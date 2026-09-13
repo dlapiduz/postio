@@ -66,9 +66,9 @@ pub fn an_account_with_no_credential_lands_on_the_repair_screen() {
 
     // ── the state 0.1.0 could get itself into ───────────────────────────
     // An account row, and a keyring that has nothing for it.
-    let database = test_support::memory();
-    let connection = database.connection().expect("a connection");
-    let account = test_support::account(&connection);
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("a connection");
+    let account = test_support::account(&connection).await;
     drop(connection);
     let directory = tempfile::tempdir().expect("a blob directory");
     let blobs = BlobStore::open(

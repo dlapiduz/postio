@@ -58,7 +58,7 @@ pub fn a_window_over_a_populated_store_lists_its_mail() {
     app::install_icons(&display);
 
     // ── a store with an account, folders and real mail in it ────────────
-    let database = test_support::memory();
+    let database = test_support::memory().await;
     let report = seed_small(&database, 11);
     assert!(
         report.message_count > 0,

@@ -49,7 +49,7 @@ struct World {
 }
 
 fn world() -> World {
-    let database = test_support::memory();
+    let database = test_support::memory().await;
     let seeded = seed_small(&database, 11);
     assert!(
         seeded.message_count > 0,

@@ -56,10 +56,10 @@ struct Local {
 }
 
 fn local() -> Local {
-    let database = test_support::temp();
-    let connection = database.connection().expect("checkout");
-    let account = test_support::account(&connection);
-    let inbox = test_support::mailbox(&connection, &account, INBOX);
+    let database = test_support::temp().await;
+    let connection = database.connect().await.expect("checkout");
+    let account = test_support::account(&connection).await;
+    let inbox = test_support::mailbox(&connection, &account, INBOX).await;
     let blobs = BlobStore::open(
         database.directory().join("blobs"),
         &postio_storage::test_support::blob_keys(),

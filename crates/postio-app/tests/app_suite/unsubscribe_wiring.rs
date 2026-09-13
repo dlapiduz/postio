@@ -44,7 +44,7 @@ fn store(
     mailbox: postio_model::ids::MailboxId,
     raw: &[u8],
 ) -> postio_model::ids::MessageId {
-    let connection = database.connection().expect("a connection");
+    let connection = database.connect().await.expect("a connection");
     let repository = MessageRepository::new(&connection);
     let parsed = postio_model::mime::parse(raw);
     let body = parsed.body.clone();
@@ -84,7 +84,7 @@ pub fn clicking_unsubscribe_logs_the_activation_and_the_privacy_pane_lists_it() 
     style::install(&display);
     app::install_icons(&display);
 
-    let database = test_support::memory();
+    let database = test_support::memory().await;
     let directory = tempfile::tempdir().expect("a blob directory");
     let blobs = BlobStore::open(
         directory.path().to_path_buf(),
@@ -93,8 +93,8 @@ pub fn clicking_unsubscribe_logs_the_activation_and_the_privacy_pane_lists_it() 
     .expect("a blob store");
 
     let account = {
-        let connection = database.connection().expect("a connection");
-        let (account, inbox) = test_support::account_with_inbox(&connection);
+        let connection = database.connect().await.expect("a connection");
+        let (account, inbox) = test_support::account_with_inbox(&connection).await;
         drop(connection);
         store(&database, account.id, inbox, NEWSLETTER);
         account.id
@@ -134,7 +134,7 @@ pub fn clicking_unsubscribe_logs_the_activation_and_the_privacy_pane_lists_it() 
 
     // ── the store starts with no activation logged ───────────────────────
     {
-        let connection = database.connection().expect("a connection");
+        let connection = database.connect().await.expect("a connection");
         assert_eq!(
             UnsubscribeRepository::new(&connection)
                 .for_account(account)
@@ -148,7 +148,7 @@ pub fn clicking_unsubscribe_logs_the_activation_and_the_privacy_pane_lists_it() 
     // ── clicking unsubscribe reaches the store, account stamped ──────────
     window.reader().click_unsubscribe();
     let landed = settle_until(|| {
-        let connection = database.connection().expect("a connection");
+        let connection = database.connect().await.expect("a connection");
         UnsubscribeRepository::new(&connection)
             .for_account(account)
             .expect("list")
@@ -161,7 +161,7 @@ pub fn clicking_unsubscribe_logs_the_activation_and_the_privacy_pane_lists_it() 
          nothing answered"
     );
     {
-        let connection = database.connection().expect("a connection");
+        let connection = database.connect().await.expect("a connection");
         let logged = UnsubscribeRepository::new(&connection)
             .for_account(account)
             .expect("list");

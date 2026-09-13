@@ -52,7 +52,7 @@ pub fn return_on_a_draft_row_opens_the_composer_on_that_draft() {
     style::install(&display);
     app::install_icons(&display);
 
-    let database = test_support::memory();
+    let database = test_support::memory().await;
     let report = seed_small(&database, 9);
     let account = report.account.id;
     let drafts_folder = report
@@ -70,7 +70,7 @@ pub fn return_on_a_draft_row_opens_the_composer_on_that_draft() {
     // would have left it — and never uploaded, so nothing about this depends
     // on a server having been reachable.
     let draft_id = {
-        let connection = database.connection().expect("a connection");
+        let connection = database.connect().await.expect("a connection");
         let mut draft = Draft::new(account);
         draft.subject = SUBJECT.to_owned();
         draft.to = vec![EmailAddress::new(None::<String>, "quinn@example.net")];
@@ -142,7 +142,7 @@ pub fn return_on_a_draft_row_opens_the_composer_on_that_draft() {
     );
     let list = window.list();
     let expected = {
-        let connection = database.connection().expect("a connection");
+        let connection = database.connect().await.expect("a connection");
         postio_storage::repository::MessageRepository::new(&connection)
             .count(&postio_storage::repository::ListQuery {
                 scope: postio_storage::repository::ListScope::Mailbox(drafts_folder.id),
@@ -166,7 +166,7 @@ pub fn return_on_a_draft_row_opens_the_composer_on_that_draft() {
         let Some(id) = list.cursor_id() else {
             return false;
         };
-        let connection = database.connection().expect("a connection");
+        let connection = database.connect().await.expect("a connection");
         DraftRepository::new(&connection)
             .by_message(id)
             .ok()

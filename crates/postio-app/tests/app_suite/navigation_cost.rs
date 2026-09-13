@@ -106,7 +106,7 @@ pub fn switching_surfaces_stays_within_a_blink() {
     style::install(&display);
     app::install_icons(&display);
 
-    let database = test_support::memory();
+    let database = test_support::memory().await;
     let report = seed_large(&database, 11, MESSAGES);
     let directory = tempfile::tempdir().expect("a blob directory");
     let blobs = BlobStore::open(
@@ -180,7 +180,7 @@ pub fn switching_surfaces_stays_within_a_blink() {
     // below can be attributed rather than guessed at.
     {
         use postio_storage::repository::{ListQuery, MessageRepository};
-        let connection = database.connection().expect("a connection");
+        let connection = database.connect().await.expect("a connection");
         let mailbox = report
             .mailboxes
             .iter()

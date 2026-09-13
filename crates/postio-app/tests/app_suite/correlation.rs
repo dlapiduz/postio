@@ -48,11 +48,11 @@ struct World {
 }
 
 fn world() -> World {
-    let database = test_support::memory();
+    let database = test_support::memory().await;
     let message = {
-        let connection = database.connection().expect("a connection");
-        let (account, inbox) = test_support::account_with_inbox(&connection);
-        test_support::mailbox(&connection, &account, "Archive");
+        let connection = database.connect().await.expect("a connection");
+        let (account, inbox) = test_support::account_with_inbox(&connection).await;
+        test_support::mailbox(&connection, &account, "Archive").await;
         let mut message = Message::new(account.id, inbox, Utc::now());
         MessageRepository::new(&connection)
             .create(&mut message)
@@ -69,7 +69,7 @@ fn world() -> World {
 
 impl World {
     fn mailbox_of(&self, message: MessageId) -> postio_model::MailboxId {
-        let connection = self.database.connection().expect("a connection");
+        let connection = self.database.connect().await.expect("a connection");
         MessageRepository::new(&connection)
             .get(message)
             .expect("a read")

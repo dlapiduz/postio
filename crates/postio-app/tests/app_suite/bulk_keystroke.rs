@@ -40,7 +40,7 @@ use postio_storage::{BlobStore, Database, test_support};
 /// How many messages in `mailbox` are still unread, straight out of the
 /// database. A count rather than a read, for the same reason the verb uses one.
 fn unread_in(database: &Database, mailbox: MailboxId) -> u32 {
-    let connection = database.connection().expect("a connection");
+    let connection = database.connect().await.expect("a connection");
     MessageRepository::new(&connection)
         .count_set(&MessageSet::in_mailbox(mailbox).with_flag(ColumnFlag::Seen, false))
         .expect("a count")
@@ -60,7 +60,7 @@ pub fn ctrl_a_then_shift_u_marks_the_whole_folder_read() {
     style::install(&display);
     app::install_icons(&display);
 
-    let database = test_support::memory();
+    let database = test_support::memory().await;
     let report = seed_small(&database, 17);
     let directory = tempfile::tempdir().expect("a blob directory");
     let blobs = BlobStore::open(

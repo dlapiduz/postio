@@ -28,7 +28,7 @@ fn at(hour: u32) -> chrono::DateTime<Utc> {
     Utc.with_ymd_and_hms(2026, 8, 20, hour, 0, 0).unwrap()
 }
 
-fn message(
+async fn message(
     connection: &Connection,
     account: &postio_model::Account,
     mailbox: postio_model::MailboxId,
@@ -40,6 +40,7 @@ fn message(
     message.subject = Some(subject.to_string());
     MessageRepository::new(connection)
         .create(&mut message)
+        .await
         .expect("create message");
     message
 }
@@ -48,7 +49,7 @@ fn message(
 /// whose subject carries the same word.
 struct World {
     _database: postio_storage::Store,
-    connection: postio_storage::PooledConnection,
+    connection: postio_storage::Checkout,
     work: postio_model::Account,
     home: postio_model::Account,
     work_inbox_message: Message,
@@ -61,7 +62,7 @@ struct World {
 /// `test_support::account` gives every account the same "Test" /
 /// `test@example.com`, which is fine for one and useless for two: half of
 /// what these tests assert is that `account:` picks *this* one out.
-fn named_account(
+async fn named_account(
     connection: &Connection,
     display_name: &str,
     address: &str,
@@ -72,38 +73,39 @@ fn named_account(
     account.outgoing.host = "smtp.example.com".to_owned();
     AccountRepository::new(connection)
         .create(&mut account)
+        .await
         .expect("create an account");
     account
 }
 
-fn world() -> World {
-    let database = test_support::memory();
-    let connection = database.connection().expect("checkout");
-    postio_index::index::ensure_schema(&connection).expect("schema");
+async fn world() -> World {
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    postio_index::index::ensure_schema(&connection).await.expect("schema");
 
-    let work = named_account(&connection, "Work", "ada@work.example");
-    let work_inbox = test_support::mailbox(&connection, &work, "INBOX").id;
-    let work_archive = test_support::mailbox(&connection, &work, "Archive").id;
-    let home = named_account(&connection, "Home", "ada@home.example");
-    let home_inbox = test_support::mailbox(&connection, &home, "INBOX").id;
+    let work = named_account(&connection, "Work", "ada@work.example").await;
+    let work_inbox = test_support::mailbox(&connection, &work, "INBOX").await.id;
+    let work_archive = test_support::mailbox(&connection, &work, "Archive").await.id;
+    let home = named_account(&connection, "Home", "ada@home.example").await;
+    let home_inbox = test_support::mailbox(&connection, &home, "INBOX").await.id;
 
-    let work_inbox_message = message(&connection, &work, work_inbox, "Quarterly report", at(9));
+    let work_inbox_message = message(&connection, &work, work_inbox, "Quarterly report", at(9)).await;
     let work_archive_message =
-        message(&connection, &work, work_archive, "Quarterly summary", at(8));
-    let home_inbox_message = message(&connection, &home, home_inbox, "Quarterly bills", at(7));
+        message(&connection, &work, work_archive, "Quarterly summary", at(8)).await;
+    let home_inbox_message = message(&connection, &home, home_inbox, "Quarterly bills", at(7)).await;
 
     World {
         _database: database,
         connection,
-        work,
-        home,
-        work_inbox_message,
-        home_inbox_message,
-        work_archive_message,
+        work: work,
+        home: home,
+        work_inbox_message: work_inbox_message,
+        home_inbox_message: home_inbox_message,
+        work_archive_message: work_archive_message,
     }
 }
 
-fn run(
+async fn run(
     world: &World,
     query: &str,
     scope: Scope,
@@ -118,6 +120,7 @@ fn run(
         order: postio_search::ResultOrder::Relevance,
     };
     search(&world.connection, &request, at(12))
+        .await
         .expect("search")
         .hits
         .into_iter()
@@ -125,13 +128,13 @@ fn run(
         .collect()
 }
 
-#[test]
-fn the_same_query_string_means_the_same_thing_in_both_scopes() {
+#[tokio::test]
+async fn the_same_query_string_means_the_same_thing_in_both_scopes() {
     // ADR 0005 Q5's rule, stated as a difference. Nothing about the string
     // changes; the eligible set does.
-    let world = world();
+    let world = world().await;
 
-    let unified = run(&world, "quarterly", Scope::AllMail, AccountScope::Unified);
+    let unified = run(&world, "quarterly", Scope::AllMail, AccountScope::Unified).await;
     assert_eq!(
         unified.len(),
         3,
@@ -145,7 +148,7 @@ fn the_same_query_string_means_the_same_thing_in_both_scopes() {
         "quarterly",
         Scope::AllMail,
         AccountScope::Account(world.work.id),
-    );
+    ).await;
     assert_eq!(
         scoped.len(),
         2,
@@ -159,20 +162,20 @@ fn the_same_query_string_means_the_same_thing_in_both_scopes() {
     );
 }
 
-#[test]
-fn a_role_scope_and_an_account_scope_compose() {
+#[tokio::test]
+async fn a_role_scope_and_an_account_scope_compose() {
     // The reason #186 kept them as two fields. Under a single enum with
     // `Account` as a fourth variant, this query could not be asked at all:
     // one enum holds one value, so "Inbox" and "this account" would have been
     // mutually exclusive.
-    let world = world();
+    let world = world().await;
 
     let both = run(
         &world,
         "quarterly",
         Scope::Inbox,
         AccountScope::Account(world.work.id),
-    );
+    ).await;
     assert_eq!(
         both,
         vec![world.work_inbox_message.id],
@@ -183,7 +186,7 @@ fn a_role_scope_and_an_account_scope_compose() {
     // And the role predicate is unchanged when the account one is absent —
     // "every account's inbox", which is a predicate removal and not a
     // redefinition (ADR 0005 Q5a).
-    let every_inbox = run(&world, "quarterly", Scope::Inbox, AccountScope::Unified);
+    let every_inbox = run(&world, "quarterly", Scope::Inbox, AccountScope::Unified).await;
     assert_eq!(every_inbox.len(), 2, "{every_inbox:?}");
     assert!(every_inbox.contains(&world.work_inbox_message.id));
     assert!(every_inbox.contains(&world.home_inbox_message.id));
@@ -193,18 +196,18 @@ fn a_role_scope_and_an_account_scope_compose() {
     );
 }
 
-#[test]
-fn the_account_operator_pins_a_search_to_one_account_from_inside_the_query() {
+#[tokio::test]
+async fn the_account_operator_pins_a_search_to_one_account_from_inside_the_query() {
     // What makes a saved search portable (ADR 0005 Q12): the string carries
     // the account, so it means the same thing run from any scope.
-    let world = world();
+    let world = world().await;
 
     let by_name = run(
         &world,
         &format!("quarterly account:{}", world.work.display_name),
         Scope::AllMail,
         AccountScope::Unified,
-    );
+    ).await;
     assert_eq!(
         by_name.len(),
         2,
@@ -218,36 +221,36 @@ fn the_account_operator_pins_a_search_to_one_account_from_inside_the_query() {
         &format!("quarterly account:{}", world.home.address.address),
         Scope::AllMail,
         AccountScope::Unified,
-    );
+    ).await;
     assert_eq!(by_address, vec![world.home_inbox_message.id]);
 }
 
-#[test]
-fn a_negated_account_operator_means_every_other_account() {
-    let world = world();
+#[tokio::test]
+async fn a_negated_account_operator_means_every_other_account() {
+    let world = world().await;
 
     let others = run(
         &world,
         &format!("quarterly -account:{}", world.work.display_name),
         Scope::AllMail,
         AccountScope::Unified,
-    );
+    ).await;
     assert_eq!(others, vec![world.home_inbox_message.id]);
 }
 
-#[test]
-fn an_account_that_names_nothing_matches_nothing_rather_than_everything() {
+#[tokio::test]
+async fn an_account_that_names_nothing_matches_nothing_rather_than_everything() {
     // The failure mode worth naming: an unresolvable name must not silently
     // drop the predicate, which would turn "account:typo" into an unscoped
     // search — the same class of lie ADR 0005 Q10 forbids of aggregate views.
-    let world = world();
+    let world = world().await;
 
     let nothing = run(
         &world,
         "quarterly account:nosuchaccount",
         Scope::AllMail,
         AccountScope::Unified,
-    );
+    ).await;
     assert!(
         nothing.is_empty(),
         "an unresolvable account: matched {} messages instead of none",
@@ -266,18 +269,18 @@ fn an_account_that_names_nothing_matches_nothing_rather_than_everything() {
 /// `Unified` (#961). It stops being invisible the moment something does, and
 /// the failure is the quiet kind: mail from an account the user switched off
 /// appearing in a result list, with no row telling them where it came from.
-#[test]
-fn a_disabled_account_is_not_searched_under_the_unified_scope() {
-    let world = world();
+#[tokio::test]
+async fn a_disabled_account_is_not_searched_under_the_unified_scope() {
+    let world = world().await;
     world
         .connection
         .execute(
             "UPDATE accounts SET enabled = 0 WHERE id = ?1",
             [world.home.id.get()],
-        )
+        ).await
         .expect("disable the home account");
 
-    let unified = run(&world, "quarterly", Scope::AllMail, AccountScope::Unified);
+    let unified = run(&world, "quarterly", Scope::AllMail, AccountScope::Unified).await;
 
     assert!(
         !unified.contains(&world.home_inbox_message.id),
@@ -291,21 +294,21 @@ fn a_disabled_account_is_not_searched_under_the_unified_scope() {
     );
 }
 
-#[test]
-fn a_pending_deletion_account_is_not_searched_either() {
+#[tokio::test]
+async fn a_pending_deletion_account_is_not_searched_either() {
     // The other half of what `list_enabled` means. An account being removed
     // still has its rows until the sweep finishes; a search that showed them
     // would be showing mail from an account the user has already deleted.
-    let world = world();
+    let world = world().await;
     world
         .connection
         .execute(
             "UPDATE accounts SET pending_deletion = 1 WHERE id = ?1",
             [world.home.id.get()],
-        )
+        ).await
         .expect("mark the home account for deletion");
 
-    let unified = run(&world, "quarterly", Scope::AllMail, AccountScope::Unified);
+    let unified = run(&world, "quarterly", Scope::AllMail, AccountScope::Unified).await;
 
     assert!(
         !unified.contains(&world.home_inbox_message.id),
@@ -313,18 +316,18 @@ fn a_pending_deletion_account_is_not_searched_either() {
     );
 }
 
-#[test]
-fn naming_a_disabled_account_explicitly_still_searches_it() {
+#[tokio::test]
+async fn naming_a_disabled_account_explicitly_still_searches_it() {
     // The scope is a *view* filter, not an authorisation one. Settings can
     // still show what a disabled account holds, and `AccountScope::Account`
     // is how it asks — so the enabled filter belongs to Unified alone.
-    let world = world();
+    let world = world().await;
     world
         .connection
         .execute(
             "UPDATE accounts SET enabled = 0 WHERE id = ?1",
             [world.home.id.get()],
-        )
+        ).await
         .expect("disable the home account");
 
     let named = run(
@@ -332,7 +335,7 @@ fn naming_a_disabled_account_explicitly_still_searches_it() {
         "quarterly",
         Scope::AllMail,
         AccountScope::Account(world.home.id),
-    );
+    ).await;
 
     assert_eq!(named, vec![world.home_inbox_message.id]);
 }

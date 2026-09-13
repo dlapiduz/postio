@@ -41,7 +41,7 @@ pub fn the_rows_own_action_clears_and_refills_its_accounts_local_index() {
     style::install(&display);
     app::install_icons(&display);
 
-    let database = test_support::memory();
+    let database = test_support::memory().await;
     let report = seed_small(&database, 41);
     let account = report.account.id;
     let directory = tempfile::tempdir().expect("a blob directory");
@@ -53,7 +53,7 @@ pub fn the_rows_own_action_clears_and_refills_its_accounts_local_index() {
 
     // A message with a local, indexed body -- the state a rebuild has
     // something real to clear and refill.
-    let connection = database.connection().expect("a connection");
+    let connection = database.connect().await.expect("a connection");
     postio_index::index::ensure_schema(&connection).expect("schema");
     let inbox = report
         .mailboxes
@@ -121,7 +121,7 @@ pub fn the_rows_own_action_clears_and_refills_its_accounts_local_index() {
     // again.
     assert!(
         settle_until(|| {
-            let connection = database.connection().expect("a connection");
+            let connection = database.connect().await.expect("a connection");
             postio_index::index::messages_missing_body_text_for_account(
                 &connection,
                 account.get(),

@@ -49,7 +49,7 @@ pub fn the_status_lines_sync_button_asks_for_a_refresh() {
     style::install(&display);
     app::install_icons(&display);
 
-    let database = test_support::memory();
+    let database = test_support::memory().await;
     seed_small(&database, 11);
     let directory = tempfile::tempdir().expect("a blob directory");
     let blobs = BlobStore::open(

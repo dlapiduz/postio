@@ -54,7 +54,7 @@ pub fn typing_in_the_box_searches_the_store_and_fills_every_search_surface() {
     app::install_icons(&display);
 
     // ── a store the application has opened ──────────────────────────────
-    let database = test_support::memory();
+    let database = test_support::memory().await;
     let report = seed_small(&database, 11);
     assert!(
         report.message_count > 0,

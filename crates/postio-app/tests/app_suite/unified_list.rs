@@ -51,7 +51,7 @@ pub fn picking_unified_lists_mail_from_every_account() {
     app::install_icons(&display);
 
     // ── two accounts, each with its own folder tree and mail ────────────
-    let database = test_support::memory();
+    let database = test_support::memory().await;
     let first = seed_small(&database, 11);
     let second = seed_extra_account(&database, "Second", "grace@example.org", 12);
     assert!(

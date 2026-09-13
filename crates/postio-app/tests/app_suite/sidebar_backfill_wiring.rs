@@ -56,7 +56,7 @@ pub fn the_menu_persists_and_the_sidebar_reflects_it_without_a_sync() {
     style::install(&display);
     app::install_icons(&display);
 
-    let database = test_support::memory();
+    let database = test_support::memory().await;
     let report = seed_small(&database, 61);
     let inbox = report.mailbox(MailboxRole::Inbox).expect("a seeded inbox");
     let inbox_id = inbox.id;
@@ -127,7 +127,7 @@ pub fn the_menu_persists_and_the_sidebar_reflects_it_without_a_sync() {
 }
 
 fn read_excluded(database: &postio_storage::Store, id: postio_model::ids::MailboxId) -> bool {
-    let connection = database.connection().expect("a connection");
+    let connection = database.connect().await.expect("a connection");
     MailboxRepository::new(&connection)
         .backfill_excluded(id)
         .expect("read")

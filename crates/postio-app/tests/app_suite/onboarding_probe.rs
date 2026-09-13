@@ -197,7 +197,7 @@ fn settle_until(done: impl Fn() -> bool) -> bool {
 fn onboard(
     transport: Arc<dyn DiscoveryTransport>,
 ) -> (Window, Onboarding, Bridge, tempfile::TempDir) {
-    let database = test_support::memory();
+    let database = test_support::memory().await;
     let directory = tempfile::tempdir().expect("a blob directory");
     let blobs = BlobStore::open(
         directory.path().to_path_buf(),

@@ -62,7 +62,7 @@ pub fn the_pane_says_offline_and_updates_the_moment_the_connection_does() {
     style::install(&display);
     app::install_icons(&display);
 
-    let database = test_support::memory();
+    let database = test_support::memory().await;
     let report = seed_small(&database, 21);
     let directory = tempfile::tempdir().expect("a blob directory");
     let blobs = BlobStore::open(
@@ -77,13 +77,13 @@ pub fn the_pane_says_offline_and_updates_the_moment_the_connection_does() {
     // it observable — the counts differ, and the first row is a message the
     // folder view has not already reported.
     let flagged_total: u32 = {
-        let connection = database.connection().expect("a connection");
+        let connection = database.connect().await.expect("a connection");
         connection
             .execute(
                 "UPDATE messages SET flagged = 1 WHERE id NOT IN \
                  (SELECT id FROM messages ORDER BY received_at DESC LIMIT 1)",
-                [],
-            )
+                (),
+            ).await
             .expect("the fixture writes");
         connection
             .query_row(

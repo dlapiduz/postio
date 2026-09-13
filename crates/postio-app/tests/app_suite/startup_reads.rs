@@ -72,7 +72,7 @@ struct Opened {
 
 /// What the main thread read while a window was pointed at a store of `size`.
 fn opening(size: usize) -> Opened {
-    let database = test_support::memory();
+    let database = test_support::memory().await;
     let report = seed_large(&database, 11, size);
     assert_eq!(
         report.message_count, size,
@@ -188,7 +188,7 @@ pub fn opening_a_window_reads_a_bounded_amount_however_big_the_mailbox_is() {
     // not on screen. It is still here and still costs what it costs — it is
     // read when the pane is looked at now, which is the whole of the fix.
     let scan = {
-        let connection = opened.database.connection().expect("a connection");
+        let connection = opened.database.connect().await.expect("a connection");
         let messages = postio_storage::repository::MessageRepository::new(&connection);
         counted(|| {
             let _ = messages

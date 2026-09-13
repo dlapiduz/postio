@@ -11,7 +11,7 @@ use postio_storage::test_support;
 
 /// The seeded database, and a store over it.
 fn seeded() -> (postio_storage::Store, postio_storage::seed::SeedReport) {
-    let database = test_support::memory();
+    let database = test_support::memory().await;
     let report = seed_small(&database, 7);
     (database, report)
 }
@@ -194,7 +194,7 @@ async fn seeking_to_a_page_finds_the_same_rows_as_walking_to_it() {
     // is the *same* page: a cursor that lands one row off would show the user
     // a duplicate or skip a message, and neither is visible until somebody
     // counts.
-    let database = test_support::memory();
+    let database = test_support::memory().await;
     let report = seed_small(&database, 3);
     let inbox = report.mailbox(MailboxRole::Inbox).expect("an inbox").id;
 
@@ -231,7 +231,7 @@ async fn a_list_that_changed_length_throws_the_remembered_boundaries_away() {
     // `OFFSET` does in the same situation and what `page_at`'s own
     // documentation warns about. It is not a regression, and pretending to
     // fix it would mean a cache that has to be told about every write.
-    let database = test_support::memory();
+    let database = test_support::memory().await;
     let report = seed_small(&database, 5);
     let inbox = report.mailbox(MailboxRole::Inbox).expect("an inbox").id;
     let store = SqliteStore::new(&database);
@@ -242,14 +242,14 @@ async fn a_list_that_changed_length_throws_the_remembered_boundaries_away() {
 
     // The newest message goes away, and everything below it moves up one.
     {
-        let connection = database.connection().expect("a connection");
+        let connection = database.connect().await.expect("a connection");
         connection
             .execute(
                 "UPDATE messages SET deleted_locally = 1
                    WHERE id = (SELECT id FROM messages WHERE mailbox_id = ?1
                                ORDER BY received_at DESC, id DESC LIMIT 1)",
                 [inbox.get()],
-            )
+            ).await
             .expect("the fixture writes");
         postio_storage::repository::MailboxRepository::new(&connection)
             .recount(inbox)
@@ -274,19 +274,19 @@ async fn a_cached_count_of_zero_is_checked_rather_than_believed() {
     //
     // The column has an owner now. This is about what happens if it ever
     // stops: the read has to degrade to slow, not to invisible.
-    let database = test_support::memory();
+    let database = test_support::memory().await;
     let report = seed_small(&database, 5);
     let inbox = report.mailbox(MailboxRole::Inbox).expect("an inbox").id;
 
     {
-        let connection = database.connection().expect("a connection");
+        let connection = database.connect().await.expect("a connection");
         // Behind the triggers' back, which is exactly the drift being guarded
         // against: the rows are all still there.
         connection
             .execute(
                 "UPDATE mailboxes SET total_count = 0 WHERE id = ?1",
                 [inbox.get()],
-            )
+            ).await
             .expect("the fixture writes");
     }
 
@@ -398,15 +398,15 @@ async fn a_thread_reads_across_every_folder_it_touches() {
     use postio_model::ids::ThreadId;
     use postio_storage::repository::MessageRepository;
 
-    let database = test_support::memory();
-    let connection = database.connection().expect("checkout");
-    let (account, inbox) = test_support::account_with_inbox(&connection);
-    let archive = test_support::mailbox(&connection, &account, "Archive");
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    let (account, inbox) = test_support::account_with_inbox(&connection).await;
+    let archive = test_support::mailbox(&connection, &account, "Archive").await;
     connection
         .execute(
             "INSERT INTO threads (id, account_id) VALUES (1, ?1)",
             [account.id.get()],
-        )
+        ).await
         .expect("a thread");
 
     let messages = MessageRepository::new(&connection);

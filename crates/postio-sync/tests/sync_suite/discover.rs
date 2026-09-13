@@ -50,8 +50,8 @@ fn paths(connection: &Connection, account: &Account) -> Vec<String> {
 
 #[tokio::test]
 async fn discovery_writes_the_servers_folders_into_the_local_table() {
-    let database = test_support::memory();
-    let connection = database.connection().expect("checkout");
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
     let account = an_account(&connection);
     let backend = a_server().await;
 
@@ -87,8 +87,8 @@ async fn a_folders_role_comes_from_the_servers_attributes_not_its_name() {
     // "Sent Messages" and "Deleted Messages" are what some servers call them.
     // A client that matched on the English word would file mail into the wrong
     // folder on every account that does not speak English.
-    let database = test_support::memory();
-    let connection = database.connection().expect("checkout");
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
     let account = an_account(&connection);
     let backend = a_server().await;
 
@@ -115,8 +115,8 @@ async fn a_folders_role_comes_from_the_servers_attributes_not_its_name() {
 async fn discovering_twice_keeps_the_same_rows() {
     // Everything else points at these ids: sync state, messages, the queue.
     // A discovery that reinserted would orphan every one of them.
-    let database = test_support::memory();
-    let connection = database.connection().expect("checkout");
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
     let account = an_account(&connection);
     let backend = a_server().await;
 
@@ -161,8 +161,8 @@ async fn discovery_preserves_what_a_sync_pass_recorded() {
     // The rows carry sync state — UIDVALIDITY, the highest MODSEQ — and losing
     // it would turn every reconnection into a full re-enumeration of every
     // folder.
-    let database = test_support::memory();
-    let connection = database.connection().expect("checkout");
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
     let account = an_account(&connection);
     let backend = a_server().await;
 
@@ -194,8 +194,8 @@ async fn discovery_does_not_reset_a_folders_backfill_exclusion() {
     // preference, the same shape `signature_id` (#394) already is. A LIST
     // response says nothing about it, so a reconnection must not silently
     // re-include a folder the user deliberately excluded.
-    let database = test_support::memory();
-    let connection = database.connection().expect("checkout");
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
     let account = an_account(&connection);
     let backend = a_server().await;
 
@@ -226,8 +226,8 @@ async fn discovery_does_not_reset_a_folders_backfill_exclusion() {
 async fn a_folder_the_server_no_longer_lists_keeps_its_mail() {
     // The row is not deleted: `messages.mailbox_id` cascades, so deleting a
     // folder because one LIST did not mention it would delete the user's mail.
-    let database = test_support::memory();
-    let connection = database.connection().expect("checkout");
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
     let account = an_account(&connection);
     let backend = a_server().await;
 
@@ -284,8 +284,8 @@ async fn a_folder_the_server_no_longer_lists_keeps_its_mail() {
 
 #[tokio::test]
 async fn a_folder_that_comes_back_is_usable_again() {
-    let database = test_support::memory();
-    let connection = database.connection().expect("checkout");
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
     let account = an_account(&connection);
 
     let smaller = MockBackend::builder()
@@ -312,8 +312,8 @@ async fn a_folder_that_comes_back_is_usable_again() {
 async fn an_empty_listing_is_not_read_as_every_folder_being_gone() {
     // A server that answers LIST with nothing, or a listing that failed part
     // way, must not empty the sidebar. Nothing is evidence of nothing.
-    let database = test_support::memory();
-    let connection = database.connection().expect("checkout");
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
     let account = an_account(&connection);
     let backend = a_server().await;
 
@@ -338,8 +338,8 @@ async fn an_empty_listing_is_not_read_as_every_folder_being_gone() {
 
 #[tokio::test]
 async fn a_child_folder_is_linked_to_its_parent() {
-    let database = test_support::memory();
-    let connection = database.connection().expect("checkout");
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
     let account = an_account(&connection);
 
     let backend = MockBackend::builder()
@@ -388,8 +388,8 @@ async fn a_missing_intermediate_level_still_leaves_the_leaf_usable() {
     // between -- a hierarchy IMAP allows and some servers produce. The leaf
     // is still a perfectly good folder; it just has nowhere local to sit
     // under, so it sits at the top rather than failing discovery outright.
-    let database = test_support::memory();
-    let connection = database.connection().expect("checkout");
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
     let account = an_account(&connection);
 
     let backend = MockBackend::builder()
@@ -418,8 +418,8 @@ async fn a_missing_intermediate_level_still_leaves_the_leaf_usable() {
 async fn a_folder_that_cannot_hold_messages_is_recorded_as_such() {
     // `\Noselect` is how a server spells "this is only a level in the
     // hierarchy". Selecting one is an error, so the engine must not try.
-    let database = test_support::memory();
-    let connection = database.connection().expect("checkout");
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
     let account = an_account(&connection);
 
     let backend = MockBackend::builder()
@@ -465,8 +465,8 @@ fn role_of(connection: &Connection, account: &Account, path: &str) -> Option<Mai
 
 #[tokio::test]
 async fn an_override_gives_a_role_to_a_folder_nothing_else_could_name() {
-    let database = test_support::memory();
-    let connection = database.connection().expect("checkout");
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
     let account = an_account(&connection);
     let backend = an_unhelpful_server().await;
 
@@ -506,8 +506,8 @@ async fn an_override_gives_a_role_to_a_folder_nothing_else_could_name() {
 
 #[tokio::test]
 async fn an_override_outranks_what_the_server_said() {
-    let database = test_support::memory();
-    let connection = database.connection().expect("checkout");
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
     let account = an_account(&connection);
     let backend = a_server().await;
 
@@ -538,8 +538,8 @@ async fn an_override_outranks_what_the_server_said() {
 /// the line back and the labels swap back, but moved mail stays moved.
 #[tokio::test]
 async fn remapping_a_role_moves_the_label_and_never_the_mail() {
-    let database = test_support::memory();
-    let connection = database.connection().expect("checkout");
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
     let account = an_account(&connection);
     let backend = MockBackend::builder()
         .mailbox(MockMailbox::new("INBOX"))
@@ -602,8 +602,8 @@ async fn a_role_follows_the_folder_when_the_server_renames_it() {
     // row is born with the same role; and `by_role` picks between them by
     // path order. "Sent" sorts before "Sent Items", so every sent copy from
     // here on is filed into a folder the server no longer has.
-    let database = test_support::memory();
-    let connection = database.connection().expect("checkout");
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
     let account = an_account(&connection);
 
     let before = MockBackend::builder()
@@ -646,8 +646,8 @@ async fn one_folder_per_role_survives_discovery() {
     // loser; discovery then throws that verdict away by re-deriving the
     // role from the name, and both rows wear it. `by_role` picks between
     // them by path order, and "Sent" sorts before "Sent Messages".
-    let database = test_support::memory();
-    let connection = database.connection().expect("checkout");
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
     let account = an_account(&connection);
 
     let backend = MockBackend::builder()
@@ -698,8 +698,8 @@ fn sent_path(connection: &Connection, account: &Account) -> Option<String> {
 async fn an_accounts_own_map_outranks_the_configuration() {
     // ADR 0035: `[mailboxes]` is one table for every account; the account's
     // own map, in the store, is what the user said about *this* server.
-    let database = test_support::memory();
-    let connection = database.connection().expect("checkout");
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
     let account = an_account(&connection);
     let backend = a_silent_server_with_two_sent_folders().await;
 
@@ -730,8 +730,8 @@ async fn an_accounts_own_map_outranks_the_configuration() {
 
 #[tokio::test]
 async fn an_accounts_map_says_nothing_about_another_account() {
-    let database = test_support::memory();
-    let connection = database.connection().expect("checkout");
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
     let icloud = an_account(&connection);
     let mut other = Account::new(
         "Other",
@@ -768,8 +768,8 @@ async fn a_map_changed_between_passes_takes_effect_on_the_next() {
     // Nothing is frozen at startup: the engine's part is the configuration
     // tier only, and the account's map is read every pass, so a choice made
     // in settings needs no restart to be honoured by discovery.
-    let database = test_support::memory();
-    let connection = database.connection().expect("checkout");
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
     let account = an_account(&connection);
     let backend = a_silent_server_with_two_sent_folders().await;
     let configured = RoleOverrides::default();
@@ -832,8 +832,8 @@ fn roles_with_a_folder(connection: &Connection, account: &Account) -> Vec<Mailbo
 
 #[tokio::test]
 async fn a_server_with_only_an_inbox_gets_a_folder_for_every_reserved_role() {
-    let database = test_support::memory();
-    let connection = database.connection().expect("checkout");
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
     let account = an_account(&connection);
     let backend = a_bare_server().await;
 
@@ -858,8 +858,8 @@ async fn a_server_with_only_an_inbox_gets_a_folder_for_every_reserved_role() {
 async fn a_second_pass_creates_nothing() {
     // SC-007. The expensive version of this bug is silent: a create per role
     // per pass, against the user's real server, forever.
-    let database = test_support::memory();
-    let connection = database.connection().expect("checkout");
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
     let account = an_account(&connection);
     let backend = a_bare_server().await;
 
@@ -881,8 +881,8 @@ async fn a_second_pass_creates_nothing() {
 
 #[tokio::test]
 async fn a_server_that_already_has_everything_is_never_asked_to_create() {
-    let database = test_support::memory();
-    let connection = database.connection().expect("checkout");
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
     let account = an_account(&connection);
     let backend = MockBackend::builder()
         .mailbox(MockMailbox::new("INBOX"))
@@ -909,8 +909,8 @@ async fn a_server_that_already_has_everything_is_never_asked_to_create() {
 async fn the_inbox_is_never_created_even_when_the_server_does_not_list_one() {
     // FR-029. A server with no INBOX is broken in a way this does not paper
     // over, and creating one would be Postio disagreeing with RFC 3501.
-    let database = test_support::memory();
-    let connection = database.connection().expect("checkout");
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
     let account = an_account(&connection);
     let backend = MockBackend::builder()
         .mailbox(MockMailbox::new("Archive").attributes(["\\Archive"]))
@@ -932,8 +932,8 @@ async fn the_inbox_is_never_created_even_when_the_server_does_not_list_one() {
 async fn a_server_that_refuses_leaves_the_role_unmapped_and_says_why() {
     // FR-031. A refusal is a thing the user can act on -- it is usually a
     // permission -- so the server's own words are kept for the settings pane.
-    let database = test_support::memory();
-    let connection = database.connection().expect("checkout");
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
     let account = an_account(&connection);
     let backend = a_bare_server().await;
     backend.refuse_creates("Permission denied");
@@ -979,8 +979,8 @@ async fn a_server_that_refuses_leaves_the_role_unmapped_and_says_why() {
 async fn a_refusal_is_not_retried_on_the_next_pass() {
     // The expensive version of this bug is silent: a CREATE per role per pass,
     // against the user's real server, forever.
-    let database = test_support::memory();
-    let connection = database.connection().expect("checkout");
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
     let account = an_account(&connection);
     let backend = a_bare_server().await;
     backend.refuse_creates("Permission denied");
@@ -1005,8 +1005,8 @@ async fn a_refusal_is_not_retried_on_the_next_pass() {
 #[tokio::test]
 async fn a_refusal_for_one_role_does_not_stop_the_others() {
     // A single awkward folder must not cost the account every other role.
-    let database = test_support::memory();
-    let connection = database.connection().expect("checkout");
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
     let account = an_account(&connection);
     let backend = a_bare_server().await;
 
@@ -1047,8 +1047,8 @@ async fn a_refusal_for_one_role_does_not_stop_the_others() {
 async fn a_mailbox_that_already_exists_is_not_an_error() {
     // Two clients may race, and servers spell "already exists" differently.
     // What the caller wants is the folder to exist, not to have made it.
-    let database = test_support::memory();
-    let connection = database.connection().expect("checkout");
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
     let account = an_account(&connection);
     let backend = a_bare_server().await;
 
@@ -1087,8 +1087,8 @@ async fn a_created_folder_is_named_after_its_role_whatever_the_provider() {
     // checkable now is that two entirely different servers get identical
     // names, which is what a provider-specific branch would break.
     let names_for = |host: &'static str| async move {
-        let database = test_support::memory();
-        let connection = database.connection().expect("checkout");
+        let database = test_support::memory().await;
+        let connection = database.connect().await.expect("checkout");
         let account = an_account(&connection);
         let backend = MockBackend::builder()
             .host(host)

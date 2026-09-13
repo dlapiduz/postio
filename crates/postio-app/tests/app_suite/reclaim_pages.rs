@@ -33,7 +33,7 @@ use postio_storage::{BlobStore, Database, test_support};
 const INCREMENTAL: i64 = 2;
 
 fn auto_vacuum(database: &Database) -> i64 {
-    let connection = database.connection().expect("a connection");
+    let connection = database.connect().await.expect("a connection");
     postio_storage::db::read_pragmas(&connection)
         .expect("the pragmas in force")
         .auto_vacuum

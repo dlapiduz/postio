@@ -107,15 +107,15 @@ async fn a_resync_batch_does_not_lock_out_an_interactive_write() {
     // File-backed, for the reason `concurrent_writers.rs` records: an
     // in-memory database shares a cache between the pool's connections and
     // fails in a different model entirely (#204).
-    let database = test_support::temp();
+    let database = test_support::temp().await;
 
     let (inbox, scratch) = {
-        let connection = database.connection().expect("checkout");
-        let account = test_support::account(&connection);
-        let inbox = test_support::mailbox(&connection, &account, INBOX);
+        let connection = database.connect().await.expect("checkout");
+        let account = test_support::account(&connection).await;
+        let inbox = test_support::mailbox(&connection, &account, INBOX).await;
         // The row the writers hammer lives in a mailbox of its own, so
         // nothing they do can be mistaken for something the resync did.
-        let drafts = test_support::mailbox(&connection, &account, "Drafts");
+        let drafts = test_support::mailbox(&connection, &account, "Drafts").await;
         let mut message = postio_model::Message::new(account.id, drafts.id, chrono::Utc::now());
         message.subject = Some("Being typed".into());
         let id = MessageRepository::new(&connection)
@@ -134,7 +134,7 @@ async fn a_resync_batch_does_not_lock_out_an_interactive_write() {
     // The store matches the server, so what follows is a resync and not a
     // first sync — which is the whole point: this is the ordinary path.
     {
-        let connection = database.connection().expect("checkout");
+        let connection = database.connect().await.expect("checkout");
         sync_mailbox(&connection, &backend, &inbox, &CancelToken::new(), |_| {})
             .await
             .expect("bootstrap sync");
@@ -208,7 +208,7 @@ async fn a_resync_batch_does_not_lock_out_an_interactive_write() {
         .collect();
 
     // ── the resync ───────────────────────────────────────────────────────
-    let connection = database.connection().expect("checkout");
+    let connection = database.connect().await.expect("checkout");
     ready.wait();
     let outcome = resync_mailbox(&connection, &backend, &inbox, &CancelToken::new(), |_| {}).await;
 

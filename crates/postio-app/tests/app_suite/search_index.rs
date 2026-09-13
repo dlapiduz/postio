@@ -30,13 +30,13 @@ use postio_storage::{BlobStore, Database, test_support};
 pub fn a_store_the_application_opened_can_be_searched() {
     // Seeded first and indexed after, which is the order every existing
     // account is in: the mail was there long before the index was.
-    let database = test_support::memory();
+    let database = test_support::memory().await;
     let report = seed_small(&database, 11);
     assert!(report.message_count > 0, "seeded nothing to find");
 
     ensure_search_index(&database).expect("the index is part of opening the store");
 
-    let connection = database.connection().expect("a connection");
+    let connection = database.connect().await.expect("a connection");
     // A word every fixture in the corpus has a sender for. Searching for the
     // *sender* rather than a subject also proves the recipients half of the
     // backfill ran, not only the subject column.
@@ -66,7 +66,7 @@ pub fn a_store_the_application_opened_can_be_searched() {
 
 /// Every message the seeded store put in the list, newest first.
 fn all_messages(database: &Database) -> Vec<MessageId> {
-    let connection = database.connection().expect("a connection");
+    let connection = database.connect().await.expect("a connection");
     let mut statement = connection
         .prepare("SELECT id FROM messages ORDER BY received_at DESC")
         .expect("a statement");
@@ -77,7 +77,7 @@ fn all_messages(database: &Database) -> Vec<MessageId> {
 
 /// Land a body for `id`, the way a settled backfill leaves one.
 fn give_body(database: &Database, id: MessageId, text: Option<&str>, html: Option<&str>) {
-    let connection = database.connection().expect("a connection");
+    let connection = database.connect().await.expect("a connection");
     let stored = StoredBody {
         text: text.map(str::to_owned),
         html: html.map(str::to_owned),
@@ -91,7 +91,7 @@ fn give_body(database: &Database, id: MessageId, text: Option<&str>, html: Optio
 }
 
 fn hits(database: &Database, account: AccountId, query: &str) -> Vec<MessageId> {
-    let connection = database.connection().expect("a connection");
+    let connection = database.connect().await.expect("a connection");
     let parsed = parse(query, Utc::now().date_naive());
     search(
         &connection,
@@ -125,7 +125,7 @@ fn hits(database: &Database, account: AccountId, query: &str) -> Vec<MessageId> 
 /// this machine when that call did not exist, and any body whose index write
 /// was lost to a crash between the commit point and it.
 pub fn a_store_that_predates_body_indexing_catches_up() {
-    let database = test_support::memory();
+    let database = test_support::memory().await;
     let report = seed_small(&database, 29);
 
     let messages = all_messages(&database);
@@ -224,7 +224,7 @@ pub fn opening_the_window_indexes_local_bodies_without_being_asked() {
         return;
     }
 
-    let database = test_support::memory();
+    let database = test_support::memory().await;
     let report = seed_small(&database, 31);
     let directory = tempfile::tempdir().expect("a blob directory");
     let blobs = BlobStore::open(
@@ -285,7 +285,7 @@ pub fn opening_the_window_indexes_local_bodies_without_being_asked() {
 /// leave the header *index* alone — which is the state every store is in
 /// before the catch-up pass reaches it (ADR 0025 Q5).
 fn give_header_block(database: &Database, id: MessageId, block: &str) {
-    let connection = database.connection().expect("a connection");
+    let connection = database.connect().await.expect("a connection");
     let stored = StoredBody {
         text: Some("a body, so the row looks fetched".to_owned()),
         html: None,
@@ -321,7 +321,7 @@ pub fn opening_the_window_indexes_local_headers_without_being_asked() {
         return;
     }
 
-    let database = test_support::memory();
+    let database = test_support::memory().await;
     let report = seed_small(&database, 37);
     let directory = tempfile::tempdir().expect("a blob directory");
     let blobs = BlobStore::open(

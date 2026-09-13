@@ -45,15 +45,15 @@ struct World {
 }
 
 fn world(raw: &[u8], with_message_id: bool) -> World {
-    let database = test_support::temp();
+    let database = test_support::temp().await;
     let blobs = BlobStore::open(
         database.directory().join("blobs"),
         &postio_storage::test_support::blob_keys(),
     )
     .expect("blobs");
-    let connection = database.connection().expect("checkout");
+    let connection = database.connect().await.expect("checkout");
 
-    let (source, source_inbox) = test_support::account_with_inbox(&connection);
+    let (source, source_inbox) = test_support::account_with_inbox(&connection).await;
     let mut target = postio_model::Account::new(
         "Second",
         postio_model::EmailAddress::new(None::<String>, "grace@example.org"),
@@ -61,7 +61,7 @@ fn world(raw: &[u8], with_message_id: bool) -> World {
     postio_storage::repository::AccountRepository::new(&connection)
         .create(&mut target)
         .expect("target account");
-    let target_inbox = test_support::mailbox(&connection, &target, "INBOX").id;
+    let target_inbox = test_support::mailbox(&connection, &target, "INBOX").await.id;
 
     let mut message = Message::new(source.id, source_inbox, at(8));
     message.server.uid = Some(Uid::new(1));
@@ -168,7 +168,7 @@ async fn drain(world: &World, backend: &MockBackend, account: AccountId) {
 
 /// A refused step backs off, so a later pass has to come visibly later.
 async fn drain_at(world: &World, backend: &MockBackend, account: AccountId, hour: u32) {
-    let connection = world.database.connection().expect("checkout");
+    let connection = world.database.connect().await.expect("checkout");
     Drainer::new(backend)
         .with_blobs(&world.blobs)
         .drain(&connection, account, at(hour))
@@ -177,7 +177,7 @@ async fn drain_at(world: &World, backend: &MockBackend, account: AccountId, hour
 }
 
 fn phase(world: &World) -> MovePhase {
-    let connection = world.database.connection().expect("checkout");
+    let connection = world.database.connect().await.expect("checkout");
     CrossAccountMoveRepository::new(&connection)
         .get(world.saga)
         .expect("read")
@@ -235,7 +235,7 @@ async fn confirming_writes_the_identity_onto_the_row_the_user_sees() {
     let target = target_server(true).await;
 
     let before = {
-        let connection = world.database.connection().expect("checkout");
+        let connection = world.database.connect().await.expect("checkout");
         MessageRepository::new(&connection)
             .get(copy)
             .expect("read")
@@ -252,7 +252,7 @@ async fn confirming_writes_the_identity_onto_the_row_the_user_sees() {
     drain(&world, &target, world.target_account).await;
     assert_eq!(phase(&world), MovePhase::Confirmed);
 
-    let connection = world.database.connection().expect("checkout");
+    let connection = world.database.connect().await.expect("checkout");
     let saga = CrossAccountMoveRepository::new(&connection)
         .get(world.saga)
         .expect("read")
@@ -293,12 +293,12 @@ async fn a_replayed_copy_finds_the_first_copy_and_makes_no_second() {
     // The crash: the settled row is put back to pending, as a restart that
     // lost the settle would leave it.
     {
-        let connection = world.database.connection().expect("checkout");
+        let connection = world.database.connect().await.expect("checkout");
         connection
             .execute(
                 "UPDATE operation_queue SET state = 'pending' WHERE account_id = ?1",
                 [world.target_account.get()],
-            )
+            ).await
             .expect("reset the row");
     }
     drain(&world, &target, world.target_account).await;
@@ -375,12 +375,12 @@ async fn the_removal_uses_the_coordinate_its_queue_row_snapshotted() {
 
     // The live row loses its identity, the queue row keeps its snapshot.
     {
-        let connection = world.database.connection().expect("checkout");
+        let connection = world.database.connect().await.expect("checkout");
         connection
             .execute(
                 "UPDATE messages SET remote_id = NULL, uid = NULL WHERE id = ?1",
                 [world.source_message.get()],
-            )
+            ).await
             .expect("clear the live coordinates");
     }
     assert_eq!(
@@ -412,7 +412,7 @@ async fn a_vanished_destination_aborts_with_the_source_intact() {
     let source = source_server().await;
     let target = target_server(true).await;
     {
-        let connection = world.database.connection().expect("checkout");
+        let connection = world.database.connect().await.expect("checkout");
         postio_storage::repository::MailboxRepository::new(&connection)
             .delete(world.target_inbox)
             .expect("the destination goes away");
@@ -429,7 +429,7 @@ async fn a_vanished_destination_aborts_with_the_source_intact() {
         "an aborted move leaves the message exactly where it was (Q13)"
     );
     // And locally too: the source row is still there to be shown again.
-    let connection = world.database.connection().expect("checkout");
+    let connection = world.database.connect().await.expect("checkout");
     assert!(
         MessageRepository::new(&connection)
             .get(world.source_message)
@@ -470,7 +470,7 @@ async fn the_inverse_removal_reaches_the_target_server_with_its_own_coordinates(
     // The identity B's server issued, now on the row (this branch's earlier
     // commit) — and the coordinate the inverse must remove by.
     let copy_identity = {
-        let connection = world.database.connection().expect("checkout");
+        let connection = world.database.connect().await.expect("checkout");
         MessageRepository::new(&connection)
             .get(world.target_message)
             .expect("read")
@@ -482,7 +482,7 @@ async fn the_inverse_removal_reaches_the_target_server_with_its_own_coordinates(
 
     // ── the undo, built the way `u` builds it ────────────────────────────
     let forward_blob = {
-        let connection = world.database.connection().expect("checkout");
+        let connection = world.database.connect().await.expect("checkout");
         CrossAccountMoveRepository::new(&connection)
             .get(world.saga)
             .expect("read")
@@ -490,7 +490,7 @@ async fn the_inverse_removal_reaches_the_target_server_with_its_own_coordinates(
             .raw_blob_id
     };
     let inverse = {
-        let connection = world.database.connection().expect("checkout");
+        let connection = world.database.connect().await.expect("checkout");
         let sagas = CrossAccountMoveRepository::new(&connection);
         let inverse = sagas
             .create(&NewCrossAccountMove {
@@ -537,7 +537,7 @@ async fn the_inverse_removal_reaches_the_target_server_with_its_own_coordinates(
     // append, from the raw blob the forward pass already stored.
     drain_at(&world, &source, world.source_account, 12).await;
     let phase_now = {
-        let connection = world.database.connection().expect("checkout");
+        let connection = world.database.connect().await.expect("checkout");
         CrossAccountMoveRepository::new(&connection)
             .get(inverse)
             .expect("read")
@@ -588,7 +588,7 @@ async fn a_copy_replayed_after_the_saga_already_aborted_is_obsolete() {
     let world = world(RAW, true);
     let target = target_server(true).await;
     {
-        let connection = world.database.connection().expect("checkout");
+        let connection = world.database.connect().await.expect("checkout");
         postio_storage::repository::MailboxRepository::new(&connection)
             .delete(world.target_inbox)
             .expect("the destination goes away");
@@ -598,12 +598,12 @@ async fn a_copy_replayed_after_the_saga_already_aborted_is_obsolete() {
     assert_eq!(phase(&world), MovePhase::Aborted);
 
     {
-        let connection = world.database.connection().expect("checkout");
+        let connection = world.database.connect().await.expect("checkout");
         connection
             .execute(
                 "UPDATE operation_queue SET state = 'pending' WHERE account_id = ?1",
                 [world.target_account.get()],
-            )
+            ).await
             .expect("re-queue the copy as a restart would find it");
     }
     drain(&world, &target, world.target_account).await;
@@ -677,15 +677,15 @@ async fn an_upload_failure_backs_off_rather_than_failing() {
 /// either source and must settle the saga without asking a server anything.
 #[tokio::test]
 async fn a_removal_with_no_coordinate_anywhere_settles_without_reaching_a_server() {
-    let database = test_support::temp();
+    let database = test_support::temp().await;
     let blobs = BlobStore::open(
         database.directory().join("blobs"),
         &postio_storage::test_support::blob_keys(),
     )
     .expect("blobs");
-    let connection = database.connection().expect("checkout");
+    let connection = database.connect().await.expect("checkout");
 
-    let (source, source_inbox) = test_support::account_with_inbox(&connection);
+    let (source, source_inbox) = test_support::account_with_inbox(&connection).await;
     let mut target = postio_model::Account::new(
         "Second",
         postio_model::EmailAddress::new(None::<String>, "grace@example.org"),
@@ -693,7 +693,7 @@ async fn a_removal_with_no_coordinate_anywhere_settles_without_reaching_a_server
     postio_storage::repository::AccountRepository::new(&connection)
         .create(&mut target)
         .expect("target account");
-    let target_inbox = test_support::mailbox(&connection, &target, "INBOX").id;
+    let target_inbox = test_support::mailbox(&connection, &target, "INBOX").await.id;
 
     // No `server.remote_id` at all -- born locally with nowhere on a server
     // it has ever been, which is the state #940 describes for a provisional
@@ -739,7 +739,7 @@ async fn a_removal_with_no_coordinate_anywhere_settles_without_reaching_a_server
         .build();
     source_backend.connect().await.expect("connect");
 
-    let connection = database.connection().expect("checkout");
+    let connection = database.connect().await.expect("checkout");
     Drainer::new(&source_backend)
         .with_blobs(&blobs)
         .drain(&connection, source.id, at(10))
@@ -765,15 +765,15 @@ async fn a_copy_with_no_local_blob_yet_backs_off_rather_than_uploading_nothing()
     // outrun a backfill that has not landed them yet. Nothing to upload is
     // a reason to wait, not to fail the move over a race with a different
     // pass of the same engine.
-    let database = test_support::temp();
+    let database = test_support::temp().await;
     let blobs = BlobStore::open(
         database.directory().join("blobs"),
         &postio_storage::test_support::blob_keys(),
     )
     .expect("blobs");
-    let connection = database.connection().expect("checkout");
+    let connection = database.connect().await.expect("checkout");
 
-    let (source, source_inbox) = test_support::account_with_inbox(&connection);
+    let (source, source_inbox) = test_support::account_with_inbox(&connection).await;
     let mut target = postio_model::Account::new(
         "Second",
         postio_model::EmailAddress::new(None::<String>, "grace@example.org"),
@@ -781,7 +781,7 @@ async fn a_copy_with_no_local_blob_yet_backs_off_rather_than_uploading_nothing()
     postio_storage::repository::AccountRepository::new(&connection)
         .create(&mut target)
         .expect("target account");
-    let target_inbox = test_support::mailbox(&connection, &target, "INBOX").id;
+    let target_inbox = test_support::mailbox(&connection, &target, "INBOX").await.id;
 
     let mut message = Message::new(source.id, source_inbox, at(8));
     message.server.remote_id = Some(postio_model::RemoteId::new("1:1"));
@@ -829,7 +829,7 @@ async fn a_copy_with_no_local_blob_yet_backs_off_rather_than_uploading_nothing()
         .build();
     target_backend.connect().await.expect("connect");
 
-    let connection = database.connection().expect("checkout");
+    let connection = database.connect().await.expect("checkout");
     Drainer::new(&target_backend)
         .with_blobs(&blobs)
         .drain(&connection, target.id, at(10))

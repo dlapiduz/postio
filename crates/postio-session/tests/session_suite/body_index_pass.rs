@@ -24,17 +24,17 @@ const TEXTLESS: usize = 450;
 
 #[test]
 fn a_store_full_of_textless_bodies_is_swept_once_and_left_alone() {
-    let database = test_support::temp();
-    let connection = database.connection().expect("checkout");
+    let database = test_support::temp().await;
+    let connection = database.connect().await.expect("checkout");
     postio_index::index::ensure_schema(&connection).expect("schema");
-    let (account, inbox) = test_support::account_with_inbox(&connection);
+    let (account, inbox) = test_support::account_with_inbox(&connection).await;
 
     // Local body, no text: what an attachment-only message looks like to the
     // pass. `body` answers a row holding no parts, the indexable text is
     // empty, and before #500 that meant the message never left the candidate
     // set.
     let messages = MessageRepository::new(&connection);
-    connection.execute_batch("BEGIN").expect("begin fixture");
+    connection.execute_batch("BEGIN").await.expect("begin fixture");
     for i in 0..TEXTLESS {
         let mut message = Message::new(
             account.id,
@@ -45,13 +45,13 @@ fn a_store_full_of_textless_bodies_is_swept_once_and_left_alone() {
         message.sync.body_state = BodyState::Full;
         messages.create(&mut message).expect("create");
     }
-    connection.execute_batch("COMMIT").expect("commit fixture");
+    connection.execute_batch("COMMIT").await.expect("commit fixture");
     drop(connection);
 
     let indexed = postio_session::index_local_bodies(&database).expect("the pass runs");
     assert_eq!(indexed, TEXTLESS, "every message was visited exactly once");
 
-    let connection = database.connection().expect("checkout");
+    let connection = database.connect().await.expect("checkout");
     assert!(
         postio_index::index::messages_missing_body_text(&connection, 10)
             .expect("candidates")

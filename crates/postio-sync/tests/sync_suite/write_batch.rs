@@ -31,8 +31,8 @@ const GENERATION: Generation = Generation::new(1);
 
 /// An account and an empty local `INBOX`.
 fn local(connection: &Connection) -> (Account, Mailbox) {
-    let account = test_support::account(connection);
-    let inbox = test_support::mailbox(connection, &account, INBOX);
+    let account = test_support::account(connection).await;
+    let inbox = test_support::mailbox(connection, &account, INBOX).await;
     (account, inbox)
 }
 
@@ -50,8 +50,8 @@ fn message(account: &Account, mailbox: &Mailbox, uid: u32, subject: &str) -> Mes
 
 #[test]
 fn a_committed_batch_is_stored_threaded_and_its_correspondents_recorded() {
-    let database = test_support::memory();
-    let connection = database.connection().expect("checkout");
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
     let (account, inbox) = local(&connection);
 
     let mut batch = vec![
@@ -114,8 +114,8 @@ fn a_committed_batch_is_stored_threaded_and_its_correspondents_recorded() {
 
 #[test]
 fn a_uid_already_known_is_written_again_but_its_correspondents_are_not() {
-    let database = test_support::memory();
-    let connection = database.connection().expect("checkout");
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
     let (account, inbox) = local(&connection);
 
     // The pass that first wrote UID 1.

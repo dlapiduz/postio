@@ -13,10 +13,10 @@ use postio_storage::test_support;
 
 /// A store with `count` messages in an inbox, and the scope that lists them.
 fn seeded(count: u32) -> (std::sync::Arc<Session>, ScopeFfi) {
-    let database = test_support::memory();
+    let database = test_support::memory().await;
     let mailbox = {
-        let connection = database.connection().expect("a connection");
-        let (account, inbox) = test_support::account_with_inbox(&connection);
+        let connection = database.connect().await.expect("a connection");
+        let (account, inbox) = test_support::account_with_inbox(&connection).await;
         let repository = MessageRepository::new(&connection);
         for _ in 0..count {
             let mut message = Message::new(account.id, inbox, Utc::now());
@@ -139,9 +139,9 @@ fn reopening_a_scope_discards_what_the_old_one_had_in_flight() {
 /// check and still be broken.
 #[test]
 fn the_unified_scope_crosses_the_abi_and_lists_every_accounts_mail() {
-    let database = test_support::memory();
-    postio_storage::seed::seed_small(&database, 21);
-    postio_storage::seed::seed_extra_account(&database, "Second", "grace@example.org", 22);
+    let database = test_support::memory().await;
+    postio_storage::seed::seed_small(&database, 21).await;
+    postio_storage::seed::seed_extra_account(&database, "Second", "grace@example.org", 22).await;
 
     let session = Session::open(SessionOptions::in_memory_with(database))
         .expect("a session over the seeded store");
@@ -176,10 +176,10 @@ fn mail_arriving_into_the_open_scope_changes_the_row_count() {
     // that one count and never again. So the first sync of a folder opened
     // while it was empty put 99 messages in the store and left the list
     // saying "No messages", with every layer working exactly as written.
-    let database = test_support::memory();
+    let database = test_support::memory().await;
     let (account, mailbox) = {
-        let connection = database.connection().expect("a connection");
-        let (account, inbox) = test_support::account_with_inbox(&connection);
+        let connection = database.connect().await.expect("a connection");
+        let (account, inbox) = test_support::account_with_inbox(&connection).await;
         (account.id, inbox)
     };
     let session =
@@ -192,7 +192,7 @@ fn mail_arriving_into_the_open_scope_changes_the_row_count() {
     // The engine writes to the store and then says so, which is the order
     // every sync uses.
     {
-        let connection = database.connection().expect("a connection");
+        let connection = database.connect().await.expect("a connection");
         let repository = MessageRepository::new(&connection);
         for _ in 0..7 {
             let mut message = Message::new(account, mailbox, Utc::now());
@@ -219,14 +219,14 @@ fn a_sender_crosses_as_the_name_a_person_reads() {
     // `Fidelity Investments <Fidelity.Investments@...` where the GTK list
     // drew `Fidelity Investments`: one row, two frontends, two answers, on a
     // field whose own comment says "already rendered for display" (#1150).
-    let database = test_support::memory();
+    let database = test_support::memory().await;
     let (account, mailbox) = {
-        let connection = database.connection().expect("a connection");
-        let (account, inbox) = test_support::account_with_inbox(&connection);
+        let connection = database.connect().await.expect("a connection");
+        let (account, inbox) = test_support::account_with_inbox(&connection).await;
         (account.id, inbox)
     };
     {
-        let connection = database.connection().expect("a connection");
+        let connection = database.connect().await.expect("a connection");
         let repository = MessageRepository::new(&connection);
         let mut message = Message::new(account, mailbox, Utc::now());
         message.from = vec![postio_model::EmailAddress::new(

@@ -47,7 +47,7 @@ fn threaded_message(
     seen: bool,
 ) -> MessageId {
     let (account, mailbox, thread) = (seat.account, seat.mailbox, seat.thread);
-    let connection = database.connection().expect("a connection");
+    let connection = database.connect().await.expect("a connection");
     let mut message = postio_model::Message::new(
         account,
         mailbox,
@@ -164,7 +164,7 @@ pub fn an_open_message_says_who_it_went_to() {
     style::install(&display);
     app::install_icons(&display);
 
-    let database = test_support::memory();
+    let database = test_support::memory().await;
     let directory = tempfile::tempdir().expect("a blob directory");
     let blobs = BlobStore::open(
         directory.path().to_path_buf(),
@@ -173,11 +173,11 @@ pub fn an_open_message_says_who_it_went_to() {
     .expect("a blob store");
 
     let (account, inbox) = {
-        let connection = database.connection().expect("a connection");
-        test_support::account_with_inbox(&connection)
+        let connection = database.connect().await.expect("a connection");
+        test_support::account_with_inbox(&connection).await
     };
     let thread = {
-        let connection = database.connection().expect("a connection");
+        let connection = database.connect().await.expect("a connection");
         let mut thread = postio_model::Thread::new(account.id);
         ThreadRepository::new(&connection)
             .create(&mut thread)
@@ -259,7 +259,7 @@ pub fn a_conversation_opens_as_one_document_without_being_asked() {
     style::install(&display);
     app::install_icons(&display);
 
-    let database = test_support::memory();
+    let database = test_support::memory().await;
     let directory = tempfile::tempdir().expect("a blob directory");
     let blobs = BlobStore::open(
         directory.path().to_path_buf(),
@@ -271,11 +271,11 @@ pub fn a_conversation_opens_as_one_document_without_being_asked() {
     // from, and the pane is only asked what shape it is once there is
     // something for it to be that shape about.
     let (account, inbox) = {
-        let connection = database.connection().expect("a connection");
-        test_support::account_with_inbox(&connection)
+        let connection = database.connect().await.expect("a connection");
+        test_support::account_with_inbox(&connection).await
     };
     let thread = {
-        let connection = database.connection().expect("a connection");
+        let connection = database.connect().await.expect("a connection");
         let mut thread = postio_model::Thread::new(account.id);
         ThreadRepository::new(&connection)
             .create(&mut thread)
@@ -330,7 +330,7 @@ pub fn a_thread_opens_as_one_document_holding_every_message() {
     style::install(&display);
     app::install_icons(&display);
 
-    let database = test_support::memory();
+    let database = test_support::memory().await;
     let directory = tempfile::tempdir().expect("a blob directory");
     let blobs = BlobStore::open(
         directory.path().to_path_buf(),
@@ -339,11 +339,11 @@ pub fn a_thread_opens_as_one_document_holding_every_message() {
     .expect("a blob store");
 
     let (account, inbox) = {
-        let connection = database.connection().expect("a connection");
-        test_support::account_with_inbox(&connection)
+        let connection = database.connect().await.expect("a connection");
+        test_support::account_with_inbox(&connection).await
     };
     let thread = {
-        let connection = database.connection().expect("a connection");
+        let connection = database.connect().await.expect("a connection");
         let mut thread = postio_model::Thread::new(account.id);
         ThreadRepository::new(&connection)
             .create(&mut thread)
@@ -468,7 +468,7 @@ pub fn a_thread_opens_as_one_document_holding_every_message() {
     // re-read, and the pane redraws -- and the message the reader is looking
     // at must not fold shut underneath them because of it.
     {
-        let connection = database_handle.connection().expect("a connection");
+        let connection = database_handle.connect().await.expect("a connection");
         let mut flags = postio_model::FlagSet::default();
         flags.insert(postio_model::Flag::Seen);
         MessageRepository::new(&connection)
@@ -537,7 +537,7 @@ pub fn a_single_message_conversation_still_offers_its_verbs() {
     style::install(&display);
     app::install_icons(&display);
 
-    let database = test_support::memory();
+    let database = test_support::memory().await;
     let directory = tempfile::tempdir().expect("a blob directory");
     let blobs = BlobStore::open(
         directory.path().to_path_buf(),
@@ -546,11 +546,11 @@ pub fn a_single_message_conversation_still_offers_its_verbs() {
     .expect("a blob store");
 
     let (account, inbox) = {
-        let connection = database.connection().expect("a connection");
-        test_support::account_with_inbox(&connection)
+        let connection = database.connect().await.expect("a connection");
+        test_support::account_with_inbox(&connection).await
     };
     let thread = {
-        let connection = database.connection().expect("a connection");
+        let connection = database.connect().await.expect("a connection");
         let mut thread = postio_model::Thread::new(account.id);
         ThreadRepository::new(&connection)
             .create(&mut thread)

@@ -55,18 +55,19 @@ BEGIN
 END;
 ";
 
-fn a_listed_message(connection: &Connection, subject: &str) -> Message {
-    let (account, mailbox) = test_support::account_with_inbox(connection);
+async fn a_listed_message(connection: &Connection, subject: &str) -> Message {
+    let (account, mailbox) = test_support::account_with_inbox(connection).await;
     let mut message = Message::new(account.id, mailbox, chrono::Utc::now());
     message.subject = Some(subject.to_string());
     message.list_id = Some("harbour-dev.lists.example.org".to_string());
     MessageRepository::new(connection)
         .create(&mut message)
+        .await
         .expect("create message");
     message
 }
 
-fn hits(connection: &Connection, account: postio_model::AccountId, query: &str) -> Vec<i64> {
+async fn hits(connection: &Connection, account: postio_model::AccountId, query: &str) -> Vec<i64> {
     let parsed = postio_search::parse(query, chrono::Utc::now().date_naive());
     postio_index::search(
         connection,
@@ -79,6 +80,7 @@ fn hits(connection: &Connection, account: postio_model::AccountId, query: &str) 
         },
         chrono::Utc::now(),
     )
+    .await
     .expect("search runs")
     .hits
     .iter()
@@ -86,36 +88,38 @@ fn hits(connection: &Connection, account: postio_model::AccountId, query: &str) 
     .collect()
 }
 
-#[test]
-fn a_store_from_before_list_id_gains_the_column_and_searches() {
-    let database = test_support::memory();
-    let connection = database.connection().expect("checkout");
+#[tokio::test]
+async fn a_store_from_before_list_id_gains_the_column_and_searches() {
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
     connection
         .execute_batch(OLD_SCHEMA)
+        .await
         .expect("the old index schema applies");
 
-    ensure_schema(&connection).expect("today's schema applies over the old one");
+    ensure_schema(&connection).await.expect("today's schema applies over the old one");
 
     // The write that used to die with `no column named list_id`.
-    let message = a_listed_message(&connection, "Tuesday walkthrough");
+    let message = a_listed_message(&connection, "Tuesday walkthrough").await;
 
     assert_eq!(
-        hits(&connection, message.account_id, "list:harbour-dev"),
+        hits(&connection, message.account_id, "list:harbour-dev").await,
         vec![message.id.get()],
         "the upgraded index answers the query the new column exists for"
     );
 }
 
-#[test]
-fn a_store_already_broken_by_the_mismatch_recovers() {
+#[tokio::test]
+async fn a_store_already_broken_by_the_mismatch_recovers() {
     // The state real stores are in: the old table, *plus* the new triggers a
     // newer binary's `ensure_schema` layered over it — the ones that
     // reference the column the table never gained. This is what the error
     // in the report was.
-    let database = test_support::memory();
-    let connection = database.connection().expect("checkout");
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
     connection
         .execute_batch(OLD_SCHEMA)
+        .await
         .expect("the old index schema applies");
     // What shipping `ensure_schema` did to it: no version mechanism meant
     // the new triggers landed over the old table. Reproduced by dropping
@@ -132,27 +136,29 @@ fn a_store_already_broken_by_the_mismatch_recovers() {
                  ON CONFLICT (message_id) DO UPDATE SET subject = excluded.subject, list_id = excluded.list_id;
              END;",
         )
+        .await
         .expect("the mismatched trigger applies");
 
-    ensure_schema(&connection).expect("the repaired schema applies");
+    ensure_schema(&connection).await.expect("the repaired schema applies");
 
-    let message = a_listed_message(&connection, "Wednesday walkthrough");
+    let message = a_listed_message(&connection, "Wednesday walkthrough").await;
     assert_eq!(
-        hits(&connection, message.account_id, "walkthrough"),
+        hits(&connection, message.account_id, "walkthrough").await,
         vec![message.id.get()],
         "a store the mismatch had already broken searches again"
     );
 }
 
-#[test]
-fn a_metadata_upgrade_never_drops_the_body_index() {
+#[tokio::test]
+async fn a_metadata_upgrade_never_drops_the_body_index() {
     // The body index is refilled from blob reads — minutes on a real
     // archive — so a metadata version bump must leave it exactly as it is.
-    let database = test_support::memory();
-    let connection = database.connection().expect("checkout");
-    ensure_schema(&connection).expect("schema");
-    let message = a_listed_message(&connection, "With a body");
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    ensure_schema(&connection).await.expect("schema");
+    let message = a_listed_message(&connection, "With a body").await;
     postio_index::index::index_body(&connection, message.id.get(), Some("the difference engine"))
+        .await
         .expect("index a body");
 
     // Force a metadata rebuild the way the next added column will: by
@@ -160,19 +166,20 @@ fn a_metadata_upgrade_never_drops_the_body_index() {
     connection
         .execute(
             "UPDATE search_schema SET version = version - 1 WHERE half = 'metadata'",
-            [],
+            (),
         )
+        .await
         .expect("the version regresses");
 
-    ensure_schema(&connection).expect("the rebuild applies");
+    ensure_schema(&connection).await.expect("the rebuild applies");
 
     assert_eq!(
-        hits(&connection, message.account_id, "difference"),
+        hits(&connection, message.account_id, "difference").await,
         vec![message.id.get()],
         "the body index survived the metadata rebuild untouched"
     );
     assert_eq!(
-        hits(&connection, message.account_id, "list:harbour-dev"),
+        hits(&connection, message.account_id, "list:harbour-dev").await,
         vec![message.id.get()],
         "and the rebuilt metadata half still indexes what the store holds"
     );

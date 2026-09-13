@@ -35,8 +35,8 @@ async fn server_with_messages(count: u32) -> MockBackend {
 
 /// An account with an empty local `INBOX` — nothing synced yet.
 fn local(connection: &Connection) -> (AccountId, Mailbox) {
-    let account = test_support::account(connection);
-    let inbox = test_support::mailbox(connection, &account, INBOX);
+    let account = test_support::account(connection).await;
+    let inbox = test_support::mailbox(connection, &account, INBOX).await;
     (account.id, inbox)
 }
 
@@ -56,8 +56,8 @@ fn known_uids(
 #[tokio::test]
 async fn the_newest_batch_lands_before_the_oldest_one() {
     let backend = server_with_messages(5).await;
-    let database = test_support::memory();
-    let connection = database.connection().expect("checkout");
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
     let (_account, inbox) = local(&connection);
 
     let mut batches: Vec<BTreeSet<u32>> = Vec::new();
@@ -89,8 +89,8 @@ async fn the_newest_batch_lands_before_the_oldest_one() {
 #[tokio::test]
 async fn interrupting_and_restarting_does_not_refetch_completed_ranges() {
     let backend = server_with_messages(5).await;
-    let database = test_support::memory();
-    let connection = database.connection().expect("checkout");
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
     let (_account, inbox) = local(&connection);
 
     let cancel = CancelToken::new();
@@ -183,8 +183,8 @@ async fn a_reply_arriving_before_its_parent_still_finds_its_thread() {
         .build();
     backend.connect().await.expect("connect");
 
-    let database = test_support::memory();
-    let connection = database.connection().expect("checkout");
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
     let (_account, inbox) = local(&connection);
 
     sync_mailbox(&connection, &backend, &inbox, &CancelToken::new(), |_| {})
@@ -217,8 +217,8 @@ async fn a_reply_arriving_before_its_parent_still_finds_its_thread() {
 #[tokio::test]
 async fn a_full_sync_records_every_correspondent_as_a_contact() {
     let backend = server_with_messages(3).await;
-    let database = test_support::memory();
-    let connection = database.connection().expect("checkout");
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
     let (account_id, inbox) = local(&connection);
 
     sync_mailbox(&connection, &backend, &inbox, &CancelToken::new(), |_| {})
@@ -265,8 +265,8 @@ async fn progress_is_a_fraction_of_the_mail_not_of_the_uid_space() {
     let backend = MockBackend::builder().mailbox(mailbox).build();
     backend.connect().await.expect("connect");
 
-    let database = test_support::memory();
-    let connection = database.connection().expect("checkout");
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
     let (_account_id, inbox) = local(&connection);
 
     let mut reports: Vec<Progress> = Vec::new();
@@ -309,8 +309,8 @@ async fn the_next_batch_is_asked_for_before_this_one_is_committed() {
     // "how many fetches had the server served by the time this batch was
     // committed?" A sequential pass can only ever answer "this one".
     let backend = server_with_messages(6).await;
-    let database = test_support::memory();
-    let connection = database.connection().expect("checkout");
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
     let (_account, inbox) = local(&connection);
 
     let mut served_at_commit: Vec<usize> = Vec::new();
@@ -343,8 +343,8 @@ async fn running_ahead_never_reorders_or_loses_a_batch() {
     // rather than answered inside the priming poll.
     let backend = server_with_messages(7).await;
     backend.set_latency(std::time::Duration::from_millis(5));
-    let database = test_support::memory();
-    let connection = database.connection().expect("checkout");
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
     let (_account, inbox) = local(&connection);
 
     let uid_validity = postio_model::Generation::new(1);
@@ -409,8 +409,8 @@ async fn a_sparse_uid_space_costs_one_fetch_not_one_per_two_hundred_uids() {
     let backend = MockBackend::builder().mailbox(mailbox).build();
     backend.connect().await.expect("connect");
 
-    let database = test_support::memory();
-    let connection = database.connection().expect("checkout");
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
     let (_account, inbox) = local(&connection);
 
     sync_mailbox(&connection, &backend, &inbox, &CancelToken::new(), |_| {})
@@ -449,8 +449,8 @@ async fn a_server_that_refuses_to_list_uids_still_syncs() {
     let backend = server_with_messages(5).await;
     backend.refuse_uid_listing();
 
-    let database = test_support::memory();
-    let connection = database.connection().expect("checkout");
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
     let (_account, inbox) = local(&connection);
 
     let report = sync_mailbox(&connection, &backend, &inbox, &CancelToken::new(), |_| {})

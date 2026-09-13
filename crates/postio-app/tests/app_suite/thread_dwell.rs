@@ -44,7 +44,7 @@ const DWELL: Duration = Duration::from_millis(80);
 
 /// Whether the store says `message` carries `\Seen`.
 fn is_read(database: &Database, message: MessageId) -> bool {
-    let connection = database.connection().expect("a connection");
+    let connection = database.connect().await.expect("a connection");
     MessageRepository::new(&connection)
         .get(message)
         .expect("a read")
@@ -63,7 +63,7 @@ fn threaded_message(
     minute: i64,
     subject: &str,
 ) -> MessageId {
-    let connection = database.connection().expect("a connection");
+    let connection = database.connect().await.expect("a connection");
     let mut message = Message::new(
         account,
         mailbox,
@@ -95,17 +95,17 @@ pub fn resting_inside_a_conversation_reads_each_message_as_focus_reaches_it() {
     style::install(&display);
     app::install_icons(&display);
 
-    let database = test_support::memory();
+    let database = test_support::memory().await;
     let (account, inbox) = {
-        let connection = database.connection().expect("a connection");
-        test_support::account_with_inbox(&connection)
+        let connection = database.connect().await.expect("a connection");
+        test_support::account_with_inbox(&connection).await
     };
     // Two conversations, because the gesture under test is a cursor
     // *move*. The list draws newest first, so the recent one is row 0 and
     // gets the autoselect — which must read nothing (#71/#601) — and `j`
     // lands on the older one, which is a person choosing a row.
     let new_thread = || {
-        let connection = database.connection().expect("a connection");
+        let connection = database.connect().await.expect("a connection");
         let mut thread = Thread::new(account.id);
         ThreadRepository::new(&connection)
             .create(&mut thread)
@@ -254,7 +254,7 @@ pub fn resting_inside_a_conversation_reads_each_message_as_focus_reaches_it() {
 
     // ── the server hears about each, exactly once ────────────────────────
     let queued = {
-        let connection = database.connection().expect("a connection");
+        let connection = database.connect().await.expect("a connection");
         OperationQueueRepository::new(&connection)
             .pending(account.id, chrono::Utc::now())
             .expect("a read")

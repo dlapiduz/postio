@@ -89,7 +89,7 @@ pub fn a_unified_search_names_the_account_it_could_not_reach() {
     style::install(&display);
     app::install_icons(&display);
 
-    let database = test_support::memory();
+    let database = test_support::memory().await;
     let first = seed_small(&database, 11);
     let second = seed_extra_account(&database, "Second", "grace@example.org", 12);
     ensure_search_index(&database).expect("the index is part of opening the store");

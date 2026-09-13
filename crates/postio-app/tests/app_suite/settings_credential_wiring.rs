@@ -56,14 +56,14 @@ pub fn update_credential_opens_a_prefilled_dialog_without_disturbing_the_window(
     style::install(&display);
     app::install_icons(&display);
 
-    let database = test_support::memory();
+    let database = test_support::memory().await;
     let report = seed_small(&database, 51);
 
     // Onboarding never ran for this account (it was seeded directly), so it
     // has no identity of its own -- give it one, the same reason
     // `signature_default_wiring.rs` does, or nothing composes with it later
     // and this test would be exercising a shape no real account has.
-    let connection = database.connection().expect("a connection");
+    let connection = database.connect().await.expect("a connection");
     let mut identity =
         postio_model::Identity::new(report.account.id, report.account.address.clone());
     identity.is_default = true;

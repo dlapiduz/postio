@@ -23,10 +23,10 @@ use postio_storage::test_support;
 /// Paged deliberately: a selection is about rows, and a window with nothing
 /// resident cannot tell "row 3 is not selected" from "row 3 is not here".
 fn listed(count: u32) -> std::sync::Arc<Session> {
-    let database = test_support::memory();
+    let database = test_support::memory().await;
     let mailbox = {
-        let connection = database.connection().expect("a connection");
-        let (account, inbox) = test_support::account_with_inbox(&connection);
+        let connection = database.connect().await.expect("a connection");
+        let (account, inbox) = test_support::account_with_inbox(&connection).await;
         let repository = MessageRepository::new(&connection);
         for _ in 0..count {
             let mut message = Message::new(account.id, inbox, Utc::now());

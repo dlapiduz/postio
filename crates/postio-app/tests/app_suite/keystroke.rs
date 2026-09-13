@@ -44,7 +44,7 @@ use postio_storage::{BlobStore, Database, test_support};
 
 /// Which mailbox holds `message`, straight out of the database.
 fn mailbox_of(database: &Database, message: MessageId) -> i64 {
-    let connection = database.connection().expect("a connection");
+    let connection = database.connect().await.expect("a connection");
     MessageRepository::new(&connection)
         .get(message)
         .expect("a read")
@@ -67,7 +67,7 @@ pub fn pressing_a_archives_the_row_in_the_database() {
     style::install(&display);
     app::install_icons(&display);
 
-    let database = test_support::memory();
+    let database = test_support::memory().await;
     let report = seed_small(&database, 11);
     let archive = report
         .mailbox(MailboxRole::Archive)

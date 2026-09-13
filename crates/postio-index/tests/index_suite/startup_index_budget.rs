@@ -29,16 +29,16 @@ use postio_index::index::ensure_schema;
 use postio_model::{EmailAddress, Message};
 use postio_storage::repository::MessageRepository;
 use postio_storage::test_support;
-use postio_storage::test_support::counting::{counted, install};
+use postio_storage::test_support::counting::{counted_async, install};
 
 /// Enough mail that a full re-index is unmistakable next to a no-op.
 const MESSAGES: usize = 2_000;
 
-#[test]
-fn an_ordinary_start_does_not_reindex_the_mailbox() {
-    let database = test_support::memory();
-    let connection = database.connection().expect("checkout");
-    let (account, mailbox) = test_support::account_with_inbox(&connection);
+#[tokio::test]
+async fn an_ordinary_start_does_not_reindex_the_mailbox() {
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    let (account, mailbox) = test_support::account_with_inbox(&connection).await;
 
     let messages = MessageRepository::new(&connection);
     for nth in 0..MESSAGES {
@@ -47,17 +47,17 @@ fn an_ordinary_start_does_not_reindex_the_mailbox() {
         let mut message = Message::new(account.id, mailbox, received);
         message.from = vec![EmailAddress::new(Some("ada"), "ada@example.com")];
         message.subject = Some(format!("quarterly report {nth}"));
-        messages.create(&mut message).expect("create message");
+        messages.create(&mut message).await.expect("create message");
     }
 
     install(&connection);
 
     // The start that builds the index. This one is allowed to be expensive:
     // it is the upgrade, and it happens once.
-    let building = counted(|| ensure_schema(&connection).expect("the first start"));
+    let building = counted_async(async || ensure_schema(&connection).await.expect("the first start")).await;
 
     // Every start after it.
-    let ordinary = counted(|| ensure_schema(&connection).expect("an ordinary start"));
+    let ordinary = counted_async(async || ensure_schema(&connection).await.expect("an ordinary start")).await;
 
     // The control, and the reason the ceiling below is known to have teeth:
     // the counter demonstrably sees a full pass over the store, because it
@@ -97,15 +97,15 @@ fn an_ordinary_start_does_not_reindex_the_mailbox() {
 /// So count statements, not trigger firings. A start that finds all three
 /// half versions current has nothing to do and should say so in SQL it did
 /// not run.
-#[test]
-fn an_ordinary_start_does_not_re_execute_the_schema() {
-    let database = test_support::memory();
-    let connection = database.connection().expect("checkout");
+#[tokio::test]
+async fn an_ordinary_start_does_not_re_execute_the_schema() {
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
 
-    ensure_schema(&connection).expect("the first start");
+    ensure_schema(&connection).await.expect("the first start");
 
     install(&connection);
-    let ordinary = counted(|| ensure_schema(&connection).expect("an ordinary start"));
+    let ordinary = counted_async(async || ensure_schema(&connection).await.expect("an ordinary start")).await;
 
     // The three half-version reads and the `search_schema` table itself. The
     // point of the ceiling is that the ~30 DDL statements below them are

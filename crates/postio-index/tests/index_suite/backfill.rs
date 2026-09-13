@@ -24,7 +24,7 @@ use postio_storage::test_support;
 
 /// A message written *before* the index exists, which is every message on a
 /// store that predates the feature.
-fn existing_message(
+async fn existing_message(
     connection: &Connection,
     account: postio_model::AccountId,
     mailbox: postio_model::MailboxId,
@@ -35,11 +35,12 @@ fn existing_message(
     message.subject = Some(subject.to_string());
     MessageRepository::new(connection)
         .create(&mut message)
+        .await
         .expect("create message");
     message
 }
 
-fn find(connection: &Connection, account: postio_model::AccountId, text: &str) -> usize {
+async fn find(connection: &Connection, account: postio_model::AccountId, text: &str) -> usize {
     let query = parse(text, Utc::now().date_naive());
     let request = SearchRequest {
         account: AccountScope::Account(account),
@@ -49,33 +50,34 @@ fn find(connection: &Connection, account: postio_model::AccountId, text: &str) -
         order: postio_search::ResultOrder::Relevance,
     };
     search(connection, &request, Utc::now())
+        .await
         .expect("search")
         .hits
         .len()
 }
 
-#[test]
-fn mail_that_predates_the_index_is_still_findable() {
-    let database = test_support::memory();
-    let connection = database.connection().expect("checkout");
-    let (account, mailbox) = test_support::account_with_inbox(&connection);
+#[tokio::test]
+async fn mail_that_predates_the_index_is_still_findable() {
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    let (account, mailbox) = test_support::account_with_inbox(&connection).await;
 
     // Written first. No schema, no triggers, nothing watching.
-    let before = existing_message(&connection, account.id, mailbox, "Quarterly report");
+    let before = existing_message(&connection, account.id, mailbox, "Quarterly report").await;
 
-    index::ensure_schema(&connection).expect("schema");
+    index::ensure_schema(&connection).await.expect("schema");
 
     // And one after, which the triggers handle.
-    let after = existing_message(&connection, account.id, mailbox, "Quarterly forecast");
+    let after = existing_message(&connection, account.id, mailbox, "Quarterly forecast").await;
 
     assert_eq!(
-        find(&connection, account.id, "forecast"),
+        find(&connection, account.id, "forecast").await,
         1,
         "a message inserted after the schema is not indexed, so the triggers \
          themselves are broken"
     );
     assert_eq!(
-        find(&connection, account.id, "report"),
+        find(&connection, account.id, "report").await,
         1,
         "the message that was already in the store is not findable. Triggers \
          only index what arrives after them, and on a real account every \
@@ -87,20 +89,20 @@ fn mail_that_predates_the_index_is_still_findable() {
     let _ = (before, after);
 }
 
-#[test]
-fn running_it_twice_does_not_duplicate_what_it_indexed() {
+#[tokio::test]
+async fn running_it_twice_does_not_duplicate_what_it_indexed() {
     // It runs on every application start, so the backfill has to be a no-op
     // the second time rather than a second copy of every document.
-    let database = test_support::memory();
-    let connection = database.connection().expect("checkout");
-    let (account, mailbox) = test_support::account_with_inbox(&connection);
-    existing_message(&connection, account.id, mailbox, "Quarterly report");
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    let (account, mailbox) = test_support::account_with_inbox(&connection).await;
+    existing_message(&connection, account.id, mailbox, "Quarterly report").await;
 
-    index::ensure_schema(&connection).expect("first");
-    index::ensure_schema(&connection).expect("second");
+    index::ensure_schema(&connection).await.expect("first");
+    index::ensure_schema(&connection).await.expect("second");
 
     assert_eq!(
-        find(&connection, account.id, "report"),
+        find(&connection, account.id, "report").await,
         1,
         "the message is indexed more than once"
     );

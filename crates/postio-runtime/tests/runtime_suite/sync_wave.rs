@@ -68,7 +68,7 @@ fn folder(path: &str, attributes: &[&str], messages: u32) -> MockMailbox {
 ///
 /// # File-backed, because this file is about concurrency
 ///
-/// `test_support::memory()` is the usual choice and is the wrong one here.
+/// `test_support::memory().await` is the usual choice and is the wrong one here.
 /// An in-memory database is opened with SQLite's *shared cache*, which is a
 /// different locking model from the WAL one Postio actually runs on: locks are
 /// per-table, and a reader blocks a writer outright rather than the two
@@ -79,10 +79,10 @@ fn folder(path: &str, attributes: &[&str], messages: u32) -> MockMailbox {
 /// running passes concurrently, but because the store underneath it was one
 /// Postio never uses. See #79, where exactly this made three lanes serialise.
 fn engine_over(backend: Arc<MockBackend>) -> (TempStore, Engine, BlobDir) {
-    let database = test_support::temp();
+    let database = test_support::temp().await;
     let account = {
-        let connection = database.connection().expect("a connection");
-        test_support::account(&connection)
+        let connection = database.connect().await.expect("a connection");
+        test_support::account(&connection).await
     };
     let directory = tempfile::tempdir().expect("a blob directory");
     let blobs = BlobStore::open(

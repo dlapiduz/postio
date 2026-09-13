@@ -74,9 +74,9 @@ pub fn a_second_activate_does_not_double_wire_the_window() {
             .start(),
     );
 
-    let database = test_support::memory();
+    let database = test_support::memory().await;
     let (account_id, mailbox_id, message_id) = {
-        let connection = database.connection().expect("a connection");
+        let connection = database.connect().await.expect("a connection");
         let mut account = Account::new("Ada", EmailAddress::new(None::<String>, ADDRESS));
         account.incoming.host = server.addr().ip().to_string();
         account.incoming.port = server.addr().port();
@@ -86,7 +86,7 @@ pub fn a_second_activate_does_not_double_wire_the_window() {
             .create(&mut account)
             .expect("the account row");
 
-        let mailbox = test_support::mailbox(&connection, &account, "INBOX");
+        let mailbox = test_support::mailbox(&connection, &account, "INBOX").await;
 
         // A message already local, so flagging it does not have to wait on
         // whatever the sync engine gets around to over the wire -- this test
@@ -182,7 +182,7 @@ pub fn a_second_activate_does_not_double_wire_the_window() {
     settle();
 
     let flagged = || -> bool {
-        let connection = database.connection().expect("a connection");
+        let connection = database.connect().await.expect("a connection");
         MessageRepository::new(&connection)
             .get(message_id)
             .expect("a read")

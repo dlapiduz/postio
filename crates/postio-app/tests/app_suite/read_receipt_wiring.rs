@@ -45,7 +45,7 @@ pub fn opening_settings_shows_how_many_messages_asked_for_a_receipt() {
     style::install(&display);
     app::install_icons(&display);
 
-    let database = test_support::memory();
+    let database = test_support::memory().await;
     let directory = tempfile::tempdir().expect("a blob directory");
     let blobs = BlobStore::open(
         directory.path().to_path_buf(),
@@ -54,8 +54,8 @@ pub fn opening_settings_shows_how_many_messages_asked_for_a_receipt() {
     .expect("a blob store");
 
     {
-        let connection = database.connection().expect("a connection");
-        let (account, inbox) = test_support::account_with_inbox(&connection);
+        let connection = database.connect().await.expect("a connection");
+        let (account, inbox) = test_support::account_with_inbox(&connection).await;
         let repository = MessageRepository::new(&connection);
         let mut asked =
             postio_model::mime::parse(ASKED).into_message(account.id, inbox, chrono::Utc::now());

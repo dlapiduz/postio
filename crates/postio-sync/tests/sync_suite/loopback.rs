@@ -88,9 +88,9 @@ async fn backend_with(server: &TestServer, config: PoolConfig) -> ImapBackend {
 }
 
 fn local(connection: &Connection) -> (AccountId, Mailbox, Mailbox) {
-    let account = test_support::account(connection);
-    let inbox = test_support::mailbox(connection, &account, INBOX);
-    let archive = test_support::mailbox(connection, &account, ARCHIVE);
+    let account = test_support::account(connection).await;
+    let inbox = test_support::mailbox(connection, &account, INBOX).await;
+    let archive = test_support::mailbox(connection, &account, ARCHIVE).await;
     (account.id, inbox, archive)
 }
 
@@ -117,8 +117,8 @@ fn known_uids(connection: &Connection, mailbox: &Mailbox, generation: u32) -> Ve
 async fn the_engine_syncs_a_mailbox_over_a_real_socket() {
     let server = server().await;
     let backend = backend_for(&server).await;
-    let database = test_support::memory();
-    let connection = database.connection().expect("checkout");
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
     let (_account, inbox, _archive) = local(&connection);
 
     let report = sync_mailbox(&connection, &backend, &inbox, &CancelToken::new(), |_| {})
@@ -155,8 +155,8 @@ async fn the_engine_syncs_a_mailbox_over_a_real_socket() {
 async fn an_incremental_resync_sees_a_flag_change_and_an_arrival() {
     let server = server().await;
     let backend = backend_for(&server).await;
-    let database = test_support::memory();
-    let connection = database.connection().expect("checkout");
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
     let (_account, inbox, _archive) = local(&connection);
     bootstrap(&connection, &backend, &inbox).await;
 
@@ -212,8 +212,8 @@ async fn a_uidvalidity_bump_rebuilds_rather_than_reporting_wrong_mail() {
     // and re-enumerate", not as an error that fails the pass.
     let server = server().await;
     let backend = backend_for(&server).await;
-    let database = test_support::memory();
-    let connection = database.connection().expect("checkout");
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
     let (_account, inbox, _archive) = local(&connection);
     bootstrap(&connection, &backend, &inbox).await;
 
@@ -255,8 +255,8 @@ async fn a_malformed_sequence_number_rebuilds_rather_than_losing_the_delta() {
     // lose the same line again.
     let server = server().await;
     let backend = backend_for(&server).await;
-    let database = test_support::memory();
-    let connection = database.connection().expect("checkout");
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
     let (_account, inbox, _archive) = local(&connection);
     bootstrap(&connection, &backend, &inbox).await;
 
@@ -297,8 +297,8 @@ async fn a_malformed_sequence_number_rebuilds_rather_than_losing_the_delta() {
 async fn a_rebuild_that_re_reads_known_messages_does_not_double_count_their_correspondents() {
     let server = server().await;
     let backend = backend_for(&server).await;
-    let database = test_support::memory();
-    let connection = database.connection().expect("checkout");
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
     let (account_id, inbox, _archive) = local(&connection);
     bootstrap(&connection, &backend, &inbox).await;
 
@@ -341,8 +341,8 @@ async fn a_rebuild_that_re_reads_known_messages_does_not_double_count_their_corr
 async fn a_torn_fetch_fails_the_pass_and_the_next_one_succeeds() {
     let server = server().await;
     let backend = backend_for(&server).await;
-    let database = test_support::memory();
-    let connection = database.connection().expect("checkout");
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
     let (_account, inbox, _archive) = local(&connection);
 
     server.inject(Fault::DropConnection {
@@ -376,8 +376,8 @@ async fn a_stalled_server_fails_the_pass_instead_of_wedging_the_engine() {
         },
     )
     .await;
-    let database = test_support::memory();
-    let connection = database.connection().expect("checkout");
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
     let (_account, inbox, _archive) = local(&connection);
 
     server.inject(Fault::Stall {
@@ -409,8 +409,8 @@ async fn a_stalled_server_fails_the_pass_instead_of_wedging_the_engine() {
 async fn a_queued_flag_change_and_move_reach_a_real_server() {
     let server = server().await;
     let backend = backend_for(&server).await;
-    let database = test_support::memory();
-    let connection = database.connection().expect("checkout");
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
     let (account, inbox, archive) = local(&connection);
     bootstrap(&connection, &backend, &inbox).await;
 
@@ -456,8 +456,8 @@ async fn a_local_move_still_reaches_the_server() {
     // archived locally, never synced.
     let server = server().await;
     let backend = backend_for(&server).await;
-    let database = test_support::memory();
-    let connection = database.connection().expect("checkout");
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
     let (account, inbox, archive) = local(&connection);
     bootstrap(&connection, &backend, &inbox).await;
 
@@ -497,8 +497,8 @@ async fn a_local_delete_still_reaches_the_server() {
     // so it loses its server position across the same gap.
     let server = server().await;
     let backend = backend_for(&server).await;
-    let database = test_support::memory();
-    let connection = database.connection().expect("checkout");
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
     let (account, inbox, trash) = local(&connection);
     bootstrap(&connection, &backend, &inbox).await;
 
@@ -538,8 +538,8 @@ async fn a_bulk_move_over_a_predicate_still_reaches_the_server() {
     // snapshot each queue row carries is what the drainer has to prefer.
     let server = server().await;
     let backend = backend_for(&server).await;
-    let database = test_support::memory();
-    let connection = database.connection().expect("checkout");
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
     let (account, inbox, archive) = local(&connection);
     bootstrap(&connection, &backend, &inbox).await;
 
@@ -581,8 +581,8 @@ async fn a_drained_move_does_not_resurrect_on_resync() {
     // re-adds it -- the archived message comes back as a duplicate.
     let server = server().await;
     let backend = backend_for(&server).await;
-    let database = test_support::memory();
-    let connection = database.connection().expect("checkout");
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
     let (account, inbox, archive) = local(&connection);
     bootstrap(&connection, &backend, &inbox).await;
 
@@ -749,8 +749,8 @@ async fn a_delivery_during_an_idle_wakes_the_watcher_and_the_pull_finds_it() {
     // outstanding, and the resync that the wake-up is supposed to trigger.
     let server = server().await;
     let backend = backend_for(&server).await;
-    let database = test_support::memory();
-    let connection = database.connection().expect("checkout");
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
     let (_account, inbox, archive) = local(&connection);
     bootstrap(&connection, &backend, &inbox).await;
 
@@ -816,8 +816,8 @@ async fn the_poll_floor_notices_what_no_wake_up_reported() {
     // poll interval.
     let server = server().await;
     let backend = backend_for(&server).await;
-    let database = test_support::memory();
-    let connection = database.connection().expect("checkout");
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
     let (_account, inbox, _archive) = local(&connection);
     bootstrap(&connection, &backend, &inbox).await;
 
@@ -876,10 +876,10 @@ struct OnDisk {
 }
 
 fn on_disk() -> OnDisk {
-    let database = test_support::temp();
-    let connection = database.connection().expect("checkout");
-    let account = test_support::account(&connection);
-    let inbox = test_support::mailbox(&connection, &account, INBOX);
+    let database = test_support::temp().await;
+    let connection = database.connect().await.expect("checkout");
+    let account = test_support::account(&connection).await;
+    let inbox = test_support::mailbox(&connection, &account, INBOX).await;
     let blobs = BlobStore::open(
         database.directory().join("blobs"),
         &postio_storage::test_support::blob_keys(),

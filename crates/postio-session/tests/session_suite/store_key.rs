@@ -263,7 +263,7 @@ fn a_plaintext_store(directory: &std::path::Path) -> (std::path::PathBuf, String
     let mut connection = Connection::open(&path).expect("a plaintext database");
     postio_storage::migrate(&mut connection).expect("migrate");
 
-    let (account, inbox) = postio_storage::test_support::account_with_inbox(&connection);
+    let (account, inbox) = postio_storage::test_support::account_with_inbox(&connection).await;
     let mut message = Message::new(account.id, inbox, chrono::Utc::now());
     message.subject = Some("Zarquon".to_owned());
     let id = MessageRepository::new(&connection)
@@ -283,10 +283,10 @@ fn a_plaintext_store(directory: &std::path::Path) -> (std::path::PathBuf, String
         .execute(
             "UPDATE messages SET raw_blob_id = ?1 WHERE id = ?2",
             bind![digest, id.get()],
-        )
+        ).await
         .expect("point the message at its source");
     connection
-        .execute_batch("PRAGMA wal_checkpoint(TRUNCATE)")
+        .execute_batch("PRAGMA wal_checkpoint(TRUNCATE)").await
         .expect("checkpoint");
     drop(connection);
     (path, digest)
@@ -301,7 +301,7 @@ fn opening_a_plaintext_store_encrypts_it_first() {
     let (database, blobs) =
         postio_session::open_store_at(&path, &key).expect("the store opens after migrating");
 
-    let connection = database.connection().expect("checkout");
+    let connection = database.connect().await.expect("checkout");
     let (subject, raw): (String, String) = connection
         .query_row("SELECT subject, raw_blob_id FROM messages", [], |row| {
             Ok((postio_storage::sql::RowExt::col(row, 0)?, postio_storage::sql::RowExt::col(row, 1)?))
@@ -332,8 +332,8 @@ fn a_store_with_work_still_queued_refuses_and_says_what_to_do() {
         .execute(
             "INSERT INTO operation_queue (account_id, op_type, created_at, updated_at)
              VALUES ((SELECT id FROM accounts LIMIT 1), 'flag', 0, 0)",
-            [],
-        )
+            (),
+        ).await
         .expect("enqueue");
     drop(connection);
 

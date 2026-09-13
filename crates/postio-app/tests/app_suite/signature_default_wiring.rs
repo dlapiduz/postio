@@ -49,7 +49,7 @@ pub fn compose_signs_with_the_selected_mailbox_or_account_default() {
     style::install(&display);
     app::install_icons(&display);
 
-    let database = test_support::memory();
+    let database = test_support::memory().await;
     let report = seed_small(&database, 31);
     let directory = tempfile::tempdir().expect("a blob directory");
     let blobs = BlobStore::open(
@@ -58,7 +58,7 @@ pub fn compose_signs_with_the_selected_mailbox_or_account_default() {
     )
     .expect("a blob store");
 
-    let connection = database.connection().expect("a connection");
+    let connection = database.connect().await.expect("a connection");
     let mut account = AccountRepository::new(&connection)
         .get(report.account.id)
         .expect("read the seeded account")

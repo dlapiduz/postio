@@ -36,9 +36,9 @@ const COMMON: &str = "quarterly";
 /// the indexer is a separate pass — and a search over an unindexed store
 /// would measure an empty result set and call it cheap.
 fn indexed(count: usize) -> (postio_storage::Store, postio_model::ids::AccountId) {
-    let database = test_support::memory();
-    let connection = database.connection().expect("a connection");
-    let (account, inbox) = test_support::account_with_inbox(&connection);
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("a connection");
+    let (account, inbox) = test_support::account_with_inbox(&connection).await;
     postio_index::index::ensure_schema(&connection).expect("the index schema");
 
     let repository = MessageRepository::new(&connection);
@@ -74,7 +74,7 @@ fn cost_of_searching(
     store: &(postio_storage::Store, postio_model::ids::AccountId),
 ) -> (usize, usize) {
     let (database, account) = store;
-    let connection = database.connection().expect("a connection");
+    let connection = database.connect().await.expect("a connection");
     let query = postio_search::parse(COMMON, Utc::now().date_naive());
 
     let run = |connection: &postio_storage::PooledConnection| {

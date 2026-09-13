@@ -73,7 +73,7 @@ pub fn closing_the_finder_without_pressing_escape_still_restores_the_folder() {
     style::install(&display);
     app::install_icons(&display);
 
-    let database = test_support::memory();
+    let database = test_support::memory().await;
     let report = seed_small(&database, 11);
     assert!(
         report.message_count > 0,

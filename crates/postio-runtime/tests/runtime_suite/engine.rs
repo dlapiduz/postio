@@ -85,7 +85,7 @@ fn engine_with_backfill(
     Arc<MockBackend>,
     BlobDir,
 ) {
-    let database = test_support::memory();
+    let database = test_support::memory().await;
     let report = seed_small(&database, 11);
     let directory = tempfile::tempdir().expect("a blob directory");
     let blobs = BlobStore::open(
@@ -355,11 +355,11 @@ async fn a_sync_pass_puts_the_servers_mail_in_the_local_store() {
     // postio-uif. `sync_mailbox` and `resync_mailbox` were written, tested
     // and never called, so the local store only ever held what something
     // else had put there and a fresh account stayed empty for ever.
-    let database = test_support::memory();
+    let database = test_support::memory().await;
     let account =
-        postio_storage::test_support::account(&database.connection().expect("a connection"));
+        postio_storage::test_support::account(&database.connect().await.expect("a connection")).await;
     let mailbox = {
-        let connection = database.connection().expect("a connection");
+        let connection = database.connect().await.expect("a connection");
         let mut mailbox = postio_model::Mailbox::new(account.id, "INBOX", Some('/'));
         postio_storage::repository::MailboxRepository::new(&connection)
             .create(&mut mailbox)
@@ -406,11 +406,11 @@ async fn a_resync_that_finds_new_mail_announces_it() {
     // postio-du6: `Event::NewMail` existed, was consumed by
     // `postio_gtk::feed`, and nothing ever emitted it -- the trigger a
     // desktop notification needs simply never fired.
-    let database = test_support::memory();
+    let database = test_support::memory().await;
     let account =
-        postio_storage::test_support::account(&database.connection().expect("a connection"));
+        postio_storage::test_support::account(&database.connect().await.expect("a connection")).await;
     let mailbox = {
-        let connection = database.connection().expect("a connection");
+        let connection = database.connect().await.expect("a connection");
         let mut mailbox = postio_model::Mailbox::new(account.id, "INBOX", Some('/'));
         postio_storage::repository::MailboxRepository::new(&connection)
             .create(&mut mailbox)
@@ -463,11 +463,11 @@ async fn mail_arriving_on_a_resync_is_an_arrival_rather_than_a_reload() {
     // The engine knows which this was: `arrived` accounts for every insert,
     // and nothing was updated or re-threaded. A change that can describe
     // itself precisely must not also ask for a reload.
-    let database = test_support::memory();
+    let database = test_support::memory().await;
     let account =
-        postio_storage::test_support::account(&database.connection().expect("a connection"));
+        postio_storage::test_support::account(&database.connect().await.expect("a connection")).await;
     let mailbox = {
-        let connection = database.connection().expect("a connection");
+        let connection = database.connect().await.expect("a connection");
         let mut mailbox = postio_model::Mailbox::new(account.id, "INBOX", Some('/'));
         postio_storage::repository::MailboxRepository::new(&connection)
             .create(&mut mailbox)
@@ -516,11 +516,11 @@ async fn a_finished_sync_queues_the_bodies_it_just_learned_about() {
     // messages missing a body changes, so it is exactly when the backfill is
     // worth seeding again. Seeding anywhere else means fetching bodies for
     // mail that has not arrived, or not fetching them for mail that has.
-    let database = test_support::memory();
+    let database = test_support::memory().await;
     let account =
-        postio_storage::test_support::account(&database.connection().expect("a connection"));
+        postio_storage::test_support::account(&database.connect().await.expect("a connection")).await;
     let mailbox = {
-        let connection = database.connection().expect("a connection");
+        let connection = database.connect().await.expect("a connection");
         let mut mailbox = postio_model::Mailbox::new(account.id, "INBOX", Some('/'));
         postio_storage::repository::MailboxRepository::new(&connection)
             .create(&mut mailbox)
@@ -567,11 +567,11 @@ async fn mail_that_arrives_while_the_app_is_open_turns_up() {
     // postio-e4n. The engine synced when the link came up and never again, so
     // a Postio left open all afternoon showed nothing that arrived during it
     // — which for a mail client is the whole job.
-    let database = test_support::memory();
+    let database = test_support::memory().await;
     let account =
-        postio_storage::test_support::account(&database.connection().expect("a connection"));
+        postio_storage::test_support::account(&database.connect().await.expect("a connection")).await;
     let mailbox = {
-        let connection = database.connection().expect("a connection");
+        let connection = database.connect().await.expect("a connection");
         let mut mailbox = postio_model::Mailbox::new(account.id, "INBOX", Some('/'));
         postio_storage::repository::MailboxRepository::new(&connection)
             .create(&mut mailbox)
@@ -662,7 +662,7 @@ async fn a_connection_that_will_not_open_leaves_the_queue_where_it_is() {
         .expect_err("the credentials were refused");
     assert!(!error.message().is_empty());
 
-    let connection = database.connection().expect("a connection");
+    let connection = database.connect().await.expect("a connection");
     let pending = OperationQueueRepository::new(&connection)
         .pending(report.account.id, Utc::now())
         .expect("the queue reads");
@@ -830,7 +830,7 @@ fn with_store<T>(
     work: impl Fn(&postio_storage::PooledConnection) -> postio_storage::Result<T>,
 ) -> T {
     for _ in 0..100 {
-        let connection = database.connection().expect("a connection");
+        let connection = database.connect().await.expect("a connection");
         match work(&connection) {
             Ok(value) => return value,
             Err(_) => {
@@ -982,12 +982,12 @@ fn give_the_inbox_uids(
     database: &postio_storage::Store,
     mailbox: postio_model::ids::MailboxId,
 ) -> usize {
-    let connection = database.connection().expect("a connection");
+    let connection = database.connect().await.expect("a connection");
     let touched = connection
         .execute(
             "UPDATE messages SET uid = id, remote_id = '1:' || id WHERE mailbox_id = ?1",
             [mailbox.get()],
-        )
+        ).await
         .expect("the fixture writes");
     // A fixture that quietly matched nothing is worse than one that fails:
     // the `UPDATE` succeeds, and the test goes on to blame whatever it
@@ -1044,7 +1044,7 @@ async fn a_draft_saved_while_connected_reaches_the_server_without_being_asked() 
     // composer autosaves on the GTK thread and the queue is just a table. So
     // the loop asks, and a draft typed on a machine that never disconnects
     // still goes out. Before this it waited for the next *reconnection*.
-    let database = test_support::memory();
+    let database = test_support::memory().await;
     let report = seed_small(&database, 12);
     let drafts_mailbox = report
         .mailbox(MailboxRole::Drafts)
@@ -1062,7 +1062,7 @@ async fn a_draft_saved_while_connected_reaches_the_server_without_being_asked() 
     );
     identity.is_default = true;
     {
-        let connection = database.connection().expect("checkout");
+        let connection = database.connect().await.expect("checkout");
         postio_storage::repository::IdentityRepository::new(&connection)
             .create(&mut identity)
             .expect("create the identity");
@@ -1120,7 +1120,7 @@ async fn a_draft_saved_while_connected_reaches_the_server_without_being_asked() 
     draft.subject = "Written while the wire was up".to_owned();
     draft.body.text = Some("A thought, mid-thought.".to_owned());
     {
-        let connection = database.connection().expect("checkout");
+        let connection = database.connect().await.expect("checkout");
         postio_storage::repository::DraftRepository::new(&connection)
             .save_and_sync(&mut draft, Utc::now())
             .expect("save and queue");
@@ -1162,9 +1162,9 @@ async fn a_fresh_account_learns_its_folders_from_the_server() {
     // local table, and nothing ever LISTed the server to fill it. An account
     // that has never synced has no folders at all, so this is the pass
     // everything else waits on.
-    let database = test_support::memory();
+    let database = test_support::memory().await;
     let account = {
-        let connection = database.connection().expect("checkout");
+        let connection = database.connect().await.expect("checkout");
         let mut account = postio_model::Account::new(
             "Test",
             postio_model::EmailAddress::new(Some("Ada Lovelace"), "ada@example.com"),
@@ -1211,7 +1211,7 @@ async fn a_fresh_account_learns_its_folders_from_the_server() {
 
     let folders = tokio::time::timeout(std::time::Duration::from_secs(15), async {
         loop {
-            let connection = database.connection().expect("checkout");
+            let connection = database.connect().await.expect("checkout");
             let found = postio_storage::repository::MailboxRepository::new(&connection)
                 .list_for_account(account.id)
                 .expect("list");
@@ -1423,10 +1423,10 @@ fn engine_seeding_in_batches(
     Arc<MockBackend>,
     BlobDir,
 ) {
-    let database = test_support::memory();
-    let connection = database.connection().expect("a connection");
-    let account = test_support::account(&connection);
-    let inbox = test_support::mailbox(&connection, &account, "INBOX");
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("a connection");
+    let account = test_support::account(&connection).await;
+    let inbox = test_support::mailbox(&connection, &account, "INBOX").await;
     drop(connection);
 
     let directory = tempfile::tempdir().expect("a blob directory");
@@ -1621,10 +1621,10 @@ async fn mail_arriving_after_startup_is_backfilled_without_being_opened() {
 /// top-up that keeps finding rows it cannot use would never stop.
 #[tokio::test]
 async fn the_top_up_does_not_outrank_the_policy_it_runs_under() {
-    let database = test_support::memory();
-    let connection = database.connection().expect("a connection");
-    let account = test_support::account(&connection);
-    let inbox = test_support::mailbox(&connection, &account, "INBOX").id;
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("a connection");
+    let account = test_support::account(&connection).await;
+    let inbox = test_support::mailbox(&connection, &account, "INBOX").await.id;
     drop(connection);
 
     let directory = tempfile::tempdir().expect("a blob directory");
@@ -1801,10 +1801,10 @@ fn engine_over_a_real_sync(
     BlobDir,
     test_support::TempStore,
 ) {
-    let database = test_support::temp();
+    let database = test_support::temp().await;
     let account = {
-        let connection = database.connection().expect("checkout");
-        test_support::account(&connection)
+        let connection = database.connect().await.expect("checkout");
+        test_support::account(&connection).await
     };
     let directory = tempfile::tempdir().expect("a blob directory");
     let blobs = BlobStore::open(
@@ -2081,7 +2081,7 @@ async fn a_queued_action_does_not_wait_out_a_sync_wave() {
     // call, and the assertion below allows three seconds -- so this is not a
     // bet about scheduling, it is the difference between "at the next
     // opportunity" and "after everything else".
-    let database = test_support::memory();
+    let database = test_support::memory().await;
     let report = seed_small(&database, 11);
     let directory = tempfile::tempdir().expect("a blob directory");
     let blobs = BlobStore::open(

@@ -226,7 +226,7 @@ session_url = "http://127.0.0.1:{jmap_refusing}/jmap/session/"
     unsafe { std::env::set_var("XDG_CONFIG_HOME", config_dir) };
 
     // ── the app ─────────────────────────────────────────────────────────
-    let database = test_support::memory();
+    let database = test_support::memory().await;
     let directory = tempfile::tempdir().expect("a blob directory");
     let blobs = BlobStore::open(
         directory.path().to_path_buf(),
@@ -314,7 +314,7 @@ session_url = "http://127.0.0.1:{jmap_refusing}/jmap/session/"
     );
 
     // ── what the rows say ───────────────────────────────────────────────
-    let connection = database.connection().expect("a connection");
+    let connection = database.connect().await.expect("a connection");
     let accounts = AccountRepository::new(&connection).list().expect("list");
     let native = accounts
         .iter()

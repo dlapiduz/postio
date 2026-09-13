@@ -51,7 +51,7 @@ pub fn return_on_a_queued_draft_row_cancels_the_send_and_reopens_it_for_editing(
     style::install(&display);
     app::install_icons(&display);
 
-    let database = test_support::memory();
+    let database = test_support::memory().await;
     let report = seed_small(&database, 9);
     let account = report.account.id;
     // The fixture still has to have a Drafts folder -- `list_row` writes the
@@ -72,7 +72,7 @@ pub fn return_on_a_queued_draft_row_cancels_the_send_and_reopens_it_for_editing(
     // `Composer::send` leaves behind, and never drained, so it is still
     // sitting in Drafts when the test activates its row.
     let (draft_id, queued_id) = {
-        let connection = database.connection().expect("a connection");
+        let connection = database.connect().await.expect("a connection");
         let mut draft = Draft::new(account);
         draft.subject = SUBJECT.to_owned();
         draft.to = vec![EmailAddress::new(None::<String>, "quinn@example.net")];
@@ -143,7 +143,7 @@ pub fn return_on_a_queued_draft_row_cancels_the_send_and_reopens_it_for_editing(
     click_folder(&window, "Outbox");
     let list = window.list();
     let expected = {
-        let connection = database.connection().expect("a connection");
+        let connection = database.connect().await.expect("a connection");
         postio_storage::repository::MessageRepository::new(&connection)
             .count(&postio_storage::repository::ListQuery::outbox(account))
             .expect("a count")
@@ -163,7 +163,7 @@ pub fn return_on_a_queued_draft_row_cancels_the_send_and_reopens_it_for_editing(
         let Some(id) = list.cursor_id() else {
             return false;
         };
-        let connection = database.connection().expect("a connection");
+        let connection = database.connect().await.expect("a connection");
         DraftRepository::new(&connection)
             .by_message(id)
             .ok()
@@ -205,7 +205,7 @@ pub fn return_on_a_queued_draft_row_cancels_the_send_and_reopens_it_for_editing(
     );
     assert_eq!(window.composer().test_subject(), SUBJECT);
 
-    let connection = database.connection().expect("a connection");
+    let connection = database.connect().await.expect("a connection");
     assert_eq!(
         DraftRepository::new(&connection)
             .get(draft_id)

@@ -21,10 +21,10 @@ use postio_storage::test_support;
 
 #[test]
 fn the_executor_is_reachable_from_postio_runtimes_own_dependency_graph() {
-    let database = test_support::memory();
-    let connection = database.connection().expect("checkout");
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
     index::ensure_schema(&connection).expect("schema");
-    let (account, mailbox) = test_support::account_with_inbox(&connection);
+    let (account, mailbox) = test_support::account_with_inbox(&connection).await;
 
     let mut message = Message::new(account.id, mailbox, Utc::now());
     message.from = vec![EmailAddress::new(Some("Ada Lovelace"), "ada@example.com")];

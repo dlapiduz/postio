@@ -52,7 +52,7 @@ fn settle() {
 /// Counted rather than listed: the assertion is about a whole account's mail,
 /// which is what the predicate under test is about too.
 fn still_outside(database: &Database, account: AccountId, archive: MailboxId) -> u32 {
-    let connection = database.connection().expect("a connection");
+    let connection = database.connect().await.expect("a connection");
     let repository = MessageRepository::new(&connection);
     let all = repository
         .count_set(&MessageSet::InAccounts {
@@ -80,7 +80,7 @@ pub fn select_all_in_a_degraded_unified_view_archives_only_what_it_could_see() {
     style::install(&display);
     app::install_icons(&display);
 
-    let database = test_support::memory();
+    let database = test_support::memory().await;
     let here = seed_small(&database, 11);
     let away = seed_extra_account(&database, "Second", "grace@example.org", 12);
     let here_archive = here

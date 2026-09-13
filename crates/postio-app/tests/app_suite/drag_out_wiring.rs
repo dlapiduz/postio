@@ -60,7 +60,7 @@ pub fn a_message_in_the_list_can_be_dragged_out_as_a_file() {
     app::install_icons(&display);
 
     // ── a store with one account, one folder and one real message ───────
-    let database = test_support::memory();
+    let database = test_support::memory().await;
     let directory = tempfile::tempdir().expect("a blob directory");
     let blobs = BlobStore::open(
         directory.path().to_path_buf(),
@@ -69,8 +69,8 @@ pub fn a_message_in_the_list_can_be_dragged_out_as_a_file() {
     .expect("a blob store");
 
     let message_id = {
-        let connection = database.connection().expect("a connection");
-        let (account, inbox) = test_support::account_with_inbox(&connection);
+        let connection = database.connect().await.expect("a connection");
+        let (account, inbox) = test_support::account_with_inbox(&connection).await;
         // The list only shows a mailbox it can find; `seed_small` would do,
         // but one known message makes the assertion about *these* bytes.
         let mut message = postio_model::Message::new(account.id, inbox, chrono::Utc::now());

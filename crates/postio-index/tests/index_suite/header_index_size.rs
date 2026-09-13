@@ -56,6 +56,7 @@ use postio_model::{BodyState, EmailAddress, Message};
 use postio_storage::repository::MessageRepository;
 use postio_storage::test_support;
 use postio_storage::Connection;
+use postio_storage::bind;
 
 /// ADR 0025 Q3's budget: `message_headers` may cost at most this share of
 /// what `message_bodies_fts` costs on the same corpus.
@@ -156,25 +157,19 @@ fn a_block(n: usize) -> postio_model::Headers {
 /// Both b-trees by name, and any future one with them -- a secondary index is
 /// part of what a policy costs, and leaving it out understated this by 17%
 /// (ADR 0027 Q2).
-fn header_index_bytes(connection: &Connection) -> i64 {
-    connection
-        .query_row(
+async fn header_index_bytes(connection: &Connection) -> i64 {
+    postio_storage::sql::one(&*connection, 
             "SELECT coalesce(sum(pgsize), 0) FROM dbstat
-              WHERE name = 'message_headers' OR name LIKE 'idx_message_headers%'",
-            [],
-            |row| postio_storage::sql::RowExt::col(row, 0),
-        )
+              WHERE name = 'message_headers' OR name LIKE 'idx_message_headers%'",(),
+            |row| postio_storage::sql::RowExt::col(row, 0)).await
         .expect("dbstat")
 }
 
-fn table_bytes(connection: &Connection, name: &str) -> i64 {
-    connection
-        .query_row(
+async fn table_bytes(connection: &Connection, name: &str) -> i64 {
+    postio_storage::sql::one(&*connection, 
             "SELECT coalesce(sum(pgsize), 0) FROM dbstat
-              WHERE name = ?1 OR name LIKE ?1 || '\\_%' ESCAPE '\\'",
-            [name],
-            |row| postio_storage::sql::RowExt::col(row, 0),
-        )
+              WHERE name = ?1 OR name LIKE ?1 async || '\\_%' ESCAPE '\\'",bind![name],
+            |row| postio_storage::sql::RowExt::col(row, 0)).await
         .expect("dbstat")
 }
 
@@ -185,17 +180,17 @@ fn table_bytes(connection: &Connection, name: &str) -> i64 {
 /// than `VALUE_LIMIT` bytes a value into the table. That guarantee holds
 /// whatever is decided about the ratio below, and it is the one that stops a
 /// twenty-hop mailing-list message from deciding the size of the store.
-#[test]
-fn no_message_may_contribute_more_than_the_two_caps_allow() {
-    let database = test_support::temp();
-    let connection = database.connection().expect("checkout");
-    ensure_schema(&connection).expect("schema");
-    let (account, mailbox) = test_support::account_with_inbox(&connection);
+#[tokio::test]
+async fn no_message_may_contribute_more_than_the_two_caps_allow() {
+    let database = test_support::temp().await;
+    let connection = database.connect().await.expect("checkout");
+    ensure_schema(&connection).await.expect("schema");
+    let (account, mailbox) = test_support::account_with_inbox(&connection).await;
     let messages = MessageRepository::new(&connection);
 
     // The pathological message: a hundred fields, each far over the cap.
     let mut message = Message::new(account.id, mailbox, chrono::Utc::now());
-    messages.create(&mut message).expect("create");
+    messages.create(&mut message).await.expect("create");
     let mut headers = postio_model::Headers::new();
     for hop in 0..100 {
         headers.push(
@@ -203,15 +198,12 @@ fn no_message_may_contribute_more_than_the_two_caps_allow() {
             format!("from relay{hop}.example.net {}", "x".repeat(4096)),
         );
     }
-    index_headers(&connection, message.id.get(), &headers).expect("index");
+    index_headers(&connection, message.id.get(), &headers).await.expect("index");
 
-    let (rows, longest): (i64, i64) = connection
-        .query_row(
+    let (rows, longest): (i64, i64) = postio_storage::sql::one(&*connection, 
             "SELECT count(*), coalesce(max(length(value)), 0) FROM message_headers
-              WHERE message_id = ?1",
-            [message.id.get()],
-            |row| Ok((postio_storage::sql::RowExt::col(row, 0)?, postio_storage::sql::RowExt::col(row, 1)?)),
-        )
+              WHERE message_id = ?1",bind![message.id.get()],
+            |row| Ok((postio_storage::sql::RowExt::col(row, 0)?, postio_storage::sql::RowExt::col(row, 1)?))).await
         .expect("measure");
 
     assert_eq!(
@@ -226,25 +218,25 @@ fn no_message_may_contribute_more_than_the_two_caps_allow() {
     );
 }
 
-#[test]
-fn the_header_index_stays_inside_its_per_message_ceiling() {
-    let database = test_support::temp();
-    let connection = database.connection().expect("checkout");
-    ensure_schema(&connection).expect("schema");
-    let (account, mailbox) = test_support::account_with_inbox(&connection);
+#[tokio::test]
+async fn the_header_index_stays_inside_its_per_message_ceiling() {
+    let database = test_support::temp().await;
+    let connection = database.connect().await.expect("checkout");
+    ensure_schema(&connection).await.expect("schema");
+    let (account, mailbox) = test_support::account_with_inbox(&connection).await;
     let messages = MessageRepository::new(&connection);
 
-    connection.execute_batch("BEGIN").expect("begin");
+    connection.execute_batch("BEGIN").await.expect("begin");
     for n in 0..MESSAGES {
         let mut message = Message::new(account.id, mailbox, chrono::Utc::now());
         message.subject = Some(format!("Re: engine notes {n}"));
         message.from = vec![EmailAddress::new(Some("Ada Lovelace"), "ada@example.com")];
         message.sync.body_state = BodyState::Full;
-        messages.create(&mut message).expect("create");
-        index_body(&connection, message.id.get(), Some(&a_body(n))).expect("index a body");
-        index_headers(&connection, message.id.get(), &a_block(n)).expect("index headers");
+        messages.create(&mut message).await.expect("create");
+        index_body(&connection, message.id.get(), Some(&a_body(n))).await.expect("index a body");
+        index_headers(&connection, message.id.get(), &a_block(n)).await.expect("index headers");
     }
-    connection.execute_batch("COMMIT").expect("commit");
+    connection.execute_batch("COMMIT").await.expect("commit");
 
     let header_rows: i64 = postio_storage::sql::one(
         &connection,
@@ -260,8 +252,8 @@ fn the_header_index_stays_inside_its_per_message_ceiling() {
          is measuring nothing; got {header_rows} rows"
     );
 
-    let headers = header_index_bytes(&connection);
-    let bodies = table_bytes(&connection, "message_bodies_fts");
+    let headers = header_index_bytes(&connection).await;
+    let bodies = table_bytes(&connection, "message_bodies_fts").await;
     assert!(headers > 0, "the header index measured as empty");
 
     let per_message = headers / MESSAGES as i64;

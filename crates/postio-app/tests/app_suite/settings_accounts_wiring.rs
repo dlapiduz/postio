@@ -41,7 +41,7 @@ pub fn account_rows_persist_enable_and_mark_removal() {
     style::install(&display);
     app::install_icons(&display);
 
-    let database = test_support::memory();
+    let database = test_support::memory().await;
     seed_small(&database, 41);
     let directory = tempfile::tempdir().expect("a blob directory");
     let blobs = BlobStore::open(
@@ -52,7 +52,7 @@ pub fn account_rows_persist_enable_and_mark_removal() {
 
     // A second account: "one row per account" proves nothing with only the
     // one `seed_small` itself creates.
-    let connection = database.connection().expect("a connection");
+    let connection = database.connect().await.expect("a connection");
     let mut second = postio_model::Account::new(
         "Work",
         EmailAddress::new(None::<String>, "work@example.com"),
@@ -131,7 +131,7 @@ pub fn account_rows_persist_enable_and_mark_removal() {
     );
 
     let first_id = {
-        let connection = database.connection().expect("a connection");
+        let connection = database.connect().await.expect("a connection");
         AccountRepository::new(&connection)
             .list()
             .expect("list")
@@ -175,7 +175,7 @@ pub fn account_rows_persist_enable_and_mark_removal() {
 }
 
 fn read_enabled(database: &postio_storage::Store, id: postio_model::ids::AccountId) -> bool {
-    let connection = database.connection().expect("a connection");
+    let connection = database.connect().await.expect("a connection");
     AccountRepository::new(&connection)
         .get(id)
         .expect("get")
@@ -184,7 +184,7 @@ fn read_enabled(database: &postio_storage::Store, id: postio_model::ids::Account
 }
 
 fn read_default(database: &postio_storage::Store, id: postio_model::ids::AccountId) -> bool {
-    let connection = database.connection().expect("a connection");
+    let connection = database.connect().await.expect("a connection");
     AccountRepository::new(&connection)
         .get(id)
         .expect("get")
@@ -193,7 +193,7 @@ fn read_default(database: &postio_storage::Store, id: postio_model::ids::Account
 }
 
 fn read_pending(database: &postio_storage::Store, id: postio_model::ids::AccountId) -> bool {
-    let connection = database.connection().expect("a connection");
+    let connection = database.connect().await.expect("a connection");
     AccountRepository::new(&connection)
         .get(id)
         .expect("get")

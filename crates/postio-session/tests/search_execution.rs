@@ -14,10 +14,10 @@ use postio_storage::test_support;
 
 /// A store with three messages, two of which say "quarterly".
 fn store() -> (test_support::TempStore, postio_model::ids::AccountId) {
-    let database = test_support::temp();
-    let connection = database.connection().expect("checkout");
+    let database = test_support::temp().await;
+    let connection = database.connect().await.expect("checkout");
     postio_index::index::ensure_schema(&connection).expect("schema");
-    let (account, inbox) = test_support::account_with_inbox(&connection);
+    let (account, inbox) = test_support::account_with_inbox(&connection).await;
 
     let messages = MessageRepository::new(&connection);
     for (offset, subject, body) in [
@@ -67,7 +67,7 @@ fn run(
     account: postio_model::ids::AccountId,
     text: &str,
 ) -> postio_search::SearchResults {
-    let connection = database.connection().expect("checkout");
+    let connection = database.connect().await.expect("checkout");
     let query = postio_search::parse(text, chrono::Utc::now().date_naive());
     postio_session::search::execute(
         &connection,

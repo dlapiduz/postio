@@ -99,7 +99,7 @@ pub fn opening_and_open_with_ing_a_part_reach_the_desktop() {
     app::install_icons(&display);
 
     // ── a store with one account, one folder, and a real attached message ──
-    let database = test_support::memory();
+    let database = test_support::memory().await;
     let directory = tempfile::tempdir().expect("a blob directory");
     let blobs = BlobStore::open(
         directory.path().to_path_buf(),
@@ -108,8 +108,8 @@ pub fn opening_and_open_with_ing_a_part_reach_the_desktop() {
     .expect("a blob store");
 
     {
-        let connection = database.connection().expect("a connection");
-        let (account, inbox) = test_support::account_with_inbox(&connection);
+        let connection = database.connect().await.expect("a connection");
+        let (account, inbox) = test_support::account_with_inbox(&connection).await;
         let parsed = postio_model::mime::parse(RAW);
         let mut message = Message::new(account.id, inbox, chrono::Utc::now());
         message.subject = Some("Quarterly figures".into());

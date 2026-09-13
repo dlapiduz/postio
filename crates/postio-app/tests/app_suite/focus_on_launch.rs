@@ -108,7 +108,7 @@ pub fn the_window_opens_with_the_keyboard_on_the_first_message() {
     style::install(&display);
     app::install_icons(&display);
 
-    let database = test_support::memory();
+    let database = test_support::memory().await;
     seed_small(&database, 11);
     let directory = tempfile::tempdir().expect("a blob directory");
     let blobs = BlobStore::open(

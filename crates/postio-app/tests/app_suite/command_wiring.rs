@@ -164,7 +164,7 @@ pub fn every_command_id_is_handled_locally_or_wired_to_the_bus() {
     style::install(&display);
     app::install_icons(&display);
 
-    let database = test_support::memory();
+    let database = test_support::memory().await;
     seed_small(&database, 11);
     let directory = tempfile::tempdir().expect("a blob directory");
     let blobs = BlobStore::open(

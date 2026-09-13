@@ -153,10 +153,10 @@ mod through_the_boundary {
         Vec<i64>,
         postio_storage::Store,
     ) {
-        let database = test_support::memory();
+        let database = test_support::memory().await;
         let (mailbox, members) = {
-            let connection = database.connection().expect("a connection");
-            let (account, inbox) = test_support::account_with_inbox(&connection);
+            let connection = database.connect().await.expect("a connection");
+            let (account, inbox) = test_support::account_with_inbox(&connection).await;
             let messages = MessageRepository::new(&connection);
             let threads = ThreadRepository::new(&connection);
             let mut thread = postio_model::Thread::new(account.id);
@@ -197,7 +197,7 @@ mod through_the_boundary {
     }
 
     fn is_flagged(database: &postio_storage::Store, message: i64) -> bool {
-        let connection = database.connection().expect("a connection");
+        let connection = database.connect().await.expect("a connection");
         MessageRepository::new(&connection)
             .get(postio_model::ids::MessageId::new(message))
             .expect("a read")

@@ -66,15 +66,15 @@ const WRITERS: usize = 3;
 #[tokio::test]
 async fn a_sync_batch_survives_the_ui_thread_writing_underneath_it() {
     // File-backed: see the module docs on why in-memory proves something else.
-    let database = test_support::temp();
+    let database = test_support::temp().await;
 
     let (account, inbox, scratch) = {
-        let connection = database.connection().expect("checkout");
-        let account = test_support::account(&connection);
-        let inbox = test_support::mailbox(&connection, &account, INBOX);
+        let connection = database.connect().await.expect("checkout");
+        let account = test_support::account(&connection).await;
+        let inbox = test_support::mailbox(&connection, &account, INBOX).await;
         // The row the writers hammer, in a mailbox of its own so nothing they
         // do can be mistaken for something the sync pass did.
-        let drafts = test_support::mailbox(&connection, &account, "Drafts");
+        let drafts = test_support::mailbox(&connection, &account, "Drafts").await;
         let mut message = Message::new(account.id, drafts.id, chrono::Utc::now());
         message.subject = Some("Being typed".into());
         let id = MessageRepository::new(&connection)
@@ -145,7 +145,7 @@ async fn a_sync_batch_survives_the_ui_thread_writing_underneath_it() {
         .collect();
 
     // -- a sync pass, batch by batch ---------------------------------------
-    let connection = database.connection().expect("checkout");
+    let connection = database.connect().await.expect("checkout");
     ready.wait();
     let outcome = sync_mailbox_with_batch_size(
         &connection,

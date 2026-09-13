@@ -35,11 +35,11 @@ fn drain(events: &EventStream) -> Vec<Event> {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_due_snooze_wakes_and_repaints_without_being_asked() {
-    let database = test_support::memory();
+    let database = test_support::memory().await;
     let (account, inbox, message_id) = {
-        let connection = database.connection().expect("a connection");
-        let account = test_support::account(&connection);
-        let inbox = test_support::mailbox(&connection, &account, "INBOX").id;
+        let connection = database.connect().await.expect("a connection");
+        let account = test_support::account(&connection).await;
+        let inbox = test_support::mailbox(&connection, &account, "INBOX").await.id;
         let mut message = postio_model::Message::new(account.id, inbox, Utc::now());
         let message_id = MessageRepository::new(&connection)
             .create(&mut message)
@@ -106,7 +106,7 @@ async fn a_due_snooze_wakes_and_repaints_without_being_asked() {
          the engine's tick never woke it"
     );
 
-    let connection = database.connection().expect("a connection");
+    let connection = database.connect().await.expect("a connection");
     assert_eq!(
         MessageRepository::new(&connection)
             .get(message_id)

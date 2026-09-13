@@ -76,7 +76,7 @@ pub fn escape_leaves_search_even_after_the_box_has_closed() {
     style::install(&display);
     app::install_icons(&display);
 
-    let database = test_support::memory();
+    let database = test_support::memory().await;
     let report = seed_small(&database, 11);
     assert!(
         report.message_count > 0,

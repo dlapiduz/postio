@@ -74,7 +74,7 @@ pub fn the_pane_follows_the_cursor_and_says_why_a_body_is_missing() {
     style::install(&display);
     app::install_icons(&display);
 
-    let database = test_support::memory();
+    let database = test_support::memory().await;
     let report = seed_small(&database, 11);
     assert!(
         report.message_count > 1,
@@ -94,13 +94,13 @@ pub fn the_pane_follows_the_cursor_and_says_why_a_body_is_missing() {
     // and the cursor's dedup would then swallow the Flagged view's own
     // first report, leaving the pane unfilled.
     let flagged_total: u32 = {
-        let connection = database.connection().expect("a connection");
+        let connection = database.connect().await.expect("a connection");
         connection
             .execute(
                 "UPDATE messages SET flagged = 1 WHERE id NOT IN \
                  (SELECT id FROM messages ORDER BY received_at DESC LIMIT 1)",
-                [],
-            )
+                (),
+            ).await
             .expect("the fixture writes");
         connection
             .query_row(

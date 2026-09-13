@@ -115,7 +115,7 @@ pub fn an_account_added_to_a_running_application_syncs_without_a_restart() {
     );
 
     // ── an application already running over somebody else's mail ─────────
-    let database = test_support::memory();
+    let database = test_support::memory().await;
     let report = seed_small(&database, 51);
 
     let directory = tempfile::tempdir().expect("a blob directory");
@@ -155,7 +155,7 @@ pub fn an_account_added_to_a_running_application_syncs_without_a_restart() {
 
     // ── the account appears in the store, the way a submission writes it ─
     let joining = {
-        let connection = database.connection().expect("a connection");
+        let connection = database.connect().await.expect("a connection");
         let mut account = Account::new("Grace", EmailAddress::new(None::<String>, JOINING_ADDRESS));
         account.incoming.host = server.addr().ip().to_string();
         account.incoming.port = server.addr().port();
@@ -181,7 +181,7 @@ pub fn an_account_added_to_a_running_application_syncs_without_a_restart() {
     let mut synced = 0;
     while Instant::now() < deadline {
         settle();
-        let connection = database.connection().expect("a connection");
+        let connection = database.connect().await.expect("a connection");
         synced = MailboxRepository::new(&connection)
             .list_for_account(joining.id)
             .expect("a read")

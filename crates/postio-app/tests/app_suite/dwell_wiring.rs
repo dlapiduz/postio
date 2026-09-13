@@ -66,7 +66,7 @@ const NEVER_WHILE_SWEEPING: Duration = Duration::from_secs(30);
 
 /// Whether the store says `message` carries `\Seen`.
 fn is_read(database: &Database, message: MessageId) -> bool {
-    let connection = database.connection().expect("a connection");
+    let connection = database.connect().await.expect("a connection");
     MessageRepository::new(&connection)
         .get(message)
         .expect("a read")
@@ -89,7 +89,7 @@ pub fn resting_on_a_message_marks_it_read_and_sweeping_past_does_not() {
     style::install(&display);
     app::install_icons(&display);
 
-    let database = test_support::memory();
+    let database = test_support::memory().await;
     let report = seed_small(&database, 11);
     assert!(report.message_count > 0, "the fixture seeded no mail");
     let directory = tempfile::tempdir().expect("a blob directory");
@@ -104,9 +104,9 @@ pub fn resting_on_a_message_marks_it_read_and_sweeping_past_does_not() {
     // too: the sweep and the rest run in the Flagged view (see below), so
     // every inbox message has to be in it.
     let (inbox, flagged_total) = {
-        let connection = database.connection().expect("a connection");
+        let connection = database.connect().await.expect("a connection");
         connection
-            .execute("UPDATE messages SET flagged = 1", ())
+            .execute("UPDATE messages SET flagged = 1", ()).await
             .expect("the fixture writes");
         let flagged_total: u32 = postio_storage::sql::one(
             &connection,
@@ -124,7 +124,7 @@ pub fn resting_on_a_message_marks_it_read_and_sweeping_past_does_not() {
         // would satisfy the resting assertion without the dwell doing
         // anything.
         connection
-            .execute("UPDATE messages SET seen = 0, flags = ''", ())
+            .execute("UPDATE messages SET seen = 0, flags = ''", ()).await
             .expect("the fixture writes");
         (inbox.id, flagged_total)
     };
@@ -245,7 +245,7 @@ pub fn resting_on_a_message_marks_it_read_and_sweeping_past_does_not() {
 
 /// The ids of the first page of `mailbox`, newest first.
 fn page(database: &Database, mailbox: postio_model::MailboxId) -> Vec<MessageId> {
-    let connection = database.connection().expect("a connection");
+    let connection = database.connect().await.expect("a connection");
     MessageRepository::new(&connection)
         .page(&ListQuery {
             scope: ListScope::Mailbox(mailbox),

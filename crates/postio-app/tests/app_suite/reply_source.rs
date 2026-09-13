@@ -69,7 +69,7 @@ fn marker(id: MessageId) -> String {
 
 /// Land a body for `id` in the store, the way a settled backfill leaves one.
 fn give_body(database: &Database, id: MessageId, text: Option<&str>, html: Option<&str>) {
-    let connection = database.connection().expect("a connection");
+    let connection = database.connect().await.expect("a connection");
     let stored = StoredBody {
         text: text.map(str::to_owned),
         html: html.map(str::to_owned),
@@ -108,7 +108,7 @@ pub fn reply_forward_and_reply_all_act_on_the_message_under_the_cursor() {
     style::install(&display);
     app::install_icons(&display);
 
-    let database = test_support::memory();
+    let database = test_support::memory().await;
     let report = seed_small(&database, 23);
     assert!(report.message_count > 4, "not enough mail to walk through");
     // Every message but the newest flagged: since #755 a folder row is a
@@ -118,13 +118,13 @@ pub fn reply_forward_and_reply_all_act_on_the_message_under_the_cursor() {
     // window opens on has already reported it, and the cursor's dedup would
     // otherwise swallow the Flagged view's own first report.
     let flagged_total: u32 = {
-        let connection = database.connection().expect("a connection");
+        let connection = database.connect().await.expect("a connection");
         connection
             .execute(
                 "UPDATE messages SET flagged = 1 WHERE id NOT IN \
                  (SELECT id FROM messages ORDER BY received_at DESC LIMIT 1)",
-                [],
-            )
+                (),
+            ).await
             .expect("the fixture writes");
         connection
             .query_row(

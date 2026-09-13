@@ -99,7 +99,7 @@ pub fn return_and_tab_move_the_keyboard_to_the_message_list() {
     style::install(&display);
     app::install_icons(&display);
 
-    let database = test_support::memory();
+    let database = test_support::memory().await;
     let report = seed_small(&database, 11);
     assert!(
         report.message_count > 0,

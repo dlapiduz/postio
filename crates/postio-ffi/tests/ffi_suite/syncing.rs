@@ -144,10 +144,10 @@ fn a_seeded_account_is_seen_by_the_starter() {
     // Guards the account read itself: a `start_syncing` that could not see a
     // configured account would answer zero for ever and look exactly like the
     // no-accounts case above.
-    let database = test_support::memory();
+    let database = test_support::memory().await;
     {
-        let connection = database.connection().expect("a connection");
-        test_support::account_with_inbox(&connection);
+        let connection = database.connect().await.expect("a connection");
+        test_support::account_with_inbox(&connection).await;
     }
     let session = Session::open(SessionOptions::in_memory_with(database)).expect("a session");
     assert_eq!(
