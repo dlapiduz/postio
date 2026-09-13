@@ -887,21 +887,38 @@ async fn reclaim_disk(wiring: &Wiring) {
         {
             tracing::warn!(%error, "could not bring the store under its ceiling");
         }
-        // The database's own pages are not reclaimed here any more, and that
-        // is a gap rather than a decision. #381 converted the store to
-        // `auto_vacuum = INCREMENTAL` and stepped it on this worker, because
-        // deleting a message frees pages inside the file and hands nothing
-        // back to the filesystem -- which a store holding a whole mailbox
-        // replica cannot afford, since a `UIDVALIDITY` reset wipes and
-        // re-syncs an entire folder from one server-side event.
+        // The database's own pages, when there are enough of them to be worth
+        // it. #381 converted the store to `auto_vacuum = INCREMENTAL` and
+        // stepped it here, because deleting a message frees pages inside the
+        // file and hands nothing back to the filesystem -- which a store
+        // holding a whole mailbox replica cannot afford, since a
+        // `UIDVALIDITY` reset wipes and re-syncs an entire folder from one
+        // server-side event.
         //
-        // This engine has the `auto_vacuum` pragma and no
-        // `incremental_vacuum` step to drive it with, so there is nothing to
-        // call. The blob sweeps above still run and are the larger half by
-        // bytes. Said rather than faked: a reclaim that silently reclaims
-        // nothing is worse than one that is known to be missing.
+        // This engine has no `auto_vacuum` toggle and no incremental step. It
+        // has a full `VACUUM`, which is a different proposition: it rewrites
+        // the whole database and **blocks every writer while it does**, at
+        // roughly 25 MiB/s. So it is not stepped, it is *decided* --
+        // `is_worth_reclaiming` says no unless the holes are both large in
+        // themselves and a real share of the file, because freed pages are
+        // reused and a store plateaus rather than creeping upward. See
+        // `Store::reclaim_free_pages` for what that costs and why an
+        // interrupted one is safe.
         //
-        // The write-ahead log is the half that *can* be reclaimed. #1175
+        // Here rather than anywhere else for the same reason the log
+        // truncation below is: off the startup path and off every
+        // interaction.
+        match database.is_worth_reclaiming().await {
+            Ok(true) => match database.reclaim_free_pages().await {
+                Ok(bytes) => tracing::info!(bytes, "reclaimed free database pages"),
+                Err(error) => tracing::warn!(%error, "could not reclaim free pages: {error}"),
+            },
+            Ok(false) => {}
+            Err(error) => {
+                tracing::warn!(%error, "could not ask the store about free pages: {error}");
+            }
+        }
+        // The write-ahead log is the other half that *can* be reclaimed. #1175
         // bounded it with `journal_size_limit`, which this engine does not
         // have; `wal_checkpoint(TRUNCATE)` is the mechanism it does, and
         // here is where it belongs -- off the startup path and off every

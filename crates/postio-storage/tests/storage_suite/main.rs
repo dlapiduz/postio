@@ -37,6 +37,7 @@ mod mailbox_size;
 mod mailboxes;
 mod messages;
 mod operations;
+mod reclaim_pages;
 mod schema_fidelity;
 mod seed_is_honest;
 mod snoozed_due_index;

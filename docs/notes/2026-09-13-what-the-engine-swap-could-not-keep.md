@@ -60,19 +60,44 @@ exactly that and nothing more, and the planner preferred the shorter one and
 then sorted — which is how the thread list acquired a sort over the whole
 folder. They are gone.
 
-## 5. There is no `dbstat`, and no full vacuum worth running
+## 5. There is no `dbstat`, and the vacuum is all-or-nothing
 
 `dbstat` gave page usage per b-tree, and three size measurements read it. They
 weigh the **file** between two states now: coarser, in that a table cannot be
 separated from its index; truer, in that it counts everything a step adds to
 the disk.
 
-Worse, `PRAGMA auto_vacuum` is behind an experimental flag the Rust builder does
-not expose, so **a Postio store grows and does not shrink**. A full `VACUUM`
-exists behind `Builder::experimental_vacuum` and rewrites the entire database,
-which on the reference store is not a startup-path operation. #381's conversion
-is archived rather than deleted, and
-`app_suite/reclaim_pages.rs` fails the moment the pragma arrives.
+`PRAGMA auto_vacuum` is behind an experimental flag the Rust builder does not
+expose, and there is no `incremental_vacuum` step to drive it with even if it
+were. So #381's answer — hand a few freed pages back on every housekeeping
+pass, at no perceptible cost — is gone. What replaced it is a full `VACUUM`,
+via `Builder::experimental_vacuum(true)`, and the four things measured about
+it on the 868 MB reference store:
+
+- it reclaims **87–88%** of the free space, at **17–25 MiB/s** — 35 to 50
+  seconds there;
+- it needs **1.1x** the file in peak disk, because it builds the new database
+  beside the old one;
+- it **blocks every writer for its whole duration**. A keystroke's write
+  waited 2,831.8 ms behind a 2.80 s vacuum, which is the exact stall
+  `WriteGate` and #425 exist to prevent;
+- **killing it is safe.** Interrupted at six points, the file was byte-identical
+  each time and every row still read.
+
+And the thing that makes the whole question less urgent than it looked: **freed
+pages are reused.** Deleting 18,000 messages and adding 18,000 back grew the
+file by 0.0 MiB. A store plateaus at its high-water mark rather than climbing,
+so what is actually lost with `auto_vacuum` is the *return of a one-off
+shrink* — after a `UIDVALIDITY` reset, an archive cleared — not a defence
+against unbounded growth.
+
+Hence a policy instead of a step: `Store::is_worth_reclaiming` asks for the
+holes to be both ≥64 MiB and ≥25% of the file before `reclaim_free_pages` is
+allowed to stall the writers, and the housekeeping worker asks on each pass.
+The thresholds are `store::reclaim_policy`'s to prove;
+`app_suite/reclaim_pages.rs` proves the application reaches them, and its
+second case fails the moment the incremental pragma arrives — which is the
+signal to take #381's conversion back out of the archive.
 
 ## 6. Bodies are plain text
 

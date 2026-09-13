@@ -286,8 +286,13 @@ const CASES: &[(&str, fn())] = &[
         reading_offline::the_pane_says_offline_and_updates_the_moment_the_connection_does as fn(),
     ),
     (
-        "reclaim_pages::the_store_still_cannot_be_told_to_reclaim_its_pages",
-        reclaim_pages::the_store_still_cannot_be_told_to_reclaim_its_pages as fn(),
+        "reclaim_pages::a_store_full_of_holes_is_reclaimed_by_the_application",
+        reclaim_pages::a_store_full_of_holes_is_reclaimed_by_the_application as fn(),
+    ),
+    (
+        "reclaim_pages::the_store_still_cannot_be_told_to_reclaim_its_pages_a_little_at_a_time",
+        reclaim_pages::the_store_still_cannot_be_told_to_reclaim_its_pages_a_little_at_a_time
+            as fn(),
     ),
     (
         "reclaim_wiring::opening_a_store_reclaims_what_nothing_references",

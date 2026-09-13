@@ -64,9 +64,14 @@ ADR**:
 
 2. **`PRAGMA auto_vacuum` cannot be enabled at all.** #381 chose
    `INCREMENTAL` so a mailbox that loses ten thousand messages hands the pages
-   back; the engine puts autovacuum behind a flag its Rust builder does not
-   expose. A Postio store grows and does not shrink. `reclaim_pages.rs` fails
-   the day that changes.
+   back a few at a time; the engine puts autovacuum behind a flag its Rust
+   builder does not expose, and offers no `incremental_vacuum` step. Only a
+   full `VACUUM` remains, which rewrites the database and blocks every writer
+   while it does. It is therefore gated on a policy rather than stepped
+   (`Store::is_worth_reclaiming`), and the cost is a one-off shrink deferred,
+   not unbounded growth: freed pages *are* reused, so a store plateaus at its
+   high-water mark. `reclaim_pages.rs` proves the application reaches the
+   gate, and fails the day the incremental mode arrives.
 
 3. **There is no read-only open.** `SQLITE_OPEN_READ_ONLY` and `PRAGMA
    query_only` have no equivalent, so the four diagnostics under `examples/`
