@@ -68,10 +68,39 @@ pub struct SqliteStore {
 /// such a folder impossible to open at all (#1534).
 #[derive(Debug, Clone, Copy)]
 struct CountedFolder {
-    /// `mailboxes.total_count` when the count was taken.
-    witness: u32,
+    /// What the folder looked like when the count was taken — see
+    /// [`witness_of`].
+    witness: Witness,
     /// What counting the threads answered then.
     threads: u32,
+}
+
+/// The cheap facts a folder's thread count is allowed to outlive.
+///
+/// **Both, and the second one is the lesson.** `total_count` alone misses a
+/// sync that re-threads without changing how many messages are in the folder:
+/// the count would be stale, and — worse — [`Marks::check`] would see an
+/// unchanged total and keep seek marks that no longer point where they say.
+/// A mark that is wrong seeks past the end and the page comes back **empty**,
+/// which is a list showing nothing on a folder that has 36,000 rows.
+///
+/// `highest_mod_seq` moves on any server-side change to the folder, which is
+/// when threading changes. Together they are strictly stronger than the
+/// recomputed total this replaced, rather than merely cheaper than it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct Witness {
+    /// `mailboxes.total_count`, maintained by the counting triggers.
+    messages: u32,
+    /// How far the folder has been synced.
+    mod_seq: Option<u64>,
+}
+
+/// What a folder looks like cheaply: one row, no scan.
+fn witness_of(mailbox: &Mailbox) -> Witness {
+    Witness {
+        messages: mailbox.counts.total,
+        mod_seq: mailbox.highest_mod_seq.map(|seq| seq.get()),
+    }
 }
 
 /// How many times this process has counted a threaded folder.
@@ -112,10 +141,11 @@ fn counted_total(
         FOLDERS_COUNTED.fetch_add(1, Ordering::Relaxed);
         return threads.count_of(query);
     };
-    // The cheap number, read first: a column on one row.
+    // The cheap facts, read first: one row, no scan.
     let witness = MailboxRepository::new(connection)
         .get(mailbox)?
-        .map(|found| found.counts.total);
+        .as_ref()
+        .map(witness_of);
     if let Some(witness) = witness
         && let Some(held) = cache.lock().expect("not poisoned").get(&mailbox).copied()
         && held.witness == witness
@@ -181,6 +211,14 @@ impl<C> Default for Marks<C> {
 }
 
 impl<C: Copy> Marks<C> {
+    /// Forget every mark, keeping the length they were taken against.
+    ///
+    /// For a caller that has learnt a mark was wrong by using it, rather than
+    /// by noticing the list changed length.
+    fn forget(&mut self) {
+        self.at.clear();
+    }
+
     /// Forget everything if the list is not the length it was.
     fn check(&mut self, total: u32) {
         if self.total != Some(total) {
@@ -333,13 +371,32 @@ impl SqliteStore {
                 Some((at, cursor)) => (Some(cursor), request.offset - at),
                 None => (None, request.offset),
             };
-            let rows = threads.page_at(
+            let mut rows = threads.page_at(
                 &ThreadListQuery {
                     after: seek,
                     ..query.clone()
                 },
                 skip,
             )?;
+
+            // An empty page inside a list that says it has rows means the
+            // mark we seeked from lied: it claimed a cursor stood at some
+            // offset, the rows moved under it, and the seek landed past the
+            // end. The page comes back empty and the list shows **nothing**
+            // on a folder holding tens of thousands of messages -- which is
+            // what "I click into another folder and it just shows empty"
+            // turned out to be (#1534).
+            //
+            // Marks are an optimisation, so the honest response to one that
+            // cannot be trusted is to stop trusting all of them and read the
+            // way we would have without any. Costly -- this is the deep
+            // `OFFSET` the marks exist to avoid -- and it happens once,
+            // because the marks are gone afterwards.
+            if rows.is_empty() && seek.is_some() && request.offset < total {
+                marks.lock().expect("not poisoned").forget();
+                rows = threads.page_at(&query, request.offset)?;
+            }
+
             if let Some(last) = rows.last() {
                 marks
                     .lock()
