@@ -29,6 +29,9 @@ Every phase is now sequenceable.
 **Storage**: SQLite (SQLCipher) plus the content-addressed blob directory.
 This feature adds one stored per-message value (message length) and no tables.
 
+> Engine changed after this landed: `rusqlite`/SQLCipher became Turso — see
+> `specs/004-turso-store`.
+
 **Testing**: `cargo test --lib` for the pure crates, `cargo nextest run` for
 integration suites, `crates/postio-app/tests/app_suite/` for wiring, headless
 by default under the cargo runner

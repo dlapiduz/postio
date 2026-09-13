@@ -10,14 +10,14 @@ Fedora 40+:
 
 ```bash
 sudo dnf install gtk4-devel libadwaita-devel webkitgtk6.0-devel \
-                 sqlite-devel libsecret-devel glib2-devel pkgconf-pkg-config
+                 libsecret-devel glib2-devel pkgconf-pkg-config
 ```
 
 Ubuntu 26.04 (earlier releases ship a GTK older than Postio's floor):
 
 ```bash
 sudo apt install build-essential pkg-config libgtk-4-dev libadwaita-1-dev \
-                 libwebkitgtk-6.0-dev libsqlite3-dev libsecret-1-dev \
+                 libwebkitgtk-6.0-dev libsecret-1-dev \
                  libglib2.0-dev libpango1.0-dev
 ```
 
@@ -67,7 +67,7 @@ full cheat sheet. Every binding is rebindable — see the
 ## Troubleshooting
 
 **`cargo build` fails looking for a library** (a `pkg-config` error naming
-`gtk4`, `libadwaita-1`, `webkitgtk-6.0`, `sqlite3`, or `libsecret-1`): a
+`gtk4`, `libadwaita-1`, `webkitgtk-6.0`, or `libsecret-1`): a
 system dependency from the list above is missing or too old. Check what you
 have against what's needed with `pkg-config --modversion gtk4` (and so on
 for the others).

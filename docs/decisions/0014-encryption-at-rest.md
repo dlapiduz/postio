@@ -1,7 +1,7 @@
 # ADR 0014 — The local store encrypts itself
 
 - **Status:** Accepted — **GO** (2026-08-25). **Mechanism amended** by
-  [ADR 0037](0037-the-store-is-turso-not-sqlcipher.md) (2026-09-13): the
+  [ADR 0038](0038-the-store-is-turso-not-sqlcipher.md) (2026-09-13): the
   database engine is Turso with its own AES-256-GCM page encryption rather
   than SQLCipher, and there is no migration path. Everything below about the
   threat model, the key hierarchy and the no-plaintext-fallback rule is
@@ -15,11 +15,14 @@
 - **Related:** the keyring posture in `postio-imap/src/secret.rs` (no
   plaintext fallback, ever), the permissions hardening of #142,
   `docs/PRODUCT.md`'s privacy commitments, the perf budgets in CLAUDE.md.
-- **Decision:** **SQLCipher for the database, per-blob AEAD for the blob
+- **Decision:** **SQLCipher for the database** *(amended by ADR 0038: the
+  engine is Turso, encrypting its own pages)*, **per-blob AEAD for the blob
   store, one master key in the Secret Service keyring, no plaintext
   fallback.** Blob ids become *keyed* BLAKE3 hashes so deduplication
   survives without cross-store content correlation. New stores encrypt from
-  first open; the pre-release migration path is drain-and-reencrypt. The
+  first open; the pre-release migration path is drain-and-reencrypt
+  *(amended by ADR 0038: no migration path — a store is rebuilt by
+  resyncing)*. The
   README's mmap-backed memory numbers are a casualty and are re-measured.
 
 ---

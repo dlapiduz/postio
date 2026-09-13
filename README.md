@@ -5,7 +5,7 @@ have too much email.
 
 Read less. Find anything. Act faster.
 
-Postio keeps a full copy of your mail in a local SQLite database with a
+Postio keeps a full copy of your mail in a local encrypted store with a
 built-in full-text index, so search and navigation never wait on the
 network. Every action — archive, flag, move, delete, undo — applies
 instantly to that local copy and is queued for the server in the
@@ -71,19 +71,12 @@ System dependencies — Fedora 40+:
 
 ```bash
 sudo dnf install gtk4-devel libadwaita-devel webkitgtk6.0-devel \
-                 sqlite-devel libsecret-devel glib2-devel pkgconf-pkg-config
+                 libsecret-devel glib2-devel pkgconf-pkg-config
 
-# The store is SQLCipher, which builds OpenSSL from source (ADR 0014). Its
-# `Configure` is a perl program, and Fedora splits the perl standard library
-# into packages — without these the build stops at a `Can't locate X.pm in
-# @INC` inside a cargo build script, one module at a time.
-sudo dnf install perl-FindBin perl-IPC-Cmd perl-Pod-Html perl-Digest-SHA \
-                 perl-Text-Template perl-Time-Piece
-
-# Optional but strongly recommended on a machine with more than one checkout:
-# every fresh target directory rebuilds that OpenSSL from C source (~4 min),
-# and ccache is what lets the second one cost seconds. Wired in automatically
-# via scripts/cc-wrapper.sh; without ccache the build is unchanged. #736.
+# Optional: ccache caches what the C build scripts in the dependency graph
+# compile, so a second target directory costs seconds instead of minutes.
+# Wired in automatically via scripts/cc-wrapper.sh; without ccache the build
+# is unchanged. #736.
 #
 # mold is the linker, selected by scripts/linker.sh whenever it is present.
 # Not for speed -- there is only ~1.2s of link to contest either way -- but
@@ -106,7 +99,7 @@ Ubuntu 26.04 (earlier releases ship a GTK older than the 4.20 floor):
 
 ```bash
 sudo apt install build-essential pkg-config libgtk-4-dev libadwaita-1-dev \
-                 libwebkitgtk-6.0-dev libsqlite3-dev libsecret-1-dev \
+                 libwebkitgtk-6.0-dev libsecret-1-dev \
                  libglib2.0-dev libpango1.0-dev
 ```
 
@@ -115,10 +108,6 @@ The same two optional tools, for the same reasons as the Fedora block above:
 ```bash
 sudo apt install ccache mold
 ```
-
-Debian and Ubuntu ship the perl modules OpenSSL needs in `perl-base` and
-`perl-modules`, both of which `build-essential` already pulls in, so the
-extra step above is Fedora-specific.
 
 Rust is pinned by [`rust-toolchain.toml`](rust-toolchain.toml) — with
 [rustup](https://rustup.rs), the right compiler arrives on the first `cargo`
@@ -222,7 +211,7 @@ rebindable; the generated reference is
 ### Troubleshooting
 
 **`cargo build` fails looking for a library** (`pkg-config` errors naming
-`gtk4`, `libadwaita-1`, `webkitgtk-6.0`, `sqlite3`, or `libsecret-1`): a
+`gtk4`, `libadwaita-1`, `webkitgtk-6.0`, or `libsecret-1`): a
 system dependency from the Fedora or Ubuntu list above is missing or too
 old. Reinstall that line — `pkg-config --modversion gtk4` (etc.) shows what
 you actually have against the floors in
@@ -255,9 +244,11 @@ Performance is a functional requirement, enforced by `cargo bench`:
 | Local search | < 100 ms | **42 ms** worst shape |
 | Memory, 100,000 messages | no full-mailbox load | **55 MiB**, flat past 100k |
 
-Measured against an **encrypted** store — the database is SQLCipher (ADR 0014)
-and there is no unencrypted configuration in normal use, so each figure already
-carries the cost of decrypting every page on the way in.
+Measured against an **encrypted** store (ADR 0014) — there is no unencrypted
+configuration in normal use, so each figure already carries the cost of
+decrypting every page on the way in. The figures predate the engine swap
+(ADR 0038); [`docs/PERFORMANCE.md`](docs/PERFORMANCE.md) says which have been
+re-measured.
 
 The full baseline — what was measured, on what, which numbers are floors
 rather than means, and how to reproduce every one — is

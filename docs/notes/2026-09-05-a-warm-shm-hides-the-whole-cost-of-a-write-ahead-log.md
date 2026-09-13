@@ -1,5 +1,9 @@
 # A warm `-shm` hides the whole cost of a write-ahead log (2026-09-05, #1175)
 
+Measured against the SQLCipher store ADR 0038 replaced, so the figures
+below are the old engine's. The lesson — a warm `-shm` flatters any
+measurement of a write-ahead log — is about WAL, not the cipher, and stands.
+
 #1175 is a 676 MB write-ahead log against an 868 MB database, and five
 seconds in front of every first frame. Two things about it were only learnt by
 measuring the wrong thing three times.

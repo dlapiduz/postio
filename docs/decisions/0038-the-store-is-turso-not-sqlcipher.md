@@ -1,4 +1,4 @@
-# ADR 0037 — The store is Turso, and ADR 0014 keeps its threat model
+# ADR 0038 — The store is Turso, and ADR 0014 keeps its threat model
 
 - **Status:** Accepted (2026-09-13)
 - **Date:** 2026-09-13

@@ -74,7 +74,7 @@ to work. Verified against gtk4 4.22, libadwaita 1.9, WebKitGTK 2.52.
 macOS and Windows frontends over the same Rust engine were always possible,
 and that possibility is the reason for two CI-enforced boundaries rather than
 an aspiration in a document: `postio-core` must not depend on GTK, and
-`postio-gtk` must not depend on SQLite or the protocol crates
+`postio-gtk` must not depend on the database engine or the protocol crates
 (`ARCHITECTURE.md` §9).
 
 **A native macOS frontend is now scheduled** — Swift over the same engine,
@@ -137,8 +137,8 @@ at read time instead; the reasoning is
 
 ## 6. What is stored locally
 
-SQLite for everything listable and searchable, plus a **content-addressed blob
-directory** for raw messages and attachments. No maildir, no mbox, no notmuch.
+An encrypted database for everything listable and searchable, plus a
+**content-addressed blob directory** for raw messages and attachments. No maildir, no mbox, no notmuch.
 
 The database must hold `accounts`, `identities`, `mailboxes`, `messages`,
 `threads`, `recipients`, `attachments`, `labels`, `message_labels`, `drafts`,
@@ -268,8 +268,8 @@ format that cannot be renamed casually (`ARCHITECTURE.md` §3).
 ## 9. Layout
 
 Three panes — sidebar, message list, reading pane — with the sidebar
-deliberately not consuming the screen. The list is windowed over paged SQLite
-and is never fully materialised (§18).
+deliberately not consuming the screen. The list is windowed over the paged
+store and is never fully materialised (§18).
 
 **The sidebar draws two kinds of row and the difference is load-bearing.** A
 *folder* is one the server has: Inbox, Archive, Sent, Drafts, Trash, Junk, and
@@ -424,7 +424,7 @@ steady state, not a half-synced one.
 prices both axes against a real 81,744-message account and settles the memory,
 disk, compression and encryption consequences.
 
-**The UI never awaits the network.** Every mutating action is: SQLite write →
+**The UI never awaits the network.** Every mutating action is: store write →
 enqueue the remote operation → emit the event → repaint. The sync engine drains
 the queue later and somewhere else. `ARCHITECTURE.md` §1.
 
@@ -485,7 +485,7 @@ Pane switches use *no* transition, and `prefers-reduced-motion` is always
 honoured.
 
 **A mailbox is never loaded into memory.** The message list is windowed over
-paged SQLite, and "select all" is a predicate — `Everything { except }` — not a
+the paged store, and "select all" is a predicate — `Everything { except }` — not a
 hundred thousand ids. This constraint shapes the store, the list widget and
 the selection model, and it is the single most-cited line in this document.
 
@@ -597,7 +597,7 @@ threads; read/unread, archive, delete, flag, move; HTML and plaintext reading
 with attachments and quoted-message folding; compose, reply, reply-all,
 forward, attachments, drafts; local full-text search with operators and an instant
 search box; vim-style navigation, a command palette and configurable shortcuts;
-SQLite, background sync, offline reading, undo.
+a local database, background sync, offline reading, undo.
 
 **Out, deliberately:** Rules. Contacts management.
 Snooze and scheduled send. **And AI** — a founding principle, deferred so that

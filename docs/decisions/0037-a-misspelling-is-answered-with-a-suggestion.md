@@ -7,8 +7,9 @@
 ## Context
 
 Searching `hanah` finds nothing, though the mailbox holds mail from `Hannah`.
-`messages_fts` tokenizes with `unicode61 remove_diacritics 2`, so the index
-matches whole words and a dropped letter is simply a different word.
+The index matches whole words — the engine's tokenizer folds case only, and
+`postio_model::fold` folds diacritics on both the indexed text and the query
+(ADR 0038) — so a dropped letter is simply a different word.
 
 The obvious fix is to make matching tolerant — a trigram tokenizer, or edit
 distance in the match path. The tree says otherwise.

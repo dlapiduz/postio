@@ -26,8 +26,9 @@ ARCHITECTURE.md where the full write-up already lives there.
 **Scope, as decided 2026-08-22.** Linux/GTK4 only, IMAP+SMTP only, targeting
 iCloud with an app-specific password (no OAuth in v1). HTML bodies render in
 WebKitGTK 6.0 locked down (JS off, network off, `cid:` custom scheme, injected
-Postio CSS). Storage is SQLite for metadata/threading/sync-state/FTS5 plus a
-content-addressed blob dir for raw messages and attachments — no
+Postio CSS). Storage is a local database for metadata/threading/sync-state/
+full-text search (SQLite then; Turso since ADR 0038) plus a content-addressed
+blob dir for raw messages and attachments — no
 maildir/mbox/notmuch and no store picker. AI is deliberately *not* in v1
 (PRODUCT.md §23) despite being a founding principle; it is epic E12 (now
 tracked
@@ -100,7 +101,7 @@ not the selection; the name is GTK's, the meaning is ours. Moved by `j`/`k`/
 click. Drawn as canvas 1b draws it: accent tint ground, 3px steel left edge,
 key hints on it alone. *Selection* — what an action will hit.
 `postio_core::state::Selection` (`These(ids) | Everything{except}`) — never a
-`Vec` for select-all, because the list is windowed over paged SQLite. Built
+`Vec` for select-all, because the list is windowed over the paged store. Built
 deliberately: `x`, Ctrl-click, Shift-click, a click on the row's check square,
 Ctrl+A. Drawn as a steel check replacing the avatar chip, on
 `--postio-selected-strong-bg`. The check is what carries "selected", not the
@@ -234,7 +235,7 @@ bodies.
   tracked as issue #8 (epic #19, Triage & Filters).
 - **Multi-select / bulk actions** — the key design constraint is that
   selection cannot be a `Vec<MessageId>` for "select all" — the list is
-  windowed over paged SQLite and must never materialise a mailbox, so model
+  windowed over the paged store and must never materialise a mailbox, so model
   selection as an id set *or* a predicate (query + exclusions) and resolve it
   in one SQL statement. Bulk archive of 50k must be one update plus one
   queued operation. Also: selected and focused are distinct states (see
@@ -251,7 +252,8 @@ if you update one, update the other; both were previously wrong in the same
 way (`postio-search` drawn as a child of `postio-gtk`, `postio-index`
 omitted entirely). `postio-search` is a pure *shared* leaf (query language, no
 SQL, no toolkit) depended on by `postio-gtk`, `postio-index`, `postio-runtime`
-and `postio-app`; `postio-index` owns `rusqlite` and the FTS5 executor.
+and `postio-app`; `postio-index` owns `turso` (its `fts` feature) and the
+fts executor.
 
 **`EventStream` is not `Clone`, and the reason is a trap rather than a
 preference.** It wraps an `async_channel::Receiver`, and that receiver is
@@ -527,8 +529,8 @@ check it isn't sharing a binary.
 **`postio-gtk` examples/tests cannot read a store.**
 `scripts/checks/check-crate-boundaries.py` counts a crate's *own* dev-dependencies,
 and an example is built from that graph — so `postio-gtk` cannot have an
-example (or test) that touches `postio-storage`, because `rusqlite` would
-land in the view layer's graph and fail CI. This is why the render-to-PNG
+example (or test) that touches `postio-storage`, because the engine crate
+(`turso`) would land in the view layer's graph and fail CI. This is why the render-to-PNG
 tool lives at `crates/postio-app/examples/shot.rs`
 (`cargo run -p postio-app --example shot`) rather than in `postio-gtk` — its
 demo mode reads a seeded store. The complement is
@@ -608,14 +610,17 @@ only part of #121 a session on the host cannot answer.
 
 **The search executor has two SQL plans, and which one a statement gets is not
 a preference.** #408, and every number here was measured against the 120,000-
-message `search_budget` bench.
+message `search_budget` bench — on FTS5, which ADR 0038's engine replaced
+with `fts` *indexes* queried through `fts_match`/`fts_score` scalar calls.
+The two-plan split survives in `executor.rs`; the `MATCH` mechanics below are
+the old engine's.
 
 - A query narrow enough to rank is **driven by the match**: walk the postings
   of both FTS indexes, look each hit up in `messages` by primary key.
 - One too broad to rank is **driven by `messages`**, ordered by its own
   `(account_id, received_at)` index, asking each row "did you match?" through a
   correlated `EXISTS` with `rowid = m.id AND … MATCH ?`. That shape is what
-  makes FTS5 answer with a docid seek — the plan says
+  made FTS5 answer with a docid seek — the plan said
   `VIRTUAL TABLE INDEX 0:=M5`, and the `=` is the rowid.
 
 Getting it wrong is expensive in both directions, and every wrong turn was
@@ -637,11 +642,12 @@ Two consequences worth knowing before editing that file:
   pool. Re-asking the indexes for the scores of ids you already have is the
   297 ms mistake wearing a different hat.
 
-**Free text scores are summed, body at half** (`BODY_SCORE_WEIGHT`). Before
-the body left `messages_fts`, one bm25 over six columns did this implicitly:
-FTS5's length normalisation put a term in a short `subject` well above the
-same term in a long `body`. Two indexes have no shared corpus statistics, so
-it is stated. Summing rather than taking the better of the two, so a message
+**Free text scores are summed, body at half** (`BODY_SCORE_WEIGHT`). Back
+when one FTS5 table indexed all six columns, one bm25 did this implicitly:
+its length normalisation put a term in a short `subject` well above the
+same term in a long `body`. The metadata and body indexes (the engine's
+`fts` indexes, scored per index by `fts_score` since ADR 0038) share no
+corpus statistics, so it is stated. Summing rather than taking the better of the two, so a message
 matching in *both* ranks first. The tests assert that ordering, never the
 number.
 
@@ -924,9 +930,9 @@ Text(TextTerm{negated,value})`. Partials are half-typed operators and *must*
 constrain nothing. Date semantics: `after:` is inclusive (`>=` start of day),
 `before:` is exclusive (`<` start of day); relative dates resolve against the
 caller-supplied `today`. Sizes are binary (`K` = 1024). `fts_match()` quotes
-every term as an FTS5 string literal and returns `None` when there's no
-positive free text (FTS5 has no unary NOT), so negative-only text must be
-excluded by the executor via `text_terms()`.
+every term as a string literal in the match expression and returns `None`
+when there's no positive free text (the match syntax has no unary NOT), so
+negative-only text must be excluded by the executor via `text_terms()`.
 
 **Config live-reload seam.** The watcher thread produces `validate::Checked`
 (parse+validate off the UI thread); the UI thread calls
@@ -1393,7 +1399,7 @@ on the same argument and in the same place as the draft copies above: any
 message with an undrained `Move` or `Delete` out of the mailbox being written.
 #368.
 
-Archiving is local-first — SQLite write, enqueue, emit, repaint — so between
+Archiving is local-first — store write, enqueue, emit, repaint — so between
 the keystroke and the queue draining, the server still lists the message where
 it was. A resync of that mailbox in that window fetches it, looks for a row
 under `(mailbox, UIDVALIDITY, UID)`, finds none *because the row is in Archive
@@ -3268,7 +3274,8 @@ gigabytes. And **the last-30%-dedup is free**: content addressing collapses
 22,878 attachment parts to 13,099 distinct ones, provided the id is taken on the
 decoded payload rather than on its base64.
 
-**The database's own weight, measured the same way** (`dbstat`, on a store with
+**The database's own weight, measured the same way** (`dbstat` then — this
+engine has none, and size is weighed as a file delta now — on a store with
 81,744 messages and only 902 bodies fetched, so this is very close to a pure
 metadata cost): 163 MB total, of which `recipients` and its four indexes are
 **56 MB — 34%, larger than `messages` itself** (378,819 rows at 4.6 per message,
@@ -3366,7 +3373,7 @@ its own file under `docs/notes/`, named by date and title; a new entry is a
 new file plus one line here. `scripts/checks/check-notes-index.py` refuses a
 note that is not listed, and a listing that names no file.
 
-- [What the engine swap could not keep](notes/2026-09-13-what-the-engine-swap-could-not-keep.md) — the eight things Turso could not carry over from SQLCipher and FTS5, each with the test that pins it (2026-09-13).
+- [What the engine swap could not keep](notes/2026-09-13-what-the-engine-swap-could-not-keep.md) — what Turso could not carry over from SQLCipher and FTS5: eight things, each with the test that pins it, and five smaller ones found reconciling the docs (2026-09-13).
 - [A slow sync pass stops every folder behind it](notes/2026-09-13-a-slow-pass-stops-every-folder-behind-it.md) — fifteen folders queued, two started, one finished; the time was inside tantivy, and the obvious wave fix breaks the job guarantee.
 - [A condvar in a runtime, and a future nobody awaits](notes/2026-09-12-a-condvar-in-a-runtime-and-a-future-nobody-awaits.md) — the write gate deadlocked a runtime, `let x = f();` drops a future the compiler cannot see, and `busy_timeout` defaulted to zero (2026-09-12).
 - [A score that is zero and says nothing](notes/2026-09-12-a-score-that-is-zero-and-says-nothing.md) — `fts_score` answers `0.0` for any arithmetic around it, and for a term bound as a different parameter than the match's; the rows are right and only the ranking is gone (2026-09-12).
@@ -3384,7 +3391,6 @@ note that is not listed, and a listing that names no file.
 - 2026-09-01 — [mold looked like a memory win over lld and was not, once measured correctly (2026-09-01)](notes/2026-09-01-mold-looked-like-a-memory-win-over-lld-and-was-not-once-meas.md)
 - 2026-08-28 — [An event with no consumer is a feature that does not exist (2026-08-28, #396)](notes/2026-08-28-an-event-with-no-consumer-is-a-feature-that-does-not-exist.md)
 - 2026-08-25 — [A nested subquery comparand costs the index key — and `count(*)` hides it (#746)](notes/2026-08-25-a-nested-subquery-comparand-costs-the-index-key-and-count-hi.md)
-- 2026-09-01 — [An intermittent SQLCipher `PRAGMA key` failure that would not reproduce on demand (2026-09-01, #710/#699)](notes/2026-09-01-an-intermittent-sqlcipher-pragma-key-failure-that-would-not.md)
 - 2026-09-02 — [Green meant "the things I named" (2026-09-02, #419)](notes/2026-09-02-green-meant-the-things-i-named.md)
 - 2026-09-02 — [Wayland is the target, so X11 must not be the thing CI proves (2026-09-02, #830)](notes/2026-09-02-wayland-is-the-target-so-x11-must-not-be-the-thing-ci-proves.md)
 - 2026-09-02 — [Adding a crate is the edit the per-crate gate cannot describe (2026-09-02, #585)](notes/2026-09-02-adding-a-crate-is-the-edit-the-per-crate-gate-cannot-describ.md)
@@ -3399,20 +3405,16 @@ note that is not listed, and a listing that names no file.
 - 2026-09-03 — [`debug = "line-tables-only"` was still most of the binary (2026-09-03)](notes/2026-09-03-debug-line-tables-only-was-still-most-of-the-binary.md)
 - 2026-09-03 — [cargo-hakari cannot be adopted here, and the reason is the boundary check (2026-09-03)](notes/2026-09-03-cargo-hakari-cannot-be-adopted-here-and-the-reason-is-the-bo.md)
 - 2026-09-03 — [mold is wired in, for memory -- and `-fuse-ld` order is why it took three tries (2026-09-03)](notes/2026-09-03-mold-is-wired-in-for-memory-and-fuse-ld-order-is-why-it-took.md)
-- 2026-09-03 — [The vendored OpenSSL is perl, not C, and no compiler cache can help (2026-09-03)](notes/2026-09-03-the-vendored-openssl-is-perl-not-c-and-no-compiler-cache-can.md)
 - 2026-09-03 — [Four build-time tips that did not survive being measured (2026-09-03)](notes/2026-09-03-four-build-time-tips-that-did-not-survive-being-measured.md)
 - 2026-09-03 — [The compile cache was full, and had been for a long time (2026-09-03)](notes/2026-09-03-the-compile-cache-was-full-and-had-been-for-a-long-time.md)
 - 2026-09-03 — [The CI cache was the wrong shape, not cold (2026-09-03)](notes/2026-09-03-the-ci-cache-was-the-wrong-shape-not-cold.md)
 - 2026-09-04 — [`connect_action` cannot see `j` (2026-09-04, #288)](notes/2026-09-04-connect-action-cannot-see-j.md)
-- 2026-09-04 — [The page size has to be chosen before #300, and 8192 is the answer (2026-09-04, #381)](notes/2026-09-04-the-page-size-has-to-be-chosen-before-300-and-8192-is-the-an.md)
-- 2026-09-04 — [A pragma that writes must not be in the per-connection batch (2026-09-04, #381)](notes/2026-09-04-a-pragma-that-writes-must-not-be-in-the-per-connection-batch.md)
 - 2026-09-04 — [Append-only registries conflict every time, and never resolve by hunk (2026-09-04, #1000/#1048)](notes/2026-09-04-append-only-registries-conflict-every-time-and-never-resolve.md)
 - 2026-09-04 — [A `TempDir` returned last drops first (2026-09-04, #724)](notes/2026-09-04-a-tempdir-returned-last-drops-first.md)
 - 2026-09-04 — [`Window::reader()` is not the reader on screen (2026-09-04, #1030)](notes/2026-09-04-window-reader-is-not-the-reader-on-screen.md)
 - 2026-09-04 — [Where the waiting went, and three things that were not what they seemed (2026-09-04, #1101/#1102/#1104)](notes/2026-09-04-where-the-waiting-went-and-three-things-that-were-not-what-t.md)
 - 2026-09-05 — [The gate that runs cannot see the platform that does not (2026-09-05, #656/#1146)](notes/2026-09-05-the-gate-that-runs-cannot-see-the-platform-that-does-not.md)
 - 2026-09-05 — [The last worktree path was inside an rlib, not on a command line (2026-09-05, #1106)](notes/2026-09-05-the-last-worktree-path-was-inside-an-rlib-not-on-a-command-l.md)
-- 2026-09-05 — [The SQLCipher key error does not mean what it says (2026-09-05, #710)](notes/2026-09-05-the-sqlcipher-key-error-does-not-mean-what-it-says.md)
 - 2026-09-05 — [A coredump names a worktree, and that work may never have landed (2026-09-05, #1015)](notes/2026-09-05-a-coredump-names-a-worktree-and-that-work-may-never-have-la.md)
 - 2026-09-05 — [A warm `-shm` hides the whole cost of a write-ahead log (2026-09-05, #1175)](notes/2026-09-05-a-warm-shm-hides-the-whole-cost-of-a-write-ahead-log.md)
 

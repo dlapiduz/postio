@@ -2159,10 +2159,7 @@ async fn a_send_whose_operation_is_gone_stops_claiming_to_be_on_its_way() {
 
     // And it is idempotent, because it runs on every drain pass.
     assert_eq!(
-        drafts
-            .fail_orphaned_sends(account.id)
-            .await
-            .expect("again"),
+        drafts.fail_orphaned_sends(account.id).await.expect("again"),
         0,
         "a second pass found something to do, so it would churn for ever"
     );

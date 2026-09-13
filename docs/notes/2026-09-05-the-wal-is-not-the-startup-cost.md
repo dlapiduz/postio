@@ -1,5 +1,9 @@
 # The WAL is not the startup cost, and measuring it took ten minutes (2026-09-05, #1175)
 
+Measured against the SQLCipher store ADR 0038 replaced, so every figure
+below is the old engine's. The method — measure a reflinked copy before
+believing an inference — is the part to keep.
+
 The maintainer reported a five-second first run against a live install whose
 store looked alarming: an 868 MB database with a **676 MB write-ahead log**
 beside it, and no `wal_autocheckpoint` or `journal_size_limit` anywhere in

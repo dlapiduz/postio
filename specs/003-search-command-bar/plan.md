@@ -46,6 +46,8 @@ introduced by this feature
 **Storage**: SQLite via `postio-storage`. This feature performs no new query:
 role resolution reads the mailbox list the feed already holds in memory
 
+> Engine changed after this landed: see `specs/004-turso-store`.
+
 **Testing**: `cargo test --lib` for units; `cargo nextest run` for integration
 suites — `core_suite` (registry and generated docs), `gtk_suite` (the bar),
 `app_suite` (the composition root, which is what proves a key reaches a folder)

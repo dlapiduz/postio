@@ -84,7 +84,8 @@ folder in the application reads through.
 **Alternative rejected: compute the split in the repository above SQL.** It
 breaks cursor paging — a page of 50 that then drops rows is not a page of 50 —
 and `ListQuery`'s cursor is a row value over `(received_at, id)` precisely so
-SQLite can seek rather than filter.
+SQLite can seek rather than filter. (Not how the current engine reads it:
+`docs/notes/2026-09-12-a-row-value-cursor-is-a-filter-not-a-seek.md`.)
 
 **Counts.** The Drafts total and the Outbox count come from one query per
 account, run where the sidebar's data is assembled, rather than from a fifth

@@ -14,7 +14,7 @@
 //! ```
 //!
 //! **Point it at a copy, or at a store nothing is using.** This engine has no
-//! read-only open (ADR 0037), so "read-only" here is a promise this file
+//! read-only open (ADR 0038), so "read-only" here is a promise this file
 //! keeps rather than one the engine enforces: it issues `SELECT` and `PRAGMA`
 //! and nothing else.
 //!
@@ -69,7 +69,7 @@ async fn main() {
     println!("threads         {threads:>12}");
     println!("header rows     {headers:>12}");
     println!("queued ops      {queued:>12}");
-    // Where the bytes are. `dbstat` is gone on this engine (ADR 0037), so
+    // Where the bytes are. `dbstat` is gone on this engine (ADR 0038), so
     // this is the *content* each table holds rather than the pages it
     // occupies -- it cannot see index or page overhead, and the difference
     // between these sums and the file is exactly that overhead.
@@ -119,7 +119,7 @@ async fn main() {
         deep.elapsed().as_secs_f64() * 1000.0
     );
 
-    // The sixteen predicates ADR 0037 says were dropped, counted rather than
+    // The sixteen predicates ADR 0038 says were dropped, counted rather than
     // asserted: a partial index that lost its `WHERE` indexes every row
     // instead of the few that matched, and pays for it in pages.
     let indexes = count("SELECT count(*) FROM sqlite_master WHERE type = 'index'").await;

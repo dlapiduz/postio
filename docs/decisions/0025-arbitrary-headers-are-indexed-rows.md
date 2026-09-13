@@ -1,6 +1,6 @@
 # ADR 0025 — Arbitrary headers are stored on the row and indexed as rows, not as text
 
-- **Status:** Accepted (2026-09-03), **Q2's "metadata scale" and Q3's budget amended by [ADR 0027](0027-the-header-index-is-budgeted-per-message.md) (2026-09-04)**
+- **Status:** Accepted (2026-09-03), **Q2's "metadata scale" and Q3's budget amended by [ADR 0027](0027-the-header-index-is-budgeted-per-message.md) (2026-09-04)**. Two mechanics went with the engine ([ADR 0038](0038-the-store-is-turso-not-sqlcipher.md), 2026-09-13): the `dbstat` measurement is a file delta now, and the schema block's `WITHOUT ROWID` is gone — this engine puts it behind an experimental flag and will not build a secondary index on such a table, and `idx_message_headers_name` is one. The decision itself — headers as rows, indexed by name — stands as built (`postio-index/src/index.rs`).
 - **Date:** 2026-09-03
 - **Decision by:** a `/ux-architect` session, on the question
   [#884](https://github.com/dlapiduz/postio/issues/884) raised: `header:` has

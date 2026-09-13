@@ -269,15 +269,17 @@ to export.
 
 Startup < 500 ms, interaction < 16 ms, local search < 100 ms. Transitions
 ≤ 100 ms or absent; honor `prefers-reduced-motion`. Never load a whole
-mailbox into memory — the list is windowed over paged SQLite.
+mailbox into memory — the list is windowed over the paged store.
 
 **Gated as counts, not as timings.** `bench.yml` compiles the bench targets
 nightly and deliberately times nothing, because a shared runner cannot defend
 16 ms — so what gates a PR is the *cause* of each budget, counted:
-`postio_storage::test_support::counting` reads statements, rows and trigger
-firings off SQLite's trace hook, and those are the same numbers on any
-machine. When you touch a read path, that is the thing to add an assertion to;
-`docs/engineering-notes.md` has what the three counts can and cannot see.
+`postio_storage::test_support::counting` counts statements and rows at the
+crate's own `sql` seam (this engine has no trace hook), `counting::scans` asks
+the planner which steps are full table scans, and those are the same numbers
+on any machine. When you touch a read path, that is the thing to add an
+assertion to; `docs/engineering-notes.md` has what the counts can and cannot
+see.
 
 ## Invariants the checks enforce
 
@@ -286,12 +288,13 @@ machine. When you touch a read path, that is the thing to add an assertion to;
 one line each (the why is `docs/ARCHITECTURE.md` and the ADRs):
 
 - `postio-core`, `postio-session`: no GTK. `postio-gtk`: no SQL, no protocol.
-- `postio-search`, `postio-body`: pure leaves — no rusqlite, no gtk4.
-- `postio-model`: no ammonia/html5ever, rusqlite, gtk4, or tokio — the whole
-  workspace waits on it to compile.
-- `postio-config`: no rusqlite, no gtk4.
+- `postio-search`, `postio-body`: pure leaves — no database engine (turso;
+  rusqlite stays banned so the rule survives a rename), no gtk4.
+- `postio-model`: no ammonia/html5ever, database engine, gtk4, or tokio — the
+  whole workspace waits on it to compile.
+- `postio-config`: no database engine, no gtk4.
 - `postio-sync` talks to the `MailBackend` trait, never `io-imap` types.
-- Every mutating action is local-first: SQLite write, enqueue, emit, repaint.
+- Every mutating action is local-first: store write, enqueue, emit, repaint.
   **The UI never awaits the network.**
 - Providers are data, not code: server settings live in the preset table,
   never as named constants or special-cased branches. Postio is not built

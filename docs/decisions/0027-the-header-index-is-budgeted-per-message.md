@@ -1,6 +1,12 @@
 # ADR 0027 — The header index is budgeted per message, not against the body index
 
-- **Status:** Accepted (2026-09-04)
+- **Status:** Accepted (2026-09-04). **Measurement amended** by
+  [ADR 0038](0038-the-store-is-turso-not-sqlcipher.md) (2026-09-13): this
+  engine has no `dbstat`, so the two b-trees are weighed as a file delta,
+  and the same policy on the same fixture measures **4,218 B** a message
+  (`index_suite/header_index_size.rs`). The 5 KiB ceiling stands. The
+  `page_size = 8192` headroom rationale below is spent — the page size is
+  the engine's to choose.
 - **Date:** 2026-09-04
 - **Decision by:** `/ux-architect`, on [#1041](https://github.com/dlapiduz/postio/issues/1041), which #926 raised when it built the index ADR 0025 specified and could not meet the budget ADR 0025 set for it.
 - **Issue:** [#1041](https://github.com/dlapiduz/postio/issues/1041)
@@ -57,7 +63,7 @@ So the cost is intrinsic. **Substring-matching arbitrary header values requires 
 
 ## Q2 — What the gate measures: bytes per message, table and index
 
-**Decision: `message_headers` plus `idx_message_headers_name`, in `dbstat` page bytes, divided by the number of messages, must stay under 5 KiB.**
+**Decision: `message_headers` plus `idx_message_headers_name`, in `dbstat` page bytes *(ADR 0038: a file delta now; no `dbstat` on this engine)*, divided by the number of messages, must stay under 5 KiB.**
 
 Bytes per message is relative in the way that matters and absolute in the way that does not. It is invariant to the one quantity that differs between mailboxes — how many messages there are — and it is the number that multiplies straight into disk: a user with 80,000 messages can be told what `header:` costs them without anyone re-running anything. It is also, unlike the ratio, a number the two caps actually control.
 
@@ -65,7 +71,7 @@ It gives up portability across *corpora*: a personal mailbox on a small server c
 
 **Count the index too.** The measurement as landed asks `dbstat` for `name = 'message_headers' OR name LIKE 'message\_headers\_%'` — a pattern written for FTS5's shadow tables, which `idx_message_headers_name` does not match. The index is 221 KB against the table's 1.30 MB on 400 messages: **the cost was being understated by 17%**, and a secondary index is part of what a policy costs. Both b-trees by name, and any future one with them.
 
-**The ceiling is 5 KiB and the headroom is deliberate.** Measured on the committed fixture, 400 messages: table 1,302,528 B, index 221,184 B, **3,809 B per message**. 5 KiB is about a third above that — enough to absorb ADR 0017's move to `page_size = 8192`, a b-tree fanout change, or a SQLite upgrade, and far too little to absorb a policy change.
+**The ceiling is 5 KiB and the headroom is deliberate.** Measured on the committed fixture, 400 messages: table 1,302,528 B, index 221,184 B, **3,809 B per message**. 5 KiB is about a third above that — enough to absorb ADR 0017's move to `page_size = 8192`, a b-tree fanout change, or a SQLite upgrade, and far too little to absorb a policy change. *(ADR 0038: 4,218 B on this engine, so the headroom is about a fifth, and the `page_size` move can no longer be made — the rationale it was reserved for is spent.)*
 
 **What each of the three tests catches, since one number cannot catch everything:**
 

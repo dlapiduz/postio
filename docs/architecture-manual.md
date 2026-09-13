@@ -289,11 +289,12 @@ types and the logic that belongs to them:
 **The engine layer** — "the database half": everything that talks to a
 server or to disk:
 
-- **`postio-storage`** — the SQLite schema, database migrations, and a
+- **`postio-storage`** — the database schema, migrations, and a
   separate content-addressed store for raw message bytes and attachments
   (the "blob store"). This is where Part Five and Part Six's stories live.
-- **`postio-index`** — the full-text search index (built on a SQLite feature
-  called FTS5) and the code that actually executes a parsed query against
+- **`postio-index`** — the full-text search index (the engine's `fts` index
+  method, over a flattened `search_documents` table and the folded body
+  column) and the code that actually executes a parsed query against
   it.
 - **`postio-account`**, **`postio-jmap`**, **`postio-gmail`** — three different
   implementations of talking to a mail server, one per protocol (the
@@ -405,10 +406,14 @@ readers. That single sentence is the seed of everything that follows.
 Once Postio was actually syncing real mailboxes, an odd, specific complaint
 showed up: **archiving a single message took 1.8 seconds.** Not "syncing is
 slow" — one keystroke, on one row, taking almost two full seconds to
-register. And it wasn't the connection pool: Postio keeps a small pool of
-database connections so multiple parts of the program can talk to SQLite
-concurrently, and measurement showed the pool handed out a connection in two
-*microseconds*. The pool was never waiting for anything.
+register. And it wasn't connection handling: at the time Postio kept a small
+hand-written pool of database connections, and measurement showed it handed
+out a connection in two *microseconds* — connections were never what anything
+was waiting for. (That pool is gone entirely now: the current engine manages
+its own connections internally behind a cheap connect-per-use call, so
+`postio-storage` no longer keeps one. Nothing else about this story changes,
+because the contended thing was never the connections — it was the database's
+single write lock.)
 
 The actual mechanism: during a first sync, the background sync engine is
 committing batches of newly-downloaded messages back-to-back, with almost no
@@ -496,7 +501,9 @@ WAL and the encryption work covered in Part Six — collide directly, and it's
 the best illustration in the whole project of a lesson worth stating plainly:
 **a change can be entirely correct in isolation and still expose a bug that
 was sitting there all along, waiting for exactly this combination of
-conditions to occur.**
+conditions to occur.** The encrypting engine in this act, SQLCipher, has
+since been replaced (Part Six tells that story); the lesson is about threads
+and `exit()`, and it outlives the engine.
 
 Once Postio's database was switched over to SQLCipher — meaning every page
 of the database is now encrypted and decrypted through a cryptography
@@ -551,22 +558,22 @@ under "performance tuning, adjust if a benchmark trips" was actually a
 **correctness** setting for this specific, concurrent application, and
 turning it off permanently, before it ever got the chance to be tuned.
 
-One more small, sharp detail from the same stretch of work, because it's a
-nice example of a failure that reports itself as the wrong problem entirely:
-SQLCipher's `PRAGMA key` — the statement that actually tells the database
-what encryption key to use — **cannot fail on its own.** It will silently
-accept *any* key at all, correct or not, and the wrong key only reveals
-itself later, elsewhere, the first time SQLite actually tries to read a page
-and finds garbage where a database page should be — surfacing as the generic
-SQLite error "file is not a database." That error message, reaching an
-actual person's screen, tells them their mail is *corrupted*, when in fact it
-is perfectly intact and simply locked behind the wrong key. The fix was to
-deliberately force the failure to happen early and honestly: immediately
-after issuing `PRAGMA key`, the code now reads one page on purpose, purely
-to force SQLite to prove the key actually works before the rest of the
-program can proceed, and translates a decrypt failure at that specific,
-controlled moment into an explicit "wrong key" error rather than letting a
-wrong key surface, unpredictably, as an apparently corrupted mailbox.
+One more small, sharp detail, because it's a nice example of a failure that
+reports itself as the wrong problem entirely: a database opened with the
+wrong encryption key does not say so. The engine decrypts the first page to
+find out whether the file is a database at all, so a wrong key and a
+genuinely damaged file arrive as the same error — a decryption failure, or,
+for a file this build was never able to read, an "invalid page size"
+complaint that is really ciphertext being misread as a file header. That
+error, reaching an actual person's screen, tells them their mail is
+*corrupted*, when in fact it is perfectly intact and simply locked behind
+the wrong key. Postio can tell apart what the engine cannot: it writes
+exactly one key per store and takes it from the keyring, so a store that
+will not open is the key (a keyring entry replaced, or belonging to another
+installation), essentially never a rotted disk — and `postio-storage`
+translates those specific error spellings into an explicit "wrong key" error
+that also says the mail is intact, rather than letting the generic wording
+stand.
 
 ### What this saga adds up to
 
@@ -588,9 +595,9 @@ the stack — not by guessing.
 
 ---
 
-## Part Six: Encrypting a mailbox — SQLCipher and what it costs
+## Part Six: Encrypting a mailbox, and what it costs
 
-### The decision: SQLCipher, not filesystem encryption
+### The decision: encrypt in the application, not the filesystem
 
 Postio's stance is that relying on the operating system's own disk
 encryption isn't enough — a mail client that promises privacy should encrypt
@@ -600,14 +607,24 @@ wandering somewhere the user didn't intend. That decision — encrypt at rest,
 in the application itself — was made deliberately by the maintainer as an
 architecture decision (documented, with its full reasoning, as ADR 0014).
 
-The database engine underneath Postio's SQLite usage is **SQLCipher**, a
-well-established fork of SQLite that adds transparent encryption *below*
-SQLite's own machinery — meaning every individual page of the database file
-is encrypted, but everything built on top (the full-text search index, WAL
-itself, every existing database query) keeps working completely unchanged,
-because as far as SQLite's own code is concerned, nothing about how pages are
-read or written has changed at all. The alternative approaches considered and
-rejected are worth naming, because each rejection teaches something: relying
+The database engine underneath is **Turso**, a from-scratch Rust rewrite of
+SQLite whose page-level encryption belongs to the engine itself: opening the
+store (`Store::open`) hands the engine a key derived from the mailbox's
+master key, and every individual page of the database file is encrypted with
+AES-256-GCM — an authenticated cipher — *below* the SQL machinery, so
+everything built on top (the full-text index, the write-ahead log, every
+existing query) works unchanged. Postio first shipped this feature on
+SQLCipher, an encrypting fork of SQLite; the engine was swapped later
+(ADR 0038), for reasons measured rather than assumed — nearly half the CPU
+cost of reading a real mailbox turned out to be SQLCipher's per-page
+integrity check, done in software beside the cipher where GCM authenticates
+as part of it, and building SQLCipher meant compiling OpenSSL from source in
+every fresh checkout. The swap kept the threat model and the key design
+below fully intact, and gave up one convenience deliberately: this engine
+has no read-only way to open a store, so the diagnostic tools that used to
+open the live database read-only now insist on being pointed at a copy. The
+alternative approaches considered and rejected are worth naming, because
+each rejection teaches something: relying
 on the Linux filesystem feature `fscrypt` was rejected because the actual
 development machine's filesystem (btrfs) doesn't even support it, which would
 have made "Postio encrypts your mail" true only on some filesystems by
@@ -727,17 +744,6 @@ guess in this project's own history turned out wrong once someone measured:
   measurements can never prove a trend has leveled off — it took a third
   data point, at a much larger mailbox size, to actually confirm that a
   rising number had stopped rising rather than merely paused.
-- Getting the encryption library itself to build turned out to be more
-  expensive than the architecture decision anticipated. The chosen build
-  configuration compiles its own copy of OpenSSL from source as part of
-  building Postio, for reproducibility — but OpenSSL's own build process is
-  a Perl program, and the Linux distribution used for development splits
-  Perl's standard library across many small packages, several of which
-  aren't installed by default. The actual list of missing pieces was
-  discovered the hard way, one cryptic "can't locate this module" build
-  failure at a time, and had to be worked out by directly reading which
-  Perl modules OpenSSL's own build script imports — because no single
-  package metadata anywhere listed them all together.
 
 ---
 
@@ -782,7 +788,7 @@ anyone's memory of a conversation that happened once.
 The thread running through all of this: nearly every distinctive thing about
 how Postio is built — eighteen crates instead of one, commands flowing one
 direction and events flowing back the other, write-ahead logging, an
-application-level write queue in front of SQLite, encryption keys derived
+application-level write queue in front of the store, encryption keys derived
 three separate ways from one master key — is not decoration. Each one is a
 direct, traceable answer to a specific problem that was measured, not
 assumed: a UI that must never freeze waiting on a network it doesn't

@@ -1,4 +1,4 @@
-//! Query execution: combining structured filters with the FTS5 index,
+//! Query execution: combining structured filters with the full-text index,
 //! ranking the results, and cutting snippets out of the match.
 //!
 //! [`search`] is the one entry point. It takes a [`ParsedQuery`] (see
@@ -9,7 +9,7 @@
 //!
 //! # Ranking
 //!
-//! FTS5's `bm25()` scores relevance alone, and lower is better. That is not
+//! The index's `fts_score` ranks relevance alone. That is not
 //! the whole story a mail search wants: a five-year-old message that happens
 //! to say "invoice" once should not usually outrank one from yesterday, and
 //! a sender the user emails constantly deserves a nudge. [`rank_score`] folds
