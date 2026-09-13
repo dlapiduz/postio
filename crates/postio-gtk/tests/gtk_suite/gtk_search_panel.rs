@@ -390,6 +390,12 @@ pub fn a_search_that_found_nothing_offers_the_word_that_was_meant() {
         "the term alone on the face: this column is 212px wide, and the count \
          rides in the description exactly as a refine chip's hits do"
     );
+    assert_eq!(
+        button.halign(),
+        gtk::Align::Start,
+        "the offer hugs its text like a refine chip; stretched to the column \
+         it reads as a slab beside pills"
+    );
     let spoken = button.tooltip_text().expect("the offer explains itself");
     assert!(
         spoken.contains("hannah") && spoken.contains("66"),

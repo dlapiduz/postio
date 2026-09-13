@@ -639,6 +639,12 @@ impl Panel {
                 }
             }
         ));
+        // Hugging its text, like a refine chip. Those sit in a `FlowBox`,
+        // which sizes a child to its content; this sits in a `Box`, which
+        // stretches one to the full 212px column -- so the offer came out as
+        // a full-width slab beside pills, which is the same complaint the
+        // wide label drew and a different cause.
+        button.set_halign(gtk::Align::Start);
         imp.suggestion.append(&button);
         imp.suggestion.set_visible(true);
     }
