@@ -51,7 +51,11 @@ async fn seeing_the_same_address_twice_is_one_contact_seen_twice() {
         "addresses compare case-insensitively, so this is one correspondent"
     );
 
-    let stored = contacts.get(first).await.expect("get").expect("the contact");
+    let stored = contacts
+        .get(first)
+        .await
+        .expect("get")
+        .expect("the contact");
     assert_eq!(stored.times_seen, 2);
     assert_eq!(stored.last_seen_at, Some(at(1)));
     assert_eq!(
@@ -59,7 +63,10 @@ async fn seeing_the_same_address_twice_is_one_contact_seen_twice() {
         "the most recently seen spelling is what we show"
     );
     assert_eq!(stored.address.name.as_deref(), Some("Ada"));
-    assert_eq!(contacts.list(Some(account.id)).await.expect("list").len(), 1);
+    assert_eq!(
+        contacts.list(Some(account.id)).await.expect("list").len(),
+        1
+    );
 }
 
 #[tokio::test]
@@ -114,7 +121,11 @@ async fn a_contact_in_one_account_is_not_a_contact_in_another() {
     assert_ne!(one, other, "accounts keep their own address books");
     assert_eq!(contacts.list(Some(first.id)).await.expect("list").len(), 1);
     assert_eq!(
-        contacts.list(Some(second_account.id)).await.expect("list").len(),
+        contacts
+            .list(Some(second_account.id))
+            .await
+            .expect("list")
+            .len(),
         1
     );
 }
@@ -220,7 +231,8 @@ async fn frequency_decides_between_addresses_used_equally_recently() {
         "ada@example.com",
         1,
         0,
-    ).await;
+    )
+    .await;
     seen(
         &contacts,
         account.id,
@@ -228,7 +240,8 @@ async fn frequency_decides_between_addresses_used_equally_recently() {
         "adam@example.com",
         9,
         0,
-    ).await;
+    )
+    .await;
     seen(
         &contacts,
         account.id,
@@ -236,7 +249,8 @@ async fn frequency_decides_between_addresses_used_equally_recently() {
         "adele@example.com",
         4,
         0,
-    ).await;
+    )
+    .await;
     seen(
         &contacts,
         account.id,
@@ -244,9 +258,13 @@ async fn frequency_decides_between_addresses_used_equally_recently() {
         "quinn@example.net",
         20,
         0,
-    ).await;
+    )
+    .await;
 
-    let matches = contacts.search(Some(account.id), "ad", 10).await.expect("search");
+    let matches = contacts
+        .search(Some(account.id), "ad", 10)
+        .await
+        .expect("search");
 
     let addresses: Vec<&str> = matches
         .iter()
@@ -274,7 +292,8 @@ async fn a_tie_on_frequency_is_broken_by_recency() {
         "ada.one@example.com",
         3,
         0,
-    ).await;
+    )
+    .await;
     seen(
         &contacts,
         account.id,
@@ -282,7 +301,8 @@ async fn a_tie_on_frequency_is_broken_by_recency() {
         "ada.two@example.com",
         3,
         30,
-    ).await;
+    )
+    .await;
 
     let matches = contacts
         .search(Some(account.id), "ada", 10)
@@ -320,7 +340,8 @@ async fn the_address_used_most_recently_comes_before_the_one_used_most_often() {
         "announce@example.net",
         400,
         0,
-    ).await;
+    )
+    .await;
     // Written to exactly once, today.
     seen(
         &contacts,
@@ -329,9 +350,13 @@ async fn the_address_used_most_recently_comes_before_the_one_used_most_often() {
         "anna@example.org",
         1,
         30,
-    ).await;
+    )
+    .await;
 
-    let matches = contacts.search(Some(account.id), "an", 10).await.expect("search");
+    let matches = contacts
+        .search(Some(account.id), "an", 10)
+        .await
+        .expect("search");
     let addresses: Vec<&str> = matches
         .iter()
         .map(|contact| contact.address.address.as_str())
@@ -358,7 +383,8 @@ async fn autocomplete_matches_the_display_name_as_well_as_the_address() {
         "q.abara@example.net",
         2,
         0,
-    ).await;
+    )
+    .await;
 
     assert_eq!(
         contacts
@@ -401,7 +427,8 @@ async fn a_user_set_name_overrides_what_the_headers_carried() {
         "ada@example.com",
         1,
         0,
-    ).await;
+    )
+    .await;
     contacts.set_name(id, Some("Ada")).await.expect("rename");
 
     let stored = contacts.get(id).await.expect("get").expect("the contact");
@@ -521,7 +548,8 @@ async fn creating_a_contact_that_was_already_a_mail_sighting_promotes_the_same_r
         "katherine@example.com",
         40,
         0,
-    ).await;
+    )
+    .await;
 
     let created = contacts
         .create(
@@ -533,7 +561,11 @@ async fn creating_a_contact_that_was_already_a_mail_sighting_promotes_the_same_r
         .expect("create");
 
     assert_eq!(created, sighted, "one row, not a duplicate");
-    let stored = contacts.get(sighted).await.expect("get").expect("the contact");
+    let stored = contacts
+        .get(sighted)
+        .await
+        .expect("get")
+        .expect("the contact");
     assert_eq!(stored.source, ContactSource::User);
     assert_eq!(stored.name.as_deref(), Some("Katherine Johnson"));
     assert_eq!(
@@ -556,14 +588,27 @@ async fn setting_a_name_on_a_mail_sourced_contact_promotes_it_to_user() {
 
     let id = seen(&contacts, account.id, "Ada", "ada@example.com", 1, 0).await;
     assert_eq!(
-        contacts.get(id).await.expect("get").expect("contact").source,
+        contacts
+            .get(id)
+            .await
+            .expect("get")
+            .expect("contact")
+            .source,
         ContactSource::Mail
     );
 
-    contacts.set_name(id, Some("Ada Norwood")).await.expect("rename");
+    contacts
+        .set_name(id, Some("Ada Norwood"))
+        .await
+        .expect("rename");
 
     assert_eq!(
-        contacts.get(id).await.expect("get").expect("contact").source,
+        contacts
+            .get(id)
+            .await
+            .expect("get")
+            .expect("contact")
+            .source,
         ContactSource::User,
         "a deliberate edit is the promotion ADR 0007 Q1 describes"
     );
@@ -592,7 +637,11 @@ async fn deleting_a_mail_sourced_contact_suppresses_it_rather_than_removing_the_
         "suppression does not change provenance"
     );
     assert!(
-        contacts.list(Some(account.id)).await.expect("list").is_empty(),
+        contacts
+            .list(Some(account.id))
+            .await
+            .expect("list")
+            .is_empty(),
         "a suppressed contact drops out of the contact list"
     );
 }
@@ -639,7 +688,10 @@ async fn a_deleted_mail_contact_does_not_come_back_on_the_next_sighting() {
 
     let mut second = Message::new(account.id, inbox, at(1));
     second.from = vec![address(Some("Ada"), "ada@example.com")];
-    contacts.record_message(&second).await.expect("record again");
+    contacts
+        .record_message(&second)
+        .await
+        .expect("record again");
 
     assert!(
         contacts
@@ -649,7 +701,11 @@ async fn a_deleted_mail_contact_does_not_come_back_on_the_next_sighting() {
             .is_empty(),
         "a deleted mail contact must not come back from a later sighting"
     );
-    let stored = contacts.get(id).await.expect("get").expect("the row survives");
+    let stored = contacts
+        .get(id)
+        .await
+        .expect("get")
+        .expect("the row survives");
     assert_eq!(
         stored.times_seen, 2,
         "sightings keep counting even while suppressed"
@@ -667,7 +723,10 @@ async fn searching_an_empty_prefix_returns_the_most_familiar_correspondents() {
     seen(&contacts, account.id, "Ada", "ada@example.com", 2, 0).await;
     seen(&contacts, account.id, "Quinn", "quinn@example.net", 5, 0).await;
 
-    let matches = contacts.search(Some(account.id), "", 1).await.expect("search");
+    let matches = contacts
+        .search(Some(account.id), "", 1)
+        .await
+        .expect("search");
 
     assert_eq!(matches.len(), 1, "the limit is respected");
     assert_eq!(matches[0].address.address, "quinn@example.net");
@@ -694,7 +753,8 @@ async fn a_user_contact_with_no_sightings_outranks_a_frequent_mail_sighting() {
         "announce@example.net",
         400,
         0,
-    ).await;
+    )
+    .await;
     contacts
         .create(
             Some(account.id),
@@ -704,7 +764,10 @@ async fn a_user_contact_with_no_sightings_outranks_a_frequent_mail_sighting() {
         .await
         .expect("create");
 
-    let matches = contacts.search(Some(account.id), "a", 10).await.expect("search");
+    let matches = contacts
+        .search(Some(account.id), "a", 10)
+        .await
+        .expect("search");
     let addresses: Vec<&str> = matches
         .iter()
         .map(|contact| contact.address.address.as_str())
@@ -733,11 +796,18 @@ async fn promoting_a_mail_sighting_moves_it_into_the_upper_band() {
         "announce@example.net",
         400,
         0,
-    ).await;
+    )
+    .await;
     let id = seen(&contacts, account.id, "Ada", "ada@example.com", 1, 0).await;
-    contacts.set_name(id, Some("Ada Norwood")).await.expect("rename");
+    contacts
+        .set_name(id, Some("Ada Norwood"))
+        .await
+        .expect("rename");
 
-    let matches = contacts.search(Some(account.id), "a", 10).await.expect("search");
+    let matches = contacts
+        .search(Some(account.id), "a", 10)
+        .await
+        .expect("search");
     assert_eq!(
         matches[0].address.address, "ada@example.com",
         "promotion moves the band, not just the name"
@@ -795,7 +865,10 @@ async fn a_suppressed_contact_is_absent_from_both_bands() {
     let contacts = ContactRepository::new(&connection);
 
     let id = seen(&contacts, account.id, "Ada", "ada@example.com", 1, 0).await;
-    contacts.delete(id).await.expect("suppress the mail contact");
+    contacts
+        .delete(id)
+        .await
+        .expect("suppress the mail contact");
 
     assert!(
         contacts

@@ -9,9 +9,9 @@
 //! shapes*, not only about outcomes: a version of this that enumerated the
 //! rows first would pass every outcome assertion and still be the bug.
 
-use postio_storage::sql::bind;
 use chrono::{DateTime, TimeZone, Utc};
 use postio_storage::Connection;
+use postio_storage::sql::bind;
 
 use postio_model::{
     Account, MailboxId, MessageId, Operation, OperationRange, OperationState, OperationTarget,
@@ -32,24 +32,28 @@ async fn fill(connection: &Connection, mailbox: MailboxId, count: usize) -> Vec<
     // closure cannot.
     let mut collected = Vec::new();
     for index in 0..count {
-            connection
-                .execute(
-                    "INSERT INTO messages (account_id, mailbox_id, received_at)
+        connection
+            .execute(
+                "INSERT INTO messages (account_id, mailbox_id, received_at)
                      SELECT account_id, id, ?2 FROM mailboxes WHERE id = ?1",
-                    [mailbox.get(), index as i64],
-                )
-                .await
-                .expect("insert a message");
+                [mailbox.get(), index as i64],
+            )
+            .await
+            .expect("insert a message");
         collected.push(MessageId::new(connection.last_insert_rowid()));
     }
     collected
 }
 
 async fn mailbox_of(connection: &Connection, message: MessageId) -> MailboxId {
-    postio_storage::sql::one(&*connection, 
-            "SELECT mailbox_id FROM messages WHERE id = ?1",bind![message.get()],
-            |row| postio_storage::sql::RowExt::col::<i64>(row, 0).map(MailboxId::new)).await
-        .expect("the message is still there")
+    postio_storage::sql::one(
+        &*connection,
+        "SELECT mailbox_id FROM messages WHERE id = ?1",
+        bind![message.get()],
+        |row| postio_storage::sql::RowExt::col::<i64>(row, 0).map(MailboxId::new),
+    )
+    .await
+    .expect("the message is still there")
 }
 
 async fn queued(connection: &Connection, account: &Account) -> Vec<QueuedOperation> {
@@ -67,7 +71,9 @@ struct World {
 
 async fn world(connection: &Connection) -> World {
     let (account, inbox) = test_support::account_with_inbox(connection).await;
-    let archive = test_support::mailbox(connection, &account, "Archive").await.id;
+    let archive = test_support::mailbox(connection, &account, "Archive")
+        .await
+        .id;
     World {
         account,
         inbox,
@@ -147,14 +153,14 @@ async fn fill_thread(
     let thread = connection.last_insert_rowid();
     let mut messages = Vec::new();
     for index in 0..count {
-            connection
-                .execute(
-                    "INSERT INTO messages (account_id, mailbox_id, received_at, thread_id)
+        connection
+            .execute(
+                "INSERT INTO messages (account_id, mailbox_id, received_at, thread_id)
                      SELECT account_id, id, ?2, ?3 FROM mailboxes WHERE id = ?1",
-                    [mailbox.get(), index as i64, thread],
-                )
-                .await
-                .expect("insert a message");
+                [mailbox.get(), index as i64, thread],
+            )
+            .await
+            .expect("insert a message");
         messages.push(MessageId::new(connection.last_insert_rowid()));
     }
     (thread, messages)
@@ -282,9 +288,20 @@ async fn a_bulk_move_clears_the_server_identity_the_way_a_single_one_does() {
         .await
         .expect("a bulk move");
 
-    let (uid, validity, mod_seq): (Option<i64>, Option<i64>, Option<i64>) = postio_storage::sql::one(&*connection, 
-            "SELECT uid, uid_validity, mod_seq FROM messages WHERE id = ?1",bind![messages[0].get()],
-            |row| Ok((postio_storage::sql::RowExt::col(row, 0)?, postio_storage::sql::RowExt::col(row, 1)?, postio_storage::sql::RowExt::col(row, 2)?))).await
+    let (uid, validity, mod_seq): (Option<i64>, Option<i64>, Option<i64>) =
+        postio_storage::sql::one(
+            &*connection,
+            "SELECT uid, uid_validity, mod_seq FROM messages WHERE id = ?1",
+            bind![messages[0].get()],
+            |row| {
+                Ok((
+                    postio_storage::sql::RowExt::col(row, 0)?,
+                    postio_storage::sql::RowExt::col(row, 1)?,
+                    postio_storage::sql::RowExt::col(row, 2)?,
+                ))
+            },
+        )
+        .await
         .expect("a read");
     assert_eq!((uid, validity, mod_seq), (None, None, None));
 }
@@ -561,17 +578,25 @@ async fn an_empty_run_names_nothing() {
 
 /// The `flags` text a row is holding, straight out of the column.
 async fn flag_text(connection: &Connection, message: MessageId) -> String {
-    postio_storage::sql::one(&*connection, 
-            "SELECT flags FROM messages WHERE id = ?1",bind![message.get()],
-            |row| postio_storage::sql::RowExt::col(row, 0)).await
-        .expect("the message is still there")
+    postio_storage::sql::one(
+        &*connection,
+        "SELECT flags FROM messages WHERE id = ?1",
+        bind![message.get()],
+        |row| postio_storage::sql::RowExt::col(row, 0),
+    )
+    .await
+    .expect("the message is still there")
 }
 
 async fn boolean(connection: &Connection, message: MessageId, column: &str) -> bool {
-    postio_storage::sql::one(&*connection, 
-            &format!("SELECT {column} FROM messages WHERE id = ?1"),bind![message.get()],
-            |row| postio_storage::sql::RowExt::col::<i64>(row, 0).map(|value| value != 0)).await
-        .expect("the message is still there")
+    postio_storage::sql::one(
+        &*connection,
+        &format!("SELECT {column} FROM messages WHERE id = ?1"),
+        bind![message.get()],
+        |row| postio_storage::sql::RowExt::col::<i64>(row, 0).map(|value| value != 0),
+    )
+    .await
+    .expect("the message is still there")
 }
 
 /// Puts `text` in the flags column and the booleans that shadow it, the way a
@@ -1019,8 +1044,12 @@ async fn second_world(connection: &Connection) -> World {
         .create(&mut account)
         .await
         .expect("create the second account");
-    let inbox = test_support::mailbox(connection, &account, "INBOX").await.id;
-    let archive = test_support::mailbox(connection, &account, "Archive").await.id;
+    let inbox = test_support::mailbox(connection, &account, "INBOX")
+        .await
+        .id;
+    let archive = test_support::mailbox(connection, &account, "Archive")
+        .await
+        .id;
     World {
         account,
         inbox,

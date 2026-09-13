@@ -3,18 +3,18 @@
 //! The bead's acceptance criterion is "draft upsert is idempotent under rapid
 //! autosave".
 
-use postio_storage::Connection;
 use chrono::{DateTime, TimeZone, Utc};
+use postio_storage::Connection;
 
 use postio_model::{
     Attachment, Draft, DraftId, DraftKind, DraftState, EmailAddress, Message, MessageBody,
     MessageId, Operation, OperationTarget, ThreadId,
 };
+use postio_storage::bind;
 use postio_storage::repository::{
     CancelSendOutcome, DraftRepository, MessageRepository, OperationQueueRepository,
 };
 use postio_storage::test_support;
-use postio_storage::bind;
 
 fn at(minutes: i64) -> DateTime<Utc> {
     Utc.with_ymd_and_hms(2026, 3, 1, 9, 0, 0).unwrap() + chrono::Duration::minutes(minutes)
@@ -83,10 +83,19 @@ async fn the_body_of_a_draft_is_stored_inline_and_not_in_the_blob_store() {
     draft.body.html = Some("<p>Half a sentence</p>".to_owned());
     let id = drafts.save(&mut draft).await.expect("save");
 
-    let (text, html): (Option<String>, Option<String>) = postio_storage::sql::one(&*connection, 
-            "SELECT body_text, body_html FROM drafts WHERE id = ?1",bind![id.get()],
-            |row| Ok((postio_storage::sql::RowExt::col(row, 0)?, postio_storage::sql::RowExt::col(row, 1)?))).await
-        .expect("read the raw row");
+    let (text, html): (Option<String>, Option<String>) = postio_storage::sql::one(
+        &*connection,
+        "SELECT body_text, body_html FROM drafts WHERE id = ?1",
+        bind![id.get()],
+        |row| {
+            Ok((
+                postio_storage::sql::RowExt::col(row, 0)?,
+                postio_storage::sql::RowExt::col(row, 1)?,
+            ))
+        },
+    )
+    .await
+    .expect("read the raw row");
 
     assert_eq!(text.as_deref(), Some("Half a sentence"));
     assert_eq!(html.as_deref(), Some("<p>Half a sentence</p>"));
@@ -292,7 +301,11 @@ async fn a_reply_draft_remembers_the_message_and_thread_it_belongs_to() {
     assert_eq!(stored.in_reply_to, Some(parent.id));
     assert_eq!(stored.thread_id, Some(ThreadId::new(1)));
     assert_eq!(
-        drafts.in_thread(ThreadId::new(1)).await.expect("in thread").len(),
+        drafts
+            .in_thread(ThreadId::new(1))
+            .await
+            .expect("in thread")
+            .len(),
         1,
         "the composer takes over the reading pane inside the thread"
     );
@@ -366,12 +379,24 @@ async fn enumerations_are_stored_with_the_spelling_the_model_documents() {
     let mut draft = a_draft(account.id);
     draft.kind = DraftKind::Forward;
     let id = drafts.save(&mut draft).await.expect("save");
-    drafts.set_state(id, DraftState::Failed).await.expect("fail it");
+    drafts
+        .set_state(id, DraftState::Failed)
+        .await
+        .expect("fail it");
 
-    let (kind, state): (String, String) = postio_storage::sql::one(&*connection, 
-            "SELECT kind, state FROM drafts WHERE id = ?1",bind![id.get()],
-            |row| Ok((postio_storage::sql::RowExt::col(row, 0)?, postio_storage::sql::RowExt::col(row, 1)?))).await
-        .expect("read the raw row");
+    let (kind, state): (String, String) = postio_storage::sql::one(
+        &*connection,
+        "SELECT kind, state FROM drafts WHERE id = ?1",
+        bind![id.get()],
+        |row| {
+            Ok((
+                postio_storage::sql::RowExt::col(row, 0)?,
+                postio_storage::sql::RowExt::col(row, 1)?,
+            ))
+        },
+    )
+    .await
+    .expect("read the raw row");
 
     assert_eq!(kind, DraftKind::Forward.as_str());
     assert_eq!(state, DraftState::Failed.as_str());
@@ -498,7 +523,11 @@ async fn discarding_a_draft_the_server_never_saw_queues_nothing() {
     drafts.save(&mut draft).await.expect("save");
 
     assert!(
-        drafts.discard(draft.id, at(1)).await.expect("discard").is_none(),
+        drafts
+            .discard(draft.id, at(1))
+            .await
+            .expect("discard")
+            .is_none(),
         "nothing was uploaded, so there is nothing to remove"
     );
     assert!(drafts.get(draft.id).await.expect("get").is_none());
@@ -897,7 +926,9 @@ async fn a_uid_that_matches_a_draft_in_a_different_folder_is_an_ordinary_message
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
     let (account, _drafts) = account_with_drafts(&connection).await;
-    let inbox = test_support::mailbox(&connection, &account, "INBOX").await.id;
+    let inbox = test_support::mailbox(&connection, &account, "INBOX")
+        .await
+        .id;
     uploaded(&connection, account.id, 7, 1).await;
 
     let mut batch = vec![fetched(account.id, inbox, 7, 1)];
@@ -972,7 +1003,9 @@ async fn a_message_row_that_beat_the_draft_to_its_uid_is_taken_back_out() {
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
     let (account, drafts) = account_with_drafts(&connection).await;
-    let elsewhere = test_support::mailbox(&connection, &account, "INBOX").await.id;
+    let elsewhere = test_support::mailbox(&connection, &account, "INBOX")
+        .await
+        .id;
     let mut first = vec![
         fetched(account.id, drafts, 7, 1),
         fetched(account.id, elsewhere, 7, 1),
@@ -1484,7 +1517,12 @@ async fn cancelling_a_send_already_being_submitted_says_it_is_in_flight() {
          worse than refusing"
     );
     assert_eq!(
-        drafts.get(draft.id).await.expect("get").expect("the draft").state,
+        drafts
+            .get(draft.id)
+            .await
+            .expect("get")
+            .expect("the draft")
+            .state,
         DraftState::Sending,
         "and it stays where it was",
     );
@@ -1516,7 +1554,12 @@ async fn moving_a_draft_back_to_editing_gives_the_reservation_back_too() {
          `save` is not the only way a draft becomes editable again"
     );
     assert_eq!(
-        drafts.get(draft.id).await.expect("get").expect("the draft").state,
+        drafts
+            .get(draft.id)
+            .await
+            .expect("get")
+            .expect("the draft")
+            .state,
         DraftState::Editing,
     );
 }
@@ -1582,7 +1625,11 @@ async fn saving_and_loading_a_draft_costs_a_fixed_number_of_statements() {
     })
     .await;
     let loading = postio_storage::test_support::counting::counted_async(|| async {
-        drafts.get(small.id).await.expect("get").expect("still here");
+        drafts
+            .get(small.id)
+            .await
+            .expect("get")
+            .expect("still here");
     })
     .await;
 
@@ -1624,7 +1671,11 @@ async fn saving_and_loading_a_draft_costs_a_fixed_number_of_statements() {
     })
     .await;
     let loading_large = postio_storage::test_support::counting::counted_async(|| async {
-        drafts.get(large.id).await.expect("get").expect("still here");
+        drafts
+            .get(large.id)
+            .await
+            .expect("get")
+            .expect("still here");
     })
     .await;
 
@@ -1695,7 +1746,11 @@ async fn a_failed_send_leaves_the_draft_editable_and_the_reason_where_it_can_be_
         .expect("the draft learns the send failed");
 
     // ── Still editable ───────────────────────────────────────────────────
-    let after = drafts.get(draft.id).await.expect("get").expect("still here");
+    let after = drafts
+        .get(draft.id)
+        .await
+        .expect("get")
+        .expect("still here");
     assert_eq!(after.state, DraftState::Failed);
     assert!(
         after.is_sendable(),
@@ -1775,13 +1830,17 @@ async fn a_failed_send_leaves_the_draft_editable_and_the_reason_where_it_can_be_
 
 /// What `messages.send_state` says for the row standing for `draft`.
 async fn mirrored_state(connection: &Connection, draft: DraftId) -> Option<String> {
-    postio_storage::sql::one(&*connection, 
-            "SELECT messages.send_state
+    postio_storage::sql::one(
+        &*connection,
+        "SELECT messages.send_state
                FROM messages
                JOIN drafts ON drafts.message_id = messages.id
-              WHERE drafts.id = ?1",bind![draft.get()],
-            |row| postio_storage::sql::RowExt::col::<Option<String>>(row, 0)).await
-        .expect("the draft has a mirror row")
+              WHERE drafts.id = ?1",
+        bind![draft.get()],
+        |row| postio_storage::sql::RowExt::col::<Option<String>>(row, 0),
+    )
+    .await
+    .expect("the draft has a mirror row")
 }
 
 #[tokio::test]
@@ -1876,11 +1935,15 @@ async fn every_draft_state_puts_the_row_in_exactly_one_of_the_two_lists() {
     let mut draft = a_draft(account.id);
     drafts.save(&mut draft).await.expect("save");
     // The mirror row #166 wrote, found the way the composer finds it.
-    let mirror: MessageId = postio_storage::sql::one(&*connection, 
-            "SELECT message_id FROM drafts WHERE id = ?1",bind![draft.id.get()],
-            |row| postio_storage::sql::RowExt::col::<i64>(row, 0)).await
-        .map(MessageId::new)
-        .expect("the draft has a mirror row");
+    let mirror: MessageId = postio_storage::sql::one(
+        &*connection,
+        "SELECT message_id FROM drafts WHERE id = ?1",
+        bind![draft.id.get()],
+        |row| postio_storage::sql::RowExt::col::<i64>(row, 0),
+    )
+    .await
+    .map(MessageId::new)
+    .expect("the draft has a mirror row");
 
     let listed = async |scope| {
         messages

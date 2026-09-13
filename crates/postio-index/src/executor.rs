@@ -31,11 +31,9 @@ use postio_search::facets::{Facets, Refinement, Scope, ScopeCount};
 use postio_search::query::{Filter, ParsedQuery, fts_literal};
 use postio_search::results::{SearchHit, SearchResults, TOTAL_HITS_CAP};
 
-
-use postio_storage::Connection;
-use postio_storage::sql::{self, RowExt as _, bind};
-use turso::Row;
 use crate::error::Result;
+use postio_storage::Connection;
+use postio_storage::sql::{self, RowExt as _};
 
 /// How many candidates `search` pulls out of SQL before re-ranking in Rust,
 /// as a multiple of the requested page size.
@@ -224,7 +222,9 @@ pub async fn search(
             .saturating_mul(RECENCY_POOL_MULTIPLIER)
             .max(RECENCY_POOL_MIN)
     };
-    let mut candidates = plan.fetch(connection, pool_size, rank_by_relevance, total_hits, now).await?;
+    let mut candidates = plan
+        .fetch(connection, pool_size, rank_by_relevance, total_hits, now)
+        .await?;
 
     match request.order {
         postio_search::ResultOrder::Relevance => {
@@ -424,13 +424,7 @@ async fn corpus_complete(connection: &Connection, request: &SearchRequest<'_>) -
         "SELECT NOT EXISTS (SELECT 1 FROM messages m WHERE {})",
         conditions.join(" AND ")
     );
-    let complete = sql::one(
-        connection,
-        &sql,
-        params.clone(),
-        |row| row.col(0),
-    )
-    .await?;
+    let complete = sql::one(connection, &sql, params.clone(), |row| row.col(0)).await?;
     Ok(complete)
 }
 
@@ -673,8 +667,7 @@ const HITS_JOIN: &str = "FROM (
 /// and `m.id IN (SELECT rowid ...)` builds an ephemeral b-tree of every
 /// posting. On a word in most of the mailbox either is ~120 ms of setup to
 /// answer a `LIMIT 50`.
-const CORRELATED_MATCH: &str =
-    "(EXISTS (SELECT 1 FROM search_documents d
+const CORRELATED_MATCH: &str = "(EXISTS (SELECT 1 FROM search_documents d
                WHERE d.message_id = m.id
                  AND fts_match(d.sender, d.recipients, d.subject, d.filenames, d.list_id, ?))
    OR EXISTS (SELECT 1 FROM messages b
@@ -712,7 +705,8 @@ impl Candidate {
             thread_id: self.thread_id,
             mailbox_id: self.mailbox_id,
             subject: self.subject,
-            from: self.from_address
+            from: self
+                .from_address
                 .map(|address| EmailAddress::new(self.from_name, address)),
             received_at: self.received_at,
             snippet: self.snippet,
@@ -917,7 +911,7 @@ impl Plan {
     /// list rather than pushed onto `params` in `build`, so that every caller
     /// composing a statement has to think about the order once, here, rather
     /// than each getting it right separately.
-    fn match_params(&self, form: Form) -> Vec<turso::Value> {
+    fn match_params(&self, _form: Form) -> Vec<turso::Value> {
         let Some(expr) = &self.match_param else {
             return Vec::new();
         };
@@ -926,9 +920,7 @@ impl Plan {
         // columns are stored as they read -- so that half goes through
         // unchanged. Both or neither, per `postio_model::fold`.
         let folded = match expr {
-            turso::Value::Text(text) => {
-                turso::Value::Text(postio_model::fold::fold(text))
-            }
+            turso::Value::Text(text) => turso::Value::Text(postio_model::fold::fold(text)),
             other => other.clone(),
         };
         // Two, either way. The driven form writes the term as `?1`/`?2` and
@@ -980,13 +972,7 @@ impl Plan {
         );
         let mut params = self.params_for(Form::Driven);
         params.push(turso::Value::Integer(TOTAL_HITS_CAP as i64));
-        let count: i64 = sql::one(
-            connection,
-            &sql,
-            params.clone(),
-            |row| row.col(0),
-        )
-        .await?;
+        let count: i64 = sql::one(connection, &sql, params.clone(), |row| row.col(0)).await?;
         Ok(count as u64)
     }
 
@@ -1026,14 +1012,9 @@ impl Plan {
         let mut params = self.params_for(Form::Driven);
         params.push(turso::Value::Integer(TOTAL_HITS_CAP as i64));
 
-        let counts: [i64; 4] = sql::one(
-            connection,
-            &sql,
-            params.clone(),
-            |row| {
+        let counts: [i64; 4] = sql::one(connection, &sql, params.clone(), |row| {
             Ok([row.col(0)?, row.col(1)?, row.col(2)?, row.col(3)?])
-        },
-        )
+        })
         .await?;
 
         Ok(["is:unread", "is:flagged", "has:attach", LARGE_TOKEN]
@@ -1067,20 +1048,15 @@ impl Plan {
         params.push(turso::Value::Integer(TOTAL_HITS_CAP as i64));
         params.push(turso::Value::Integer(REFINE_FOLDERS as i64));
 
-        sql::all(
-            connection,
-            &sql,
-            params.clone(),
-            |row| {
+        sql::all(connection, &sql, params.clone(), |row| {
             Ok(Refinement {
                 token: format!("in:{}", quote_value(&row.col::<String>(0)?)),
                 hits: row.col::<i64>(1)?.max(0) as u64,
             })
-        },
-        )
+        })
         .await
-    .map_err(Into::into)
-}
+        .map_err(Into::into)
+    }
 
     /// Selects a candidate pool, then hydrates it into full [`Candidate`]s.
     ///
@@ -1104,8 +1080,9 @@ impl Plan {
         total_hits: u64,
         now: DateTime<Utc>,
     ) -> Result<Vec<Candidate>> {
-        let scored =
-            self.fetch_candidates(connection, pool_size, rank_by_relevance, total_hits, now).await?;
+        let scored = self
+            .fetch_candidates(connection, pool_size, rank_by_relevance, total_hits, now)
+            .await?;
         self.hydrate(connection, &scored).await
     }
 
@@ -1183,7 +1160,9 @@ impl Plan {
         // Asked for more than the pool, because the union can hand back the
         // same message twice and the duplicates are folded below. Doubling is
         // the bound: a message appears at most once per index.
-        params.push(turso::Value::Integer(i64::from(pool_size).saturating_mul(2)));
+        params.push(turso::Value::Integer(
+            i64::from(pool_size).saturating_mul(2),
+        ));
 
         let mut statement = connection.prepare(&sql).await?;
         let rows = sql::mapped(&mut statement, params.clone(), |row| {
@@ -1193,7 +1172,8 @@ impl Plan {
                 row.col::<i64>(0)?,
                 meta.unwrap_or(0.0) + BODY_SCORE_WEIGHT * body.unwrap_or(0.0),
             ))
-        }).await?;
+        })
+        .await?;
 
         // Folded here rather than with a `GROUP BY`, which would cost a sort
         // over the match set — the thing this whole shape exists to avoid.
@@ -1287,7 +1267,11 @@ impl Plan {
         )
     }
 
-    async fn hydrate(&self, connection: &Connection, scored: &[(i64, f64)]) -> Result<Vec<Candidate>> {
+    async fn hydrate(
+        &self,
+        connection: &Connection,
+        scored: &[(i64, f64)],
+    ) -> Result<Vec<Candidate>> {
         if scored.is_empty() {
             return Ok(Vec::new());
         }
@@ -1314,7 +1298,8 @@ impl Plan {
         params.extend(ids.iter().map(|id| turso::Value::Integer(*id)));
 
         let mut statement = connection.prepare(&sql).await?;
-        let by_id: std::collections::HashMap<i64, Candidate> = sql::mapped(&mut statement, params.clone(), |row| {
+        let by_id: std::collections::HashMap<i64, Candidate> =
+            sql::mapped(&mut statement, params.clone(), |row| {
                 let id: i64 = row.col(0)?;
                 Ok((
                     id,
@@ -1335,7 +1320,8 @@ impl Plan {
                         score: 0.0,
                     },
                 ))
-            }).await?
+            })
+            .await?
             .into_iter()
             .collect();
 
@@ -1397,7 +1383,10 @@ fn filter_condition(filter: &Filter) -> (String, Vec<turso::Value>) {
             "m.account_id IN (SELECT id FROM accounts \
              WHERE lower(display_name) = lower(?) OR lower(address) = lower(?))"
                 .to_string(),
-            vec![turso::Value::Text(value.clone()), turso::Value::Text(value.clone())],
+            vec![
+                turso::Value::Text(value.clone()),
+                turso::Value::Text(value.clone()),
+            ],
         ),
         Filter::In(value) => (
             "m.mailbox_id IN (SELECT id FROM mailboxes \
@@ -1456,7 +1445,10 @@ fn filter_condition(filter: &Filter) -> (String, Vec<turso::Value>) {
                   WHERE h.message_id = m.id AND h.name = ? \
                     AND h.value LIKE '%' || ? || '%' ESCAPE '\\')"
                     .to_string(),
-                vec![turso::Value::Text(name.clone()), turso::Value::Text(escape_like(value))],
+                vec![
+                    turso::Value::Text(name.clone()),
+                    turso::Value::Text(escape_like(value)),
+                ],
             ),
         },
         Filter::Filename(value) => fts_column_condition("filenames", value),
@@ -1712,7 +1704,9 @@ mod tests {
     async fn hydrate_probes_contacts_by_address_key() {
         let database = postio_storage::test_support::memory().await;
         let connection = database.connect().await.expect("checkout");
-        crate::index::ensure_schema(&connection).await.expect("schema");
+        crate::index::ensure_schema(&connection)
+            .await
+            .expect("schema");
 
         let query = postio_search::parse("invoice", at(0).date_naive());
         let request = SearchRequest {
@@ -1725,10 +1719,12 @@ mod tests {
         let plan = Plan::build(&request);
 
         let sql = plan.hydrate_sql("?, ?, ?");
-        let mut statement = connection.prepare(&format!("EXPLAIN QUERY PLAN {sql}"))
+        let mut statement = connection
+            .prepare(&format!("EXPLAIN QUERY PLAN {sql}"))
             .await
             .expect("prepare the hydrate statement");
-        let steps: Vec<String> = sql::mapped(&mut statement, bind![1i64, 10i64, 11i64, 12i64], |row| {
+        let steps: Vec<String> =
+            sql::mapped(&mut statement, bind![1i64, 10i64, 11i64, 12i64], |row| {
                 row.col(3)
             })
             .await

@@ -1,9 +1,9 @@
 //! Per-mailbox sync state: round-trip, atomicity with the writes it describes,
 //! and what a crash mid-sync leaves behind.
 
-use postio_storage::sql::bind;
 use chrono::{DateTime, TimeZone, Utc};
 use postio_storage::Connection;
+use postio_storage::sql::bind;
 
 use postio_model::FullResyncReason;
 use postio_model::{Generation, MailboxId, MailboxStatus, ModSeq, ResyncPlan, SyncState, Uid};
@@ -28,10 +28,14 @@ async fn insert_message(connection: &Connection, mailbox: MailboxId, uid: u32) {
 }
 
 async fn message_count(connection: &Connection, mailbox: MailboxId) -> i64 {
-    postio_storage::sql::one(&*connection, 
-            "SELECT count(*) FROM messages WHERE mailbox_id = ?1",bind![mailbox.get()],
-            |row| postio_storage::sql::RowExt::col(row, 0)).await
-        .expect("count messages")
+    postio_storage::sql::one(
+        &*connection,
+        "SELECT count(*) FROM messages WHERE mailbox_id = ?1",
+        bind![mailbox.get()],
+        |row| postio_storage::sql::RowExt::col(row, 0),
+    )
+    .await
+    .expect("count messages")
 }
 
 // ---------------------------------------------------------------------------
@@ -137,7 +141,10 @@ async fn observing_persists_what_the_server_reported() {
     let status = MailboxStatus::new(Generation::new(1_707_000_000))
         .with_uid_next(Uid::new(4_412))
         .with_highest_mod_seq(ModSeq::new(90_210));
-    let returned = states.observe(inbox, &status, at(9)).await.expect("observe");
+    let returned = states
+        .observe(inbox, &status, at(9))
+        .await
+        .expect("observe");
 
     assert_eq!(returned.uid_next, Some(Uid::new(4_412)));
     assert_eq!(returned.last_seen_at, Some(at(9)));
@@ -156,7 +163,10 @@ async fn a_uid_validity_change_clears_the_stored_counters() {
         .with_uid_next(Uid::new(4_412))
         .with_highest_mod_seq(ModSeq::new(90_210));
     states.observe(inbox, &first, at(9)).await.expect("observe");
-    states.complete_full_sync(inbox, at(9)).await.expect("complete");
+    states
+        .complete_full_sync(inbox, at(9))
+        .await
+        .expect("complete");
 
     let renumbered = states
         .observe(
@@ -191,8 +201,14 @@ async fn the_plan_is_read_from_the_stored_state() {
         ResyncPlan::Full(FullResyncReason::NeverSynced)
     );
 
-    states.observe(inbox, &status, at(9)).await.expect("observe");
-    states.complete_full_sync(inbox, at(9)).await.expect("complete");
+    states
+        .observe(inbox, &status, at(9))
+        .await
+        .expect("observe");
+    states
+        .complete_full_sync(inbox, at(9))
+        .await
+        .expect("complete");
 
     assert_eq!(
         states.plan(inbox, &status).await.expect("plan"),
@@ -233,8 +249,14 @@ async fn resetting_takes_a_mailbox_back_to_never_synced() {
     let states = SyncStateRepository::new(&connection);
 
     let status = MailboxStatus::new(Generation::new(7)).with_highest_mod_seq(ModSeq::new(100));
-    states.observe(inbox, &status, at(9)).await.expect("observe");
-    states.complete_full_sync(inbox, at(9)).await.expect("complete");
+    states
+        .observe(inbox, &status, at(9))
+        .await
+        .expect("observe");
+    states
+        .complete_full_sync(inbox, at(9))
+        .await
+        .expect("complete");
 
     let reset = states.reset(inbox).await.expect("reset");
 

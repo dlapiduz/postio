@@ -14,9 +14,19 @@
 //! machine and another mailbox — a byte count would be a number about this
 //! test's fixture.
 //!
-//! `dbstat` reports real page usage per b-tree, including the shadow tables
-//! an FTS5 index is made of, which is the only honest way to compare a
-//! virtual table with an ordinary one.
+//! **Measured as a file delta, because this engine has no `dbstat`.** The
+//! old measurement asked SQLite's `dbstat` virtual table for page usage per
+//! b-tree by name. There is no such table here, and no per-object accounting
+//! at all -- so the store is weighed on disk before the headers are indexed
+//! and again after, and the difference is what the header policy costs.
+//!
+//! That is a coarser instrument in one way and a truer one in another. It
+//! cannot attribute bytes to the table versus its index, which `dbstat`
+//! could; but it counts everything the policy actually adds to the file,
+//! including the index, the free pages it leaves and any overhead a
+//! by-name pattern would have missed. The old one missed exactly that: its
+//! `LIKE 'message\_headers\_%'` was written for FTS5's shadow tables and did
+//! not match `idx_message_headers_name`, understating the cost by 17%.
 //!
 //! # The gate is bytes per message, and ADR 0027 is why
 //!
@@ -41,31 +51,27 @@
 //! item rather than a claim. The ratio survives below as a printed
 //! observation and asserts nothing.
 //!
-//! **The index is counted too.** This measurement used to ask `dbstat` for
-//! `name = 'message_headers' OR name LIKE 'message\_headers\_%'` -- a pattern
-//! written for FTS5's shadow tables, which `idx_message_headers_name` does not
-//! match. The index is 221 KB against the table's 1.30 MB here, so the cost
-//! was understated by 17% and the gate was pointed at part of the object.
-//!
 //! The fixture is committed and deliberately heavy -- three signature sets, a
 //! three-hop `Received` chain, a full mailing-list header set -- so it reads
 //! as a ceiling: a lighter mailbox passes by definition.
 //!
 use postio_index::index::{HEADER_ROWS_PER_MESSAGE, ensure_schema, index_body, index_headers};
 use postio_model::{BodyState, EmailAddress, Message};
+use postio_storage::bind;
 use postio_storage::repository::MessageRepository;
 use postio_storage::test_support;
-use postio_storage::Connection;
-use postio_storage::bind;
 
 /// ADR 0025 Q3's budget: `message_headers` may cost at most this share of
 /// what `message_bodies_fts` costs on the same corpus.
 /// ADR 0027 Q2: `message_headers` + `idx_message_headers_name`, per message.
 ///
-/// The committed fixture measures 3,809 B a message, so the ceiling is about
-/// a third above it -- enough headroom to absorb ADR 0017's move to
-/// `page_size = 8192`, a b-tree fanout change or a SQLite upgrade, and far
-/// too little to absorb a policy change.
+/// The committed fixture measures **4,218 B** a message, against 3,809 B under
+/// SQLCipher -- the same policy on the same fixture, weighed as a file delta
+/// rather than by `dbstat`, on an engine with its own page layout. So the
+/// ceiling that was a third above the measurement is now about a fifth above
+/// it. That is still headroom for a b-tree fanout change or an engine
+/// upgrade, and still far too little to absorb a policy change, which is what
+/// the number is for.
 const BYTES_PER_MESSAGE: i64 = 5 * 1024;
 
 /// Enough messages that the b-trees are more than their root pages and the
@@ -152,25 +158,16 @@ fn a_block(n: usize) -> postio_model::Headers {
     headers
 }
 
-/// What the header policy costs on disk: the table and its index.
+/// What the store weighs on disk, right now.
 ///
-/// Both b-trees by name, and any future one with them -- a secondary index is
-/// part of what a policy costs, and leaving it out understated this by 17%
-/// (ADR 0027 Q2).
-async fn header_index_bytes(connection: &Connection) -> i64 {
-    postio_storage::sql::one(&*connection, 
-            "SELECT coalesce(sum(pgsize), 0) FROM dbstat
-              WHERE name = 'message_headers' OR name LIKE 'idx_message_headers%'",(),
-            |row| postio_storage::sql::RowExt::col(row, 0)).await
-        .expect("dbstat")
-}
-
-async fn table_bytes(connection: &Connection, name: &str) -> i64 {
-    postio_storage::sql::one(&*connection, 
-            "SELECT coalesce(sum(pgsize), 0) FROM dbstat
-              WHERE name = ?1 OR name LIKE ?1 async || '\\_%' ESCAPE '\\'",bind![name],
-            |row| postio_storage::sql::RowExt::col(row, 0)).await
-        .expect("dbstat")
+/// The log is folded back into the file first, or this reads a database whose
+/// newest pages are still in `postio.db-wal` -- which is most of them, in the
+/// middle of a fixture.
+async fn store_bytes(store: &postio_storage::test_support::TempStore) -> i64 {
+    store.truncate_log().await.expect("fold the log back in");
+    std::fs::metadata(store.directory().join("postio.db"))
+        .expect("the store is on disk")
+        .len() as i64
 }
 
 /// The part that is not in dispute: what one message may contribute.
@@ -198,13 +195,24 @@ async fn no_message_may_contribute_more_than_the_two_caps_allow() {
             format!("from relay{hop}.example.net {}", "x".repeat(4096)),
         );
     }
-    index_headers(&connection, message.id.get(), &headers).await.expect("index");
+    index_headers(&connection, message.id.get(), &headers)
+        .await
+        .expect("index");
 
-    let (rows, longest): (i64, i64) = postio_storage::sql::one(&*connection, 
-            "SELECT count(*), coalesce(max(length(value)), 0) FROM message_headers
-              WHERE message_id = ?1",bind![message.id.get()],
-            |row| Ok((postio_storage::sql::RowExt::col(row, 0)?, postio_storage::sql::RowExt::col(row, 1)?))).await
-        .expect("measure");
+    let (rows, longest): (i64, i64) = postio_storage::sql::one(
+        &*connection,
+        "SELECT count(*), coalesce(max(length(value)), 0) FROM message_headers
+              WHERE message_id = ?1",
+        bind![message.id.get()],
+        |row| {
+            Ok((
+                postio_storage::sql::RowExt::col(row, 0)?,
+                postio_storage::sql::RowExt::col(row, 1)?,
+            ))
+        },
+    )
+    .await
+    .expect("measure");
 
     assert_eq!(
         rows, HEADER_ROWS_PER_MESSAGE as i64,
@@ -226,6 +234,13 @@ async fn the_header_index_stays_inside_its_per_message_ceiling() {
     let (account, mailbox) = test_support::account_with_inbox(&connection).await;
     let messages = MessageRepository::new(&connection);
 
+    // Three weighings of one store, so the delta between them is the cost of
+    // exactly the step in between. The headers go in a pass of their own for
+    // that reason -- interleaved with the bodies, as the sync path does it,
+    // there would be nothing to subtract.
+    let empty = store_bytes(&database).await;
+
+    let mut ids = Vec::with_capacity(MESSAGES);
     connection.execute_batch("BEGIN").await.expect("begin");
     for n in 0..MESSAGES {
         let mut message = Message::new(account.id, mailbox, chrono::Utc::now());
@@ -233,10 +248,22 @@ async fn the_header_index_stays_inside_its_per_message_ceiling() {
         message.from = vec![EmailAddress::new(Some("Ada Lovelace"), "ada@example.com")];
         message.sync.body_state = BodyState::Full;
         messages.create(&mut message).await.expect("create");
-        index_body(&connection, message.id.get(), Some(&a_body(n))).await.expect("index a body");
-        index_headers(&connection, message.id.get(), &a_block(n)).await.expect("index headers");
+        index_body(&connection, message.id.get(), Some(&a_body(n)))
+            .await
+            .expect("index a body");
+        ids.push(message.id.get());
     }
     connection.execute_batch("COMMIT").await.expect("commit");
+    let with_bodies = store_bytes(&database).await;
+
+    connection.execute_batch("BEGIN").await.expect("begin");
+    for (n, id) in ids.iter().enumerate() {
+        index_headers(&connection, *id, &a_block(n))
+            .await
+            .expect("index headers");
+    }
+    connection.execute_batch("COMMIT").await.expect("commit");
+    let with_headers = store_bytes(&database).await;
 
     let header_rows: i64 = postio_storage::sql::one(
         &connection,
@@ -252,8 +279,8 @@ async fn the_header_index_stays_inside_its_per_message_ceiling() {
          is measuring nothing; got {header_rows} rows"
     );
 
-    let headers = header_index_bytes(&connection).await;
-    let bodies = table_bytes(&connection, "message_bodies_fts").await;
+    let headers = with_headers - with_bodies;
+    let bodies = with_bodies - empty;
     assert!(headers > 0, "the header index measured as empty");
 
     let per_message = headers / MESSAGES as i64;
@@ -264,9 +291,9 @@ async fn the_header_index_stays_inside_its_per_message_ceiling() {
     // from, and seeing it move while the per-message figure does not is the
     // clearest statement of why the denominator was wrong.
     println!(
-        "\n{MESSAGES} messages\n  message_headers + index {:>8.2} MB\n  \
-         message_bodies_fts      {:>8.2} MB\n  share                   {:>8.1} %\n  \
-         per message             {per_message:>8} B\n",
+        "\n{MESSAGES} messages\n  the headers add          {:>8.2} MB\n  \
+         the mail and bodies add  {:>8.2} MB\n  share                    {:>8.1} %\n  \
+         per message              {per_message:>8} B\n",
         mb(headers),
         mb(bodies),
         100.0 * headers as f64 / bodies.max(1) as f64,

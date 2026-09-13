@@ -49,11 +49,10 @@ use postio_model::{Account, EmailAddress, Mailbox, MailboxId};
 
 use tempfile::TempDir;
 
-use crate::store::Store;
 use crate::key::{BlobKeys, Purpose, StoreKey, Subkey};
 use crate::repository::{AccountRepository, MailboxRepository};
 use crate::store::Connection;
-
+use crate::store::Store;
 
 /// The key every scratch database is encrypted under.
 ///
@@ -256,7 +255,6 @@ pub async fn temp() -> TempStore {
         _directory: directory,
     }
 }
-
 
 /// A file-backed [`Store`] plus the temporary directory holding it.
 ///

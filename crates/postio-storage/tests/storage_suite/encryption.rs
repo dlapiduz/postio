@@ -95,12 +95,23 @@ async fn the_same_key_reopens_the_store_and_the_mail_is_there() {
     let directory = tempfile::tempdir().expect("a directory");
     let path = a_store_with_a_secret(directory.path(), &key(2)).await;
 
-    let database = Store::open(&path, &key(2)).await.expect("reopen with the same key");
+    let database = Store::open(&path, &key(2))
+        .await
+        .expect("reopen with the same key");
     let connection = database.connect().await.expect("checkout");
-    let (id, subject): (i64, Option<String>) = postio_storage::sql::one(&*connection, "SELECT id, subject FROM messages",(), |row| {
-            Ok((postio_storage::sql::RowExt::col(row, 0)?, postio_storage::sql::RowExt::col(row, 1)?))
-        }).await
-        .expect("the message written before the store was closed");
+    let (id, subject): (i64, Option<String>) = postio_storage::sql::one(
+        &*connection,
+        "SELECT id, subject FROM messages",
+        (),
+        |row| {
+            Ok((
+                postio_storage::sql::RowExt::col(row, 0)?,
+                postio_storage::sql::RowExt::col(row, 1)?,
+            ))
+        },
+    )
+    .await
+    .expect("the message written before the store was closed");
     assert_eq!(subject.as_deref(), Some(SECRET_SUBJECT));
     assert_eq!(
         MessageRepository::new(&connection)
@@ -120,7 +131,9 @@ async fn a_wrong_key_is_refused_in_words_rather_than_reported_as_corruption() {
     let directory = tempfile::tempdir().expect("a directory");
     let path = a_store_with_a_secret(directory.path(), &key(3)).await;
 
-    let error = Store::open(&path, &key(4)).await.expect_err("a different key must not open it");
+    let error = Store::open(&path, &key(4))
+        .await
+        .expect_err("a different key must not open it");
     let said = error.to_string();
 
     // The sentence reaches a person: `postio_session::open_store_at` puts it
@@ -143,18 +156,20 @@ async fn a_wrong_key_never_destroys_what_it_could_not_read() {
     let directory = tempfile::tempdir().expect("a directory");
     let path = a_store_with_a_secret(directory.path(), &key(5)).await;
 
-    Store::open(&path, &key(6)).await.expect_err("the wrong key");
+    Store::open(&path, &key(6))
+        .await
+        .expect_err("the wrong key");
 
-    let database = Store::open(&path, &key(5)).await.expect("the right key still opens it");
+    let database = Store::open(&path, &key(5))
+        .await
+        .expect("the right key still opens it");
     let connection = database.connect().await.expect("checkout");
-    let count: i64 = postio_storage::sql::one(
-        &connection,
-        "SELECT count(*) FROM messages",
-        (),
-        |row| postio_storage::sql::RowExt::col(row, 0),
-    )
-    .await
-    .expect("count");
+    let count: i64 =
+        postio_storage::sql::one(&connection, "SELECT count(*) FROM messages", (), |row| {
+            postio_storage::sql::RowExt::col(row, 0)
+        })
+        .await
+        .expect("count");
     assert_eq!(count, 1, "the mail survived a failed open");
 }
 
@@ -168,12 +183,9 @@ async fn temp_store_is_memory_so_sorts_never_spill_plaintext_to_disk() {
     // Asked of the connection rather than of a struct this crate fills in:
     // there is no pragma-reading helper any more, and asking the engine is
     // the stronger question anyway -- it answers what is actually set.
-    let temp_store: i64 = postio_storage::sql::one(
-        &connection,
-        "PRAGMA temp_store",
-        (),
-        |row| postio_storage::sql::RowExt::col(row, 0),
-    )
+    let temp_store: i64 = postio_storage::sql::one(&connection, "PRAGMA temp_store", (), |row| {
+        postio_storage::sql::RowExt::col(row, 0)
+    })
     .await
     .expect("read the pragma");
     assert_eq!(

@@ -275,9 +275,9 @@ impl Store {
         }
 
         let fresh = !path.exists();
-        let database = Self::build(path, key).await.map_err(|error| {
-            if fresh { error } else { as_key_failure(error) }
-        })?;
+        let database = Self::build(path, key)
+            .await
+            .map_err(|error| if fresh { error } else { as_key_failure(error) })?;
         let store = Self {
             database,
             path: Some(path.to_path_buf()),
@@ -435,7 +435,9 @@ impl Store {
         let connection = self.connect().await?;
         // A query, not an `execute`: it answers with (busy, log, checkpointed)
         // and the engine refuses a statement whose rows nobody reads.
-        let mut rows = connection.query("PRAGMA wal_checkpoint(TRUNCATE)", ()).await?;
+        let mut rows = connection
+            .query("PRAGMA wal_checkpoint(TRUNCATE)", ())
+            .await?;
         let _ = rows.next().await?;
         drop(rows);
         Ok(before)

@@ -12,11 +12,11 @@
 use chrono::{DateTime, TimeDelta, TimeZone, Utc};
 use postio_model::ids::{AccountId, MailboxId, MessageId, ThreadId};
 use postio_model::{Message, RfcMessageId};
+use postio_storage::Connection;
 use postio_storage::repository::{
     MessageRepository, ThreadGroup, ThreadRepository, ThreadingRepository, UnifiedThreadListQuery,
 };
 use postio_storage::test_support;
-use postio_storage::Connection;
 
 fn at(hour: i64) -> DateTime<Utc> {
     Utc.with_ymd_and_hms(2026, 3, 10, 0, 0, 0).unwrap() + TimeDelta::hours(hour)
@@ -84,7 +84,8 @@ async fn threads_sharing_a_root_rfc_id_group_across_accounts_and_dedupe() {
         Some("<root@example.com>"),
         &[],
         "Launch",
-    ).await;
+    )
+    .await;
     file(
         &connection,
         a,
@@ -93,7 +94,8 @@ async fn threads_sharing_a_root_rfc_id_group_across_accounts_and_dedupe() {
         Some("<re1@example.com>"),
         &["<root@example.com>"],
         "Re: Launch",
-    ).await;
+    )
+    .await;
     let (_, b_thread) = file(
         &connection,
         b,
@@ -102,7 +104,8 @@ async fn threads_sharing_a_root_rfc_id_group_across_accounts_and_dedupe() {
         Some("<root@example.com>"),
         &[],
         "Launch",
-    ).await;
+    )
+    .await;
 
     let groups = page(&connection, 10).await;
     assert_eq!(groups.len(), 1, "one conversation, however many accounts");
@@ -147,7 +150,8 @@ async fn rootless_threads_group_by_subject_within_the_window_and_not_beyond() {
         None,
         &[],
         "Weekly digest",
-    ).await;
+    )
+    .await;
 
     let groups = page(&connection, 10).await;
     let sizes: Vec<usize> = groups.iter().map(|group| group.members.len()).collect();
@@ -173,7 +177,8 @@ async fn a_partner_already_shown_is_never_a_second_row_across_pages() {
         Some("<pair@example.com>"),
         &[],
         "Paired",
-    ).await;
+    )
+    .await;
     file(
         &connection,
         b,
@@ -182,7 +187,8 @@ async fn a_partner_already_shown_is_never_a_second_row_across_pages() {
         Some("<pair@example.com>"),
         &[],
         "Paired",
-    ).await;
+    )
+    .await;
     // …and one older standalone per account fills the second page.
     file(
         &connection,
@@ -192,7 +198,8 @@ async fn a_partner_already_shown_is_never_a_second_row_across_pages() {
         Some("<solo-a@example.com>"),
         &[],
         "Alone in A",
-    ).await;
+    )
+    .await;
     file(
         &connection,
         b,
@@ -201,7 +208,8 @@ async fn a_partner_already_shown_is_never_a_second_row_across_pages() {
         Some("<solo-b@example.com>"),
         &[],
         "Alone in B",
-    ).await;
+    )
+    .await;
 
     let repository = ThreadRepository::new(&connection);
     let first = repository
@@ -258,7 +266,8 @@ async fn the_group_count_is_what_walking_every_page_produces() {
         Some("<r@example.com>"),
         &[],
         "Root pair",
-    ).await;
+    )
+    .await;
     file(
         &connection,
         b,
@@ -267,7 +276,8 @@ async fn the_group_count_is_what_walking_every_page_produces() {
         Some("<r@example.com>"),
         &[],
         "Root pair",
-    ).await;
+    )
+    .await;
 
     // Grouped by subject, inside the coalescing window.
     file(&connection, a, a_inbox, 16, None, &[], "Subject pair").await;
@@ -284,7 +294,8 @@ async fn the_group_count_is_what_walking_every_page_produces() {
         None,
         &[],
         "Weekly digest",
-    ).await;
+    )
+    .await;
 
     // Same subject inside the window but the *same* account: never a group,
     // because a conversation folds across accounts and not within one.
@@ -300,7 +311,8 @@ async fn the_group_count_is_what_walking_every_page_produces() {
         Some("<solo-a@example.com>"),
         &[],
         "Alone in A",
-    ).await;
+    )
+    .await;
     file(
         &connection,
         b,
@@ -309,7 +321,8 @@ async fn the_group_count_is_what_walking_every_page_produces() {
         Some("<solo-b@example.com>"),
         &[],
         "Alone in B",
-    ).await;
+    )
+    .await;
 
     let repository = ThreadRepository::new(&connection);
 
@@ -364,7 +377,8 @@ async fn an_offset_window_is_the_walk_from_that_row_on() {
             None,
             &[],
             &format!("Note {hour}"),
-        ).await;
+        )
+        .await;
     }
     file(
         &connection,
@@ -374,7 +388,8 @@ async fn an_offset_window_is_the_walk_from_that_row_on() {
         Some("<p@example.com>"),
         &[],
         "Paired",
-    ).await;
+    )
+    .await;
     file(
         &connection,
         b,
@@ -383,7 +398,8 @@ async fn an_offset_window_is_the_walk_from_that_row_on() {
         Some("<p@example.com>"),
         &[],
         "Paired",
-    ).await;
+    )
+    .await;
     file(&connection, b, b_inbox, 2, None, &[], "Only in B").await;
 
     let repository = ThreadRepository::new(&connection);
@@ -447,7 +463,8 @@ async fn a_disabled_account_is_not_in_the_unified_view_at_all() {
         Some("<solo-a@example.com>"),
         &[],
         "Only in A",
-    ).await;
+    )
+    .await;
     file(
         &connection,
         b,
@@ -456,7 +473,8 @@ async fn a_disabled_account_is_not_in_the_unified_view_at_all() {
         Some("<solo-b@example.com>"),
         &[],
         "Only in B",
-    ).await;
+    )
+    .await;
     file(
         &connection,
         a,
@@ -465,7 +483,8 @@ async fn a_disabled_account_is_not_in_the_unified_view_at_all() {
         Some("<pair@example.com>"),
         &[],
         "Shared",
-    ).await;
+    )
+    .await;
     file(
         &connection,
         b,
@@ -474,7 +493,8 @@ async fn a_disabled_account_is_not_in_the_unified_view_at_all() {
         Some("<pair@example.com>"),
         &[],
         "Shared",
-    ).await;
+    )
+    .await;
 
     let repository = ThreadRepository::new(&connection);
     assert_eq!(

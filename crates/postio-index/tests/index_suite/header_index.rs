@@ -13,9 +13,9 @@ use postio_index::index::{
 };
 use postio_model::headers::{Headers, VALUE_LIMIT};
 use postio_model::{BodyState, Message};
+use postio_storage::Connection;
 use postio_storage::repository::MessageRepository;
 use postio_storage::test_support;
-use postio_storage::Connection;
 
 /// A message with a stored header block, which is what the catch-up pass
 /// looks for. The block's *content* does not matter here — every one of
@@ -51,10 +51,14 @@ async fn rows(connection: &Connection, message_id: i64) -> Vec<(String, String, 
         .await
         .expect("prepare");
     postio_storage::sql::mapped(&mut statement, [message_id], |row| {
-            Ok((postio_storage::sql::RowExt::col(row, 0)?, postio_storage::sql::RowExt::col(row, 1)?, postio_storage::sql::RowExt::col(row, 2)?))
-        })
-        .await
-        .expect("query")
+        Ok((
+            postio_storage::sql::RowExt::col(row, 0)?,
+            postio_storage::sql::RowExt::col(row, 1)?,
+            postio_storage::sql::RowExt::col(row, 2)?,
+        ))
+    })
+    .await
+    .expect("query")
 }
 
 #[tokio::test]
@@ -74,7 +78,9 @@ async fn a_block_becomes_one_row_per_occurrence_in_wire_order() {
     ]
     .into_iter()
     .collect();
-    index_headers(&connection, message.id.get(), &headers).await.expect("index");
+    index_headers(&connection, message.id.get(), &headers)
+        .await
+        .expect("index");
 
     assert_eq!(
         rows(&connection, message.id.get()).await,
@@ -101,7 +107,9 @@ async fn a_value_past_the_cap_is_stored_exactly_as_the_matcher_would_hold_it() {
 
     let long = "a".repeat(VALUE_LIMIT * 2);
     let headers: Headers = [("DKIM-Signature", long.as_str())].into_iter().collect();
-    index_headers(&connection, message.id.get(), &headers).await.expect("index");
+    index_headers(&connection, message.id.get(), &headers)
+        .await
+        .expect("index");
 
     let stored = rows(&connection, message.id.get()).await;
     assert_eq!(stored.len(), 1);
@@ -130,7 +138,9 @@ async fn a_message_is_capped_at_the_rows_per_message_limit() {
             )
         })
         .collect();
-    index_headers(&connection, message.id.get(), &headers).await.expect("index");
+    index_headers(&connection, message.id.get(), &headers)
+        .await
+        .expect("index");
 
     let stored = rows(&connection, message.id.get()).await;
     assert_eq!(stored.len(), HEADER_ROWS_PER_MESSAGE);
@@ -150,9 +160,13 @@ async fn re_indexing_a_message_replaces_its_rows_rather_than_adding_to_them() {
     let message = a_message_with_a_stored_block(&connection).await;
 
     let first: Headers = [("X-Mailer", "mutt")].into_iter().collect();
-    index_headers(&connection, message.id.get(), &first).await.expect("index");
+    index_headers(&connection, message.id.get(), &first)
+        .await
+        .expect("index");
     let second: Headers = [("X-Mailer", "notmuch")].into_iter().collect();
-    index_headers(&connection, message.id.get(), &second).await.expect("re-index");
+    index_headers(&connection, message.id.get(), &second)
+        .await
+        .expect("re-index");
 
     assert_eq!(
         rows(&connection, message.id.get()).await,
@@ -171,7 +185,9 @@ async fn deleting_a_message_takes_its_header_rows_with_it() {
     ensure_schema(&connection).await.expect("schema");
     let message = a_message_with_a_stored_block(&connection).await;
     let headers: Headers = [("X-Mailer", "mutt")].into_iter().collect();
-    index_headers(&connection, message.id.get(), &headers).await.expect("index");
+    index_headers(&connection, message.id.get(), &headers)
+        .await
+        .expect("index");
 
     MessageRepository::new(&connection)
         .delete(&[message.id])
@@ -192,13 +208,17 @@ async fn the_catch_up_query_offers_a_stored_block_that_has_no_rows_yet() {
     let message = a_message_with_a_stored_block(&connection).await;
 
     assert_eq!(
-        messages_missing_header_rows(&connection, 10).await.expect("candidates"),
+        messages_missing_header_rows(&connection, 10)
+            .await
+            .expect("candidates"),
         vec![message.id.get()],
         "a message with a block and no rows is exactly what the pass is for"
     );
 
     let headers: Headers = [("X-Mailer", "mutt")].into_iter().collect();
-    index_headers(&connection, message.id.get(), &headers).await.expect("index");
+    index_headers(&connection, message.id.get(), &headers)
+        .await
+        .expect("index");
 
     assert!(
         messages_missing_header_rows(&connection, 10)
@@ -243,7 +263,9 @@ async fn a_block_that_yields_no_fields_still_stops_being_a_candidate() {
     ensure_schema(&connection).await.expect("schema");
     let message = a_message_with_a_stored_block(&connection).await;
 
-    index_headers(&connection, message.id.get(), &Headers::new()).await.expect("index nothing");
+    index_headers(&connection, message.id.get(), &Headers::new())
+        .await
+        .expect("index nothing");
 
     assert!(
         messages_missing_header_rows(&connection, 10)
@@ -268,7 +290,9 @@ async fn bumping_the_headers_half_refills_it_and_leaves_the_bodies_alone() {
         .await
         .expect("index a body");
     let headers: Headers = [("X-Mailer", "mutt")].into_iter().collect();
-    index_headers(&connection, message.id.get(), &headers).await.expect("index");
+    index_headers(&connection, message.id.get(), &headers)
+        .await
+        .expect("index");
 
     connection
         .execute(
@@ -277,14 +301,18 @@ async fn bumping_the_headers_half_refills_it_and_leaves_the_bodies_alone() {
         )
         .await
         .expect("the version regresses");
-    ensure_schema(&connection).await.expect("the rebuild applies");
+    ensure_schema(&connection)
+        .await
+        .expect("the rebuild applies");
 
     assert!(
         rows(&connection, message.id.get()).await.is_empty(),
         "the headers half is dropped on a version mismatch"
     );
     assert_eq!(
-        messages_missing_header_rows(&connection, 10).await.expect("candidates"),
+        messages_missing_header_rows(&connection, 10)
+            .await
+            .expect("candidates"),
         vec![message.id.get()],
         "and the message is offered to the pass again, which is the refill"
     );
@@ -306,7 +334,9 @@ async fn a_metadata_upgrade_never_drops_the_header_rows() {
     ensure_schema(&connection).await.expect("schema");
     let message = a_message_with_a_stored_block(&connection).await;
     let headers: Headers = [("X-Mailer", "mutt")].into_iter().collect();
-    index_headers(&connection, message.id.get(), &headers).await.expect("index");
+    index_headers(&connection, message.id.get(), &headers)
+        .await
+        .expect("index");
 
     connection
         .execute(
@@ -315,7 +345,9 @@ async fn a_metadata_upgrade_never_drops_the_header_rows() {
         )
         .await
         .expect("the version regresses");
-    ensure_schema(&connection).await.expect("the rebuild applies");
+    ensure_schema(&connection)
+        .await
+        .expect("the rebuild applies");
 
     assert_eq!(
         rows(&connection, message.id.get()).await.len(),

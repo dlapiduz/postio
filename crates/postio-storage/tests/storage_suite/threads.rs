@@ -5,7 +5,6 @@
 //! both directions is tested" and "adding a message updates the denormalized
 //! fields".
 
-
 use chrono::{DateTime, TimeZone, Utc};
 use postio_storage::Connection;
 
@@ -75,7 +74,11 @@ async fn a_thread_round_trips_with_its_membership_derived_from_its_messages() {
     threads.add_message(thread.id, root.id).await.expect("add");
     threads.add_message(thread.id, reply.id).await.expect("add");
 
-    let stored = threads.get(thread.id).await.expect("get").expect("the thread");
+    let stored = threads
+        .get(thread.id)
+        .await
+        .expect("get")
+        .expect("the thread");
     assert_eq!(
         stored.message_ids,
         vec![root.id, reply.id],
@@ -104,7 +107,13 @@ async fn reading_a_thread_that_is_not_there_is_none() {
     let connection = database.connect().await.expect("checkout");
     let threads = ThreadRepository::new(&connection);
 
-    assert!(threads.get(ThreadId::new(404)).await.expect("get").is_none());
+    assert!(
+        threads
+            .get(ThreadId::new(404))
+            .await
+            .expect("get")
+            .is_none()
+    );
     assert!(!threads.delete(ThreadId::new(404)).await.expect("delete"));
 }
 
@@ -117,7 +126,10 @@ async fn deleting_a_thread_leaves_its_messages_alone() {
 
     let thread = a_thread(&connection, account.id).await;
     let message = message(&connection, account.id, inbox, "ada", 10).await;
-    threads.add_message(thread.id, message.id).await.expect("add");
+    threads
+        .add_message(thread.id, message.id)
+        .await
+        .expect("add");
 
     assert!(threads.delete(thread.id).await.expect("delete"));
 
@@ -148,7 +160,11 @@ async fn adding_a_message_updates_the_threads_aggregates() {
     let root = message(&connection, account.id, inbox, "ada", 100).await;
     threads.add_message(thread.id, root.id).await.expect("add");
 
-    let after_root = threads.get(thread.id).await.expect("get").expect("the thread");
+    let after_root = threads
+        .get(thread.id)
+        .await
+        .expect("get")
+        .expect("the thread");
     assert_eq!(after_root.message_count, 1);
     assert_eq!(after_root.unread_count, 0);
     assert!(!after_root.is_flagged && !after_root.has_attachments);
@@ -166,7 +182,11 @@ async fn adding_a_message_updates_the_threads_aggregates() {
     messages.create(&mut reply).await.expect("create");
     threads.add_message(thread.id, reply.id).await.expect("add");
 
-    let after_reply = threads.get(thread.id).await.expect("get").expect("the thread");
+    let after_reply = threads
+        .get(thread.id)
+        .await
+        .expect("get")
+        .expect("the thread");
     assert_eq!(after_reply.message_count, 2);
     assert_eq!(after_reply.unread_count, 1, "the reply is unread");
     assert!(after_reply.has_unread());
@@ -227,7 +247,11 @@ async fn removing_a_message_updates_the_aggregates_too() {
 
     threads.remove_message(reply.id).await.expect("remove");
 
-    let stored = threads.get(thread.id).await.expect("get").expect("the thread");
+    let stored = threads
+        .get(thread.id)
+        .await
+        .expect("get")
+        .expect("the thread");
     assert_eq!(stored.message_count, 1);
     assert_eq!(stored.last_at, at(100));
     assert_eq!(
@@ -261,7 +285,11 @@ async fn a_locally_deleted_message_leaves_the_threads_counts() {
         .expect("hide");
     threads.recompute(thread.id).await.expect("recompute");
 
-    let stored = threads.get(thread.id).await.expect("get").expect("the thread");
+    let stored = threads
+        .get(thread.id)
+        .await
+        .expect("get")
+        .expect("the thread");
     assert_eq!(
         stored.message_count, 1,
         "the list hides it, so it is not counted"
@@ -358,7 +386,8 @@ async fn a_page_of_threads_costs_a_fixed_number_of_queries() {
                 inbox,
                 sender,
                 index * 1_000 + reply * 10,
-            ).await;
+            )
+            .await;
             ThreadRepository::new(&connection)
                 .add_message(thread.id, message.id)
                 .await
@@ -413,7 +442,10 @@ async fn the_thread_list_is_newest_first_and_pages_by_cursor() {
     for index in 0..25 {
         let thread = a_thread(&connection, account.id).await;
         let message = message(&connection, account.id, inbox, "ada", index * 100).await;
-        threads.add_message(thread.id, message.id).await.expect("add");
+        threads
+            .add_message(thread.id, message.id)
+            .await
+            .expect("add");
     }
 
     let first = threads
@@ -566,7 +598,11 @@ async fn merging_moves_every_message_and_leaves_one_thread() {
 
     threads.merge(keep.id, absorb.id).await.expect("merge");
 
-    let merged = threads.get(keep.id).await.expect("get").expect("the thread");
+    let merged = threads
+        .get(keep.id)
+        .await
+        .expect("get")
+        .expect("the thread");
     assert_eq!(merged.message_ids, vec![older.id, newer.id]);
     assert_eq!(merged.message_count, 2);
     assert_eq!(merged.last_at, at(500), "the aggregates were recomputed");
@@ -589,7 +625,11 @@ async fn merging_a_thread_into_itself_does_nothing() {
 
     threads.merge(thread.id, thread.id).await.expect("merge");
 
-    let stored = threads.get(thread.id).await.expect("get").expect("still there");
+    let stored = threads
+        .get(thread.id)
+        .await
+        .expect("get")
+        .expect("still there");
     assert_eq!(stored.message_count, 1);
 }
 
@@ -631,7 +671,9 @@ async fn a_folder_only_shows_conversations_it_holds_a_message_of() {
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
     let (account, inbox) = test_support::account_with_inbox(&connection).await;
-    let archive = test_support::mailbox(&connection, &account, "Archive").await.id;
+    let archive = test_support::mailbox(&connection, &account, "Archive")
+        .await
+        .id;
 
     let here = a_thread(&connection, account.id).await;
     let elsewhere = a_thread(&connection, account.id).await;
@@ -659,7 +701,9 @@ async fn the_row_is_drawn_from_the_newest_message_in_this_folder() {
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
     let (account, inbox) = test_support::account_with_inbox(&connection).await;
-    let archive = test_support::mailbox(&connection, &account, "Archive").await.id;
+    let archive = test_support::mailbox(&connection, &account, "Archive")
+        .await
+        .id;
 
     let thread = a_thread(&connection, account.id).await;
     let in_inbox = unread_in(&connection, account.id, inbox, thread.id, 10).await;
@@ -687,7 +731,9 @@ async fn unread_is_counted_in_this_folder_and_the_total_is_not() {
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
     let (account, inbox) = test_support::account_with_inbox(&connection).await;
-    let archive = test_support::mailbox(&connection, &account, "Archive").await.id;
+    let archive = test_support::mailbox(&connection, &account, "Archive")
+        .await
+        .id;
 
     let thread = a_thread(&connection, account.id).await;
     // Two unread here, three unread over there.
@@ -714,7 +760,9 @@ async fn a_folder_with_only_read_messages_of_a_thread_reads_as_handled() {
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
     let (account, inbox) = test_support::account_with_inbox(&connection).await;
-    let archive = test_support::mailbox(&connection, &account, "Archive").await.id;
+    let archive = test_support::mailbox(&connection, &account, "Archive")
+        .await
+        .id;
 
     let thread = a_thread(&connection, account.id).await;
     // `message` marks Seen; `unread_in` does not.
@@ -744,7 +792,9 @@ async fn the_account_scoped_list_is_unchanged_by_any_of_this() {
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
     let (account, inbox) = test_support::account_with_inbox(&connection).await;
-    let archive = test_support::mailbox(&connection, &account, "Archive").await.id;
+    let archive = test_support::mailbox(&connection, &account, "Archive")
+        .await
+        .id;
 
     let thread = a_thread(&connection, account.id).await;
     unread_in(&connection, account.id, inbox, thread.id, 10).await;
@@ -920,7 +970,9 @@ async fn a_folder_scoped_count_agrees_with_the_rows_it_would_show() {
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
     let (account, inbox) = test_support::account_with_inbox(&connection).await;
-    let archive = test_support::mailbox(&connection, &account, "Archive").await.id;
+    let archive = test_support::mailbox(&connection, &account, "Archive")
+        .await
+        .id;
 
     for index in 0..4 {
         let thread = a_thread(&connection, account.id).await;
@@ -934,7 +986,8 @@ async fn a_folder_scoped_count_agrees_with_the_rows_it_would_show() {
             archive,
             thread.id,
             100 + index * 10,
-        ).await;
+        )
+        .await;
     }
 
     let repository = ThreadRepository::new(&connection);
@@ -942,7 +995,10 @@ async fn a_folder_scoped_count_agrees_with_the_rows_it_would_show() {
     assert_eq!(repository.count_of(&query).await.expect("a count"), 4);
     assert_eq!(repository.page(&query).await.expect("a page").len(), 4);
     assert_eq!(
-        repository.count(account.id).await.expect("an account count"),
+        repository
+            .count(account.id)
+            .await
+            .expect("an account count"),
         7,
         "the account still sees every conversation"
     );

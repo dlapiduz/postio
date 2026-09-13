@@ -20,9 +20,9 @@ use postio_index::{SearchRequest, search};
 use postio_model::{AccountScope, EmailAddress, Message};
 use postio_search::facets::Scope;
 use postio_search::parse;
+use postio_storage::Connection;
 use postio_storage::repository::{AccountRepository, MessageRepository};
 use postio_storage::test_support;
-use postio_storage::Connection;
 
 fn at(hour: u32) -> chrono::DateTime<Utc> {
     Utc.with_ymd_and_hms(2026, 8, 20, hour, 0, 0).unwrap()
@@ -81,18 +81,24 @@ async fn named_account(
 async fn world() -> World {
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
-    postio_index::index::ensure_schema(&connection).await.expect("schema");
+    postio_index::index::ensure_schema(&connection)
+        .await
+        .expect("schema");
 
     let work = named_account(&connection, "Work", "ada@work.example").await;
     let work_inbox = test_support::mailbox(&connection, &work, "INBOX").await.id;
-    let work_archive = test_support::mailbox(&connection, &work, "Archive").await.id;
+    let work_archive = test_support::mailbox(&connection, &work, "Archive")
+        .await
+        .id;
     let home = named_account(&connection, "Home", "ada@home.example").await;
     let home_inbox = test_support::mailbox(&connection, &home, "INBOX").await.id;
 
-    let work_inbox_message = message(&connection, &work, work_inbox, "Quarterly report", at(9)).await;
+    let work_inbox_message =
+        message(&connection, &work, work_inbox, "Quarterly report", at(9)).await;
     let work_archive_message =
         message(&connection, &work, work_archive, "Quarterly summary", at(8)).await;
-    let home_inbox_message = message(&connection, &home, home_inbox, "Quarterly bills", at(7)).await;
+    let home_inbox_message =
+        message(&connection, &home, home_inbox, "Quarterly bills", at(7)).await;
 
     World {
         _database: database,
@@ -148,7 +154,8 @@ async fn the_same_query_string_means_the_same_thing_in_both_scopes() {
         "quarterly",
         Scope::AllMail,
         AccountScope::Account(world.work.id),
-    ).await;
+    )
+    .await;
     assert_eq!(
         scoped.len(),
         2,
@@ -175,7 +182,8 @@ async fn a_role_scope_and_an_account_scope_compose() {
         "quarterly",
         Scope::Inbox,
         AccountScope::Account(world.work.id),
-    ).await;
+    )
+    .await;
     assert_eq!(
         both,
         vec![world.work_inbox_message.id],
@@ -207,7 +215,8 @@ async fn the_account_operator_pins_a_search_to_one_account_from_inside_the_query
         &format!("quarterly account:{}", world.work.display_name),
         Scope::AllMail,
         AccountScope::Unified,
-    ).await;
+    )
+    .await;
     assert_eq!(
         by_name.len(),
         2,
@@ -221,7 +230,8 @@ async fn the_account_operator_pins_a_search_to_one_account_from_inside_the_query
         &format!("quarterly account:{}", world.home.address.address),
         Scope::AllMail,
         AccountScope::Unified,
-    ).await;
+    )
+    .await;
     assert_eq!(by_address, vec![world.home_inbox_message.id]);
 }
 
@@ -234,7 +244,8 @@ async fn a_negated_account_operator_means_every_other_account() {
         &format!("quarterly -account:{}", world.work.display_name),
         Scope::AllMail,
         AccountScope::Unified,
-    ).await;
+    )
+    .await;
     assert_eq!(others, vec![world.home_inbox_message.id]);
 }
 
@@ -250,7 +261,8 @@ async fn an_account_that_names_nothing_matches_nothing_rather_than_everything() 
         "quarterly account:nosuchaccount",
         Scope::AllMail,
         AccountScope::Unified,
-    ).await;
+    )
+    .await;
     assert!(
         nothing.is_empty(),
         "an unresolvable account: matched {} messages instead of none",
@@ -277,7 +289,8 @@ async fn a_disabled_account_is_not_searched_under_the_unified_scope() {
         .execute(
             "UPDATE accounts SET enabled = 0 WHERE id = ?1",
             [world.home.id.get()],
-        ).await
+        )
+        .await
         .expect("disable the home account");
 
     let unified = run(&world, "quarterly", Scope::AllMail, AccountScope::Unified).await;
@@ -305,7 +318,8 @@ async fn a_pending_deletion_account_is_not_searched_either() {
         .execute(
             "UPDATE accounts SET pending_deletion = 1 WHERE id = ?1",
             [world.home.id.get()],
-        ).await
+        )
+        .await
         .expect("mark the home account for deletion");
 
     let unified = run(&world, "quarterly", Scope::AllMail, AccountScope::Unified).await;
@@ -327,7 +341,8 @@ async fn naming_a_disabled_account_explicitly_still_searches_it() {
         .execute(
             "UPDATE accounts SET enabled = 0 WHERE id = ?1",
             [world.home.id.get()],
-        ).await
+        )
+        .await
         .expect("disable the home account");
 
     let named = run(
@@ -335,7 +350,8 @@ async fn naming_a_disabled_account_explicitly_still_searches_it() {
         "quarterly",
         Scope::AllMail,
         AccountScope::Account(world.home.id),
-    ).await;
+    )
+    .await;
 
     assert_eq!(named, vec![world.home_inbox_message.id]);
 }

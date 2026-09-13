@@ -23,6 +23,12 @@
 //! from both other counts. A budget written in statements and rows alone
 //! would have passed it.
 //!
+//! There is deliberately **no always-zero `steps` field** standing in for the
+//! old one. A budget written as `assert!(counts.steps < BUDGET)` passes
+//! trivially against a zero, which is a worse answer than not compiling: the
+//! test still runs, still reports green, and no longer asks anything. Every
+//! caller that measured steps has had to say what it is really asking.
+//!
 //! [`scans`] is what replaces that, and it is a different kind of instrument:
 //! rather than measuring how much work a query did, it asks the planner
 //! whether the query *can* be cheap. An unindexed `count(*)` is a `SCAN`, and
@@ -55,16 +61,6 @@ pub struct Counts {
     /// module documentation is about. A `count(*)` over a hundred thousand
     /// messages returns one.
     pub rows: usize,
-
-    /// Kept so the suites that print a `Counts` still compile.
-    ///
-    /// It was statements issued from inside another statement's callback,
-    /// which the trace hook could see and this cannot. Always zero.
-    pub nested: usize,
-
-    /// Kept, and always zero. See the module documentation: there is no step
-    /// count to read, and [`scans`] is what took over the question.
-    pub steps: usize,
 }
 
 thread_local! {
@@ -125,8 +121,6 @@ pub fn here() -> Counts {
     Counts {
         statements: STATEMENTS.with(Cell::get),
         rows: ROWS.with(Cell::get),
-        nested: 0,
-        steps: 0,
     }
 }
 

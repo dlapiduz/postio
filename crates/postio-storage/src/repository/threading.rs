@@ -43,9 +43,9 @@ use postio_model::{
 
 use super::{MessageRepository, ThreadRepository};
 
+use crate::error::Result;
 use crate::sql::{self, RowExt as _, bind};
 use crate::store::Connection;
-use crate::error::Result;
 
 /// Files messages into threads.
 ///
@@ -151,17 +151,25 @@ impl<'a> ThreadingRepository<'a> {
     /// Last claim wins. That only happens when two threads have already been
     /// merged, or when a message is re-filed, and in both cases the newer
     /// answer is the right one.
-    async fn claim(&self, connection: &Connection, id: &RfcMessageId, thread_id: ThreadId) -> Result<()> {
+    async fn claim(
+        &self,
+        connection: &Connection,
+        id: &RfcMessageId,
+        thread_id: ThreadId,
+    ) -> Result<()> {
         // Cached: a sync pass runs this once per id every message claims, so
         // it is one of the handful of statements a first sync compiles
         // hundreds of thousands of times (#728).
-        connection.prepare_cached(
+        connection
+            .prepare_cached(
                 "INSERT INTO thread_links (account_id, rfc_message_id, thread_id)
              VALUES (?1, ?2, ?3)
              ON CONFLICT (account_id, rfc_message_id) DO UPDATE
                 SET thread_id = excluded.thread_id",
-            ).await?
-            .execute(bind![self.account_id.get(), id.as_str(), thread_id.get()]).await?;
+            )
+            .await?
+            .execute(bind![self.account_id.get(), id.as_str(), thread_id.get()])
+            .await?;
         Ok(())
     }
 
@@ -170,24 +178,38 @@ impl<'a> ThreadingRepository<'a> {
     /// `OR REPLACE` because the two threads may well claim the same id — that
     /// is often *why* they merged — and the surviving row is the one that
     /// points at the thread that survived.
-    async fn relink(&self, connection: &Connection, absorbed: ThreadId, into: ThreadId) -> Result<()> {
-        connection.execute(
-            "UPDATE OR REPLACE thread_links SET thread_id = ?2 WHERE thread_id = ?1",
-            bind![absorbed.get(), into.get()],
-        ).await?;
+    async fn relink(
+        &self,
+        connection: &Connection,
+        absorbed: ThreadId,
+        into: ThreadId,
+    ) -> Result<()> {
+        connection
+            .execute(
+                "UPDATE OR REPLACE thread_links SET thread_id = ?2 WHERE thread_id = ?1",
+                bind![absorbed.get(), into.get()],
+            )
+            .await?;
         Ok(())
     }
 
     /// Every id a thread claims, for diagnostics and tests.
     pub async fn claims(&self, thread_id: ThreadId) -> Result<Vec<RfcMessageId>> {
-        let mut statement = self.connection.prepare(
-            "SELECT rfc_message_id FROM thread_links
+        let mut statement = self
+            .connection
+            .prepare(
+                "SELECT rfc_message_id FROM thread_links
               WHERE account_id = ?1 AND thread_id = ?2 ORDER BY rfc_message_id",
-        ).await?;
-        let rows = sql::mapped(&mut statement, bind![self.account_id.get(), thread_id.get()], |row| {
-            row.col::<String>(0)
-        }).await?;
-        Ok(rows.into_iter()
+            )
+            .await?;
+        let rows = sql::mapped(
+            &mut statement,
+            bind![self.account_id.get(), thread_id.get()],
+            |row| row.col::<String>(0),
+        )
+        .await?;
+        Ok(rows
+            .into_iter()
             .into_iter()
             .map(RfcMessageId::new)
             .collect())
@@ -237,8 +259,7 @@ impl<'a> ThreadingRepository<'a> {
             // a better one. Excluding it is what makes "nothing better than what
             // it already has" ([`Assignment::New`]) distinguishable from "still
             // itself".
-            let index =
-                LoadedIndex::load(&scope, self.account_id, &cue, Some(current)).await?;
+            let index = LoadedIndex::load(&scope, self.account_id, &cue, Some(current)).await?;
             let assignment = assign(&cue, &index);
             if matches!(assignment, Assignment::New) {
                 return Ok(None);
@@ -250,7 +271,9 @@ impl<'a> ThreadingRepository<'a> {
             // properly — claims included — rather than leaving a zero-message row
             // behind for the thread list to have to filter out forever after.
             self.relink(&scope, current, result.thread_id).await?;
-            ThreadRepository::new(&scope).merge(result.thread_id, current).await?;
+            ThreadRepository::new(&scope)
+                .merge(result.thread_id, current)
+                .await?;
             result.merged.push(current);
 
             Ok(Some(result))
@@ -380,4 +403,3 @@ impl ThreadIndex for LoadedIndex {
             .collect()
     }
 }
-

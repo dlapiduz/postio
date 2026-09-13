@@ -43,10 +43,10 @@ use postio_model::{
 };
 
 use crate::Result;
-use crate::store::Connection;
 use crate::repository::{
     FlagSource, MessageRepository, OperationQueueRepository, ThreadOrder, ThreadRepository,
 };
+use crate::store::Connection;
 
 /// Which server operation a relocation is.
 ///
@@ -144,18 +144,22 @@ pub async fn set_flag(
         } else {
             flags.remove(flag);
         }
-        messages.set_flags(message.id, &flags, FlagSource::Local).await?;
+        messages
+            .set_flags(message.id, &flags, FlagSource::Local)
+            .await?;
         let operation = if wanted {
             Operation::SetFlags { flags: one.clone() }
         } else {
             Operation::ClearFlags { flags: one.clone() }
         };
-        queue.enqueue(
-            account,
-            OperationTarget::Message(message.id),
-            &operation,
-            at,
-        ).await?;
+        queue
+            .enqueue(
+                account,
+                OperationTarget::Message(message.id),
+                &operation,
+                at,
+            )
+            .await?;
     }
 
     let threads = ThreadRepository::new(transaction);

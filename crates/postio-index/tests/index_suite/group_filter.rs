@@ -7,9 +7,9 @@ use postio_index::{SearchRequest, search};
 use postio_model::{AccountScope, EmailAddress, Message};
 use postio_search::facets::Scope;
 use postio_search::parse;
+use postio_storage::Connection;
 use postio_storage::repository::{ContactGroupRepository, ContactRepository, MessageRepository};
 use postio_storage::test_support;
-use postio_storage::Connection;
 
 fn at(hour: u32) -> chrono::DateTime<Utc> {
     Utc.with_ymd_and_hms(2026, 8, 20, hour, 0, 0).unwrap()
@@ -26,10 +26,14 @@ struct World {
 async fn world() -> World {
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
-    postio_index::index::ensure_schema(&connection).await.expect("schema");
+    postio_index::index::ensure_schema(&connection)
+        .await
+        .expect("schema");
 
     let account = test_support::account(&connection).await;
-    let inbox = test_support::mailbox(&connection, &account, "INBOX").await.id;
+    let inbox = test_support::mailbox(&connection, &account, "INBOX")
+        .await
+        .id;
 
     let contacts = ContactRepository::new(&connection);
     let groups = ContactGroupRepository::new(&connection);

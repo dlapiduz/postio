@@ -24,9 +24,9 @@
 
 use postio_index::index::{ensure_schema, index_body, messages_missing_body_text};
 use postio_model::{BodyState, Message};
+use postio_storage::Connection;
 use postio_storage::repository::MessageRepository;
 use postio_storage::test_support;
-use postio_storage::Connection;
 
 async fn a_message(connection: &Connection, subject: &str) -> i64 {
     let (account, mailbox) = test_support::account_with_inbox(connection).await;
@@ -79,7 +79,9 @@ async fn a_body_is_searchable_in_a_table_of_its_own() {
     ensure_schema(&connection).await.expect("schema");
     let id = a_message(&connection, "Quarterly report").await;
 
-    index_body(&connection, id, Some("the difference engine is finished")).await.expect("index");
+    index_body(&connection, id, Some("the difference engine is finished"))
+        .await
+        .expect("index");
 
     assert_eq!(body_hits(&connection, "difference").await, vec![id]);
     assert!(body_hits(&connection, "unrelated").await.is_empty());
@@ -98,8 +100,12 @@ async fn re_indexing_replaces_the_body_rather_than_adding_a_second_row() {
     ensure_schema(&connection).await.expect("schema");
     let id = a_message(&connection, "Quarterly report").await;
 
-    index_body(&connection, id, Some("the first draft")).await.expect("index");
-    index_body(&connection, id, Some("the second draft")).await.expect("re-index");
+    index_body(&connection, id, Some("the first draft"))
+        .await
+        .expect("index");
+    index_body(&connection, id, Some("the second draft"))
+        .await
+        .expect("re-index");
 
     assert_eq!(body_hits(&connection, "second").await, vec![id]);
     assert!(
@@ -115,7 +121,9 @@ async fn clearing_a_body_removes_it_from_the_index() {
     let connection = database.connect().await.expect("checkout");
     ensure_schema(&connection).await.expect("schema");
     let id = a_message(&connection, "Quarterly report").await;
-    index_body(&connection, id, Some("something")).await.expect("index");
+    index_body(&connection, id, Some("something"))
+        .await
+        .expect("index");
 
     index_body(&connection, id, None).await.expect("clear");
 
@@ -141,7 +149,9 @@ async fn deleting_a_message_takes_its_body_with_it() {
     let connection = database.connect().await.expect("checkout");
     ensure_schema(&connection).await.expect("schema");
     let id = a_message(&connection, "Quarterly report").await;
-    index_body(&connection, id, Some("the difference engine")).await.expect("index");
+    index_body(&connection, id, Some("the difference engine"))
+        .await
+        .expect("index");
 
     MessageRepository::new(&connection)
         .delete(&[postio_model::MessageId::new(id)])
@@ -166,12 +176,16 @@ async fn a_body_indexed_before_this_table_existed_is_found_by_the_maintenance_pa
     let id = a_message(&connection, "Quarterly report").await;
 
     assert_eq!(
-        messages_missing_body_text(&connection, 10).await.expect("candidates"),
+        messages_missing_body_text(&connection, 10)
+            .await
+            .expect("candidates"),
         vec![id],
         "a body that is local and not indexed here is exactly the work"
     );
 
-    index_body(&connection, id, Some("already indexed")).await.expect("catch up");
+    index_body(&connection, id, Some("already indexed"))
+        .await
+        .expect("catch up");
 
     assert!(
         messages_missing_body_text(&connection, 10)
@@ -202,7 +216,9 @@ async fn a_message_whose_text_is_local_but_whose_payloads_are_not_is_still_index
         .expect("the fixture writes");
 
     assert_eq!(
-        messages_missing_body_text(&connection, 10).await.expect("candidates"),
+        messages_missing_body_text(&connection, 10)
+            .await
+            .expect("candidates"),
         vec![id]
     );
 }
@@ -246,12 +262,16 @@ async fn a_message_with_nothing_to_index_leaves_the_candidate_set() {
     let id = a_message(&connection, "Report attached").await;
 
     assert_eq!(
-        messages_missing_body_text(&connection, 10).await.expect("candidates"),
+        messages_missing_body_text(&connection, 10)
+            .await
+            .expect("candidates"),
         vec![id],
         "local body, never indexed: exactly the work"
     );
 
-    index_body(&connection, id, None).await.expect("index nothing");
+    index_body(&connection, id, None)
+        .await
+        .expect("index nothing");
 
     assert!(
         messages_missing_body_text(&connection, 10)

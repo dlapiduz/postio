@@ -48,11 +48,11 @@ use postio_model::{
     RfcMessageId, ids::MessageId, test_corpus,
 };
 
-use crate::sql::{self, RowExt as _, bind};
-use crate::store::{Connection, Store};
 use crate::repository::{
     ContactRepository, MailboxRepository, MessageRepository, StoredBody, ThreadingRepository,
 };
+use crate::sql::{self, RowExt as _, bind};
+use crate::store::{Connection, Store};
 use crate::test_support;
 
 /// What one seed call produced.
@@ -122,8 +122,7 @@ fn anchor() -> DateTime<Utc> {
 /// worth panicking on rather than threading a `Result` through every call site
 /// that wants one.
 pub async fn seed_small(database: &Store, seed: u64) -> SeedReport {
-    seed_small_into(database, false, seed)
-        .await
+    seed_small_into(database, false, seed).await
 }
 
 /// [`seed_small`], plus the corpus' own bodies written into `blobs`.
@@ -144,8 +143,7 @@ pub async fn seed_small(database: &Store, seed: u64) -> SeedReport {
 ///
 /// If a write fails, as [`seed_small`] does.
 pub async fn seed_small_with_bodies(database: &Store, seed: u64) -> SeedReport {
-    seed_small_into(database, true, seed)
-        .await
+    seed_small_into(database, true, seed).await
 }
 
 /// The seeded account: `test_support::account` plus the identity a real one
@@ -404,49 +402,49 @@ pub async fn thread_seeded_messages(
 
     let threads = sql::in_scope(&connection, |scope| async move {
         let mut threads = 0;
-    for chunk in rows.chunks(per_thread) {
-        // A real thread's subject is one of its own messages' (`recompute_in`
-        // reads the oldest member's), never a constant -- and a benchmark
-        // that gave every seeded thread the identical literal subject once
-        // sent `unified_page`'s subject-coalescing query chasing all 13,000
-        // of them as candidates for every page row, which is what #619's
-        // budget miss actually was, not a query-plan problem: instrumenting
-        // confirmed every one of the top 100 raw threads shared this one
-        // literal subject, and fixing only that (nothing in `unified_page`
-        // itself) took `cargo bench`'s own measurement from 18.6-19.5ms to
-        // 1.7-1.9ms. Any member's subject keeps every seeded thread's
-        // subject as distinct as its messages' already are, which is "the
-        // same shape of data" this function promises rather than a
-        // pathological one no real mailbox produces.
-        let subject = chunk
-            .first()
-            .and_then(|(_, subject)| subject.as_deref())
-            .unwrap_or("seeded conversation");
-        scope
-            .execute(
-                "INSERT INTO threads (account_id, subject, message_count, unread_count,
-                                      has_attachments, is_flagged, first_at, last_at)
-                 VALUES (?1, ?2, 0, 0, 0, 0, 0, 0)",
-                bind![account.get(), subject],
-            )
-            .await
-            .expect("insert a seeded thread");
-        let thread = scope.last_insert_rowid();
-        for (id, _) in chunk {
+        for chunk in rows.chunks(per_thread) {
+            // A real thread's subject is one of its own messages' (`recompute_in`
+            // reads the oldest member's), never a constant -- and a benchmark
+            // that gave every seeded thread the identical literal subject once
+            // sent `unified_page`'s subject-coalescing query chasing all 13,000
+            // of them as candidates for every page row, which is what #619's
+            // budget miss actually was, not a query-plan problem: instrumenting
+            // confirmed every one of the top 100 raw threads shared this one
+            // literal subject, and fixing only that (nothing in `unified_page`
+            // itself) took `cargo bench`'s own measurement from 18.6-19.5ms to
+            // 1.7-1.9ms. Any member's subject keeps every seeded thread's
+            // subject as distinct as its messages' already are, which is "the
+            // same shape of data" this function promises rather than a
+            // pathological one no real mailbox produces.
+            let subject = chunk
+                .first()
+                .and_then(|(_, subject)| subject.as_deref())
+                .unwrap_or("seeded conversation");
             scope
                 .execute(
-                    "UPDATE messages SET thread_id = ?1 WHERE id = ?2",
-                    [thread, *id],
+                    "INSERT INTO threads (account_id, subject, message_count, unread_count,
+                                      has_attachments, is_flagged, first_at, last_at)
+                 VALUES (?1, ?2, 0, 0, 0, 0, 0, 0)",
+                    bind![account.get(), subject],
                 )
                 .await
-                .expect("file a seeded message into its thread");
+                .expect("insert a seeded thread");
+            let thread = scope.last_insert_rowid();
+            for (id, _) in chunk {
+                scope
+                    .execute(
+                        "UPDATE messages SET thread_id = ?1 WHERE id = ?2",
+                        [thread, *id],
+                    )
+                    .await
+                    .expect("file a seeded message into its thread");
+            }
+            threads += 1;
         }
-        threads += 1;
-    }
-    // The aggregates, in one statement rather than per thread.
-    scope
-        .execute(
-            "UPDATE threads SET
+        // The aggregates, in one statement rather than per thread.
+        scope
+            .execute(
+                "UPDATE threads SET
                  message_count = (SELECT count(*) FROM messages m
                                    WHERE m.thread_id = threads.id AND m.deleted_locally = 0),
                  unread_count  = (SELECT count(*) FROM messages m
@@ -457,10 +455,10 @@ pub async fn thread_seeded_messages(
                  last_at  = coalesce((SELECT max(received_at) FROM messages m
                                        WHERE m.thread_id = threads.id), 0)
                WHERE account_id = ?1",
-            [account.get()],
-        )
-        .await
-        .expect("recompute the seeded thread aggregates");
+                [account.get()],
+            )
+            .await
+            .expect("recompute the seeded thread aggregates");
         Ok::<_, crate::Error>(threads)
     })
     .await

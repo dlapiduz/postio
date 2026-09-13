@@ -32,11 +32,11 @@ use postio_model::{
 use super::messages::{LIST_COLUMNS, MessageListRow, placeholders, read_list_row};
 use super::{from_millis, require_persisted, to_millis};
 
-use crate::sql::{self, RowExt as _, bind};
-use turso::Row;
-use crate::store::Connection;
 use crate::error::{Error, Result};
 use crate::repository::MessageRepository;
+use crate::sql::{self, RowExt as _, bind};
+use crate::store::Connection;
+use turso::Row;
 
 /// How many threads a page holds when the caller does not say.
 pub const DEFAULT_THREAD_PAGE_SIZE: u32 = 50;
@@ -281,11 +281,13 @@ impl<'a> ThreadRepository<'a> {
         let account_id = require_persisted(thread.account_id.get(), "account")?;
         // Cached: a first sync creates a thread for most messages it files, so
         // this runs on the same order as the message insert itself (#728).
-        self.connection.prepare_cached(
+        self.connection
+            .prepare_cached(
                 "INSERT INTO threads (account_id, subject, message_count, unread_count,
                                   has_attachments, is_flagged, first_at, last_at)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
-            ).await?
+            )
+            .await?
             .execute(bind![
                 account_id,
                 thread.subject,
@@ -295,7 +297,8 @@ impl<'a> ThreadRepository<'a> {
                 thread.is_flagged,
                 to_millis(thread.first_at),
                 to_millis(thread.last_at),
-            ]).await?;
+            ])
+            .await?;
         thread.id = ThreadId::new(self.connection.last_insert_rowid());
         Ok(thread.id)
     }
@@ -306,23 +309,26 @@ impl<'a> ThreadRepository<'a> {
     /// [`ThreadRepository::add_message`], never by being listed here.
     pub async fn update(&self, thread: &Thread) -> Result<()> {
         let id = require_persisted(thread.id.get(), "thread")?;
-        let changed = self.connection.execute(
-            "UPDATE threads
+        let changed = self
+            .connection
+            .execute(
+                "UPDATE threads
                 SET account_id = ?2, subject = ?3, message_count = ?4, unread_count = ?5,
                     has_attachments = ?6, is_flagged = ?7, first_at = ?8, last_at = ?9
               WHERE id = ?1",
-            bind![
-                id,
-                thread.account_id.get(),
-                thread.subject,
-                thread.message_count,
-                thread.unread_count,
-                thread.has_attachments,
-                thread.is_flagged,
-                to_millis(thread.first_at),
-                to_millis(thread.last_at),
-            ],
-        ).await?;
+                bind![
+                    id,
+                    thread.account_id.get(),
+                    thread.subject,
+                    thread.message_count,
+                    thread.unread_count,
+                    thread.has_attachments,
+                    thread.is_flagged,
+                    to_millis(thread.first_at),
+                    to_millis(thread.last_at),
+                ],
+            )
+            .await?;
         if changed == 0 {
             return Err(Error::NotFound {
                 entity: "thread",
@@ -334,9 +340,12 @@ impl<'a> ThreadRepository<'a> {
 
     /// One thread, with its membership and participants derived.
     pub async fn get(&self, id: ThreadId) -> Result<Option<Thread>> {
-        let mut statement = self.connection.prepare(&format!(
-            "SELECT {THREAD_COLUMNS} FROM threads WHERE id = ?1"
-        )).await?;
+        let mut statement = self
+            .connection
+            .prepare(&format!(
+                "SELECT {THREAD_COLUMNS} FROM threads WHERE id = ?1"
+            ))
+            .await?;
         let found = crate::sql::first_of(&mut statement, [id.get()], read_thread).await?;
         let Some(mut thread) = found else {
             return Ok(None);
@@ -344,7 +353,9 @@ impl<'a> ThreadRepository<'a> {
         drop(statement);
 
         thread.message_ids = self.member_ids(id).await?;
-        thread.participants = self.participants_for(&[id]).await?
+        thread.participants = self
+            .participants_for(&[id])
+            .await?
             .remove(&id)
             .unwrap_or_default();
         thread.mailbox_ids = self.mailboxes_in(id).await?;
@@ -357,7 +368,10 @@ impl<'a> ThreadRepository<'a> {
     /// Its messages survive with no thread: threading is a local derivation and
     /// can simply run again.
     pub async fn delete(&self, id: ThreadId) -> Result<bool> {
-        let deleted = self.connection.execute("DELETE FROM threads WHERE id = ?1", [id.get()]).await?;
+        let deleted = self
+            .connection
+            .execute("DELETE FROM threads WHERE id = ?1", [id.get()])
+            .await?;
         Ok(deleted > 0)
     }
 
@@ -371,8 +385,11 @@ impl<'a> ThreadRepository<'a> {
             let previous = thread_of(&transaction, message_id).await?;
 
             // Cached: once per message filed (#728).
-            let changed = transaction.prepare_cached("UPDATE messages SET thread_id = ?2 WHERE id = ?1").await?
-                .execute(bind![message_id.get(), thread_id.get()]).await?;
+            let changed = transaction
+                .prepare_cached("UPDATE messages SET thread_id = ?2 WHERE id = ?1")
+                .await?
+                .execute(bind![message_id.get(), thread_id.get()])
+                .await?;
             if changed == 0 {
                 return Err(Error::NotFound {
                     entity: "message",
@@ -393,10 +410,12 @@ impl<'a> ThreadRepository<'a> {
     pub async fn remove_message(&self, message_id: MessageId) -> Result<()> {
         sql::in_scope(self.connection, |transaction| async move {
             let previous = thread_of(&transaction, message_id).await?;
-            transaction.execute(
-                "UPDATE messages SET thread_id = NULL WHERE id = ?1",
-                [message_id.get()],
-            ).await?;
+            transaction
+                .execute(
+                    "UPDATE messages SET thread_id = NULL WHERE id = ?1",
+                    [message_id.get()],
+                )
+                .await?;
             if let Some(previous) = previous {
                 recompute_in(&transaction, previous).await?;
             }
@@ -420,16 +439,22 @@ impl<'a> ThreadRepository<'a> {
             return self.recompute(keep).await;
         }
         sql::in_scope(self.connection, |transaction| async move {
-            transaction.execute(
-                "UPDATE messages SET thread_id = ?1 WHERE thread_id = ?2",
-                bind![keep.get(), absorb.get()],
-            ).await?;
+            transaction
+                .execute(
+                    "UPDATE messages SET thread_id = ?1 WHERE thread_id = ?2",
+                    bind![keep.get(), absorb.get()],
+                )
+                .await?;
             // Drafts are shown inline in their thread, so they have to follow.
-            transaction.execute(
-                "UPDATE drafts SET thread_id = ?1 WHERE thread_id = ?2",
-                bind![keep.get(), absorb.get()],
-            ).await?;
-            transaction.execute("DELETE FROM threads WHERE id = ?1", [absorb.get()]).await?;
+            transaction
+                .execute(
+                    "UPDATE drafts SET thread_id = ?1 WHERE thread_id = ?2",
+                    bind![keep.get(), absorb.get()],
+                )
+                .await?;
+            transaction
+                .execute("DELETE FROM threads WHERE id = ?1", [absorb.get()])
+                .await?;
             recompute_in(&transaction, keep).await?;
             Ok(())
         })
@@ -444,7 +469,8 @@ impl<'a> ThreadRepository<'a> {
             [id.get()],
             read_list_row,
         )
-        .await}
+        .await
+    }
 
     /// The SQL [`ThreadRepository::messages`] runs, for `EXPLAIN QUERY PLAN`.
     pub fn explain_messages(&self, order: ThreadOrder) -> String {
@@ -492,7 +518,9 @@ impl<'a> ThreadRepository<'a> {
         // page of threads can under-fill the page of groups. Loop until the
         // groups fill or the list ends; each pass is one indexed window.
         'fill: loop {
-            let raw = self.unified_raw_page(query.limit.max(2) * 2, cursor).await?;
+            let raw = self
+                .unified_raw_page(query.limit.max(2) * 2, cursor)
+                .await?;
             let Some(last) = raw.last() else {
                 break;
             };
@@ -575,10 +603,12 @@ impl<'a> ThreadRepository<'a> {
         if offset == 0 {
             return self.unified_page(query).await;
         }
-        let mut groups = self.unified_page(&UnifiedThreadListQuery {
-            limit: query.limit.saturating_add(offset),
-            after: query.after,
-        }).await?;
+        let mut groups = self
+            .unified_page(&UnifiedThreadListQuery {
+                limit: query.limit.saturating_add(offset),
+                after: query.after,
+            })
+            .await?;
         if offset as usize >= groups.len() {
             return Ok(Vec::new());
         }
@@ -647,7 +677,11 @@ impl<'a> ThreadRepository<'a> {
     }
 
     /// One raw window of threads across every account, newest first.
-    async fn unified_raw_page(&self, limit: u32, after: Option<ThreadCursor>) -> Result<Vec<Thread>> {
+    async fn unified_raw_page(
+        &self,
+        limit: u32,
+        after: Option<ThreadCursor>,
+    ) -> Result<Vec<Thread>> {
         let cursor = if after.is_some() {
             // See `where_clause` in `messages.rs`: a row value reads better and
             // this engine will not seek on one.
@@ -655,12 +689,15 @@ impl<'a> ThreadRepository<'a> {
         } else {
             ""
         };
-        let mut statement = self.connection.prepare(&format!(
-            "SELECT {THREAD_COLUMNS} FROM threads
+        let mut statement = self
+            .connection
+            .prepare(&format!(
+                "SELECT {THREAD_COLUMNS} FROM threads
               WHERE message_count > 0 AND {enabled}{cursor}
               ORDER BY last_at DESC, id DESC LIMIT {limit}",
-            enabled = enabled_account("")
-        )).await?;
+                enabled = enabled_account("")
+            ))
+            .await?;
         let mut arguments: Vec<i64> = Vec::new();
         if let Some(after) = after {
             arguments.push(to_millis(after.last_at));
@@ -689,21 +726,25 @@ impl<'a> ThreadRepository<'a> {
         // 1. Every page thread's root RfcMessageId, in one window pass.
         let mut roots: HashMap<String, Vec<&Thread>> = HashMap::new();
         {
-            let mut statement = self.connection.prepare(&format!(
-                "SELECT thread_id, rfc_message_id FROM (
+            let mut statement = self
+                .connection
+                .prepare(&format!(
+                    "SELECT thread_id, rfc_message_id FROM (
                      SELECT thread_id, rfc_message_id,
                             row_number() OVER (PARTITION BY thread_id
                                                ORDER BY received_at, id) AS rank
                        FROM messages
                       WHERE thread_id IN ({placeholders}) AND {MEMBER}
                  ) WHERE rank = 1"
-            )).await?;
+                ))
+                .await?;
             let rows = sql::mapped(&mut statement, ids.clone(), |row| {
                 Ok((
                     ThreadId::new(row.col::<i64>(0)?),
                     row.col::<Option<String>>(1)?,
                 ))
-            }).await?;
+            })
+            .await?;
             for (thread_id, root) in rows {
                 if let (Some(root), Some(thread)) = (
                     root.filter(|root| !root.is_empty()),
@@ -720,20 +761,28 @@ impl<'a> ThreadRepository<'a> {
             let root_placeholders = std::iter::repeat_n("?", root_keys.len())
                 .collect::<Vec<_>>()
                 .join(", ");
-            let mut statement = self.connection.prepare(&format!(
-                "SELECT DISTINCT m.rfc_message_id, {columns} FROM threads t
+            let mut statement = self
+                .connection
+                .prepare(&format!(
+                    "SELECT DISTINCT m.rfc_message_id, {columns} FROM threads t
                    JOIN messages m ON m.thread_id = t.id
                   WHERE m.rfc_message_id IN ({root_placeholders})
                     AND t.message_count > 0 AND {enabled}",
-                columns = prefixed_thread_columns("t"),
-                enabled = enabled_account("t.")
-            )).await?;
-            let rows = sql::mapped(&mut statement, root_keys.iter().map(|key| key.as_str()).collect::<Vec<_>>(), |row| {
-                let root: String = row.col(0)?;
-                let mut candidate = read_thread_offset(row, 1)?;
-                candidate.message_ids = Vec::new();
-                Ok((root, candidate))
-            }).await?;
+                    columns = prefixed_thread_columns("t"),
+                    enabled = enabled_account("t.")
+                ))
+                .await?;
+            let rows = sql::mapped(
+                &mut statement,
+                root_keys.iter().map(|key| key.as_str()).collect::<Vec<_>>(),
+                |row| {
+                    let root: String = row.col(0)?;
+                    let mut candidate = read_thread_offset(row, 1)?;
+                    candidate.message_ids = Vec::new();
+                    Ok((root, candidate))
+                },
+            )
+            .await?;
             for (root, candidate) in rows {
                 for thread in roots.get(root.as_str()).into_iter().flatten() {
                     if candidate.account_id != thread.account_id
@@ -760,12 +809,15 @@ impl<'a> ThreadRepository<'a> {
             let subject_placeholders = std::iter::repeat_n("?", subjects.len())
                 .collect::<Vec<_>>()
                 .join(", ");
-            let mut statement = self.connection.prepare(&format!(
-                "SELECT {THREAD_COLUMNS} FROM threads
+            let mut statement = self
+                .connection
+                .prepare(&format!(
+                    "SELECT {THREAD_COLUMNS} FROM threads
                   WHERE subject IN ({subject_placeholders}) AND message_count > 0
                     AND {enabled}",
-                enabled = enabled_account("")
-            )).await?;
+                    enabled = enabled_account("")
+                ))
+                .await?;
             let rows = sql::mapped(&mut statement, subjects.clone(), read_thread).await?;
             for candidate in rows {
                 for thread in page {
@@ -817,7 +869,12 @@ impl<'a> ThreadRepository<'a> {
         // addresses is one message to the user. A message with no
         // RfcMessageId can never be anyone's copy, so it counts by row.
         let mut members: Vec<i64> = vec![head.id.get()];
-        members.extend(partners.iter().map(|partner| partner.id.get()).collect::<Vec<_>>());
+        members.extend(
+            partners
+                .iter()
+                .map(|partner| partner.id.get())
+                .collect::<Vec<_>>(),
+        );
         let placeholders = std::iter::repeat_n("?", members.len())
             .collect::<Vec<_>>()
             .join(", ");
@@ -852,7 +909,10 @@ impl<'a> ThreadRepository<'a> {
 
     /// [`ThreadRepository::page`] with `tail` appended to the statement.
     async fn page_with(&self, query: &ThreadListQuery, tail: &str) -> Result<Vec<ThreadListRow>> {
-        let mut statement = self.connection.prepare(&format!("{}{tail}", self.explain(query))).await?;
+        let mut statement = self
+            .connection
+            .prepare(&format!("{}{tail}", self.explain(query)))
+            .await?;
         let mut arguments = vec![query.account_id.get()];
         // `?2` when the query is folder-scoped, so the cursor follows at ?3/?4
         // rather than ?2/?3 — `explain` numbers them the same way.
@@ -887,7 +947,8 @@ impl<'a> ThreadRepository<'a> {
                 // knows and the account window has to look up.
                 scoped.then(|| MessageId::new(row.col::<i64>(9).unwrap_or_default())),
             ))
-        }).await?;
+        })
+        .await?;
         let mut page: Vec<(ThreadListRow, Option<MessageId>)> = rows;
         drop(statement);
 
@@ -901,7 +962,8 @@ impl<'a> ThreadRepository<'a> {
             let wanted: Vec<MessageId> = page.iter().filter_map(|(_, id)| *id).collect();
             let mut latest: HashMap<MessageId, MessageListRow> =
                 MessageRepository::new(self.connection)
-                    .rows_for(&wanted).await?
+                    .rows_for(&wanted)
+                    .await?
                     .into_iter()
                     .map(|row| (row.id, row))
                     .collect();
@@ -1010,7 +1072,11 @@ impl<'a> ThreadRepository<'a> {
     /// scrolls shifts every row down and this window silently skips one. The
     /// store's seek marks exist to keep the offset small — see
     /// `postio_runtime::store`.
-    pub async fn page_at(&self, query: &ThreadListQuery, offset: u32) -> Result<Vec<ThreadListRow>> {
+    pub async fn page_at(
+        &self,
+        query: &ThreadListQuery,
+        offset: u32,
+    ) -> Result<Vec<ThreadListRow>> {
         if offset == 0 {
             return self.page(query).await;
         }
@@ -1028,21 +1094,24 @@ impl<'a> ThreadRepository<'a> {
     /// number and the rows cannot disagree about what "in this folder" means.
     pub async fn count_of(&self, query: &ThreadListQuery) -> Result<u32> {
         let count: i64 = match query.mailbox {
-            None => sql::one(
-                self.connection,
-                "SELECT count(*) FROM threads WHERE account_id = ?1 AND message_count > 0",
-                [query.account_id.get()],
-                |row| row.col(0),
-            )
-            .await?,
+            None => {
+                sql::one(
+                    self.connection,
+                    "SELECT count(*) FROM threads WHERE account_id = ?1 AND message_count > 0",
+                    [query.account_id.get()],
+                    |row| row.col(0),
+                )
+                .await?
+            }
             // The same predicate the window uses, so the number and the rows
             // cannot disagree about what a row is: one per conversation the
             // folder holds, plus one per message it holds that belongs to no
             // conversation.
-            Some(mailbox) => sql::one(
-                self.connection,
-                &format!(
-                    "SELECT count(*) FROM messages rep
+            Some(mailbox) => {
+                sql::one(
+                    self.connection,
+                    &format!(
+                        "SELECT count(*) FROM messages rep
                       WHERE rep.mailbox_id = ?1 AND rep.{MEMBER}
                         AND NOT EXISTS (
                                 SELECT 1 FROM messages newer
@@ -1051,11 +1120,12 @@ impl<'a> ThreadRepository<'a> {
                                    AND newer.thread_id = rep.thread_id
                                    AND (newer.received_at, newer.id)
                                        > (rep.received_at, rep.id))"
-                ),
-                [mailbox.get()],
-                |row| row.col(0),
-            )
-            .await?,
+                    ),
+                    [mailbox.get()],
+                    |row| row.col(0),
+                )
+                .await?
+            }
         };
         Ok(count as u32)
     }
@@ -1065,13 +1135,14 @@ impl<'a> ThreadRepository<'a> {
         sql::all(
             self.connection,
             &format!(
-            "SELECT id FROM messages WHERE thread_id = ?1 AND {MEMBER}
+                "SELECT id FROM messages WHERE thread_id = ?1 AND {MEMBER}
               ORDER BY received_at, id"
-        ),
+            ),
             [id.get()],
             |row| Ok(MessageId::new(row.col(0)?)),
         )
-        .await}
+        .await
+    }
 
     /// Everyone who has written in each of `ids`, in first-seen order.
     ///
@@ -1079,7 +1150,10 @@ impl<'a> ThreadRepository<'a> {
     /// them, and SQLite takes the bare `name`/`address` columns from the row
     /// that minimum came from — so the display name is the one the participant
     /// first appeared under.
-    async fn participants_for(&self, ids: &[ThreadId]) -> Result<HashMap<ThreadId, Vec<EmailAddress>>> {
+    async fn participants_for(
+        &self,
+        ids: &[ThreadId],
+    ) -> Result<HashMap<ThreadId, Vec<EmailAddress>>> {
         if ids.is_empty() {
             return Ok(HashMap::new());
         }
@@ -1096,12 +1170,17 @@ impl<'a> ThreadRepository<'a> {
             placeholders(ids.len(), 1)
         );
         let mut statement = self.connection.prepare(&sql).await?;
-        let rows = sql::mapped(&mut statement, ids.iter().map(|id| id.get()).collect::<Vec<_>>(), |row| {
-            Ok((
-                ThreadId::new(row.col(0)?),
-                EmailAddress::new(row.col::<Option<String>>(1)?, row.col::<String>(2)?),
-            ))
-        }).await?;
+        let rows = sql::mapped(
+            &mut statement,
+            ids.iter().map(|id| id.get()).collect::<Vec<_>>(),
+            |row| {
+                Ok((
+                    ThreadId::new(row.col(0)?),
+                    EmailAddress::new(row.col::<Option<String>>(1)?, row.col::<String>(2)?),
+                ))
+            },
+        )
+        .await?;
 
         let mut participants: HashMap<ThreadId, Vec<EmailAddress>> = HashMap::new();
         for (thread_id, address) in rows {
@@ -1143,16 +1222,21 @@ impl<'a> ThreadRepository<'a> {
             placeholders(ids.len(), 1)
         );
         let mut statement = self.connection.prepare(&sql).await?;
-        let rows = sql::mapped(&mut statement, ids.iter().map(|id| id.get()).collect::<Vec<_>>(), |row| {
-            // `LIST_COLUMNS` rather than a hand-written copy of it. This
-            // query used to spell the same thirteen columns out again, and
-            // adding a fourteenth to `LIST_COLUMNS` left this one behind --
-            // `read_list_row` then asked for a column index the statement did
-            // not have, and the unified list failed to page at all while every
-            // storage-level test passed. `thread_id` is the second column in
-            // both, which is what lets the reader be shared.
-            Ok((ThreadId::new(row.col(1)?), read_list_row(&row)?))
-        }).await?;
+        let rows = sql::mapped(
+            &mut statement,
+            ids.iter().map(|id| id.get()).collect::<Vec<_>>(),
+            |row| {
+                // `LIST_COLUMNS` rather than a hand-written copy of it. This
+                // query used to spell the same thirteen columns out again, and
+                // adding a fourteenth to `LIST_COLUMNS` left this one behind --
+                // `read_list_row` then asked for a column index the statement did
+                // not have, and the unified list failed to page at all while every
+                // storage-level test passed. `thread_id` is the second column in
+                // both, which is what lets the reader be shared.
+                Ok((ThreadId::new(row.col(1)?), read_list_row(&row)?))
+            },
+        )
+        .await?;
 
         let mut latest = HashMap::new();
         for (thread_id, message) in rows {
@@ -1165,39 +1249,45 @@ impl<'a> ThreadRepository<'a> {
         sql::all(
             self.connection,
             &format!(
-            "SELECT DISTINCT mailbox_id FROM messages WHERE thread_id = ?1 AND {MEMBER}
+                "SELECT DISTINCT mailbox_id FROM messages WHERE thread_id = ?1 AND {MEMBER}
               ORDER BY mailbox_id"
-        ),
+            ),
             [id.get()],
             |row| Ok(MailboxId::new(row.col(0)?)),
         )
-        .await}
+        .await
+    }
 
     async fn labels_in(&self, id: ThreadId) -> Result<Vec<LabelId>> {
         sql::all(
             self.connection,
             &format!(
-            "SELECT DISTINCT message_labels.label_id
+                "SELECT DISTINCT message_labels.label_id
                FROM message_labels
                JOIN messages ON messages.id = message_labels.message_id
               WHERE messages.thread_id = ?1 AND messages.{MEMBER}
               ORDER BY message_labels.label_id"
-        ),
+            ),
             [id.get()],
             |row| Ok(LabelId::new(row.col(0)?)),
         )
-        .await}
+        .await
+    }
 }
 
 /// The thread a message is currently in.
 async fn thread_of(connection: &Connection, message_id: MessageId) -> Result<Option<ThreadId>> {
-    let mut statement = connection.prepare("SELECT thread_id FROM messages WHERE id = ?1").await?;
-    Ok(crate::sql::first_of(&mut statement, [message_id.get()], |row| {
-        row.col::<Option<i64>>(0)
-    })
-    .await?
-    .flatten()
-    .map(ThreadId::new))
+    let mut statement = connection
+        .prepare("SELECT thread_id FROM messages WHERE id = ?1")
+        .await?;
+    Ok(
+        crate::sql::first_of(&mut statement, [message_id.get()], |row| {
+            row.col::<Option<i64>>(0)
+        })
+        .await?
+        .flatten()
+        .map(ThreadId::new),
+    )
 }
 
 /// Recomputes one thread's aggregates from its members, in whatever
@@ -1210,18 +1300,19 @@ async fn recompute_in(connection: &Connection, id: ThreadId) -> Result<()> {
     let root_subject: Option<String> = sql::one(
         connection,
         &format!(
-                "SELECT subject FROM messages WHERE thread_id = ?1 AND {MEMBER}
+            "SELECT subject FROM messages WHERE thread_id = ?1 AND {MEMBER}
                   ORDER BY received_at, id LIMIT 1"
-            ),
+        ),
         [id.get()],
         |row| row.col::<Option<String>>(0),
     )
     .await
-        .unwrap_or(None);
+    .unwrap_or(None);
 
-    connection.execute(
-        &format!(
-            "UPDATE threads
+    connection
+        .execute(
+            &format!(
+                "UPDATE threads
                 SET subject = coalesce(?2, subject),
                     message_count = (SELECT count(*) FROM messages
                                       WHERE thread_id = ?1 AND {MEMBER}),
@@ -1237,9 +1328,10 @@ async fn recompute_in(connection: &Connection, id: ThreadId) -> Result<()> {
                     last_at = coalesce((SELECT max(received_at) FROM messages
                                          WHERE thread_id = ?1 AND {MEMBER}), 0)
               WHERE id = ?1"
-        ),
-        bind![id.get(), root_subject.as_deref().map(normalize_subject)],
-    ).await?;
+            ),
+            bind![id.get(), root_subject.as_deref().map(normalize_subject)],
+        )
+        .await?;
     Ok(())
 }
 

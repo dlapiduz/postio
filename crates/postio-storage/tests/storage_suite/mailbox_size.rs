@@ -1,7 +1,7 @@
 //! What an account's mail costs, before a byte of it is fetched — ADR 0017.
 
-use postio_storage::sql::bind;
 use postio_storage::repository::{MessageRepository, StorageFootprint};
+use postio_storage::sql::bind;
 use postio_storage::test_support;
 
 /// A headers-only message, the state the footprint is computed from.

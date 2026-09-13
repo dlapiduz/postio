@@ -4,7 +4,6 @@
 //! The linkage *rule* is unit-tested in `postio-model`; what is tested here is
 //! that the index answering it is the one the schema can serve cheaply.
 
-
 use chrono::{DateTime, TimeDelta, TimeZone, Utc};
 use postio_storage::Connection;
 
@@ -76,7 +75,8 @@ async fn a_conversation_lands_in_one_thread() {
         "<a@example.com>",
         &[],
         "Contract",
-    ).await;
+    )
+    .await;
     let (reply, second) = file(
         &connection,
         account.id,
@@ -85,7 +85,8 @@ async fn a_conversation_lands_in_one_thread() {
         "<b@example.com>",
         &["<a@example.com>"],
         "Re: Contract",
-    ).await;
+    )
+    .await;
     let (third, last) = file(
         &connection,
         account.id,
@@ -94,7 +95,8 @@ async fn a_conversation_lands_in_one_thread() {
         "<c@example.com>",
         &["<a@example.com>", "<b@example.com>"],
         "Re: Contract",
-    ).await;
+    )
+    .await;
 
     assert_eq!((second, last), (thread, thread));
     assert_eq!(members(&connection, thread).await, vec![root, reply, third]);
@@ -114,7 +116,8 @@ async fn two_conversations_stay_apart() {
         "<a@example.com>",
         &[],
         "Contract",
-    ).await;
+    )
+    .await;
     let (_, second) = file(
         &connection,
         account.id,
@@ -123,7 +126,8 @@ async fn two_conversations_stay_apart() {
         "<x@example.com>",
         &[],
         "Invoice",
-    ).await;
+    )
+    .await;
 
     assert_ne!(first, second);
 }
@@ -142,7 +146,8 @@ async fn a_new_thread_takes_the_normalized_subject() {
         "<a@example.com>",
         &[],
         "RE: Re: FWD: Contract",
-    ).await;
+    )
+    .await;
 
     assert_eq!(
         ThreadRepository::new(&connection)
@@ -175,7 +180,8 @@ async fn a_reply_that_arrives_before_its_parent_still_gathers_it() {
         "<b@example.com>",
         &["<a@example.com>"],
         "Re: Contract",
-    ).await;
+    )
+    .await;
     let (parent, same) = file(
         &connection,
         account.id,
@@ -184,7 +190,8 @@ async fn a_reply_that_arrives_before_its_parent_still_gathers_it() {
         "<a@example.com>",
         &[],
         "Contract",
-    ).await;
+    )
+    .await;
 
     assert_eq!(same, thread);
     assert_eq!(members(&connection, thread).await, vec![parent, reply]);
@@ -204,7 +211,8 @@ async fn a_late_message_that_links_two_threads_merges_them() {
         "<b@example.com>",
         &["<a@example.com>"],
         "Re: Contract",
-    ).await;
+    )
+    .await;
     let (right, second) = file(
         &connection,
         account.id,
@@ -213,7 +221,8 @@ async fn a_late_message_that_links_two_threads_merges_them() {
         "<c@example.com>",
         &["<x@example.com>"],
         "Re: Notes",
-    ).await;
+    )
+    .await;
     assert_ne!(first, second, "nothing links them yet");
 
     // The message that references both turns up.
@@ -242,7 +251,10 @@ async fn a_late_message_that_links_two_threads_merges_them() {
         expected
     });
     assert_eq!(
-        ThreadRepository::new(&connection).get(second).await.expect("get"),
+        ThreadRepository::new(&connection)
+            .get(second)
+            .await
+            .expect("get"),
         None,
         "the absorbed thread is gone, not left empty"
     );
@@ -263,7 +275,8 @@ async fn a_merge_moves_the_claimed_ids_onto_the_surviving_thread() {
         "<b@example.com>",
         &["<a@example.com>"],
         "Re: A",
-    ).await;
+    )
+    .await;
     file(
         &connection,
         account.id,
@@ -272,7 +285,8 @@ async fn a_merge_moves_the_claimed_ids_onto_the_surviving_thread() {
         "<c@example.com>",
         &["<x@example.com>"],
         "Re: X",
-    ).await;
+    )
+    .await;
 
     let mut linker = Message::new(account.id, inbox, at(3).await);
     linker.rfc_message_id = Some(id("<a@example.com>"));
@@ -311,7 +325,8 @@ async fn a_merge_moves_the_claimed_ids_onto_the_surviving_thread() {
         "<d@example.com>",
         &["<c@example.com>"],
         "Re: X",
-    ).await;
+    )
+    .await;
     assert_eq!(later, threaded.thread_id);
 }
 
@@ -334,7 +349,8 @@ async fn a_reply_with_no_references_falls_back_to_its_subject() {
         "<a@example.com>",
         &[],
         "Contract",
-    ).await;
+    )
+    .await;
     let (_, second) = file(
         &connection,
         account.id,
@@ -343,7 +359,8 @@ async fn a_reply_with_no_references_falls_back_to_its_subject() {
         "<b@example.com>",
         &[],
         "Re: Contract",
-    ).await;
+    )
+    .await;
 
     assert_eq!(second, first);
 }
@@ -362,7 +379,8 @@ async fn two_messages_that_merely_share_a_subject_are_not_a_conversation() {
         "<a@example.com>",
         &[],
         "Hello",
-    ).await;
+    )
+    .await;
     let (_, second) = file(
         &connection,
         account.id,
@@ -371,7 +389,8 @@ async fn two_messages_that_merely_share_a_subject_are_not_a_conversation() {
         "<b@example.com>",
         &[],
         "Hello",
-    ).await;
+    )
+    .await;
 
     assert_ne!(second, first);
 }
@@ -390,7 +409,8 @@ async fn a_reference_to_a_message_that_never_arrived_is_harmless() {
         "<a@example.com>",
         &[],
         "Contract",
-    ).await;
+    )
+    .await;
     let (_, second) = file(
         &connection,
         account.id,
@@ -399,7 +419,8 @@ async fn a_reference_to_a_message_that_never_arrived_is_harmless() {
         "<c@example.com>",
         &["<a@example.com>", "<gone@example.com>"],
         "Re: Contract",
-    ).await;
+    )
+    .await;
 
     assert_eq!(second, first);
 }
@@ -418,7 +439,8 @@ async fn message_ids_match_without_regard_to_case() {
         "<A@Example.COM>",
         &[],
         "Contract",
-    ).await;
+    )
+    .await;
     let (_, second) = file(
         &connection,
         account.id,
@@ -427,7 +449,8 @@ async fn message_ids_match_without_regard_to_case() {
         "<b@example.com>",
         &["<a@example.com>"],
         "Re: Contract",
-    ).await;
+    )
+    .await;
 
     assert_eq!(second, first);
 }
@@ -439,7 +462,9 @@ async fn threading_never_crosses_accounts() {
     let first = test_support::account(&connection).await;
     let first_inbox = test_support::mailbox(&connection, &first, "INBOX").await.id;
     let second = test_support::account(&connection).await;
-    let second_inbox = test_support::mailbox(&connection, &second, "INBOX").await.id;
+    let second_inbox = test_support::mailbox(&connection, &second, "INBOX")
+        .await
+        .id;
 
     let (_, theirs) = file(
         &connection,
@@ -449,7 +474,8 @@ async fn threading_never_crosses_accounts() {
         "<a@example.com>",
         &[],
         "Contract",
-    ).await;
+    )
+    .await;
     let (_, ours) = file(
         &connection,
         second.id,
@@ -458,7 +484,8 @@ async fn threading_never_crosses_accounts() {
         "<b@example.com>",
         &["<a@example.com>"],
         "Re: Contract",
-    ).await;
+    )
+    .await;
 
     assert_ne!(
         ours, theirs,
@@ -510,7 +537,8 @@ async fn cost_of_one_more(threads: i64) -> usize {
             &root,
             &[],
             &format!("Topic {index}"),
-        ).await;
+        )
+        .await;
         for reply in 1..3 {
             file(
                 &connection,
@@ -520,7 +548,8 @@ async fn cost_of_one_more(threads: i64) -> usize {
                 &format!("<reply{index}-{reply}@example.com>"),
                 &[&root],
                 &format!("Re: Topic {index}"),
-            ).await;
+            )
+            .await;
         }
     }
 
@@ -782,7 +811,8 @@ async fn rethreading_never_moves_a_message_out_of_a_thread_it_shares_with_others
         "<root@example.com>",
         &[],
         "Quarterly numbers",
-    ).await;
+    )
+    .await;
     file(
         &connection,
         account.id,
@@ -791,7 +821,8 @@ async fn rethreading_never_moves_a_message_out_of_a_thread_it_shares_with_others
         "<reply@example.com>",
         &["<root@example.com>"],
         "Re: Quarterly numbers",
-    ).await;
+    )
+    .await;
     assert_eq!(members(&connection, root_thread).await.len(), 2);
 
     // A third message with no reference at all, but the same subject as the
@@ -873,7 +904,8 @@ async fn every_corpus_fixture_can_be_threaded() {
     // Malformed headers, truncated multiparts, missing Message-IDs, mislabelled
     // charsets: none of them may panic the pass or leave a message unfiled.
     for (index, fixture) in postio_model::test_corpus::all().iter().enumerate() {
-        let thread = file_fixture(&connection, account.id, inbox, index as i64, fixture.name()).await;
+        let thread =
+            file_fixture(&connection, account.id, inbox, index as i64, fixture.name()).await;
         assert!(
             thread.is_assigned(),
             "`{}` was left without a thread",

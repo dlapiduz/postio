@@ -12,13 +12,13 @@
 //! migration. This is the same shape, so it gets the same answer and a test
 //! that says so.
 
-use postio_storage::Connection;
 use chrono::Utc;
 use postio_index::{SearchRequest, index, search};
 use postio_model::AccountScope;
 use postio_model::{EmailAddress, Message};
 use postio_search::facets::Scope;
 use postio_search::parse;
+use postio_storage::Connection;
 use postio_storage::repository::MessageRepository;
 use postio_storage::test_support;
 

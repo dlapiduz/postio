@@ -56,10 +56,7 @@ async fn truncating_the_log_returns_the_file_to_nothing() {
     );
 
     let before = store.truncate_log().await.expect("truncate");
-    assert_eq!(
-        before, grew,
-        "truncate_log should report the size it found"
-    );
+    assert_eq!(before, grew, "truncate_log should report the size it found");
 
     let after = std::fs::metadata(&wal).map(|meta| meta.len()).unwrap_or(0);
     assert_eq!(

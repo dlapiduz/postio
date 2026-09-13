@@ -223,8 +223,11 @@ async fn flags_are_denormalized_so_the_list_never_parses_a_string() {
         .collect();
     let id = messages.create(&mut message).await.expect("create");
 
-    let (flags, seen, flagged, answered, draft): (String, bool, bool, bool, bool) = postio_storage::sql::one(&*connection, 
-            "SELECT flags, seen, flagged, answered, draft FROM messages WHERE id = ?1",bind![id.get()],
+    let (flags, seen, flagged, answered, draft): (String, bool, bool, bool, bool) =
+        postio_storage::sql::one(
+            &*connection,
+            "SELECT flags, seen, flagged, answered, draft FROM messages WHERE id = ?1",
+            bind![id.get()],
             |row| {
                 Ok((
                     postio_storage::sql::RowExt::col(row, 0)?,
@@ -233,7 +236,9 @@ async fn flags_are_denormalized_so_the_list_never_parses_a_string() {
                     postio_storage::sql::RowExt::col(row, 3)?,
                     postio_storage::sql::RowExt::col(row, 4)?,
                 ))
-            }).await
+            },
+        )
+        .await
         .expect("read the raw row");
 
     assert!(seen && flagged && answered && !draft);
@@ -272,14 +277,12 @@ async fn updating_a_message_replaces_its_recipients_rather_than_appending() {
     assert_eq!(stored.to.len(), 1);
     assert_eq!(stored.subject.as_deref(), Some("Rewritten"));
 
-    let recipients: i64 = postio_storage::sql::one(
-        &connection,
-        "SELECT count(*) FROM recipients",
-        (),
-        |row| postio_storage::sql::RowExt::col(row, 0),
-    )
-    .await
-    .expect("count");
+    let recipients: i64 =
+        postio_storage::sql::one(&connection, "SELECT count(*) FROM recipients", (), |row| {
+            postio_storage::sql::RowExt::col(row, 0)
+        })
+        .await
+        .expect("count");
     assert_eq!(recipients, 3, "from + to + cc, with no leftovers");
 }
 
@@ -295,7 +298,13 @@ async fn deleting_messages_takes_their_recipients_and_attachments() {
     let first_id = messages.create(&mut first).await.expect("create");
     let second_id = messages.create(&mut second).await.expect("create");
 
-    assert_eq!(messages.delete(&[first_id, second_id]).await.expect("delete"), 2);
+    assert_eq!(
+        messages
+            .delete(&[first_id, second_id])
+            .await
+            .expect("delete"),
+        2
+    );
     assert!(messages.get(first_id).await.expect("get").is_none());
 
     for table in ["messages", "recipients", "attachments"] {
@@ -418,7 +427,10 @@ async fn needing_backfill_is_windowed_and_scoped_to_its_mailbox() {
     let limited = messages.needing_backfill(inbox, 2).await.expect("query");
     assert_eq!(limited.len(), 2, "the window caps how many come back");
 
-    let archived = messages.needing_backfill(archive.id, 10).await.expect("query");
+    let archived = messages
+        .needing_backfill(archive.id, 10)
+        .await
+        .expect("query");
     assert_eq!(
         archived.len(),
         1,
@@ -501,7 +513,10 @@ async fn upserting_a_batch_inserts_what_is_new_and_updates_what_is_known() {
         a_message(inbox, account.id, 10),
         a_message(inbox, account.id, 11),
     ];
-    let report = messages.upsert_batch(&mut batch).await.expect("first upsert");
+    let report = messages
+        .upsert_batch(&mut batch)
+        .await
+        .expect("first upsert");
     assert_eq!(report.inserted, 2);
     assert_eq!(report.updated, 0);
     let ids: Vec<MessageId> = batch.iter().map(|message| message.id).collect();
@@ -514,7 +529,10 @@ async fn upserting_a_batch_inserts_what_is_new_and_updates_what_is_known() {
         a_message(inbox, account.id, 12),
     ];
     again[0].flags = [Flag::Seen, Flag::Flagged].into_iter().collect();
-    let report = messages.upsert_batch(&mut again).await.expect("second upsert");
+    let report = messages
+        .upsert_batch(&mut again)
+        .await
+        .expect("second upsert");
 
     assert_eq!(report.inserted, 1);
     assert_eq!(report.updated, 2);
@@ -523,14 +541,12 @@ async fn upserting_a_batch_inserts_what_is_new_and_updates_what_is_known() {
         "a message keeps its local id across a resync, so the UI's selection survives"
     );
 
-    let total: i64 = postio_storage::sql::one(
-        &connection,
-        "SELECT count(*) FROM messages",
-        (),
-        |row| postio_storage::sql::RowExt::col(row, 0),
-    )
-    .await
-    .expect("count");
+    let total: i64 =
+        postio_storage::sql::one(&connection, "SELECT count(*) FROM messages", (), |row| {
+            postio_storage::sql::RowExt::col(row, 0)
+        })
+        .await
+        .expect("count");
     assert_eq!(total, 3, "no duplicates");
     assert!(
         messages
@@ -597,7 +613,10 @@ async fn a_message_can_be_found_by_its_server_uid() {
             .is_none(),
         "a UID means nothing under a different UIDVALIDITY"
     );
-    assert_eq!(messages.uids_in(inbox, validity).await.expect("uids"), vec![uid]);
+    assert_eq!(
+        messages.uids_in(inbox, validity).await.expect("uids"),
+        vec![uid]
+    );
     assert!(
         messages
             .uids_in(inbox, postio_model::Generation::new(100))
@@ -729,7 +748,13 @@ async fn a_locally_deleted_message_is_hidden_from_the_list_but_still_there() {
     let mut message = a_message(inbox, account.id, 70);
     let id = messages.create(&mut message).await.expect("create");
 
-    assert_eq!(messages.set_deleted_locally(&[id], true).await.expect("hide"), 1);
+    assert_eq!(
+        messages
+            .set_deleted_locally(&[id], true)
+            .await
+            .expect("hide"),
+        1
+    );
     assert!(
         messages
             .page(&ListQuery::mailbox(inbox))
@@ -743,7 +768,10 @@ async fn a_locally_deleted_message_is_hidden_from_the_list_but_still_there() {
         "but undo has to be able to bring it back"
     );
 
-    messages.set_deleted_locally(&[id], false).await.expect("undo");
+    messages
+        .set_deleted_locally(&[id], false)
+        .await
+        .expect("undo");
     assert_eq!(
         messages
             .page(&ListQuery::mailbox(inbox))
@@ -829,7 +857,12 @@ async fn waking_due_snoozes_clears_only_what_is_due_and_says_which_mailboxes_cha
     );
 
     assert_eq!(
-        messages.get(due_id).await.expect("get").unwrap().snoozed_until,
+        messages
+            .get(due_id)
+            .await
+            .expect("get")
+            .unwrap()
+            .snoozed_until,
         None,
         "waking clears the snooze rather than merely revealing it"
     );
@@ -852,7 +885,10 @@ async fn waking_due_snoozes_clears_only_what_is_due_and_says_which_mailboxes_cha
     );
 
     assert_eq!(
-        messages.wake_due(account.id, now).await.expect("wake due again"),
+        messages
+            .wake_due(account.id, now)
+            .await
+            .expect("wake due again"),
         Vec::new(),
         "nothing left to wake, so nothing left to repaint"
     );
@@ -885,7 +921,12 @@ async fn waking_due_snoozes_never_touches_another_accounts_rows() {
         "only account a's engine asked, so only account a's row may wake"
     );
     assert_eq!(
-        messages.get(id_b).await.expect("get b").unwrap().snoozed_until,
+        messages
+            .get(id_b)
+            .await
+            .expect("get b")
+            .unwrap()
+            .snoozed_until,
         Some(due),
         "account b's own engine has not ticked yet, so its snooze must stand"
     );
@@ -906,7 +947,10 @@ async fn unsnoozing_clears_it_immediately_without_waiting_for_wake_due() {
         .expect("snooze");
 
     assert_eq!(messages.unsnooze(&[id]).await.expect("unsnooze"), 1);
-    assert_eq!(messages.get(id).await.expect("get").unwrap().snoozed_until, None);
+    assert_eq!(
+        messages.get(id).await.expect("get").unwrap().snoozed_until,
+        None
+    );
     assert_eq!(
         messages
             .page(&ListQuery::mailbox(inbox))
@@ -1079,7 +1123,10 @@ async fn paging_by_offset_is_available_for_a_windowed_list_model() {
         "row 21 counting from the newest"
     );
     assert_eq!(
-        messages.count(&ListQuery::mailbox(inbox)).await.expect("count"),
+        messages
+            .count(&ListQuery::mailbox(inbox))
+            .await
+            .expect("count"),
         100
     );
 }
@@ -1095,7 +1142,10 @@ async fn the_list_can_be_scoped_to_an_account_or_to_flagged_messages() {
     let messages = MessageRepository::new(&connection);
 
     assert_eq!(
-        messages.count(&ListQuery::mailbox(inbox)).await.expect("count"),
+        messages
+            .count(&ListQuery::mailbox(inbox))
+            .await
+            .expect("count"),
         10
     );
     assert_eq!(
@@ -1145,7 +1195,10 @@ async fn a_thread_id_travels_on_the_list_row_so_the_list_can_group_without_a_sec
         .await
         .expect("assign");
 
-    let page = messages.page(&ListQuery::mailbox(inbox)).await.expect("page");
+    let page = messages
+        .page(&ListQuery::mailbox(inbox))
+        .await
+        .expect("page");
     assert_eq!(page[0].thread_id, Some(ThreadId::new(1)));
     assert_eq!(
         messages
@@ -1288,8 +1341,16 @@ async fn a_cursor_page_seeks_past_the_cursor_instead_of_filtering_down_to_it() {
     let messages = MessageRepository::new(&connection);
 
     for (label, query, sort_column) in [
-        ("mailbox", ListQuery::mailbox(MailboxId::new(1)), "received_at"),
-        ("account", ListQuery::account(postio_model::AccountId::new(1)), "received_at"),
+        (
+            "mailbox",
+            ListQuery::mailbox(MailboxId::new(1)),
+            "received_at",
+        ),
+        (
+            "account",
+            ListQuery::account(postio_model::AccountId::new(1)),
+            "received_at",
+        ),
     ] {
         let sql = messages.explain(&query.clone().after(ListCursor {
             received_at: at(0),
@@ -1327,7 +1388,10 @@ async fn paging_stays_flat_over_a_hundred_thousand_messages() {
     let mut cursor = first.last().expect("a row").cursor();
     let mut pages = 1;
     while pages < 1_900 {
-        let page = messages.page(&query.clone().after(cursor)).await.expect("page");
+        let page = messages
+            .page(&query.clone().after(cursor))
+            .await
+            .expect("page");
         let Some(last) = page.last() else { break };
         cursor = last.cursor();
         pages += 1;
@@ -1343,7 +1407,10 @@ async fn paging_stays_flat_over_a_hundred_thousand_messages() {
     // And the whole mailbox is never materialized: the only way to see every
     // row is to ask for one window at a time.
     assert_eq!(
-        messages.count(&ListQuery::mailbox(inbox)).await.expect("count"),
+        messages
+            .count(&ListQuery::mailbox(inbox))
+            .await
+            .expect("count"),
         100_000
     );
 }
@@ -1471,10 +1538,14 @@ async fn enqueue_and_move_locally(
 }
 
 async fn rows_in(connection: &Connection, mailbox: MailboxId) -> usize {
-    postio_storage::sql::one(&*connection, 
-            "SELECT COUNT(*) FROM messages WHERE mailbox_id = ?1",bind![mailbox.get()],
-            |row| postio_storage::sql::RowExt::col::<i64>(row, 0)).await
-        .expect("count") as usize
+    postio_storage::sql::one(
+        &*connection,
+        "SELECT COUNT(*) FROM messages WHERE mailbox_id = ?1",
+        bind![mailbox.get()],
+        |row| postio_storage::sql::RowExt::col::<i64>(row, 0),
+    )
+    .await
+    .expect("count") as usize
 }
 
 #[tokio::test]
@@ -1504,7 +1575,8 @@ async fn a_resync_does_not_resurrect_a_message_with_an_undrained_move() {
             to: archive.id,
         },
         archive.id,
-    ).await;
+    )
+    .await;
     assert_eq!(
         rows_in(&connection, inbox).await,
         0,
@@ -1518,7 +1590,10 @@ async fn a_resync_does_not_resurrect_a_message_with_an_undrained_move() {
     resynced[0].server.uid = Some(uid);
     resynced[0].server.uid_validity = Some(validity);
     resynced[0].server.remote_id = Some(postio_model::RemoteId::new(format!("{validity}:{uid}")));
-    let report = messages.upsert_batch(&mut resynced).await.expect("resync upsert");
+    let report = messages
+        .upsert_batch(&mut resynced)
+        .await
+        .expect("resync upsert");
 
     assert_eq!(
         rows_in(&connection, inbox).await,
@@ -1563,13 +1638,17 @@ async fn a_resync_does_not_resurrect_a_message_with_an_undrained_delete() {
             trash: trash.id,
         },
         trash.id,
-    ).await;
+    )
+    .await;
 
     let mut resynced = vec![a_message(inbox, account.id, 41)];
     resynced[0].server.uid = Some(uid);
     resynced[0].server.uid_validity = Some(validity);
     resynced[0].server.remote_id = Some(postio_model::RemoteId::new(format!("{validity}:{uid}")));
-    messages.upsert_batch(&mut resynced).await.expect("resync upsert");
+    messages
+        .upsert_batch(&mut resynced)
+        .await
+        .expect("resync upsert");
 
     assert_eq!(
         rows_in(&connection, inbox).await,
@@ -1609,7 +1688,8 @@ async fn the_shadow_lifts_once_the_operation_settles() {
                 to: archive.id,
             },
             archive.id,
-        ).await;
+        )
+        .await;
 
         // The queue row settles, one way or the other.
         let queue = OperationQueueRepository::new(&connection);
@@ -1631,7 +1711,10 @@ async fn the_shadow_lifts_once_the_operation_settles() {
         let mut resynced = vec![a_message(inbox, account.id, 42)];
         resynced[0].server.uid = Some(uid);
         resynced[0].server.uid_validity = Some(validity);
-        messages.upsert_batch(&mut resynced).await.expect("resync upsert");
+        messages
+            .upsert_batch(&mut resynced)
+            .await
+            .expect("resync upsert");
 
         assert_eq!(
             rows_in(&connection, inbox).await,
@@ -1737,7 +1820,11 @@ async fn a_partial_message_is_still_reachable_by_the_interactive_lane() {
     let id = messages.create(&mut message).await.expect("create");
 
     assert!(
-        messages.backfill_candidate(id).await.expect("look up").is_some(),
+        messages
+            .backfill_candidate(id)
+            .await
+            .expect("look up")
+            .is_some(),
         "the user can still ask for the rest of it"
     );
 }
@@ -1798,7 +1885,12 @@ async fn a_payload_key_for_a_part_the_message_does_not_have_writes_nothing() {
     let id = messages.create(&mut message).await.expect("create");
 
     let blob = postio_model::BlobId::new("b".repeat(64));
-    assert!(!messages.set_attachment_blob(id, "7.3", &blob).await.expect("ask"));
+    assert!(
+        !messages
+            .set_attachment_blob(id, "7.3", &blob)
+            .await
+            .expect("ask")
+    );
 
     let stored = messages.get(id).await.expect("get").expect("the message");
     assert_eq!(stored.attachments[0].blob_id, None);
@@ -1918,22 +2010,18 @@ async fn two_messages_from_the_same_sender_share_one_address_row() {
         messages.create(&mut message).await.expect("create");
     }
 
-    let addresses: i64 = postio_storage::sql::one(
-        &connection,
-        "SELECT count(*) FROM addresses",
-        (),
-        |row| postio_storage::sql::RowExt::col(row, 0),
-    )
-    .await
-    .expect("count");
-    let recipients: i64 = postio_storage::sql::one(
-        &connection,
-        "SELECT count(*) FROM recipients",
-        (),
-        |row| postio_storage::sql::RowExt::col(row, 0),
-    )
-    .await
-    .expect("count");
+    let addresses: i64 =
+        postio_storage::sql::one(&connection, "SELECT count(*) FROM addresses", (), |row| {
+            postio_storage::sql::RowExt::col(row, 0)
+        })
+        .await
+        .expect("count");
+    let recipients: i64 =
+        postio_storage::sql::one(&connection, "SELECT count(*) FROM recipients", (), |row| {
+            postio_storage::sql::RowExt::col(row, 0)
+        })
+        .await
+        .expect("count");
 
     assert_eq!(recipients, 6, "three messages, two addresses each");
     assert_eq!(addresses, 2, "but only two distinct addresses stored");
@@ -2092,7 +2180,10 @@ async fn a_resync_does_not_unread_a_message_whose_flag_has_not_drained() {
     resynced[0].server.uid = Some(uid);
     resynced[0].server.uid_validity = Some(validity);
     resynced[0].server.remote_id = Some(postio_model::RemoteId::new(format!("{validity}:{uid}")));
-    messages.upsert_batch(&mut resynced).await.expect("resync upsert");
+    messages
+        .upsert_batch(&mut resynced)
+        .await
+        .expect("resync upsert");
 
     assert!(
         is_seen(&connection, message).await,
@@ -2131,9 +2222,16 @@ async fn a_resync_still_takes_the_flags_the_queue_is_not_holding() {
     resynced[0].server.uid_validity = Some(validity);
     resynced[0].server.remote_id = Some(postio_model::RemoteId::new(format!("{validity}:{uid}")));
     resynced[0].flags.insert(postio_model::Flag::Flagged);
-    messages.upsert_batch(&mut resynced).await.expect("resync upsert");
+    messages
+        .upsert_batch(&mut resynced)
+        .await
+        .expect("resync upsert");
 
-    let stored = messages.get(message).await.expect("read").expect("the message");
+    let stored = messages
+        .get(message)
+        .await
+        .expect("read")
+        .expect("the message");
     assert!(
         stored.flags.contains(&postio_model::Flag::Flagged),
         "a flag set elsewhere never arrived: preserving local intent must not \
@@ -2182,7 +2280,10 @@ async fn a_drained_flag_stops_being_protected() {
     resynced[0].server.uid = Some(uid);
     resynced[0].server.uid_validity = Some(validity);
     resynced[0].server.remote_id = Some(postio_model::RemoteId::new(format!("{validity}:{uid}")));
-    messages.upsert_batch(&mut resynced).await.expect("resync upsert");
+    messages
+        .upsert_batch(&mut resynced)
+        .await
+        .expect("resync upsert");
 
     assert!(
         !is_seen(&connection, message).await,
@@ -2208,7 +2309,10 @@ async fn upsert_matches_a_row_by_identity_before_the_wire_pair() {
 
     let mut shifted = vec![a_message(inbox, account.id, 40)];
     shifted[0].server.uid = Some(Uid::new(999));
-    let report = messages.upsert_batch(&mut shifted).await.expect("second pass");
+    let report = messages
+        .upsert_batch(&mut shifted)
+        .await
+        .expect("second pass");
 
     assert_eq!(report.updated, 1, "{report:?}");
     assert_eq!(report.inserted, 0, "{report:?}");
@@ -2329,7 +2433,11 @@ async fn the_stored_block_comes_back_as_headers_rather_than_being_parsed_and_dro
         .await
         .expect("set");
 
-    let headers = messages.headers(id).await.expect("headers").expect("the row");
+    let headers = messages
+        .headers(id)
+        .await
+        .expect("headers")
+        .expect("the row");
 
     assert_eq!(headers.get("x-mailer"), Some("mutt 1.5.24"));
     assert_eq!(
@@ -2354,7 +2462,11 @@ async fn a_message_with_no_stored_block_has_no_headers_rather_than_an_error() {
     let mut message = postio_model::Message::new(account.id, inbox, chrono::Utc::now());
     let id = messages.create(&mut message).await.expect("create");
 
-    let headers = messages.headers(id).await.expect("headers").expect("the row");
+    let headers = messages
+        .headers(id)
+        .await
+        .expect("headers")
+        .expect("the row");
 
     assert!(headers.is_empty());
 }
@@ -2394,7 +2506,10 @@ async fn a_fetched_message_with_no_stored_block_is_offered_for_repair() {
     let mut untouched = postio_model::Message::new(account.id, inbox, chrono::Utc::now());
     messages.create(&mut untouched).await.expect("create");
 
-    let candidates = messages.messages_missing_headers(10).await.expect("candidates");
+    let candidates = messages
+        .messages_missing_headers(10)
+        .await
+        .expect("candidates");
 
     assert_eq!(candidates.len(), 1, "got: {candidates:?}");
     assert_eq!(candidates[0].message_id, fetched_id);
@@ -2572,7 +2687,10 @@ async fn a_fetched_message_does_not_adopt_a_local_row_that_already_has_an_identi
     let shared = RfcMessageId::new("<shared@example.com>");
     let mut existing = a_message(inbox, account.id, 30);
     existing.rfc_message_id = Some(shared.clone());
-    messages.create(&mut existing).await.expect("an ordinary message");
+    messages
+        .create(&mut existing)
+        .await
+        .expect("an ordinary message");
     assert!(existing.server.remote_id.is_some());
 
     let mut fetched = a_message(inbox, account.id, 31);
