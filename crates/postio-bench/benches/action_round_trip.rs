@@ -68,9 +68,30 @@ use postio_gtk::feed::{Feed, ListScope, MessageSource, PageFuture, PageRequest};
 use postio_gtk::list::MessageList;
 use postio_model::{Message, MessageId};
 use postio_session::actions::Actions;
-use postio_storage::Database;
+use postio_storage::Store;
 use postio_storage::repository::MessageRepository;
 use postio_storage::test_support;
+
+/// The runtime every async call in this bench is driven on.
+///
+/// Criterion's `iter` takes a synchronous closure and calls it on this thread,
+/// where there is no ambient runtime -- so `block_on` here is the plain thing
+/// rather than the trap it is everywhere else in this workspace. Multi-threaded
+/// because a store read may reach `block_in_place`.
+fn on_runtime<T>(future: impl std::future::Future<Output = T>) -> T {
+    use std::sync::OnceLock;
+    static RUNTIME: OnceLock<tokio::runtime::Runtime> = OnceLock::new();
+    RUNTIME
+        .get_or_init(|| {
+            tokio::runtime::Builder::new_multi_thread()
+                .worker_threads(2)
+                .enable_all()
+                .build()
+                .expect("a runtime for the benches")
+        })
+        .block_on(future)
+}
+
 
 /// A source that never answers.
 ///
@@ -88,7 +109,7 @@ impl MessageSource for Never {
 /// An account with an inbox and an archive, a bus over it, and a `Feed`
 /// watching the inbox the way an open window's list would.
 struct World {
-    database: Database,
+    database: Store,
     account_id: postio_model::AccountId,
     inbox: postio_model::MailboxId,
     actions: Actions,
@@ -100,12 +121,12 @@ struct World {
     _list: MessageList,
 }
 
-fn world() -> World {
-    let database = test_support::memory();
+async fn world() -> World {
+    let database = test_support::memory().await;
     let (account, inbox) = {
-        let connection = database.connection().expect("a connection");
-        let (account, inbox) = test_support::account_with_inbox(&connection);
-        test_support::mailbox(&connection, &account, "Archive");
+        let connection = database.connect().await.expect("a connection");
+        let (account, inbox) = test_support::account_with_inbox(&connection).await;
+        test_support::mailbox(&connection, &account, "Archive").await;
         (account, inbox)
     };
     let state = SharedState::default();
@@ -132,11 +153,11 @@ fn world() -> World {
 
 impl World {
     /// A fresh message in the inbox, selected the way clicking it would be.
-    fn message(&self) -> MessageId {
-        let connection = self.database.connection().expect("a connection");
+    async fn message(&self) -> MessageId {
+        let connection = self.database.connect().await.expect("a connection");
         let mut message = Message::new(self.account_id, self.inbox, Utc::now());
         MessageRepository::new(&connection)
-            .create(&mut message)
+            .create(&mut message).await
             .expect("a message")
     }
 
@@ -150,15 +171,18 @@ impl World {
     /// `n` fresh messages in the inbox, selected. Excluded from every timed
     /// region: this is what a real selection already looked like before the
     /// key was pressed.
-    fn seeded(&self, n: usize) -> Vec<MessageId> {
-        let ids: Vec<MessageId> = (0..n).map(|_| self.message()).collect();
+    async fn seeded(&self, n: usize) -> Vec<MessageId> {
+        let mut ids: Vec<MessageId> = Vec::with_capacity(n);
+        for _ in 0..n {
+            ids.push(self.message().await);
+        }
         self.select(&ids);
         ids
     }
 
     /// Archive the current selection, and feed every resulting event to the
     /// watching `Feed` — the whole round trip a keystroke sets off.
-    fn archive_and_apply(&self) {
+    async fn archive_and_apply(&self) {
         self.actions
             .run(
                 &Command::Archive {
@@ -166,6 +190,7 @@ impl World {
                 },
                 &self.sink,
             )
+            .await
             .expect("archive");
         while let Some(event) = self.events.try_next() {
             self.feed.apply(&event);
@@ -191,7 +216,7 @@ const SIZES: [usize; 3] = [1, 50, 500];
 const RUNS: usize = 5;
 
 fn bench_archive_round_trip(c: &mut Criterion) {
-    let world = world();
+    let world = on_runtime(world());
 
     for n in SIZES {
         c.bench_function(&format!("archive round trip, {n} selected"), |b| {
@@ -221,9 +246,9 @@ fn bench_archive_round_trip(c: &mut Criterion) {
         let mut worker_best = None;
         let mut ui_best = None;
         for _ in 0..RUNS {
-            world.seeded(n);
+            on_runtime(world.seeded(n));
             let worker_start = Instant::now();
-            world
+            on_runtime(world
                 .actions
                 .run(
                     &Command::Archive {
@@ -231,7 +256,7 @@ fn bench_archive_round_trip(c: &mut Criterion) {
                     },
                     &world.sink,
                 )
-                .expect("archive");
+                ).expect("archive");
             let worker_elapsed = worker_start.elapsed();
 
             let events = world.drain();

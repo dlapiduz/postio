@@ -220,7 +220,7 @@ fn populate(
 /// the empty state rather than of the folder list the canvas draws. The old
 /// hand-rolled source stamped this on the way past; now that the folders come
 /// out of the store, the store is where it has to be stamped.
-fn stamp_as_just_synced(database: &postio_storage::Database, report: &SeedReport) {
+fn stamp_as_just_synced(database: &postio_storage::Store, report: &SeedReport) {
     let connection = database.connection().expect("a checked-out connection");
     let repository = MailboxRepository::new(&connection);
     let synced = chrono::Utc::now() - chrono::Duration::seconds(12);

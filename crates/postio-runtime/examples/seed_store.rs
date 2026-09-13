@@ -47,7 +47,7 @@ fn main() {
             std::process::exit(1);
         }
     };
-    let database = match postio_storage::Database::open(
+    let database = match postio_storage::Store::open(
         &path,
         &store_key.derive(postio_storage::key::Purpose::Database),
     ) {
