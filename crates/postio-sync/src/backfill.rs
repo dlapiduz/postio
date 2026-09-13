@@ -49,10 +49,10 @@ use postio_account::backend::{BackendError, BodyPart, MailBackend, VecSink};
 use postio_account::cancel::CancelToken;
 use postio_model::{BodyState, MailboxId, MessageId, Uid, mime};
 use postio_storage::BlobStore;
-use postio_storage::Connection;
 use postio_storage::repository::{
     BackfillCandidate, MailboxRepository, MessageRepository, StoredBody,
 };
+use postio_storage::{Checkout, Connection, WritePriority};
 
 use crate::blob_sink::BlobSink;
 use crate::drain::SyncError;
@@ -1091,7 +1091,7 @@ fn pending_payloads(message: &postio_model::Message) -> Vec<String> {
 /// hole in search, and guessing section `1` would be wrong for every multipart
 /// message.
 pub async fn fetch_body(
-    connection: &Connection,
+    connection: &Checkout,
     blobs: &BlobStore,
     backend: &dyn MailBackend,
     request: &BodyRequest,
@@ -1139,6 +1139,11 @@ pub async fn fetch_body(
                 });
             };
             let bytes = block.text.len() as u64;
+            // The gate, now that the wire is done with. See `writing` below.
+            let _permit = connection
+                .write_gate()
+                .acquire(WritePriority::Background)
+                .await;
             messages.set_headers(request.message, Some(&block)).await?;
             index_the_header_block(connection, request.message, Some(&block)).await;
             return Ok(Outcome::Stored { bytes });
@@ -1210,6 +1215,15 @@ pub async fn fetch_body(
     if message.preview.is_none() {
         message.preview = parsed.preview;
     }
+
+    // Everything below this line writes, and nothing below it touches the
+    // wire, so this is where the gate belongs: taken after the fetch and held
+    // to the end. See `writing` for why a backfill takes one at all.
+    let _permit = connection
+        .write_gate()
+        .acquire(WritePriority::Background)
+        .await;
+
     messages.update(&mut message).await?;
 
     // Every payload arrived with the message, so record where each one landed
@@ -1286,7 +1300,7 @@ pub async fn fetch_body(
 /// schema was never created is a real state that must not cost a fetched
 /// message.
 async fn index_the_header_block(
-    connection: &Connection,
+    connection: &Checkout,
     message: MessageId,
     block: Option<&postio_model::headers::Block>,
 ) {
@@ -1331,7 +1345,7 @@ async fn index_the_header_block(
 /// decoded text is a column rather than a file, so this path touches the blob
 /// store nowhere: it is text in, row out.
 async fn fetch_text_parts(
-    connection: &Connection,
+    connection: &Checkout,
     blobs: &BlobStore,
     backend: &dyn MailBackend,
     request: &BodyRequest,
@@ -1462,6 +1476,14 @@ async fn fetch_text_parts(
     if message.preview.is_none() {
         message.preview = preview;
     }
+    // The text axis's write phase. The sections are fetched above; from
+    // here down it is all store, so the gate is taken once and held to the
+    // end rather than per statement.
+    let _permit = connection
+        .write_gate()
+        .acquire(WritePriority::Background)
+        .await;
+
     messages.update(&mut message).await?;
 
     // `partial` means text local, payloads not — the variant the schema
@@ -1642,7 +1664,7 @@ async fn fetch_section(
 /// Nothing to keep: the message around the part was never fetched. That is the
 /// point.
 async fn fetch_payloads(
-    connection: &Connection,
+    connection: &Checkout,
     blobs: &BlobStore,
     backend: &dyn MailBackend,
     request: &BodyRequest,
@@ -1669,10 +1691,21 @@ async fn fetch_payloads(
             continue;
         };
         bytes += moved;
-        messages
-            .set_attachment_blob(request.message, part_id, &blob)
-            .await?;
+        {
+            let _permit = connection
+                .write_gate()
+                .acquire(WritePriority::Background)
+                .await;
+            messages
+                .set_attachment_blob(request.message, part_id, &blob)
+                .await?;
+        }
     }
+
+    let _permit = connection
+        .write_gate()
+        .acquire(WritePriority::Background)
+        .await;
 
     // The commit point for this axis. Re-read rather than reasoned about: the
     // rows above were written one at a time, and what matters here is whether

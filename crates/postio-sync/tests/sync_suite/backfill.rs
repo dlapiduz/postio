@@ -2295,3 +2295,85 @@ async fn a_legacy_row_with_no_block_and_no_blob_is_queued_and_filled() {
         0
     );
 }
+
+// ---------------------------------------------------------------------------
+// And it waits its turn
+// ---------------------------------------------------------------------------
+
+/// A backfilled body does not write while a person holds the gate.
+///
+/// #425's rule, and the same omission `resync.rs` had before
+/// `resync_interactive_write.rs` caught it: `postio_storage::WriteGate` is the
+/// whole of this engine's write serialisation -- its busy timeout is **0**
+/// where SQLCipher's was 5,000 ms -- so a writer outside the gate is not
+/// merely rude, it is a collision the engine reports and nobody retries.
+///
+/// The backfill was that writer. Every other path takes a permit;
+/// `backfill.rs` took none, and it writes `messages` (the row, the body, the
+/// attachment blobs) and then `messages.body_search` through the indexer.
+///
+/// Seen on a live account: archiving a message while the body backfill ran
+/// answered *"Could not save that change"*, over
+///
+/// ```text
+/// the local store refused a write: engine: database snapshot is stale,
+/// rollback and retry the transaction
+/// ```
+///
+/// A person's archive is what must not lose, so the backfill is the one that
+/// waits. It takes `WritePriority::Background`, which cannot even *begin*
+/// while an interactive writer is waiting.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_backfilled_body_waits_for_the_write_a_person_is_doing() {
+    let backend = server(2).await;
+    let local = local().await;
+    let fetched = headers(&local, &backend).await;
+    let (id, uid) = fetched[0];
+
+    // Somebody is mid-archive.
+    let permit = local
+        .connection
+        .write_gate()
+        .acquire(postio_storage::WritePriority::Interactive)
+        .await;
+
+    // A duration is the assertion here rather than a wait for a condition:
+    // what is being claimed is that something does *not* happen, and that
+    // cannot be settled by waiting for it. Generous enough that a loaded
+    // machine does not read as a pass.
+    let raced = tokio::time::timeout(
+        Duration::from_millis(750),
+        fetch_body(
+            &local.connection,
+            &local.blobs,
+            &backend,
+            &request(&local.inbox, id, uid, 1_024),
+            BackfillPolicy::default().max_inline_bytes,
+            &CancelToken::new(),
+        ),
+    )
+    .await;
+    assert!(
+        raced.is_err(),
+        "the backfill wrote a body while a person held the write gate; that \
+         is the collision the gate exists to prevent, and this engine answers \
+         it with `database snapshot is stale` rather than a retry"
+    );
+
+    // And once the person is done, it goes through.
+    drop(permit);
+    let outcome = fetch_body(
+        &local.connection,
+        &local.blobs,
+        &backend,
+        &request(&local.inbox, id, uid, 1_024),
+        BackfillPolicy::default().max_inline_bytes,
+        &CancelToken::new(),
+    )
+    .await
+    .expect("fetch");
+    assert!(
+        matches!(outcome, Outcome::Stored { .. }),
+        "waiting for the gate must not cost the body: {outcome:?}"
+    );
+}
