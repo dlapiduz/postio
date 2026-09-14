@@ -1342,14 +1342,19 @@ async fn a_requested_body_does_not_wait_for_the_supervisors_first_tick() {
     );
 }
 
-/// #327: the body a *person* asked for is indexed too, not only a backfill's.
+/// #327: the body a *person* asked for reaches the index too, not only a
+/// backfill's.
 ///
 /// The two arrive by different routes — `Job::RequestBody` jumps the queue
 /// with `Lane::Interactive`, a backfill is seeded per mailbox at startup —
 /// and search coverage that followed only the second would be bounded by
 /// whatever the backfill happened to have reached. The engine settles both
-/// through one `pump_body`, so this asserts the property at the layer where
-/// that claim is actually testable rather than trusting the shared call.
+/// through one `pump_body`, and neither writes the search row itself any
+/// more: a stored body with no row is the indexer's queue, drained by
+/// `postio_session::spawn_body_indexer` off the sync lane. So this asserts
+/// the engine's half of the contract — the body the user asked for lands in
+/// the queue — and then that one indexer batch, run the way the session runs
+/// it, makes the body findable.
 #[tokio::test]
 async fn a_body_the_user_asked_for_is_indexed_as_well_as_stored() {
     // The background lane is off, and that is load-bearing rather than tidy.
@@ -1439,9 +1444,26 @@ async fn a_body_the_user_asked_for_is_indexed_as_well_as_stored() {
         "there was nothing to fetch for a message the mock holds"
     );
 
+    // The engine's half: the body lands, and lands in the indexer's queue --
+    // a stored body with no search row (`messages_missing_body_text`).
+    // Neither the store nor the fetch writes the row any more; the session's
+    // indexer drains the queue off the sync lane.
+    let pending = async |id: i64| {
+        with_store(
+            &database,
+            "asking the indexer's queue",
+            async |connection| {
+                let queue = postio_index::index::messages_missing_body_text(&connection, 100)
+                    .await
+                    .expect("the indexer's queue");
+                Ok(queue.contains(&id))
+            },
+        )
+        .await
+    };
     tokio::time::timeout(std::time::Duration::from_secs(5), async {
         loop {
-            if body_is_indexed(message.get()).await {
+            if pending(message.get()).await {
                 return;
             }
             tokio::time::sleep(std::time::Duration::from_millis(20)).await;
@@ -1449,9 +1471,40 @@ async fn a_body_the_user_asked_for_is_indexed_as_well_as_stored() {
     })
     .await
     .expect(
-        "the body the user opened landed in the blob store and never reached \
-         the search index, so search covers only whatever the background \
-         backfill happened to have fetched (#327)",
+        "the body the user opened never landed as a body the indexer would \
+         pick up, so search covers only whatever the background backfill \
+         happened to have fetched (#327)",
+    );
+    assert!(
+        !body_is_indexed(message.get()).await,
+        "the fetch wrote the search row itself, on the sync lane"
+    );
+
+    // The indexer's half, one batch of it, the way the session runs it.
+    with_store(&database, "one indexer batch", async |connection| {
+        let messages = postio_storage::repository::MessageRepository::new(&connection);
+        let queue = postio_index::index::messages_missing_body_text(&connection, 100)
+            .await
+            .expect("the indexer's queue");
+        for id in queue {
+            let stored = messages
+                .body(postio_model::ids::MessageId::new(id))
+                .await?
+                .unwrap_or_default();
+            let body = postio_model::MessageBody {
+                text: stored.text,
+                html: stored.html,
+            };
+            postio_index::index::index_body_of(&connection, id, &body)
+                .await
+                .expect("index a body");
+        }
+        Ok(())
+    })
+    .await;
+    assert!(
+        body_is_indexed(message.get()).await,
+        "one indexer batch over the queue did not reach the body the user asked for"
     );
 }
 
