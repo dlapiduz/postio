@@ -201,6 +201,9 @@ fn wait_for(flag: &Rc<RefCell<bool>>, timeout: Duration) {
     let deadline = Instant::now() + postio_test_support::scaled(timeout);
     while !*flag.borrow() && Instant::now() < deadline {
         while glib::MainContext::default().iteration(false) {}
+        if let Some(reason) = postio_gtk::web_process::take_death() {
+            panic!("a WebKit web process died ({reason}) while waiting for a load");
+        }
         std::thread::sleep(std::time::Duration::from_millis(5));
     }
     assert!(*flag.borrow(), "the WebView never finished loading");

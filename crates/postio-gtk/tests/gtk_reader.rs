@@ -683,6 +683,7 @@ fn the_reader_renders_and_hardens_the_corpus() {
     view_original_reaches_one_message_of_a_thread();
     one_senders_styling_cannot_reach_another_message();
     a_whole_thread_costs_one_web_process();
+    a_dead_web_process_fails_the_wait_for_it_at_once();
     an_allowed_senders_images_survive_the_thread_document();
     the_show_verb_actually_grants_consent();
     a_messages_own_verb_names_that_message();
@@ -2060,6 +2061,11 @@ fn wait_for(flag: &Rc<RefCell<bool>>, timeout: Duration) {
     let deadline = Instant::now() + postio_test_support::scaled(timeout);
     while !*flag.borrow() && Instant::now() < deadline {
         while glib::MainContext::default().iteration(false) {}
+        // A document held by a dead web process is never going to finish
+        // loading; say so now rather than at the deadline.
+        if let Some(reason) = postio_gtk::web_process::take_death() {
+            panic!("a WebKit web process died ({reason}) while waiting for a load");
+        }
         std::thread::sleep(std::time::Duration::from_millis(10));
     }
     assert!(*flag.borrow(), "the WebView never finished loading");
@@ -2295,5 +2301,72 @@ fn a_whole_thread_costs_one_web_process() {
         document.matches("<details").count(),
         30,
         "the document does not hold the whole thread"
+    );
+}
+
+/// A web process that dies fails the wait for it at once, not at the deadline.
+///
+/// CI, 2026-09-14: a web process died under an editor test on the runner's
+/// software GL stack, every bounded wait after it ran to its scaled
+/// deadline, and the case hit nextest's 240 s cap. `postio_gtk::web_process`
+/// hears the death from WebKit itself; this proves the wait helpers listen.
+fn a_dead_web_process_fails_the_wait_for_it_at_once() {
+    if adw::init().is_err() || gdk::Display::default().is_none() {
+        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
+        return;
+    }
+
+    let window = gtk::Window::new();
+    let reader = Reader::with_allowlist(
+        Rc::new(NoBlobs),
+        RemoteImageAllowList::default(),
+        scratch_path("dead-web-process"),
+    );
+    window.set_child(Some(&reader.widget()));
+    window.present();
+
+    let finished = track_load_finished(&reader);
+    reader.render(
+        &postio_model::MessageBody {
+            text: Some("alive".to_owned()),
+            html: None,
+        },
+        None,
+    );
+    wait_for(&finished, Duration::from_secs(5));
+
+    let before = postio_gtk::web_process::deaths();
+    reader.view().terminate_web_process();
+    // The signal arrives through the main loop, not from the call.
+    let deadline = Instant::now() + postio_test_support::scaled(Duration::from_secs(5));
+    while postio_gtk::web_process::deaths() == before && Instant::now() < deadline {
+        pump();
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    assert_eq!(
+        postio_gtk::web_process::deaths(),
+        before + 1,
+        "the death was counted"
+    );
+    assert!(
+        postio_gtk::web_process::last_death().is_some(),
+        "and its reason kept"
+    );
+
+    // A wait begun after the death fails now, naming it, not at its deadline.
+    let never = Rc::new(RefCell::new(false));
+    let started = Instant::now();
+    let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        wait_for(&never, Duration::from_secs(20));
+    }));
+    let waited = started.elapsed();
+    window.set_visible(false);
+    assert!(
+        outcome.is_err(),
+        "the wait must fail once the process is gone"
+    );
+    assert!(
+        waited < Duration::from_secs(5),
+        "the wait ran {waited:?} towards its deadline instead of failing at once"
     );
 }
