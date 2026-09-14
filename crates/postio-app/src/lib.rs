@@ -230,10 +230,12 @@ pub fn run() -> glib::ExitCode {
 
     // The sync engines first, and before anything else here: they are the one
     // thing in this process still writing to the database on a thread of
-    // their own, and every page they write goes through libcrypto. Letting
-    // `main` return with one of them mid-commit means the process's exit
-    // handlers tear libcrypto down underneath it -- a reproducible coredump,
-    // and the reason `Engine` keeps its `JoinHandle` at all.
+    // their own. Letting `main` return with one of them mid-commit leaves a
+    // write torn by the process exit for the store engine to recover -- and
+    // that engine is pre-1.0, so waiting for the pass to finish rather than
+    // trusting its young WAL recovery is why `Engine` keeps its `JoinHandle`.
+    // (Under SQLCipher this was sharper still: a coredump through libcrypto's
+    // atexit teardown, which the pure-Rust engine cannot reproduce.)
     //
     // Bounded: `stop_retained` waits a few seconds per engine and gives up
     // rather than holding a closed window open on a stalled network read.
@@ -1072,10 +1074,10 @@ async fn adopt_engine(
 ) {
     // Retained rather than leaked. It does live as long as the session, but
     // "dropping it at exit would stop the engine a moment before the process
-    // ends anyway" -- which is what the leak was for -- stopped being true
-    // when the store became SQLCipher: that moment is exactly when libcrypto
-    // goes away underneath a thread still encrypting a page. `run` calls
-    // `stop_retained` before it returns.
+    // ends anyway" -- which is what the leak was for -- stopped being safe
+    // once that moment could leave a write torn mid-commit for a pre-1.0
+    // engine to recover. `run` calls `stop_retained` before it returns. See
+    // `postio_runtime::engine::EngineThread`.
     postio_runtime::retain(sync.clone());
     // `Refresh` is the one command that needs it, and it is pressed long
     // after the bus was built. The first engine fills the slot; the

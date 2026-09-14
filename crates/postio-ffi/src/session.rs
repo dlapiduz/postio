@@ -410,9 +410,10 @@ pub struct Session {
     offline: Arc<std::sync::atomic::AtomicBool>,
     /// The engines this session started, kept alive for as long as it is.
     ///
-    /// Retained rather than leaked, for the reason `postio-app` records: the
-    /// store is SQLCipher, and dropping an engine at process exit is exactly
-    /// when libcrypto goes away underneath a thread still encrypting a page.
+    /// Retained rather than leaked, for the reason `postio-app` records:
+    /// dropping an engine at process exit can leave a sync pass's write torn
+    /// mid-commit, and the pre-1.0 store engine's recovery is not one to bet
+    /// on when waiting for the pass is cheap.
     engines: Mutex<Vec<postio_runtime::Engine>>,
     /// `[keys]` as this installation has it.
     ///

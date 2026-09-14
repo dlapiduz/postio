@@ -289,10 +289,12 @@ enum Job {
 ///
 /// The application used to `Box::leak` each engine, on the reasoning that it
 /// lives as long as the process and "dropping it at exit would stop the
-/// engine a moment before the process ends anyway". That reasoning was sound
-/// until the store became SQLCipher; now the moment before the process ends
-/// is exactly when libcrypto goes away underneath a thread that is still
-/// encrypting a page. See [`EngineThread`].
+/// engine a moment before the process ends anyway". That was sound while the
+/// store recovered a torn write cleanly and unsound once it did not have to:
+/// the moment before the process ends is when a sync pass may be mid-commit,
+/// and the engine that replaced SQLite is pre-1.0 — trusting its WAL recovery
+/// to undo a write torn by `exit()` is a bet worth not making. See
+/// [`EngineThread`].
 ///
 /// So they are retained here instead, where [`stop_retained`] can reach them.
 static RETAINED: Mutex<Vec<Engine>> = Mutex::new(Vec::new());
@@ -357,21 +359,19 @@ pub struct Engine {
 /// `JoinHandle`, so nothing could wait for it even in principle — and
 /// `exit()` does not stop threads, it runs the process's exit handlers and
 /// then kills it. A sync pass still committing at that moment kept writing
-/// while the libraries underneath it were being torn down.
+/// while the process was torn down around it.
 ///
-/// That was survivable until the store became SQLCipher. Encrypting a page
-/// goes through libcrypto, and libcrypto is finalized by those same exit
-/// handlers, so the window turned into a reproducible coredump:
+/// Under SQLCipher this was a reproducible coredump: encrypting a page went
+/// through libcrypto, libcrypto was finalized by the same exit handlers, and
+/// thread B faulted through freed memory. That specific crash left with the C
+/// library — the pure-Rust engine has no atexit finalizer to fault through.
 ///
-/// ```text
-/// thread A: exit() -> __run_exit_handlers -> (libcrypto goes away)
-/// thread B: sqlcipher_page_cipher -> walWriteOneFrame
-///           -> sqlite3PagerCommitPhaseOne -> SyncStateRepository::observe
-/// ```
-///
-/// No mail was lost — a torn WAL frame is what recovery is for — but the
-/// process died on the way out, in the tests about half the time and in the
-/// application whenever somebody quit mid-sync.
+/// What did not leave is the write torn mid-commit. Under SQLite a torn WAL
+/// frame was "what recovery is for"; the engine that replaced it is pre-1.0,
+/// and its recovery is its own young implementation rather than the most
+/// tested one on earth. Waiting for the pass to finish rather than betting on
+/// that recovery is cheap insurance, and it is why this stayed after the
+/// coredump it was written for stopped being possible.
 ///
 /// # Bounded, because `Drop` runs on somebody else's thread
 ///
