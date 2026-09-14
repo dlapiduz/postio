@@ -74,6 +74,7 @@ len_of                            # crates/postio-storage/src/blob.rs:287
 lookup_binding                    # crates/postio-core/src/registry.rs:1067
 mark_in_flight                    # crates/postio-storage/src/repository/operations.rs:465
 matching                          # crates/postio-account/src/backend/message.rs:49
+message_page                      # crates/postio-runtime/src/store/local.rs -- the flat window under MailStore::list_page; for postio-bench store_reads and runtime_suite, which measure one window on purpose
 needing_backfill                  # crates/postio-storage/src/repository/messages.rs:1384
 next_scope                        # crates/postio-core/src/state.rs:460
 normalized_subject                # crates/postio-model/src/message.rs:313
@@ -116,6 +117,7 @@ suspend                           # crates/postio-sync/src/watch.rs:510
 takes_free_text                   # crates/postio-search/src/query.rs:157
 temporary_directory               # crates/postio-storage/src/blob.rs:145
 text_bytes                        # crates/postio-storage/src/repository/messages.rs:547
+thread_page                       # crates/postio-runtime/src/store/local.rs -- the threaded window under MailStore::list_page; for runtime_suite/thread_store, which measures it on purpose
 timing_out_after_the_payload      # crates/postio-smtp/src/transport.rs:594
 try_next                          # crates/postio-core/src/bridge.rs:328
 unbind                            # crates/postio-ui/src/keymap.rs:634 -- counterpart to `bind`, no rebinding surface calls it yet (#1100)
