@@ -31,7 +31,7 @@
 
 use html5ever::driver::ParseOpts;
 use html5ever::tendril::TendrilSink;
-use html5ever::{LocalName, QualName, ns, parse_document, parse_fragment};
+use html5ever::{LocalName, QualName, ns, parse_fragment};
 use markup5ever_rcdom::{Handle, NodeData, RcDom};
 
 use crate::document::{Block, ContentId, Document, HeadingLevel, Href, Inline};
@@ -70,19 +70,6 @@ pub fn parse(html: &str) -> Document {
     )
     .one(html);
 
-    let mut blocks = Vec::new();
-    let mut loose: Vec<Inline> = Vec::new();
-    walk_blocks(&dom.document, &mut blocks, &mut loose);
-    flush(&mut blocks, &mut loose);
-    Document { blocks }
-}
-
-/// Parse a whole document rather than a fragment.
-///
-/// Only differs for input carrying `<html>`/`<head>`, which a mail body
-/// often does. `<head>` content is dropped: a `<title>` is not body text.
-pub fn parse_document_html(html: &str) -> Document {
-    let dom = parse_document(RcDom::default(), ParseOpts::default()).one(html);
     let mut blocks = Vec::new();
     let mut loose: Vec<Inline> = Vec::new();
     walk_blocks(&dom.document, &mut blocks, &mut loose);

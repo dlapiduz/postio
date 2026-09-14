@@ -115,11 +115,6 @@ impl ConnectionSettings {
         format!("{}:{}", self.host, self.port)
     }
 
-    /// Whether the connection is encrypted from the first byte.
-    pub fn is_implicit_tls(&self) -> bool {
-        self.security == TransportSecurity::Tls
-    }
-
     /// Rejects settings that would put a password on the wire in the clear.
     ///
     /// `TransportSecurity::None` is allowed only against the loopback

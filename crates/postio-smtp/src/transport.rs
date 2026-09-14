@@ -552,12 +552,6 @@ impl ScriptedConnector {
         self
     }
 
-    /// Makes every plaintext connect fail with `reason`.
-    pub fn failing_tcp(mut self, reason: impl Into<String>) -> Self {
-        self.tcp_failure = Some(reason.into());
-        self
-    }
-
     /// Makes the connection reset as the client writes the command
     /// containing `keyword`, before any reply to it.
     ///
