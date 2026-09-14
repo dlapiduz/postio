@@ -21,11 +21,11 @@
     <div class="wrap">
       <a class="nav-word" href="#top">Postio</a>
       <ul class="nav-links">
+        <li><a href="#get-it">Install</a></li>
         <li><a href="#privacy">Privacy</a></li>
-        <li><a href="#architecture">Architecture</a></li>
-        <li><a href="#roadmap">Roadmap</a></li>
+        <li><a href="#architecture">Under the hood</a></li>
+        <li><a href="#status">Status</a></li>
         <li><a href="docs/">Docs</a></li>
-        <li><a href="#get-it">Get it</a></li>
         <li><a class="nav-cta" href="https://github.com/dlapiduz/postio">Source</a></li>
       </ul>
     </div>
@@ -33,20 +33,20 @@
 
   <header class="hero" id="top">
     <div class="wrap">
-      <span class="eyebrow">A mail client for people with too much email</span>
+      <span class="eyebrow">A mail client for people with too much email · 0.4 alpha</span>
       <h1>Read less. Find anything. Act faster.</h1>
       <p class="lede">
-        Postio is a local-first, keyboard-first email client. Your mail is kept
-        in a local database with a full-text index, so search and navigation
-        never wait on the network — and every action you take applies
-        instantly, offline or not.
+        Postio is a local-first, keyboard-first email client for Linux. Your
+        mail is kept in an encrypted local store with a full-text index, so
+        search and navigation never wait on the network — and every action
+        you take applies instantly, offline or not.
       </p>
       <div class="cta-row">
         <a class="btn btn-primary" href="#get-it">Get Postio</a>
-        <a class="btn btn-secondary" href="https://github.com/dlapiduz/postio">View source on GitHub</a>
+        <a class="btn btn-secondary" href="docs/">Read the guide</a>
       </div>
       <div class="shot-frame">
-        <img src="assets/img/search.png" alt="Postio's search results, with the reading pane open on a matched message and matched terms highlighted." loading="eager" width="1280" height="800">
+        <img src="assets/img/conversation.png" alt="Postio reading a conversation: the folder list, the message list, and a threaded reading pane with a rail of the thread's messages." loading="eager" width="1280" height="800">
       </div>
     </div>
   </header>
@@ -59,8 +59,8 @@
           <p>
             Opening the app is immediate, because there's nothing to wait
             for — mail already synced locally is already on screen. Every
-            archive, flag, move or delete applies to your local copy right
-            away; the server catches up in the background.
+            archive, flag, move, snooze or delete applies to your local copy
+            right away; the server catches up in the background.
           </p>
         </div>
         <div class="pillar">
@@ -69,7 +69,7 @@
             One query box searches mail, jumps to a folder, or finds a
             person — <code>from:ada has:attach after:2026-01-01</code> — and
             it's local, so results appear as you type instead of after a
-            round trip.
+            round trip. Save a search and it becomes a folder in the sidebar.
           </p>
         </div>
         <div class="pillar">
@@ -78,7 +78,7 @@
             Every command has a shortcut, a command-palette entry, and an
             accessible action, generated from one table so the three can't
             drift apart. <code>e</code> replies, <code>a</code> archives,
-            <code>t</code> opens a thread — the mouse stays excellent and is
+            <code>u</code> undoes anything — the mouse stays excellent and is
             never required.
             <a href="docs/keyboard.html">Every binding →</a>
           </p>
@@ -92,6 +92,25 @@
 
       <div class="feature">
         <div class="feature-text">
+          <span class="eyebrow">Search</span>
+          <h2>Search is how you move, not a box in the corner</h2>
+          <p>
+            Type a query and the results narrow as you go, with the scopes
+            and refinements that still match beside them. Operators compose —
+            <code>from:</code>, <code>in:</code>, <code>has:attach</code>,
+            <code>is:unread</code>, <code>after:</code>, <code>larger:</code>,
+            <code>account:</code> — and a leading <code>-</code> negates. The
+            preview shows the match highlighted before you open it, and
+            <code>Ctrl+S</code> pins the search to the sidebar as a folder.
+          </p>
+        </div>
+        <div class="shot-frame">
+          <img src="assets/img/search.png" alt="Postio's search results, with scope and refinement panels on the left and a matched message previewed with its hits highlighted." loading="lazy" width="1280" height="800">
+        </div>
+      </div>
+
+      <div class="feature">
+        <div class="feature-text">
           <span class="eyebrow">Bulk actions</span>
           <h2>Built for triage, not just for reading one message at a time</h2>
           <p>
@@ -100,7 +119,8 @@
             delete, move, each with its own key hint. Selection and cursor
             are two different things on purpose: the cursor is where the
             keyboard is, the selection is what an action would hit, and
-            Postio never confuses the two.
+            Postio never confuses the two. A burst of actions is one
+            <code>u</code> to undo.
           </p>
         </div>
         <div class="shot-frame">
@@ -115,13 +135,48 @@
           <p>
             Compose takes over the reading pane rather than opening a
             separate window — the message list keeps its scroll position and
-            selection right where you left them, visible underneath. Reply
-            or start a new message, and <code>Esc</code> puts you back
-            exactly where you were without discarding a word.
+            selection right where you left them. Reply with the original
+            folded under your text, write rich text with the usual keys,
+            attach a file, send now or schedule it, and <code>Esc</code>
+            puts you back exactly where you were without discarding a word.
           </p>
         </div>
         <div class="shot-frame">
-          <img src="assets/img/compose.png" alt="Postio's composer open over the reading pane, replying to a message, with the message list still visible on the left." loading="lazy" width="1280" height="800">
+          <img src="assets/img/compose.png" alt="Postio's composer open over the reading pane, replying to a message with the quoted original folded beneath the reply, and the message list still visible on the left." loading="lazy" width="1280" height="800">
+        </div>
+      </div>
+
+      <div class="feature">
+        <div class="feature-text">
+          <span class="eyebrow">Accounts</span>
+          <h2>All your accounts, one inbox</h2>
+          <p>
+            Add as many IMAP, Gmail or JMAP accounts as you have. Each is
+            synced by its own engine, and the unified inbox groups their
+            threads together at read time — a slow or unreachable server
+            never holds the others back, and search says so rather than
+            leaving a gap. Sign in with a password, an app-specific
+            password, or OAuth 2 through your browser.
+          </p>
+        </div>
+        <div class="shot-frame">
+          <img src="assets/img/accounts.png" alt="Postio's sidebar with two accounts, each with its own folders, and a Unified entry above them." loading="lazy" width="1280" height="800">
+        </div>
+      </div>
+
+      <div class="feature">
+        <div class="feature-text">
+          <span class="eyebrow">Native</span>
+          <h2>A real desktop application, in light and dark</h2>
+          <p>
+            GTK4 and libadwaita, following your desktop's theme, text
+            scaling and reduced-motion settings. Three row densities, a
+            sidebar that folds away, notifications for the folders you
+            choose, and transitions of a hundred milliseconds or none at all.
+          </p>
+        </div>
+        <div class="shot-frame">
+          <img src="assets/img/inbox-dark.png" alt="Postio's inbox and reading pane in the dark theme." loading="lazy" width="1280" height="800">
         </div>
       </div>
 
@@ -146,21 +201,25 @@
         <div class="privacy-item">
           <h3>Read receipts are never automatic</h3>
           <p><code>Disposition-Notification-To</code> is tracking with a
-          friendly name, and Postio doesn't send one without you asking.</p>
+          friendly name, and Postio doesn't send one without you asking.
+          One-click unsubscribe fires only when you click it.</p>
         </div>
         <div class="privacy-item">
           <h3>No speculative connections</h3>
-          <p>No link prefetch, no favicon fetch. The message reader has
-          JavaScript and network access off; images referenced by
-          <code>cid:</code> resolve from what already synced.</p>
+          <p>No link prefetch, no favicon fetch. The message reader runs no
+          script that arrived in a message and has network access off;
+          images referenced by <code>cid:</code> resolve from what already
+          synced.</p>
         </div>
         <div class="privacy-item">
-          <h3>No telemetry, ever</h3>
-          <p>No crash reporting, no update ping, no analytics — on this
-          page either. Your credentials live in your OS keyring, never in a
-          config file, never in a log.</p>
+          <h3>Encrypted at rest, no telemetry</h3>
+          <p>The local store is encrypted and the key lives in your OS
+          keyring, beside your credentials — never in a config file, never
+          in a log. No crash reporting, no update ping, no analytics — on
+          this page either.</p>
         </div>
       </div>
+      <p style="margin-top: var(--space-6);"><a href="docs/privacy.html">What encryption at rest does and doesn't protect →</a></p>
     </div>
   </section>
 
@@ -169,17 +228,19 @@
       <span class="eyebrow">Under the hood</span>
       <h2>Local-first isn't a tagline here — it's how the app is built</h2>
       <p style="max-width: 680px;">
-        Every action follows the same rule: write to the local database,
+        Every action follows the same rule: write to the local store,
         queue the network operation, repaint. The network is never in the
         critical path of anything you do — which is also what makes offline
         just the normal case rather than a special mode.
       </p>
       <div class="arch-grid">
         <div class="arch-card">
-          <h3>SQLite + full-text search</h3>
+          <h3>An encrypted store with its own index</h3>
           <p>
-            Mail metadata, threads and sync state live in SQLite with an
-            FTS5 index; raw messages and attachments sit in a
+            Mail metadata, threads, bodies and sync state live in
+            <a href="https://github.com/tursodatabase/turso">Turso</a>, a
+            Rust rewrite of SQLite, encrypted page by page and indexed by its
+            built-in full-text search; raw messages and attachments sit in a
             content-addressed blob store. Nothing is ever loaded into memory
             all at once — the message list is windowed over paged queries,
             even at hundreds of thousands of messages.
@@ -222,47 +283,62 @@
     </div>
   </section>
 
-  <section id="roadmap">
+  <section id="status">
     <div class="wrap">
-      <span class="eyebrow">Roadmap</span>
-      <h2>What's designed, and what's next</h2>
+      <span class="eyebrow">Status</span>
+      <h2>What 0.4 does, and what it doesn't yet</h2>
       <p style="max-width: 680px;">
-        Postio's first release is deliberately narrow: one account, done
-        properly, before anything else. Here's what's already decided for
-        after that — none of it is built yet unless this page says so.
+        Postio 0.4 is an alpha: more complete than the number suggests, and
+        still early software. Keep your current client around until you
+        trust it. The issue tracker is the live picture; this is the shape.
       </p>
       <ul class="roadmap-list">
         <li class="roadmap-item">
-          <span class="roadmap-status in-progress">In progress</span>
+          <span class="roadmap-status in-progress">Built</span>
           <div>
-            <h3>Multiple accounts &amp; OAuth sign-in</h3>
+            <h3>Mail, the whole of it</h3>
             <p>
-              A second account, a unified inbox that groups threads across
-              accounts at read time, and signing in to providers that
-              require OAuth 2 instead of a password. The design is settled
-              and published; the implementation is underway.
+              Several accounts with a unified inbox. IMAP and SMTP, Gmail and
+              JMAP. Password, app-specific password or OAuth 2. Folders,
+              threads and labels; read, archive, delete, flag, move, snooze.
+              HTML and plain-text reading with attachments and quoted-text
+              folding. Rich-text compose, reply, forward, drafts, scheduled
+              send, and an outbox that never sends twice. Background sync
+              with IDLE, full offline use, undo.
             </p>
           </div>
         </li>
         <li class="roadmap-item">
-          <span class="roadmap-status">Planned</span>
+          <span class="roadmap-status in-progress">Built</span>
+          <div>
+            <h3>Search, saved searches, contacts</h3>
+            <p>
+              Local full-text search with operators, saved searches pinned
+              as folders, a spelling suggestion when a query finds nothing,
+              and an address book with groups grown from the people already
+              in your mail.
+            </p>
+          </div>
+        </li>
+        <li class="roadmap-item">
+          <span class="roadmap-status">Not yet</span>
           <div>
             <h3>Filters and rules</h3>
             <p>
-              The same search language you'd type in the search bar,
-              reused as the condition for a rule that files mail as it
-              arrives — one language to learn, not two.
+              The same search language you'd type in the search bar, reused
+              as the condition for a rule that files mail as it arrives —
+              one language to learn, not two. Designed; not built.
             </p>
           </div>
         </li>
         <li class="roadmap-item">
-          <span class="roadmap-status">Planned</span>
+          <span class="roadmap-status">Not yet</span>
           <div>
-            <h3>Contacts</h3>
+            <h3>macOS</h3>
             <p>
-              A real address book grown from the people already in your
-              mail, with groups and vCard import/export — not just an
-              autocomplete cache.
+              A native Swift frontend over the same engine reads mail,
+              searches and pages today, and is built and tested — but not yet
+              released. Windows is unscheduled.
             </p>
           </div>
         </li>
@@ -272,12 +348,11 @@
             <h3>AI — summarize, draft, search by meaning</h3>
             <p>
               AI is a founding idea for Postio and is deliberately absent
-              from the first release, so the core mail experience lands
-              excellently on its own first. When it arrives, two rules are
-              already fixed: it can never send or modify mail without
-              you confirming in the Postio UI, and every request to a
-              remote model is opt-in, per account, and logged where you can
-              read it.
+              until the fundamentals are excellent on their own. When it
+              arrives, two rules are already fixed: it can never send or
+              modify mail without you confirming in the Postio UI, and every
+              request to a remote model is opt-in, per account, and logged
+              where you can read it.
             </p>
           </div>
         </li>
@@ -287,51 +362,48 @@
 
   <section id="get-it">
     <div class="wrap">
-      <span class="eyebrow">Status</span>
-      <h2>Where things stand today</h2>
+      <span class="eyebrow">Install</span>
+      <h2>Get Postio</h2>
       <div class="status-card">
         <p>
-          Postio is <strong>pre-release and under active development.</strong>
-          The first release targets Linux (GTK4 / libadwaita) with one IMAP
-          and SMTP account, authenticated with a password or an
-          app-specific password — reliable read, search, compose and reply,
-          fully keyboard-operable, with sync and errors always visible. It
-          is not yet packaged for easy install.
-        </p>
-        <p>
-          The most current picture of what's done and what's left is the
-          issue tracker itself, not this page — a snapshot here would be out
-          of date within a week.
+          Postio runs on Linux under Wayland, on GTK 4.20 and libadwaita 1.7
+          or newer. Every tagged release publishes a prebuilt Flatpak bundle
+          with a signed build-provenance attestation, so a download can be
+          checked rather than merely trusted.
         </p>
       </div>
 
       <div class="get-it-grid">
         <div class="get-it-card">
-          <h3>Build it today</h3>
+          <h3>The Flatpak bundle</h3>
           <p>
-            There's no packaged build yet, so running Postio means building
-            it from source. The README has the current system dependencies
-            and the exact steps.
+            Download <code>postio-&lt;version&gt;-x86_64.flatpak</code> from
+            the latest release and install it for your user. The bundle
+            fetches the GNOME runtime from Flathub if you don't have it.
           </p>
-          <pre>git clone https://github.com/dlapiduz/postio
-cd postio &amp;&amp; cat README.md</pre>
-          <p><a href="docs/install.html">Full build instructions →</a></p>
+          <pre>flatpak install --user ./postio-&lt;version&gt;-x86_64.flatpak
+flatpak run dev.postio.Postio</pre>
+          <p><a href="https://github.com/dlapiduz/postio/releases">Releases →</a></p>
         </div>
         <div class="get-it-card">
-          <h3>Follow along</h3>
+          <h3>From source</h3>
           <p>
-            Every decision and every piece of work is public: the product
-            spec, the architecture decisions, and the issue tracker where
-            the project plans and argues with itself.
+            One script builds a release binary and installs it under
+            <code>~/.local</code>, on your <code>$PATH</code> and in your app
+            grid. The guide has the system packages for Fedora and Ubuntu.
           </p>
-          <p>
-            <a href="docs/">Documentation</a><br>
-            <a href="https://github.com/dlapiduz/postio/blob/main/docs/PRODUCT.md">Product spec</a><br>
-            <a href="https://github.com/dlapiduz/postio/tree/main/docs/decisions">Architecture decisions</a><br>
-            <a href="https://github.com/dlapiduz/postio/issues">Issue tracker</a>
-          </p>
+          <pre>git clone https://github.com/dlapiduz/postio
+cd postio &amp;&amp; scripts/install-local.sh</pre>
+          <p><a href="docs/install.html">Full install instructions →</a></p>
         </div>
       </div>
+
+      <p style="margin-top: var(--space-8); max-width: 680px;">
+        First run opens on a one-screen setup: type your address, and the
+        server settings fill themselves in. Then
+        <a href="docs/keyboard.html">learn a handful of keys</a>, or press
+        <code>?</code> and let the app teach them to you.
+      </p>
     </div>
   </section>
 
@@ -339,11 +411,12 @@ cd postio &amp;&amp; cat README.md</pre>
     <div class="wrap">
       <div>
         <a class="nav-word" href="#top">Postio</a>
-        <p class="fine-print">A local-first, keyboard-first email client.</p>
+        <p class="fine-print">A local-first, keyboard-first email client. 0.4 alpha.</p>
       </div>
       <ul class="footer-links">
         <li><a href="docs/">Docs</a></li>
         <li><a href="https://github.com/dlapiduz/postio">GitHub</a></li>
+        <li><a href="https://github.com/dlapiduz/postio/releases">Releases</a></li>
         <li><a href="https://github.com/dlapiduz/postio/blob/main/docs/PRODUCT.md">Product spec</a></li>
         <li><a href="https://github.com/dlapiduz/postio/tree/main/docs/decisions">Architecture decisions</a></li>
         <li><a href="https://github.com/dlapiduz/postio/issues">Issues</a></li>

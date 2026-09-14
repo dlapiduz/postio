@@ -1,101 +1,102 @@
 # Postio
 
-Postio is a local-first, keyboard-first email client built for people who
-have too much email.
+**A local-first, keyboard-first email client for people who have too much
+email.** Read less. Find anything. Act faster.
 
-Read less. Find anything. Act faster.
+![Postio reading a conversation: the folder list, the message list and a
+threaded reading pane, all driven from the keyboard](site/assets/img/conversation.png)
 
-Postio keeps a full copy of your mail in a local encrypted store with a
-built-in full-text index, so search and navigation never wait on the
-network. Every action — archive, flag, move, delete, undo — applies
-instantly to that local copy and is queued for the server in the
-background. The UI never awaits the network.
+Postio keeps a complete, encrypted copy of your mail on your own machine,
+with a full-text index built beside it. Opening the app, searching, and
+moving around never wait on the network. Every action — archive, flag, move,
+delete, snooze, undo — lands on that local copy instantly and reaches the
+server in the background. It is a native GTK4/libadwaita application for
+Linux, works fully offline after its first sync, and never sends anything you
+did not ask it to.
 
-## Status
+**Postio 0.4.0 is an alpha.** It is more complete than the number suggests,
+but it is early software: expect rough edges, read the
+[status](#whats-in-04-and-what-is-not) section before switching, and keep
+your current client around until you trust it.
 
-Postio is pre-release and under active development. **v1 scope:** Linux
-(GTK4/libadwaita) only, IMAP + SMTP only, app-specific passwords (no OAuth).
-Other platforms, other protocols, OAuth, and AI features are founding ideas
-deliberately deferred so the core mail experience lands first. See
-[`docs/PRODUCT.md`](docs/PRODUCT.md) for what Postio must do.
+- **Home page and tour:** <https://dlapiduz.github.io/postio/>
+- **User guide:** <https://dlapiduz.github.io/postio/docs/> — installing,
+  every key, `config.toml`, how sync works, privacy, FAQ
+- **Releases:** <https://github.com/dlapiduz/postio/releases>
 
-Screenshots will go here once the shell is far enough along to be worth a
-picture.
+## Why Postio
 
-## This codebase is almost entirely AI-generated
+- **It is instant.** The inbox, a thread, a search result: all of it is read
+  from the local store, never fetched live. Startup, navigation and search
+  are held to real budgets and the *cause* of each budget is counted in the
+  test suite, not just timed on one machine.
+- **Search is how you move.** One query language works everywhere it
+  appears: typed into the search box, saved as a folder in the sidebar, or
+  written into `config.toml`. `from:ada has:attach after:2026-01-01` is a
+  query you can type, and results appear as you type it.
+- **Every action has a key.** `j`/`k` move, `e` replies, `a` archives, `u`
+  undoes anything, `/` searches, `Ctrl+K` opens the command palette, `?`
+  shows the cheat sheet. Every binding is rebindable. The mouse works too and
+  is never required.
+- **All your accounts, one inbox.** Several IMAP, Gmail or JMAP accounts,
+  each synced by its own engine, grouped into one unified inbox at read
+  time. Sign in with a password, an app-specific password, or OAuth 2 through
+  your browser.
+- **Private by design.** Remote images and tracking pixels stay blocked
+  until you allow them per sender. Read receipts are never automatic.
+  Unsubscribe links fire only when you click them. No telemetry, no crash
+  reporting, no update ping. The reader runs no script that arrived in a
+  message.
+- **Encrypted at rest.** The local store is encrypted and the key lives in
+  your OS keyring, so a stray backup or a stolen disk holds ciphertext.
+  Credentials go in the keyring too, never in a config file or a log.
+- **Built for triage.** Select a run of messages and the list header becomes
+  the action bar. Snooze, schedule a send, fold quoted text, walk a
+  conversation with `J`/`K`, archive a whole thread with `A`.
 
-Postio is written by AI coding agents — Claude, running in parallel
-sessions — under the direction of a human maintainer who sets scope, reviews
-the results, and makes the product decisions. That is not a disclaimer; it is
-the experiment: not whether an agent can emit code, but whether a *process*
-can make agent-written software trustworthy.
+![Search results with the scope and refinement panels, and a matched message
+previewed with its hits highlighted](site/assets/img/search.png)
 
-- **Every piece of work is a GitHub issue**, worked on its own branch, landed
-  as a PR. The issue history is the reasoning, in public.
-- **Test-driven development is mandatory**: the failing test comes first, and
-  a gate chain — tests, clippy as errors, formatting, architectural boundary
-  checks, a personal-data scanner, dependency audits — runs on every landing.
-- **The invariants are machine-checked, not remembered.** A crate that must
-  not link GTK, a view layer that must not speak SQL, a log that must never
-  contain message content — each is a script, because a rule an agent (or a
-  person) has to remember is a rule that drifts.
-- **Decisions are written down** as [ADRs](docs/decisions/), and hard-won
-  lessons live in [`docs/engineering-notes.md`](docs/engineering-notes.md).
+## Install
 
-Read the code with the same skepticism you would give any codebase — and if
-you find something wrong, the issue tracker is where this project thinks. See
-[`CONTRIBUTING.md`](CONTRIBUTING.md) for how to file an issue an agent can
-act on.
+Postio runs on Linux under Wayland (GTK 4.20 and libadwaita 1.7 or newer;
+the maintainer's machine is Fedora 44). There are three ways in.
 
-## Building and running
+### 1. The Flatpak bundle
 
-### Supported systems
+Every tagged release publishes a prebuilt `.flatpak` bundle on the
+[Releases page](https://github.com/dlapiduz/postio/releases), with a signed
+build-provenance attestation and a software bill of materials beside it.
 
-Postio is Linux only, GTK4/libadwaita, Wayland first and X11 where it
-happens to work (see [`docs/PRODUCT.md`](docs/PRODUCT.md) §2). What that
-means in practice:
+```bash
+# Download postio-<version>-x86_64.flatpak from the Releases page, then:
+flatpak install --user ./postio-<version>-x86_64.flatpak
+flatpak run dev.postio.Postio
+```
 
-- **Verified**: Fedora 40+ under Wayland, against the exact library versions
-  the code is written for — gtk4 4.22, libadwaita 1.9, WebKitGTK 2.52. CI
-  additionally builds and tests on Ubuntu 26.04.
-- **Expected to work, not verified**: other distributions that ship the same
-  library floors (the Ubuntu 26.04 line below is one such case), other
-  Wayland compositors, and X11 sessions generally.
-- Older GTK4/libadwaita (anything before Ubuntu 26.04's 4.20/1.7, for
-  example) will fail to build, not misbehave at runtime — `cargo` reports the
-  missing symbol at compile time.
+The bundle names Flathub as its runtime source, so `flatpak` fetches the
+GNOME runtime on its own if you do not have it yet. A mail client holds your
+credentials and your mail, so it is worth checking that a downloaded bundle
+was built by this project's release workflow from the tagged commit:
 
-### Quickstart
+```bash
+gh attestation verify postio-<version>-x86_64.flatpak --repo dlapiduz/postio
+```
 
-System dependencies — Fedora 40+:
+Postio is not on Flathub yet; when it is, this section collapses to one
+`flatpak install` line.
+
+### 2. From source
+
+System dependencies on Fedora:
 
 ```bash
 sudo dnf install gtk4-devel libadwaita-devel webkitgtk6.0-devel \
                  libsecret-devel glib2-devel pkgconf-pkg-config
-
-# Optional: ccache caches what the C build scripts in the dependency graph
-# compile, so a second target directory costs seconds instead of minutes.
-# Wired in automatically via scripts/cc-wrapper.sh; without ccache the build
-# is unchanged. #736.
-#
-# mold is the linker, selected by scripts/linker.sh whenever it is present.
-# Not for speed -- there is only ~1.2s of link to contest either way -- but
-# for memory: it peaks ~265 MB below lld, and this workstation runs several
-# sessions that link at once, which is what the jobserver's token count
-# defends (scripts/jobserver.sh, #1104). Without it lld
-# links the binary and nothing says so; `readelf -p .comment <binary>` is the
-# only thing that tells you which one ran. #1092.
-sudo dnf install ccache mold
-
-# The linker and C compiler .cargo/config.toml names are bare program names
-# (postio-linker, postio-cc), so one compile cache serves every worktree.
-# The claim, land and test scripts run this themselves; a plain `cargo build`
-# in a fresh clone needs it once, or fails with "linker `postio-linker` not
-# found". #1101
-scripts/install-shims.sh
 ```
 
-Ubuntu 26.04 (earlier releases ship a GTK older than the 4.20 floor):
+On Ubuntu 26.04 or newer (earlier releases ship a GTK older than Postio's
+floor):
 
 ```bash
 sudo apt install build-essential pkg-config libgtk-4-dev libadwaita-1-dev \
@@ -103,207 +104,177 @@ sudo apt install build-essential pkg-config libgtk-4-dev libadwaita-1-dev \
                  libglib2.0-dev libpango1.0-dev
 ```
 
-The same two optional tools, for the same reasons as the Fedora block above:
+Rust is pinned by [`rust-toolchain.toml`](rust-toolchain.toml); with
+[rustup](https://rustup.rs) installed, the right compiler arrives on the
+first `cargo` command. Then:
 
 ```bash
-sudo apt install ccache mold
-```
-
-Rust is pinned by [`rust-toolchain.toml`](rust-toolchain.toml) — with
-[rustup](https://rustup.rs), the right compiler arrives on the first `cargo`
-command.
-
-The tools the gates run on — Python, `gh`, `jq`, `sccache` — are pinned by
-[`mise.toml`](mise.toml), because `scripts/checks/` is 54 Python scripts and
-nothing said which Python. It is optional: `mise install` once if you use
-[mise](https://mise.jdx.dev), and everything resolves off `PATH` as before if
-you do not. It deliberately does not pin Rust (`rust-toolchain.toml` owns
-that, and a second place to say it is the bug that pin exists to prevent) or
-the system libraries above, which are distro packages rather than tooling.
-
-`cargo-nextest` runs the integration tiers, and is the one piece of tooling
-`mise.toml` cannot pin — it has no entry in mise's registry. Install it with
-the script that holds the pin, which is also what `ci.yml` runs:
-
-```bash
-scripts/install-nextest.sh
-```
-
-It fails open the way `mold` and `ccache` do: `scripts/issue-land.sh` runs
-`cargo test` when nextest is absent and reaches the same verdict, slower. On
-this workspace "slower" is most of a landing — `app_suite` takes 200s against
-20.4s, and the whole workspace ~500s against 118.6s, because nextest runs test
-*binaries* concurrently and there are 140 of them. The `--lib` tiers
-(`scripts/test-fast.sh`, `scripts/test-sanity.sh`) stay on `cargo test` on
-purpose: a process per test is 2.2x *slower* for ~1,459 small tests in ~19
-binaries.
-
-`gh` needs to be **2.94.0 or newer**: `scripts/issue-claim.sh` reads
-`--json blockedBy`, which that release added (cli/cli#13057). An older `gh`
-rejects the field outright — writes its complaint to stderr, nothing to
-stdout — so `scripts/issue-*.sh` refuse up front with a sentence naming both
-versions rather than the traceback that used to follow from the empty
-stdout (#558). `mise.toml` already pins comfortably above the floor, which
-is the ordinary way this stays true; the runtime check in
-`scripts/lib/require-gh.sh` is the backstop for the sessions that do not use
-mise, the same gap `RUSTUP_TOOLCHAIN` leaves for the Rust pin
-(`docs/engineering-notes.md`).
-
-```bash
-cargo run -p postio-app        # build and run
-cargo test --workspace         # never touches the network
-```
-
-### Installing
-
-To go from source to a working app — `postio` on your `$PATH`, Postio in the
-app grid with its icon:
-
-```bash
+git clone https://github.com/dlapiduz/postio.git
+cd postio
 scripts/install-local.sh               # builds --release, installs to ~/.local
 scripts/install-local.sh --uninstall   # removes exactly what it installed
 ```
 
-Prefer a sandboxed build? The Flatpak manifest in [`flatpak/`](flatpak/)
-builds against the GNOME 50 runtime and is Flathub-submission-ready, but
-Postio isn't on Flathub yet — for now, build it yourself:
+That puts `postio` on your `$PATH` and Postio in your app grid with its
+icon. The script checks the build dependencies first and names every missing
+one at once. Prefer to build the Flatpak yourself? The manifest and the
+one-time SDK setup are in [`flatpak/README.md`](flatpak/README.md).
+
+### 3. Just try it
 
 ```bash
-python3 flatpak/flatpak-cargo-generator.py Cargo.lock -o flatpak/cargo-sources.json
-flatpak-builder --user --install --force-clean flatpak/build-dir flatpak/dev.postio.Postio.json
+cargo run -p postio-app
 ```
 
-One-time SDK setup and the details are in [`flatpak/README.md`](flatpak/README.md).
-Once a Flathub listing exists this will collapse to a single `flatpak
-install flathub dev.postio.Postio`; the listing's own description is kept in
-[`dev.postio.Postio.metainfo.xml`](crates/postio-gtk/data/dev.postio.Postio.metainfo.xml)
-rather than written twice.
+builds and runs Postio from the checkout without installing anything.
 
-A tagged release also publishes a prebuilt `.flatpak` bundle on the
-[Releases page](https://github.com/dlapiduz/postio/releases), alongside a
-signed build-provenance attestation and a software bill of materials — a
-mail client holds your credentials and your mail, so a downloaded bundle
-should be checkable rather than merely trusted because it appeared on a
-release page. Verify one with the [GitHub
-CLI](https://cli.github.com):
+## First run
 
-```bash
-gh attestation verify postio-VERSION-x86_64.flatpak --repo dlapiduz/postio
+Postio opens on a one-screen setup. Type your email address and the
+autoconfig probe fills in the server settings: a built-in provider table
+first, then Thunderbird's autoconfig service, then DNS SRV records, or you
+can enter everything by hand. Providers that require OAuth 2 (Gmail,
+Microsoft 365) open your browser to sign in; everything else takes a
+password or an app-specific password. The credential goes straight into
+your desktop keyring and is never written to a file.
+
+The first sync brings the newest mail in first and then backfills every
+folder to completion in the background, so search and offline reading
+eventually cover your whole mailbox. Attachments download when you open
+them, not proactively; `config.toml` can change both behaviours.
+
+Add a second account any time with `Ctrl+Shift+N`.
+
+## Everyday use
+
+| Keys | Does |
+|---|---|
+| `j` / `k` | Next / previous message |
+| `Enter` or `l` | Open the message or conversation |
+| `e` / `E` / `f` | Reply / reply all / forward |
+| `a` / `A` | Archive the message / the whole thread |
+| `d`, `m`, `s`, `L` | Delete, move to…, flag, add a label |
+| `b` / `B` | Snooze / unsnooze |
+| `x`, `J` / `K` | Select this row, extend the selection down / up |
+| `u` | Undo the last action, however many rows it touched |
+| `/` | Search all mail (`>` runs a command, `#` jumps to a folder, `@` finds a person) |
+| `Ctrl+S` in a search | Save the search as a folder in the sidebar |
+| `c` | Compose (`Ctrl+Enter` sends, `Ctrl+Shift+Enter` schedules) |
+| `g i`, `g d`, `g t`, `g s` | Go to inbox, drafts, sent, flagged |
+| `g a` | Switch between an account and the unified inbox |
+| `Ctrl+K` | Command palette, every command by name |
+| `?` | The cheat sheet |
+
+Search operators compose, and a leading `-` negates:
+
+```
+from:ada after:2026-01-01 has:attach
+subject:invoice -in:archive is:unread
 ```
 
-A successful verification confirms the bundle was built by this project's
-`release.yml` workflow, from the tagged commit, and has not been modified
-since. The SBOM (`postio-VERSION.spdx.json`, also attached to the release) is
-attested the same way and lists every dependency the build actually shipped.
+`from:` `to:` `subject:` `in:` `list:` `filename:` `has:attach` `is:unread`
+`is:read` `is:flagged` `before:` `after:` `larger:` `smaller:` `account:`
+`group:` `header:` `body:`
 
-First run opens onto a one-screen setup: type your email address and the
-autoconfig probe fills in the server settings (a preset table, Thunderbird
-autoconfig, then DNS SRV — or manual entry). The password goes straight into
-the OS keyring; it is never written to a file. iCloud accounts need an
-app-specific password from <https://account.apple.com>.
+The complete, generated keyboard reference is
+[`docs/keybindings.md`](docs/keybindings.md); every binding can be changed
+in `config.toml`.
 
-Then drive it from the keyboard: `j`/`k` to move, `Enter` to open, `e` reply,
-`a` archive, `u` undo anything, `/` search (`from:ada is:unread …`), `Ctrl+K`
-for the command palette, `?` for the full cheat sheet. Every binding is
-rebindable; the generated reference is
-[`docs/keybindings.md`](docs/keybindings.md).
-
-### Troubleshooting
-
-**`cargo build` fails looking for a library** (`pkg-config` errors naming
-`gtk4`, `libadwaita-1`, `webkitgtk-6.0`, or `libsecret-1`): a
-system dependency from the Fedora or Ubuntu list above is missing or too
-old. Reinstall that line — `pkg-config --modversion gtk4` (etc.) shows what
-you actually have against the floors in
-[`docs/PRODUCT.md`](docs/PRODUCT.md) §2.
-
-**The window fails to open, or opens with no decorations / broken
-rendering**: Postio is a GTK4/libadwaita app and targets Wayland. X11 is not
-a supported configuration — nothing tests it and there is no plan to support
-it — so running under a Wayland session is the first thing to try before
-filing an issue.
-
-**Onboarding can't save the account, or every launch reopens onboarding**:
-Postio stores credentials in the OS keyring over the Secret Service D-Bus
-API (`org.freedesktop.secrets`), never in `config.toml`. That needs a
-running keyring daemon — GNOME Keyring or KWallet's Secret Service
-integration are the common ones. Minimal desktop environments and window
-managers often don't start one by default; on Fedora,
-`sudo dnf install gnome-keyring` and ensure your session starts it
-(GNOME/KDE sessions do this automatically). A locked keyring blocks the
-same way — unlock it and retry.
-
-## It must feel instant
-
-Performance is a functional requirement, enforced by `cargo bench`:
-
-| Budget | Target | Measured |
-|---|---|---|
-| Startup to usable UI (populated DB) | < 500 ms | **427 ms** |
-| Ordinary UI interaction | < 16 ms | **0.3 ms** typical |
-| Local search | < 100 ms | **42 ms** worst shape |
-| Memory, 100,000 messages | no full-mailbox load | **55 MiB**, flat past 100k |
-
-Measured against an **encrypted** store (ADR 0014) — there is no unencrypted
-configuration in normal use, so each figure already carries the cost of
-decrypting every page on the way in. The figures predate the engine swap
-(ADR 0038); [`docs/PERFORMANCE.md`](docs/PERFORMANCE.md) says which have been
-re-measured.
-
-The full baseline — what was measured, on what, which numbers are floors
-rather than means, and how to reproduce every one — is
-[`docs/PERFORMANCE.md`](docs/PERFORMANCE.md). Two cases are outside budget
-today and tracked as their own issues rather than smoothed over here: a
-unified thread page across two accounts ([#619]), and startup against its
-recorded baseline ([#636]).
-
-[#619]: https://github.com/dlapiduz/postio/issues/619
-[#636]: https://github.com/dlapiduz/postio/issues/636
+![Replying inside the reading pane, with the quoted message folded under the
+reply and the message list still visible](site/assets/img/compose.png)
 
 ## Configuration
 
 Postio reads `config.toml` from `$POSTIO_CONFIG`, or
 `$XDG_CONFIG_HOME/postio/config.toml`, or `~/.config/postio/config.toml`. A
 missing file is fine — first run needs nothing on disk — and the file is
-live-reloaded on save. Unrecognized keys are preserved on save, so a config
-file survives a downgrade.
-
-**No credential ever lives in `config.toml`** — passwords go in the Secret
-Service keyring, and an account in the file only references a keyring entry.
+live-reloaded on save. The settings window edits the same file.
 
 ```toml
 [ui]
 density = "airy"          # airy | comfortable | compact
 theme = "system"          # system | light | dark
 
-[accounts.personal]
-email = "ada@example.com"
-default = true
-
-[accounts.personal.imap]
-host = "imap.example.com"
-port = 993
-security = "implicit-tls"
+[sync]
+check_for_mail = "idle"   # idle (push) | poll
+attachment_fetch = "on_open"
 
 [keys]
 archive = "y"             # overrides the default binding for `archive`
+
+[filters.needs-reply]
+query  = "is:unread from:team"
+pinned = true             # shows in the sidebar as a folder
 ```
 
-Other sections: `[accounts.<id>.smtp]`, `[sync]` (IDLE vs. polling),
-`[filters]` (named saved searches), `[logging]`.
+Every key, type and default is in [`docs/config.md`](docs/config.md).
+**No credential ever lives in `config.toml`**: an account in the file only
+references a keyring entry.
 
-## Architecture
+## What's in 0.4 and what is not
 
-Fourteen crates in strict layers: a GTK view layer that speaks no SQL and no
-protocol, an engine that owns the database and the network, and a UI-agnostic
-contract between them — commands down, events up, and the UI never awaits the
-network. The boundaries are enforced against cargo's resolved dependency
-graph by CI, not by convention.
+**In:** several accounts with a unified inbox; IMAP + SMTP, Gmail and JMAP
+backends; password, app-specific password and OAuth 2 sign-in; folders,
+threads and labels; read, archive, delete, flag, move, snooze; HTML and
+plain-text reading with attachments and quoted-text folding; rich-text
+compose, reply, reply-all, forward, drafts, scheduled send and an outbox
+that never sends twice; local full-text search with operators, saved
+searches and virtual folders; contacts and contact groups grown from your
+mail; notifications; vim-style keys, a command palette, every binding
+rebindable; background sync with IDLE, full offline use, and undo.
 
-The full picture — the crate map, the load-bearing decisions and their
-costs — is [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md), with long-form
-ADRs in [`docs/decisions/`](docs/decisions/). The agent workflow, commit
-conventions, and quality gates are in [`CLAUDE.md`](CLAUDE.md).
+**Not yet:** filters and rules (designed, not built); AI features (a
+founding idea, deliberately after the fundamentals); Microsoft Graph;
+PGP/S-MIME; phishing and link warnings; vCard import/export. A native macOS
+frontend over the same engine is built and reads mail today, but is not yet
+released. Windows is unscheduled.
+
+Postio is alpha software. Its test suite is large and its invariants are
+machine-checked, and you should still treat it as early: it has met few
+mailboxes so far, and the issue tracker is where the rough edges get filed.
+
+## Documentation
+
+| For | Read |
+|---|---|
+| Installing and using Postio | the [user guide](https://dlapiduz.github.io/postio/docs/) (source in [`docs/book/`](docs/book/)) |
+| Every key | [`docs/keybindings.md`](docs/keybindings.md) |
+| Every config key | [`docs/config.md`](docs/config.md) |
+| What Postio must do, and must not | [`docs/PRODUCT.md`](docs/PRODUCT.md) |
+| How it is put together, and why | [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) and the ADRs in [`docs/decisions/`](docs/decisions/) |
+| The performance budgets and what was measured | [`docs/PERFORMANCE.md`](docs/PERFORMANCE.md) |
+| Hard-won lessons | [`docs/engineering-notes.md`](docs/engineering-notes.md) |
+| Contributing, and the developer setup | [`CONTRIBUTING.md`](CONTRIBUTING.md) |
+| The agent workflow and the gates | [`CLAUDE.md`](CLAUDE.md) |
+
+## How Postio is built
+
+Twenty crates in strict layers: a GTK view layer that speaks no SQL and no
+protocol, an engine that owns the local store and the network, and a
+UI-agnostic contract between them — commands down, events up, and the UI
+never awaits the network. The boundaries are checked against cargo's
+resolved dependency graph on every pull request, not left to convention.
+The store is [Turso](https://github.com/tursodatabase/turso) with its
+full-text index, encrypted page by page; raw messages and attachments live in
+a content-addressed blob store beside it.
+
+**This codebase is almost entirely AI-generated.** Postio is written by AI
+coding agents — Claude, in parallel sessions — under a human maintainer who
+sets scope, reviews the results and makes the product decisions. That is the
+experiment, not a disclaimer: not whether an agent can emit code, but whether
+a *process* can make agent-written software trustworthy. Every piece of work
+is an issue worked on its own branch and landed as a pull request;
+test-driven development is mandatory; the invariants — no GTK in the engine,
+no SQL in the view layer, no message content in a log, a destructive command
+must be undoable — are scripts that run on every landing, because a rule an
+agent has to remember is a rule that drifts. Decisions are written down as
+[ADRs](docs/decisions/), in public.
+
+Read the code with the same scepticism you would give any codebase, and if
+you find something wrong, the [issue
+tracker](https://github.com/dlapiduz/postio/issues) is where this project
+thinks. [`CONTRIBUTING.md`](CONTRIBUTING.md) says how to file an issue an
+agent can act on, and how to set up a machine to build and test.
 
 ## License
 
