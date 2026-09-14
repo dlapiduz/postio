@@ -32,6 +32,7 @@ mod egress_wiring;
 mod escape_after_finder_closed;
 mod event_fanout;
 mod focus_on_launch;
+mod folder_header_count;
 mod glib_main_context;
 mod go_to_keystroke;
 mod keystroke;
@@ -207,6 +208,10 @@ const CASES: &[(&str, fn())] = &[
     (
         "conversation_body_arrives::a_body_arriving_fills_in_the_open_conversation",
         conversation_body_arrives::a_body_arriving_fills_in_the_open_conversation as fn(),
+    ),
+    (
+        "folder_header_count::the_header_count_follows_a_reload",
+        folder_header_count::the_header_count_follows_a_reload as fn(),
     ),
     (
         "conversation_by_default::landing_on_a_thread_row_opens_the_conversation",
