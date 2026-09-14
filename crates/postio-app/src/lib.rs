@@ -710,7 +710,20 @@ pub async fn feed_the_window(window: &Window, wiring: &Wiring) -> Option<Wired> 
         .await
         .map(|view| &*Box::leak(Box::new(view)));
 
-    catch_up_the_body_index(wiring).await;
+    // The body indexer: a catch-up pass now, then one batched write after
+    // each burst of `BodyLoaded` on the wiring's hub. Every body reaches the
+    // search index through it and nothing else -- neither the store nor the
+    // fetch writes the row -- see `postio_session::spawn_body_indexer`. Here,
+    // with the other idle passes, because this is the call `run` makes and
+    // the one `search_index::opening_the_window_indexes_local_bodies_without_
+    // being_asked` proves reaches a person: a store opened with no account,
+    // or with the network down, still has bodies on disk and still becomes
+    // searchable.
+    postio_session::spawn_body_indexer(
+        wiring.database.clone(),
+        wiring.events.subscribe("indexer"),
+        &wiring.runtime,
+    );
     repair_the_header_blocks(wiring).await;
     catch_up_the_header_index(wiring).await;
     reclaim_disk(wiring).await;
@@ -929,41 +942,6 @@ async fn reclaim_disk(wiring: &Wiring) {
             Ok(0) => {}
             Ok(bytes) => tracing::info!(bytes, "truncated the write-ahead log"),
             Err(error) => tracing::warn!(%error, "could not truncate the log"),
-        }
-    });
-}
-
-/// Index the bodies that were already on this machine, out of the way.
-///
-/// `postio_sync::backfill::fetch_body` indexes each body as it lands, so
-/// everything fetched from now on is covered. This is the mail that arrived
-/// before that call existed: `index_body` was written, tested and benched and
-/// nothing ever called it, so `search_documents.body` was empty on every
-/// message in every real store and search matched metadata only (#327).
-///
-/// # On the runtime, and after the window
-///
-/// The first pass over an existing archive reads a blob per message, which is
-/// minutes of I/O on a large one — nothing a startup budget of 500 ms can
-/// hold. So it is spawned, exactly as `seed_the_backfill` spawns its seeding,
-/// and search fills in behind a window that is already usable. Every pass
-/// after the first costs one query that finds nothing.
-///
-/// Here rather than in `start_syncing` because it dials nothing: a store
-/// opened with no account, or with the network down, still has bodies on
-/// disk and should still become searchable.
-///
-/// `spawn_blocking`, not `spawn`: this is synchronous SQLite and synchronous
-/// decompression from beginning to end, and a blocking call inside a tokio
-/// task stalls whatever else that worker was meant to poll.
-async fn catch_up_the_body_index(wiring: &Wiring) {
-    let database = wiring.database.clone();
-    wiring.runtime.spawn(async move {
-        if let Err(error) = postio_session::index_local_bodies(&database).await {
-            // Recoverable, and the same judgement `ensure_search_index`
-            // makes: a mail client whose body search is behind still reads
-            // mail, and the next start tries again.
-            tracing::warn!(%error, "could not index the bodies already on disk");
         }
     });
 }

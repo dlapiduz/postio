@@ -992,6 +992,83 @@ pub fn purge_fetch_debris(blobs: &BlobStore) -> Result<usize, Box<dyn std::error
     Ok(purged)
 }
 
+/// How long the indexer waits after a body lands before it runs a pass, so a
+/// backfill's burst of arrivals becomes one batched write rather than one
+/// per body.
+const INDEX_BODY_DEBOUNCE: Duration = Duration::from_millis(500);
+
+/// The body indexer: every stored body reaches the search index through
+/// here, in batches, off the sync lane.
+///
+/// Neither `MessageRepository::set_body` nor the backfill writes a body's
+/// full-text row any more. They did -- one row per body, in or just after
+/// the body's own transaction -- and every such write updated the tantivy
+/// index on the lane that was syncing, where whichever commit came next
+/// could inherit a segment merge measured in seconds and every folder
+/// queued behind it waited (`fts_merge_stall`, the note of 2026-09-13). A
+/// stored body with no row is the queue
+/// ([`messages_missing_body_text`](postio_index::index::messages_missing_body_text)),
+/// and this task drains it: a catch-up pass at start, then a pass
+/// [`INDEX_BODY_DEBOUNCE`] after each burst of `BodyLoaded` events, each pass
+/// [`index_local_bodies`] -- hundreds of bodies under one background permit
+/// and one transaction, with a breather between batches.
+///
+/// A body is searchable a moment after it lands rather than in the same
+/// instant, which is the trade every mail client makes. The task ends when
+/// the event hub does.
+///
+/// Both composition roots spawn one, with `wiring.events.subscribe(..)`:
+/// `postio-app` on the window's hub, and the macOS boundary on its own --
+/// which never had a body indexer at all, and relied on the fetch to write
+/// the row. `events` is `None` for a sink with no hub behind it (a test's
+/// plain channel): the catch-up pass still runs, and nothing wakes it after.
+pub fn spawn_body_indexer(
+    database: Store,
+    events: Option<postio_core::bridge::EventStream>,
+    runtime: &tokio::runtime::Handle,
+) -> tokio::task::JoinHandle<()> {
+    runtime.spawn(async move {
+        // Whatever the previous run left behind, before anything new lands.
+        body_index_pass(&database).await;
+        let Some(events) = events else {
+            return;
+        };
+        loop {
+            let Some(event) = events.next().await else {
+                return;
+            };
+            if !matches!(event, postio_core::Event::BodyLoaded { .. }) {
+                continue;
+            }
+            // Let the burst finish: a backfill announces bodies by the
+            // hundred, and one pass over all of them is the whole point.
+            // Every event that arrives meanwhile is drained, not counted.
+            let quiet = tokio::time::sleep(INDEX_BODY_DEBOUNCE);
+            tokio::pin!(quiet);
+            loop {
+                tokio::select! {
+                    () = &mut quiet => break,
+                    next = events.next() => {
+                        if next.is_none() {
+                            return;
+                        }
+                    }
+                }
+            }
+            body_index_pass(&database).await;
+        }
+    })
+}
+
+/// One pass of the indexer, and the reason it cannot fail the task: a store
+/// whose search schema was never created is a real state, and a body search
+/// that is behind still reads mail.
+async fn body_index_pass(database: &Store) {
+    if let Err(error) = index_local_bodies(database).await {
+        tracing::warn!(%error, "the body indexer's pass failed: {error}");
+    }
+}
+
 /// How many bodies one pass of [`index_local_bodies`] reads before letting go
 /// of its connection.
 ///
@@ -1043,6 +1120,7 @@ const INDEX_BODY_BREATHER: Duration = Duration::from_millis(25);
 /// pass: one unreadable body should cost that message its body search, not
 /// every message after it.
 pub async fn index_local_bodies(database: &Store) -> Result<usize, Box<dyn std::error::Error>> {
+    let started = std::time::Instant::now();
     let mut indexed = 0usize;
     let mut last_batch: Vec<i64> = Vec::new();
     loop {
@@ -1123,16 +1201,23 @@ pub async fn index_local_bodies(database: &Store) -> Result<usize, Box<dyn std::
         if taken < INDEX_BODY_BATCH as usize {
             break;
         }
-        // Let go of the machine between batches. The pass runs at start on a
-        // worker while the window is already live; without a pause it
-        // decompresses bodies and writes the index as fast as the machine
-        // allows, and the search this index exists to serve pays for that in
-        // evicted cache and queued reads (#500).
-        std::thread::sleep(INDEX_BODY_BREATHER);
+        // Let go of the machine between batches. The pass runs on a worker
+        // while the window is already live; without a pause it decompresses
+        // bodies and writes the index as fast as the machine allows, and the
+        // search this index exists to serve pays for that in evicted cache
+        // and queued reads (#500). Yielded, not slept: a thread sleep would
+        // park the runtime worker this runs on.
+        tokio::time::sleep(INDEX_BODY_BREATHER).await;
     }
     if indexed > 0 {
-        // A count and nothing else: what a log may carry about mail.
-        tracing::info!(indexed, "indexed bodies that were already local");
+        // A count and a duration and nothing else: what a log may carry
+        // about mail. The duration is what says whether the index is the
+        // slow part of a sync (2026-09-13's stalled pass was).
+        tracing::info!(
+            indexed,
+            elapsed_ms = started.elapsed().as_millis() as u64,
+            "indexed bodies"
+        );
     }
     Ok(indexed)
 }

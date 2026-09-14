@@ -666,8 +666,9 @@ CREATE INDEX IF NOT EXISTS search_documents_fts ON search_documents
 -- `postio_model::fold` does the folding, and the query path applies the
 -- identical fold -- the engine's tokenizer lowercases and does not strip
 -- diacritics, so an unaccented query finds an accented word only because
--- both sides went through the same fold. `index_body` and
--- `MessageRepository::set_body` are the writers.
+-- both sides went through the same fold. `index_body` is the one writer,
+-- run by `postio_session::spawn_body_indexer` in batches off the sync lane;
+-- a stored body with no row here is what the indexer has yet to reach.
 CREATE INDEX IF NOT EXISTS messages_body_fts ON message_search_bodies USING fts (body_search);
 
 -- Arbitrary headers: the table `header:` matches against (ADR 0025 Q2).
