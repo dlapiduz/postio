@@ -18,6 +18,7 @@ mod command_wiring;
 mod compose_detach;
 mod compose_typing;
 mod composer_warm;
+mod conversation_body_arrives;
 mod conversation_by_default;
 mod conversation_reply_target;
 mod correlation;
@@ -202,6 +203,10 @@ const CASES: &[(&str, fn())] = &[
     (
         "compose_typing::every_letter_can_be_typed_into_the_composer_body",
         compose_typing::every_letter_can_be_typed_into_the_composer_body as fn(),
+    ),
+    (
+        "conversation_body_arrives::a_body_arriving_fills_in_the_open_conversation",
+        conversation_body_arrives::a_body_arriving_fills_in_the_open_conversation as fn(),
     ),
     (
         "conversation_by_default::landing_on_a_thread_row_opens_the_conversation",
