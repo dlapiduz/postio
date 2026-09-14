@@ -156,7 +156,7 @@ const RECENCY_HALF_LIFE_DAYS: f64 = 730.0;
 /// over a year old -- and no ranking function can surface a recent message
 /// that never entered the pool.
 ///
-/// **Linear, not exponential, and not by choice.** This SQLCipher build has no
+/// **Linear, not exponential, and not by choice.** The store engine has no
 /// math functions -- `exp`, `ln` and `pow` are all absent -- so the ordering
 /// can only use arithmetic. Linear in years is what that allows, and it has
 /// the virtue of never saturating: it keeps separating eighteen years from
@@ -707,8 +707,8 @@ const HITS_JOIN: &str = "FROM (
                FROM search_documents
               WHERE fts_match(sender, recipients, subject, filenames, list_id, ?1)
              UNION ALL
-             SELECT id, NULL, fts_score(body_search, ?2)
-               FROM messages
+             SELECT message_id, NULL, fts_score(body_search, ?2)
+               FROM message_search_bodies
               WHERE fts_match(body_search, ?2)
           ) hits CROSS JOIN messages m ON m.id = hits.rid";
 
@@ -732,8 +732,8 @@ const HITS_JOIN: &str = "FROM (
 const CORRELATED_MATCH: &str = "(EXISTS (SELECT 1 FROM search_documents d
                WHERE d.message_id = m.id
                  AND fts_match(d.sender, d.recipients, d.subject, d.filenames, d.list_id, ?))
-   OR EXISTS (SELECT 1 FROM messages b
-               WHERE b.id = m.id AND fts_match(b.body_search, ?)))";
+   OR EXISTS (SELECT 1 FROM message_search_bodies b
+               WHERE b.message_id = m.id AND fts_match(b.body_search, ?)))";
 
 /// Which plan a statement asks for. See [`HITS_JOIN`] and [`CORRELATED_MATCH`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -858,7 +858,7 @@ impl Plan {
                 "m.id NOT IN (SELECT message_id FROM search_documents
                                WHERE fts_match(sender, recipients, subject,
                                                filenames, list_id, ?))
-                 AND m.id NOT IN (SELECT id FROM messages
+                 AND m.id NOT IN (SELECT message_id FROM message_search_bodies
                                    WHERE fts_match(body_search, ?))"
                     .to_string(),
             );

@@ -23,7 +23,8 @@
 //!    gone with them. The full-text index is now an index on the body column
 //!    rather than a virtual table beside it, and an index cannot tokenise
 //!    compressed bytes.
-//! 2. **`body_search` is new**: the body folded for search. The engine's
+//! 2. **`body_search` is a sibling table** (`message_search_bodies`), not a
+//!    column: the body folded for search. The engine's
 //!    tokenizer does not remove diacritics and offers no option to, so the
 //!    fold FTS5 did inside its index is done by `postio_model::fold` before
 //!    the write.
@@ -422,21 +423,6 @@ CREATE TABLE messages (
     -- decision never loads the body.
     body_line_count         INTEGER,
 
-    -- `body_text` folded for search: lowercased, NFD, combining marks removed.
-    --
-    -- The column the full-text index is actually built on, and it exists
-    -- because the engine's tokenizer does not fold. FTS5 was asked for
-    -- `unicode61 remove_diacritics 2` and did it inside the index; the
-    -- tantivy analyzer behind `USING fts` is SimpleTokenizer + LowerCaser
-    -- with no equivalent option, so the fold moves into the application and
-    -- has to be written down somewhere. `postio_model::fold` is the one
-    -- writer, and it applies the identical fold to the query -- both paths or
-    -- neither, or `café` and `cafe` stop meeting.
-    --
-    -- Derived, so it is never read back: `body_text` remains what the reader
-    -- displays.
-    body_search             TEXT,
-
     -- The raw RFC 5322 source, in the content-addressed blob store. Bodies are
     -- not there: the blob store holds attachments and raw messages, which are
     -- large, stream, and are worth deduplicating. Bodies are none of those
@@ -449,6 +435,38 @@ CREATE TABLE messages (
     text_part_headers       TEXT,
     html_part_id            TEXT,
     html_part_headers       TEXT
+);
+
+-- The body folded for the full-text index, one row per indexed message.
+--
+-- A sibling of `messages` rather than a column on it, and the reason is
+-- write cost: the body index is a `USING fts` index, and the engine merges
+-- tantivy segments on **any** write to the table the index is on. With the
+-- index on `messages` a header sync -- which never touches a body -- paid
+-- whatever merge the body backfill had made due, measured at 14.6 ms mean
+-- and 529 ms worst per header insert against 2.9 ms / 77 ms without
+-- (`examples/fts_write_cost.rs`). Moving `body_search` here leaves writes to
+-- `messages` -- header syncs, flag flips, moves -- clear of the body index,
+-- which now only merges when a body is actually written. This is the same
+-- shape `search_documents` already uses for the metadata index, for a
+-- gentler version of the same reason.
+--
+-- Not the body. `body_text` -- what the reader displays -- stays a row in
+-- `messages` (ADR 0020, rows not files, is untouched). This is the derived,
+-- folded, never-displayed copy the index reads: the engine's tokenizer
+-- lowercases and does not strip diacritics, so `postio_model::fold` folds it
+-- on the way in and the query path applies the identical fold, both or
+-- neither (`café` and `cafe` stop meeting otherwise).
+--
+-- A row's *presence* is the record that the message was indexed:
+-- `messages_missing_body_text` asks for messages with no row here, and
+-- `index_body` writes an empty-string row for an attachment-only message so
+-- it is not re-selected for ever (#500). The `messages_body_fts` index over
+-- `body_search` is created by `postio-index`, which owns the search indexes;
+-- the table is here because it hangs off `messages`.
+CREATE TABLE message_search_bodies (
+    message_id  INTEGER PRIMARY KEY REFERENCES messages(id) ON DELETE CASCADE,
+    body_search TEXT NOT NULL
 );
 
 CREATE TABLE operation_queue (

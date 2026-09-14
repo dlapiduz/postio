@@ -49,7 +49,7 @@ async fn a_message(connection: &Connection, subject: &str) -> i64 {
 async fn body_hits(connection: &Connection, query: &str) -> Vec<i64> {
     postio_storage::sql::all(
         connection,
-        "SELECT id FROM messages WHERE fts_match(body_search, ?1) ORDER BY id",
+        "SELECT message_id FROM message_search_bodies          WHERE fts_match(body_search, ?1) ORDER BY message_id",
         [postio_model::fold::fold(query)],
         |row| postio_storage::sql::RowExt::col(row, 0),
     )
@@ -59,13 +59,13 @@ async fn body_hits(connection: &Connection, query: &str) -> Vec<i64> {
 
 /// How many messages carry indexed body text.
 ///
-/// The count `message_bodies_fts` used to answer with a row count. A message
-/// that has been through `index_body` has a non-`NULL` `body_search` whether
-/// or not it had any words; one that has not been through it has `NULL`.
+/// A message that has been through `index_body` (or `set_body`) has a row in
+/// `message_search_bodies` whether or not it had any words; one that has not
+/// has none.
 async fn indexed_bodies(connection: &Connection) -> i64 {
     postio_storage::sql::scalar(
         connection,
-        "SELECT count(*) FROM messages WHERE body_search IS NOT NULL",
+        "SELECT count(*) FROM message_search_bodies",
         (),
     )
     .await

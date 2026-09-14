@@ -146,7 +146,7 @@ async fn main() {
         ("search documents", "SELECT count(*) FROM search_documents"),
         (
             "indexed body text (reads every overflow page: decrypt throughput)",
-            "SELECT count(body_search), coalesce(sum(length(body_search)),0) FROM messages",
+            "SELECT count(*), coalesce(sum(length(body_search)),0) FROM message_search_bodies",
         ),
     ] {
         let start = Instant::now();
@@ -200,7 +200,7 @@ async fn main() {
     for sql in [
         "SELECT message_id FROM search_documents
           WHERE fts_match(sender, recipients, subject, filenames, list_id, 'invoice')",
-        "SELECT id FROM messages WHERE fts_match(body_search, 'invoice')",
+        "SELECT message_id FROM message_search_bodies WHERE fts_match(body_search, 'invoice')",
         "SELECT id FROM messages m
           WHERE m.deleted_locally = 0 AND m.account_id = 1
           ORDER BY m.received_at DESC, m.id DESC LIMIT 50",

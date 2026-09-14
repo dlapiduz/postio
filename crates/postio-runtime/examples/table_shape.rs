@@ -41,7 +41,7 @@ async fn main() {
     let (rows, body, total): (i64, i64, i64) = postio_storage::sql::one(
         &connection,
         "SELECT count(*),
-                coalesce(sum(length(coalesce(body_search,''))), 0),
+                (SELECT coalesce(sum(length(body_search)), 0) FROM message_search_bodies),
                 coalesce(sum(length(coalesce(subject,'')) + length(coalesce(preview,''))
                            + length(coalesce(rfc_message_id,'')) + 120), 0)
            FROM messages",

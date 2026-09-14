@@ -5,10 +5,15 @@
 //! samples inside `tantivy`, under
 //! `turso_core::index_method::fts` -> `IndexMerger::write`.
 //!
-//! The suspicion this measures: `messages_body_fts` is an index **on
-//! `messages`**, so every write to that table -- including a header sync that
-//! never touches `body_search` -- goes through the tantivy index, and pays
-//! whatever merge the *body backfill's* accumulated segments have made due.
+//! What this measured, and what the fix did: `messages_body_fts` **was** an
+//! index on `messages`, so every write to that table -- a header sync that
+//! never touches a body included -- went through the tantivy index and paid
+//! whatever merge the *body backfill's* accumulated segments had made due
+//! (14.6 ms mean / 529 ms worst at 1,200 body writes, against 2.9 / 77 with
+//! the index dropped). The index is on its own table
+//! (`message_search_bodies`) now, so the `with_index` column below writes
+//! bodies there and the header inserts into `messages` stay at the
+//! index-dropped cost -- the two columns should now match.
 //!
 //! ```text
 //! cargo run -p postio-storage --example fts_write_cost --features test-support
@@ -86,7 +91,10 @@ async fn main() {
                 for n in 0..300 {
                     let _ = connection
                         .execute(
-                            "UPDATE messages SET body_search = ?2 WHERE id = ?1",
+                            "INSERT INTO message_search_bodies (message_id, body_search)
+                             VALUES (?1, ?2)
+                             ON CONFLICT (message_id) DO UPDATE
+                                SET body_search = excluded.body_search",
                             postio_storage::sql::bind![(n % 200) + 1, body(n + round * 1000)],
                         )
                         .await;

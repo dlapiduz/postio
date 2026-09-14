@@ -319,7 +319,7 @@ async fn bumping_the_headers_half_refills_it_and_leaves_the_bodies_alone() {
 
     let bodies = postio_storage::sql::scalar(
         &connection,
-        "SELECT count(*) FROM messages WHERE id = ?1 AND body_search IS NOT NULL",
+        "SELECT count(*) FROM message_search_bodies WHERE message_id = ?1",
         [message.id.get()],
     )
     .await
