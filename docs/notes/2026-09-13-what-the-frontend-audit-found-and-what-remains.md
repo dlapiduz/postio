@@ -14,16 +14,21 @@ subtler: frontend-agnostic *decisions* living in GTK files, which the macOS
 frontend (`crates/postio-ffi` + `macos/`) then re-derives or goes without.
 Three moves remain, in value order:
 
-1. **The store→list source seam.** `MessageSource` / `MailboxSource` /
-   `ResultSource` / `PageRequest` / `Page` are defined in
-   `postio-gtk/src/feed.rs`, so `postio-app/src/feed.rs` implements a GTK
-   trait to serve data, and `postio-ffi/src/session.rs` (~1697–1800) had to
-   hand-roll its own fetch/in-flight/generation logic. Move the traits to
-   `postio-ui` generic over `ListRow`, apply `ListScope::reaction` in a
-   shared driver, leave `postio-gtk::feed::Feed` as the adapter. Largest
-   move, deletes a duplicated subsystem, gives macOS the
-   insert-at-top/refetch/ignore distinctions it currently flattens into
-   `reloadData()`.
+1. **The store→list source seam** — *done, same day, narrower than
+   mapped.* `postio_ui::paging::Paging` is the policy both frontends now
+   run: what a page number means (an offset read of the scope, or a slice
+   of the search ranking), what each scope does with each event (the table
+   moved there from `feed.rs`'s module docs), and how often a failed page
+   may be re-asked. `Page<T>` and `PageRequest` are its vocabulary. GTK's
+   `Feed` is the adapter over it; the FFI's `fetch`/`react` are the other
+   adapter, and macOS gained the insert-at-top / refetch-in-place / reload
+   distinctions it used to flatten into "count again and reset" — the
+   visible fix being that a flag change now reaches the row on screen.
+   What did **not** move, on purpose: `MessageSource`/`ResultSource`/
+   `MailboxSource` stay in `postio-gtk`. They are the *crossing* — futures
+   pollable on the GTK main context — and the macOS side crosses on tokio
+   with no trait at all; a generic trait over both would describe nothing
+   either side needs.
 2. **The focus/keyboard-context machine** — *done, same day.*
    `postio_ui::focus::next_pane` is the pane-cycle table (GTK's
    `cycle_pane` and, through the FFI's `nextPane`, the macOS `Pane.next()`
