@@ -28,12 +28,12 @@
 mod concurrent_accounts;
 mod engine;
 mod list_refresh;
+mod local_store;
 mod mail_store;
 mod network;
 mod read_state;
 mod search;
 mod snooze_wake;
-mod local_store;
 mod sync_progress;
 mod sync_wave;
 mod thread_store;

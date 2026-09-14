@@ -12,7 +12,8 @@ so the next session starts from the map rather than the audit.
 `postio-gtk` genuinely cannot reach the store — the checks hold. The leak is
 subtler: frontend-agnostic *decisions* living in GTK files, which the macOS
 frontend (`crates/postio-ffi` + `macos/`) then re-derives or goes without.
-Three moves remain, in value order:
+Three moves were mapped, in value order — all three landed the next day, and
+each entry says what it became and what it deliberately left:
 
 1. **The store→list source seam** — *done, same day, narrower than
    mapped.* `postio_ui::paging::Paging` is the policy both frontends now
