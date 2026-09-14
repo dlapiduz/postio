@@ -2,17 +2,17 @@
 //!
 //! # Why this is here and not in the frontend
 //!
-//! `postio-gtk` must not depend on `rusqlite` — CI enforces it — so the view
-//! layer cannot read `postio-storage` itself. It also must never *wait* on a
-//! read: every widget is main-thread only, and a query that blocked the main
-//! loop would cost frames on the one interaction that happens most.
+//! `postio-gtk` must not depend on the database engine — CI enforces it — so
+//! the view layer cannot read `postio-storage` itself. It also must never
+//! *wait* on a read: every widget is main-thread only, and a query that
+//! blocked the main loop would cost frames on the one interaction that happens
+//! most.
 //!
-//! `Store` is both halves of that answer. It owns the connection pool, runs
-//! every query on a blocking thread through `tokio::task::spawn_blocking`, and
-//! hands back types built out of [`postio_model`] — which the frontend already
-//! depends on — rather than anything of `postio-storage`'s. The rows a
-//! frontend sees have no SQL in their ancestry, which is what keeps a second
-//! frontend possible.
+//! `Store` is both halves of that answer. It reads through `postio-storage`'s
+//! async engine — a plain `await`, no thread pool — and hands back types built
+//! out of [`postio_model`], which the frontend already depends on, rather than
+//! anything of `postio-storage`'s. The rows a frontend sees have no SQL in
+//! their ancestry, which is what keeps a second frontend possible.
 //!
 //! # Why the count travels with the page
 //!
@@ -23,9 +23,11 @@
 //!
 //! # What it costs
 //!
-//! One `spawn_blocking` per call, which is a pool thread and not a tokio
-//! worker, so a slow query delays no other task. `Pool` hands each of those
-//! threads its own connection rather than serialising them behind one mutex.
+//! A `connect().await` and the read, both on the caller's task. The engine is
+//! async to the bottom (specs/004-turso-store), so there is no blocking
+//! thread and no pool: a read is a future like any other, and a slow one
+//! yields rather than tying up a worker. This was a `spawn_blocking` onto a
+//! pool of connections while the store was SQLite; the swap deleted both.
 
 use std::fmt;
 use std::future::Future;

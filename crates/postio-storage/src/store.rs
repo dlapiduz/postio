@@ -61,13 +61,13 @@ pub const MAX_CONCURRENT_PASSES: usize = 4;
 /// crate, rather than properties taken on trust.
 pub const CIPHER: &str = "aes256gcm";
 
-/// Which kind of caller is asking — for the store's write lock
-/// ([`WriteGate`]), or, before the engine pooled its own connections, for a
-/// connection out of the pool (#672).
+/// Which kind of caller is asking for the store's single writer
+/// ([`WriteGate`]).
 ///
-/// One enum for both: they are the same distinction — "is a person waiting
-/// on this, right now" — applied to two different contended resources, and a
-/// caller declares it once rather than choosing a name per resource. See
+/// The distinction is "is a person waiting on this, right now" — an
+/// interactive write goes ahead of a background one. It once named the same
+/// distinction for a connection out of the pool too (#672); the pool went
+/// with the engine swap, and the enum kept the half that outlived it. See
 /// [`WriteGate`] for why it has to exist.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WritePriority {
