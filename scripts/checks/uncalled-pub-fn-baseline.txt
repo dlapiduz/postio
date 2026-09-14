@@ -78,7 +78,6 @@ partials                          # crates/postio-search/src/query.rs:369
 plain_forward                     # crates/postio-model/src/reply.rs:221
 plain_quote                       # crates/postio-model/src/reply.rs:213
 preset_for                        # crates/postio-account/src/imap/settings.rs:74
-prune_settled                     # crates/postio-storage/src/repository/operations.rs:543
 record_seen                       # crates/postio-model/src/contact.rs:95
 recount                           # crates/postio-storage/src/repository/mailboxes.rs:276
 recount_account                   # crates/postio-storage/src/repository/mailboxes.rs:303

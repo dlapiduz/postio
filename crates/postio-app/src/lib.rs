@@ -895,6 +895,19 @@ async fn reclaim_disk(wiring: &Wiring) {
             // start tries again.
             tracing::warn!(%error, "could not reclaim blobs nothing references");
         }
+        // Settled operations past their retention: the queue's own sweep,
+        // which existed and was never run until now.
+        match postio_session::prune_settled_operations(
+            &database,
+            postio_session::OPERATION_RETENTION,
+            chrono::Utc::now(),
+        )
+        .await
+        {
+            Ok(0) => {}
+            Ok(removed) => tracing::debug!(removed, "pruned settled operations"),
+            Err(error) => tracing::warn!(%error, "could not prune settled operations: {error}"),
+        }
         // Last, and only when somebody has set a ceiling: this is the sweep
         // that costs a refetch, so it takes what the free sweeps left.
         if let Err(error) =

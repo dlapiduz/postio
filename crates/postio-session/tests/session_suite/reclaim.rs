@@ -276,3 +276,77 @@ async fn no_ceiling_means_the_pass_does_not_run_at_all() {
     assert!(written.iter().all(|blob| blobs.contains(blob)));
     assert_eq!(blob_files(&blobs).len(), 3);
 }
+
+#[tokio::test]
+async fn settled_operations_past_their_retention_are_pruned_and_the_rest_kept() {
+    // `OperationQueueRepository::prune_settled` was written and tested and
+    // nothing ever called it, so the queue grew without bound -- the shape
+    // of #416. Housekeeping runs it now, and this is the contract: a done
+    // row older than the retention goes; a done row inside it stays, so a
+    // late undo still finds it; a pending row stays whatever its age.
+    use chrono::Duration;
+    use postio_model::{Message, Operation, OperationTarget};
+    use postio_storage::repository::{MessageRepository, OperationQueueRepository};
+    use postio_storage::test_support;
+
+    let database = test_support::memory().await;
+    let (old_done, recent_done, pending) = {
+        let connection = database.connect().await.expect("checkout");
+        let (account, inbox) = test_support::account_with_inbox(&connection).await;
+        let archive = test_support::mailbox(&connection, &account, "Archive").await;
+        let mut message = Message::new(account.id, inbox, chrono::Utc::now());
+        let id = MessageRepository::new(&connection)
+            .create(&mut message)
+            .await
+            .expect("create");
+        let queue = OperationQueueRepository::new(&connection);
+        let now = chrono::Utc::now();
+        let mut enqueued = Vec::new();
+        for age in [40, 2, 40] {
+            let at = now - Duration::days(age);
+            let queued = queue
+                .enqueue(
+                    account.id,
+                    OperationTarget::Message(id),
+                    &Operation::Move {
+                        from: inbox,
+                        to: archive.id,
+                    },
+                    at,
+                )
+                .await
+                .expect("enqueue");
+            enqueued.push((queued.id, at));
+        }
+        let (old_done, old_at) = enqueued[0];
+        let (recent_done, recent_at) = enqueued[1];
+        let (pending, _) = enqueued[2];
+        queue.mark_done(old_done, old_at).await.expect("settle");
+        queue
+            .mark_done(recent_done, recent_at)
+            .await
+            .expect("settle");
+        (old_done, recent_done, pending)
+    };
+
+    let removed = postio_session::prune_settled_operations(
+        &database,
+        postio_session::OPERATION_RETENTION,
+        chrono::Utc::now(),
+    )
+    .await
+    .expect("the sweep runs");
+    assert_eq!(removed, 1, "exactly the settled row past its retention");
+
+    let connection = database.connect().await.expect("checkout");
+    let queue = OperationQueueRepository::new(&connection);
+    assert!(queue.get(old_done).await.expect("read").is_none(), "gone");
+    assert!(
+        queue.get(recent_done).await.expect("read").is_some(),
+        "a late undo still finds a recently settled row"
+    );
+    assert!(
+        queue.get(pending).await.expect("read").is_some(),
+        "a pending row is never pruned, however old"
+    );
+}
