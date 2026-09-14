@@ -188,6 +188,19 @@ jobs:
       # enable that rule. Output is redacted by default -- these logs are
       # public. Run the script locally with --reveal to see the offending
       # values.
+      # `check-unused-deps.py` skips, saying so, without cargo-machete -- so
+      # this job installs it, and the gate is real here whatever a
+      # workstation has. Cached on the install script's hash, the way
+      # nextest is: the key changes exactly when the pin does.
+      - name: Cache cargo-machete
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ~/.cargo/bin/cargo-machete
+          key: ${{ runner.os }}-cargo-machete-${{ hashFiles('scripts/install-machete.sh') }}
+
+      - name: Install cargo-machete
+        run: scripts/install-machete.sh
+
       - name: Run every repository invariant
         env:
           POSTIO_DENY_NAMES: ${{ secrets.POSTIO_DENY_NAMES }}
