@@ -79,7 +79,9 @@ exit 0
 # Everything install-local.sh and the stubs above reach for outside the
 # shell's builtins. Symlinked rather than inherited from PATH, so a case can
 # ask what happens when `perl` is not on the machine at all.
-BORROWED = ["bash", "sh", "dirname", "install", "rm", "mkdir", "chmod", "env", "printf", "cat"]
+# `cmp` and `cp` are scripts/install-shims.sh's, which install-local.sh now
+# runs first so a fresh clone's build can find `postio-linker`.
+BORROWED = ["bash", "sh", "dirname", "install", "rm", "mkdir", "chmod", "env", "printf", "cat", "cmp", "cp"]
 
 # Resolved before any case narrows PATH down to the stubs.
 BASH = shutil.which("bash") or "/bin/bash"

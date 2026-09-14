@@ -107,6 +107,12 @@ if [ -z "${POSTIO_SKIP_DEP_CHECK:-}" ]; then
     check_build_dependencies
 fi
 
+# The linker and C compiler .cargo/config.toml names are bare program names
+# (postio-linker, postio-cc) so one compile cache serves every worktree
+# (#1101). A fresh clone has neither on PATH, and the first thing a person
+# following the README would see is "linker `postio-linker` not found".
+"$here/scripts/install-shims.sh"
+
 echo "Building postio (release) — the first build takes a while..."
 cargo build --release --package postio-app --bin postio \
     --manifest-path "$here/Cargo.toml"
