@@ -35,7 +35,7 @@ pub fn watch(view: &webkit6::WebView) {
     view.connect_web_process_terminated(|_, reason| {
         tracing::error!(
             ?reason,
-            "a WebKit web process died; the document it held is gone"
+            "a WebKit web process died ({reason:?}); the document it held is gone"
         );
         let reason = format!("{reason:?}");
         DEATHS.fetch_add(1, Ordering::SeqCst);
