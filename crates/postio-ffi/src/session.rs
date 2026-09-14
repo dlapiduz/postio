@@ -2,7 +2,7 @@
 
 use std::sync::{Arc, Mutex};
 
-use postio_core::bridge::{Bridge, CommandSender, EventStream, event_channel, handler_fn};
+use postio_core::bridge::{Bridge, CommandSender, EventStream, handler_fn};
 use postio_session::Wiring;
 
 use crate::event::UiEvent;
@@ -872,7 +872,14 @@ impl Session {
     /// it on the main actor**: it belongs in a launch task, with the unlock
     /// surface shown if it comes back [`SessionError::KeyringLocked`].
     pub fn open(options: SessionOptions) -> Result<Arc<Self>, SessionError> {
-        let (sink, events) = event_channel();
+        // A hub rather than a channel: the frontend drains one subscription
+        // and the body indexer another, the way `postio-app`'s window and
+        // indexer share its hub. This boundary had no body indexer before
+        // and relied on the fetch to write the search row -- which it no
+        // longer does anywhere.
+        let hub = postio_core::bridge::EventHub::new();
+        let sink = hub.sink();
+        let events = hub.subscribe("frontend");
 
         // Read before anything moves out of `options`, and once: both paths
         // below build the same configuration from it.
@@ -958,6 +965,11 @@ impl Session {
                 .with_backfill(postio_session::backfill_policy(&sync_config))
                 .with_watch(postio_session::watch_policy(&sync_config));
             let keys = config.keys;
+            postio_session::spawn_body_indexer(
+                wiring.database.clone(),
+                wiring.events.subscribe("indexer"),
+                &wiring.runtime,
+            );
             return Ok(Arc::new(Session {
                 wiring: Mutex::new(Some(wiring)),
                 resolver: Mutex::new(build_resolver(&keys)),
@@ -1020,6 +1032,11 @@ impl Session {
             .with_secrets(secrets)
             .with_backfill(postio_session::backfill_policy(&sync_config))
             .with_watch(postio_session::watch_policy(&sync_config));
+        postio_session::spawn_body_indexer(
+            wiring.database.clone(),
+            wiring.events.subscribe("indexer"),
+            &wiring.runtime,
+        );
         Ok(Arc::new(Session {
             wiring: Mutex::new(Some(wiring)),
             resolver: Mutex::new(build_resolver(&keys)),

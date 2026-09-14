@@ -1597,18 +1597,16 @@ impl<'a> MessageRepository<'a> {
     /// what was there, so a refetch that finds no HTML part does not leave the
     /// previous fetch's HTML behind to be read as this message's.
     ///
-    /// Indexes `body_search` alongside them, and that is not optional: it is
-    /// `body_text` folded for the full-text index, and this is the only place
-    /// a body is written. The engine's tokenizer lowercases and does not
-    /// remove diacritics, so `postio_model::fold` does — on this path and on
-    /// the query path, both or neither (FR-012).
-    ///
-    /// The fold lands in `message_search_bodies`, the sibling table the body
-    /// index is on (see the schema for why it is not a column) — an
-    /// empty-string row for an attachment-only body, so a message with no
-    /// text is still recorded as indexed and not re-selected for ever (#500).
-    /// Written in the same transaction as the body, so the two cannot come
-    /// apart: a search hit whose body the reader cannot show, or the reverse.
+    /// Deliberately does **not** write the body's full-text row. It did, in
+    /// this transaction, so a search hit and the body it named could not
+    /// come apart -- and every body commit then updated the tantivy index on
+    /// the sync lane, where whichever commit came next could inherit a
+    /// segment merge measured in seconds (`fts_merge_stall`). The row is the
+    /// indexer's now: `postio_index::index::messages_missing_body_text` is
+    /// the queue (a body with no row), and `postio_session::
+    /// spawn_body_indexer` drains it in batches of hundreds under one write,
+    /// off the sync lane. A body is searchable a moment after it lands rather
+    /// than in the same instant.
     ///
     /// # Errors
     ///
@@ -1619,52 +1617,39 @@ impl<'a> MessageRepository<'a> {
         body: &StoredBody,
         body_state: BodyState,
     ) -> Result<()> {
-        sql::in_scope(self.connection, |transaction| async move {
-            let changed = transaction
-                .execute(
-                    "UPDATE messages
+        let changed = self
+            .connection
+            .execute(
+                "UPDATE messages
                     SET body_text = ?2, body_html = ?3, body_headers = ?4,
                         body_state = ?5,
                         body_headers_truncated = ?6, body_encoding_problems = ?7,
                         body_line_count = ?8, body_parsed_with = ?9
                   WHERE id = ?1",
-                    bind![
-                        id.get(),
-                        // Packed per row: zstd when that is smaller, the text
-                        // when it is not -- see `body_codec`.
-                        body.text.as_deref().map(crate::body_codec::pack),
-                        body.html.as_deref().map(crate::body_codec::pack),
-                        body.headers,
-                        body_state.as_str(),
-                        body.headers_truncated,
-                        body.encoding_problems,
-                        body.text.as_deref().map(line_count),
-                        // Stamped with the parser that produced it, so a later
-                        // parser can tell which rows it may want back.
-                        postio_model::mime::PARSER_VERSION,
-                    ],
-                )
-                .await?;
-            if changed == 0 {
-                return Err(Error::NotFound {
-                    entity: "message",
-                    id: id.get(),
-                });
-            }
-            transaction
-                .execute(
-                    "INSERT INTO message_search_bodies (message_id, body_search)
-                     VALUES (?1, ?2)
-                     ON CONFLICT (message_id) DO UPDATE SET body_search = excluded.body_search",
-                    bind![
-                        id.get(),
-                        postio_model::fold::fold(body.text.as_deref().unwrap_or("")),
-                    ],
-                )
-                .await?;
-            Ok(())
-        })
-        .await
+                bind![
+                    id.get(),
+                    // Packed per row: zstd when that is smaller, the text
+                    // when it is not -- see `body_codec`.
+                    body.text.as_deref().map(crate::body_codec::pack),
+                    body.html.as_deref().map(crate::body_codec::pack),
+                    body.headers,
+                    body_state.as_str(),
+                    body.headers_truncated,
+                    body.encoding_problems,
+                    body.text.as_deref().map(line_count),
+                    // Stamped with the parser that produced it, so a later
+                    // parser can tell which rows it may want back.
+                    postio_model::mime::PARSER_VERSION,
+                ],
+            )
+            .await?;
+        if changed == 0 {
+            return Err(Error::NotFound {
+                entity: "message",
+                id: id.get(),
+            });
+        }
+        Ok(())
     }
 
     /// Sets `body_state` on its own, without touching the stored body.

@@ -534,8 +534,23 @@ impl EventHub {
     /// The subscription starts at *now*. Everything before it is in the
     /// store (ADR 0013 Q4).
     pub fn subscribe(&self, label: impl Into<String>) -> EventStream {
+        self.inner.subscribe(label)
+    }
+
+    /// How many subscriptions are live, last time anybody looked.
+    pub fn subscribers(&self) -> usize {
+        self.inner
+            .read()
+            .iter()
+            .filter(|subscription| !subscription.events.is_closed())
+            .count()
+    }
+}
+
+impl HubInner {
+    fn subscribe(&self, label: impl Into<String>) -> EventStream {
         let (sender, receiver) = async_channel::unbounded();
-        let mut subscribers = self.inner.write();
+        let mut subscribers = self.write();
         // A consumer that went away leaves a queue nothing will ever read,
         // and every emit would keep paying for it. Under the write lock a
         // subscribe already takes, so the emit path stays a read lock.
@@ -547,14 +562,22 @@ impl EventHub {
         });
         EventStream(receiver)
     }
+}
 
-    /// How many subscriptions are live, last time anybody looked.
-    pub fn subscribers(&self) -> usize {
-        self.inner
-            .read()
-            .iter()
-            .filter(|subscription| !subscription.events.is_closed())
-            .count()
+impl EventSink {
+    /// A private stream for one consumer, when this sink is on a hub.
+    ///
+    /// `None` for a sink from [`event_channel`]: that pair has one reader and
+    /// no room for a second. What this is for is a component handed only a
+    /// sink — the session's body indexer, wired from a `Wiring` — that has
+    /// to listen as well as speak: on a hub it subscribes like the window
+    /// does, and a test that wired a plain channel gets the component's
+    /// catch-up behaviour and no events, which is what a plain channel says.
+    pub fn subscribe(&self, label: impl Into<String>) -> Option<EventStream> {
+        match &self.events {
+            EventTarget::Hub(inner) => Some(inner.subscribe(label)),
+            EventTarget::Direct(_) => None,
+        }
     }
 }
 

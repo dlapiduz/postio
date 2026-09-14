@@ -740,11 +740,45 @@ async fn a_fetched_body_becomes_searchable_text() {
     .await
     .expect("fetch");
 
+    // The fetch stores; the indexer indexes. A stored body with no search
+    // row is the indexer's queue, and the fetch must leave it there rather
+    // than write the row itself on the sync lane.
+    assert!(
+        !body_is_indexed(&local.connection, id).await,
+        "the fetch wrote the search row itself, on the sync lane"
+    );
+    index_pending(&local.connection).await;
     assert!(
         body_matches(&local.connection, id, &format!("\"body of note {uid}\"")).await,
-        "the body landed in the blob store and never reached the index, so \
-         a word that appears only in a message's body finds nothing (#327)"
+        "the body landed in the store and never reached the index, so a word \
+         that appears only in a message's body finds nothing (#327)"
     );
+}
+
+/// One batch of the indexer, in miniature: everything the store holds a
+/// body for and no search row, indexed the way `postio_session::
+/// spawn_body_indexer` does it. What a test asserts through here is the
+/// contract between the fetch and the indexer, not the indexer itself --
+/// that has its own suite in `postio-session`.
+async fn index_pending(connection: &postio_storage::Checkout) {
+    let pending = postio_index::index::messages_missing_body_text(connection, 1_000)
+        .await
+        .expect("the indexer's queue");
+    let messages = postio_storage::repository::MessageRepository::new(connection);
+    for id in pending {
+        let stored = messages
+            .body(MessageId::new(id))
+            .await
+            .expect("read a body")
+            .unwrap_or_default();
+        let body = postio_model::MessageBody {
+            text: stored.text,
+            html: stored.html,
+        };
+        postio_index::index::index_body_of(connection, id, &body)
+            .await
+            .expect("index a body");
+    }
 }
 
 /// The other half of the same call: an HTML-only message is indexed as its
@@ -789,6 +823,7 @@ async fn an_html_only_body_is_indexed_as_text_and_not_as_markup() {
     .await
     .expect("fetch");
 
+    index_pending(&local.connection).await;
     assert!(
         body_is_indexed(&local.connection, id).await,
         "an HTML-only message reached the index at all"
@@ -1039,10 +1074,10 @@ async fn a_payload_with_nothing_to_explain_its_bytes_asks_for_every_byte() {
 
 #[tokio::test]
 async fn text_fetched_by_section_reaches_the_search_index() {
-    // #327 was "bodies are never indexed", and the fix hung `index_body_of`
-    // off the one place every body arrived. The text axis is a *second* place
-    // bodies arrive, so it needs its own proof -- otherwise ADR 0017 would
-    // quietly reintroduce the bug it exists to serve.
+    // #327 was "bodies are never indexed". The text axis is a *second* place
+    // bodies arrive, so it needs its own proof that what it stores is what
+    // the indexer picks up -- otherwise ADR 0017 would quietly reintroduce
+    // the bug it exists to serve.
     let inbox = MockMailbox::new(INBOX)
         .uid_validity(UidValidity::new(VALIDITY))
         .message(with_a_big_attachment(1));
@@ -1067,6 +1102,7 @@ async fn text_fetched_by_section_reaches_the_search_index() {
     .await
     .expect("fetch");
 
+    index_pending(&local.connection).await;
     assert!(
         body_matches(&local.connection, id, "\"statement is attached\"").await,
         "the text part's words did not reach the index"

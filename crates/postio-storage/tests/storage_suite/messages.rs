@@ -2856,3 +2856,48 @@ async fn a_stored_body_is_smaller_than_its_text_and_reads_back_whole() {
         text.len()
     );
 }
+
+#[tokio::test]
+async fn set_body_leaves_the_search_index_to_the_indexer() {
+    // The body's full-text row used to be written here, in the body's own
+    // transaction, so a search hit and the body it named could not come
+    // apart. What that bought was paid on the sync lane: every body commit
+    // updated the tantivy index, and whichever commit came next could
+    // inherit a segment merge measured in seconds (`fts_merge_stall`). The
+    // index is the indexer's now -- `postio_session::spawn_body_indexer`
+    // batches hundreds of bodies into one write, off the sync lane -- and a
+    // body is searchable a moment after it lands rather than in the same
+    // instant, which is the trade every mail client makes.
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    let (account, inbox) = test_support::account_with_inbox(&connection).await;
+    let messages = MessageRepository::new(&connection);
+    let mut message = a_message(inbox, account.id, 500);
+    let id = messages.create(&mut message).await.expect("create");
+    messages
+        .set_body(
+            id,
+            &StoredBody {
+                text: Some("words worth finding".to_owned()),
+                html: None,
+                headers: None,
+                headers_truncated: false,
+                encoding_problems: false,
+            },
+            BodyState::Full,
+        )
+        .await
+        .expect("set");
+    let indexed = postio_storage::sql::exists(
+        &connection,
+        "SELECT 1 FROM message_search_bodies WHERE message_id = ?1",
+        [id.get()],
+    )
+    .await
+    .expect("ask the index");
+    assert!(
+        !indexed,
+        "storing a body wrote its search row inside the body's transaction; \
+         that write belongs to the indexer, off the sync lane"
+    );
+}

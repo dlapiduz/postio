@@ -1252,33 +1252,15 @@ pub async fn fetch_body(
         .set_body(request.message, &stored, BodyState::Full)
         .await?;
 
-    // And into the search index, *after* the commit point.
-    //
-    // This is the one place every body arrives — background backfill and the
-    // interactive fetch of whatever the user just opened both settle through
-    // here — which is why the call belongs here and not in a scheduler that
-    // sees only some of them. `index_body` had existed and been tested since
-    // the index was written and nothing in the workspace ever called it, so
-    // the `body` column was empty on every message ever synced (#327).
-    //
-    // After rather than before: an index entry for a body that is not local
-    // yet would let search answer for a corpus it does not have, and nothing
-    // could detect it. The other order — indexed but not committed — is a row
-    // the maintenance pass simply picks up again.
-    //
-    // Never fatal. A store whose search schema was never created is a real
-    // state (a headless sync, a test that only wants mail), and trading a
-    // fetched message for an unavailable index would be the wrong way round.
-    // `postio_session::index_local_bodies` sweeps up whatever this misses.
-    if let Err(error) =
-        postio_index::index::index_body_of(connection, request.message.get(), &parsed.body).await
-    {
-        tracing::debug!(
-            message = request.message.get(),
-            %error,
-            "a fetched body did not reach the search index"
-        );
-    }
+    // Not into the search index: a stored body with no
+    // `message_search_bodies` row *is* the indexer's queue
+    // (`messages_missing_body_text`), and `postio_session::
+    // spawn_body_indexer` drains it in batches of hundreds under one write,
+    // woken by the `BodyLoaded` this fetch emits. This lane used to write the
+    // row itself, one body at a time, after the commit point -- which put a
+    // tantivy segment merge on the sync lane every few hundred bodies, for
+    // seconds, and every folder queued behind it waited (#327 is why the
+    // call was here at all; the indexer is what it lacked).
     index_the_header_block(connection, request.message, block.as_ref()).await;
     Ok(Outcome::Stored { bytes })
 }
@@ -1495,15 +1477,7 @@ async fn fetch_text_parts(
     // is concerned. See `fetch_body` for why it is last.
     messages.set_body(request.message, &stored, state).await?;
 
-    if let Err(error) =
-        postio_index::index::index_body_of(connection, request.message.get(), &body).await
-    {
-        tracing::debug!(
-            message = request.message.get(),
-            %error,
-            "a fetched body did not reach the search index"
-        );
-    }
+    // The search row is the indexer's, not this lane's -- see `fetch_body`.
     index_the_header_block(connection, request.message, block.as_ref()).await;
     Ok(Outcome::Stored { bytes })
 }

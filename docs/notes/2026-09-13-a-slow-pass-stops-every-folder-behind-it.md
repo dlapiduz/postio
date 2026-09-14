@@ -79,3 +79,18 @@ finishes before the wave can return, and the job is answered only after it.
 to keep it: **a wave is background work and the user must never queue behind
 it.** A refill and that promise can probably coexist, but not by adding the
 refill alone.
+
+## What changed since (2026-09-14): the body index left the sync lane
+
+The merge cost was paid on the lane that was syncing because that lane wrote
+the body's full-text row itself — `MessageRepository::set_body` inside the
+body's transaction, and the backfill once more just after it, one row per
+body. Neither does now. A stored body with no `message_search_bodies` row is
+the queue (`messages_missing_body_text`), and `postio_session::
+spawn_body_indexer` drains it in batches of hundreds under one background
+permit and one transaction, half a second after each burst of `BodyLoaded`,
+with a breather between batches. The merges still happen; they happen on a
+task nothing waits for, at a fraction of the frequency, and never inside a
+folder's pass. A body is searchable a moment after it lands rather than in the
+same instant. The macOS boundary, which had no body indexer at all and relied
+on the fetch's write, runs the same task on its own event hub.

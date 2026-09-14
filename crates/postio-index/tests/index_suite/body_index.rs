@@ -59,7 +59,7 @@ async fn body_hits(connection: &Connection, query: &str) -> Vec<i64> {
 
 /// How many messages carry indexed body text.
 ///
-/// A message that has been through `index_body` (or `set_body`) has a row in
+/// A message that has been through `index_body` has a row in
 /// `message_search_bodies` whether or not it had any words; one that has not
 /// has none.
 async fn indexed_bodies(connection: &Connection) -> i64 {
