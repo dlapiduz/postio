@@ -52,9 +52,7 @@ async fn main() {
     let rows = postio_storage::sql::all(
         &connection,
         "SELECT id, mailbox_id, text_part_id, text_part_headers, html_part_id, html_part_headers,
-                length(body_text), length(body_html),
-                instr(coalesce(body_text, ''), char(65533)) > 0,
-                instr(coalesce(body_html, ''), char(65533)) > 0,
+                body_text, body_html,
                 (SELECT count(*) FROM attachments a WHERE a.message_id = messages.id),
                 body_headers_truncated
            FROM messages WHERE body_encoding_problems = 1 ORDER BY id LIMIT 40",
@@ -67,43 +65,38 @@ async fn main() {
                 row.opt_text(3)?,
                 row.opt_text(4)?,
                 row.opt_text(5)?,
-                row.opt_int(6)?,
-                row.opt_int(7)?,
+                // The columns hold whichever shape `body_codec` chose;
+                // measured here after unpacking, and only for the two
+                // booleans the census prints.
+                row.col::<Option<Vec<u8>>>(6)?
+                    .map(postio_storage::body_codec::unpack)
+                    .map(|text| (text.len(), text.contains('\u{fffd}'))),
+                row.col::<Option<Vec<u8>>>(7)?
+                    .map(postio_storage::body_codec::unpack)
+                    .map(|html| (html.len(), html.contains('\u{fffd}'))),
                 row.col::<i64>(8)?,
                 row.col::<i64>(9)?,
-                row.col::<i64>(10)?,
-                row.col::<i64>(11)?,
             ))
         },
     )
     .await
     .expect("read the flagged rows");
 
-    for (
-        id,
-        mailbox,
-        text_id,
-        text_headers,
-        html_id,
-        html_headers,
-        text_len,
-        html_len,
-        text_fffd,
-        html_fffd,
-        parts,
-        truncated,
-    ) in rows
+    for (id, mailbox, text_id, text_headers, html_id, html_headers, text, html, parts, truncated) in
+        rows
     {
+        let shape = |body: Option<(usize, bool)>| match body {
+            Some((len, fffd)) => format!("len {len} fffd {fffd}"),
+            None => "absent".to_owned(),
+        };
         println!(
-            "message {id} mailbox {mailbox}: text part {} [{}] len {:?} fffd {}; html part {} [{}] len {:?} fffd {}; attachments {parts}; headers truncated {truncated}",
+            "message {id} mailbox {mailbox}: text part {} [{}] {}; html part {} [{}] {}; attachments {parts}; headers truncated {truncated}",
             text_id.as_deref().unwrap_or("-"),
             tokens(text_headers.as_deref()),
-            text_len,
-            text_fffd,
+            shape(text),
             html_id.as_deref().unwrap_or("-"),
             tokens(html_headers.as_deref()),
-            html_len,
-            html_fffd,
+            shape(html),
         );
     }
 

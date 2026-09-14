@@ -47,6 +47,7 @@
 
 pub mod actions;
 pub mod blob;
+pub mod body_codec;
 pub mod error;
 pub mod key;
 mod perm;
