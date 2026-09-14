@@ -1442,6 +1442,7 @@ impl Window {
             let feed = feed.clone();
             let folders = folders.clone();
             let sidebar = self.sidebar();
+            let list = list.clone();
             // Which folder tree this handler has already opened something
             // for. `None` is "not yet": generations start at zero, so zero
             // is a real value rather than a spare one.
@@ -1451,6 +1452,23 @@ impl Window {
             // emitted `MailboxesChanged` (#813).
             let picked_for = std::cell::Cell::new(None::<u64>);
             move |loaded| {
+                // Refresh the header's "N unread" for the folder already on
+                // screen, on every load. `set_mailbox` is called elsewhere
+                // only when a folder is *opened*, so without this the count
+                // above the rows kept its open-time value while a resync
+                // moved the real one -- the sidebar's badge updated and the
+                // header did not, and the two disagreed (INBOX read "32
+                // unread" over two). The name is unchanged, so this touches
+                // the count and leaves the selection alone.
+                if let Some(id) = feed.mailbox()
+                    && let Some(mailbox) = folders.mailbox(id)
+                {
+                    list.set_mailbox(
+                        &crate::sidebar::display_name(&mailbox, &folders.mailboxes()),
+                        mailbox.counts.unread,
+                    );
+                }
+
                 let generation = folders.generation();
                 if picked_for.get() == Some(generation) {
                     return;
