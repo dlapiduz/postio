@@ -17,6 +17,7 @@ pub mod conversation;
 pub mod dwell;
 pub mod editor;
 pub mod finder;
+pub mod focus;
 pub mod format;
 pub mod keymap;
 pub mod list;

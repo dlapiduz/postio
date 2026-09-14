@@ -24,10 +24,15 @@ Three moves remain, in value order:
    move, deletes a duplicated subsystem, gives macOS the
    insert-at-top/refetch/ignore distinctions it currently flattens into
    `reloadData()`.
-2. **The focus/keyboard-context machine.** `window.rs` ~2455–2530 owns the
-   pane-cycle table and context stack; `macos/Sources/Postio/Engine.swift`
-   ~420–460 re-derives all of it. A `postio_ui::focus` with
-   `cycle`/`enter`/`leave` beside `keymap` ends the double bookkeeping.
+2. **The focus/keyboard-context machine** — *done, same day.*
+   `postio_ui::focus::next_pane` is the pane-cycle table (GTK's
+   `cycle_pane` and, through the FFI's `nextPane`, the macOS `Pane.next()`
+   both read it), and `postio_ui::focus::Returns` is the way back out of a
+   nested surface — the four `before_*` cells the window kept for the
+   folders, the parts panel and the two settings lists are one
+   `RefCell<Returns>` behind `enter_surface`/`leave_surface`, with the
+   idempotence and the `List` fallback tested toolkit-free rather than
+   repeated at each of five call sites.
 3. **Notification wording** — *done, same day.* `postio_ui::notify::decide`
    is the one rule (suppression, identifier, click target); `postio-app`
    and the FFI's `decideNotification` are shims over it. What stayed a
