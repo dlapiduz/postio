@@ -70,6 +70,8 @@ use mail_parser::{
     MessagePartId, MimeHeaders, PartType,
 };
 
+use mail_parser::decoders::charsets::map::charset_decoder;
+
 use crate::address::EmailAddress;
 use crate::attachment::{Attachment, Disposition};
 use crate::headers::Headers;
@@ -477,20 +479,49 @@ fn parse_inner(raw: &[u8], headers_only: bool) -> ParsedMessage {
             .and_then(|content_type| content_type.attribute("format"))
             .is_some_and(|format| format.eq_ignore_ascii_case("flowed"))
     });
+    // A single-part `text/plain` message whose quoted-printable the parser
+    // refused is adopted as the text body *encoded*; `lenient_text` reads
+    // it properly. Anything else the parser gave up on is dropped from the
+    // bodies and offered as a nameless attachment, which the loop below
+    // takes back for the part it adopts.
+    let lenient_plain = text_part
+        .as_ref()
+        .and_then(|(part, _)| lenient_text(raw, part));
     message.body = MessageBody {
         // RFC 2046 §5.1.1: a multipart whose boundary could not be used has
         // no parts to have found a text body among, and is read as this
         // entity's own content instead. `text_is_flowed` is correctly left
         // `false` above -- the fallback part carries no `format` attribute
         // of its own to answer that from.
-        text: text_part
-            .map(|(_, text)| text)
+        text: lenient_plain
+            .or_else(|| text_part.map(|(_, text)| text))
             .or_else(|| multipart_boundary_fallback(&source)),
         html: source.html_bodies().find_map(|part| match &part.body {
             PartType::Html(html) => Some(html.to_string()),
             _ => None,
         }),
     };
+
+    // The bodies the parser dropped, read leniently — see `lenient_text`.
+    let mut adopted: Vec<u32> = Vec::new();
+    for (subtype, slot) in [
+        ("plain", &mut message.body.text),
+        ("html", &mut message.body.html),
+    ] {
+        if slot.is_some() {
+            continue;
+        }
+        if let Some((index, text)) = source.parts.iter().enumerate().find_map(|(index, part)| {
+            is_text_part(part, subtype)
+                .then(|| lenient_text(raw, part))
+                .flatten()
+                .map(|text| (index as u32, text))
+        }) {
+            *slot = Some(text);
+            adopted.push(index);
+        }
+    }
+
     // Falls back to the parser's HTML-to-text rendering when there is no
     // text/plain part: an HTML-only message still needs a list snippet, even
     // though a converted body is not good enough to *store* as the text body.
@@ -513,7 +544,7 @@ fn parse_inner(raw: &[u8], headers_only: bool) -> ParsedMessage {
             // §5.1.1's fallback above is what happens when one has to be
             // read anyway, and it must not also show up here as a nameless,
             // typeless attachment (#900).
-            if is_multipart_type(part) {
+            if is_multipart_type(part) || adopted.contains(id) {
                 return None;
             }
             Some(parsed_part(*id, part, &paths))
@@ -555,6 +586,117 @@ fn unknown_transfer_encoding(source: &MpMessage<'_>) -> bool {
                 })
         })
     })
+}
+
+/// A text part whose quoted-printable the parser refused, read leniently from
+/// the raw bytes — or `None` for a part that decoded, or that is not
+/// quoted-printable, or whose bytes this message does not hold.
+///
+/// `mail_parser`'s streaming decoder gives up on the whole part at the first
+/// `=` followed by another `=` — a data URI's base64 padding a sender left
+/// unescaped is how that usually arrives — and hands the part back *encoded*,
+/// typed as "other text". A `text/plain` part then reached the screen with
+/// its `=C3=A9` intact, and a `text/html` one was never adopted as the HTML
+/// body at all: the reader showed an empty pane under "parts of this message
+/// could not be decoded", and offered the body as a nameless attachment.
+/// Three of the first 433 bodies a real account fetched (2026-09-14) were
+/// exactly that.
+///
+/// The lenient reading undoes every valid escape and keeps a stray `=` as
+/// written. The caveat still stands — `is_encoding_problem` is what makes
+/// this run — because the words on screen are a reading, not a decoding.
+fn lenient_text(raw: &[u8], part: &mail_parser::MessagePart<'_>) -> Option<String> {
+    if !part.is_encoding_problem || !declares_quoted_printable(part) {
+        return None;
+    }
+    let bytes = raw.get(part.offset_body as usize..part.offset_end as usize)?;
+    let decoded = lenient_quoted_printable(bytes);
+    let decoder = part
+        .content_type()
+        .and_then(|content_type| content_type.attribute("charset"))
+        .and_then(|charset| charset_decoder(charset.as_bytes()));
+    Some(match decoder {
+        Some(decode) => decode(&decoded),
+        None => String::from_utf8_lossy(&decoded).into_owned(),
+    })
+}
+
+/// Whether `part` declares itself `text/<subtype>`.
+fn is_text_part(part: &mail_parser::MessagePart<'_>, subtype: &str) -> bool {
+    part.content_type().is_some_and(|content_type| {
+        content_type.ctype().eq_ignore_ascii_case("text")
+            && content_type
+                .subtype()
+                .is_some_and(|declared| declared.eq_ignore_ascii_case(subtype))
+    })
+}
+
+/// Whether `part` declares `Content-Transfer-Encoding: quoted-printable`.
+fn declares_quoted_printable(part: &mail_parser::MessagePart<'_>) -> bool {
+    part.headers.iter().any(|header| {
+        header
+            .name()
+            .eq_ignore_ascii_case("Content-Transfer-Encoding")
+            && header
+                .value()
+                .as_text()
+                .is_some_and(|value| value.trim().eq_ignore_ascii_case("quoted-printable"))
+    })
+}
+
+/// RFC 2045 §6.7 quoted-printable, decoded the way a reader would rather
+/// than the way a validator would: every `=XX` and every soft line break is
+/// undone, and an `=` that encodes nothing is kept as the sender wrote it.
+fn lenient_quoted_printable(bytes: &[u8]) -> Vec<u8> {
+    let hex = |byte: u8| (byte as char).to_digit(16).map(|digit| digit as u8);
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut at = 0;
+    // Whether the byte before this one was an `=` that encoded nothing. A
+    // run of them is the sender writing `==`, not an escape that happens to
+    // start after a stray one: `AA==` at the end of a line stays `AA==`
+    // rather than becoming `AA=` and a soft break.
+    let mut after_stray = false;
+    while at < bytes.len() {
+        if bytes[at] != b'=' {
+            out.push(bytes[at]);
+            at += 1;
+            after_stray = false;
+            continue;
+        }
+        if after_stray {
+            out.push(b'=');
+            at += 1;
+            continue;
+        }
+        let rest = &bytes[at + 1..];
+        // A soft line break: `=`, any trailing whitespace, then the newline.
+        let blank = rest
+            .iter()
+            .take_while(|byte| matches!(byte, b' ' | b'\t'))
+            .count();
+        match &rest[blank..] {
+            [b'\r', b'\n', ..] => {
+                at += 1 + blank + 2;
+                continue;
+            }
+            [b'\n', ..] => {
+                at += 1 + blank + 1;
+                continue;
+            }
+            _ => {}
+        }
+        if let [high, low, ..] = rest
+            && let (Some(high), Some(low)) = (hex(*high), hex(*low))
+        {
+            out.push((high << 4) | low);
+            at += 3;
+            continue;
+        }
+        out.push(b'=');
+        at += 1;
+        after_stray = true;
+    }
+    out
 }
 
 /// Whether decoding the charset lost octets.

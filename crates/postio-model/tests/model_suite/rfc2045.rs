@@ -441,3 +441,68 @@ fn the_charset_corpus_still_produces_a_body_for_every_fixture() {
         );
     }
 }
+
+// ---------------------------------------------------------------------------
+// RFC 2045 §6.7 — quoted-printable a sender got wrong
+// ---------------------------------------------------------------------------
+
+#[test]
+fn a_text_html_part_whose_quoted_printable_is_invalid_is_still_shown() {
+    // Two `=` in a row is not quoted-printable -- a data URI's base64 padding
+    // left unescaped is how it usually arrives -- and `mail_parser` gives up
+    // on the whole part when it meets one. For `text/html` that used to mean
+    // no body at all: the part came back typed as "other text", was never
+    // adopted as the HTML body, and was offered as a nameless attachment
+    // instead, while the reader showed an empty pane under "parts of this
+    // message could not be decoded". Three of the first 433 bodies a real
+    // account fetched (2026-09-14) were exactly that.
+    let raw = single(
+        "Content-Type: text/html; charset=\"utf-8\"\r\n\
+Content-Transfer-Encoding: quoted-printable",
+        b"<p>caf=C3=A9</p><img src=\"data:image/png;base64,AA==\">\r\n",
+    );
+    let message = mime::parse(&raw);
+    let html = message
+        .body
+        .html
+        .as_deref()
+        .expect("the html body is shown");
+    assert!(
+        html.contains("<p>café</p>"),
+        "the valid encoding is still decoded: {html:?}"
+    );
+    assert!(
+        html.contains("AA==\""),
+        "the sender's `==` is kept as written: {html:?}"
+    );
+    assert!(
+        message.encoding_problems,
+        "the caveat still stands: the words on screen are a lenient reading"
+    );
+    assert!(
+        message.parts.is_empty(),
+        "the body is not also offered as an attachment: {:?}",
+        message.parts
+    );
+}
+
+#[test]
+fn a_text_plain_part_whose_quoted_printable_is_invalid_is_decoded_leniently() {
+    // The same sender error in a `text/plain` part: `mail_parser` keeps the
+    // part as text but leaves it *encoded*, so `=C3=A9` reached the screen
+    // as six characters. A lenient decode undoes every valid escape and
+    // keeps the stray `=` as the sender wrote it.
+    let raw = single(
+        "Content-Type: text/plain; charset=\"utf-8\"\r\n\
+Content-Transfer-Encoding: quoted-printable",
+        b"50=25 off==\r\ncaf=C3=A9 =\r\nsoft\r\n",
+    );
+    let message = mime::parse(&raw);
+    let text = message
+        .body
+        .text
+        .as_deref()
+        .expect("the text body is shown");
+    assert_eq!(text, "50% off==\r\ncafé soft\r\n");
+    assert!(message.encoding_problems);
+}
