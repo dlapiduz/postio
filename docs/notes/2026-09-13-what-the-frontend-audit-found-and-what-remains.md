@@ -28,10 +28,17 @@ Three moves remain, in value order:
    pane-cycle table and context stack; `macos/Sources/Postio/Engine.swift`
    ~420–460 re-derives all of it. A `postio_ui::focus` with
    `cycle`/`enter`/`leave` beside `keymap` ends the double bookkeeping.
-3. **Notification wording.** `postio-app/src/notifications.rs` ~250–301 and
-   `macos/Sources/PostioKit/MailNotifier.swift` ~59–95 are two products
-   today (different titles, different click targets, macOS-only
-   suppression). One `decide()` in `postio-ui`, two thin shims.
+3. **Notification wording** — *done, same day.* `postio_ui::notify::decide`
+   is the one rule (suppression, identifier, click target); `postio-app`
+   and the FFI's `decideNotification` are shims over it. What stayed a
+   per-platform choice, on purpose, is the **wording**: macOS draws counts
+   and a folder name because a notification there is a log the lock screen
+   reads out; GTK draws the newest sender and subject because the shell keeps
+   banners off the lock screen and a popup saying nothing about the mail is
+   not worth the interruption (#745). Both are `Wording` variants, so the
+   choice is visible rather than two divergent copies. Still open: the
+   `[sync] notify_roles` gate does not cross the boundary, so macOS notifies
+   for every folder as it always has.
 
 ## The widget layer
 

@@ -162,9 +162,18 @@ pub async fn apply(
         // Rows that have left the mailbox cannot stay selected: the next
         // action would be aimed at mail that is no longer there.
         Event::MessagesRemoved { .. } => window.list().clear_selection(),
+        // Asked at the moment the decision is made rather than tracked:
+        // whether the window is in front is a live property, and a cached
+        // copy would go stale in exactly the window that matters.
         Event::NewMail {
             mailbox, messages, ..
-        } => notifier.notify(window, *mailbox, messages).await,
+        } => {
+            let attention = postio_ui::notify::Attention {
+                showing: feeds.messages.mailbox(),
+                active: window.is_active(),
+            };
+            notifier.notify(window, *mailbox, messages, attention).await;
+        }
         _ => {}
     }
 }
