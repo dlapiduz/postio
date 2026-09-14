@@ -6,17 +6,19 @@
 //!
 //! # Why it is a thread and not a task
 //!
-//! `Drainer::drain` is async and borrows a `rusqlite::Connection` across its
-//! awaits. `Connection` is `!Sync`, so `&Connection` is `!Send`, so the future
-//! is `!Send` and `tokio::spawn` will not take it — and neither will the
-//! command bus, whose handlers are boxed `Send` futures.
+//! A drain is a long, stateful, *sequential* thing: one connection, one
+//! queue, one order. So the engine gets a thread of its own running a
+//! current-thread runtime, keeps its state there in `Rc`/`RefCell` — none of
+//! it `Send`, on purpose — and takes work over a channel. Nothing about it
+//! crosses a thread boundary while borrowed, and every caller awaits a reply
+//! rather than blocking — which is the rule that matters, because the caller
+//! is the UI.
 //!
-//! That is not a wart to route around. A drain is a long, stateful,
-//! *sequential* thing: one connection, one queue, one order. So it gets a
-//! thread of its own running a current-thread runtime, keeps its connection
-//! there, and takes work over a channel. Nothing about it crosses a thread
-//! boundary while borrowed, and every caller awaits a reply rather than
-//! blocking — which is the rule that matters, because the caller is the UI.
+//! It was first shaped this way by necessity: the store's connection was
+//! rusqlite's, `!Sync`, so the drain's future could not be `tokio::spawn`ed
+//! at all. The store is async to the bottom now (specs/004-turso-store) and
+//! a checkout could cross threads; the sequential shape is the point, and it
+//! stayed.
 //!
 //! # What runs here
 //!
