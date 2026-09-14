@@ -80,7 +80,7 @@ pub enum Recovery {
 /// 0005's consequences asked for that to be settled once rather than
 /// special-cased at every surface, so it is data on the row — the same shape
 /// the rest of this table already uses — and every surface evaluates it
-/// through [`available`].
+/// through [`reachable_in`], which asks [`Requirement::met_by`] per row.
 ///
 /// **The shape for the next one:** add a variant here, give it a line in
 /// [`Availability`], and answer it in [`Requirement::met_by`]. Nothing at a
