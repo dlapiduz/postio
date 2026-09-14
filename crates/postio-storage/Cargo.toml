@@ -37,7 +37,7 @@ chacha20poly1305 = "0.11.0"
 # Whoever calls this crate still supplies the runtime.
 tokio = { version = "1", default-features = false, features = ["sync", "macros"] }
 chrono = { version = "0.4.45", default-features = false, features = ["std", "clock"] }
-postio-model = { version = "0.2.0", path = "../postio-model" }
+postio-model = { version = "0.3.0", path = "../postio-model" }
 # Turso, the Rust rewrite of SQLite (specs/004-turso-store). Encryption is
 # the engine's own AES-256-GCM rather than SQLCipher's AES-CBC + HMAC, which
 # takes `openssl-src` out of the graph entirely -- with it goes the 28 s
