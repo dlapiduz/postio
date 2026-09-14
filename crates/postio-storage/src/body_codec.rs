@@ -2,7 +2,7 @@
 //! text itself when it is not.
 //!
 //! Bodies are text in a column rather than files (ADR 0020), and they are
-//! most of a store's bytes -- `table_shape` measured 91% of the messages
+//! most of a store's bytes -- `postio-diag shape` measured 91% of the messages
 //! table as body bytes on a real account. They were zstd frames until the
 //! engine changed and the full-text index moved onto the column, because an
 //! index cannot tokenise compressed bytes; the index reads its own folded

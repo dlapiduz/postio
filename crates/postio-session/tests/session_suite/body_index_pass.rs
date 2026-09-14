@@ -132,7 +132,8 @@ async fn a_body_that_lands_is_indexed_a_moment_later_by_the_indexer() {
     }
     sink.emit(postio_core::Event::BodyLoaded { account, message });
 
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    let deadline =
+        std::time::Instant::now() + postio_test_support::scaled(std::time::Duration::from_secs(10));
     let indexed = loop {
         let connection = database.connect().await.expect("checkout");
         let pending = postio_index::index::messages_missing_body_text(&connection, 10)
