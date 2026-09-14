@@ -45,7 +45,6 @@ impl MailboxFilter {
             ..Self::all()
         }
     }
-
 }
 
 impl Default for MailboxFilter {
