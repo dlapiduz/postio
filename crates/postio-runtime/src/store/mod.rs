@@ -245,7 +245,7 @@ pub type Read<'a, T> = Pin<Box<dyn Future<Output = Result<T, StoreError>> + Send
 /// Five methods, each one something a frontend calls. Which window a scope
 /// lists itself as — threaded or flat (ADR 0015) — is the store's decision,
 /// answered inside [`list_page`](Self::list_page); the two windows underneath
-/// it are [`SqliteStore`]'s own methods, for the tests and benches that mean
+/// it are [`LocalStore`]'s own methods, for the tests and benches that mean
 /// one of them specifically, and are deliberately not part of this contract.
 ///
 /// Every method returns a future rather than a value: reads happen on the
@@ -282,9 +282,9 @@ pub trait MailStore: Send + Sync {
     -> Read<'_, postio_storage::repository::DraftCounts>;
 }
 
-mod sqlite;
-pub use sqlite::SqliteStore;
+mod local;
+pub use local::LocalStore;
 /// How many threaded-folder counts this process has issued. For tests — see
 /// the counter's own documentation in `sqlite`.
 #[doc(hidden)]
-pub use sqlite::folders_counted;
+pub use local::folders_counted;
