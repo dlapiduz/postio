@@ -78,7 +78,7 @@ impl MessageSource for Sources {
         };
         // Which window answers is the store's decision, not this one's:
         // folders thread, query views list messages, and Drafts is a folder
-        // that does not (ADR 0015, and `SqliteStore::lists_conversations`).
+        // that does not (ADR 0015, and `LocalStore::lists_conversations`).
         // Asking here would put that line in two places, and the list model,
         // the row widget and the verbs all work from what comes back rather
         // than from a mode any of them keeps.

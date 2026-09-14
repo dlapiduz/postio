@@ -1,4 +1,4 @@
-//! The local store, over real SQLite.
+//! The local store, read directly off the database engine.
 //!
 //! The half of [`super`] that owns a database. Behind the `runtime` feature
 //! because `postio-gtk` depends on `postio-core` and must not have the engine
@@ -31,7 +31,7 @@ impl From<postio_storage::Error> for StoreError {
 
 /// The local store, read directly.
 #[derive(Debug, Clone)]
-pub struct SqliteStore {
+pub struct LocalStore {
     store: Store,
     /// Where each page boundary starts, so a page does not have to be
     /// counted to from the top of the folder every time. See [`Marks`].
@@ -246,13 +246,13 @@ impl<C: Copy> Marks<C> {
     }
 }
 
-impl SqliteStore {
+impl LocalStore {
     /// Read `store`.
     ///
-    /// Cloning a [`SqliteStore`] is cheap and gives another handle to the same
+    /// Cloning a [`LocalStore`] is cheap and gives another handle to the same
     /// store, which is how each read gets a connection of its own.
     pub fn new(store: &Store) -> Self {
-        SqliteStore {
+        LocalStore {
             store: store.clone(),
             marks: Arc::new(Mutex::new(Marks::default())),
             thread_marks: Arc::new(Mutex::new(Marks::default())),
@@ -353,7 +353,7 @@ impl SqliteStore {
 
     /// One page of the threaded list.
     ///
-    /// The same shape as [`SqliteStore::read_page`], over the thread window
+    /// The same shape as [`LocalStore::read_page`], over the thread window
     /// instead of the message one: count and rows from one connection and one
     /// moment, seek to the nearest boundary anybody has already read, and
     /// remember where this page ended so the next one can seek too.
@@ -711,7 +711,7 @@ async fn summarise(
 /// scope lists itself" and never chooses a window, so putting these on the
 /// trait made every fake implement two reads nothing would call. The tests
 /// and benches that measure one window reach the concrete store.
-impl SqliteStore {
+impl LocalStore {
     /// One page of the flat message list, with the count that page was read
     /// against.
     pub fn message_page(&self, request: PageRequest) -> Read<'_, MessagePage> {
@@ -739,7 +739,7 @@ impl SqliteStore {
     }
 }
 
-impl MailStore for SqliteStore {
+impl MailStore for LocalStore {
     fn list_page(&self, request: PageRequest) -> Read<'_, ListPage> {
         Box::pin(self.read_list_page(request))
     }

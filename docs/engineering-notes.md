@@ -1261,7 +1261,7 @@ folder to be newest within and the ADR's shape is right there.
 **Drafts does not thread**, which ADR 0015 did not have to say because it was
 writing about reading mail. A draft is a document you are writing; two drafts
 answering the same conversation would collapse into one row with no way to
-open the other. `SqliteStore::lists_conversations` is the one place that is
+open the other. `LocalStore::lists_conversations` is the one place that is
 decided, so the frontend never holds a second opinion about it.
 
 **The tracker count is a size heuristic, and it under-counts on purpose

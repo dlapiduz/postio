@@ -33,7 +33,7 @@ mod network;
 mod read_state;
 mod search;
 mod snooze_wake;
-mod sqlite_store;
+mod local_store;
 mod sync_progress;
 mod sync_wave;
 mod thread_store;

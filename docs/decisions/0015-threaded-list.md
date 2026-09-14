@@ -128,7 +128,7 @@ folder to be newest within.
 **Drafts does not thread.** Q1 did not have to say so because it was writing
 about reading mail. A draft is a document you are writing; two drafts
 answering one conversation would collapse into a single row with no way to
-reach the other. `SqliteStore::lists_conversations` is the only place this is
+reach the other. `LocalStore::lists_conversations` is the only place this is
 decided, so no frontend holds a second opinion.
 
 ## Q2 — What a collapsed row shows

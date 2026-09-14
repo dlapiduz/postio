@@ -5,7 +5,7 @@
 //! Nothing here touches the network.
 
 use postio_model::MailboxRole;
-use postio_runtime::store::{ListScope, MailStore, PageRequest, SqliteStore};
+use postio_runtime::store::{ListScope, LocalStore, MailStore, PageRequest};
 use postio_storage::seed::seed_small;
 use postio_storage::test_support;
 
@@ -19,7 +19,7 @@ async fn seeded() -> (postio_storage::Store, postio_storage::seed::SeedReport) {
 #[tokio::test]
 async fn a_page_carries_the_count_it_was_read_against() {
     let (database, report) = seeded().await;
-    let store = SqliteStore::new(&database);
+    let store = LocalStore::new(&database);
     let inbox = report.mailbox(MailboxRole::Inbox).expect("an inbox").id;
 
     let page = store
@@ -50,7 +50,7 @@ async fn a_page_carries_the_count_it_was_read_against() {
 #[tokio::test]
 async fn rows_come_newest_first_and_paging_walks_them_without_repeating() {
     let (database, report) = seeded().await;
-    let store = SqliteStore::new(&database);
+    let store = LocalStore::new(&database);
     let inbox = report.mailbox(MailboxRole::Inbox).expect("an inbox").id;
     let page = async |offset, limit| {
         store
@@ -94,7 +94,7 @@ async fn every_row_knows_how_long_its_thread_is() {
     // The badge on the canvas' row is a count of the thread, and a source
     // that left it at one would silently remove the badge from every row.
     let (database, report) = seeded().await;
-    let store = SqliteStore::new(&database);
+    let store = LocalStore::new(&database);
     let inbox = report.mailbox(MailboxRole::Inbox).expect("an inbox").id;
 
     let page = store
@@ -119,7 +119,7 @@ async fn every_row_knows_how_long_its_thread_is() {
 #[tokio::test]
 async fn a_page_past_the_end_is_empty_rather_than_an_error() {
     let (database, report) = seeded().await;
-    let store = SqliteStore::new(&database);
+    let store = LocalStore::new(&database);
     let inbox = report.mailbox(MailboxRole::Inbox).expect("an inbox").id;
 
     let page = store
@@ -138,7 +138,7 @@ async fn a_page_past_the_end_is_empty_rather_than_an_error() {
 #[tokio::test]
 async fn the_account_reads_its_folders_with_their_counts() {
     let (database, report) = seeded().await;
-    let store = SqliteStore::new(&database);
+    let store = LocalStore::new(&database);
 
     let mailboxes = store
         .mailboxes(report.account.id)
@@ -163,7 +163,7 @@ async fn several_reads_at_once_do_not_wedge_a_single_threaded_runtime() {
     // hold it for the length of the query, and this is the shape that shows
     // it — several in flight, all expected back.
     let (database, report) = seeded().await;
-    let store = SqliteStore::new(&database);
+    let store = LocalStore::new(&database);
     let inbox = report.mailbox(MailboxRole::Inbox).expect("an inbox").id;
     let page = async |offset| {
         store
@@ -193,14 +193,14 @@ async fn seeking_to_a_page_finds_the_same_rows_as_walking_to_it() {
     let inbox = report.mailbox(MailboxRole::Inbox).expect("an inbox").id;
 
     // A fresh store has no marks: every read walks.
-    let walked = SqliteStore::new(&database);
+    let walked = LocalStore::new(&database);
     let mut cold = Vec::new();
     for offset in (0..12).step_by(3) {
         cold.push(page_ids(&walked, inbox, offset, 3).await);
     }
 
     // A store that has read them in order has a mark for each boundary.
-    let sought = SqliteStore::new(&database);
+    let sought = LocalStore::new(&database);
     let mut warm = Vec::new();
     for offset in (0..12).step_by(3) {
         warm.push(page_ids(&sought, inbox, offset, 3).await);
@@ -228,7 +228,7 @@ async fn a_list_that_changed_length_throws_the_remembered_boundaries_away() {
     let database = test_support::memory().await;
     let report = seed_small(&database, 5).await;
     let inbox = report.mailbox(MailboxRole::Inbox).expect("an inbox").id;
-    let store = SqliteStore::new(&database);
+    let store = LocalStore::new(&database);
 
     // Read two pages, so there is a boundary to be wrong about.
     page_ids(&store, inbox, 0, 3).await;
@@ -253,7 +253,7 @@ async fn a_list_that_changed_length_throws_the_remembered_boundaries_away() {
     }
 
     let after = page_ids(&store, inbox, 3, 3).await;
-    let fresh = page_ids(&SqliteStore::new(&database), inbox, 3, 3).await;
+    let fresh = page_ids(&LocalStore::new(&database), inbox, 3, 3).await;
     assert_eq!(
         after, fresh,
         "a store holding stale boundaries disagreed with one reading cold"
@@ -287,7 +287,7 @@ async fn a_cached_count_of_zero_is_checked_rather_than_believed() {
             .expect("the fixture writes");
     }
 
-    let page = SqliteStore::new(&database)
+    let page = LocalStore::new(&database)
         .message_page(PageRequest {
             scope: ListScope::Mailbox(inbox),
             offset: 0,
@@ -306,7 +306,7 @@ async fn a_cached_count_of_zero_is_checked_rather_than_believed() {
 
 /// The ids on one page.
 async fn page_ids(
-    store: &SqliteStore,
+    store: &LocalStore,
     mailbox: postio_model::ids::MailboxId,
     offset: u32,
     limit: u32,
@@ -328,7 +328,7 @@ async fn page_ids(
 #[tokio::test]
 async fn a_ranked_set_of_ids_reads_back_in_that_order() {
     let (database, report) = seeded().await;
-    let store = SqliteStore::new(&database);
+    let store = LocalStore::new(&database);
     let inbox = report.mailbox(MailboxRole::Inbox).expect("an inbox").id;
 
     // Take real ids from a real read, so the ranking is over mail the store
@@ -428,7 +428,7 @@ async fn a_thread_reads_across_every_folder_it_touches() {
     }
     drop(connection);
 
-    let store = SqliteStore::new(&database);
+    let store = LocalStore::new(&database);
     let page = store
         .message_page(PageRequest {
             scope: ListScope::Thread(ThreadId::new(1)),

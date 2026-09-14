@@ -43,7 +43,7 @@ use criterion::{Criterion, criterion_group, criterion_main};
 use postio_core::perf_budget::{INTERACTION_BUDGET, check_budget};
 use postio_model::MailboxRole;
 use postio_model::ids::MailboxId;
-use postio_runtime::store::{ListScope, PageRequest, SqliteStore};
+use postio_runtime::store::{ListScope, LocalStore, PageRequest};
 use postio_storage::repository::{ThreadListQuery, ThreadRepository, UnifiedThreadListQuery};
 use postio_storage::seed::{seed_large, thread_seeded_messages};
 use postio_storage::test_support;
@@ -78,19 +78,19 @@ const SMALL: usize = 1_000;
 const PAGE: u32 = 50;
 
 /// A store over a seeded mailbox, and the mailbox to read.
-async fn seeded(messages: usize) -> (SqliteStore, MailboxId, test_support::TempStore) {
+async fn seeded(messages: usize) -> (LocalStore, MailboxId, test_support::TempStore) {
     // A file rather than memory: WAL and `mmap_size` are part of what makes
     // the read fast and neither applies to an in-memory database. Measuring
     // the wrong storage engine would be worse than not measuring.
     let database = on_runtime(test_support::temp());
     let report = on_runtime(seed_large(&database, 7, messages));
     let inbox = report.mailbox(MailboxRole::Inbox).expect("an inbox").id;
-    let store = SqliteStore::new(&database);
+    let store = LocalStore::new(&database);
     (store, inbox, database)
 }
 
 /// Read one page, the way the list does.
-fn read(runtime: &tokio::runtime::Runtime, store: &SqliteStore, mailbox: MailboxId, offset: u32) {
+fn read(runtime: &tokio::runtime::Runtime, store: &LocalStore, mailbox: MailboxId, offset: u32) {
     let page = runtime
         .block_on(store.message_page(PageRequest {
             scope: ListScope::Mailbox(mailbox),
@@ -158,9 +158,9 @@ fn bench_message_page(c: &mut Criterion) {
     // held to the same 16ms as every other thing a person does.
     //
     // A store of its own, because "cold" here means the boundary cache is
-    // empty rather than the page cache: `SqliteStore` remembers where each
+    // empty rather than the page cache: `LocalStore` remembers where each
     // page it has read began, and the reads above have populated it.
-    let cold = SqliteStore::new(&huge_dir);
+    let cold = LocalStore::new(&huge_dir);
     let start = Instant::now();
     read(&runtime, &cold, huge_inbox, deep);
     let measured = start.elapsed();

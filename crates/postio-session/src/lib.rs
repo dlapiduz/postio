@@ -57,7 +57,7 @@ use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 
 use postio_core::bridge::EventSink;
-use postio_runtime::store::{MailStore, SqliteStore};
+use postio_runtime::store::{LocalStore, MailStore};
 use postio_storage::blob::{EvictionReport, GarbageCollection, GarbageReport};
 use postio_storage::repository::AccountRepository;
 use postio_storage::{BlobStore, Store};
@@ -367,7 +367,7 @@ impl Wiring {
         commands: postio_core::bridge::CommandSender,
     ) -> Self {
         Wiring {
-            store: Arc::new(SqliteStore::new(&database)),
+            store: Arc::new(LocalStore::new(&database)),
             egress: egress::EgressRecorder::start(database.clone()),
             database,
             blobs,

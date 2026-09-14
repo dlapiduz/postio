@@ -8,19 +8,19 @@
 
 use postio_model::mailbox::MailboxRole;
 use postio_model::{AccountId, MailboxId};
-use postio_runtime::store::{ListScope, PageRequest, SqliteStore};
+use postio_runtime::store::{ListScope, LocalStore, PageRequest};
 use postio_storage::seed::{seed_large, thread_seeded_messages};
 use postio_storage::test_support;
 
 async fn store(
     messages: usize,
     per_thread: usize,
-) -> (SqliteStore, AccountId, MailboxId, test_support::TempStore) {
+) -> (LocalStore, AccountId, MailboxId, test_support::TempStore) {
     let database = test_support::temp().await;
     let report = seed_large(&database, 7, messages).await;
     let inbox = report.mailbox(MailboxRole::Inbox).expect("an inbox").id;
     thread_seeded_messages(&database, report.account.id, per_thread).await;
-    let store = SqliteStore::new(&database);
+    let store = LocalStore::new(&database);
     (store, report.account.id, inbox, database)
 }
 
@@ -161,7 +161,7 @@ async fn the_unified_scope_pages_every_account_without_repeating_a_row() {
     let database = test_support::temp().await;
     postio_storage::seed::seed_small(&database, 3).await;
     postio_storage::seed::seed_extra_account(&database, "Second", "grace@example.org", 4).await;
-    let store = SqliteStore::new(&database);
+    let store = LocalStore::new(&database);
 
     let first = store
         .thread_page(request(ListScope::Unified, 0, 10))
@@ -230,7 +230,7 @@ async fn paging_a_folder_counts_it_once_rather_than_once_per_page() {
     let report = seed_large(&database, 7, 600).await;
     let inbox = report.mailbox(MailboxRole::Inbox).expect("an inbox").id;
     thread_seeded_messages(&database, report.account.id, 4).await;
-    let store = SqliteStore::new(&database);
+    let store = LocalStore::new(&database);
 
     // One page, to establish what a page costs including its first count.
     let first = store
@@ -278,7 +278,7 @@ async fn a_folder_that_gains_a_message_is_counted_again() {
     let report = seed_large(&database, 7, 300).await;
     let inbox = report.mailbox(MailboxRole::Inbox).expect("an inbox").id;
     thread_seeded_messages(&database, report.account.id, 4).await;
-    let store = SqliteStore::new(&database);
+    let store = LocalStore::new(&database);
 
     let first = store
         .thread_page(request(ListScope::Mailbox(inbox), 0, 50))
