@@ -3806,6 +3806,7 @@ dependencies = [
  "postio-smtp",
  "postio-storage",
  "postio-sync",
+ "postio-test-support",
  "postio-ui",
  "secrecy",
  "tempfile",
@@ -3850,7 +3851,6 @@ dependencies = [
  "tokio",
  "tracing",
  "turso",
- "unicode-normalization",
  "zeroize",
  "zstd",
 ]
@@ -3884,7 +3884,6 @@ dependencies = [
 name = "postio-ui"
 version = "0.2.0"
 dependencies = [
- "base64 0.23.1",
  "chrono",
  "postio-body",
  "postio-config",

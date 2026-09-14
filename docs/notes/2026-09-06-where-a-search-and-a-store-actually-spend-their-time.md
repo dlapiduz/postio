@@ -69,7 +69,7 @@ you are chasing, that is the first thing to reach for, not the last.**
 
 ## The largest structural cost left: bodies live in `messages`
 
-Measured with `table_shape.rs`, on a store **still backfilling** (6,068 of
+Measured with `table_shape.rs` (since folded into `postio-diag shape`), on a store **still backfilling** (6,068 of
 82,057 bodies downloaded):
 
 ```

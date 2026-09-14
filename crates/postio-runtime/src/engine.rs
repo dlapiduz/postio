@@ -2471,6 +2471,10 @@ async fn sync_pass(
     tracing::Span::current().record("path", record.path.as_str());
     tracing::Span::current().record("incremental", synced_before);
     tracing::info!("sync started");
+    // Timed here so the "sync finished" line can say how long the pass took:
+    // the one number that separates a slow server from a slow store, and
+    // the number the 2026-09-13 stall was diagnosed without.
+    let started = std::time::Instant::now();
 
     announce_status(parts, &status.borrow_mut().on_sync_started(mailbox));
 
@@ -2539,6 +2543,7 @@ async fn sync_pass(
             updated = summary.updated,
             threaded = summary.threaded,
             full = summary.full,
+            elapsed_ms = started.elapsed().as_millis() as u64,
             "sync finished"
         );
         // `MessageListChanged` is the view's blunt instrument: it means the
