@@ -81,13 +81,11 @@ turso = { version = "=0.8.0-pre.11", default-features = false, features = ["fts"
 # calls it supplies one, and postio-runtime is the only thing that does.
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "sync"] }
 
-[lints.rust]
-# Not the workspace floor: see EXCEPTIONS in scripts/checks/check-lint-floor.py.
-unsafe_code = "deny"
-# A future nobody awaits is a statement that silently does not run, and this
-# crate is now async to the bottom. Two of them survived the port into a green
-# build -- a seeded store that knew none of its own correspondents, and one
-# that filed no messages at all -- and only the tests noticed. A warning is
-# not enough for a failure mode whose symptom is nothing happening.
-unused_must_use = "deny"
-missing_docs = "warn"
+# The workspace floor, in full: the SQLCipher-era `unsafe` (an
+# `OPENSSL_init_crypto` FFI call against libcrypto's atexit handler) went with
+# the engine swap, so there is no reason left to weaken `unsafe_code` from
+# `forbid` -- and inheriting the floor is what puts `let_underscore_future`
+# back on the crate whose own `DraftRepository::delete` is the dropped-future
+# bug that lint exists for.
+[lints]
+workspace = true

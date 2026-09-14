@@ -54,3 +54,10 @@ harness = false
 [lints.rust]
 # Not the workspace floor: see EXCEPTIONS in scripts/checks/check-lint-floor.py.
 unsafe_code = "deny"
+
+# A crate that keeps its own `[lints.rust]` inherits none of the workspace
+# lints, so the clippy floor's most load-bearing rule is restated here:
+# `let _ = some_async_call()` drops the future unpolled, which is how a sent
+# draft went on existing. See the workspace `[lints.clippy]`.
+[lints.clippy]
+let_underscore_future = "deny"
