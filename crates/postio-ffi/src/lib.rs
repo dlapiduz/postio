@@ -42,6 +42,7 @@ mod keys;
 mod list;
 mod logging;
 mod mailbox;
+mod notify;
 mod palette;
 mod reader;
 mod registry;
@@ -56,6 +57,10 @@ pub use keys::{KeyOutcomeFfi, ModifiersFfi};
 pub use list::{RowFfi, ScopeFfi};
 pub use logging::start_logging;
 pub use mailbox::{MailboxFfi, MailboxRoleFfi};
+pub use notify::{
+    MailArrivalFfi, MailNotificationFfi, NotificationDecisionFfi, SuppressedFfi,
+    decide_notification,
+};
 pub use palette::{CheatRowFfi, CheatSectionFfi, PaletteEntryFfi};
 pub use reader::{InlinePart, RemoteImagesFfi};
 pub use registry::{CommandSpecFfi, MenuFfi, MenuSectionFfi, UiContext, UiRecovery, menus};
