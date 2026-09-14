@@ -619,6 +619,85 @@ fn is_offline(status: &SyncStatus) -> bool {
     matches!(status.state, ConnectionState::Offline)
 }
 
+/// What fetches a body that is not here yet, for a closure that has outlived
+/// the [`Fill`] it came from — see [`Fill::fetcher`].
+#[derive(Clone)]
+struct BodyFetcher {
+    engine: postio_session::refresh::EngineSlot,
+    runtime: tokio::runtime::Handle,
+}
+
+impl BodyFetcher {
+    /// Ask the engine for `message`'s body if `loaded` says it is not here.
+    ///
+    /// [`Absent::Partial`] is "headers synced, body not fetched"; the
+    /// backfill reaches it eventually, and this is what makes opening it now
+    /// jump the queue. Nothing to do without an engine — a window over a
+    /// store nobody is syncing — or for any other absence, which no fetch
+    /// would change.
+    fn request_if_partial(&self, message: MessageId, loaded: &Loaded) {
+        if let crate::compose::Body::Absent(Absent::Partial) = &loaded.body
+            && let Some(engine) = self.engine.get().cloned()
+        {
+            self.runtime.spawn(async move {
+                let _ = engine.request_body(message).await;
+            });
+        }
+    }
+}
+
+/// What draws the single reading pane, for a closure that has outlived the
+/// [`Fill`] it came from — see [`Fill::painter`]: the cells [`paint`] reads,
+/// and the window it paints into.
+struct Painter {
+    window: Window,
+    showing: Showing,
+    opened: Rc<RefCell<Option<Opened>>>,
+    named_accounts: Rc<Vec<(postio_model::AccountId, String)>>,
+    offline: Rc<Cell<bool>>,
+}
+
+impl Painter {
+    /// Whether the pane still wants `message` by the time its read answered.
+    ///
+    /// Late is the normal case, not the edge case: the cursor moved while
+    /// the blob was read, and the pane is showing something else now. This
+    /// guard carries far more weight than it used to — it used to filter
+    /// double clicks and now it filters a held-down `j`.
+    fn still_showing(&self, message: MessageId) -> bool {
+        self.showing.get() == Some(message)
+    }
+
+    /// Draw `loaded` as `message` — see [`paint`].
+    fn paint(&self, message: MessageId, loaded: Loaded) {
+        paint(
+            &self.window,
+            &self.opened,
+            &self.named_accounts,
+            &self.offline,
+            message,
+            loaded,
+        );
+    }
+
+    /// Redraw the parts panel from what the pane just opened, when it is up.
+    ///
+    /// Its chips are drawn from the same attachment rows the reader's are,
+    /// and `Node::downloaded` genuinely changes at runtime (#377), so a chip
+    /// that said "download" has to stop saying it. Whatever `opened` holds
+    /// is the right tree: the panel owns the keyboard while it is up
+    /// (`Context::Parts`), so the cursor cannot have moved to another
+    /// message underneath it.
+    fn refresh_parts(&self) {
+        let panel = self.window.parts();
+        if panel.is_visible()
+            && let Some(opened) = self.opened.borrow().as_ref()
+        {
+            panel.update_parts(&opened.root, &opened.parts);
+        }
+    }
+}
+
 /// Everything filling the reading pane needs, so the cursor and activation
 /// can share one implementation rather than two that drift.
 struct Fill {
@@ -756,6 +835,44 @@ impl Fill {
         })
     }
 
+    /// Read `message` and, when the answer lands back on the main loop, hand
+    /// it to `then`.
+    ///
+    /// Every fill is this shape — one crossing through [`read`](Self::read),
+    /// awaited where the widgets are — and each caller used to spell the
+    /// crossing out itself. A read that comes back empty (the message went
+    /// away underneath it) is simply not painted.
+    fn read_then(&self, message: MessageId, then: impl FnOnce(Loaded) + 'static) {
+        // Started before the spawn: `read` borrows `self`, and a `'static`
+        // task cannot carry that borrow.
+        let answer = self.read(message);
+        glib::spawn_future_local(async move {
+            let Ok(Some(loaded)) = answer.recv().await else {
+                return;
+            };
+            then(loaded);
+        });
+    }
+
+    /// See [`BodyFetcher`].
+    fn fetcher(&self) -> BodyFetcher {
+        BodyFetcher {
+            engine: self.engine.clone(),
+            runtime: self.runtime.clone(),
+        }
+    }
+
+    /// See [`Painter`].
+    fn painter(&self, window: &Window) -> Painter {
+        Painter {
+            window: window.clone(),
+            showing: self.showing.clone(),
+            opened: self.opened.clone(),
+            named_accounts: Rc::clone(&self.named_accounts),
+            offline: Rc::clone(&self.offline),
+        }
+    }
+
     /// Fetch every body in a thread, for one-document mode (ADR 0032, #1316).
     ///
     /// The stacked pane fetches a body when a message is expanded, and
@@ -773,122 +890,90 @@ impl Fill {
         rows: Vec<postio_gtk::list::Row>,
     ) {
         for row in rows {
-            // Started before the spawn: `read` borrows `self`, and a
-            // `'static` task cannot carry that borrow.
-            let answer = self.read(row.id);
-            let engine = self.engine.clone();
-            let runtime = self.runtime.clone();
-            glib::spawn_future_local({
-                let pane = pane.clone();
-                async move {
-                    let Ok(Some(loaded)) = answer.recv().await else {
-                        return;
-                    };
-                    // Not here yet. Fetch it, so a conversation the backfill
-                    // has not reached fills in as it is opened rather than
-                    // staying a stack of empty headers -- `body_arrived`
-                    // draws it into this same pane when it lands.
-                    if let crate::compose::Body::Absent(postio_gtk::reader::Absent::Partial) =
-                        &loaded.body
-                        && let Some(engine) = engine.get().cloned()
-                    {
-                        let id = row.id;
-                        runtime.spawn(async move {
-                            let _ = engine.request_body(id).await;
-                        });
-                    }
-                    // The envelope first, and separately from the body: a
-                    // message can have one without the other, and who it went
-                    // to should be drawn as soon as it is known rather than
-                    // waiting on a body that may still be fetching.
-                    //
-                    // `fill_reader` twenty lines below has always used
-                    // `loaded.envelope` to feed the stacked pane's per-entry
-                    // header. This dropped everything but the body, which is
-                    // why the one-document pane said nothing about
-                    // recipients (#1427) -- not because the data was not
-                    // there.
-                    if let Some(envelope) = &loaded.envelope {
-                        pane.set_thread_recipients(
-                            row.id,
-                            postio_ui::reader::header::recipient_line(&envelope.to),
-                            postio_ui::reader::header::recipient_line(&envelope.cc),
-                        );
-                    }
-                    if let crate::compose::Body::Ready { body, .. } = loaded.body {
-                        pane.set_thread_body(row.id, body);
-                    }
+            let pane = pane.clone();
+            let fetch = self.fetcher();
+            self.read_then(row.id, move |loaded| {
+                // Not here yet. Fetch it, so a conversation the backfill
+                // has not reached fills in as it is opened rather than
+                // staying a stack of empty headers -- `body_arrived`
+                // draws it into this same pane when it lands.
+                fetch.request_if_partial(row.id, &loaded);
+                // The envelope first, and separately from the body: a
+                // message can have one without the other, and who it went
+                // to should be drawn as soon as it is known rather than
+                // waiting on a body that may still be fetching.
+                //
+                // `fill_reader` below has always used `loaded.envelope` to
+                // feed the stacked pane's per-entry header. This dropped
+                // everything but the body, which is why the one-document
+                // pane said nothing about recipients (#1427) -- not because
+                // the data was not there.
+                if let Some(envelope) = &loaded.envelope {
+                    pane.set_thread_recipients(
+                        row.id,
+                        postio_ui::reader::header::recipient_line(&envelope.to),
+                        postio_ui::reader::header::recipient_line(&envelope.cc),
+                    );
+                }
+                if let crate::compose::Body::Ready { body, .. } = loaded.body {
+                    pane.set_thread_body(row.id, body);
                 }
             });
         }
     }
 
     fn fill_reader(&self, reader: &postio_gtk::reader::Reader, message: MessageId) {
-        let answer = self.read(message);
-        let engine = self.engine.clone();
-        let runtime = self.runtime.clone();
-        glib::spawn_future_local({
-            let reader = reader.clone();
-            let offline_now = self.offline.clone();
-            async move {
-                let Ok(Some(loaded)) = answer.recv().await else {
-                    return;
-                };
-                // Not here yet? Fetch it. The conversation stack builds one
-                // of these per message, so this is what makes a thread whose
-                // bodies the backfill has not reached fill in as it is read.
-                if let crate::compose::Body::Absent(postio_gtk::reader::Absent::Partial) =
-                    &loaded.body
-                    && let Some(engine) = engine.get().cloned()
-                {
-                    runtime.spawn(async move {
-                        let _ = engine.request_body(message).await;
-                    });
-                }
-                // `set_message_header` is still called here, unlike before
-                // #487: the conversation entry above already carries
-                // sender/subject/date, so the reader's own copies of those
-                // stay hidden (`set_identity_visible(false)`, set once when
-                // this reader was built) — but recipients have nowhere else
-                // to go, and the header is the only place that draws To/Cc.
-                if let Some(envelope) = &loaded.envelope {
-                    reader.set_message_header(
-                        &envelope.from,
-                        &envelope.to,
-                        &envelope.cc,
-                        envelope.subject.as_deref(),
-                        envelope.date,
-                    );
-                }
-                match loaded.body {
-                    crate::compose::Body::Ready {
-                        body,
-                        encoding_problems,
-                    } => {
-                        let root = root_type(loaded.content_type.as_deref(), &body, &loaded.parts);
-                        reader.set_attachments(&root, &loaded.parts);
-                        reader.render(&body, loaded.sender.as_deref());
-                        // After `render`, which clears it: the caveat belongs
-                        // to this message and must not outlive it (#901).
-                        reader.set_encoding_problems(encoding_problems);
-                        // Same reason, same convention (#971).
-                        reader.set_unsubscribe(loaded.list_identifier.as_deref());
-                        // And last, because it is what decides whether that
-                        // banner is allowed to stand at all (#1525).
-                        reader.set_send_state(loaded.send_state);
-                    }
-                    crate::compose::Body::Absent(reason) => {
-                        let root = root_type(
-                            loaded.content_type.as_deref(),
-                            &postio_model::MessageBody::default(),
-                            &loaded.parts,
-                        );
-                        reader.set_attachments(&root, &loaded.parts);
-                        reader.show_absent(Self::waiting_reason(&offline_now, reason));
-                    }
-                }
-                reader.widget().set_visible(true);
+        let reader = reader.clone();
+        let offline_now = self.offline.clone();
+        let fetch = self.fetcher();
+        self.read_then(message, move |loaded| {
+            // Not here yet? Fetch it. The conversation stack builds one
+            // of these per message, so this is what makes a thread whose
+            // bodies the backfill has not reached fill in as it is read.
+            fetch.request_if_partial(message, &loaded);
+            // `set_message_header` is still called here, unlike before
+            // #487: the conversation entry above already carries
+            // sender/subject/date, so the reader's own copies of those
+            // stay hidden (`set_identity_visible(false)`, set once when
+            // this reader was built) — but recipients have nowhere else
+            // to go, and the header is the only place that draws To/Cc.
+            if let Some(envelope) = &loaded.envelope {
+                reader.set_message_header(
+                    &envelope.from,
+                    &envelope.to,
+                    &envelope.cc,
+                    envelope.subject.as_deref(),
+                    envelope.date,
+                );
             }
+            match loaded.body {
+                crate::compose::Body::Ready {
+                    body,
+                    encoding_problems,
+                } => {
+                    let root = root_type(loaded.content_type.as_deref(), &body, &loaded.parts);
+                    reader.set_attachments(&root, &loaded.parts);
+                    reader.render(&body, loaded.sender.as_deref());
+                    // After `render`, which clears it: the caveat belongs
+                    // to this message and must not outlive it (#901).
+                    reader.set_encoding_problems(encoding_problems);
+                    // Same reason, same convention (#971).
+                    reader.set_unsubscribe(loaded.list_identifier.as_deref());
+                    // And last, because it is what decides whether that
+                    // banner is allowed to stand at all (#1525).
+                    reader.set_send_state(loaded.send_state);
+                }
+                crate::compose::Body::Absent(reason) => {
+                    let root = root_type(
+                        loaded.content_type.as_deref(),
+                        &postio_model::MessageBody::default(),
+                        &loaded.parts,
+                    );
+                    reader.set_attachments(&root, &loaded.parts);
+                    reader.show_absent(Self::waiting_reason(&offline_now, reason));
+                }
+            }
+            reader.widget().set_visible(true);
         });
     }
 
@@ -943,48 +1028,17 @@ impl Fill {
         self.aimed.set(Some(message));
         self.showing.set(Some(message));
 
-        let answer = self.read(message);
-        let engine = self.engine.clone();
-        let runtime = self.runtime.clone();
-        glib::spawn_future_local({
-            let showing = self.showing.clone();
-            let opened = self.opened.clone();
-            let self_accounts = Rc::clone(&self.named_accounts);
-            let offline_now = Rc::clone(&self.offline);
-            let window = window.clone();
-            async move {
-                let Ok(Some(loaded)) = answer.recv().await else {
-                    return;
-                };
-                // Late. The cursor moved while the blob was read, and the
-                // pane is showing something else now. This guard carries far
-                // more weight than it used to: it used to filter double
-                // clicks and now it filters a held-down `j`.
-                if showing.get() != Some(message) {
-                    return;
-                }
-                // After the guard, so only the message the pane settled on
-                // has its body fetched -- a held-down `j` that swept past
-                // this one asks for nothing. `Partial` is "headers here,
-                // body not yet"; the backfill reaches it eventually, this
-                // makes opening it now what jumps the queue.
-                if let crate::compose::Body::Absent(postio_gtk::reader::Absent::Partial) =
-                    &loaded.body
-                    && let Some(engine) = engine.get().cloned()
-                {
-                    runtime.spawn(async move {
-                        let _ = engine.request_body(message).await;
-                    });
-                }
-                paint(
-                    &window,
-                    &opened,
-                    &self_accounts,
-                    &offline_now,
-                    message,
-                    loaded,
-                );
+        let painter = self.painter(window);
+        let fetch = self.fetcher();
+        self.read_then(message, move |loaded| {
+            if !painter.still_showing(message) {
+                return;
             }
+            // After the guard, so only the message the pane settled on
+            // has its body fetched -- a held-down `j` that swept past
+            // this one asks for nothing.
+            fetch.request_if_partial(message, &loaded);
+            painter.paint(message, loaded);
         });
     }
 
@@ -1042,11 +1096,7 @@ impl Fill {
         // that is not open is not inserted into the pane's map.
         let conversation = window.conversation();
         if conversation.rows().iter().any(|row| row.id == message) {
-            let answer = self.read(message);
-            glib::spawn_future_local(async move {
-                let Ok(Some(loaded)) = answer.recv().await else {
-                    return;
-                };
+            self.read_then(message, move |loaded| {
                 if let crate::compose::Body::Ready { body, .. } = loaded.body {
                     conversation.set_thread_body(message, body);
                 }
@@ -1062,47 +1112,16 @@ impl Fill {
         let Some(message) = self.showing.get() else {
             return;
         };
-        let answer = self.read(message);
-        glib::spawn_future_local({
-            let showing = self.showing.clone();
-            let opened = self.opened.clone();
-            let self_accounts = Rc::clone(&self.named_accounts);
-            let offline_now = Rc::clone(&self.offline);
-            let window = window.clone();
-            async move {
-                let Ok(Some(loaded)) = answer.recv().await else {
-                    return;
-                };
-                // The cursor can still have moved between queueing this and
-                // the store answering — the same race `fill` guards, reached
-                // by a different road.
-                if showing.get() != Some(message) {
-                    return;
-                }
-                paint(
-                    &window,
-                    &opened,
-                    &self_accounts,
-                    &offline_now,
-                    message,
-                    loaded,
-                );
-
-                // And the panel, when it is open. Its chips are drawn from
-                // the same attachment rows the reader's are, and
-                // `Node::downloaded` genuinely changes at runtime now (#377),
-                // so a chip that said "download" has to stop saying it.
-                //
-                // Whatever `opened` holds is the right tree: the panel owns
-                // the keyboard while it is up (`Context::Parts`), so the
-                // cursor cannot have moved to another message underneath it.
-                let panel = window.parts();
-                if panel.is_visible()
-                    && let Some(opened) = opened.borrow().as_ref()
-                {
-                    panel.update_parts(&opened.root, &opened.parts);
-                }
+        let painter = self.painter(window);
+        self.read_then(message, move |loaded| {
+            // The cursor can still have moved between queueing this and
+            // the store answering — the same race `fill` guards, reached
+            // by a different road.
+            if !painter.still_showing(message) {
+                return;
             }
+            painter.paint(message, loaded);
+            painter.refresh_parts();
         });
     }
 
