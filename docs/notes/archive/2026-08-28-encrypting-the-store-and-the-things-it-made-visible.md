@@ -1,5 +1,7 @@
 # Encrypting the store, and the things it made visible (2026-08-28, #610/#300)
 
+*Archived 2026-09-14: the SQLCipher migration and its mechanics; the engine is Turso since ADR 0038 and there is no plaintext-to-encrypted migration any more.*
+
 The engine below is SQLCipher, which ADR 0038 replaced with Turso. What
 survives the swap is what the encryption *exposed*: the keyring seam and the
 `temp_store = MEMORY` rule are enforced on the new engine too, and the

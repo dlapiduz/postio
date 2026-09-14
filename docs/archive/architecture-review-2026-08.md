@@ -1,5 +1,7 @@
 # Postio architecture review — August 2026
 
+*Archived 2026-09-14: every finding below has since landed and every measurement is of a codebase that no longer exists — `postio-session` and `postio-ui` were split out, the sanitiser moved to `postio-body`, the extension vocabulary is ADR 0002, the event hub ADR 0013, the boundary check guards ten crates, and the store is Turso rather than SQLCipher/FTS5 (ADR 0038). Kept as the record of the critique that shaped those changes; `docs/ARCHITECTURE.md` says what remains open.*
+
 Reviewer's note: this is an assessment, not a work order. Nothing here is
 implemented. Each finding ends with a suggested shape and a rough cost so the
 maintainer can decide what is worth doing and when.

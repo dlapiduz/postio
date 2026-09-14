@@ -1,5 +1,7 @@
 # The WAL is not the startup cost, and measuring it took ten minutes (2026-09-05, #1175)
 
+*Archived 2026-09-14: a startup measurement of the SQLCipher store; the engine is Turso since ADR 0038, so every figure is the old engine's and only the method carries over.*
+
 Measured against the SQLCipher store ADR 0038 replaced, so every figure
 below is the old engine's. The method — measure a reflinked copy before
 believing an inference — is the part to keep.

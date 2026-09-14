@@ -1,5 +1,7 @@
 # Where a search and a store actually spend their time (2026-09-06, #1216)
 
+*Archived 2026-09-14: a night of profiling against the SQLCipher store and FTS5; the engine is Turso since ADR 0038, so the timings describe an engine Postio no longer runs on.*
+
 Every timing below is the old engine's (SQLCipher; swapped for Turso by
 ADR 0038), so re-running the tooling now measures a different engine. The
 finding — the costs that matter live in query plans and widget lifecycles,

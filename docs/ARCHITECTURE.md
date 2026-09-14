@@ -3,10 +3,11 @@
 How Postio is put together, and **why** — the decisions that are load-bearing,
 so a change that would break one is recognisable as such before it is written.
 
-Scope note: this describes what is **built**. Where a decision is made but not
-yet implemented it says so explicitly. `docs/decisions/` holds the long-form
-ADRs; `docs/architecture-review-2026-08.md` holds the standing critique and the
-gaps this document does not paper over.
+Scope note: this describes what is **built**, as of 0.4.0. Where a decision is
+made but not yet implemented it says so explicitly. `docs/decisions/` holds
+the long-form ADRs, with [an index](decisions/README.md) of where each one
+stands. The August 2026 outside review that shaped several of them is kept
+in [`docs/archive/`](archive/); every finding it raised has since landed.
 
 ---
 
@@ -214,12 +215,12 @@ wearing a different hat.
 | Concept | Is | Status |
 |---|---|---|
 | A search | A query | Built |
-| A saved search | A query with a name | Schema built, not wired |
-| A virtual folder in the sidebar | A saved search that is pinned | Schema built, not wired |
-| A rule | An ordered `[[rules]]` entry naming actions, optionally reusing a named `[filters]` query rather than `[filters]` itself growing actions (ADR 0008 Q4) | Not built ([#5](https://github.com/dlapiduz/postio/issues/5)) |
+| A saved search | A query with a name | Built (`Ctrl+S` on a search; renamed, reordered and deleted from the sidebar) |
+| A virtual folder in the sidebar | A saved search that is pinned | Built |
+| A rule | An ordered `[[rules]]` entry naming actions, optionally reusing a named `[filters]` query rather than `[filters]` itself growing actions (ADR 0008 Q4) | Not built ([#5](https://github.com/dlapiduz/postio/issues/5)); the engine lives on `feature/rules` |
 
-`crates/postio-config/src/filters.rs` already implements the schema and names
-it exactly this way — *"`[filters]` — named saved queries"* — with a `pinned`
+`crates/postio-config/src/filters.rs` implements the schema and names it
+exactly this way — *"`[filters]` — named saved queries"* — with a `pinned`
 field meaning "show this filter in the sidebar":
 
 ```toml
@@ -228,9 +229,10 @@ query  = "is:unread from:team"
 pinned = true
 ```
 
-No runtime reads `FilterConfig` yet. The sidebar does not render pinned
-filters, and there is no rules engine. The *decision* is settled and the
-configuration surface exists; the wiring does not.
+The sidebar renders pinned filters, the settings window edits them, and a
+saved search re-runs its query when opened. There is no rules engine on
+`main`: ADR 0008, 0028 and 0030 decide its shape, and the implementation
+waits on an unmerged branch.
 
 **Why one language:** there is one matching engine to write and one syntax for
 a user to learn. Dry-run — showing what a rule *would* match before enabling it
@@ -288,8 +290,8 @@ hide inside the thing meant to catch it.
 - **`postio-core` must not depend on `gtk4`/`libadwaita`.** It is the
   UI-agnostic contract; this is what keeps a second frontend possible.
 - **`postio-gtk` must not depend on `turso`/`io-imap`.** The view layer does
-  no SQL and speaks no protocol. (`rusqlite` is banned in the same place and
-  for the same reason; it is simply no longer in the graph to ban.)
+  no SQL and speaks no protocol. (`rusqlite` stays on the banned list beside
+  `turso`, so the rule outlives the engine that made it.)
 
 `scripts/checks/check-crate-boundaries.py` inspects `cargo metadata`'s **resolved
 graph**, not source text, so a violation arriving transitively through an
@@ -305,17 +307,20 @@ database engine in the graph of every crate depending on `postio-core` the momen
 it on — the view layer included. `postio-core` therefore has **no optional
 dependencies at all.**
 
-**The macOS frontend is no longer deferred** ([#15](https://github.com/dlapiduz/postio/issues/15),
-[ADR 0019](decisions/0019-macos-frontend.md)) — a native Swift frontend over the
-same engine, through a UniFFI boundary in `postio-ffi`, with the toolkit-free
-presentation logic extracted into `postio-ui`.
+**The macOS frontend is built** ([#15](https://github.com/dlapiduz/postio/issues/15),
+[ADR 0019](decisions/0019-macos-frontend.md)) — a native Swift frontend in
+`macos/` over the same engine, through a UniFFI boundary in `postio-ffi`, with
+the toolkit-free presentation logic extracted into `postio-ui`. It reads,
+searches and pages mail; compose is deferred, and it is not yet released.
 
 The invariant is what made that possible, and it was not a theory: measured on
-2026-08-27, **thirteen of the fifteen crates build and test on macOS with no
-changes at all**. `cargo check --workspace --all-targets --exclude postio-gtk
---exclude postio-app` exits 0 there; the whole-workspace run fails only on
-`glib-sys` wanting `glib-2.0` from `pkg-config`. The boundary this section
-describes turns out to be exactly where the portable half ends.
+2026-08-27, when the workspace had fifteen crates, **thirteen of them built and
+tested on macOS with no changes at all** — everything but `postio-gtk` and
+`postio-app`, which is still the exclusion set today at twenty crates.
+`cargo check --workspace --all-targets --exclude postio-gtk --exclude
+postio-app` exits 0 there; the whole-workspace run fails only on `glib-sys`
+wanting `glib-2.0` from `pkg-config`. The boundary this section describes
+turns out to be exactly where the portable half ends.
 
 `scripts/issue-land.sh` enforces the same line at landing time: a changed crate
 the host cannot build is refused rather than merged unverified, probing
@@ -423,32 +428,25 @@ document. The rich editing surface stays in epic E10.
 
 ## Known gaps
 
-Recorded rather than hidden. Full argument in
-[`architecture-review-2026-08.md`](architecture-review-2026-08.md).
+Recorded rather than hidden. The August 2026 review
+([`docs/archive/architecture-review-2026-08.md`](archive/architecture-review-2026-08.md))
+listed seven findings, and every one has landed: `postio-session` split out of
+`postio-app` with the same CI-enforced no-GTK rule `postio-core` has
+([#82](https://github.com/dlapiduz/postio/issues/82)); the toolkit-free
+keymap, selection and tokens moved into `postio-ui`; the sanitiser and quote
+folder into `postio-body` ([ADR 0004](decisions/0004-composer-document-model.md));
+the extension vocabulary and correlation ids as
+[ADR 0002](decisions/0002-extensible-command-vocabulary.md); the event hub as
+[ADR 0013](decisions/0013-event-fanout.md), so a second frontend subscribes
+beside the window without stealing a repaint; and the boundary check now
+guards ten crates against cargo's resolved graph rather than two, so
+`postio-search` cannot re-acquire the store engine.
 
-**Closed since that review:** `postio-app` was both composition root and GTK
-binary, so `actions.rs` — the whole verb vocabulary, with no toolkit in it —
-linked GTK and no headless frontend was possible. [#82](https://github.com/dlapiduz/postio/issues/82)
-split `postio-session` out and gave it the same CI-enforced rule
-`postio-core` has, which is the part that makes it stay true.
+What remains open, as of 0.4.0:
 
-**Also closed:** `postio-plp4`'s two halves and `postio-3o8f`, all from the
-retired bead tracker. The extension vocabulary and correlation ids both landed
-as [ADR 0002](decisions/0002-extensible-command-vocabulary.md) (issue #33) —
-including `CommandSpec.title` staying `&'static str`, with a translated title
-leaked at registration rather than needing `Cow`, which answers what used to
-be `postio-plp4`'s localisation half. The composer's document model is
-[ADR 0004](decisions/0004-composer-document-model.md) ([#30](https://github.com/dlapiduz/postio/issues/30)),
-covered in §13 below. What ADR 0002's own implementation left open — exactly
-one `EventStream`, so a tracked caller and the window could not both read it —
-is now built: `postio_core::bridge::EventHub` fans every producer's events out
-to every subscriber, each by name and each with a private stream, per
-[ADR 0013](decisions/0013-event-fanout.md) ([#176](https://github.com/dlapiduz/postio/issues/176)).
-`postio-app` subscribes once as `"window"`; a second frontend subscribes
-alongside it without stealing a repaint.
-
-| Gap | Effect | Issue |
+| Gap | Effect | Where |
 |---|---|---|
-| ~2,850 lines of toolkit-free logic live in `postio-gtk` — keymap, selection, tokens | A second frontend must reimplement, fork, or link GTK to borrow them. Smaller than it once measured: `postio-body` (ADR 0004) already pulled the sanitizer and the quote folder out. | — |
-| Boundary rules guard two crates, not the graph | Nothing stops `postio-search` re-acquiring the database crate and undoing the index split | — |
-| `first_account()` in `postio-app/src/lib.rs` | Single account, though model/storage/engine are all account-aware. An appropriate MVP cut. | [#1](https://github.com/dlapiduz/postio/issues/1) |
+| The rules engine is designed and not on `main` | `[filters]` are saved searches only; nothing files mail on arrival | ADR 0008/0028/0030, [#5](https://github.com/dlapiduz/postio/issues/5) |
+| The macOS frontend is read-only | Compose, settings edits and account setup still need the GTK app | ADR 0019 |
+| `[sync] notify_roles` does not cross the FFI | The macOS build notifies for every folder, not the configured ones | `docs/notes/2026-09-13-what-the-frontend-audit-found-and-what-remains.md` |
+| Wall-clock performance figures predate the engine swap | The counted budgets hold; the timings in `PERFORMANCE.md` have not been re-measured on Turso against a real mailbox | [`PERFORMANCE.md`](PERFORMANCE.md) |

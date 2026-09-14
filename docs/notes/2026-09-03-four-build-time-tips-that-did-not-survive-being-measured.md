@@ -13,7 +13,8 @@ anything under ~10s means nothing.
 
 **`[profile.dev.package."*"] opt-level = 1` (from 2) -- reverted, and it is
 the important one.** The argument for it was that no gate can see it: the
-perf budgets are asserted as counts off SQLite's trace hook, not timings, and
+perf budgets are asserted as counts at the store's sql seam
+(`test_support::counting`), not timings, and
 `cargo bench` measures release. That argument is true and beside the point.
 What a dependency's optimization level moves is the wall clock of the suites
 people wait on:

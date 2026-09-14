@@ -1,5 +1,12 @@
 # Two compile caches, because neither can do the other's job (2026-08-28, #736)
 
+*Amended 2026-09-14:* the 77% figure below was measured on the vendored
+OpenSSL + SQLCipher graph, which is gone with the pure-Rust engine (ADR 0038);
+`scripts/cc-wrapper.sh` says in its own header that it is no longer
+load-bearing. The lesson stands — a rustc wrapper cannot cache C, and any C
+that returns to the graph needs the second cache again — but the number is
+the old graph's.
+
 The workspace has *two* machine-wide compile caches, and the split is forced,
 not stylistic:
 
