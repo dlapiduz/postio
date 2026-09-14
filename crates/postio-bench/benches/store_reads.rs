@@ -22,7 +22,7 @@
 //! # Running
 //!
 //! ```sh
-//! cargo bench -p postio-runtime --bench store_reads
+//! cargo bench -p postio-bench --bench store_reads
 //! ```
 //!
 //! CI compiles this and does not time it: a shared runner is too noisy to

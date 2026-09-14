@@ -18,7 +18,7 @@
 //! # Running
 //!
 //! ```sh
-//! cargo bench -p postio-index --bench search_budget
+//! cargo bench -p postio-bench --bench search_budget
 //! ```
 //!
 //! Corpus generation is deterministic (a fixed-seed xorshift generator, no
@@ -33,7 +33,7 @@
 //! # Recording a new baseline
 //!
 //! ```sh
-//! cargo bench -p postio-index --bench search_budget -- --save-baseline main
+//! cargo bench -p postio-bench --bench search_budget -- --save-baseline main
 //! ```
 
 #![allow(missing_docs)]
