@@ -187,10 +187,19 @@ impl From<ThreadSummary> for RowFfi {
     }
 }
 
-/// The rows of one page, whichever way the scope lists itself.
-pub fn rows_of(page: ListPage) -> Vec<RowFfi> {
+/// One page as the window takes it, whichever way the scope lists itself.
+///
+/// The total travels with the rows: they come from one read, so the count
+/// the window reports and the page it draws can never disagree.
+pub fn page_of(page: ListPage) -> postio_ui::paging::Page<RowFfi> {
     match page {
-        ListPage::Messages(page) => page.rows.into_iter().map(RowFfi::from).collect(),
-        ListPage::Threads(page) => page.rows.into_iter().map(RowFfi::from).collect(),
+        ListPage::Messages(page) => postio_ui::paging::Page {
+            total: page.total,
+            rows: page.rows.into_iter().map(RowFfi::from).collect(),
+        },
+        ListPage::Threads(page) => postio_ui::paging::Page {
+            total: page.total,
+            rows: page.rows.into_iter().map(RowFfi::from).collect(),
+        },
     }
 }

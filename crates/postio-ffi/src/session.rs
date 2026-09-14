@@ -319,9 +319,11 @@ pub struct Session {
     /// so that a row lookup -- which happens on every table redraw -- does not
     /// contend with whatever else is holding the session.
     list: Arc<Mutex<postio_ui::list::ListWindow<crate::RowFfi>>>,
-    /// What the window is currently showing, so a page fetch knows what to
-    /// ask the store for.
-    scope: Mutex<Option<postio_runtime::store::ListScope>>,
+    /// What the window is showing, what a page of it means and what an event
+    /// does to it — [`postio_ui::paging::Paging`], the policy `postio-gtk`'s
+    /// feed follows too, so a page fetch and an event reaction are one rule
+    /// on both frontends.
+    paging: Mutex<postio_ui::paging::Paging>,
     /// What the user has marked, and where the keyboard is.
     ///
     /// Held here rather than passed in with every [`Session::invoke`] (#721).
@@ -971,7 +973,7 @@ impl Session {
                 outcome: Mutex::new(None),
                 resting: Mutex::new(None),
                 anchor: Mutex::new(None),
-                scope: Mutex::new(None),
+                paging: Mutex::new(postio_ui::paging::Paging::default()),
                 in_flight: Arc::default(),
                 reconnects: Arc::default(),
                 offline: Arc::default(),
@@ -1034,7 +1036,7 @@ impl Session {
             outcome: Mutex::new(None),
             resting: Mutex::new(None),
             anchor: Mutex::new(None),
-            scope: Mutex::new(None),
+            paging: Mutex::new(postio_ui::paging::Paging::default()),
             in_flight: Arc::default(),
             reads: Arc::default(),
             reconnects: Arc::default(),
@@ -1069,7 +1071,7 @@ impl Session {
             return 0;
         };
         let total = blocking(store.list_count(listed)).unwrap_or(0);
-        *self.scope.lock().expect("scope lock") = Some(listed);
+        self.paging.lock().expect("paging lock").open(listed);
         // "These twelve" means something else the moment the list does, and an
         // action carrying a selection across would land on mail the user
         // cannot see. The cursor goes with it: it named a row in a list that
@@ -1151,7 +1153,7 @@ impl Session {
             // The shared conversion, not a second one: `ScopeFfi` becomes a
             // `ListScope` on the way in, and `aim::view_scope` is the one
             // rule for what a whole-view gesture is relative to (#670).
-            scope: self.scope.lock().expect("scope lock").and_then(|scope| {
+            scope: self.scope_in_view().and_then(|scope| {
                 postio_core::aim::view_scope(scope, &self.reachable.lock().expect("reachable lock"))
             }),
             selection: &selection,
@@ -1724,18 +1726,25 @@ impl Session {
     }
 
     /// Read one page into the window, behind the caller.
+    ///
+    /// What the page *is* — an offset read of the scope, or a slice of the
+    /// search ranking — is [`postio_ui::paging::Paging::fetch_for`]'s answer,
+    /// the same one `postio-gtk`'s feed gets; only the crossing to the store
+    /// and back is this boundary's.
     fn fetch(&self, generation: u64, page: u32) {
-        // Search hits are ranked, not sorted, so no `ListScope` describes
-        // them and the store cannot page them. They are read by id instead --
-        // the same page of the same window, filled from a different call.
-        if self.hits.lock().expect("hits lock").is_some() {
-            self.fetch_hits(generation, page);
-            return;
+        let fetch = self.paging.lock().expect("paging lock").fetch_for(page);
+        match fetch {
+            None => {}
+            Some(postio_ui::paging::Fetch::Scope(request)) => self.fetch_scope(generation, request),
+            Some(postio_ui::paging::Fetch::Hits { ids, .. }) => {
+                self.fetch_hits(generation, page, ids);
+            }
         }
+    }
+
+    /// One page of the scope in view, read by offset.
+    fn fetch_scope(&self, generation: u64, request: postio_ui::paging::PageRequest) {
         let Some((store, runtime)) = self.reader() else {
-            return;
-        };
-        let Some(scope) = *self.scope.lock().expect("scope lock") else {
             return;
         };
         let local = self.local.0.clone();
@@ -1746,23 +1755,29 @@ impl Session {
         in_flight.fetch_add(1, ordering);
         self.reads.fetch_add(1, ordering);
         runtime.spawn(async move {
-            let request = postio_runtime::store::PageRequest {
-                scope,
-                offset: page * postio_ui::list::PAGE_SIZE,
-                limit: postio_ui::list::PAGE_SIZE,
+            let wanted = postio_runtime::store::PageRequest {
+                scope: request.scope,
+                offset: request.offset,
+                limit: request.limit,
             };
-            if let Ok(fetched) = store.list_page(request).await {
-                let rows = crate::list::rows_of(fetched);
-                let delivered = list
-                    .lock()
-                    .expect("list lock")
-                    .deliver(generation, page, rows);
+            if let Ok(fetched) = store.list_page(wanted).await {
+                let page = crate::list::page_of(fetched);
+                let delivered = {
+                    let mut list = list.lock().expect("list lock");
+                    // The count and the rows come from one read, so every
+                    // page corrects the total the scope was opened with —
+                    // for the generation it was asked in, and no other.
+                    if list.generation() == generation {
+                        let _ = list.set_total(page.total);
+                    }
+                    list.deliver(generation, request.page, page.rows)
+                };
                 // A page for a scope the user has already left is dropped
                 // rather than drawn, and saying nothing about it is the point:
                 // an event here would tell the frontend to reload rows that
                 // belong to a folder it is no longer showing.
                 if !delivered.stale {
-                    let _ = local.try_send(UiEvent::PageReady { page });
+                    let _ = local.try_send(UiEvent::PageReady { page: request.page });
                 }
             }
             in_flight.fetch_sub(1, ordering);
@@ -1775,24 +1790,10 @@ impl Session {
     /// relevance order, and asking the store for "rows 50..100 of this scope"
     /// would re-sort them by date. So the window pages over the *ranking*,
     /// and each page names the ids it wants.
-    fn fetch_hits(&self, generation: u64, page: u32) {
+    fn fetch_hits(&self, generation: u64, page: u32, wanted: Vec<postio_model::ids::MessageId>) {
         let Some((store, runtime)) = self.reader() else {
             return;
         };
-        let wanted: Vec<postio_model::ids::MessageId> = {
-            let held = self.hits.lock().expect("hits lock");
-            let Some(hits) = held.as_ref() else { return };
-            let first = (page * postio_ui::list::PAGE_SIZE) as usize;
-            hits.iter()
-                .skip(first)
-                .take(postio_ui::list::PAGE_SIZE as usize)
-                .map(|hit| postio_model::ids::MessageId::new(hit.message))
-                .collect()
-        };
-        if wanted.is_empty() {
-            return;
-        }
-
         let local = self.local.0.clone();
         let list = self.list.clone();
         let in_flight = self.in_flight.clone();
@@ -1857,7 +1858,7 @@ impl Session {
         {
             let mut resting = self.resting.lock().expect("resting lock");
             if resting.is_none() {
-                *resting = *self.scope.lock().expect("scope lock");
+                *resting = self.scope_in_view();
             }
         }
 
@@ -1907,14 +1908,19 @@ impl Session {
             })
             .unwrap_or_default();
 
-        let total = hits.len() as u32;
+        let ranking: Vec<postio_model::ids::MessageId> = hits
+            .iter()
+            .map(|hit| postio_model::ids::MessageId::new(hit.message))
+            .collect();
         *self.hits.lock().expect("hits lock") = Some(hits);
         *self.outcome.lock().expect("outcome lock") = Some(outcome);
-        // No `ListScope` describes a ranking, so there is none while a search
-        // is on screen. `aim` sees `None` and refuses a whole-view gesture,
-        // which is the conservative answer: "select everything matching this
-        // query" is a predicate the engine has no way to evaluate yet.
-        *self.scope.lock().expect("scope lock") = None;
+        // The ranking is the list now; the scope is set aside, not left, and
+        // `scope_in_view` says why nothing sees it until the search closes.
+        let total = self
+            .paging
+            .lock()
+            .expect("paging lock")
+            .show_results(ranking);
         self.drop_selection_and_cursor();
         self.list.lock().expect("list lock").reset(total)
     }
@@ -1932,8 +1938,10 @@ impl Session {
         *self.outcome.lock().expect("outcome lock") = None;
         let resting = self.resting.lock().expect("resting lock").take();
         match resting {
+            // Opening the scope again is leaving the results.
             Some(scope) => self.open_list_scope(scope),
             None => {
+                self.paging.lock().expect("paging lock").close_results();
                 self.drop_selection_and_cursor();
                 self.list.lock().expect("list lock").reset(0)
             }
@@ -2442,9 +2450,25 @@ impl Session {
     /// index, and re-running the query is the frontend's call, not a
     /// reconnection's.
     fn open_mailbox(&self) -> Option<postio_model::MailboxId> {
-        match *self.scope.lock().expect("scope lock") {
-            Some(postio_runtime::store::ListScope::Mailbox(mailbox)) => Some(mailbox),
-            _ => None,
+        self.scope_in_view()
+            .and_then(postio_runtime::store::ListScope::mailbox)
+    }
+
+    /// The scope the window is showing, or `None` while a search is.
+    ///
+    /// No `ListScope` describes a ranking, so there is none while a search
+    /// is on screen: `aim` sees `None` and refuses a whole-view gesture,
+    /// which is the conservative answer — "select everything matching this
+    /// query" is a predicate the engine has no way to evaluate yet — and a
+    /// reconnection finds no mailbox to refresh. The scope is set aside in
+    /// [`postio_ui::paging::Paging`], not forgotten, and `resting` is what
+    /// brings it back when the search closes.
+    fn scope_in_view(&self) -> Option<postio_runtime::store::ListScope> {
+        let paging = self.paging.lock().expect("paging lock");
+        if paging.showing_results() {
+            None
+        } else {
+            paging.scope()
         }
     }
 
@@ -2506,73 +2530,84 @@ impl Session {
         // Whichever speaks first. The engine's stream ends when the session
         // shuts down, and that is what must end the frontend's loop -- so a
         // closed engine stream wins even if the local one is merely idle.
-        let event = tokio::select! {
-            engine = self.events.next() => engine.map(UiEvent::from),
+        tokio::select! {
+            engine = self.events.next() => engine.map(|event| self.cross(event)),
             local = self.local.1.recv() => local.ok(),
-        }?;
-        self.recount_if_the_list_changed(&event);
-        Some(event)
+        }
     }
 
     /// [`next_event`](Self::next_event), for callers that are not async.
     ///
     /// Rust-only. Swift always awaits.
     pub fn next_event_blocking(&self) -> Option<UiEvent> {
-        let event = self.events.next_blocking().map(UiEvent::from)?;
-        self.recount_if_the_list_changed(&event);
-        Some(event)
+        self.events.next_blocking().map(|event| self.cross(event))
     }
 
-    /// Re-count the open scope when an event says its contents moved.
+    /// One engine event on its way to the frontend: the window reacts to it
+    /// first, so that by the time the frontend redraws on it the count and
+    /// the pages already say what the event said.
+    fn cross(&self, event: postio_core::Event) -> UiEvent {
+        self.react(&event);
+        UiEvent::from(event)
+    }
+
+    /// What the window does when an event says the list moved.
     ///
-    /// **`open_scope` counts once**, because a table asks how tall it is
-    /// before it draws and that question cannot await. Everything after that
-    /// arrives as an event — and a frontend's whole answer to an event is to
-    /// reload its table, which asks `row_count`, which reads the total that
-    /// one count set. Nothing ever set it again.
-    ///
-    /// So a folder opened while it was empty and filled a moment later by the
-    /// first sync stayed empty on screen: 99 messages in the store, "No
-    /// messages" in the list, every layer doing exactly what it was written
-    /// to do. Found by running the application against a real account (#1150);
-    /// invisible to every test, because no test had a list whose contents
-    /// changed after it was opened.
+    /// [`postio_ui::paging::Paging::plan`]'s table, the one `postio-gtk`'s
+    /// feed follows: new mail in the open scope is inserted at the top,
+    /// changed rows have the pages holding them re-read in place, and a scope
+    /// whose membership or order moved is reloaded. Before the table crossed
+    /// the boundary this was "count again, and reset if the count moved" —
+    /// which drew a filled folder that had been opened empty (#1150) and
+    /// nothing else: a flag set on macOS stayed undrawn, because a flag does
+    /// not move the count.
     ///
     /// It belongs here rather than in either frontend for the reason the whole
-    /// boundary does: the count is the window's, the window is here, and a
-    /// frontend that re-opened the scope to refresh it would be making a
-    /// navigation decision to fix a bookkeeping one. `postio-gtk`'s feed does
-    /// the same thing on the same events, one layer up.
+    /// boundary does: the window is here, and a frontend that re-opened the
+    /// scope to refresh it would be making a navigation decision to fix a
+    /// bookkeeping one.
     ///
-    /// Deliberately not `PageReady` — that is this boundary telling itself a
-    /// page landed, and re-counting there would reset the window inside its
-    /// own fetch.
-    fn recount_if_the_list_changed(&self, event: &UiEvent) {
-        if !matches!(
-            event,
-            UiEvent::MessageListChanged { .. }
-                | UiEvent::MessagesChanged { .. }
-                | UiEvent::MessagesRemoved { .. }
-                | UiEvent::NewMail { .. }
-        ) {
-            return;
-        }
-        // A search holds its own ranking; its hits do not change because a
-        // folder did, and re-counting would reset the window to a folder's
-        // size while showing search results.
-        if self.is_searching() {
-            return;
-        }
-        let Some(scope) = *self.scope.lock().expect("scope lock") else {
-            return;
-        };
-        let Some((store, _runtime)) = self.reader() else {
-            return;
-        };
-        let total = blocking(store.list_count(scope)).unwrap_or(0);
-        let mut list = self.list.lock().expect("list lock");
-        if list.total() != total {
-            list.reset(total);
+    /// A reload still counts synchronously — `open_scope`'s reason: the table
+    /// asks how tall it is the moment it hears the event, and that question
+    /// cannot await — and then re-reads the first page. The rows on screen
+    /// stay until their replacements land; a reset would blank the table
+    /// under the cursor. A search is never reloaded: its ranking does not
+    /// change because a folder did.
+    fn react(&self, event: &postio_core::Event) {
+        let plan = self.paging.lock().expect("paging lock").plan(event);
+        match plan {
+            postio_ui::paging::Plan::Ignore => {}
+            postio_ui::paging::Plan::InsertAtTop(count) => {
+                self.list.lock().expect("list lock").inserted_at_top(count);
+            }
+            postio_ui::paging::Plan::Refetch(messages) => {
+                let (generation, pages) = {
+                    let list = self.list.lock().expect("list lock");
+                    (list.generation(), list.pages_holding(messages))
+                };
+                for page in pages {
+                    self.fetch(generation, page);
+                }
+            }
+            postio_ui::paging::Plan::Reload => {
+                let Some(scope) = self.scope_in_view() else {
+                    return;
+                };
+                let Some((store, _runtime)) = self.reader() else {
+                    return;
+                };
+                let total = blocking(store.list_count(scope)).unwrap_or(0);
+                let generation = {
+                    let mut list = self.list.lock().expect("list lock");
+                    list.invalidate();
+                    let _ = list.set_total(total);
+                    list.generation()
+                };
+                // A list that shrank to nothing stops asking for pages, so the
+                // reload asks once itself, or an emptied folder would keep
+                // showing the rows it used to have.
+                self.fetch(generation, 0);
+            }
         }
     }
 

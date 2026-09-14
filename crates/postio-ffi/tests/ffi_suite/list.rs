@@ -7,8 +7,8 @@
 
 use chrono::Utc;
 use postio_ffi::{ScopeFfi, Session, SessionOptions};
-use postio_model::Message;
-use postio_storage::repository::MessageRepository;
+use postio_model::{Flag, FlagSet, Message};
+use postio_storage::repository::{FlagSource, MessageRepository};
 use postio_storage::test_support;
 
 /// A store with `count` messages in an inbox, and the scope that lists them.
@@ -32,6 +32,63 @@ async fn seeded(count: u32) -> (std::sync::Arc<Session>, ScopeFfi) {
             mailbox: mailbox.into(),
         },
     )
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_flag_change_reaches_the_row_on_screen() {
+    // The engine writes to the store and says `MessagesChanged`: the same
+    // rows in the same order, so the boundary re-reads the page holding them
+    // in place -- `postio_ui::paging`'s table, the one `postio-gtk`'s feed
+    // follows. Before that table crossed the boundary, an event whose count
+    // had not moved did nothing at all, and a flag set on macOS stayed
+    // undrawn until something else happened to reload the list.
+    let database = test_support::memory().await;
+    let (account, mailbox, id) = {
+        let connection = database.connect().await.expect("a connection");
+        let (account, inbox) = test_support::account_with_inbox(&connection).await;
+        let mut message = Message::new(account.id, inbox, Utc::now());
+        let id = MessageRepository::new(&connection)
+            .create(&mut message)
+            .await
+            .expect("a message");
+        (account.id, inbox, id)
+    };
+    let session =
+        Session::open(SessionOptions::in_memory_with(database.clone())).expect("a session");
+    session.open_scope(ScopeFfi::Mailbox {
+        mailbox: mailbox.into(),
+    });
+    let _ = session.row_at(0);
+    session.settle_for_test();
+    assert!(
+        !session.row_at(0).expect("the row arrived").flagged,
+        "the fixture starts unflagged"
+    );
+
+    {
+        let connection = database.connect().await.expect("a connection");
+        let mut flags = FlagSet::new();
+        flags.insert(Flag::Flagged);
+        MessageRepository::new(&connection)
+            .set_flags(id, &flags, FlagSource::Local)
+            .await
+            .expect("flag it");
+    }
+    session.emit_for_test(postio_core::Event::MessagesChanged {
+        account,
+        messages: vec![id],
+    });
+    let _ = session.next_event_blocking();
+    session.settle_for_test();
+
+    assert!(
+        session
+            .row_at(0)
+            .expect("the row is still resident")
+            .flagged,
+        "the page holding the changed row should have been re-read in place"
+    );
+    session.shutdown();
 }
 
 #[tokio::test(flavor = "multi_thread")]
