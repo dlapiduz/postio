@@ -123,7 +123,6 @@ pub struct ImapSession {
     capabilities: Capabilities,
     endpoint: String,
     account: String,
-    pre_authenticated: bool,
     /// The mailbox this session currently has selected, cached so a fetch
     /// loop over many chunks of the same mailbox does not re-issue `SELECT`
     /// for every one of them. See [`selection`].
@@ -254,7 +253,6 @@ impl ImapSession {
             capabilities,
             endpoint: settings.endpoint(),
             account: settings.username.clone(),
-            pre_authenticated: opened.pre_authenticated,
             selected: None,
             // A session opened outside a pool answers only to itself; the
             // pool replaces both of these when it opens one.
@@ -278,12 +276,6 @@ impl ImapSession {
     /// The account this session authenticated as.
     pub fn account(&self) -> &str {
         &self.account
-    }
-
-    /// Whether the session opened already authenticated (a `PREAUTH`
-    /// greeting, as a local socket proxy sends).
-    pub fn is_pre_authenticated(&self) -> bool {
-        self.pre_authenticated
     }
 
     /// Whether the bytes on this connection are encrypted.

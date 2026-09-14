@@ -1909,15 +1909,6 @@ pub fn reachable(context: Context) -> impl Iterator<Item = ActionSpec> {
     for_context(context).map(ActionSpec::from).chain(extensions)
 }
 
-/// Whether `spec` is reachable in `context` *and* satisfied by `state`.
-///
-/// The one place a surface asks "can the user do this right now". Splitting
-/// it from [`ActionSpec::available_in`] keeps the context question — which is
-/// most of them — free of state nobody else needs.
-pub fn available(spec: &ActionSpec, context: Context, state: Availability) -> bool {
-    spec.available_in(context) && spec.requires.met_by(state)
-}
-
 /// Every command reachable in `context` for a window in `state`.
 ///
 /// What the palette, the cheat sheet and the key hints iterate. [`reachable`]

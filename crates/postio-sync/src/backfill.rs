@@ -681,17 +681,6 @@ impl Backfill {
         }
     }
 
-    /// Offers everything set aside one more time.
-    ///
-    /// A fetch that failed while the link was going down is not the same
-    /// message as one the server genuinely cannot produce, and there is no way
-    /// to tell them apart at the time. So a reconnection forgives them all: the
-    /// next seed offers them again, and anything that fails a second time is
-    /// set aside a second time.
-    pub fn forgive_set_aside(&mut self) {
-        self.set_aside.clear();
-    }
-
     /// Stops the backfill and everything it has on the wire.
     ///
     /// The queue is emptied rather than parked: what is worth fetching is
