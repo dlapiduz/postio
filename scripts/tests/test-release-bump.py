@@ -168,19 +168,33 @@ def main() -> int:
         )
 
         metainfo = (root / METAINFO_PATH).read_text(encoding="utf-8")
+        # `type="development"` is AppStream's word for a pre-release. GNOME
+        # Software and Flathub read it; without it a 0.x build is listed as
+        # a stable release, which 0.x is not.
         case(
-            "a new release entry is added with the given version and date",
-            '<release version="0.3.0" date="2026-09-10">' in metainfo,
-            f"no new release entry found:\n{metainfo}",
+            "a new release entry is added with the given version and date, marked development",
+            '<release version="0.3.0" date="2026-09-10" type="development">' in metainfo,
+            f"no new development release entry found:\n{metainfo}",
         )
         case(
             "the notes reach the changelog entry",
             "did a thing" in metainfo and "did another thing" in metainfo,
             f"notes text is missing from the changelog:\n{metainfo}",
         )
+        # Bullets become a list and paragraphs stay paragraphs: a release
+        # note written by hand for the release page reads as one on the
+        # software centre's page too, rather than as a run-on `<p>`.
+        case(
+            "bullets in the notes become a list",
+            "<ul>" in metainfo
+            and "<li>did a thing</li>" in metainfo
+            and "<li>did another thing</li>" in metainfo
+            and "</ul>" in metainfo,
+            f"the bullets were not rendered as a list:\n{metainfo}",
+        )
         case(
             "the new entry comes before the previous newest one -- newest first",
-            metainfo.index('version="0.3.0"') < metainfo.index('version="0.2.0"'),
+            metainfo.find('version="0.3.0"') < metainfo.find('version="0.2.0"'),
             f"release entries are out of order:\n{metainfo}",
         )
         case(
@@ -188,6 +202,37 @@ def main() -> int:
             '<release version="0.1.0" date="2026-08-23">' in metainfo
             and "Initial development release." in metainfo,
             f"an older release entry was lost or altered:\n{metainfo}",
+        )
+
+    # ── a stable release, and prose notes ────────────────────────────
+    with tempfile.TemporaryDirectory() as directory:
+        root = world(Path(directory))
+        notes = root / "notes.txt"
+        notes.write_text(
+            "The store moved to a new engine.\n\n- Search is faster.\n\nEverything else is the same.\n",
+            encoding="utf-8",
+        )
+        result = run(root, "1.0.0", "--notes-file", str(notes), "--date", "2027-01-01")
+        metainfo = (root / METAINFO_PATH).read_text(encoding="utf-8")
+        case(
+            "a 1.x release is not marked development",
+            result.returncode == 0
+            and '<release version="1.0.0" date="2027-01-01">' in metainfo,
+            f"exit {result.returncode}; entry:\n{metainfo}",
+        )
+        case(
+            "a paragraph in the notes becomes a <p>",
+            "<p>The store moved to a new engine.</p>" in metainfo
+            and "<p>Everything else is the same.</p>" in metainfo,
+            f"prose was not rendered as paragraphs:\n{metainfo}",
+        )
+        first = metainfo.find("<p>The store moved to a new engine.</p>")
+        item = metainfo.find("<li>Search is faster.</li>")
+        last = metainfo.find("<p>Everything else is the same.</p>")
+        case(
+            "a list between paragraphs is its own element",
+            -1 < first < item < last,
+            f"the list is out of order with its paragraphs:\n{metainfo}",
         )
 
     # ── refusals ──────────────────────────────────────────────────────

@@ -56,14 +56,25 @@ jobs:
       - uses: ./.github/actions/rust-workspace
         if: github.ref_type == 'tag'
 
+      # Hand-written notes win when there are any: docs/releases/<version>.md
+      # is a paragraph or two and a list of what changed, written for a
+      # person, and it becomes both the GitHub release body and the AppStream
+      # changelog entry (release-bump.py renders its paragraphs and bullets).
+      # Without one the notes are the commit subjects since the last tag --
+      # complete, and unreadable past a few dozen commits.
       - name: Generate release notes since the last tag
         if: github.ref_type == 'tag'
         run: |
           : > release-notes.txt
-          LAST_TAG=$(git describe --tags --abbrev=0 --match 'v*' HEAD^ 2>/dev/null || true)
-          if [ -n "$LAST_TAG" ]; then
-            git log "$LAST_TAG"..HEAD --no-merges --format='- %s' \
-              | grep -v '^- chore(release):' >> release-notes.txt || true
+          VERSION="${GITHUB_REF_NAME#v}"
+          if [ -s "docs/releases/${VERSION}.md" ]; then
+            cp "docs/releases/${VERSION}.md" release-notes.txt
+          else
+            LAST_TAG=$(git describe --tags --abbrev=0 --match 'v*' HEAD^ 2>/dev/null || true)
+            if [ -n "$LAST_TAG" ]; then
+              git log "$LAST_TAG"..HEAD --no-merges --format='- %s' \
+                | grep -v '^- chore(release):' >> release-notes.txt || true
+            fi
           fi
           [ -s release-notes.txt ] || echo "- Maintenance release" >> release-notes.txt
           echo "--- release-notes.txt ---"
@@ -231,13 +242,20 @@ jobs:
       # below it: `create` has no clobber flag, and a rerun (workflow_dispatch
       # against the same tag, after some earlier step failed) must not error
       # out here just because this step already succeeded once.
+      #
+      # A 0.x tag is a pre-release on the release page too: `--prerelease`
+      # keeps it off the "Latest" badge and says what the version number
+      # already says. The same rule marks the AppStream entry
+      # `type="development"` (scripts/release-bump.py).
       - name: Create the release
         if: github.ref_type == 'tag'
         run: |
+          PRERELEASE=""
+          case "${GITHUB_REF_NAME#v}" in 0.*) PRERELEASE="--prerelease" ;; esac
           gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1 || \
             gh release create "$GITHUB_REF_NAME" \
               --title "$GITHUB_REF_NAME" \
-              --notes-file release-notes.txt
+              --notes-file release-notes.txt $PRERELEASE
         env:
           GH_TOKEN: ${{ github.token }}
 
