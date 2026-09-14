@@ -992,6 +992,43 @@ pub fn purge_fetch_debris(blobs: &BlobStore) -> Result<usize, Box<dyn std::error
     Ok(purged)
 }
 
+/// How long a settled operation -- done, or failed for good -- stays in the
+/// queue before housekeeping removes it.
+///
+/// Long enough that a late undo finds what it is undoing and a person
+/// asking "what happened to that send" finds the row; short enough that the
+/// table stops growing without bound, which is what it did until now:
+/// `prune_settled` existed, was tested, and nothing ever called it -- the
+/// shape of #416 again.
+pub const OPERATION_RETENTION: chrono::Duration = chrono::Duration::days(30);
+
+/// Remove every account's settled operations older than `retention`, and
+/// answer how many went. Housekeeping, off the startup and interaction
+/// paths, the way the other reclaim passes run.
+pub async fn prune_settled_operations(
+    database: &Store,
+    retention: chrono::Duration,
+    now: chrono::DateTime<chrono::Utc>,
+) -> Result<usize, Box<dyn std::error::Error>> {
+    let connection = database.connect().await?;
+    let before = now - retention;
+    let accounts = postio_storage::repository::AccountRepository::new(&connection)
+        .list()
+        .await?;
+    // Background, like every other reclaim pass: a keystroke's write goes
+    // first, and this can wait for it.
+    let _permit = connection
+        .write_gate()
+        .acquire(postio_storage::WritePriority::Background)
+        .await;
+    let queue = postio_storage::repository::OperationQueueRepository::new(&connection);
+    let mut removed = 0;
+    for account in accounts {
+        removed += queue.prune_settled(account.id, before).await?;
+    }
+    Ok(removed)
+}
+
 /// How long the indexer waits after a body lands before it runs a pass, so a
 /// backfill's burst of arrivals becomes one batched write rather than one
 /// per body.
