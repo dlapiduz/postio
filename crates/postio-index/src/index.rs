@@ -11,11 +11,11 @@
 //!
 //! * `search_documents_fts`, over the five metadata columns of
 //!   `search_documents`;
-//! * `messages_body_fts`, over `messages.body_search` — the body text
-//!   folded for search. The engine's tokenizer lowercases and does not
-//!   strip diacritics, so [`postio_model::fold`] folds the column on the
-//!   way in ([`index_body`]) and the query path applies the identical fold,
-//!   or the two stop meeting.
+//! * `messages_body_fts`, over `message_search_bodies.body_search` — the
+//!   body text folded for search, one row per indexed message. The engine's
+//!   tokenizer lowercases and does not strip diacritics, so
+//!   [`postio_model::fold`] folds the column on the way in ([`index_body`])
+//!   and the query path applies the identical fold, or the two stop meeting.
 //!
 //! # Why `search_documents` is still a table of its own
 //!
@@ -30,9 +30,11 @@
 //! new arrivals answers nothing on every existing store.
 //!
 //! Bodies are not flattened into it: since ADR 0020 they are already one
-//! column of one row (`messages.body_text`), so their index sits directly
-//! on `messages` — on `body_search`, which [`index_body`] writes, since the
-//! fold cannot be computed by a trigger.
+//! column of one row (`messages.body_text`), and their index sits on a
+//! sibling table of its own, `message_search_bodies`, which [`index_body`]
+//! writes — the fold cannot be computed by a trigger, and keeping the folded
+//! copy off `messages` keeps the index's segment merges off every other
+//! write to that table.
 //!
 //! `search_documents.message_id` cascades from `messages.id`, so deleting a
 //! message deletes its flattened row, and the indexes follow their tables
@@ -69,9 +71,9 @@ use postio_storage::sql::{self, RowExt as _, bind};
 /// them, and this index is retro-fitted onto stores that already hold tens of
 /// thousands of messages — so the schema ends with a backfill over `messages`,
 /// and running it again is a no-op rather than a second copy. Everything
-/// except message *bodies*: `messages.body_search` is written only when the
-/// extracted text exists, no trigger can derive it from raw bytes, and
-/// [`index_body`] is how it arrives.
+/// except message *bodies*: a `message_search_bodies` row is written only
+/// when the extracted text exists, no trigger can derive it from raw bytes,
+/// and [`index_body`] is how it arrives.
 pub async fn ensure_schema(connection: &Connection) -> Result<()> {
     postio_storage::sql::batch(
         connection,

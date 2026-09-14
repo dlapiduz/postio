@@ -19,10 +19,11 @@
 //! Four things differ from the schema the old engine held, and each is forced
 //! rather than chosen:
 //!
-//! 1. **Bodies are `TEXT`, not zstd `BLOB`s**, and `body_dictionaries` is
-//!    gone with them. The full-text index is now an index on the body column
-//!    rather than a virtual table beside it, and an index cannot tokenise
-//!    compressed bytes.
+//! 1. **`body_dictionaries` is gone.** Bodies were plain `TEXT` for a while,
+//!    because an index cannot tokenise compressed bytes and the body index
+//!    sat on the body column; once it moved to its own folded table (point
+//!    2), the column was free to be small again, and `crate::body_codec`
+//!    packs it per row — zstd when that is smaller, no shared dictionary.
 //! 2. **`body_search` is a sibling table** (`message_search_bodies`), not a
 //!    column: the body folded for search. The engine's
 //!    tokenizer does not remove diacritics and offers no option to, so the
