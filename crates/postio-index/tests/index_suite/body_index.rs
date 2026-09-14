@@ -63,13 +63,9 @@ async fn body_hits(connection: &Connection, query: &str) -> Vec<i64> {
 /// `message_search_bodies` whether or not it had any words; one that has not
 /// has none.
 async fn indexed_bodies(connection: &Connection) -> i64 {
-    postio_storage::sql::scalar(
-        connection,
-        "SELECT count(*) FROM message_search_bodies",
-        (),
-    )
-    .await
-    .expect("count")
+    postio_storage::sql::scalar(connection, "SELECT count(*) FROM message_search_bodies", ())
+        .await
+        .expect("count")
 }
 
 #[tokio::test]
