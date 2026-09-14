@@ -8,3 +8,4 @@
 - [How sync works](sync.md)
 - [Privacy and security](privacy.md)
 - [FAQ](faq.md)
+- [Release notes](releases.md)

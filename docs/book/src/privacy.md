@@ -16,15 +16,18 @@ ask for.** Concretely, that means:
   sender that your address is live — which is exactly what a spammer wants
   to learn.
 - **No link prefetch, no favicon fetching, no speculative connections of
-  any kind.** The message reader has JavaScript and network access turned
-  off entirely; inline (`cid:`) images resolve from the local blob store,
-  not the network.
-- **Forwarding and replying can't be used to smuggle out an attack.**
-  Quoted content is sanitized on the way in, and the mail Postio sends is
-  generated fresh from its own internal document — never a pass-through of
-  whatever HTML arrived. A phishing email you forward can't make the
-  recipient's client run something your own client already protected you
-  from.
+  any kind.** The message reader has network access turned off and runs no
+  script that arrived in a message — every message is sanitized before it
+  reaches the screen, and the only script in the reader is Postio's own,
+  bundled with the app. Inline (`cid:`) images resolve from the local blob
+  store, not the network.
+- **Forwarding and replying can't be used to smuggle out an attack.** A
+  reply quotes exactly what the reader showed you — the sender's markup as
+  the sanitizer left it — and everything else Postio sends is generated
+  from its own internal document. Nothing that arrived in a message is ever
+  passed through unsanitized, so a phishing email you forward can't make
+  the recipient's client run something your own client already protected
+  you from.
 - **No telemetry, no crash reporting, no update ping.** Postio doesn't
   know you're using it, and neither does anyone else.
 - **Your local mail store is encrypted at rest.** Because Postio backfills
