@@ -239,6 +239,21 @@ impl std::fmt::Display for Unparseable {
 
 impl std::error::Error for Unparseable {}
 
+/// Which reading of a message [`parse`] produces — bumped whenever a change
+/// here makes it yield something different for bytes it already saw.
+///
+/// A body is fetched once and its raw bytes are not kept (ADR 0020), so a
+/// parser fix cannot reach a stored body by re-parsing it. The store stamps
+/// every body with the version that wrote it (`messages.body_parsed_with`),
+/// and the backfill fetches again the rows an older version got wrong: the
+/// ones that carried the decode caveat, an empty body from a failed decode
+/// among them. Bumping this is what makes that happen; not bumping it after
+/// a fix is how three empty messages stayed empty on a real account
+/// (2026-09-14).
+///
+/// 1: the lenient quoted-printable reading.
+pub const PARSER_VERSION: u32 = 1;
+
 /// Parses raw RFC 5322 bytes, body and attachments included.
 ///
 /// Infallible: see the [module docs](self). A message that cannot be parsed at

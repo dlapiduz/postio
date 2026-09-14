@@ -2715,3 +2715,88 @@ async fn a_fetched_message_does_not_adopt_a_local_row_that_already_has_an_identi
          identity is a different message and must not be collapsed into it"
     );
 }
+
+#[tokio::test]
+async fn a_body_an_older_parser_got_wrong_is_fetched_again_once() {
+    // A body is fetched once and its raw bytes are not kept, so a parser fix
+    // reaches a stored body only by fetching it again -- and only the rows
+    // the older parser got wrong: the ones that carried the decode caveat, or
+    // came out with no body at all (three of them on a real account,
+    // 2026-09-14). `messages.body_parsed_with` is what says which parser
+    // wrote a row; `postio_model::mime::PARSER_VERSION` is the current one.
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    let (account, inbox) = test_support::account_with_inbox(&connection).await;
+    let messages = MessageRepository::new(&connection);
+
+    let mut flagged = a_message(inbox, account.id, 3);
+    let mut empty = a_message(inbox, account.id, 2);
+    let mut clean = a_message(inbox, account.id, 1);
+    for message in [&mut flagged, &mut empty, &mut clean] {
+        messages.create(message).await.expect("create");
+    }
+    let body = |text: Option<&str>, problems: bool| StoredBody {
+        text: text.map(str::to_owned),
+        html: None,
+        headers: None,
+        headers_truncated: false,
+        encoding_problems: problems,
+    };
+    messages
+        .set_body(
+            flagged.id,
+            &body(Some("=C3=A9 as six characters"), true),
+            BodyState::Full,
+        )
+        .await
+        .expect("set");
+    messages
+        .set_body(empty.id, &body(None, true), BodyState::Full)
+        .await
+        .expect("set");
+    messages
+        .set_body(clean.id, &body(Some("fine"), false), BodyState::Full)
+        .await
+        .expect("set");
+
+    // Bodies a parser before this column wrote are stamped zero, whatever
+    // they carry.
+    connection
+        .execute("UPDATE messages SET body_parsed_with = 0", ())
+        .await
+        .expect("age the rows");
+
+    let again: Vec<MessageId> = messages
+        .needing_backfill(inbox, 10)
+        .await
+        .expect("query")
+        .into_iter()
+        .map(|candidate| candidate.message_id)
+        .collect();
+    assert_eq!(
+        again,
+        [flagged.id, empty.id],
+        "the two an older parser got wrong, newest first; a clean body is not \
+         fetched again for a stamp alone"
+    );
+
+    // Fetched again by the current parser -- still flagged, say -- they are
+    // done with: that is what keeps the backfill from spinning on a body no
+    // parser can improve.
+    messages
+        .set_body(flagged.id, &body(Some("é"), true), BodyState::Full)
+        .await
+        .expect("set");
+    messages
+        .set_body(empty.id, &body(None, true), BodyState::Full)
+        .await
+        .expect("set");
+    assert!(
+        messages
+            .needing_backfill(inbox, 10)
+            .await
+            .expect("query")
+            .is_empty(),
+        "a body the current parser wrote is never fetched again, caveat or not"
+    );
+}

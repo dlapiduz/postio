@@ -419,6 +419,14 @@ CREATE TABLE messages (
     -- Whether decoding the body hit a charset or transfer-encoding problem the
     -- reader should disclose rather than hide.
     body_encoding_problems  INTEGER NOT NULL DEFAULT 0,
+    -- Which parser wrote `body_text`/`body_html`
+    -- (`postio_model::mime::PARSER_VERSION`). A body is fetched once and the
+    -- raw bytes are not kept, so a parser fix cannot reach a stored body by
+    -- re-parsing it; what it can do is fetch again the rows it got wrong.
+    -- A row below the current version that carried the caveat is a backfill
+    -- candidate once more (an empty body from a failed decode carries it
+    -- too). Zero is "a parser before this column existed".
+    body_parsed_with        INTEGER NOT NULL DEFAULT 0,
     -- Lines in `body_text`, for the reader's "show more" threshold, so that
     -- decision never loads the body.
     body_line_count         INTEGER,
