@@ -675,13 +675,13 @@ async fn a_cancelled_fetch_stores_nothing() {
 /// Whether `id` has been through `index_body` at all.
 ///
 /// `body_search` is `NULL` until it has and the **empty string** after it,
-/// even for a message with no words — the column is the record that indexing
-/// happened, and #500's infinite loop is what "tried, nothing there" spelled
-/// as `NULL` cost.
+/// even for a message with no words — a row in `message_search_bodies` is the
+/// record that indexing happened, and #500's infinite loop is what "tried,
+/// nothing there" spelled as a missing row cost.
 async fn body_is_indexed(connection: &postio_storage::Checkout, id: MessageId) -> bool {
     postio_storage::sql::exists(
         connection,
-        "SELECT 1 FROM messages WHERE id = ?1 AND body_search IS NOT NULL",
+        "SELECT 1 FROM message_search_bodies WHERE message_id = ?1",
         bind![id.get()],
     )
     .await
@@ -697,7 +697,7 @@ async fn body_is_indexed(connection: &postio_storage::Checkout, id: MessageId) -
 async fn body_matches(connection: &postio_storage::Checkout, id: MessageId, query: &str) -> bool {
     postio_storage::sql::exists(
         connection,
-        "SELECT 1 FROM messages WHERE id = ?1 AND fts_match(body_search, ?2)",
+        "SELECT 1 FROM message_search_bodies WHERE message_id = ?1 AND fts_match(body_search, ?2)",
         bind![id.get(), postio_model::fold::fold(query)],
     )
     .await

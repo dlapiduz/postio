@@ -46,7 +46,7 @@ async fn main() {
 
     let messages = count("SELECT count(*) FROM messages").await;
     let bodied = count("SELECT count(*) FROM messages WHERE body_text IS NOT NULL").await;
-    let indexed = count("SELECT count(*) FROM messages WHERE body_search IS NOT NULL").await;
+    let indexed = count("SELECT count(*) FROM message_search_bodies").await;
     let headers = count("SELECT count(*) FROM message_headers").await;
     let threads = count("SELECT count(*) FROM threads").await;
     let mailboxes = count("SELECT count(*) FROM mailboxes").await;
@@ -84,7 +84,7 @@ async fn main() {
          + length(coalesce(body_html, ''))), 0) FROM messages")
     .await;
     let search_bytes =
-        sum("SELECT coalesce(sum(length(coalesce(body_search, ''))), 0) FROM messages").await;
+        sum("SELECT coalesce(sum(length(body_search)), 0) FROM message_search_bodies").await;
     let envelope_bytes = sum("SELECT coalesce(sum(length(coalesce(subject, '')) \
          + length(coalesce(preview, '')) + length(coalesce(remote_id, ''))), 0) FROM messages")
     .await;

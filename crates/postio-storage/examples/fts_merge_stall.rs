@@ -54,7 +54,9 @@ async fn main() {
     for n in 1..=bodies {
         connection
             .execute(
-                "UPDATE messages SET body_search = ?2 WHERE id = ?1",
+                "INSERT INTO message_search_bodies (message_id, body_search)
+                 VALUES (?1, ?2)
+                 ON CONFLICT (message_id) DO UPDATE SET body_search = excluded.body_search",
                 postio_storage::sql::bind![n, body(n)],
             )
             .await

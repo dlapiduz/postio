@@ -123,7 +123,7 @@ pub async fn ensure_schema(connection: &Connection) -> Result<()> {
         postio_storage::sql::batch(
             connection,
             "DROP INDEX IF EXISTS messages_body_fts;
-             UPDATE messages SET body_search = NULL;",
+             DELETE FROM message_search_bodies;",
         )
         .await?;
     }
@@ -161,17 +161,22 @@ pub async fn ensure_schema(connection: &Connection) -> Result<()> {
 /// 2 — `list_id` on `search_documents` and `messages_fts` (48a2f96).
 const METADATA_SCHEMA_VERSION: i64 = 2;
 
-/// The body half's version: `message_bodies_fts` alone.
+/// The body half's version: `messages_body_fts` over `message_search_bodies`.
 ///
 /// **Kept separate deliberately.** Refilling the metadata half is cheap SQL;
-/// refilling this one means `index_local_bodies` re-reading and decompressing
-/// every body on disk — minutes on a real archive, against a search that answers
+/// refilling this one means `index_local_bodies` re-reading every body on
+/// disk — minutes on a real archive, against a search that answers
 /// metadata-only until it finishes. A metadata bump must never cost that,
-/// so this only moves when `message_bodies_fts` itself changes shape. On
-/// mismatch the table is dropped; the catch-up pass finds every message
-/// missing from it and refills in the background, batched and yielding
-/// (#500).
-const BODIES_SCHEMA_VERSION: i64 = 1;
+/// so this only moves when the body index itself changes shape. On
+/// mismatch `message_search_bodies` is cleared; the catch-up pass finds
+/// every message missing from it and refills in the background, batched and
+/// yielding (#500).
+///
+/// History:
+/// 1 — `messages_body_fts` on `messages.body_search`.
+/// 2 — the same index moved to its own table, `message_search_bodies`, so a
+///     header write no longer merges the body index (`fts_write_cost`).
+const BODIES_SCHEMA_VERSION: i64 = 2;
 
 /// The header half's version: `message_headers` and its name index.
 ///
@@ -258,26 +263,35 @@ pub async fn index_body(
     message_id: i64,
     body: Option<&str>,
 ) -> Result<()> {
-    // One `UPDATE` where there used to be a delete and an insert: the index
-    // is on a column of `messages` now rather than in a contentless table
-    // beside it, and a column can simply be written.
+    // An upsert into `message_search_bodies`, the sibling table the body
+    // index is on. A body write pays the index merge here; a header write to
+    // `messages` does not, which is the whole point of the table (see the
+    // schema).
     //
-    // **Empty string, not NULL, for a message with no text.** The column is
-    // also the record that this message *was* indexed:
-    // [`messages_missing_body_text`] asks for `body_search IS NULL`, and when
-    // "tried, nothing there" left the column NULL, every attachment-only
-    // message stayed a candidate for ever -- with one batch of them in a
-    // store, `postio_session::index_local_bodies` re-selected the same batch
-    // in a tight loop, burning a core and streaming write transactions for as
-    // long as the app ran (#500). An empty string is the cheapest possible
-    // spelling of "done", and it can never match.
+    // **A row is written even for a message with no text**, an empty string
+    // in it. The row's *presence* is the record that this message *was*
+    // indexed: [`messages_missing_body_text`] asks for messages with no row
+    // here, and when "tried, nothing there" left no row, every
+    // attachment-only message stayed a candidate for ever -- with one batch
+    // of them in a store, `postio_session::index_local_bodies` re-selected
+    // the same batch in a tight loop, burning a core and streaming write
+    // transactions for as long as the app ran (#500). An empty string can
+    // never match, and the row can never be re-selected.
     //
     // Folded on the way in, because the engine's tokenizer will not: see
     // [`postio_model::fold`], and note that the query path must apply the
     // same fold or the two stop meeting.
+    // `SELECT ... WHERE EXISTS`, not `VALUES`, so a message that is not here
+    // yet is a no-op rather than a foreign-key violation. `index_body` can
+    // race ahead of the message insert (the catch-up pass and a fresh sync
+    // touch the same rows), and the old column write was a `WHERE id = ?`
+    // `UPDATE` that simply matched nothing -- this keeps that contract now
+    // that the write is an insert into a table with a foreign key.
     connection
         .execute(
-            "UPDATE messages SET body_search = ?2 WHERE id = ?1",
+            "INSERT INTO message_search_bodies (message_id, body_search)
+             SELECT ?1, ?2 WHERE EXISTS (SELECT 1 FROM messages WHERE id = ?1)
+             ON CONFLICT (message_id) DO UPDATE SET body_search = excluded.body_search",
             (message_id, postio_model::fold::fold(body.unwrap_or(""))),
         )
         .await?;
@@ -361,7 +375,8 @@ pub async fn messages_missing_body_text(connection: &Connection, limit: u32) -> 
         "SELECT m.id
            FROM messages m
           WHERE m.body_state IN ('full', 'partial')
-            AND m.body_search IS NULL
+            AND NOT EXISTS (SELECT 1 FROM message_search_bodies b
+                             WHERE b.message_id = m.id)
           ORDER BY m.received_at DESC
           LIMIT ?1",
         [limit],
@@ -388,7 +403,8 @@ pub async fn messages_missing_body_text_for_account(
            FROM messages m
           WHERE m.account_id = ?1
             AND m.body_state IN ('full', 'partial')
-            AND m.body_search IS NULL
+            AND NOT EXISTS (SELECT 1 FROM message_search_bodies b
+                             WHERE b.message_id = m.id)
           ORDER BY m.received_at DESC
           LIMIT ?2",
         bind![account_id, limit],
@@ -398,23 +414,23 @@ pub async fn messages_missing_body_text_for_account(
     .map_err(Into::into)
 }
 
-/// Removes `account_id`'s rows from `message_bodies_fts`, so the next
+/// Removes `account_id`'s rows from `message_search_bodies`, so the next
 /// [`messages_missing_body_text_for_account`] call finds them again.
 ///
-/// `message_bodies_fts` is `contentless_delete = 1` (see the module docs on
-/// why it has to be), which is exactly what makes a targeted delete possible
-/// at all — a plain contentless table can only be appended to. Nothing here
-/// touches `messages`, `search_documents` or `messages_fts`: this account's
-/// mail is not going anywhere, only its body text drops out of the index
-/// until the catch-up pass puts it back.
+/// Nothing here touches `messages` or `search_documents`: this account's mail
+/// is not going anywhere, only its body text drops out of the index until the
+/// catch-up pass puts it back. Deleting the rows is what
+/// [`messages_missing_body_text_for_account`] then keys on — a message with
+/// no row in `message_search_bodies` is one to index.
 pub async fn clear_account_body_index(connection: &Connection, account_id: i64) -> Result<usize> {
-    // Clearing the column, not deleting a row: the body index is on
-    // `messages.body_search` now, and NULL is what the catch-up pass looks
-    // for. See `index_body` for why an indexed-but-textless message holds an
-    // empty string instead.
+    // Deleting the rows, not clearing a column: the body index is on
+    // `message_search_bodies` now, and a missing row is what the catch-up
+    // pass looks for. See `index_body` for why an indexed-but-textless
+    // message holds an empty-string row.
     Ok(connection
         .execute(
-            "UPDATE messages SET body_search = NULL WHERE account_id = ?1",
+            "DELETE FROM message_search_bodies
+              WHERE message_id IN (SELECT id FROM messages WHERE account_id = ?1)",
             [account_id],
         )
         .await? as usize)
@@ -639,20 +655,20 @@ CREATE TABLE IF NOT EXISTS search_documents (
 CREATE INDEX IF NOT EXISTS search_documents_fts ON search_documents
     USING fts (sender, recipients, subject, filenames, list_id);
 
--- Message bodies are not here, and that is the other half of the change.
+-- The body index, over its own table (`postio_storage::schema` defines
+-- `message_search_bodies`; this owns the index on it).
 --
--- `message_bodies_fts` was a contentless FTS5 table keyed by message id,
--- because the bodies lived in the blob store where no trigger could see them.
--- They are `messages.body_text` now, so the index goes on the column:
--- `messages.body_search`, which is the same text folded for search.
+-- `body_search` is `messages.body_text` folded for search. It sits in a
+-- sibling table rather than on `messages` so a header write does not merge
+-- the body index -- the table's own documentation in `postio_storage::schema`
+-- has the write-cost measurement.
 --
 -- `postio_model::fold` does the folding, and the query path applies the
 -- identical fold -- the engine's tokenizer lowercases and does not strip
 -- diacritics, so an unaccented query finds an accented word only because
--- both sides went through the same fold.
--- `index_body` is the writer; the column's own documentation in
--- `postio_storage::schema` says the rest.
-CREATE INDEX IF NOT EXISTS messages_body_fts ON messages USING fts (body_search);
+-- both sides went through the same fold. `index_body` and
+-- `MessageRepository::set_body` are the writers.
+CREATE INDEX IF NOT EXISTS messages_body_fts ON message_search_bodies USING fts (body_search);
 
 -- Arbitrary headers: the table `header:` matches against (ADR 0025 Q2).
 --
@@ -938,7 +954,7 @@ mod tests {
         let folded = postio_model::fold::fold(query);
         sql::all(
             connection,
-            "SELECT id FROM messages WHERE fts_match(body_search, ?1) ORDER BY id",
+            "SELECT message_id FROM message_search_bodies              WHERE fts_match(body_search, ?1) ORDER BY message_id",
             [folded.as_str()],
             |row| row.col(0),
         )

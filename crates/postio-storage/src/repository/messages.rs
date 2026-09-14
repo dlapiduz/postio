@@ -1595,11 +1595,18 @@ impl<'a> MessageRepository<'a> {
     /// what was there, so a refetch that finds no HTML part does not leave the
     /// previous fetch's HTML behind to be read as this message's.
     ///
-    /// Writes `body_search` with them, and that is not optional: it is
+    /// Indexes `body_search` alongside them, and that is not optional: it is
     /// `body_text` folded for the full-text index, and this is the only place
     /// a body is written. The engine's tokenizer lowercases and does not
-    /// remove diacritics, so `postio_index::fold` does — on this path and on
+    /// remove diacritics, so `postio_model::fold` does — on this path and on
     /// the query path, both or neither (FR-012).
+    ///
+    /// The fold lands in `message_search_bodies`, the sibling table the body
+    /// index is on (see the schema for why it is not a column) — an
+    /// empty-string row for an attachment-only body, so a message with no
+    /// text is still recorded as indexed and not re-selected for ever (#500).
+    /// Written in the same transaction as the body, so the two cannot come
+    /// apart: a search hit whose body the reader cannot show, or the reverse.
     ///
     /// # Errors
     ///
@@ -1610,35 +1617,47 @@ impl<'a> MessageRepository<'a> {
         body: &StoredBody,
         body_state: BodyState,
     ) -> Result<()> {
-        let changed = self
-            .connection
-            .execute(
-                "UPDATE messages
-                SET body_text = ?2, body_html = ?3, body_headers = ?4,
-                    body_search = ?5, body_state = ?6,
-                    body_headers_truncated = ?7, body_encoding_problems = ?8,
-                    body_line_count = ?9
-              WHERE id = ?1",
-                bind![
-                    id.get(),
-                    body.text,
-                    body.html,
-                    body.headers,
-                    body.text.as_deref().map(postio_model::fold::fold),
-                    body_state.as_str(),
-                    body.headers_truncated,
-                    body.encoding_problems,
-                    body.text.as_deref().map(line_count),
-                ],
-            )
-            .await?;
-        if changed == 0 {
-            return Err(Error::NotFound {
-                entity: "message",
-                id: id.get(),
-            });
-        }
-        Ok(())
+        sql::in_scope(self.connection, |transaction| async move {
+            let changed = transaction
+                .execute(
+                    "UPDATE messages
+                    SET body_text = ?2, body_html = ?3, body_headers = ?4,
+                        body_state = ?5,
+                        body_headers_truncated = ?6, body_encoding_problems = ?7,
+                        body_line_count = ?8
+                  WHERE id = ?1",
+                    bind![
+                        id.get(),
+                        body.text,
+                        body.html,
+                        body.headers,
+                        body_state.as_str(),
+                        body.headers_truncated,
+                        body.encoding_problems,
+                        body.text.as_deref().map(line_count),
+                    ],
+                )
+                .await?;
+            if changed == 0 {
+                return Err(Error::NotFound {
+                    entity: "message",
+                    id: id.get(),
+                });
+            }
+            transaction
+                .execute(
+                    "INSERT INTO message_search_bodies (message_id, body_search)
+                     VALUES (?1, ?2)
+                     ON CONFLICT (message_id) DO UPDATE SET body_search = excluded.body_search",
+                    bind![
+                        id.get(),
+                        postio_model::fold::fold(body.text.as_deref().unwrap_or("")),
+                    ],
+                )
+                .await?;
+            Ok(())
+        })
+        .await
     }
 
     /// Sets `body_state` on its own, without touching the stored body.
