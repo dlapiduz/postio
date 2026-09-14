@@ -623,6 +623,11 @@ where
         if done().await {
             return true;
         }
+        // A reader whose web process died is never going to paint; fail
+        // now, naming the death, rather than at the deadline.
+        if let Some(reason) = postio_gtk::web_process::take_death() {
+            panic!("a WebKit web process died ({reason}) while settling");
+        }
         tokio::time::sleep(std::time::Duration::from_millis(10)).await;
     }
     done().await

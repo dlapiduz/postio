@@ -1439,7 +1439,15 @@ pub fn settle_until(what: &str, done: impl Fn() -> bool) {
     postio_test_support::settle_until_within(
         postio_test_support::scaled(std::time::Duration::from_secs(120)),
         what,
-        || while glib::MainContext::default().iteration(false) {},
+        || {
+            while glib::MainContext::default().iteration(false) {}
+            // A document held by a dead web process is never going to
+            // arrive; fail now, naming the death, rather than at the
+            // deadline (`postio_gtk::web_process`).
+            if let Some(reason) = postio_gtk::web_process::take_death() {
+                panic!("a WebKit web process died ({reason}) while waiting for {what}");
+            }
+        },
         done,
     );
 }
