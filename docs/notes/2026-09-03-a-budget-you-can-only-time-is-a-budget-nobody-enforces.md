@@ -1,5 +1,14 @@
 # A budget you can only time is a budget nobody enforces (2026-09-03, #100)
 
+*Amended 2026-09-14:* the mechanism paragraphs below — rusqlite's `trace_v2`,
+the `Profile`/`Stmt` callbacks, FTS5's shadow tables, `Counts::nested` —
+describe the engine ADR 0038 replaced. `crates/postio-storage/src/test_support/counting.rs`
+now counts at the crate's own sql seam (statements and rows, exactly, where
+each query is issued), and `counting::scans` replaces the step counter by
+asking the planner whether a query *can* be cheap rather than how much it did.
+The lesson — measure the cause, not the budget — is unchanged and is what
+`bench.yml` still relies on: it compiles the bench targets and times nothing.
+
 `PRODUCT.md` §18 states three budgets — 500ms to a usable UI, 16ms per
 interaction, 100ms for local search — and both it and `CLAUDE.md` said they
 were enforced by benches in CI. They were not. `bench.yml` says so in its own

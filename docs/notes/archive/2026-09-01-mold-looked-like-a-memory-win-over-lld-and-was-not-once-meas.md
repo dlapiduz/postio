@@ -1,5 +1,7 @@
 # mold looked like a memory win over lld and was not, once measured correctly (2026-09-01)
 
+*Archived 2026-09-14: a measurement that rejected mold; superseded two days later by [mold is wired in, for memory](../2026-09-03-mold-is-wired-in-for-memory-and-fuse-ld-order-is-why-it-took.md), which re-measured after the debug info left the profile and adopted it.*
+
 Tried, benchmarked, and deliberately not adopted — recorded so nobody spends
 an afternoon re-deriving this. The hypothesis was reasonable: linking is the
 documented memory peak here, not compiling (see the `jobs = 2` comment in
