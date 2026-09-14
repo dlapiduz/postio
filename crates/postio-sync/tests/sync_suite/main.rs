@@ -26,6 +26,7 @@ mod discover;
 mod drafts;
 mod drain;
 mod initial;
+mod interactive_under_load;
 mod loopback;
 mod resync;
 mod resync_interactive_write;

@@ -93,6 +93,7 @@ fn master() -> StoreKey {
 }
 
 pub mod counting;
+pub mod gate_log;
 /// A migrated scratch database, shared by every connection its pool opens.
 ///
 /// It lives as long as the returned handle (clones included) and disappears

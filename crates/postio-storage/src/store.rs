@@ -191,6 +191,10 @@ impl WriteGate {
         if priority == WritePriority::Interactive {
             self.lock().interactive_waiting += 1;
         }
+        // The instrument behind the interaction-under-load gate: what this
+        // gate did, in order, for a test to count rather than time.
+        #[cfg(feature = "test-support")]
+        crate::test_support::gate_log::requested(priority);
         loop {
             // The future is created and *enabled* before the state is read,
             // which is what closes the lost-wake-up window: a permit released
@@ -210,6 +214,9 @@ impl WriteGate {
                     if priority == WritePriority::Interactive {
                         state.interactive_waiting -= 1;
                     }
+                    drop(state);
+                    #[cfg(feature = "test-support")]
+                    crate::test_support::gate_log::granted(priority);
                     return WritePermit {
                         inner: Arc::clone(&self.inner),
                     };
