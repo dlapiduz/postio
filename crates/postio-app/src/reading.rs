@@ -412,6 +412,7 @@ pub async fn install(window: &Window, wiring: &Wiring, feeds: &Feeds, showing: S
         offline: Rc::new(Cell::new(is_offline(&feeds.folders.status()))),
         queued: Cell::new(false),
         aimed: Cell::new(None),
+        engine: wiring.engine.clone(),
     });
     window.list().connect_cursor_moved(glib::clone!(
         #[weak]
@@ -649,6 +650,18 @@ struct Fill {
     /// change it still names a message this pane is no longer displaying.
     /// Either of those would make it the wrong thing to skip on.
     aimed: Cell<Option<MessageId>>,
+    /// The engine, so showing a message whose body is not here yet is what
+    /// fetches it.
+    ///
+    /// The backfill reaches every body eventually, but "eventually" is a
+    /// queue tens of thousands of messages long on a first sync — so opening
+    /// one has to jump it to the front rather than wait its turn.
+    /// [`Absent::Partial`] is precisely "headers synced, body not fetched",
+    /// and its own doc says a `request_body` is what leaves that state; this
+    /// is the caller that keeps that promise. A slot rather than an `Engine`,
+    /// because the pane is built before an account's engine is adopted
+    /// (`adopt_engine`), and reads empty until it is.
+    engine: postio_session::refresh::EngineSlot,
 }
 
 impl Fill {
@@ -763,12 +776,27 @@ impl Fill {
             // Started before the spawn: `read` borrows `self`, and a
             // `'static` task cannot carry that borrow.
             let answer = self.read(row.id);
+            let engine = self.engine.clone();
+            let runtime = self.runtime.clone();
             glib::spawn_future_local({
                 let pane = pane.clone();
                 async move {
                     let Ok(Some(loaded)) = answer.recv().await else {
                         return;
                     };
+                    // Not here yet. Fetch it, so a conversation the backfill
+                    // has not reached fills in as it is opened rather than
+                    // staying a stack of empty headers -- `body_arrived`
+                    // draws it into this same pane when it lands.
+                    if let crate::compose::Body::Absent(postio_gtk::reader::Absent::Partial) =
+                        &loaded.body
+                        && let Some(engine) = engine.get().cloned()
+                    {
+                        let id = row.id;
+                        runtime.spawn(async move {
+                            let _ = engine.request_body(id).await;
+                        });
+                    }
                     // The envelope first, and separately from the body: a
                     // message can have one without the other, and who it went
                     // to should be drawn as soon as it is known rather than
@@ -797,6 +825,8 @@ impl Fill {
 
     fn fill_reader(&self, reader: &postio_gtk::reader::Reader, message: MessageId) {
         let answer = self.read(message);
+        let engine = self.engine.clone();
+        let runtime = self.runtime.clone();
         glib::spawn_future_local({
             let reader = reader.clone();
             let offline_now = self.offline.clone();
@@ -804,6 +834,17 @@ impl Fill {
                 let Ok(Some(loaded)) = answer.recv().await else {
                     return;
                 };
+                // Not here yet? Fetch it. The conversation stack builds one
+                // of these per message, so this is what makes a thread whose
+                // bodies the backfill has not reached fill in as it is read.
+                if let crate::compose::Body::Absent(postio_gtk::reader::Absent::Partial) =
+                    &loaded.body
+                    && let Some(engine) = engine.get().cloned()
+                {
+                    runtime.spawn(async move {
+                        let _ = engine.request_body(message).await;
+                    });
+                }
                 // `set_message_header` is still called here, unlike before
                 // #487: the conversation entry above already carries
                 // sender/subject/date, so the reader's own copies of those
@@ -903,6 +944,8 @@ impl Fill {
         self.showing.set(Some(message));
 
         let answer = self.read(message);
+        let engine = self.engine.clone();
+        let runtime = self.runtime.clone();
         glib::spawn_future_local({
             let showing = self.showing.clone();
             let opened = self.opened.clone();
@@ -919,6 +962,19 @@ impl Fill {
                 // clicks and now it filters a held-down `j`.
                 if showing.get() != Some(message) {
                     return;
+                }
+                // After the guard, so only the message the pane settled on
+                // has its body fetched -- a held-down `j` that swept past
+                // this one asks for nothing. `Partial` is "headers here,
+                // body not yet"; the backfill reaches it eventually, this
+                // makes opening it now what jumps the queue.
+                if let crate::compose::Body::Absent(postio_gtk::reader::Absent::Partial) =
+                    &loaded.body
+                    && let Some(engine) = engine.get().cloned()
+                {
+                    runtime.spawn(async move {
+                        let _ = engine.request_body(message).await;
+                    });
                 }
                 paint(
                     &window,
@@ -974,12 +1030,28 @@ impl Fill {
             });
         }
 
-        // The stacked pane's per-entry repaint used to live here: it asked
-        // `reader_for(message)` for that message's own `Reader` and refilled
-        // it when a body landed. One document has no per-message readers --
-        // the whole thread is one `WebView` (ADR 0032) -- and its arrivals go
-        // through `ConversationView::set_thread_body`, which coalesces them
-        // into one redraw. Removed with the pane itself (#1426).
+        // And the one-document conversation pane, when the body is for a
+        // message it is showing. One `WebView` for the whole thread (ADR
+        // 0032), so this reads the body and hands it to
+        // `set_thread_body`, which coalesces arrivals into one redraw.
+        //
+        // Without this a conversation whose bodies the backfill had not
+        // reached stayed a stack of empty headers until it was closed and
+        // reopened -- `fill_thread` requested the bodies but nothing drew
+        // them when they landed. Guarded by `rows()` so a body for a thread
+        // that is not open is not inserted into the pane's map.
+        let conversation = window.conversation();
+        if conversation.rows().iter().any(|row| row.id == message) {
+            let answer = self.read(message);
+            glib::spawn_future_local(async move {
+                let Ok(Some(loaded)) = answer.recv().await else {
+                    return;
+                };
+                if let crate::compose::Body::Ready { body, .. } = loaded.body {
+                    conversation.set_thread_body(message, body);
+                }
+            });
+        }
     }
 
     /// Read whatever the pane is showing again and draw it.
