@@ -173,7 +173,13 @@ the panel — because `postio-gtk` cannot see `postio-storage`.
 
 ## Children
 
-1. Storage: `mailbox_roles` table, repository, migration 0006.
+1. Storage: `mailbox_roles` table, repository, migration 0006. *(As built:
+   the table is declared in `crates/postio-storage/src/schema.rs`'s `HEAD` —
+   it arrived as migration 0006, and the migrations went with the engine,
+   ADR 0038. `mailbox_role_refusals` shipped beside it and is not otherwise
+   mentioned here: one row per `(account_id, role)` recording that the
+   server refused the role, with when and what it said, so the retry is not
+   made again on a timer.)*
 2. Discovery: per-account overrides built from table + config on every pass;
    the engine's part becomes the config tier.
 3. Core/session: `MapMailboxRole` command, action, undo, event.

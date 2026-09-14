@@ -1,6 +1,8 @@
 # ADR 0009 — The AI subsystem
 
-- **Status:** Accepted — **GO** (2026-08-24)
+- **Status:** Accepted — **GO** (2026-08-24); not built as of 0.4.0 (there is
+  no `postio-ai`); amended 2026-09-14 for the Turso engine and the egress log
+  that landed, see below
 - **Date:** 2026-08-24
 - **Issue:** [#7 AI subsystem: summarize, draft reply, semantic search](https://github.com/dlapiduz/postio/issues/7)
 - **Related:** [ADR 0002](0002-extensible-command-vocabulary.md) (the seam this
@@ -43,9 +45,10 @@ because of what the code can reach, not because everybody remembered.
 
 `postio-ai` depends on `postio-model` (message types), `postio-core` (to
 register its commands) and `postio-storage` (embeddings, egress log). It
-**does not depend on `postio-imap`, `postio-smtp` or `postio-sync`**, and the
-`scripts/checks/check-crate-boundaries.py` rule that already guards two crates gains a
-third entry for exactly this.
+**does not depend on `postio-account` (`postio-imap`, when this was written),
+`postio-smtp` or `postio-sync`**, and `scripts/checks/check-crate-boundaries.py`
+— which guarded two crates then and guards ten now — gains an entry for
+exactly this.
 
 That is the whole enforcement of "AI must never send mail": there is no send in
 its dependency closure. A procedural rule ("the AI code must ask first") is one
@@ -101,7 +104,7 @@ enforces (`crates/postio-bench/benches/search_budget.rs`).
 **Decision: hybrid retrieval.**
 
 ```
-   query ──┬─► FTS5 executor            → candidates by literal match
+   query ──┬─► full-text executor       → candidates by literal match
            └─► vector scan (top-K)      → candidates by meaning
                      │
                      └─► merge, re-rank, return  (postio-index)
@@ -119,9 +122,9 @@ enforces (`crates/postio-bench/benches/search_budget.rs`).
   approximate-recall behaviour to explain. If `search_budget.rs` shows it
   missing 100 ms at realistic mailbox sizes, an ANN index becomes its own
   issue with a number attached — rather than being built speculatively now.
-- **A message with no embedding is not invisible.** FTS5 candidates are always
-  in the merge, so semantic search degrades to today's search rather than to
-  nothing.
+- **A message with no embedding is not invisible.** Full-text candidates (the
+  `USING fts` indexes; FTS5 when this was written) are always in the merge, so
+  semantic search degrades to today's search rather than to nothing.
 
 ---
 
@@ -188,6 +191,12 @@ Every provider call appends a row: timestamp, account, feature, provider id,
 locality, message ids included, total bytes sent, outcome. It is visible in the
 settings panel, and revoking consent is one action away from reading it.
 
+> **Amended 2026-09-14:** the log landed first for the mail protocols, as one
+> table — `egress_log` in `crates/postio-storage/src/schema.rs`, its
+> `subsystem` constrained to `'imap'`, `'smtp'` and `'discovery'` (#151). An
+> AI provider's rows belong in that table under a fourth `subsystem` value,
+> not in a table of their own.
+
 **The log records ids, counts and outcomes — never content.** That is the same
 rule as `ARCHITECTURE.md` §11's "logs never carry message content", and it is
 not a weakening: "on 3 March, 12 messages from this account went to this remote
@@ -207,7 +216,8 @@ One-Click guards already use.
 `postio-app` already has the send path in scope — which would make "AI cannot
 send mail" a promise rather than a fact.
 
-**A dedicated semantic index replacing FTS5.** Loses exact match, loses
+**A dedicated semantic index replacing the full-text indexes.** Loses exact
+match, loses
 operators, loses the one-language guarantee, and puts a 100 ms budget at the
 mercy of an approximate-nearest-neighbour recall parameter.
 
@@ -228,8 +238,11 @@ Linux desktop where the user very likely already has Ollama.
 
 ## Consequences
 
-- New crate `postio-ai`; a third entry in `check-crate-boundaries.py`; a
-  migration for `message_embeddings` and `ai_egress_log`.
+- New crate `postio-ai`; an entry in `check-crate-boundaries.py`; a
+  `message_embeddings` table in `crates/postio-storage/src/schema.rs` (there
+  are no migrations to write) and a fourth value in `egress_log.subsystem`'s
+  CHECK — the log that landed is one table, not an `ai_egress_log` beside it.
+  All of it still future work.
 - `postio-index` gains a merge step and keeps its budget bench as the gate.
 - `postio-search` does not change at all, which is the point.
 - The composer becomes the place drafted replies land, which is one more reason

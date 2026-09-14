@@ -53,8 +53,8 @@ misspelled it, which is the one case that does not need help.
 
 - Matching is unchanged, so saved searches, virtual folders and rules are unaffected by this feature existing. That is the point.
 - A suggestion is a query the user could have typed. Accepting it rewrites the box, and nothing downstream can tell the difference between an accepted suggestion and the same thing typed by hand.
-- The vocabulary comes from FTS5's `fts5vocab`, which needs no schema change.
-- The ranking is arithmetic over two strings and a count, so it lives in `postio-search` — the leaf that may not have `rusqlite` — and is tested without a database. Reading the vocabulary is `postio-index`'s half.
+- The vocabulary is rebuilt, on a search that found nothing, by scanning the newest `VOCABULARY_DOCUMENTS` (5,000) rows of `search_documents` and keeping the commonest `VOCABULARY_CAP` (4,096) terms (`crates/postio-index/src/executor.rs`) — metadata columns only, never body terms. It needs no schema change. *(As first written this read "FTS5's `fts5vocab`"; the engine keeps no term dictionary to read — ADR 0038.)*
+- The ranking is arithmetic over two strings and a count, so it lives in `postio-search` — the leaf `check-crate-boundaries.py` keeps free of the engine (`rusqlite`, `turso`, `turso_core`) — and is tested without a database. Reading the vocabulary is `postio-index`'s half.
 - It runs only when a query returned nothing, never on the typing path.
 - Nothing leaves the machine: the vocabulary is the local index.
 

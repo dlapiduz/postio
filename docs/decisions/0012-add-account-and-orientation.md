@@ -1,6 +1,7 @@
 # ADR 0012 — Adding a second account, and orienting a first-time user
 
-- **Status:** Accepted — **GO** (2026-08-24)
+- **Status:** Accepted — **GO** (2026-08-24); amended 2026-09-14 — built, and
+  the view-layer ban now names the current store engine
 - **Date:** 2026-08-24
 - **Issue:** [#64 Setup wizard: add-account flow and first-run keyboard orientation](https://github.com/dlapiduz/postio/issues/64)
 - **Related:** [ADR 0005](0005-multiple-accounts.md) (what a second account
@@ -20,7 +21,10 @@
 
 `postio-gtk/src/onboarding.rs` is unusually well set up for this, and its
 doc comment says why: it draws the form and nothing else, because the view
-layer may not link `io-imap` or `rusqlite`. The seam is already there —
+layer may not link `io-imap` or the store engine — `rusqlite` when this was
+written, `turso`/`turso_core` now, all three on
+`scripts/checks/check-crate-boundaries.py`'s banned list for `postio-gtk`.
+The seam is already there —
 `connect_probe` and `connect_submit` — with `postio-app/src/onboarding.rs`
 doing the probe, the connection test and the two writes on the other side.
 
@@ -31,8 +35,8 @@ doing the probe, the connection test and the two writes on the other side.
 | `Settings` as a view-owned shape, not `AccountSettings` | Built |
 | Probe on *commit*, never on keystroke, for the privacy reason | Built |
 | `onboarding::install` replacing the window's content | Built — and single-use by construction |
-| A path for an account to join a running app | **Absent** |
-| Anything that tells a new user the app is keyboard-first | **Absent** |
+| A path for an account to join a running app | Built since — `attach_account` in `crates/postio-app/src/lib.rs` (Q2) |
+| Anything that tells a new user the app is keyboard-first | Built since — `crates/postio-gtk/src/orientation.rs`, driven from `crates/postio-app/src/orientation.rs` (Q4–Q6) |
 
 ---
 
@@ -102,8 +106,9 @@ state: a stale `Settings` written into a dialogue the user re-opened for a
 different address, or a status set on a widget that is no longer in the tree.
 
 **Decision: fix #57 first, as part of this work rather than after it.** The
-mechanism already exists — `postio_imap::cancel::CancelToken`, which
-`discovery` takes and does not honour on every path — and closing the dialogue
+mechanism already exists — `postio_account::cancel::CancelToken`
+(`postio_imap::cancel` then), which `discovery` takes and does not honour on
+every path — and closing the dialogue
 must cancel the token. This is also the same token
 [ADR 0006](0006-oauth-and-provider-presets.md) hands to the OAuth flow, so
 getting it right once is worth doing before there are two callers.
@@ -180,8 +185,9 @@ demonstrated the thing it was going to teach them.
 
 ## Q7 — The boundary holds
 
-The issue's third criterion — no new `io-imap` or `rusqlite` in `postio-gtk` —
-falls out of the arrangement rather than needing care. The dialogue host is a
+The issue's third criterion — no new `io-imap` or store engine (`rusqlite`
+then, `turso` now) in `postio-gtk` — falls out of the arrangement rather than
+needing care. The dialogue host is a
 GTK presenter; the probe, the account write, the keyring entry and the engine
 start all happen in `postio-app`, which is where `compose.rs`, `feed.rs` and
 the existing `onboarding.rs` already join the two halves.

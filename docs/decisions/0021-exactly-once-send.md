@@ -110,7 +110,7 @@ Two durable marks replace the accidental one:
 1. **Immediately before `send_message`** — after the connection is open and
    authenticated, so that connect and auth failures stay ordinarily retryable —
    the draft goes to `DraftState::Sending`, committed.
-2. **Immediately after `send_message` returns `Ok`**, in one SQLite
+2. **Immediately after `send_message` returns `Ok`**, in one store
    transaction and before `quit()`, the `APPEND`, or anything else, the draft
    goes to `DraftState::Sent` with the time it was accepted.
 
@@ -293,6 +293,10 @@ second spelling of it anywhere is a bug in the design, not the code.
   depends on.
 - **A schema change**: `drafts.rfc_message_id`, and a `CHECK` widened for
   `'unconfirmed'`. The migrations test asserting the table list is unaffected.
+  *(ADR 0038: there are no migrations to test any more. Both are declared in
+  `crates/postio-storage/src/schema.rs`'s `HEAD`; the equivalent check is
+  `schema.rs`'s `declared()` and the test beside it, which read the object
+  list off `HEAD` — and a widened `CHECK` does not change that list either.)*
 - **A fifth drain outcome**, which every `match` over `Outcome` must answer,
   and a new field on `DrainReport` and `DrainSummary`.
 - **`send.rs`'s module docs are wrong and must be rewritten.** "A known gap …

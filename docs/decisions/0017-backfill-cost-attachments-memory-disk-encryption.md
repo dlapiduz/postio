@@ -6,6 +6,9 @@
   that engine is gone — as is ADR 0020's trained-dictionary row compression
   (its status says why). The conclusion stands (pages are not compressed),
   and blob-level zstd survives as shipped (`postio-storage/src/blob.rs`).
+  **Amended 2026-09-14** (specs/004-turso-store): the contentless-FTS,
+  partial-index, pragma and re-encrypt items in Axis 3 and Axis 4 are
+  annotated in place below; every measurement stands.
 - **Date:** 2026-08-26
 - **Amended:** 2026-08-27 — why blobs rather than compressed rows, and the
   dictionary deferred behind a measurement ([#399](https://github.com/dlapiduz/postio/issues/399))
@@ -29,6 +32,13 @@
   under the AEAD; the FTS5 index becomes contentless; the store gains a byte
   budget with eviction. Nothing here weakens ADR 0016: it is what makes ADR 0016
   affordable.
+
+> **Amended 2026-09-14 (specs/004-turso-store):** "the FTS5 index becomes
+> contentless" did not survive the engine. There is no contentless mode: the
+> full-text indexes are `CREATE INDEX … USING fts` over ordinary columns —
+> `search_documents_fts` over `search_documents`, `messages_body_fts` over
+> `message_search_bodies` (`crates/postio-index/src/index.rs`). The rest of
+> the decision line stands; Axis 3's first item says what replaced it.
 
 ---
 
@@ -67,8 +77,9 @@ is part of the floor rather than part of what can be freed.
 
 Three things follow immediately, and they are the whole of this ADR:
 
-1. **Ninety percent of a mailbox by weight is bytes FTS5 cannot index.** A PDF,
-   a JPEG and a ZIP contribute their filename to search and nothing else. The
+1. **Ninety percent of a mailbox by weight is bytes a full-text index cannot
+   index.** A PDF, a JPEG and a ZIP contribute their filename to search and
+   nothing else. The
    corpus that makes search complete — ADR 0016's own justification — is the
    1.43 GB, not the 12.43 GB.
 2. **The 5 MB cap is not a rounding error, it is half the mailbox**, and it
@@ -194,7 +205,11 @@ the same signature. **Blobs are stored zstd-compressed**, level 3, with a
 dictionary trained on the store's own text corpus and versioned in the blob
 header. **Superseded by ADR 0020**: text bodies move into SQLite rows and are
 compressed there, so the blob store's dictionary is not needed — what remains
-in it is attachments, which are incompressible.
+in it is attachments, which are incompressible. **And ADR 0020's own trained
+dictionary is gone with the engine (ADR 0038):** bodies are compressed per
+row, zstd level 3, no dictionary, and only when the frame is smaller than the
+text — `crates/postio-storage/src/body_codec.rs`; `body_dictionaries` is
+listed as deliberately absent in `crates/postio-storage/src/schema.rs`.
 
 Three constraints on how:
 
@@ -244,6 +259,13 @@ problem far larger than the saving. Decision: **no page compression, now or
 later** — shrink what is stored instead. Four things do that, in descending
 value:
 
+> **Amended 2026-09-14 (ADR 0038):** SQLCipher never went underneath — the
+> engine is Turso, encrypting with its own `aes256gcm` cipher (`Store::open`,
+> `crates/postio-storage/src/store.rs`). The conclusion stands for a plainer
+> reason: the engine offers no compressing VFS and no loadable extension, and
+> Postio's own per-row zstd (`body_codec.rs`) is the "shrink what is stored"
+> this paragraph asked for.
+
 1. **`messages_fts` becomes contentless.** This is the important one.
    `search_documents` is an ordinary table holding a **full copy of every
    message's body text** inside SQLite, existing only to feed an
@@ -259,11 +281,35 @@ value:
    re-indexes from the blob store rather than from a shadow table. That is a
    fair price for removing a duplicate of the whole corpus from the hot,
    encrypted, budget-gated path.
+
+   > **Amended 2026-09-14 (specs/004-turso-store):** there is no
+   > `messages_fts`, no `content=''`, no `snippet()`, `highlight()` or
+   > `rebuild` on this engine. The body index is `messages_body_fts`, a
+   > `USING fts` index over `message_search_bodies` — a sibling table holding
+   > each body folded for search, because the engine's tokenizer does not
+   > strip diacritics and an index cannot tokenise a compressed column
+   > (`crates/postio-index/src/index.rs`, `crates/postio-storage/src/schema.rs`).
+   > So the copy this item set out to remove exists, by necessity and as
+   > folded text. What came true by another route is the highlighting: Postio
+   > computes result highlights itself (`crates/postio-search/src/highlight.rs`).
+   > `search_documents` still holds the flattened metadata row its own index
+   > sits on.
+
 2. **Delete two indexes that index nothing.** `idx_recipients_draft` and
    `idx_attachments_draft` are not partial, so they index all 378,819 recipient
    rows and every attachment row — of which **zero** have a `draft_id`.
    `idx_recipients_draft` alone is 6 MB, 3.9% of the database. Adding
    `WHERE draft_id IS NOT NULL` is one migration and costs nothing.
+
+   > **Amended 2026-09-14 (specs/004-turso-store):** now actively wrong.
+   > Turso's planner will not read a partial index, so that `WHERE` would
+   > make the index unreadable and the query it exists for a table scan. The
+   > rule is that a `WHERE` on an index in `schema.rs` must be a constraint,
+   > never a size optimisation
+   > (`docs/notes/2026-09-12-a-partial-index-the-planner-will-not-read.md`).
+   > `idx_recipients_draft` and `idx_attachments_draft` are whole indexes on
+   > purpose, and the six megabytes are paid.
+
 3. **Normalize addresses out of `recipients`.** `recipients` and its indexes are
    **56 MB, 34% of the database** — 378,819 rows at 4.6 per message, each storing
    `address` and a near-duplicate `address_normalized`. An `addresses` table with
@@ -275,6 +321,15 @@ value:
    rewrites the whole database anyway and doing it twice is a second hours-long
    pass over a user's mailbox. This is a sequencing constraint on #300/#301, not
    a preference.
+
+   > **Amended 2026-09-14 (ADR 0038):** all dead. The store's setup sets no
+   > `auto_vacuum` or `page_size` (`cache_size` is the one tuning lever left,
+   > beside WAL, `busy_timeout` and `temp_store`); there is no
+   > drain-and-reencrypt migration — a SQLCipher store cannot be read by
+   > Turso at all, so an existing store is rebuilt by resyncing; and
+   > reclaiming pages is a full `VACUUM` gated by `Store::is_worth_reclaiming`
+   > (`crates/postio-storage/src/store.rs`), because the engine offers no
+   > incremental one. The sequencing constraint has nothing left to sequence.
 
 ### A byte budget, because the store is a cache
 
@@ -292,6 +347,11 @@ ADR 0014 is accepted and entirely unimplemented (#299, #300, #301). Full backfil
 changes its cost model, and the changes must be recorded *before* those three
 land rather than discovered by them.
 
+> **Amended 2026-09-14:** implemented since, and its *mechanism* amended by
+> [ADR 0038](0038-the-store-is-turso-not-sqlcipher.md) — Turso's `aes256gcm`
+> under `Store::open`, not SQLCipher. The threat model, and the six points
+> below, are unchanged by that.
+
 1. **The threat model's stakes change, though the model does not.** ADR 0014 was
    written when the local store held a few hundred messages per folder. Under
    ADR 0016 it holds **a complete replica of the user's mail**. Nothing in
@@ -308,6 +368,12 @@ land rather than discovered by them.
    benches that gate #300 must be re-baselined against a **fully backfilled**
    store, not against a seeded fixture, or they will certify a 163 MB database
    and ship against a 900 MB one.
+
+   > **Amended 2026-09-14 (ADR 0038):** history on both counts — the engine
+   > priced is not the one shipped, and there is no contentless FTS to keep
+   > the gate reachable. The gate itself (`search_budget.rs`, baselined
+   > against a backfilled store) is what survives.
+
 3. **The blob header must carry compression from day one.** #301 defines
    `magic ‖ nonce ‖ ciphertext‖tag`. Compression is a field in that header, not a
    later addition — retrofitting one into a format already written across a
@@ -354,6 +420,13 @@ larger than the saving. Row-level compression (`sqlite-zstd`, which does
 per-column zstd with automatic dictionary training — very nearly this issue, as
 a library) does not rescue that: it would have to be a loadable extension
 inside an encrypted database, and the store bundles rusqlite statically.
+
+> **Amended 2026-09-14 (ADR 0038):** SQLCipher did not go underneath and the
+> store bundles no `rusqlite`; the engine is Turso. The conclusion holds for
+> the same shape of reason — no VFS, no loadable extension — and the row-level
+> compression this paragraph could not have was written by hand instead:
+> `crates/postio-storage/src/body_codec.rs`, per row, no dictionary. The four
+> bullets below are about *attachments* and are untouched by any of it.
 
 But the deeper reason is that **the bytes are not shaped like rows**:
 
@@ -455,7 +528,8 @@ with no migration and no flag day. That was the point of reserving the field in
 - **`PRODUCT.md` §11 and §14 are rewritten, not patched.** Both currently say
   bodies are fetched lazily. Under ADR 0016 they are not: bodies are eager and
   complete, and lazy describes attachments alone. §6 regains its "bodies are not
-  in SQLite" rule via contentless FTS.
+  in SQLite" rule via contentless FTS. *(It did not: ADR 0020 put bodies in
+  `messages` rows, and there is no contentless index on this engine.)*
 - `BackfillPolicy` is unchanged in shape; `max_body_bytes` now measures the text
   axis, where it will essentially never bind, and a new `AttachmentPolicy`
   governs payloads.
@@ -469,7 +543,8 @@ with no migration and no flag day. That was the point of reserving the field in
   roughly nine times sooner than a whole-message backfill would.
 - #300/#301 acquire two hard prerequisites: the pragma choices in Axis 3 must be
   made before the re-encrypt migration, and the blob header must carry a
-  compression field.
+  compression field. *(The first is moot — no re-encrypt migration and no
+  pragmas to choose, per the Axis 3 amendment; the second shipped.)*
 - `docs/engineering-notes.md` records the measured shape of a real mailbox —
   90% payload by weight, 15% of messages carrying it — because every future
   sizing argument in this project will want that number and nobody should have
@@ -484,7 +559,9 @@ with no migration and no flag day. That was the point of reserving the field in
 - **If contentless FTS makes result highlighting materially worse** — highlights
   regenerated from the blob disagreeing with what FTS5 matched, on real queries —
   that reopens Axis 3's first item toward `detail=none` with content retained,
-  and the database pays for it.
+  and the database pays for it. *(Moot on this engine: there is no contentless
+  mode, and highlights are computed by `crates/postio-search/src/highlight.rs`
+  over text Postio holds either way.)*
 - **If per-part fetching costs more than it saves**, because a message with
   twelve small text parts becomes twelve round trips where one `BODY.PEEK[]`
   was one, the text axis needs part coalescing (a single `FETCH` naming several

@@ -119,7 +119,8 @@ other reasons rather than as its own change.
 > the rename alone, not the split #153 also sketched. Every reference in this
 > ADR below is left as `postio-imap`, the name that was true when each of
 > these decisions was made; read it as history, not as the crate's current
-> name.
+> name. The one exception is the file path in Q4's diagram, which a reader
+> would look up, so it reads as the tree has it.
 
 ---
 
@@ -185,7 +186,7 @@ toolchain.
 static, and layered with a user file at runtime.**
 
 ```
-  crates/postio-imap/data/providers.toml     ← the shipped table
+  crates/postio-account/data/providers.toml  ← the shipped table
         │  build.rs, using the same parser as the runtime
         ▼
   static PRESETS: &[Preset]                  ← unchanged shape, zero runtime cost

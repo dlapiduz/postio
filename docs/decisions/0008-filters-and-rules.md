@@ -1,13 +1,15 @@
 # ADR 0008 — Filters and rules: one language, two evaluators
 
-- **Status:** Accepted — **GO** (2026-08-24)
+- **Status:** Accepted — **GO** (2026-08-24); amended 2026-09-14 — the rules
+  engine designed here is not on `main`, see the note under the built table
 - **Date:** 2026-08-24
 - **Issue:** [#5 Filters and rules engine](https://github.com/dlapiduz/postio/issues/5)
 - **Related:** `docs/ARCHITECTURE.md` §6 (one matching language), §4 (selection
   is a predicate), [ADR 0005](0005-multiple-accounts.md)
 - **Decision:** the query language stays the only way to say *which messages*,
   and gains a **second evaluator** — an in-memory matcher in `postio-search`
-  beside the FTS5 executor in `postio-index`, held to agreement by a
+  beside the SQL executor in `postio-index` (FTS5 then, `USING fts` now),
+  held to agreement by a
   differential test. Rules live in a new **ordered `[[rules]]` array**, not in
   `[filters]`, because a map has no order and the issue requires one. A rule
   fires **when every fact it needs exists**, which is not always on arrival.
@@ -20,13 +22,22 @@
 |---|---|
 | Query parser, `Field`, `Filter`, `Clause`, `ParsedQuery` | Built (`postio-search`) |
 | Negation with a leading `-`, on operators and free text | Built |
-| FTS5 execution of a parsed query | Built (`postio-index/src/executor.rs`) |
+| Execution of a parsed query as SQL plus a full-text `MATCH` (FTS5 when measured; `USING fts` now) | Built (`postio-index/src/executor.rs`) |
 | `[filters.<name>] { query, pinned }` | Built (`config/src/filters.rs`), **no runtime reads it** |
 | `postio-config` deliberately keeping the query as *text* | Built, and the idiom this ADR extends |
-| Sidebar rendering of pinned filters | Absent |
-| Any rules engine | Absent |
-| `OR` in the query language | **Absent** — tokens are implicitly ANDed |
-| `body:` and `header:` operators | Absent |
+| Sidebar rendering of pinned filters | Built since — a pinned `[filters]` entry is a saved-search row in the sidebar (`crates/postio-gtk/src/config.rs`, `sidebar.rs`) |
+| Any rules engine | Absent — still, on `main`; see the note below |
+| `OR` in the query language | **Absent** — tokens are implicitly ANDed; still true on `main` |
+| `body:` and `header:` operators | `header:` built since (`Field::Header`, ADR 0025; `Filter::Header` in `crates/postio-index/src/executor.rs`). `body:` is not an operator: free text reaches bodies through `messages_body_fts` over `message_search_bodies` |
+
+> **Status 2026-09-14:** the rules engine this ADR designs — the matcher,
+> `OR`, `postio-model::rule`, `[[rules]]` in `postio-config`, the rules pass
+> in sync — is not on `main`. The work exists on the unmerged
+> `origin/feature/rules` branch;
+> [ADR 0028](0028-a-rule-runs-the-same-verb-a-keystroke-does.md) and
+> [ADR 0030](0030-a-rule-stages-where-it-can-be-carried-out.md) extend the
+> design and are in the same position. What did land is the language growth
+> the search bar needed on its own: `header:`, by ADR 0025.
 
 ---
 
@@ -34,8 +45,9 @@
 
 This is the question the issue does not ask and everything else depends on.
 
-`postio-index` executes a `ParsedQuery` by compiling it to SQL and an FTS5
-`MATCH`. A rule on arrival has no row to run SQL against — the sync pass is
+`postio-index` executes a `ParsedQuery` by compiling it to SQL and a full-text
+`MATCH` (FTS5's then; a `USING fts` index's now). A rule on arrival has no row
+to run SQL against — the sync pass is
 holding a `Message` it has just parsed and is deciding what to do with it
 before it is committed anywhere a query could see.
 
@@ -222,7 +234,7 @@ archive          trash          forward:<address>          stop
 > rules pass and the command bus call the same implementation.
 
 **Every action is local-first, exactly like a keystroke** (`ARCHITECTURE.md`
-§1): SQLite write, enqueue the remote operation, emit the event. There is no
+§1): a store write, enqueue the remote operation, emit the event. There is no
 rules-only mutation path, which means rules inherit offline behaviour,
 reconciliation and event flow for free.
 
