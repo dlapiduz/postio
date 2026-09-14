@@ -2800,3 +2800,59 @@ async fn a_body_an_older_parser_got_wrong_is_fetched_again_once() {
         "a body the current parser wrote is never fetched again, caveat or not"
     );
 }
+
+#[tokio::test]
+async fn a_stored_body_is_smaller_than_its_text_and_reads_back_whole() {
+    // Bodies are text in a column (ADR 0020) and were zstd frames until the
+    // engine changed, when the full-text index moved onto the column and an
+    // index cannot tokenise compressed bytes. The index reads its own folded
+    // table now (`message_search_bodies`), so the column is free to be small
+    // again: the spec accepted a 2.19x store on the text axis, and it does
+    // not have to.
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    let (account, inbox) = test_support::account_with_inbox(&connection).await;
+    let messages = MessageRepository::new(&connection);
+
+    let mut message = a_message(inbox, account.id, 400);
+    let id = messages.create(&mut message).await.expect("create");
+    // A newsletter's worth of markup: what most of a store's bytes are.
+    let html = "<tr><td class=\"cell\" style=\"padding:0 12px\">A line of the same shape as every other.</td></tr>\n".repeat(400);
+    let text = "A line of plain text that reads much like the one before it.\n".repeat(200);
+    let body = StoredBody {
+        text: Some(text.clone()),
+        html: Some(html.clone()),
+        headers: Some("Subject: hello\r\n".to_owned()),
+        headers_truncated: false,
+        encoding_problems: false,
+    };
+    messages
+        .set_body(id, &body, BodyState::Full)
+        .await
+        .expect("set");
+
+    let stored = messages.body(id).await.expect("read").expect("the body");
+    assert_eq!(stored, body, "what was written is what is read back");
+
+    let (html_bytes, text_bytes): (i64, i64) = postio_storage::sql::one(
+        &connection,
+        "SELECT length(body_html), length(body_text) FROM messages WHERE id = ?1",
+        [id.get()],
+        |row| {
+            use postio_storage::sql::RowExt;
+            Ok((row.col(0)?, row.col(1)?))
+        },
+    )
+    .await
+    .expect("the column sizes");
+    assert!(
+        (html_bytes as usize) < html.len() / 4,
+        "{html_bytes} bytes stored for {} bytes of markup: the column is not compressed",
+        html.len()
+    );
+    assert!(
+        (text_bytes as usize) < text.len() / 2,
+        "{text_bytes} bytes stored for {} bytes of text",
+        text.len()
+    );
+}

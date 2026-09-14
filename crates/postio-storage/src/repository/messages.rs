@@ -1396,11 +1396,11 @@ impl<'a> MessageRepository<'a> {
     /// Reads exactly the three columns it needs rather than a whole row: this
     /// is the reading pane's 16 ms path.
     ///
-    /// There is no decompression step any more. The parts were zstd frames
-    /// against a shared dictionary until the engine changed, and the full-text
-    /// index is an index on `body_text` now rather than a virtual table beside
-    /// it — an index cannot tokenise compressed bytes, so the column has to be
-    /// the text (`specs/004-turso-store`).
+    /// The text and HTML columns hold whichever shape [`crate::body_codec`]
+    /// chose per row -- a zstd frame, or the text itself -- and either reads
+    /// back as the text. They were text and nothing else while the full-text
+    /// index sat on `body_text` (an index cannot tokenise compressed bytes);
+    /// the index reads its own folded table now, so the column is small again.
     pub async fn body(&self, id: MessageId) -> Result<Option<StoredBody>> {
         sql::first(
             self.connection,
@@ -1409,9 +1409,11 @@ impl<'a> MessageRepository<'a> {
                FROM messages WHERE id = ?1",
             [id.get()],
             |row| {
+                let text: Option<Vec<u8>> = row.col(0)?;
+                let html: Option<Vec<u8>> = row.col(1)?;
                 Ok(StoredBody {
-                    text: row.col(0)?,
-                    html: row.col(1)?,
+                    text: text.map(crate::body_codec::unpack),
+                    html: html.map(crate::body_codec::unpack),
                     headers: row.col(2)?,
                     headers_truncated: row.col(3)?,
                     encoding_problems: row.col(4)?,
@@ -1628,8 +1630,10 @@ impl<'a> MessageRepository<'a> {
                   WHERE id = ?1",
                     bind![
                         id.get(),
-                        body.text,
-                        body.html,
+                        // Packed per row: zstd when that is smaller, the text
+                        // when it is not -- see `body_codec`.
+                        body.text.as_deref().map(crate::body_codec::pack),
+                        body.html.as_deref().map(crate::body_codec::pack),
                         body.headers,
                         body_state.as_str(),
                         body.headers_truncated,
