@@ -234,18 +234,11 @@ mod imp {
         /// the box is ever opened, so a pick can never answer a move the user
         /// abandoned two openings ago.
         pub pending_move: std::cell::Cell<bool>,
-        /// The context that had the keyboard before it went to the folders,
-        /// so `Esc` puts it back where it was rather than guessing `List`.
-        pub before_sidebar: std::cell::Cell<Option<Context>>,
-        /// The context that had the keyboard before it went to the parts
-        /// panel, restored when the panel closes — see `before_sidebar`.
-        pub before_parts: std::cell::Cell<Option<Context>>,
-        /// The context that had the keyboard before it went to the account
-        /// list in settings — see `before_sidebar` (#471).
-        pub before_accounts: std::cell::Cell<Option<Context>>,
-        /// The context that had the keyboard before it went to the
-        /// keybinding list in settings — see `before_sidebar` (#1016).
-        pub before_keys: std::cell::Cell<Option<Context>>,
+        /// Where the keyboard was before it went into the folders, the parts
+        /// panel or a list in settings (#471, #1016), so leaving each puts
+        /// it back where it was rather than guessing `List`. The rule is
+        /// [`postio_ui::focus::Returns`]'s; this only holds it.
+        pub returns: std::cell::RefCell<postio_ui::focus::Returns>,
         /// Set once `keys_list`'s own `EventControllerFocus` has been
         /// added — never during `Window::new`'s own construction. See
         /// `Window::ensure_keys_focus_controller`'s own doc for why.
@@ -437,19 +430,13 @@ impl Window {
         // needed one. Without it `j` here reached the window's own resolver
         // first and moved the message selection instead of walking the
         // tree; see `postio-14b`.
-        if self.context() != Context::Parts {
-            self.imp().before_parts.set(Some(self.context()));
-            self.set_context(Context::Parts);
-        }
+        self.enter_surface(Context::Parts);
     }
 
     /// Put the parts panel away.
     pub fn close_parts(&self) {
         self.parts().set_visible(false);
-        if self.context() == Context::Parts {
-            let previous = self.imp().before_parts.take().unwrap_or(Context::List);
-            self.set_context(previous);
-        }
+        self.leave_surface(Context::Parts);
     }
 
     /// The rows the list is holding for `thread`.
@@ -1646,22 +1633,12 @@ impl Window {
         focus.connect_enter(glib::clone!(
             #[weak(rename_to = window)]
             self,
-            move |_| {
-                if window.context() != Context::Sidebar {
-                    window.imp().before_sidebar.set(Some(window.context()));
-                    window.set_context(Context::Sidebar);
-                }
-            }
+            move |_| window.enter_surface(Context::Sidebar)
         ));
         focus.connect_leave(glib::clone!(
             #[weak(rename_to = window)]
             self,
-            move |_| {
-                if window.context() == Context::Sidebar {
-                    let previous = window.imp().before_sidebar.take();
-                    window.set_context(previous.unwrap_or(Context::List));
-                }
-            }
+            move |_| window.leave_surface(Context::Sidebar)
         ));
         sidebar.add_controller(focus);
 
@@ -1828,22 +1805,12 @@ impl Window {
         accounts_focus.connect_enter(glib::clone!(
             #[weak(rename_to = window)]
             self,
-            move |_| {
-                if window.context() != Context::Accounts {
-                    window.imp().before_accounts.set(Some(window.context()));
-                    window.set_context(Context::Accounts);
-                }
-            }
+            move |_| window.enter_surface(Context::Accounts)
         ));
         accounts_focus.connect_leave(glib::clone!(
             #[weak(rename_to = window)]
             self,
-            move |_| {
-                if window.context() == Context::Accounts {
-                    let previous = window.imp().before_accounts.take();
-                    window.set_context(previous.unwrap_or(Context::List));
-                }
-            }
+            move |_| window.leave_surface(Context::Accounts)
         ));
         settings.accounts_list().add_controller(accounts_focus);
 
@@ -2487,8 +2454,7 @@ impl Window {
         if !self.sidebar().focus_folders() {
             return;
         }
-        self.imp().before_sidebar.set(Some(self.context()));
-        self.set_context(Context::Sidebar);
+        self.enter_surface(Context::Sidebar);
     }
 
     /// Move the keyboard one pane along: sidebar, list, reader, round.
@@ -2496,24 +2462,19 @@ impl Window {
     /// #494: bare Tab had no entry in the table at all, so its top-level
     /// meaning was whatever GTK's native focus chain produced -- "sometimes
     /// it changes panes, sometimes it changes items within a pane". This is
-    /// the deliberate version.
+    /// the deliberate version, and the table is
+    /// [`postio_ui::focus::next_pane`]'s — the macOS app walks the same one.
     ///
     /// Three panes, always the same three. The drill-in used to make the
     /// middle one sometimes a thread column instead of the list (#1003);
     /// the list is only ever the list now, and the conversation is what the
     /// reading pane holds rather than a pane of its own.
     fn cycle_pane(&self, forward: bool) {
-        let next = match (self.context(), forward) {
-            (Context::Sidebar, true) => Context::List,
-            (Context::List | Context::Conversation, true) => Context::Reader,
-            (Context::Reader, true) => Context::Sidebar,
-            (Context::Sidebar, false) => Context::Reader,
-            (Context::List | Context::Conversation, false) => Context::Sidebar,
-            (Context::Reader, false) => Context::List,
-            // Tab does not resolve to this command anywhere else -- see
-            // `PANE_SURFACES` -- so any other context means the keymap and
-            // the registry disagree. Do nothing rather than guess a pane.
-            _ => return,
+        // Tab does not resolve to this command outside the panes -- see
+        // `PANE_SURFACES` -- so no next pane means the keymap and the
+        // registry disagree. Do nothing rather than guess one.
+        let Some(next) = postio_ui::focus::next_pane(self.context(), forward) else {
+            return;
         };
         self.focus_pane(next);
     }
@@ -2546,9 +2507,38 @@ impl Window {
 
     /// Give the keyboard back to whatever had it before the folders.
     fn leave_sidebar(&self) {
-        let previous = self.imp().before_sidebar.take().unwrap_or(Context::List);
-        self.set_context(previous);
+        self.leave_surface(Context::Sidebar);
         self.list().grab_focus();
+    }
+
+    /// Record that the keyboard's context is going into `surface`, and go.
+    ///
+    /// Idempotent: a focus controller firing for a child widget of a
+    /// surface the keyboard is already in changes nothing — see
+    /// [`postio_ui::focus::Returns::enter`].
+    fn enter_surface(&self, surface: Context) {
+        // The borrow ends before `set_context` runs anything.
+        let next = self
+            .imp()
+            .returns
+            .borrow_mut()
+            .enter(surface, self.context());
+        if let Some(next) = next {
+            self.set_context(next);
+        }
+    }
+
+    /// Give the keyboard's context back to whatever had it before
+    /// `surface`, if the keyboard is in `surface` at all.
+    fn leave_surface(&self, surface: Context) {
+        let previous = self
+            .imp()
+            .returns
+            .borrow_mut()
+            .leave(surface, self.context());
+        if let Some(previous) = previous {
+            self.set_context(previous);
+        }
     }
 
     /// Hand one invocation to everything listening, in both shapes.
@@ -3208,22 +3198,12 @@ impl Window {
         keys_focus.connect_enter(glib::clone!(
             #[weak(rename_to = window)]
             self,
-            move |_| {
-                if window.context() != Context::Keys {
-                    window.imp().before_keys.set(Some(window.context()));
-                    window.set_context(Context::Keys);
-                }
-            }
+            move |_| window.enter_surface(Context::Keys)
         ));
         keys_focus.connect_leave(glib::clone!(
             #[weak(rename_to = window)]
             self,
-            move |_| {
-                if window.context() == Context::Keys {
-                    let previous = window.imp().before_keys.take();
-                    window.set_context(previous.unwrap_or(Context::List));
-                }
-            }
+            move |_| window.leave_surface(Context::Keys)
         ));
         self.settings().keys_list().add_controller(keys_focus);
     }

@@ -38,6 +38,7 @@
 mod account;
 mod dwell;
 mod event;
+mod focus;
 mod keys;
 mod list;
 mod logging;
@@ -53,6 +54,7 @@ mod settings;
 pub use account::AccountFfi;
 pub use dwell::{DwellArmFfi, dwell_on_cursor};
 pub use event::{ConnectionStateFfi, FailureReasonFfi, UiEvent};
+pub use focus::next_pane;
 pub use keys::{KeyOutcomeFfi, ModifiersFfi};
 pub use list::{RowFfi, ScopeFfi};
 pub use logging::start_logging;
