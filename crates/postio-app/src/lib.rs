@@ -984,19 +984,7 @@ pub async fn start_syncing(window: &Window, wiring: &Wiring) {
         return;
     }
 
-    let engines = match engine::start_all(
-        &accounts,
-        &wiring.database,
-        wiring.blobs.clone(),
-        wiring.events.clone(),
-        wiring.secrets.clone(),
-        wiring.mailbox_roles.clone(),
-        wiring.backfill,
-        wiring.watch,
-        &wiring.egress,
-    )
-    .await
-    {
+    let engines = match engine::start_all(&accounts, wiring).await {
         Ok(engines) => engines,
         Err(refusal) => {
             // A sentence, not a hang. Starting some of the engines would
@@ -1036,19 +1024,7 @@ pub async fn attach_account(
     // to serve every enabled account, not every account that had an engine
     // when the window opened.
     let accounts = enabled_accounts(&wiring.database).await.len();
-    let started = engine::start_joining(
-        account,
-        accounts,
-        &wiring.database,
-        wiring.blobs.clone(),
-        wiring.events.clone(),
-        wiring.secrets.clone(),
-        wiring.mailbox_roles.clone(),
-        wiring.backfill,
-        wiring.watch,
-        &wiring.egress,
-    )
-    .await?;
+    let started = engine::start_joining(account, accounts, wiring).await?;
     if let Some(sync) = started {
         adopt_engine(window, wiring, account.id, sync).await;
     }

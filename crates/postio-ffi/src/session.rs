@@ -2330,21 +2330,11 @@ impl Session {
             return Ok(0);
         }
 
-        let started = postio_session::engine::start_all(
-            &accounts,
-            &wiring.database,
-            wiring.blobs.clone(),
-            wiring.events.clone(),
-            wiring.secrets.clone(),
-            wiring.mailbox_roles.clone(),
-            wiring.backfill,
-            wiring.watch,
-            &wiring.egress,
-        )
-        .await
-        .map_err(|refusal| SessionError::StoreUnavailable {
-            message: refusal.to_string(),
-        })?;
+        let started = postio_session::engine::start_all(&accounts, wiring)
+            .await
+            .map_err(|refusal| SessionError::StoreUnavailable {
+                message: refusal.to_string(),
+            })?;
 
         let count = started.len() as u32;
         for (_, engine) in started {
