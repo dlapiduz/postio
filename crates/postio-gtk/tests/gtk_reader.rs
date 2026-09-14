@@ -2267,16 +2267,23 @@ fn a_whole_thread_costs_one_web_process() {
     eprintln!("2 messages {short:?}, 30 messages {long:?}");
     window.set_visible(false);
 
+    // Compared as sets of pids, not as counts: the readers the earlier cases
+    // left alive are WebKit's to reap, and one of theirs exiting between two
+    // samples made a length comparison see "no new process" when this view's
+    // had plainly appeared (CI, 2026-09-14: `[.., 74179]` became
+    // `[.., 74321]`). What the claim is about is the processes *this* reader
+    // adds.
+    let spawned: Vec<_> = short.iter().filter(|pid| !before.contains(pid)).collect();
     assert_eq!(
-        short.len(),
-        before.len() + 1,
+        spawned.len(),
+        1,
         "the thread never rendered, or it cost more than one view's process \
          ({before:?} -> {short:?}), and either way the count below proves \
          nothing"
     );
-    assert_eq!(
-        long.len(),
-        short.len(),
+    let grown: Vec<_> = long.iter().filter(|pid| !short.contains(pid)).collect();
+    assert!(
+        grown.is_empty(),
         "a thirty-message thread cost more web processes than a two-message \
          one ({short:?} -> {long:?}), which is the whole claim of ADR 0032"
     );
