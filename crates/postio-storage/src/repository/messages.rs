@@ -1624,7 +1624,7 @@ impl<'a> MessageRepository<'a> {
                     SET body_text = ?2, body_html = ?3, body_headers = ?4,
                         body_state = ?5,
                         body_headers_truncated = ?6, body_encoding_problems = ?7,
-                        body_line_count = ?8
+                        body_line_count = ?8, body_parsed_with = ?9
                   WHERE id = ?1",
                     bind![
                         id.get(),
@@ -1635,6 +1635,9 @@ impl<'a> MessageRepository<'a> {
                         body.headers_truncated,
                         body.encoding_problems,
                         body.text.as_deref().map(line_count),
+                        // Stamped with the parser that produced it, so a later
+                        // parser can tell which rows it may want back.
+                        postio_model::mime::PARSER_VERSION,
                     ],
                 )
                 .await?;
@@ -1785,6 +1788,18 @@ impl<'a> MessageRepository<'a> {
     /// engine's own loop is between awaits. A body landing between two calls
     /// shifts the window by one, and the next call corrects it — this is a
     /// backlog being refilled, not a page a user is reading.
+    ///
+    /// # A body an older parser got wrong is a candidate again
+    ///
+    /// A body is fetched once and its raw bytes are not kept, so a parser fix
+    /// reaches it only by fetching it again. Every body is stamped with the
+    /// parser that wrote it (`body_parsed_with`); a row below the current
+    /// [`postio_model::mime::PARSER_VERSION`] that carried the decode caveat
+    /// is selected once more — and only those, because a body the older
+    /// parser read cleanly is not worth a round trip, and a body that came
+    /// out empty *from a failed decode* carries the caveat too. The fetch
+    /// stamps the current version whatever it finds, so a body no parser can
+    /// improve is asked for once, not for ever.
     pub async fn needing_backfill_from(
         &self,
         mailbox_id: MailboxId,
@@ -1797,25 +1812,25 @@ impl<'a> MessageRepository<'a> {
                     mailboxes.path, messages.remote_id
                FROM messages JOIN mailboxes ON mailboxes.id = messages.mailbox_id
               WHERE messages.mailbox_id = ?1
-                AND messages.body_state IN ('not_fetched', 'headers_only')
+                AND (messages.body_state IN ('not_fetched', 'headers_only')
+                     OR (messages.body_parsed_with < ?4
+                         AND messages.body_encoding_problems = 1))
                 AND messages.uid IS NOT NULL
                 AND messages.remote_id IS NOT NULL
                 AND messages.deleted_locally = 0
               ORDER BY messages.received_at DESC
               LIMIT ?2 OFFSET ?3",
-            bind![mailbox_id.get(), limit, offset],
+            bind![
+                mailbox_id.get(),
+                limit,
+                offset,
+                postio_model::mime::PARSER_VERSION
+            ],
             |row| read_backfill_candidate(row, mailbox_id),
         )
         .await
     }
 
-    /// One message's backfill candidate, if it still needs (part of) its body.
-    ///
-    /// For the interactive lane: the reading pane knows only which message was
-    /// opened, not which mailbox it lives in or what the server calls it, so
-    /// this looks both up rather than asking the caller to already know them.
-    /// `None` covers both "already has a full body" and "not there any more" —
-    /// either way there is nothing to fetch.
     /// What `account_id`'s mail costs and how much of it is local.
     ///
     /// See [`StorageFootprint`] for what the numbers mean and why they are
