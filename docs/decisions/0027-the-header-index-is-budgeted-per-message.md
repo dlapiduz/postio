@@ -20,7 +20,7 @@
 
 ADR 0025 Q3 set the gate as a share of `message_bodies_fts` and gave the reason: *"a relative figure rather than an absolute one, because it is the ratio that stays true on another machine and another mailbox."* The instinct is right and is this project's own — `PRODUCT.md` §18 gates counts rather than milliseconds precisely because a count is the same number on a developer's machine and on a shared runner. The mistake is in which relative figure.
 
-**The two objects are not the same kind of thing, and the difference is the entire ratio.** `message_bodies_fts` is `content = ''` — an inverted index that holds no text at all, which was the whole point of ADR 0016 moving the bodies there. `message_headers` holds every value verbatim, because ADR 0025 Q2 rejected an FTS table here on the ground that a substring match needs the string. So the ratio is not "how expensive is the header policy"; it is "how well does FTS5 compress this fixture's bodies", asked in a way that charges the answer to headers.
+**The two objects are not the same kind of thing, and the difference is the entire ratio.** `message_bodies_fts` is `content = ''` — an inverted index that holds no text at all, which was the whole point of ADR 0016 moving the bodies there. `message_headers` holds every value verbatim, because ADR 0025 Q2 rejected an FTS table here on the ground that a substring match needs the string. So the ratio is not "how expensive is the header policy"; it is "how well does FTS5 compress this fixture's bodies", asked in a way that charges the answer to headers. *(ADR 0038: the body index is `messages_body_fts`, a `USING fts` index over `message_search_bodies` — no `content = ''`, no FTS5 — and the objection is unchanged: the denominator is still an index's size over the fixture's bodies, which the header policy does not control.)*
 
 **It moves for reasons that have nothing to do with the policy under test.** #926's own measurements make the point without needing an argument:
 
@@ -31,6 +31,8 @@ ADR 0025 Q3 set the gate as a share of `message_bodies_fts` and gave the reason:
 | long threaded bodies, three ARC/DKIM signatures, 8 hops | 205% |
 | **short** bodies, one DKIM signature, 4 hops | 269% |
 | the fixture now committed in `header_index_size.rs` | **636%** |
+
+*(`message_bodies_fts`, here and in Q4's table, is the FTS5 body index these figures were taken from; its successor is `messages_body_fts` over `message_search_bodies` — ADR 0038.)*
 
 The fourth row is the tell. Nothing about the header policy changed between rows two and four; the *bodies* got shorter, the denominator shrank, and the header index "regressed" by 2.5x. A mailbox of two-line notifications — a real and common shape — fails hardest, and no cap can save it, because the cap is on the numerator. A gate a corpus can fail for a reason unrelated to what it gates is not a gate.
 
@@ -69,7 +71,7 @@ Bytes per message is relative in the way that matters and absolute in the way th
 
 It gives up portability across *corpora*: a personal mailbox on a small server carries ten fields where a Gmail-delivered list message carries twenty-five, so the figure is a property of the fixture as well as of the policy. That is a real loss and it is the smaller one, because the fixture is committed, deliberately heavy, and read as a **ceiling** — a lighter mailbox passes by definition. The ratio failed the opposite way: a lighter mailbox failed harder.
 
-**Count the index too.** The measurement as landed asks `dbstat` for `name = 'message_headers' OR name LIKE 'message\_headers\_%'` — a pattern written for FTS5's shadow tables, which `idx_message_headers_name` does not match. The index is 221 KB against the table's 1.30 MB on 400 messages: **the cost was being understated by 17%**, and a secondary index is part of what a policy costs. Both b-trees by name, and any future one with them.
+**Count the index too.** The measurement as landed asks `dbstat` for `name = 'message_headers' OR name LIKE 'message\_headers\_%'` — a pattern written for FTS5's shadow tables, which `idx_message_headers_name` does not match. The index is 221 KB against the table's 1.30 MB on 400 messages: **the cost was being understated by 17%**, and a secondary index is part of what a policy costs. Both b-trees by name, and any future one with them. *(ADR 0038: no shadow tables and no `dbstat` on this engine; the file-delta weighing in `header_index_size.rs` counts table and index together by construction.)*
 
 **The ceiling is 5 KiB and the headroom is deliberate.** Measured on the committed fixture, 400 messages: table 1,302,528 B, index 221,184 B, **3,809 B per message**. 5 KiB is about a third above that — enough to absorb ADR 0017's move to `page_size = 8192`, a b-tree fanout change, or a SQLite upgrade, and far too little to absorb a policy change. *(ADR 0038: 4,218 B on this engine, so the headroom is about a fifth, and the `page_size` move can no longer be made — the rationale it was reserved for is spent.)*
 
@@ -91,7 +93,7 @@ That number is the reason this ADR exists, and it is written here rather than le
 
 - **`[storage] max_bytes` must count it.** ADR 0017 gives the store a byte budget whose eviction reclaims *refetchable* blobs. `message_headers` is not a blob and is not refetchable in that sense — it rebuilds from `body_headers` with no network, which is cheaper than a refetch, not more expensive. It is therefore **fixed overhead** against that budget, not something the sweep can take, and the budget's accounting must include it from the start rather than discover it.
 - **Dropping it is not a silent option.** ADR 0025 Q5's rule is that nothing may *silently* answer "no such mail". A store that evicted the header index would have to say so, the way Q4 already has the backfill status line say how much of the mailbox `body:` can see. That is a coherent future design and it is not this decision; if `max_bytes` ever makes it necessary, it is a new question with the mechanism already in place.
-- **Encryption is unaffected.** ADR 0014's gate is the 100 ms search budget, and SQLCipher decrypts the pages a query touches. `header:` narrows on `name` through `idx_message_headers_name`, so it touches one name's range and not the table; the size shows up on disk and in `VACUUM`, not in the search budget.
+- **Encryption is unaffected.** ADR 0014's gate is the 100 ms search budget, and SQLCipher decrypts the pages a query touches. `header:` narrows on `name` through `idx_message_headers_name`, so it touches one name's range and not the table; the size shows up on disk and in `VACUUM`, not in the search budget. *(ADR 0038: read Turso's page encryption for SQLCipher — the same per-page shape. And `VACUUM` is now the store's only reclaim path, gated by `Store::is_worth_reclaiming`, which makes on-disk size the more expensive of the two places it shows up and the point sharper rather than weaker.)*
 
 ## Q4 — ADR 0025 Q2's "metadata scale" is wrong, and the right claim is stronger
 
@@ -99,7 +101,7 @@ Q2 defended a content table on the ground that *"headers under Q3's caps are met
 
 | | bytes per message |
 |---|---|
-| `search_documents` + `messages_fts` — the metadata half of the same index | 184 B |
+| `search_documents` + `messages_fts` (`search_documents_fts` since ADR 0038) — the metadata half of the same index | 184 B |
 | `messages` | 225 B |
 | `message_bodies_fts` | 524 B |
 | **`message_headers` + its index** | **3,809 B** |
@@ -118,13 +120,13 @@ The claim Q2 needed is a different one and it survives the measurement: **`messa
 
 **A share of the whole SQLite file.** Comparable in kind, portable, and it is how ADR 0017 talks — `idx_recipients_draft` at 3.9% of the database, `recipients` at 34%. Rejected because the denominator is whatever the fixture happens to create: this test's store holds no compressed body text and no blobs, so the header half measures 66% of the database, a figure about the fixture's omissions. Making the denominator honest means building a realistic store in a test that exists to measure one table, and the per-message figure is the same information without the machinery.
 
-**A share of `messages.body_headers`, the column the rows derive from.** The most attractive rejected option: same data, same database, same corpus, and it measures the real quantity — how much indexing headers costs over keeping them, which is where the two caps bite. It would be immune to body length entirely. Rejected on instrumentation: `dbstat` reports page usage per b-tree, not per column, so `body_headers` cannot be separated from the rest of the `messages` row without a second store built to hold nothing else. Worth revisiting if a per-column measurement ever becomes cheap; the per-message ceiling gates the same regressions today.
+**A share of `messages.body_headers`, the column the rows derive from.** The most attractive rejected option: same data, same database, same corpus, and it measures the real quantity — how much indexing headers costs over keeping them, which is where the two caps bite. It would be immune to body length entirely. Rejected on instrumentation: `dbstat` reports page usage per b-tree, not per column, so `body_headers` cannot be separated from the rest of the `messages` row without a second store built to hold nothing else. *(ADR 0038: the right rejection with a dead instrument — there is no `dbstat` here at all, and a file delta cannot separate a column either.)* Worth revisiting if a per-column measurement ever becomes cheap; the per-message ceiling gates the same regressions today.
 
 **Ship `header:` without a size gate at all.** ADR 0025 Q3's third forbidden door, and it stays shut. The reason to gate is not that the number might be large — it is 310 MB and that is now recorded — but that nothing else in the tree notices when a schema change doubles it.
 
 ## Consequences
 
-- `crates/postio-index/tests/header_index_size.rs` replaces its ratio assertion with the per-message ceiling, counts `idx_message_headers_name` alongside the table, and runs in the default suite: the `#[ignore]` and its pointer at #1041 both go.
+- `crates/postio-index/tests/index_suite/header_index_size.rs` replaces its ratio assertion with the per-message ceiling, counts `idx_message_headers_name` alongside the table, and runs in the default suite: the `#[ignore]` and its pointer at #1041 both go.
 - ADR 0025 Q3's budget sentence and Q2's "metadata scale" sentence are marked amended in place, pointing here.
 - `HEADERS_SCHEMA_VERSION` does **not** move. Neither cap changes, so no store is refilled and nothing re-indexes — which is the cheapest possible outcome of this decision and a reason to prefer it on its own.
 - #926's last acceptance criterion is met by that test change, and #926 closes with it.

@@ -87,3 +87,12 @@ inside one engine. This is a different file format: the old store cannot be
 opened, so there is nothing to drain. The maintainer's instruction was explicit
 ("we can blow the current store"), and `postio_session::open_store_at` carries
 a comment where the migration call used to be.
+
+> **Amended 2026-09-14 (specs/004-turso-store):** the note this ADR wrote
+> into ADR 0020's status line — "bodies are plain `TEXT`" — was true for as
+> long as the body index sat on the body column itself. Once the index moved
+> to its own folded table, `message_search_bodies`, the body column was free
+> to be small again, and `crates/postio-storage/src/body_codec.rs` restored
+> per-row zstd (level 3, no trained dictionary — `body_dictionaries` stays
+> gone), storing the frame only where it is smaller than the text. ADR 0020's
+> status line carries the same amendment.

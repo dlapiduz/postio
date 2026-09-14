@@ -1,6 +1,7 @@
 # ADR 0030 — A rule stages where it can be answered *and* carried out
 
-- **Status:** Accepted (2026-09-06)
+- **Status:** Accepted (2026-09-06); the rules engine it amends is on the
+  unmerged `feature/rules` branch, not on `main` (as of 2026-09-14)
 - **Date:** 2026-09-06
 - **Decision by:** `/ux-architect`, on [#1142](https://github.com/dlapiduz/postio/issues/1142), which was filed `needs-architecture` because #481 could land every action except `forward:` without it.
 - **Issue:** [#1142](https://github.com/dlapiduz/postio/issues/1142)
@@ -13,7 +14,8 @@
 ## The question
 
 `RuleSet::compile` derives `Stage` from the query and nothing else
-(`postio-search/src/rules.rs`):
+(`postio-search/src/rules.rs` — on the unmerged `feature/rules` branch, not
+on `main`, where none of the rules engine exists yet):
 
 ```rust
 let stage = if needs_body(&query) { Stage::OnBody } else { Stage::OnArrival };

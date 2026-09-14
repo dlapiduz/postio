@@ -1,6 +1,7 @@
 # ADR 0003 — Rich-text (HTML) compose
 
-- **Status:** Accepted — **GO** (2026-08-24)
+- **Status:** Accepted — **GO** (2026-08-24); amended 2026-09-14, see the
+  notes below — everything it decided is built, one crate name changed
 - **Date:** 2026-08-24
 - **Issue:** [#3 Rich-text (HTML) compose](https://github.com/dlapiduz/postio/issues/3), under [#17 Epic: Compose](https://github.com/dlapiduz/postio/issues/17)
 - **Related:** bead `postio-3o8f`; issues [#12](https://github.com/dlapiduz/postio/issues/12) (rich signatures), [#13](https://github.com/dlapiduz/postio/issues/13) (`$EDITOR`)
@@ -28,14 +29,18 @@ More than it looks, and it changes the shape of the work. Measured at `37c10b8`:
 | `MessageBody { text, html }` | Built (`model/src/message.rs:18`) |
 | `multipart/alternative` on send | **Built** — `outgoing.rs:163-166`, with a passing round-trip test |
 | Inline images as `cid:` parts | **Built** — `an_inline_image_round_trips_with_its_content_id_and_is_referenced_from_the_html` passes |
-| Draft persistence for HTML | **Built** — `drafts.body_html` exists (`0001_initial_schema.sql:331`) |
-| Reading HTML safely | Built — `reader/sanitize.rs` (ammonia), hardened `WebView`, `postio-cid:` scheme |
-| Composing HTML | **Absent** — `composer.rs:279` is a `gtk::TextView` |
-| Generating `text/plain` | **Absent** — no HTML→text exists anywhere in the tree |
-| Quoting an HTML message | **Absent by decision** — `reply.rs:157`: "HTML-only content is not quoted" |
+| Draft persistence for HTML | **Built** — `drafts.body_html` (`crates/postio-storage/src/schema.rs`) |
+| Reading HTML safely | Built — `crates/postio-body/src/sanitize.rs` (ammonia; moved out of the reader by ADR 0004), hardened `WebView`, `postio-cid:` scheme |
+| Composing HTML | **Built** — the composer holds `crate::editor::Editor`, a `contenteditable` WebView (`crates/postio-gtk/src/editor.rs`); it was a `gtk::TextView` when this was measured |
+| Generating `text/plain` | **Built** — `postio_body::Document::to_text` (`crates/postio-body/src/document.rs`) |
+| Quoting an HTML message | **Built** — `crates/postio-body/src/quote.rs`, [ADR 0033](0033-a-reply-quotes-what-the-reader-shows.md); "HTML-only content is not quoted" was the rule when this was measured |
 
 Criterion 2 is half-built at the MIME layer with no generator. Criterion 3 is
 currently a documented non-feature.
+
+> **Amended 2026-09-14:** the two sentences above describe `37c10b8`, when
+> the last three rows read *Absent*. All three criteria are met now; the rows
+> were rewritten to say where each piece lives.
 
 ---
 
@@ -83,9 +88,10 @@ the single most important constraint in this ADR:
 
 **No tables, no colours, no font control, no arbitrary CSS.** Each is a fresh
 sanitisation, round-trip and `to_text()` problem, and none is in issue #3's
-scope (bold, italic, lists, links, inline images). `reader/sanitize.rs` already
-strips `style` on the way *in* so Postio's CSS always wins; emitting it on the
-way out would be inconsistent with that.
+scope (bold, italic, lists, links, inline images). The sanitiser
+(`crates/postio-body/src/sanitize.rs`) already strips `style` on the way *in*
+so Postio's CSS always wins; emitting it on the way out would be inconsistent
+with that.
 
 ## Q2 — What is the editor?
 
@@ -161,9 +167,9 @@ acceptance criteria, not advice.
 1. **The composer WebView is a separate view with its own settings.** The
    reader's WebView keeps JS off. Nothing here relaxes the reader.
 2. **Quoted content is sanitised before it is ever inserted** — through the
-   existing `reader/sanitize.rs` path, reduced to the Q1 subset. Hostile markup
-   never reaches the DOM, so enabling script in that DOM is not enabling script
-   *beside* attacker markup.
+   existing sanitiser (`crates/postio-body/src/sanitize.rs` since ADR 0004),
+   reduced to the Q1 subset. Hostile markup never reaches the DOM, so enabling
+   script in that DOM is not enabling script *beside* attacker markup.
 3. **No network from the composer view.** No remote loads, ever. Enforced the
    way the reader enforces it — a custom scheme handler that resolves `cid:`
    from the blob store and fails everything else, plus a CSP with no remote
@@ -209,7 +215,7 @@ Option<Document>)` — or a small `QuoteSource` trait — keeps `postio-model`
 pure. The HTML→`Document` parser and the sanitiser live in a new crate above it.
 
 That crate is the `postio-ui` extraction proposed in
-`architecture-review-2026-08.md` §2: `sanitize.rs`, `quote.rs` and
+`docs/archive/architecture-review-2026-08.md` §2: `sanitize.rs`, `quote.rs` and
 `allowlist.rs` are on its list of toolkit-free code trapped in `postio-gtk`,
 ~760 lines with zero or near-zero GTK references. **Issue #3 is the forcing
 function for that extraction** — the first feature that genuinely cannot be
@@ -260,7 +266,9 @@ advantages are precisely the costs this design accepts:
 - **`postio-gtk`** gains the composer WebView, its bundled editor script, and
   formatting commands; `composer.rs:554` stops synthesising `MessageBody` from
   a `GtkTextBuffer`.
-- **`postio-storage`** needs no migration — `drafts.body_html` already exists.
+- **`postio-storage`** changes nothing — `drafts.body_html` already exists
+  (`crates/postio-storage/src/schema.rs`; there are no migrations on this
+  engine to need or not need).
 - **`ARCHITECTURE.md` §11 already covers this** — refined 2026-08-24 to scope
   the no-script rule to message-derived content in both directions. The
   hardening requirements in Q2 are what implement it.

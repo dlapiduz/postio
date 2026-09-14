@@ -39,7 +39,10 @@ does an extension contribute".
 
 **Postio has a second frontend scheduled.** A native macOS frontend over the
 same engine, Swift over Rust, thirteen of fifteen crates already building
-unchanged. Every architectural boundary in this workspace — `postio-core` has
+unchanged. *(Written 2026-08-28; the frontend is built now — `macos/`, over
+`crates/postio-ffi`, the read-only slice — and the count was of a
+fifteen-crate workspace that has twenty. The exclusion set, `postio-gtk` and
+`postio-app`, is unchanged.)* Every architectural boundary in this workspace — `postio-core` has
 no GTK, `postio-gtk` has no SQL or protocol — exists to keep that possible,
 and ADR 0019 turned the possibility into a plan.
 

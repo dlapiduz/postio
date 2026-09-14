@@ -34,8 +34,10 @@ options assume facts that are not true today, and reading the code first moves
 the decision.
 
 **1. `messages.body_headers` is always NULL.** The column exists, is
-zstd-compressed against the trained dictionary, and is covered by SQLCipher —
-and *nothing in the workspace writes it*. Both backfill paths construct
+zstd-compressed against the trained dictionary, and is covered by SQLCipher
+*(as built: stored as plain `TEXT` — `body_codec` packs `body_text` and
+`body_html` only, and there is no dictionary — and covered by the engine's
+page encryption, ADR 0038)* — and *nothing in the workspace writes it*. Both backfill paths construct
 `StoredBody { headers: None, .. }` on purpose
 (`crates/postio-sync/src/backfill.rs:1108`, `:1299`), with the reason stated at
 the call site:
@@ -75,7 +77,9 @@ exists to catch.
 
 **Decision: the sync paths stop passing `None` and store the block.**
 
-It is the cheapest place available. Bodies pay for the dictionary already, and
+It is the cheapest place available. Bodies pay for the dictionary already
+*(no dictionary since ADR 0038, and the header block is stored uncompressed
+as built — the page encryption is what it shares with the bodies)*, and
 a header block is the most compressible text in a mailbox — the same `Received`
 boilerplate, the same `Content-Type` lines, the same DKIM field names, on every
 message from a given provider. ADR 0020 measured 2.19x on bodies; headers
@@ -109,7 +113,10 @@ and matched by substring; that is a `LIKE` on a column, not an inverted index.
 
 **A contentless FTS table cannot say which message a match belongs to.**
 `message_bodies_fts` gets away with `content = ''` because its rowid *is* the
-message id. One FTS row per header cannot do that — a message has many headers
+message id. *(That table went with FTS5. On this engine the body index is
+`messages_body_fts` over `message_search_bodies`, whose primary key is
+`message_id` — the same one-row-per-message property, and the argument that
+follows holds unchanged; ADR 0038.)* One FTS row per header cannot do that — a message has many headers
 — so the rowid has to be a header id, and mapping it back to a message needs a
 side table holding `(rowid, message_id)`. That side table is a content table
 with the text removed; having built it, the honest thing is to put the value in
@@ -128,7 +135,8 @@ it.
 > **"Metadata scale" is wrong, and
 > [ADR 0027](0027-the-header-index-is-budgeted-per-message.md) Q4 replaces it
 > (2026-09-04).** Measured, `message_headers` and its index cost 3,809 bytes a
-> message where `search_documents` and `messages_fts` together cost 184 — it is
+> message where `search_documents` and `messages_fts` *(the FTS5 name;
+> `search_documents_fts` since ADR 0038)* together cost 184 — it is
 > seventeen times the metadata half of the index it sits in. The conclusion
 > survives on a better reason than the one given here: what made
 > `search_documents.body` unacceptable was that it was *unbounded*, and a
@@ -152,14 +160,20 @@ CREATE TABLE IF NOT EXISTS message_headers (
     value      TEXT    NOT NULL,   -- unfolded, RFC 2047-decoded, truncated per Q3
     ordinal    INTEGER NOT NULL,   -- occurrence index within the message, wire order
     PRIMARY KEY (message_id, name, ordinal)
-) WITHOUT ROWID;
+);
 
 CREATE INDEX IF NOT EXISTS idx_message_headers_name ON message_headers (name, message_id);
 ```
 
+*(The table closed with `WITHOUT ROWID` until ADR 0038 — see the status line;
+the block above is the shape `crates/postio-index/src/index.rs` declares now.)*
+
 `ON DELETE CASCADE` rather than a trigger: unlike `message_bodies_fts`, this is
 an ordinary table and the foreign key does the work `trg_message_bodies_fts_ad`
-had to be written by hand to do.
+had to be written by hand to do. *(ADR 0038: that trigger went with the
+virtual table. `messages_body_fts` is an index on an ordinary table now,
+`message_search_bodies`, whose rows cascade the same way — so the contrast is
+history, and the mechanism is the one everything uses.)*
 
 `header:name` compiles to `EXISTS (SELECT 1 FROM message_headers WHERE
 message_id = m.id AND name = ?)`; `header:name=value` adds
@@ -210,7 +224,8 @@ test should be pointed at.
 
 **The budget, and what happens if it is missed.** The size test required by
 #884 measures `message_headers` against `message_bodies_fts` on the same
-corpus with `dbstat`, exactly as `body_index_size.rs` does. The budget is
+corpus with `dbstat`, exactly as `body_index_size.rs` does *(both size tests
+weigh a file delta now; this engine has no `dbstat` — ADR 0038)*. The budget is
 **≤ 25% of what the body index costs on the same corpus**. A relative figure
 rather than an absolute one, because it is the ratio that stays true on another
 machine and another mailbox. If the measurement misses it, the lever is the two
@@ -223,7 +238,8 @@ caps — not a list of names, and not shipping it anyway.
 > picked: `message_bodies_fts` is `content = ''` and holds no text at all,
 > while `message_headers` holds every value verbatim, so the ratio measures how
 > well FTS5 compresses the fixture's *bodies* and charges the answer to
-> headers. It moves for reasons the header policy does not control — a corpus
+> headers *(as it was under FTS5; the body index is `messages_body_fts` over
+> `message_search_bodies` now, and the point survives — ADR 0038)*. It moves for reasons the header policy does not control — a corpus
 > of short mail measured 269% where the same policy measured 107% on long mail
 > — and the two caps reach about half the cost where the target needed a
 > twentieth. #1041 is the measurement; ADR 0027 replaces the budget with a
@@ -373,7 +389,10 @@ would have been avoiding.
 
 - `postio-sync`'s two backfill paths and `send` stop passing `headers: None`;
   `messages.body_headers` starts holding data. No migration: the column,
-  the compression and the dictionary reference are already there.
+  the compression and the dictionary reference are already there. *(As built:
+  the column is in `schema.rs`'s `HEAD` and holds the block as plain text —
+  no dictionary, no per-row codec — and there are no migrations at all since
+  ADR 0038.)*
 - `postio-storage` gains header persistence on `Message.headers`, which has
   been parsed and dropped on the floor since the model was written.
 - `postio-index` gains `message_headers`, a `headers` row in `search_schema`,
@@ -383,8 +402,10 @@ would have been avoiding.
 - `postio-search` gains `Field::Header` and
   `Filter::Header { name, value: Option<String> }`; it stays pure.
 - `search_statement_budget.rs` gains an assertion for the new join;
-  a `header_index_size.rs` measurement is added beside `body_index_size.rs`,
-  with the ≤ 25%-of-the-body-index budget from Q3.
+  a `header_index_size.rs` measurement is added beside `body_index_size.rs`
+  (both under `crates/postio-index/tests/index_suite/`), with the
+  ≤ 25%-of-the-body-index budget from Q3 *(replaced by ADR 0027's 5 KiB
+  per-message ceiling)*.
 - ADR 0008 Q2's `header:` row is now specified rather than named, and its Q3
   fact classification gains `header:` on the `NEEDS_BODY` side.
 - `PRODUCT.md` §7's operator list gains `header:`.

@@ -6,7 +6,9 @@
   2026-08-26** ([#186](https://github.com/dlapiduz/postio/issues/186)),
   **Q6a decided 2026-08-27** ([#464](https://github.com/dlapiduz/postio/issues/464)),
   **Q6b decided 2026-08-28** ([#470](https://github.com/dlapiduz/postio/issues/470)),
-  **Q6c decided 2026-08-28** ([#471](https://github.com/dlapiduz/postio/issues/471))
+  **Q6c decided 2026-08-28** ([#471](https://github.com/dlapiduz/postio/issues/471)),
+  **amended 2026-09-14 for the Turso engine** (specs/004-turso-store — the
+  built table, Q3, Q5, Q7, Alternatives and Consequences)
 - **Date:** 2026-08-24
 - **Issue:** [#1 Multiple accounts & unified inbox](https://github.com/dlapiduz/postio/issues/1)
 - **Unblocks:** [#64](https://github.com/dlapiduz/postio/issues/64) (add-account
@@ -53,7 +55,7 @@ redesign. Measured at `0e0ec08`.
 | `[accounts.<id>]` as a map, with `default = true` | **Gone** — #470 retired the section; see the note under Unified, below |
 | `AppState.connections: BTreeMap<AccountId, ConnectionState>` | Built — status is already per account |
 | `Engine` keyed to one account, owning one connection on one thread | Built (`runtime/src/engine.rs`) |
-| SQLite in WAL with a connection pool and a 5s busy timeout | Built (`storage/src/db.rs:73`) |
+| The store in WAL with a 5 s busy timeout | Built (`crates/postio-storage/src/store.rs`); the connection pool this row once named is gone with the engine — see Q3 |
 | **`first_account()`** | The cut. `app/src/lib.rs:389` and `:449` |
 
 The single-account assumption lives in exactly two call sites in the
@@ -69,10 +71,10 @@ place that matters.
 
 A database per account would make the unified inbox a cross-connection join,
 which SQLite can do with `ATTACH` but which then makes every list query's plan
-depend on how many accounts are configured. It would also fork the FTS5 index,
-so a search across accounts becomes N searches merged in Rust with no way to
-rank them against each other — and search is Postio's primary way to move
-around (`PRODUCT.md` §7).
+depend on how many accounts are configured. It would also fork the full-text
+indexes (FTS5 then; `USING fts` now), so a search across accounts becomes N
+searches merged in Rust with no way to rank them against each other — and
+search is Postio's primary way to move around (`PRODUCT.md` §7).
 
 The cost of one database is writer contention, and Q3 answers it.
 
@@ -121,21 +123,34 @@ design assumed there was only one.
 
 The pieces that make N of them safe are already in place:
 
-- **WAL** (`db.rs:73`) — readers never block the writer, so the UI's list
-  queries are unaffected by a sync pass on another account.
-- **`busy_timeout = 5000`** (`db.rs:79`) — SQLite allows one writer at a time;
-  a second engine's write retries rather than failing. Sync writes are short
-  batched transactions, so five seconds is many orders of magnitude of headroom.
+- **WAL** (`crates/postio-storage/src/store.rs`) — readers never block the
+  writer, so the UI's list queries are unaffected by a sync pass on another
+  account.
+- **`busy_timeout = 5000`** (`store.rs`, the same pragma block) — the engine
+  allows one writer at a time; a second engine's write retries rather than
+  failing. Sync writes are short batched transactions, so five seconds is many
+  orders of magnitude of headroom.
 - **Per-account operation queues** — `idx_operation_queue_drain` is
   `(account_id, state, next_attempt_at, id)`. Two drainers on two accounts never
   see each other's rows.
 
 **The one thing that must be added: a bound on concurrent engines.** Each
-engine holds an IMAP connection, a TLS session and a connection from the pool.
-`Database::open_with` takes `max_connections`; the composition root must size
-the pool from the account count rather than from a constant, and must refuse to
-start more engines than the pool can serve — otherwise the tenth account
-deadlocks waiting for a connection that a sync pass is holding.
+engine holds an IMAP connection and a TLS session, and every concurrent sync
+pass contends for the store's single writer. The bound is
+`MAX_CONCURRENT_PASSES` in `crates/postio-storage/src/store.rs`, and the
+contention is ordered by the `WriteGate` beside it — a queue with a priority
+in it, `WritePriority::Interactive` ahead of `WritePriority::Background`, so
+a keystroke's write waits for at most one background batch however many
+passes are running.
+
+> **Amended 2026-09-14 (specs/004-turso-store):** the paragraph above
+> originally said a connection pool, sized through `Database::open_with`'s
+> `max_connections`, had to be set from the account count, or "the tenth
+> account deadlocks waiting for a connection that a sync pass is holding".
+> There is no pool: the engine keeps its own connections and `connect` is
+> cheap. What the pool's size was standing in for — how many passes may touch
+> the store at once — is the constant named above, and the deadlock it feared
+> has nothing to deadlock on.
 
 **What must *not* be added: a global sync lock.** Serialising accounts would
 make one slow or unreachable server stall every other account's mail, which is
@@ -215,10 +230,11 @@ than new interaction.
 
 ## Q5 — Search across accounts
 
-`postio-index` executes a parsed `postio-search` query against FTS5. Scope
-becomes a *filter on the executor*, not a change to the query language: the
-same query string means the same thing in either scope, which is
-`ARCHITECTURE.md` §6's rule.
+`postio-index` executes a parsed `postio-search` query as SQL over the
+`USING fts` indexes (against FTS5, when this was written). Scope becomes a
+*filter on the executor*, not a change to the query language: the same query
+string means the same thing in either scope, which is `ARCHITECTURE.md` §6's
+rule.
 
 Two small additions:
 
@@ -688,8 +704,9 @@ right and one opportunity not taken.
 
 **A correction worth recording**, because it is the sort of thing a reviewer
 assumes and gets wrong: Postio does **not** reimplement autoconfig.
-`postio-imap/src/discovery/` uses `io-pim-discovery` for steps 2–5 of its
-chain and adds only what that crate deliberately leaves to a caller — probe
+`postio-account/src/discovery/` (`postio-imap`, before #153) uses
+`io-pim-discovery` for steps 2–5 of its chain and adds only what that crate
+deliberately leaves to a caller — probe
 *order*, per-step and whole-probe budgets, cancellation, the built-in preset
 table, and the mapping to something an onboarding screen can render. That
 division is correct and should not be "simplified" by pushing policy down into
@@ -914,8 +931,8 @@ Concretely:
 - **No global sync lock** (unchanged from the first version) — one unreachable
   server must not stall the others.
 - **Backoff is per account.** A failing account's retries must not consume the
-  connection pool slots a healthy account needs, which is the practical form of
-  the pool sizing rule in Q3.
+  concurrent-pass permits a healthy account needs, which is the practical form
+  of the pass bound in Q3.
 - **A disabled account is not a failing one.** `accounts.enabled = 0` stops the
   engine and drops out of Unified silently and correctly, because the user
   asked for that.
@@ -1020,8 +1037,8 @@ Smaller, and each is a real decision rather than a note.
 
 ## Alternatives
 
-**A database per account.** Rejected in Q1: forks the FTS5 index and makes
-cross-account search unrankable.
+**A database per account.** Rejected in Q1: forks the full-text indexes and
+makes cross-account search unrankable.
 
 **Per-account `UNION ALL` for unified search.** Rejected in Q5a on
 measurement: slower than the unified index it was meant to avoid (32.4 ms
@@ -1044,6 +1061,12 @@ pool, and one slow server stalling everyone. The engine is already a thread
 that owns a connection because `rusqlite::Connection` is `!Sync`; N of them is
 the cheap path, not the expensive one.
 
+> **Amended 2026-09-14 (specs/004-turso-store):** the `!Sync` reason is gone
+> — the store is async to the bottom and a checkout could cross threads. The
+> engine stayed one sequential thread per account on purpose, and the top of
+> `crates/postio-runtime/src/engine.rs` says why; the rejection stands on
+> that.
+
 **Cross-account move as a plain copy, leaving the source alone.** Honest, never
 loses mail, and not what the user asked for — they said *move*. A client that
 quietly turns a move into a copy trains people not to trust it. The saga in Q9
@@ -1063,13 +1086,16 @@ one that is wrong.
 ## Consequences
 
 - `first_account()` disappears. `app/src/lib.rs` starts an engine per enabled
-  account and sizes the pool from the count.
+  account. *(It was to size the pool from the count too; there is no pool —
+  Q3, amended.)*
 - `AppState.scope` is a breaking change inside `postio-core`, caught by the
   compiler everywhere it matters.
 - `postio-search` gains one `Field`; `docs/keybindings.md` and the config
   reference regenerate themselves (`ARCHITECTURE.md` §2).
-- **A migration adding `idx_messages_recency ON messages (received_at DESC,
-  id DESC)`** (Q5a) — landed as migration 0012 with Q5b. 2.2 MiB per 120,000 messages, no measurable insert cost,
+- **An index, `idx_messages_recency ON messages (received_at DESC,
+  id DESC)`** (Q5a) — landed as migration 0012 with Q5b, and declared in
+  `crates/postio-storage/src/schema.rs` now that there are no migrations.
+  2.2 MiB per 120,000 messages, no measurable insert cost,
   and without it unified recency-ordered search is 20 seconds rather than 19
   milliseconds. It belongs in the same change that teaches the executor to
   drop the `account_id` predicate, or an earlier one — never a later one, and

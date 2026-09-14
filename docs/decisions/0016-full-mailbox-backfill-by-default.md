@@ -1,6 +1,7 @@
 # ADR 0016 — Full-mailbox backfill by default, folders optionally excluded
 
-- **Status:** Accepted — **GO** (2026-08-25)
+- **Status:** Accepted — **GO** (2026-08-25); amended 2026-09-14 for the Turso
+  engine — the search index and the concurrency rule it names
 - **Date:** 2026-08-25
 - **Decision by:** the maintainer, directly, in response to #318
 - **Issue:** [#318 Backfill is seeded once, 200 per folder, and never
@@ -45,8 +46,11 @@ quietly relying on nobody noticing the gap:
   turns into a network request the moment someone opens it, exactly #318's
   symptom ("every older message pays a round trip when it is opened").
 - **§7: "Search is a defining feature and a primary way to navigate."**
-  FTS5 indexes what is locally parsed. A body that never arrived is a body
-  that can never match a search term. A 200-per-folder cap does not mean
+  The body index — `messages_body_fts`, a `USING fts` index over
+  `message_search_bodies`, written by `postio_session::spawn_body_indexer`
+  off the sync lane (FTS5, when this was written) — indexes what is locally
+  parsed. A body that never arrived is a body that can never match a search
+  term. A 200-per-folder cap does not mean
   "search is slightly less complete" — it means search silently stops
   covering a mailbox's own history past whatever arrived in the first
   20-odd minutes of first sync, which is the opposite of "a primary way to
@@ -123,7 +127,9 @@ not worth keeping locally in full. So:
 If backfilling a real large account (this project already has one on hand —
 engineering-notes.md's 81,716-message account) turns out to make the
 background lane starve interactive fetches or the sync engine's own
-housekeeping under the existing pool-sizing rules (`ARCHITECTURE.md`, the
-sync-lanes constraints), that is a throttling-policy bug to fix in
-`BackfillPolicy`, not a reason to reintroduce a horizon. The target stays
-"everything"; only the pacing is up for adjustment.
+housekeeping under the existing concurrency rules (`MAX_CONCURRENT_PASSES`
+and the `WriteGate` in `crates/postio-storage/src/store.rs` — there is no
+pool to size any more — and the sync-lanes constraints), that is a
+throttling-policy bug to fix in `BackfillPolicy`, not a reason to reintroduce
+a horizon. The target stays "everything"; only the pacing is up for
+adjustment.

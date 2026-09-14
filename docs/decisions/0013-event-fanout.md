@@ -1,6 +1,7 @@
 # ADR 0013 — Event fan-out: a hub between producers and subscribers
 
-- **Status:** Accepted — **GO** (2026-08-24)
+- **Status:** Accepted — **GO** (2026-08-24); built — `EventHub` in
+  `crates/postio-core/src/bridge.rs` (#176); noted 2026-09-14
 - **Date:** 2026-08-24
 - **Issue:** [#149 One EventStream cannot serve a window and an MCP server at
   once](https://github.com/dlapiduz/postio/issues/149)
@@ -46,7 +47,7 @@ and the third is the one the issue's framing missed:
 | `EventSink` is `Clone`, many producers | Built — a spawned task keeps its handler's sink and origin |
 | `EventStream` is deliberately **not** `Clone` | Built — `async_channel`'s receiver is work-stealing: a cloned receiver *steals* events, it does not duplicate them. Not-`Clone` is what makes delivery total |
 | `EventEnvelope { event, origin }`, `send_tracked`, `InvocationFinished` | Built (ADR 0002, #33) |
-| **There are already two event queues, not one** | Built — the bus's channel (made inside `BridgeBuilder::build`) and the engine's (`event_channel()` in `postio-app/src/lib.rs:153`), each with one reader |
+| **There are already two event queues, not one** | Built — the bus's channel (made inside `BridgeBuilder::build`) and the engine's (`event_channel()`, called from `postio-app/src/lib.rs`), each with one reader |
 | The window drains both | Built — `commands::drain` is called once per stream, over a `Rc<RefCell<Vec<Option<EventStream>>>>` handoff shared with onboarding |
 
 So today's shape is *N producers, two channels, one reader each* — and the
@@ -176,7 +177,7 @@ This is already the contract the window itself lives by: it feeds from the
 store at startup and applies events as diffs from there. Stating it as a rule
 closes the tempting wrong door — an event replay buffer — which would make the
 hub a second, unbounded, in-memory copy of recent mailbox activity with no
-consumer that needs it. Events are notifications; SQLite is the record.
+consumer that needs it. Events are notifications; the store is the record.
 
 ---
 
@@ -225,6 +226,8 @@ already places at the tool surface.
   frontend" needs from this layer.
 - **The implementation is its own `ready` issue**, filed with this ADR. The
   decision does not block on it; #14 and #137 can cite this document today.
+  *(#176 — landed as `EventHub`, `sink()` and `subscribe(label)` as Q1
+  describes.)*
 - **ADR 0002 and ADR 0010 get pointer amendments** so the two passages that
   deferred to each other now name this ADR. The broader doc-drift pass stays
   #148's.
