@@ -14,14 +14,18 @@ set -euo pipefail
 
 VERSION="0.9.2"
 
+# `--version` prints the bare number (`0.9.2`), not `cargo-machete 0.9.2`:
+# the last field is the version whichever shape a release chooses.
 if command -v cargo-machete >/dev/null 2>&1; then
-    installed=$(cargo-machete --version 2>/dev/null | awk '{print $2}')
+    installed=$(cargo-machete --version 2>/dev/null | awk '{print $NF}')
     if [ "$installed" = "$VERSION" ]; then
         echo "cargo-machete $VERSION already installed"
         exit 0
     fi
-    echo "cargo-machete $installed installed; replacing with $VERSION"
+    echo "cargo-machete ${installed:-unknown} installed; replacing with $VERSION"
 fi
 
-cargo install cargo-machete --version "$VERSION" --locked
+# `--force`: a binary restored from a cache of another version is exactly
+# what the branch above found, and cargo refuses to overwrite it otherwise.
+cargo install cargo-machete --version "$VERSION" --locked --force
 echo "cargo-machete $VERSION installed"
