@@ -231,48 +231,31 @@ impl StoreError {
 /// in traits is not object-safe.
 pub type Read<'a, T> = Pin<Box<dyn Future<Output = Result<T, StoreError>> + Send + 'a>>;
 
-/// Everything a frontend needs to read out of the local store.
+/// Everything a frontend needs to read out of the local store — and only
+/// that.
 ///
 /// A trait rather than a struct so the thing that owns a database and the
 /// thing that draws its rows need not be compiled together. `postio-gtk`
-/// depends on `postio-core`, so anything concrete here would put `rusqlite` in
-/// the view layer's dependency graph — which
-/// `scripts/checks/check-crate-boundaries.py` refuses, and rightly: the view layer
-/// does no SQL. The implementation lives behind the `runtime` feature, and a
-/// test can answer from a table instead.
+/// depends on `postio-core`, so anything concrete here would put the
+/// database engine in the view layer's dependency graph — which
+/// `scripts/checks/check-crate-boundaries.py` refuses, and rightly: the view
+/// layer does no SQL. The implementation lives behind the `runtime` feature,
+/// and a test can answer from a table instead.
 ///
-/// Every method returns a future rather than a value: reads happen on a
-/// blocking thread and the caller awaits, so no UI thread ever waits on
-/// SQLite.
+/// Five methods, each one something a frontend calls. Which window a scope
+/// lists itself as — threaded or flat (ADR 0015) — is the store's decision,
+/// answered inside [`list_page`](Self::list_page); the two windows underneath
+/// it are [`SqliteStore`]'s own methods, for the tests and benches that mean
+/// one of them specifically, and are deliberately not part of this contract.
+///
+/// Every method returns a future rather than a value: reads happen on the
+/// runtime and the caller awaits, so no UI thread ever waits on the store.
 pub trait MailStore: Send + Sync {
-    /// One page of the message list, with the count that page was read
-    /// against.
-    fn message_page(&self, request: PageRequest) -> Read<'_, MessagePage>;
-
     /// One page of the list, however this scope lists itself.
-    ///
-    /// What the frontend calls. [`MailStore::message_page`] and
-    /// [`MailStore::thread_page`] are the two windows underneath it, and are
-    /// worth asking for directly only when the caller genuinely means one of
-    /// them.
     fn list_page(&self, request: PageRequest) -> Read<'_, ListPage>;
 
     /// How many rows the list would show, however this scope lists itself.
     fn list_count(&self, scope: ListScope) -> Read<'_, u32>;
-
-    /// One page of the *threaded* list, with the count it was read against.
-    ///
-    /// A real folder threads and a query view does not (ADR 0015), so this
-    /// answers only [`ListScope::Mailbox`] and [`ListScope::Account`];
-    /// anything else is a caller asking the wrong question and comes back as
-    /// an error rather than as message rows wearing a hat.
-    fn thread_page(&self, request: PageRequest) -> Read<'_, ThreadPage>;
-
-    /// How many conversations the threaded list would show.
-    fn thread_count(&self, scope: ListScope) -> Read<'_, u32>;
-
-    /// How many rows the list would show, without reading any of them.
-    fn message_count(&self, scope: ListScope) -> Read<'_, u32>;
 
     /// The rows for an explicit, ranked set of ids, in the order given.
     ///

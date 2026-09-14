@@ -43,7 +43,7 @@ use criterion::{Criterion, criterion_group, criterion_main};
 use postio_core::perf_budget::{INTERACTION_BUDGET, check_budget};
 use postio_model::MailboxRole;
 use postio_model::ids::MailboxId;
-use postio_runtime::store::{ListScope, MailStore, PageRequest, SqliteStore};
+use postio_runtime::store::{ListScope, PageRequest, SqliteStore};
 use postio_storage::repository::{ThreadListQuery, ThreadRepository, UnifiedThreadListQuery};
 use postio_storage::seed::{seed_large, thread_seeded_messages};
 use postio_storage::test_support;
