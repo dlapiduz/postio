@@ -230,3 +230,39 @@ async fn a_lone_writer_is_not_starved_by_a_busy_one() {
          way, and one starved pass stops every later sync wave."
     );
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn the_gate_records_what_it_did_for_the_load_gate_to_read() {
+    // `test_support::gate_log` is the instrument behind the
+    // interaction-under-load gate in `postio-sync`: that suite can only
+    // assert "no background unit began while a keystroke waited" if the
+    // gate says, in order, who asked and who was served.
+    use postio_storage::test_support::gate_log::{self, Event};
+    let gate = gate().await;
+    gate_log::reset();
+
+    let background = gate.acquire(WritePriority::Background).await;
+    let interactive = tokio::spawn({
+        let gate = gate.clone();
+        async move { gate.acquire(WritePriority::Interactive).await }
+    });
+    until_interactive_is_waiting(&gate).await;
+    drop(background);
+    let _permit = interactive.await.expect("the interactive writer is served");
+
+    assert_eq!(
+        gate_log::events(),
+        [
+            Event::Requested(WritePriority::Background),
+            Event::Granted(WritePriority::Background),
+            Event::Requested(WritePriority::Interactive),
+            Event::Granted(WritePriority::Interactive),
+        ],
+        "every request and every grant, in the order they happened"
+    );
+    assert_eq!(
+        gate_log::background_grants_while_interactive_waited(0),
+        Some(0),
+        "and the reading the load gate takes off it"
+    );
+}
