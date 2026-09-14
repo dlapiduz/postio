@@ -53,10 +53,6 @@ postio-model = { version = "0.2.0", path = "../postio-model" }
 # `postio-app` makes it explicitly. `fts` stays: the search index is built
 # on the engine's full-text index method.
 turso = { version = "=0.8.0-pre.11", default-features = false, features = ["fts"] }
-# Unicode normalisation for the diacritic fold the engine does not do.
-# `postio-index` applies it on both the write and the query path; it lives
-# here because the folded column is written where the body is.
-unicode-normalization = "0.1"
 serde_json = "1.0.151"
 tempfile = { version = "3.27.0", optional = true }
 # Blob compression (ADR 0017). `zstd` rather than a pure-Rust decoder because
