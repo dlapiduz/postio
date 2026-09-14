@@ -704,29 +704,48 @@ async fn summarise(
     })
 }
 
-impl MailStore for SqliteStore {
-    fn message_page(&self, request: PageRequest) -> Read<'_, MessagePage> {
+/// The two windows underneath [`MailStore::list_page`], for callers that
+/// mean one of them specifically.
+///
+/// Not part of [`MailStore`]: a frontend asks for "the list, however this
+/// scope lists itself" and never chooses a window, so putting these on the
+/// trait made every fake implement two reads nothing would call. The tests
+/// and benches that measure one window reach the concrete store.
+impl SqliteStore {
+    /// One page of the flat message list, with the count that page was read
+    /// against.
+    pub fn message_page(&self, request: PageRequest) -> Read<'_, MessagePage> {
         Box::pin(self.read_page(request))
     }
 
-    fn message_count(&self, scope: ListScope) -> Read<'_, u32> {
+    /// How many rows the flat list would show, without reading any of them.
+    pub fn message_count(&self, scope: ListScope) -> Read<'_, u32> {
         Box::pin(self.read_count(scope))
     }
 
+    /// One page of the *threaded* list, with the count it was read against.
+    ///
+    /// A real folder threads and a query view does not (ADR 0015), so this
+    /// answers only [`ListScope::Mailbox`] and [`ListScope::Account`];
+    /// anything else is a caller asking the wrong question and comes back as
+    /// an error rather than as message rows wearing a hat.
+    pub fn thread_page(&self, request: PageRequest) -> Read<'_, ThreadPage> {
+        Box::pin(self.read_thread_page(request))
+    }
+
+    /// How many conversations the threaded list would show.
+    pub fn thread_count(&self, scope: ListScope) -> Read<'_, u32> {
+        Box::pin(self.read_thread_count(scope))
+    }
+}
+
+impl MailStore for SqliteStore {
     fn list_page(&self, request: PageRequest) -> Read<'_, ListPage> {
         Box::pin(self.read_list_page(request))
     }
 
     fn list_count(&self, scope: ListScope) -> Read<'_, u32> {
         Box::pin(self.read_list_count(scope))
-    }
-
-    fn thread_page(&self, request: PageRequest) -> Read<'_, ThreadPage> {
-        Box::pin(self.read_thread_page(request))
-    }
-
-    fn thread_count(&self, scope: ListScope) -> Read<'_, u32> {
-        Box::pin(self.read_thread_count(scope))
     }
 
     fn message_rows(&self, ids: Vec<MessageId>) -> Read<'_, Vec<MessageSummary>> {
