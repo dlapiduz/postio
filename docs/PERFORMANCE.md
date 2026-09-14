@@ -56,8 +56,9 @@ taken: **startup**, where the cipher change should help — 45.9% of sampled CPU
 on a real mailbox was in SHA-512 for SQLCipher's per-page MAC, and GCM
 authenticates as part of the cipher — and **store size**, which is expected to
 grow, because sixteen partial indexes lost their predicates
-(`2026-09-12-a-partial-index-the-planner-will-not-read.md`) and message text is
-no longer compressed. Both want the reference mailbox.
+(`2026-09-12-a-partial-index-the-planner-will-not-read.md`) and message text
+lost its trained dictionary — it is zstd per row again
+(`postio_storage::body_codec`), without one. Both want the reference mailbox.
 
 ## How to read these numbers
 
@@ -75,9 +76,9 @@ cargo run --release -p postio-runtime --example seed_store -- /tmp/postio.db 200
 POSTIO_STORE=/tmp/postio.db POSTIO_STARTUP_TRACE=1 POSTIO_STARTUP_EXIT=1 \
   cargo run --release -p postio-app
 
-cargo bench -p postio-runtime --bench store_reads   # the database read
-cargo bench -p postio-index   --bench search_budget # the query
-cargo bench -p postio-gtk     --bench list_scroll   # the row draw
+cargo bench -p postio-bench --bench store_reads    # the database read
+cargo bench -p postio-bench --bench search_budget  # the query
+cargo bench -p postio-bench --bench list_scroll    # the row draw
 
 # which window pays the first-realize toll (#790)
 cargo run -p postio-gtk --example first_realize -- splash real
@@ -253,7 +254,7 @@ the cheat sheet, and a key bound to one refuses out loud with the same
 sentence the plate would show.
 
 *The first store reads are not in the `window` phase either.* The keyring
-round trip and the SQLCipher open used to be folded into that phase; they are
+round trip and the store open used to be folded into that phase; they are
 `store` now, and since #1114 they happen **after** `shell` — the frame the
 compositor first showed the window in — rather than before the main loop
 starts. The split shows the two moving independently:
@@ -318,11 +319,13 @@ Two exceptions, both real:
   It was 71% of work that should not have happened. The four list indexes
   supplied the scope column and the sort order but neither of the two columns
   every list query *filters* on — `deleted_locally` and `snoozed_until`. Only
-  rows that pass the `WHERE` count toward an `OFFSET`, so SQLite fetched every
-  row it was about to discard in order to test them: fifty thousand table
-  reads to return fifty rows, each one a page decrypt. Migration 0005 put
-  those columns in the indexes and the jump became **3.58 ms**, a 98%
-  reduction, now inside the 16 ms interaction budget and asserted by
+  rows that pass the `WHERE` count toward an `OFFSET`, so the engine of the
+  day fetched every row it was about to discard in order to test them: fifty
+  thousand table reads to return fifty rows, each one a page decrypt. Putting
+  those two columns into the indexes — the four list indexes in
+  `crates/postio-storage/src/schema.rs` still end in `deleted_locally,
+  snoozed_until` for this reason — made the jump **3.58 ms**, a 98%
+  reduction, inside the 16 ms interaction budget and asserted by
   `store_reads` rather than merely reported.
 
   `cache_size` was not the lever, despite `db.rs` naming it the first one to
@@ -336,7 +339,10 @@ Two exceptions, both real:
 
 ## Search
 
-Over a 120,000-message index, by query shape:
+Over a 120,000-message index, by query shape. These were measured on the old
+engine's FTS5 index and have not been re-measured on Turso's `fts`, which is a
+different index over different tables; the shapes still describe what
+`search_budget` stresses.
 
 | Query shape | Measured |
 |---|---|
@@ -385,10 +391,12 @@ back to the anonymous one, and the total improved.
 
 **A transient worth knowing about.** During the first minute on a large store,
 anonymous memory peaks well above the settled figure — 86 MiB on the 400,000
-store — while the body-index catch-up and the compression-dictionary trainer
-run. The trainer reads up to 4,096 bodies or 32 MiB of samples, whichever
-comes first (`postio_storage::body`), and frees them when it is done. Both are
-idle-time passes on a worker; neither is on the startup path.
+store — while the body-index catch-up runs. When this was measured a
+compression-dictionary trainer ran beside it, reading up to 4,096 bodies or
+32 MiB of samples; that trainer is gone with the dictionary (bodies are zstd
+per row in `postio_storage::body_codec`, with no training pass), so the peak
+is expected to be lower and has not been re-taken. The catch-up is an
+idle-time pass on a worker; it is not on the startup path.
 
 Reproduce it:
 
