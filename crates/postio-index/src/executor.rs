@@ -444,7 +444,7 @@ async fn suggestion_for(
 ///
 /// It asks *does backfill still owe bodies here*, not *is every local body in
 /// the index*. Those differ for a message whose body has arrived but whose
-/// text has not been indexed yet — the window `catch_up_the_body_index`
+/// text has not been indexed yet — the window `postio_session::spawn_body_indexer`
 /// closes at startup for a store that predates #327.
 ///
 /// Answering the second question exactly would mean `NOT EXISTS (SELECT 1

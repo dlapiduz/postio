@@ -770,7 +770,7 @@ pub async fn feed_the_window(window: &Window, wiring: &Wiring) -> Option<Wired> 
 /// broken rather than as an index catching up.
 ///
 /// `spawn_blocking` and once per start, the same two reasons
-/// [`catch_up_the_body_index`] has: it is a blob read and a header parse per
+/// [`postio_session::spawn_body_indexer`] has: it is a blob read and a header parse per
 /// message, synchronous from beginning to end, and nothing on screen is
 /// waiting for it. After the index catch-up rather than before, for the same
 /// reason that one goes first — somebody is waiting to search their mail, and
@@ -807,7 +807,7 @@ async fn repair_the_header_blocks(wiring: &Wiring) {
 /// whichever of them runs next, which is what makes that acceptable.
 ///
 /// `spawn_blocking` and once per start, the same two reasons
-/// [`catch_up_the_body_index`] has: it is synchronous SQLite that
+/// [`postio_session::spawn_body_indexer`] has: it is synchronous SQLite that
 /// decompresses and parses a block per message, and nothing on screen waits
 /// for it. Every pass after the first costs one query that finds nothing.
 async fn catch_up_the_header_index(wiring: &Wiring) {
@@ -842,7 +842,7 @@ async fn catch_up_the_header_index(wiring: &Wiring) {
 /// The debris purge is one `read_dir` of a directory that is empty in the
 /// ordinary case, so it runs first and inline. Garbage collection walks the
 /// whole blob tree, which on a backfilled archive is a great many files, so it
-/// goes on a worker for the same reason [`catch_up_the_body_index`] does: a
+/// goes on a worker for the same reason [`postio_session::spawn_body_indexer`] does: a
 /// mail client that will not draw until it has counted its own files has
 /// traded the wrong thing.
 ///
