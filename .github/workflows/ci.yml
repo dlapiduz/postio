@@ -819,6 +819,21 @@ jobs:
       - name: Install cargo-nextest
         run: scripts/install-nextest.sh
 
+      # `test-ffi-bindgen.py` builds `postio-ffi` -- most of the workspace --
+      # inside a 900 s patience window, and this job cached only the
+      # registry, so every run was a cold build on a macOS runner:
+      # 2026-09-14 saw it cross the cap twice, on the two pushes that changed
+      # Cargo.lock. The build artifacts are cached now, and the patience dial
+      # is doubled for the cold run that follows a lock change -- the base
+      # stays the number that is right on a warm runner.
+      - name: Cache the build
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: target
+          key: ${{ runner.os }}-tooling-target-${{ hashFiles('rust-toolchain.toml') }}-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-tooling-target-${{ hashFiles('rust-toolchain.toml') }}-
+
       # `CI` is what `scripts/lib/prereq.py` reads to decide that a missing
       # prerequisite is a broken runner rather than somebody's laptop. Set
       # explicitly, the way the Swift job sets it, rather than relied upon:
@@ -827,4 +842,5 @@ jobs:
       - name: Prove the tooling still holds itself up on macOS
         env:
           CI: "true"
+          POSTIO_TEST_PATIENCE: "2"
         run: scripts/run-self-tests.sh --logs "$RUNNER_TEMP/self-test-logs"
