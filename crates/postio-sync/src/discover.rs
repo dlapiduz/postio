@@ -38,8 +38,8 @@
 
 use postio_account::backend::{MailBackend, MailboxFilter, MailboxSummary};
 use postio_model::{AccountId, Mailbox, MailboxId, MailboxRole, RoleOverrides};
+use postio_storage::Connection;
 use postio_storage::repository::{MailboxRepository, MailboxRoleRepository};
-use rusqlite::Connection;
 
 use crate::drain::Result;
 
@@ -84,7 +84,7 @@ pub async fn discover(
     overrides: &RoleOverrides,
 ) -> Result<DiscoveryReport> {
     let listed = backend.list_mailboxes(&MailboxFilter::all()).await?;
-    let mut report = reconcile(connection, account, &listed, overrides)?;
+    let mut report = reconcile(connection, account, &listed, overrides).await?;
 
     // Every reserved role must end this pass with a folder (spec 003, FR-026).
     // Done after reconciling rather than from the listing, because whether a
@@ -100,7 +100,7 @@ pub async fn discover(
         // the path separator, and a folder Postio believes in but never saw
         // listed is exactly the kind of row that later turns out not to exist.
         let listed = backend.list_mailboxes(&MailboxFilter::all()).await?;
-        let second = reconcile(connection, account, &listed, overrides)?;
+        let second = reconcile(connection, account, &listed, overrides).await?;
 
         // Merged, not replaced, so the report describes the whole pass.
         //
@@ -154,10 +154,13 @@ async fn create_missing_roles(
     backend: &dyn MailBackend,
     account: AccountId,
 ) -> Result<bool> {
-    let known = MailboxRepository::new(connection).list_for_account(account)?;
+    let known = MailboxRepository::new(connection)
+        .list_for_account(account)
+        .await?;
     let roles = MailboxRoleRepository::new(connection);
     let refused: Vec<MailboxRole> = roles
-        .refusals(account)?
+        .refusals(account)
+        .await?
         .into_iter()
         .map(|(role, _)| role)
         .collect();
@@ -205,7 +208,7 @@ async fn create_missing_roles(
                 // account stays usable; the user is told in settings, where
                 // the server's own words are worth reading, rather than in a
                 // log where they would outlive the screen they belong on.
-                roles.refuse(account, role, &error.to_string())?;
+                roles.refuse(account, role, &error.to_string()).await?;
                 tracing::warn!(
                     account = account.get(),
                     role = role.as_str(),
@@ -245,19 +248,21 @@ fn default_path_for(role: MailboxRole) -> &'static str {
 /// Split out because everything interesting here is a decision about rows
 /// rather than about the protocol, and because it lets the whole reconciliation
 /// be exercised without a backend at all.
-pub fn reconcile(
+pub async fn reconcile(
     connection: &Connection,
     account: AccountId,
     listed: &[MailboxSummary],
     overrides: &RoleOverrides,
 ) -> std::result::Result<DiscoveryReport, postio_storage::Error> {
     let mailboxes = MailboxRepository::new(connection);
-    let chosen = MailboxRoleRepository::new(connection).for_account(account)?;
+    let chosen = MailboxRoleRepository::new(connection)
+        .for_account(account)
+        .await?;
     let overrides = &overrides.over(chosen);
     let mut report = DiscoveryReport::default();
 
     for summary in listed {
-        match mailboxes.by_path(account, &summary.path)? {
+        match mailboxes.by_path(account, &summary.path).await? {
             Some(existing) => {
                 let mut updated = existing.clone();
                 apply(&mut updated, summary, overrides);
@@ -265,14 +270,14 @@ pub fn reconcile(
                 // folder tree is the common case on every reconnection, and a
                 // write per folder per reconnect is a write nobody asked for.
                 if updated != existing {
-                    mailboxes.update(&updated)?;
+                    mailboxes.update(&updated).await?;
                 }
                 report.updated += 1;
             }
             None => {
                 let mut mailbox = Mailbox::new(account, &summary.path, summary.delimiter);
                 apply(&mut mailbox, summary, overrides);
-                mailboxes.create(&mut mailbox)?;
+                mailboxes.create(&mut mailbox).await?;
                 report.added += 1;
             }
         }
@@ -280,10 +285,10 @@ pub fn reconcile(
 
     // Parents in a second pass: a child can be listed before its parent, and a
     // parent that does not exist yet has no id to point at.
-    link_parents(&mailboxes, account, listed)?;
+    link_parents(&mailboxes, account, listed).await?;
 
     if !listed.is_empty() {
-        report.vanished = retire_missing(&mailboxes, account, listed)?;
+        report.vanished = retire_missing(&mailboxes, account, listed).await?;
     }
 
     Ok(report)
@@ -315,7 +320,7 @@ fn apply(mailbox: &mut Mailbox, summary: &MailboxSummary, overrides: &RoleOverri
 }
 
 /// Point every listed folder at the row for its parent path.
-fn link_parents(
+async fn link_parents(
     mailboxes: &MailboxRepository<'_>,
     account: AccountId,
     listed: &[MailboxSummary],
@@ -324,19 +329,19 @@ fn link_parents(
         let Some(parent_path) = parent_path(summary) else {
             continue;
         };
-        let Some(parent) = mailboxes.by_path(account, parent_path)? else {
+        let Some(parent) = mailboxes.by_path(account, parent_path).await? else {
             // A hierarchy whose intermediate level the server does not list.
             // The folder is still perfectly usable; it just sits at the top.
             continue;
         };
-        let Some(mut child) = mailboxes.by_path(account, &summary.path)? else {
+        let Some(mut child) = mailboxes.by_path(account, &summary.path).await? else {
             continue;
         };
         if child.parent_id == Some(parent.id) || child.id == parent.id {
             continue;
         }
         child.parent_id = Some(parent.id);
-        mailboxes.update(&child)?;
+        mailboxes.update(&child).await?;
     }
     Ok(())
 }
@@ -352,13 +357,13 @@ fn parent_path(summary: &MailboxSummary) -> Option<&str> {
 ///
 /// Returns how many were retired. See the module docs for why this is not a
 /// delete.
-fn retire_missing(
+async fn retire_missing(
     mailboxes: &MailboxRepository<'_>,
     account: AccountId,
     listed: &[MailboxSummary],
 ) -> std::result::Result<usize, postio_storage::Error> {
     let mut retired = 0;
-    for mut local in mailboxes.list_for_account(account)? {
+    for mut local in mailboxes.list_for_account(account).await? {
         if listed.iter().any(|summary| summary.path == local.path) {
             continue;
         }
@@ -377,7 +382,7 @@ fn retire_missing(
         if unrole {
             local.role = MailboxRole::Regular;
         }
-        mailboxes.update(&local)?;
+        mailboxes.update(&local).await?;
         retired += 1;
     }
     Ok(retired)
@@ -387,12 +392,13 @@ fn retire_missing(
 ///
 /// A convenience for the engine, which asks this question after every discovery
 /// pass to decide what to sync and what to watch.
-pub fn selectable(
+pub async fn selectable(
     connection: &Connection,
     account: AccountId,
 ) -> std::result::Result<Vec<MailboxId>, postio_storage::Error> {
     Ok(MailboxRepository::new(connection)
-        .list_for_account(account)?
+        .list_for_account(account)
+        .await?
         .into_iter()
         .filter(|mailbox| mailbox.selectable)
         .map(|mailbox| mailbox.id)

@@ -20,8 +20,8 @@
 //! first wrote it.
 
 use postio_model::{Account, EmailAddress, Message};
+use postio_storage::Connection;
 use postio_storage::repository::ContactRepository;
-use rusqlite::Connection;
 
 use crate::drain::Result;
 
@@ -33,7 +33,11 @@ use crate::drain::Result;
 /// the sender of everything filed in Sent. `record_message` has no way to
 /// know which address is "ours" — it only sees one message at a time — so
 /// the exclusion happens here, against every address `account` can send as.
-pub(crate) fn record(connection: &Connection, account: &Account, message: &Message) -> Result<()> {
+pub(crate) async fn record(
+    connection: &Connection,
+    account: &Account,
+    message: &Message,
+) -> Result<()> {
     let is_own = |address: &EmailAddress| {
         let normalized = address.normalized();
         account.address.normalized() == normalized
@@ -53,7 +57,9 @@ pub(crate) fn record(connection: &Connection, account: &Account, message: &Messa
     trimmed.cc.retain(|address| !is_own(address));
     trimmed.bcc.retain(|address| !is_own(address));
 
-    ContactRepository::new(connection).record_message(&trimmed)?;
+    ContactRepository::new(connection)
+        .record_message(&trimmed)
+        .await?;
     Ok(())
 }
 
@@ -64,7 +70,7 @@ mod tests {
     use postio_storage::repository::MessageRepository;
     use postio_storage::test_support;
 
-    fn message(
+    async fn message(
         connection: &Connection,
         account: &Account,
         mailbox: postio_model::MailboxId,
@@ -78,21 +84,25 @@ mod tests {
         message.cc = vec![EmailAddress::new(Some("Carol"), "carol@example.com")];
         MessageRepository::new(connection)
             .create(&mut message)
+            .await
             .expect("create message");
         message
     }
 
-    #[test]
-    fn every_real_correspondent_is_recorded() {
-        let database = test_support::memory();
-        let connection = database.connection().expect("checkout");
-        let (account, mailbox) = test_support::account_with_inbox(&connection);
-        let message = message(&connection, &account, mailbox);
+    #[tokio::test]
+    async fn every_real_correspondent_is_recorded() {
+        let database = test_support::memory().await;
+        let connection = database.connect().await.expect("checkout");
+        let (account, mailbox) = test_support::account_with_inbox(&connection).await;
+        let message = message(&connection, &account, mailbox).await;
 
-        record(&connection, &account, &message).expect("record");
+        record(&connection, &account, &message)
+            .await
+            .expect("record");
 
         let contacts = ContactRepository::new(&connection)
             .list(Some(account.id))
+            .await
             .expect("list");
         let addresses: Vec<String> = contacts.iter().map(|c| c.address.normalized()).collect();
         assert!(
@@ -109,17 +119,20 @@ mod tests {
         );
     }
 
-    #[test]
-    fn the_accounts_own_address_is_never_recorded_as_a_correspondent() {
-        let database = test_support::memory();
-        let connection = database.connection().expect("checkout");
-        let (account, mailbox) = test_support::account_with_inbox(&connection);
-        let message = message(&connection, &account, mailbox);
+    #[tokio::test]
+    async fn the_accounts_own_address_is_never_recorded_as_a_correspondent() {
+        let database = test_support::memory().await;
+        let connection = database.connect().await.expect("checkout");
+        let (account, mailbox) = test_support::account_with_inbox(&connection).await;
+        let message = message(&connection, &account, mailbox).await;
 
-        record(&connection, &account, &message).expect("record");
+        record(&connection, &account, &message)
+            .await
+            .expect("record");
 
         let contacts = ContactRepository::new(&connection)
             .list(Some(account.id))
+            .await
             .expect("list");
         assert!(
             contacts
@@ -129,11 +142,11 @@ mod tests {
         );
     }
 
-    #[test]
-    fn a_send_from_identity_is_also_excluded_as_a_correspondent() {
-        let database = test_support::memory();
-        let connection = database.connection().expect("checkout");
-        let (mut account, mailbox) = test_support::account_with_inbox(&connection);
+    #[tokio::test]
+    async fn a_send_from_identity_is_also_excluded_as_a_correspondent() {
+        let database = test_support::memory().await;
+        let connection = database.connect().await.expect("checkout");
+        let (mut account, mailbox) = test_support::account_with_inbox(&connection).await;
         account.identities.push(Identity::new(
             account.id,
             EmailAddress::new(Some("Ada at Work"), "ada.work@example.com"),
@@ -147,12 +160,16 @@ mod tests {
         )];
         MessageRepository::new(&connection)
             .create(&mut message)
+            .await
             .expect("create message");
 
-        record(&connection, &account, &message).expect("record");
+        record(&connection, &account, &message)
+            .await
+            .expect("record");
 
         let contacts = ContactRepository::new(&connection)
             .list(Some(account.id))
+            .await
             .expect("list");
         assert_eq!(
             contacts.len(),

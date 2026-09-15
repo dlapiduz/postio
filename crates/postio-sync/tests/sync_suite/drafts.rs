@@ -8,12 +8,12 @@ use chrono::{DateTime, TimeZone, Utc};
 use postio_account::backend::{MailBackend, MockBackend, MockMailbox};
 use postio_model::{Account, Draft, EmailAddress, Identity, MailboxId, Operation, OperationTarget};
 use postio_storage::BlobStore;
+use postio_storage::Connection;
 use postio_storage::repository::{
     AccountRepository, DraftRepository, MailboxRepository, OperationQueueRepository,
 };
 use postio_storage::test_support;
 use postio_sync::{DrainReport, Drainer};
-use rusqlite::Connection;
 
 fn at(hour: u32) -> DateTime<Utc> {
     Utc.with_ymd_and_hms(2026, 3, 1, hour, 0, 0).unwrap()
@@ -48,7 +48,7 @@ impl Drop for TempBlobs {
 }
 
 /// An account with one identity and the Drafts mailbox a draft is filed into.
-fn account_with_drafts(connection: &Connection) -> (Account, MailboxId) {
+async fn account_with_drafts(connection: &Connection) -> (Account, MailboxId) {
     let mut account = Account::new(
         "Test",
         EmailAddress::new(Some("Ada Lovelace"), "ada@example.com"),
@@ -62,8 +62,9 @@ fn account_with_drafts(connection: &Connection) -> (Account, MailboxId) {
 
     AccountRepository::new(connection)
         .create(&mut account)
+        .await
         .expect("create account");
-    let drafts = test_support::mailbox(connection, &account, "Drafts");
+    let drafts = test_support::mailbox(connection, &account, "Drafts").await;
     (account, drafts.id)
 }
 
@@ -103,15 +104,16 @@ async fn exists(backend: &MockBackend, mailbox: &str) -> u32 {
 
 #[tokio::test]
 async fn an_autosaved_draft_reaches_the_drafts_mailbox() {
-    let database = test_support::memory();
-    let connection = database.connection().expect("checkout");
-    let (account, _) = account_with_drafts(&connection);
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    let (account, _) = account_with_drafts(&connection).await;
     let blobs = TempBlobs::new();
     let backend = a_server("Drafts").await;
 
     let mut draft = a_draft(&account, "Tide gate interlock");
     DraftRepository::new(&connection)
         .save_and_sync(&mut draft, at(9))
+        .await
         .expect("save and queue");
 
     let report = drain(&connection, &backend, &blobs.store, &account).await;
@@ -121,6 +123,7 @@ async fn an_autosaved_draft_reaches_the_drafts_mailbox() {
 
     let stored = DraftRepository::new(&connection)
         .get(draft.id)
+        .await
         .expect("get")
         .expect("the draft");
     assert!(
@@ -132,18 +135,19 @@ async fn an_autosaved_draft_reaches_the_drafts_mailbox() {
 
 #[tokio::test]
 async fn editing_a_draft_replaces_its_copy_rather_than_adding_one() {
-    let database = test_support::memory();
-    let connection = database.connection().expect("checkout");
-    let (account, _) = account_with_drafts(&connection);
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    let (account, _) = account_with_drafts(&connection).await;
     let blobs = TempBlobs::new();
     let backend = a_server("Drafts").await;
     let drafts = DraftRepository::new(&connection);
 
     let mut draft = a_draft(&account, "Tide gate interlock");
-    drafts.save_and_sync(&mut draft, at(9)).expect("save");
+    drafts.save_and_sync(&mut draft, at(9)).await.expect("save");
     drain(&connection, &backend, &blobs.store, &account).await;
     let first = drafts
         .get(draft.id)
+        .await
         .expect("get")
         .expect("the draft")
         .server
@@ -152,6 +156,7 @@ async fn editing_a_draft_replaces_its_copy_rather_than_adding_one() {
     draft.body.text = Some("Half a thought, now most of one.".to_owned());
     drafts
         .save_and_sync(&mut draft, at(10))
+        .await
         .expect("save again");
     let report = drain(&connection, &backend, &blobs.store, &account).await;
 
@@ -164,6 +169,7 @@ async fn editing_a_draft_replaces_its_copy_rather_than_adding_one() {
 
     let second = drafts
         .get(draft.id)
+        .await
         .expect("get")
         .expect("the draft")
         .server
@@ -176,9 +182,9 @@ async fn a_run_of_autosaves_costs_one_round_trip() {
     // The reason saves fold at all: a minute of typing leaves a queue full of
     // rows that all say the same thing, and the text is not read until the
     // step drains.
-    let database = test_support::memory();
-    let connection = database.connection().expect("checkout");
-    let (account, _) = account_with_drafts(&connection);
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    let (account, _) = account_with_drafts(&connection).await;
     let blobs = TempBlobs::new();
     let backend = a_server("Drafts").await;
     let drafts = DraftRepository::new(&connection);
@@ -186,7 +192,10 @@ async fn a_run_of_autosaves_costs_one_round_trip() {
     let mut draft = a_draft(&account, "Tide gate interlock");
     for (index, hour) in [7, 8, 9].into_iter().enumerate() {
         draft.subject = format!("Tide gate interlock, revision {index}");
-        drafts.save_and_sync(&mut draft, at(hour)).expect("save");
+        drafts
+            .save_and_sync(&mut draft, at(hour))
+            .await
+            .expect("save");
     }
 
     let before = backend.calls();
@@ -206,19 +215,19 @@ async fn a_run_of_autosaves_costs_one_round_trip() {
 
 #[tokio::test]
 async fn discarding_a_draft_takes_the_server_copy_with_it() {
-    let database = test_support::memory();
-    let connection = database.connection().expect("checkout");
-    let (account, _) = account_with_drafts(&connection);
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    let (account, _) = account_with_drafts(&connection).await;
     let blobs = TempBlobs::new();
     let backend = a_server("Drafts").await;
     let drafts = DraftRepository::new(&connection);
 
     let mut draft = a_draft(&account, "Tide gate interlock");
-    drafts.save_and_sync(&mut draft, at(9)).expect("save");
+    drafts.save_and_sync(&mut draft, at(9)).await.expect("save");
     drain(&connection, &backend, &blobs.store, &account).await;
     assert_eq!(exists(&backend, "Drafts").await, 1);
 
-    drafts.discard(draft.id, at(10)).expect("discard");
+    drafts.discard(draft.id, at(10)).await.expect("discard");
     let report = drain(&connection, &backend, &blobs.store, &account).await;
 
     assert_eq!(report.applied, 1, "{report:?}");
@@ -231,18 +240,18 @@ async fn discarding_a_draft_takes_the_server_copy_with_it() {
 
 #[tokio::test]
 async fn a_draft_discarded_before_it_was_ever_uploaded_asks_the_server_for_nothing() {
-    let database = test_support::memory();
-    let connection = database.connection().expect("checkout");
-    let (account, _) = account_with_drafts(&connection);
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    let (account, _) = account_with_drafts(&connection).await;
     let blobs = TempBlobs::new();
     let backend = a_server("Drafts").await;
     let drafts = DraftRepository::new(&connection);
 
     let mut draft = a_draft(&account, "Tide gate interlock");
-    drafts.save_and_sync(&mut draft, at(9)).expect("save");
+    drafts.save_and_sync(&mut draft, at(9)).await.expect("save");
     // Discarded while the save is still in the queue: the row goes, so the
     // save has nothing left to upload.
-    drafts.discard(draft.id, at(10)).expect("discard");
+    drafts.discard(draft.id, at(10)).await.expect("discard");
 
     let report = drain(&connection, &backend, &blobs.store, &account).await;
 
@@ -257,9 +266,9 @@ async fn a_renumbered_drafts_mailbox_is_never_expunged_by_a_stale_uid() {
     // generation, the old number is somebody else's message. Since #543 the
     // check lives behind the seam — the adapter refuses the stale id — and
     // the drainer reads that refusal as obsolete, never as a retry.
-    let database = test_support::memory();
-    let connection = database.connection().expect("checkout");
-    let (account, drafts_mailbox) = account_with_drafts(&connection);
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    let (account, drafts_mailbox) = account_with_drafts(&connection).await;
     let blobs = TempBlobs::new();
     // The server has renumbered: its Drafts generation is 2, and the queued
     // discard below still names an id from generation 1.
@@ -271,6 +280,7 @@ async fn a_renumbered_drafts_mailbox_is_never_expunged_by_a_stale_uid() {
     let mut draft = a_draft(&account, "Tide gate interlock");
     DraftRepository::new(&connection)
         .save(&mut draft)
+        .await
         .expect("save");
     OperationQueueRepository::new(&connection)
         .enqueue(
@@ -282,6 +292,7 @@ async fn a_renumbered_drafts_mailbox_is_never_expunged_by_a_stale_uid() {
             },
             at(9),
         )
+        .await
         .expect("enqueue");
 
     let report = drain(&connection, &backend, &blobs.store, &account).await;
@@ -296,9 +307,9 @@ async fn a_draft_whose_attachment_is_still_being_written_waits_rather_than_fails
     // thread, so an autosave can reach the queue first. Uploading the draft
     // now would put a copy on the server that is quietly missing part of
     // itself.
-    let database = test_support::memory();
-    let connection = database.connection().expect("checkout");
-    let (account, _) = account_with_drafts(&connection);
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    let (account, _) = account_with_drafts(&connection).await;
     let blobs = TempBlobs::new();
     let backend = a_server("Drafts").await;
 
@@ -310,6 +321,7 @@ async fn a_draft_whose_attachment_is_still_being_written_waits_rather_than_fails
     )];
     DraftRepository::new(&connection)
         .save_and_sync(&mut draft, at(9))
+        .await
         .expect("save");
 
     let report = drain(&connection, &backend, &blobs.store, &account).await;
@@ -325,9 +337,9 @@ async fn the_copy_in_drafts_keeps_the_bcc_the_sent_message_will_not() {
     // there loses recipients they typed; carrying it in the *sent* bytes
     // would hand every other recipient the list. Both matter, and they are
     // different bytes.
-    let database = test_support::memory();
-    let connection = database.connection().expect("checkout");
-    let (account, _) = account_with_drafts(&connection);
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    let (account, _) = account_with_drafts(&connection).await;
     let blobs = TempBlobs::new();
     let backend = a_server("Drafts").await;
 
@@ -335,12 +347,14 @@ async fn the_copy_in_drafts_keeps_the_bcc_the_sent_message_will_not() {
     draft.bcc = vec![EmailAddress::new(None::<String>, "quiet@example.com")];
     DraftRepository::new(&connection)
         .save_and_sync(&mut draft, at(9))
+        .await
         .expect("save and queue");
 
     drain(&connection, &backend, &blobs.store, &account).await;
 
     let stored = DraftRepository::new(&connection)
         .get(draft.id)
+        .await
         .expect("get")
         .expect("the draft");
     let remote_id = stored.server.remote_id.expect("the copy landed");
@@ -369,7 +383,7 @@ async fn the_copy_in_drafts_keeps_the_bcc_the_sent_message_will_not() {
 
 /// The Drafts mailbox as the sidebar and the message list see it: the rows
 /// `messages` holds for that folder, subject first.
-fn listed(connection: &Connection, mailbox: MailboxId) -> Vec<String> {
+async fn listed(connection: &Connection, mailbox: MailboxId) -> Vec<String> {
     let query = postio_storage::repository::ListQuery {
         scope: postio_storage::repository::ListScope::Mailbox(mailbox),
         limit: 50,
@@ -377,6 +391,7 @@ fn listed(connection: &Connection, mailbox: MailboxId) -> Vec<String> {
     };
     postio_storage::repository::MessageRepository::new(connection)
         .page(&query)
+        .await
         .expect("a page of the Drafts folder")
         .into_iter()
         .map(|row| row.subject.unwrap_or_default())
@@ -397,9 +412,9 @@ async fn a_draft_this_client_uploaded_does_not_come_back_as_a_second_row() {
     //
     // The other message is another client's draft. It has no local draft row,
     // and it is the reason the folder is worth syncing at all.
-    let database = test_support::memory();
-    let connection = database.connection().expect("checkout");
-    let (account, drafts_mailbox) = account_with_drafts(&connection);
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    let (account, drafts_mailbox) = account_with_drafts(&connection).await;
     let blobs = TempBlobs::new();
     let backend = MockBackend::builder()
         .mailbox(
@@ -415,6 +430,7 @@ async fn a_draft_this_client_uploaded_does_not_come_back_as_a_second_row() {
     let mut draft = a_draft(&account, "Tide gate interlock");
     DraftRepository::new(&connection)
         .save_and_sync(&mut draft, at(9))
+        .await
         .expect("save and queue");
     drain(&connection, &backend, &blobs.store, &account).await;
     assert_eq!(
@@ -425,6 +441,7 @@ async fn a_draft_this_client_uploaded_does_not_come_back_as_a_second_row() {
 
     let mailbox = MailboxRepository::new(&connection)
         .get(drafts_mailbox)
+        .await
         .expect("a read")
         .expect("the Drafts folder");
     postio_sync::sync_mailbox(
@@ -437,7 +454,7 @@ async fn a_draft_this_client_uploaded_does_not_come_back_as_a_second_row() {
     .await
     .expect("a sync pass over Drafts");
 
-    let mut after_sync = listed(&connection, drafts_mailbox);
+    let mut after_sync = listed(&connection, drafts_mailbox).await;
     after_sync.sort();
     assert_eq!(
         after_sync,

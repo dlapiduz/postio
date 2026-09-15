@@ -85,6 +85,35 @@ def main() -> int:
         r = run(root)
         case("a note not named by date fails", r.returncode != 0, "passed a note whose name has no date")
 
+        (root / "docs" / "notes" / "not-dated.md").unlink()
+
+        # An archived note is one directory down and is still listed -- under
+        # its own heading, linked as notes/archive/<name>. Both rules follow
+        # it there: unlisted fails, dangling fails, listed passes.
+        old = "2026-08-25-a-measurement-of-the-old-engine.md"
+        tree(root, [f"- 2026-09-04 — [A thing that happened](notes/{good})",
+                    f"- 2026-08-25 — [A measurement of the old engine](notes/archive/{old})"],
+             {good: "# A thing that happened\n"})
+        archive = root / "docs" / "notes" / "archive"
+        archive.mkdir()
+        (archive / old).write_text("# A measurement of the old engine\n\nbody\n", encoding="utf-8")
+        r = run(root)
+        case("a listed archived note passes", r.returncode == 0, r.stdout + r.stderr)
+
+        (archive / "2026-08-26-archived-and-unlisted.md").write_text("# Unlisted\n", encoding="utf-8")
+        r = run(root)
+        case("an unlisted archived note fails", r.returncode != 0, "passed with an archived note missing from the index")
+        case("...and is named with its folder", "archive/2026-08-26-archived-and-unlisted.md" in r.stdout + r.stderr, r.stdout + r.stderr)
+        (archive / "2026-08-26-archived-and-unlisted.md").unlink()
+
+        tree(root, [f"- 2026-09-04 — [A thing that happened](notes/{good})",
+                    f"- 2026-08-25 — [A measurement of the old engine](notes/archive/{old})",
+                    "- 2026-08-24 — [Gone](notes/archive/2026-08-24-gone.md)"],
+             {good: "# A thing that happened\n"})
+        r = run(root)
+        case("an archive listing that names no file fails", r.returncode != 0, "passed with a dangling archive line")
+        case("...and is named", "archive/2026-08-24-gone.md" in r.stdout + r.stderr, r.stdout + r.stderr)
+
     if FAILURES:
         print(f"\n{len(FAILURES)} case(s) failed:", file=sys.stderr)
         for failure in FAILURES:

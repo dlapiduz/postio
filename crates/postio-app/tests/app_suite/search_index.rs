@@ -25,60 +25,68 @@ use postio_search::parse;
 use postio_session::{Wiring, ensure_search_index, index_local_bodies};
 use postio_storage::repository::{MessageRepository, StoredBody};
 use postio_storage::seed::seed_small;
-use postio_storage::{BlobStore, Database, test_support};
+use postio_storage::{BlobStore, Store, test_support};
 
 pub fn a_store_the_application_opened_can_be_searched() {
-    // Seeded first and indexed after, which is the order every existing
-    // account is in: the mail was there long before the index was.
-    let database = test_support::memory();
-    let report = seed_small(&database, 11);
-    assert!(report.message_count > 0, "seeded nothing to find");
+    crate::gtk_case(async {
+        // Seeded first and indexed after, which is the order every existing
+        // account is in: the mail was there long before the index was.
+        let database = test_support::memory().await;
+        let report = seed_small(&database, 11).await;
+        assert!(report.message_count > 0, "seeded nothing to find");
 
-    ensure_search_index(&database).expect("the index is part of opening the store");
+        ensure_search_index(&database)
+            .await
+            .expect("the index is part of opening the store");
 
-    let connection = database.connection().expect("a connection");
-    // A word every fixture in the corpus has a sender for. Searching for the
-    // *sender* rather than a subject also proves the recipients half of the
-    // backfill ran, not only the subject column.
-    let query = parse("example.com", Utc::now().date_naive());
-    let hits = search(
-        &connection,
-        &SearchRequest {
-            account: AccountScope::Account(report.account.id),
-            query: &query,
-            scope: Scope::AllMail,
-            limit: 50,
-            order: postio_search::ResultOrder::Relevance,
-        },
-        Utc::now(),
-    )
-    .expect("the search runs")
-    .hits;
+        let connection = database.connect().await.expect("a connection");
+        // A word every fixture in the corpus has a sender for. Searching for the
+        // *sender* rather than a subject also proves the recipients half of the
+        // backfill ran, not only the subject column.
+        let query = parse("example.com", Utc::now().date_naive());
+        let hits = search(
+            &connection,
+            &SearchRequest {
+                account: AccountScope::Account(report.account.id),
+                query: &query,
+                scope: Scope::AllMail,
+                limit: 50,
+                order: postio_search::ResultOrder::Relevance,
+            },
+            Utc::now(),
+        )
+        .await
+        .expect("the search runs")
+        .hits;
 
-    assert!(
-        !hits.is_empty(),
-        "the store holds {} messages and searching it finds none. Either the \
-         index was never created — which is what postio-x4e was — or it was \
-         created empty, which is the same bug with the backfill missing.",
-        report.message_count
-    );
+        assert!(
+            !hits.is_empty(),
+            "the store holds {} messages and searching it finds none. Either the \
+             index was never created — which is what postio-x4e was — or it was \
+             created empty, which is the same bug with the backfill missing.",
+            report.message_count
+        );
+    });
 }
 
 /// Every message the seeded store put in the list, newest first.
-fn all_messages(database: &Database) -> Vec<MessageId> {
-    let connection = database.connection().expect("a connection");
+async fn all_messages(database: &Store) -> Vec<MessageId> {
+    let connection = database.connect().await.expect("a connection");
     let mut statement = connection
         .prepare("SELECT id FROM messages ORDER BY received_at DESC")
+        .await
         .expect("a statement");
-    let rows = statement
-        .query_map([], |row| row.get::<_, i64>(0))
-        .expect("query");
-    rows.map(|id| MessageId::new(id.expect("an id"))).collect()
+    let rows = postio_storage::sql::mapped(&mut statement, (), |row| {
+        postio_storage::sql::RowExt::col::<i64>(row, 0)
+    })
+    .await
+    .expect("query");
+    rows.into_iter().map(MessageId::new).collect()
 }
 
 /// Land a body for `id`, the way a settled backfill leaves one.
-fn give_body(database: &Database, id: MessageId, text: Option<&str>, html: Option<&str>) {
-    let connection = database.connection().expect("a connection");
+async fn give_body(database: &Store, id: MessageId, text: Option<&str>, html: Option<&str>) {
+    let connection = database.connect().await.expect("a connection");
     let stored = StoredBody {
         text: text.map(str::to_owned),
         html: html.map(str::to_owned),
@@ -88,11 +96,12 @@ fn give_body(database: &Database, id: MessageId, text: Option<&str>, html: Optio
     };
     MessageRepository::new(&connection)
         .set_body(id, &stored, BodyState::Full)
+        .await
         .expect("store the body");
 }
 
-fn hits(database: &Database, account: AccountId, query: &str) -> Vec<MessageId> {
-    let connection = database.connection().expect("a connection");
+async fn hits(database: &Store, account: AccountId, query: &str) -> Vec<MessageId> {
+    let connection = database.connect().await.expect("a connection");
     let parsed = parse(query, Utc::now().date_naive());
     search(
         &connection,
@@ -105,6 +114,7 @@ fn hits(database: &Database, account: AccountId, query: &str) -> Vec<MessageId> 
         },
         Utc::now(),
     )
+    .await
     .expect("the search runs")
     .hits
     .into_iter()
@@ -126,82 +136,92 @@ fn hits(database: &Database, account: AccountId, query: &str) -> Vec<MessageId> 
 /// this machine when that call did not exist, and any body whose index write
 /// was lost to a crash between the commit point and it.
 pub fn a_store_that_predates_body_indexing_catches_up() {
-    let database = test_support::memory();
-    let report = seed_small(&database, 29);
+    crate::gtk_case(async {
+        let database = test_support::memory().await;
+        let report = seed_small(&database, 29).await;
 
-    let messages = all_messages(&database);
-    assert!(messages.len() > 2, "not enough seeded mail to tell apart");
+        let messages = all_messages(&database).await;
+        assert!(messages.len() > 2, "not enough seeded mail to tell apart");
 
-    // A word that appears in no subject, no address and no filename in the
-    // corpus, so a hit for it can only have come from a body.
-    let (plain, markup, never_fetched) = (messages[0], messages[1], messages[2]);
-    give_body(
-        &database,
-        plain,
-        Some("The turbines held at ninety-one percent all quarter."),
-        None,
-    );
-    give_body(
-        &database,
-        markup,
-        None,
-        Some(
-            "<div><p>The <a href=\"https://tracker.example/c?i=7\">turbines</a> \
-             held steady.</p></div>",
-        ),
-    );
-    // `never_fetched` keeps its seeded `BodyState::NotFetched` and gets no
-    // blob: its body is on the server, and the index must not claim to have
-    // read it.
+        // A word that appears in no subject, no address and no filename in the
+        // corpus, so a hit for it can only have come from a body.
+        let (plain, markup, never_fetched) = (messages[0], messages[1], messages[2]);
+        give_body(
+            &database,
+            plain,
+            Some("The turbines held at ninety-one percent all quarter."),
+            None,
+        )
+        .await;
+        give_body(
+            &database,
+            markup,
+            None,
+            Some(
+                "<div><p>The <a href=\"https://tracker.example/c?i=7\">turbines</a> \
+                 held steady.</p></div>",
+            ),
+        )
+        .await;
+        // `never_fetched` keeps its seeded `BodyState::NotFetched` and gets no
+        // blob: its body is on the server, and the index must not claim to have
+        // read it.
 
-    ensure_search_index(&database).expect("the index is part of opening the store");
-    assert!(
-        hits(&database, report.account.id, "turbines").is_empty(),
-        "nothing has indexed a body yet, so this cannot be measuring the pass"
-    );
-
-    let indexed = index_local_bodies(&database).expect("the pass runs");
-    assert_eq!(
-        indexed, 2,
-        "the pass should index exactly the two messages whose body is on          this machine"
-    );
-
-    let found = hits(&database, report.account.id, "turbines");
-    assert!(
-        found.contains(&plain),
-        "a word that appears only in a message's body finds nothing (#327)"
-    );
-    assert!(
-        found.contains(&markup),
-        "an HTML-only message is not findable by anything it actually says"
-    );
-    assert!(
-        !found.contains(&never_fetched),
-        "a message whose body is still on the server was indexed anyway, so          search is answering for a corpus this machine does not have"
-    );
-
-    // Markup and link targets are not the message. Indexing them would make
-    // every HTML message a hit for `div`, and every message carrying one
-    // tracking redirect a hit for whatever campaign shared that shortener.
-    for markup_word in ["div", "href", "tracker.example"] {
+        ensure_search_index(&database)
+            .await
+            .expect("the index is part of opening the store");
         assert!(
-            hits(&database, report.account.id, markup_word).is_empty(),
-            "{markup_word:?} matched, so a message is a hit for a word it \
-             never contained"
+            hits(&database, report.account.id, "turbines")
+                .await
+                .is_empty(),
+            "nothing has indexed a body yet, so this cannot be measuring the pass"
         );
-    }
 
-    // Idempotent: the second pass finds nothing left to do, and the first
-    // pass's rows are not duplicated. `search_documents` is keyed by
-    // `message_id`, so a duplicate would be a second FTS row for one message
-    // — one message appearing twice in its own result list.
-    assert_eq!(
-        index_local_bodies(&database).expect("a second pass"),
-        0,
-        "the pass indexed the same bodies again, so it is not safe to run on          every start"
-    );
-    let again = hits(&database, report.account.id, "turbines");
-    assert_eq!(again.len(), 2, "one message, one hit: {again:?}");
+        let indexed = index_local_bodies(&database).await.expect("the pass runs");
+        assert_eq!(
+            indexed, 2,
+            "the pass should index exactly the two messages whose body is on          this machine"
+        );
+
+        let found = hits(&database, report.account.id, "turbines").await;
+        assert!(
+            found.contains(&plain),
+            "a word that appears only in a message's body finds nothing (#327)"
+        );
+        assert!(
+            found.contains(&markup),
+            "an HTML-only message is not findable by anything it actually says"
+        );
+        assert!(
+            !found.contains(&never_fetched),
+            "a message whose body is still on the server was indexed anyway, so          search is answering for a corpus this machine does not have"
+        );
+
+        // Markup and link targets are not the message. Indexing them would make
+        // every HTML message a hit for `div`, and every message carrying one
+        // tracking redirect a hit for whatever campaign shared that shortener.
+        for markup_word in ["div", "href", "tracker.example"] {
+            assert!(
+                hits(&database, report.account.id, markup_word)
+                    .await
+                    .is_empty(),
+                "{markup_word:?} matched, so a message is a hit for a word it \
+                 never contained"
+            );
+        }
+
+        // Idempotent: the second pass finds nothing left to do, and the first
+        // pass's rows are not duplicated. `search_documents` is keyed by
+        // `message_id`, so a duplicate would be a second FTS row for one message
+        // — one message appearing twice in its own result list.
+        assert_eq!(
+            index_local_bodies(&database).await.expect("a second pass"),
+            0,
+            "the pass indexed the same bodies again, so it is not safe to run on          every start"
+        );
+        let again = hits(&database, report.account.id, "turbines").await;
+        assert_eq!(again.len(), 2, "one message, one hit: {again:?}");
+    });
 }
 
 /// And nobody has to ask for it.
@@ -220,73 +240,84 @@ pub fn a_store_that_predates_body_indexing_catches_up() {
 /// Nothing here touches the network — `start_syncing` is the half that opens
 /// a socket and this never calls it.
 pub fn opening_the_window_indexes_local_bodies_without_being_asked() {
-    if adw::init().is_err() || gdk::Display::default().is_none() {
-        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
-        return;
-    }
+    crate::gtk_case(async {
+        if adw::init().is_err() || gdk::Display::default().is_none() {
+            eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
+            return;
+        }
 
-    let database = test_support::memory();
-    let report = seed_small(&database, 31);
-    let directory = tempfile::tempdir().expect("a blob directory");
-    let blobs = BlobStore::open(
-        directory.path().to_path_buf(),
-        &postio_storage::test_support::blob_keys(),
-    )
-    .expect("a blob store");
+        let database = test_support::memory().await;
+        let report = seed_small(&database, 31).await;
+        let directory = tempfile::tempdir().expect("a blob directory");
+        let blobs = BlobStore::open(
+            directory.path().to_path_buf(),
+            &postio_storage::test_support::blob_keys(),
+        )
+        .expect("a blob store");
 
-    let target = all_messages(&database)[0];
-    give_body(
-        &database,
-        target,
-        Some("A word no header in the corpus carries: photogrammetry."),
-        None,
-    );
-    ensure_search_index(&database).expect("the index is part of opening the store");
-    assert!(
-        hits(&database, report.account.id, "photogrammetry").is_empty(),
-        "the body is not indexed yet, so this cannot be measuring the wiring"
-    );
+        let target = all_messages(&database).await[0];
+        give_body(
+            &database,
+            target,
+            Some("A word no header in the corpus carries: photogrammetry."),
+            None,
+        )
+        .await;
+        ensure_search_index(&database)
+            .await
+            .expect("the index is part of opening the store");
+        assert!(
+            hits(&database, report.account.id, "photogrammetry")
+                .await
+                .is_empty(),
+            "the body is not indexed yet, so this cannot be measuring the wiring"
+        );
 
-    let (bridge, _replies) = Bridge::new(handler_fn(|_, _| async {})).expect("a runtime");
-    let (sink, _events) = event_channel();
-    let wiring = Wiring::new(
-        database.clone(),
-        blobs,
-        bridge.handle(),
-        sink,
-        bridge.commands(),
-    );
+        let (bridge, _replies) = Bridge::new(handler_fn(|_, _| async {})).expect("a runtime");
+        let (sink, _events) = event_channel();
+        let wiring = Wiring::new(
+            database.clone(),
+            blobs,
+            bridge.handle(),
+            sink,
+            bridge.commands(),
+        );
 
-    let window = Window::default();
-    window.present();
-    while glib::MainContext::default().iteration(false) {}
-
-    // ── the same call `run` makes, and nothing else ──────────────────────
-    let _wired = feed_the_window(&window, &wiring).expect("the seeded store has an account");
-
-    let deadline =
-        std::time::Instant::now() + postio_test_support::scaled(std::time::Duration::from_secs(10));
-    let mut found = false;
-    while std::time::Instant::now() < deadline && !found {
+        let window = Window::default();
+        window.present();
         while glib::MainContext::default().iteration(false) {}
-        found = hits(&database, report.account.id, "photogrammetry").contains(&target);
-        std::thread::sleep(std::time::Duration::from_millis(10));
-    }
-    assert!(
-        found,
-        "the store was opened the way the application opens it and a body \
-         already on this machine is still not searchable. `index_local_bodies` \
-         exists and nothing runs it."
-    );
 
-    bridge.shutdown();
+        // ── the same call `run` makes, and nothing else ──────────────────────
+        let _wired = feed_the_window(&window, &wiring)
+            .await
+            .expect("the seeded store has an account");
+
+        let deadline = std::time::Instant::now()
+            + postio_test_support::scaled(std::time::Duration::from_secs(10));
+        let mut found = false;
+        while std::time::Instant::now() < deadline && !found {
+            while glib::MainContext::default().iteration(false) {}
+            found = hits(&database, report.account.id, "photogrammetry")
+                .await
+                .contains(&target);
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+        assert!(
+            found,
+            "the store was opened the way the application opens it and a body \
+             already on this machine is still not searchable. `index_local_bodies` \
+             exists and nothing runs it."
+        );
+
+        bridge.shutdown();
+    });
 }
 
 /// Land a header block for `id`, the way a settled backfill leaves one, and
 /// leave the header *index* alone — which is the state every store is in
 /// before the catch-up pass reaches it (ADR 0025 Q5).
-fn give_header_block(database: &Database, id: MessageId, block: &str) {
-    let connection = database.connection().expect("a connection");
+async fn give_header_block(database: &Store, id: MessageId, block: &str) {
+    let connection = database.connect().await.expect("a connection");
     let stored = StoredBody {
         text: Some("a body, so the row looks fetched".to_owned()),
         html: None,
@@ -296,6 +327,7 @@ fn give_header_block(database: &Database, id: MessageId, block: &str) {
     };
     MessageRepository::new(&connection)
         .set_body(id, &stored, BodyState::Full)
+        .await
         .expect("store the block");
 }
 
@@ -317,78 +349,90 @@ fn give_header_block(database: &Database, id: MessageId, block: &str) {
 /// Nothing here touches the network — `start_syncing` is the half that opens
 /// a socket and this never calls it.
 pub fn opening_the_window_indexes_local_headers_without_being_asked() {
-    if adw::init().is_err() || gdk::Display::default().is_none() {
-        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
-        return;
-    }
+    crate::gtk_case(async {
+        if adw::init().is_err() || gdk::Display::default().is_none() {
+            eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
+            return;
+        }
 
-    let database = test_support::memory();
-    let report = seed_small(&database, 37);
-    let directory = tempfile::tempdir().expect("a blob directory");
-    let blobs = BlobStore::open(
-        directory.path().to_path_buf(),
-        &postio_storage::test_support::blob_keys(),
-    )
-    .expect("a blob store");
-
-    let target = all_messages(&database)[0];
-    // A field no envelope column carries and no fixture in the corpus has,
-    // so nothing but `message_headers` could answer for it.
-    give_header_block(
-        &database,
-        target,
-        "X-Mailer: Photogrammetry 4.2\r\nContent-Type: text/plain; charset=utf-8",
-    );
-    ensure_search_index(&database).expect("the index is part of opening the store");
-    assert!(
-        hits(
-            &database,
-            report.account.id,
-            "header:x-mailer=photogrammetry"
+        let database = test_support::memory().await;
+        let report = seed_small(&database, 37).await;
+        let directory = tempfile::tempdir().expect("a blob directory");
+        let blobs = BlobStore::open(
+            directory.path().to_path_buf(),
+            &postio_storage::test_support::blob_keys(),
         )
-        .is_empty(),
-        "the block is stored and unindexed, so this cannot be measuring the wiring"
-    );
+        .expect("a blob store");
 
-    let (bridge, _replies) = Bridge::new(handler_fn(|_, _| async {})).expect("a runtime");
-    let (sink, _events) = event_channel();
-    let wiring = Wiring::new(
-        database.clone(),
-        blobs,
-        bridge.handle(),
-        sink,
-        bridge.commands(),
-    );
-
-    let window = Window::default();
-    window.present();
-    while glib::MainContext::default().iteration(false) {}
-
-    // ── the same call `run` makes, and nothing else ──────────────────────
-    let _wired = feed_the_window(&window, &wiring).expect("the seeded store has an account");
-
-    postio_test_support::settle_until(
-        "a stored header block to become findable with header:",
-        || {
-            while glib::MainContext::default().iteration(false) {}
-        },
-        || {
+        let target = all_messages(&database).await[0];
+        // A field no envelope column carries and no fixture in the corpus has,
+        // so nothing but `message_headers` could answer for it.
+        give_header_block(
+            &database,
+            target,
+            "X-Mailer: Photogrammetry 4.2\r\nContent-Type: text/plain; charset=utf-8",
+        )
+        .await;
+        ensure_search_index(&database)
+            .await
+            .expect("the index is part of opening the store");
+        assert!(
             hits(
                 &database,
                 report.account.id,
-                "header:x-mailer=photogrammetry",
+                "header:x-mailer=photogrammetry"
             )
-            .contains(&target)
-        },
-    );
+            .await
+            .is_empty(),
+            "the block is stored and unindexed, so this cannot be measuring the wiring"
+        );
 
-    // Presence and value are two different questions, and both have to reach
-    // the running application -- `header:x-mailer` alone is the half a
-    // half-typed query asks.
-    assert!(
-        hits(&database, report.account.id, "header:x-mailer").contains(&target),
-        "presence is answerable too, not only a value match"
-    );
+        let (bridge, _replies) = Bridge::new(handler_fn(|_, _| async {})).expect("a runtime");
+        let (sink, _events) = event_channel();
+        let wiring = Wiring::new(
+            database.clone(),
+            blobs,
+            bridge.handle(),
+            sink,
+            bridge.commands(),
+        );
 
-    bridge.shutdown();
+        let window = Window::default();
+        window.present();
+        while glib::MainContext::default().iteration(false) {}
+
+        // ── the same call `run` makes, and nothing else ──────────────────────
+        let _wired = feed_the_window(&window, &wiring)
+            .await
+            .expect("the seeded store has an account");
+
+        postio_test_support::settle_until_async(
+            "a stored header block to become findable with header:",
+            || {
+                while glib::MainContext::default().iteration(false) {}
+            },
+            async || {
+                hits(
+                    &database,
+                    report.account.id,
+                    "header:x-mailer=photogrammetry",
+                )
+                .await
+                .contains(&target)
+            },
+        )
+        .await;
+
+        // Presence and value are two different questions, and both have to reach
+        // the running application -- `header:x-mailer` alone is the half a
+        // half-typed query asks.
+        assert!(
+            hits(&database, report.account.id, "header:x-mailer")
+                .await
+                .contains(&target),
+            "presence is answerable too, not only a value match"
+        );
+
+        bridge.shutdown();
+    });
 }

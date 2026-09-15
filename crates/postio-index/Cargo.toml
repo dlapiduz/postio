@@ -17,16 +17,18 @@ chrono = { version = "0.4.45", default-features = false, features = ["std", "clo
 postio-body = { workspace = true }
 postio-model = { workspace = true }
 postio-search = { workspace = true }
-# Matches `postio-storage`: one `links = "sqlite3"` crate in the graph, so
-# the feature that selects SQLCipher has to agree everywhere (ADR 0014).
-rusqlite = { version = "0.40.2", features = [
-    "bundled-sqlcipher-vendored-openssl",
-] }
+postio-storage = { workspace = true }
+# The engine, for its Row and Value types. postio-index is the one crate
+# besides postio-storage that speaks SQL -- it maintains the search index
+# over the same tables (ADR 0016).
+turso = { version = "=0.8.0-pre.11", default-features = false, features = ["fts"] }
 thiserror = "2.0.20"
 tracing = "0.1"
 
 [dev-dependencies]
 postio-storage = { workspace = true, features = ["test-support"] }
+# Tests only: the engine is async, so its tests need a runtime.
+tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
 
 [lints]
 workspace = true

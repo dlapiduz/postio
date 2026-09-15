@@ -4,8 +4,9 @@ Performance is a functional requirement in Postio. What enforces it is
 **counted work rather than wall-clock**: `bench.yml` compiles the bench
 targets nightly and deliberately times nothing, because a shared runner
 cannot defend 16 ms, so what gates a pull request is the *cause* of each
-budget — statements, rows and SQLite steps, which are the same numbers on
-any machine. See `postio_storage::test_support::counting`.
+budget — statements and rows, plus the full scans `counting::scans` reads
+off the planner, which are the same numbers on any machine. See
+`postio_storage::test_support::counting`.
 
 | Budget | Target | Measured |
 |---|---|---|
@@ -17,12 +18,47 @@ any machine. See `postio_storage::test_support::counting`.
 
 Transitions are ≤ 100 ms or absent entirely, and `prefers-reduced-motion` is
 always honored. A mailbox is never loaded into memory in full — the message
-list is windowed over paged SQLite.
+list is windowed over the paged store.
 
-**These numbers are from an encrypted store.** Since ADR 0014 the database is
-SQLCipher and there is no unencrypted configuration to compare against in
+**These numbers are from an encrypted store.** Since ADR 0014 the database
+encrypts itself and there is no unencrypted configuration to compare against in
 normal use, so every figure here already carries the cost of decrypting each
-page on the way in. Where that cost is separable it is stated.
+page on the way in. Where that cost is separable it is stated. The *cipher*
+changed with ADR 0038 — read the next section before trusting any wall-clock
+figure below it.
+
+## The engine changed underneath every number below
+
+`specs/004-turso-store` replaced SQLCipher and `rusqlite` with Turso, whose
+page cipher is AES-256-GCM. **Every wall-clock figure in this document was
+measured against the old engine and none has been re-measured on a real
+store** — that needs a live mailbox and a live run, which is the one
+measurement a test cannot give.
+
+What *has* been measured, on this branch and on fixtures rather than on a
+mailbox:
+
+| | old engine | this engine |
+|---|---|---|
+| a page 95,000 rows deep | — | **1.4 ms → 107 ms → 1.4 ms** |
+| paging over 100,000 messages (the whole case) | — | 240 s timeout → **42 s** |
+| the header index, per message | 3,809 B | **4,218 B** |
+| statements to open a window, 1k vs 10k messages | flat | **flat** (31 and 31) |
+
+The 107 ms is the one to read: a keyset cursor spelled as a row value is a
+*filter* on this engine rather than a seek, so every list in the application
+was a skip as soon as somebody scrolled. It is a seek again
+(`docs/notes/2026-09-12-a-row-value-cursor-is-a-filter-not-a-seek.md`), and
+the deep page is back inside the budget.
+
+Two figures are expected to move against the old engine and have not been
+taken: **startup**, where the cipher change should help — 45.9% of sampled CPU
+on a real mailbox was in SHA-512 for SQLCipher's per-page MAC, and GCM
+authenticates as part of the cipher — and **store size**, which is expected to
+grow, because sixteen partial indexes lost their predicates
+(`2026-09-12-a-partial-index-the-planner-will-not-read.md`) and message text
+lost its trained dictionary — it is zstd per row again
+(`postio_storage::body_codec`), without one. Both want the reference mailbox.
 
 ## How to read these numbers
 
@@ -36,13 +72,13 @@ spread is reported where it is wide enough to matter.
 Reproduce them:
 
 ```sh
-cargo run -p postio-runtime --example seed_store -- /tmp/postio.db 20000
+cargo run --release -p postio-runtime --example seed_store -- /tmp/postio.db 20000
 POSTIO_STORE=/tmp/postio.db POSTIO_STARTUP_TRACE=1 POSTIO_STARTUP_EXIT=1 \
   cargo run --release -p postio-app
 
-cargo bench -p postio-runtime --bench store_reads   # the database read
-cargo bench -p postio-index   --bench search_budget # the query
-cargo bench -p postio-gtk     --bench list_scroll   # the row draw
+cargo bench -p postio-bench --bench store_reads    # the database read
+cargo bench -p postio-bench --bench search_budget  # the query
+cargo bench -p postio-bench --bench list_scroll    # the row draw
 
 # which window pays the first-realize toll (#790)
 cargo run -p postio-gtk --example first_realize -- splash real
@@ -115,7 +151,9 @@ account's mail weighs, which measured 1.48 s in the pane next door.
 **Note which two rows did not move.** An aggregate is one statement and one
 row however much it reads, so the two counted budgets already in the
 workspace were blind to it by construction. `steps`
-(`SQLITE_STMTSTATUS_VM_STEP`) is the count that sees it, and
+(`SQLITE_STMTSTATUS_VM_STEP`) was the count that saw it; the step counter
+went with the engine (ADR 0038), and `counting::scans` — the planner asked
+whether a query *can* be cheap — is what sees an unindexed aggregate now.
 `docs/notes/2026-09-11-an-aggregate-hides-from-a-row-count.md` is why that
 matters beyond this one query.
 
@@ -138,17 +176,9 @@ With an account and six folders:
 | of which first frame | 106 ms | |
 | fonts and styles together | 9 ms | |
 
-Three things about this deserve saying plainly rather than being averaged away.
+Two things about this deserve saying plainly rather than being averaged away.
 
-**Encryption costs about 78 ms of it.** Measured by disabling `PRAGMA key` in
-`db::configure` and re-running the same binary against an equivalent
-plaintext store: floor 350 ms against 427 ms. That is the price ADR 0014 said
-would land on this budget, and it lands inside it. This paragraph used to add
-that the difference "sits almost entirely in window construction, which is
-where the first store reads happen"; #790 split that phase and found the
-store reads are not in it — see below.
-
-**Most of the rest is GTK's own first-realize cost, not a Postio widget.**
+**Most of it is GTK's own first-realize cost, not a Postio widget.**
 #636 bisected window construction by timing each pane's constructor in
 isolation (`Shell`, `Sidebar`, `MessageListView`, `Finder`, `CheatSheet`,
 `SettingsPanel`, the composer's `Editor` and its WebView) — none cost more
@@ -161,8 +191,8 @@ measured ~295 ms, and `ngl` measured ~1.9 s.
 
 **#790 decided to keep the GPU renderer** rather than trade runtime
 compositing for that startup time, and in measuring the alternative found an
-attribution error in each of the two claims above. Both were this document's,
-and both matter to anyone deciding what to optimise next.
+attribution error in two claims this document used to make. Both matter to
+anyone deciding what to optimise next.
 
 *The compile is not in the `window` phase.* `app::build_with` marks
 `Phase::Window` and calls `window.present()` on the next line, so the realize
@@ -224,7 +254,7 @@ the cheat sheet, and a key bound to one refuses out loud with the same
 sentence the plate would show.
 
 *The first store reads are not in the `window` phase either.* The keyring
-round trip and the SQLCipher open used to be folded into that phase; they are
+round trip and the store open used to be folded into that phase; they are
 `store` now, and since #1114 they happen **after** `shell` — the frame the
 compositor first showed the window in — rather than before the main loop
 starts. The split shows the two moving independently:
@@ -236,8 +266,8 @@ starts. The split shows the two moving independently:
 | `first frame` | 99 ms | 74 – 81 ms |
 
 `window` is flat — widget construction does not read the store — while
-`store` grows by a factor of four with the data. So the 78 ms of encryption
-measured above sits in `store`, not in "window construction, which is where
+`store` grows by a factor of four with the data. So the cost of encryption
+sits in `store`, not in "window construction, which is where
 the first store reads happen". Those figures are a debug build under the
 headless compositor and are not comparable to the release numbers in the
 table; what they establish is which phase moves, which is a shape, not a
@@ -251,7 +281,7 @@ attack.
 This document previously recorded 147 ms for the whole figure; nothing in
 that measurement survives to compare against — different commit, different
 schema, and no record of what else the machine was doing — so the honest
-statement is 427 ms today, of which 78 ms is encryption. The worst of five
+statement is 427 ms today. The worst of five
 runs exceeded the 500 ms budget. The per-phase rows in the table above
 predate the `store` split and still fold it into `window`; they want
 re-running on the recipe below. See
@@ -289,11 +319,13 @@ Two exceptions, both real:
   It was 71% of work that should not have happened. The four list indexes
   supplied the scope column and the sort order but neither of the two columns
   every list query *filters* on — `deleted_locally` and `snoozed_until`. Only
-  rows that pass the `WHERE` count toward an `OFFSET`, so SQLite fetched every
-  row it was about to discard in order to test them: fifty thousand table
-  reads to return fifty rows, each one a page decrypt. Migration 0005 put
-  those columns in the indexes and the jump became **3.58 ms**, a 98%
-  reduction, now inside the 16 ms interaction budget and asserted by
+  rows that pass the `WHERE` count toward an `OFFSET`, so the engine of the
+  day fetched every row it was about to discard in order to test them: fifty
+  thousand table reads to return fifty rows, each one a page decrypt. Putting
+  those two columns into the indexes — the four list indexes in
+  `crates/postio-storage/src/schema.rs` still end in `deleted_locally,
+  snoozed_until` for this reason — made the jump **3.58 ms**, a 98%
+  reduction, inside the 16 ms interaction budget and asserted by
   `store_reads` rather than merely reported.
 
   `cache_size` was not the lever, despite `db.rs` naming it the first one to
@@ -307,7 +339,10 @@ Two exceptions, both real:
 
 ## Search
 
-Over a 120,000-message index, by query shape:
+Over a 120,000-message index, by query shape. These were measured on the old
+engine's FTS5 index and have not been re-measured on Turso's `fts`, which is a
+different index over different tables; the shapes still describe what
+`search_budget` stresses.
 
 | Query shape | Measured |
 |---|---|
@@ -338,16 +373,16 @@ passes have settled**:
 | Resident total | 160.8 MiB | 176.7 MiB | 176.9 MiB |
 
 **The anonymous figure is the claim**, and the shape of it is the answer: it
-steps up once between a thousand messages and a hundred thousand — the SQLite
-page cache filling, bounded by `cache_size` — and then does not move at all
+steps up once between a thousand messages and a hundred thousand — the
+database page cache filling, bounded by `cache_size` — and then does not move at all
 between a hundred thousand and four hundred thousand, against a store that
 tripled. Bounded, not proportional.
 
 **The file-backed half is now flat, and that is new.** It used to grow from
 83 MiB to 167 MiB with mailbox size, because `PRAGMA mmap_size` was 256 MiB
 and SQLite mapped as much of the store as it touched. That pragma is gone:
-memory-mapping is meaningless over encrypted pages, since SQLCipher has to
-decrypt each one into the page cache, so there is no version of "the file is
+memory-mapping is meaningless over encrypted pages, since an encrypting
+engine has to decrypt each one into the page cache, so there is no version of "the file is
 the buffer" (ADR 0014). What is left in this row is shared libraries.
 
 Net effect at 100,000 messages: resident total went from 215 MiB to 177 MiB.
@@ -356,10 +391,12 @@ back to the anonymous one, and the total improved.
 
 **A transient worth knowing about.** During the first minute on a large store,
 anonymous memory peaks well above the settled figure — 86 MiB on the 400,000
-store — while the body-index catch-up and the compression-dictionary trainer
-run. The trainer reads up to 4,096 bodies or 32 MiB of samples, whichever
-comes first (`postio_storage::body`), and frees them when it is done. Both are
-idle-time passes on a worker; neither is on the startup path.
+store — while the body-index catch-up runs. When this was measured a
+compression-dictionary trainer ran beside it, reading up to 4,096 bodies or
+32 MiB of samples; that trainer is gone with the dictionary (bodies are zstd
+per row in `postio_storage::body_codec`, with no training pass), so the peak
+is expected to be lower and has not been re-taken. The catch-up is an
+idle-time pass on a worker; it is not on the startup path.
 
 Reproduce it:
 

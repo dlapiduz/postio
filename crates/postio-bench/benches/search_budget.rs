@@ -18,7 +18,7 @@
 //! # Running
 //!
 //! ```sh
-//! cargo bench -p postio-index --bench search_budget
+//! cargo bench -p postio-bench --bench search_budget
 //! ```
 //!
 //! Corpus generation is deterministic (a fixed-seed xorshift generator, no
@@ -33,7 +33,7 @@
 //! # Recording a new baseline
 //!
 //! ```sh
-//! cargo bench -p postio-index --bench search_budget -- --save-baseline main
+//! cargo bench -p postio-bench --bench search_budget -- --save-baseline main
 //! ```
 
 #![allow(missing_docs)]
@@ -53,7 +53,27 @@ use postio_model::{AccountId, EmailAddress, Message};
 use postio_search::facets::Scope;
 use postio_search::parse;
 use postio_storage::repository::MessageRepository;
-use postio_storage::{Database, test_support};
+use postio_storage::{Store, test_support};
+
+/// The runtime every async call in this bench is driven on.
+///
+/// Criterion's `iter` takes a synchronous closure and calls it on this thread,
+/// where there is no ambient runtime -- so `block_on` here is the plain thing
+/// rather than the trap it is everywhere else in this workspace. Multi-threaded
+/// because a store read may reach `block_in_place`.
+fn on_runtime<T>(future: impl std::future::Future<Output = T>) -> T {
+    use std::sync::OnceLock;
+    static RUNTIME: OnceLock<tokio::runtime::Runtime> = OnceLock::new();
+    RUNTIME
+        .get_or_init(|| {
+            tokio::runtime::Builder::new_multi_thread()
+                .worker_threads(2)
+                .enable_all()
+                .build()
+                .expect("a runtime for the benches")
+        })
+        .block_on(future)
+}
 
 /// docs/PRODUCT.md §18 / CLAUDE.md: local search must resolve in under this.
 const SEARCH_BUDGET: Duration = Duration::from_millis(100);
@@ -75,13 +95,13 @@ const SENDER_COUNT: u64 = 500;
 const CONTACT_COUNT: u64 = 20_000;
 
 struct Corpus {
-    database: Database,
+    database: Store,
     account_id: AccountId,
 }
 
 fn corpus() -> &'static Corpus {
     static CORPUS: OnceLock<Corpus> = OnceLock::new();
-    CORPUS.get_or_init(build_corpus)
+    CORPUS.get_or_init(|| on_runtime(build_corpus()))
 }
 
 /// A tiny, fixed-seed xorshift64 generator: reproducible across machines and
@@ -107,11 +127,11 @@ impl Xorshift64 {
     }
 }
 
-fn build_corpus() -> Corpus {
-    let database = test_support::memory();
-    let connection = database.connection().expect("checkout");
-    postio_index::index::ensure_schema(&connection).expect("schema");
-    let (account, mailbox) = test_support::account_with_inbox(&connection);
+async fn build_corpus() -> Corpus {
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    on_runtime(postio_index::index::ensure_schema(&connection)).expect("schema");
+    let (account, mailbox) = test_support::account_with_inbox(&connection).await;
 
     let base = Utc.with_ymd_and_hms(2020, 1, 1, 0, 0, 0).unwrap();
     let mut rng = Xorshift64::new(0x5eed_1234_5678_9abc);
@@ -121,9 +141,7 @@ fn build_corpus() -> Corpus {
     // its own SAVEPOINT per call (see `postio_storage::repository::Scope`),
     // which nests fine inside this outer transaction and turns 120,000
     // separate commits into one.
-    connection
-        .execute_batch("BEGIN")
-        .expect("start bulk load transaction");
+    on_runtime(connection.execute_batch("BEGIN")).expect("start bulk load transaction");
     for i in 0..MESSAGE_COUNT {
         // Uncorrelated with `i % 100` below (which places `UNCOMMON_WORD`)
         // on purpose: `i % SENDER_COUNT` would put every sender on a fixed
@@ -144,14 +162,21 @@ fn build_corpus() -> Corpus {
         )];
         message.subject = Some(format!("Weekly update {i}"));
         message.size = 1024 + rng.below(4096);
-        repository.create(&mut message).expect("create message");
+        repository
+            .create(&mut message)
+            .await
+            .expect("create message");
 
         let mut body = format!("{COMMON_WORD} the status as of message {i}");
         if i % 100 == 0 {
             body.push_str(&format!(" {UNCOMMON_WORD} figures attached"));
         }
-        postio_index::index::index_body(&connection, message.id.get(), Some(&body))
-            .expect("index body");
+        on_runtime(postio_index::index::index_body(
+            &connection,
+            message.id.get(),
+            Some(&body),
+        ))
+        .expect("index body");
     }
     // #746: a contacts table at real-mailbox scale. Sender affinity's cost
     // scales with `candidates × contacts`, and an empty table multiplies the
@@ -160,30 +185,26 @@ fn build_corpus() -> Corpus {
     // The corpus' own senders get affinity to exercise the probe's hit path;
     // the rest is the long tail every real address book carries.
     {
-        let mut insert = connection
-            .prepare(
-                "INSERT INTO contacts (account_id, address, address_normalized, times_seen)
+        let mut insert = on_runtime(connection.prepare(
+            "INSERT INTO contacts (account_id, address, address_normalized, times_seen)
                  VALUES (?1, ?2, ?2, ?3)",
-            )
-            .expect("prepare contact insert");
+        ))
+        .expect("prepare contact insert");
         for i in 0..CONTACT_COUNT {
             let address = if i < SENDER_COUNT {
                 format!("sender{i}@example.com")
             } else {
                 format!("correspondent{i}@example.com")
             };
-            insert
-                .execute(rusqlite::params![
-                    account.id.get(),
-                    address,
-                    rng.below(100) as i64
-                ])
-                .expect("seed contact");
+            on_runtime(insert.execute(postio_storage::bind![
+                account.id.get(),
+                address,
+                rng.below(100) as i64
+            ]))
+            .expect("seed contact");
         }
     }
-    connection
-        .execute_batch("COMMIT")
-        .expect("commit bulk load transaction");
+    on_runtime(connection.execute_batch("COMMIT")).expect("commit bulk load transaction");
 
     drop(connection);
     Corpus {
@@ -196,9 +217,9 @@ fn now() -> DateTime<Utc> {
     Utc.with_ymd_and_hms(2020, 6, 1, 0, 0, 0).unwrap()
 }
 
-fn run(query: &str, limit: u32) -> Duration {
+async fn run(query: &str, limit: u32) -> Duration {
     let corpus = corpus();
-    let connection = corpus.database.connection().expect("checkout");
+    let connection = corpus.database.connect().await.expect("checkout");
     let parsed = parse(query, now().date_naive());
     let request = SearchRequest {
         account: AccountScope::Account(corpus.account_id),
@@ -209,7 +230,7 @@ fn run(query: &str, limit: u32) -> Duration {
     };
 
     let start = Instant::now();
-    let results = search(&connection, &request, now()).expect("search");
+    let results = on_runtime(search(&connection, &request, now())).expect("search");
     let elapsed = start.elapsed();
     assert!(!results.hits.is_empty(), "query {query:?} matched nothing");
     elapsed
@@ -217,9 +238,9 @@ fn run(query: &str, limit: u32) -> Duration {
 
 /// [`run`], but for the canvas' left column: the three scope counts and the
 /// refine aggregates, measured together the way the panel asks for them.
-fn run_facets(query: &str) -> Duration {
+async fn run_facets(query: &str) -> Duration {
     let corpus = corpus();
-    let connection = corpus.database.connection().expect("checkout");
+    let connection = corpus.database.connect().await.expect("checkout");
     let parsed = parse(query, now().date_naive());
     let request = SearchRequest {
         account: AccountScope::Account(corpus.account_id),
@@ -230,7 +251,7 @@ fn run_facets(query: &str) -> Duration {
     };
 
     let start = Instant::now();
-    let facets = postio_index::executor::facets(&connection, &request).expect("facets");
+    let facets = on_runtime(postio_index::executor::facets(&connection, &request)).expect("facets");
     let elapsed = start.elapsed();
     assert!(
         facets.hits(Scope::AllMail) > 0,
@@ -247,25 +268,31 @@ fn assert_budget(name: &str, elapsed: Duration) {
 }
 
 fn bench_simple_term(c: &mut Criterion) {
-    c.bench_function("search_simple_term", |b| b.iter(|| run(UNCOMMON_WORD, 50)));
-    assert_budget("simple term", run(UNCOMMON_WORD, 50));
+    c.bench_function("search_simple_term", |b| {
+        b.iter(|| on_runtime(run(UNCOMMON_WORD, 50)))
+    });
+    assert_budget("simple term", on_runtime(run(UNCOMMON_WORD, 50)));
 }
 
 fn bench_operator_only(c: &mut Criterion) {
     let query = "from:sender42";
-    c.bench_function("search_operator_only", |b| b.iter(|| run(query, 50)));
-    assert_budget("operator-only", run(query, 50));
+    c.bench_function("search_operator_only", |b| {
+        b.iter(|| on_runtime(run(query, 50)))
+    });
+    assert_budget("operator-only", on_runtime(run(query, 50)));
 }
 
 fn bench_composed(c: &mut Criterion) {
     let query = "from:sender42 quarterly";
-    c.bench_function("search_composed", |b| b.iter(|| run(query, 50)));
-    assert_budget("composed", run(query, 50));
+    c.bench_function("search_composed", |b| b.iter(|| on_runtime(run(query, 50))));
+    assert_budget("composed", on_runtime(run(query, 50)));
 }
 
 fn bench_common_word_worst_case(c: &mut Criterion) {
-    c.bench_function("search_common_word", |b| b.iter(|| run(COMMON_WORD, 50)));
-    assert_budget("common-word worst case", run(COMMON_WORD, 50));
+    c.bench_function("search_common_word", |b| {
+        b.iter(|| on_runtime(run(COMMON_WORD, 50)))
+    });
+    assert_budget("common-word worst case", on_runtime(run(COMMON_WORD, 50)));
 }
 
 // ---------------------------------------------------------------------------
@@ -288,28 +315,28 @@ const ACCOUNTS: u64 = 4;
 const PER_ACCOUNT: u64 = 30_000;
 
 struct MultiAccount {
-    database: Database,
+    database: Store,
     first: AccountId,
 }
 
 fn multi_account_corpus() -> &'static MultiAccount {
     static CORPUS: OnceLock<MultiAccount> = OnceLock::new();
-    CORPUS.get_or_init(build_multi_account_corpus)
+    CORPUS.get_or_init(|| on_runtime(build_multi_account_corpus()))
 }
 
-fn build_multi_account_corpus() -> MultiAccount {
-    let database = test_support::memory();
-    let connection = database.connection().expect("checkout");
-    postio_index::index::ensure_schema(&connection).expect("schema");
+async fn build_multi_account_corpus() -> MultiAccount {
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    on_runtime(postio_index::index::ensure_schema(&connection)).expect("schema");
 
     let base = Utc.with_ymd_and_hms(2020, 1, 1, 0, 0, 0).unwrap();
     let mut rng = Xorshift64::new(0x51de_9876_5432_10ab);
     let repository = MessageRepository::new(&connection);
     let mut first = None;
 
-    connection.execute_batch("BEGIN").expect("start bulk load");
+    on_runtime(connection.execute_batch("BEGIN")).expect("start bulk load");
     for a in 0..ACCOUNTS {
-        let (account, mailbox) = test_support::account_with_inbox(&connection);
+        let (account, mailbox) = test_support::account_with_inbox(&connection).await;
         first.get_or_insert(account.id);
         for i in 0..PER_ACCOUNT {
             // Interleaved in time across accounts, never concatenated: a
@@ -324,19 +351,24 @@ fn build_multi_account_corpus() -> MultiAccount {
             )];
             message.subject = Some(format!("Weekly update {i}"));
             message.size = 1024 + rng.below(4096);
-            repository.create(&mut message).expect("create message");
+            repository
+                .create(&mut message)
+                .await
+                .expect("create message");
 
             let mut body = format!("{COMMON_WORD} the status as of message {i}");
             if i % 100 == 0 {
                 body.push_str(&format!(" {UNCOMMON_WORD} figures attached"));
             }
-            postio_index::index::index_body(&connection, message.id.get(), Some(&body))
-                .expect("index body");
+            on_runtime(postio_index::index::index_body(
+                &connection,
+                message.id.get(),
+                Some(&body),
+            ))
+            .expect("index body");
         }
     }
-    connection
-        .execute_batch("COMMIT")
-        .expect("commit bulk load");
+    on_runtime(connection.execute_batch("COMMIT")).expect("commit bulk load");
 
     drop(connection);
     MultiAccount {
@@ -345,9 +377,9 @@ fn build_multi_account_corpus() -> MultiAccount {
     }
 }
 
-fn run_multi_account(query: &str, account: AccountScope) -> Duration {
+async fn run_multi_account(query: &str, account: AccountScope) -> Duration {
     let corpus = multi_account_corpus();
-    let connection = corpus.database.connection().expect("checkout");
+    let connection = corpus.database.connect().await.expect("checkout");
     let parsed = parse(query, now().date_naive());
     let request = SearchRequest {
         account,
@@ -358,7 +390,7 @@ fn run_multi_account(query: &str, account: AccountScope) -> Duration {
     };
 
     let start = Instant::now();
-    let results = search(&connection, &request, now()).expect("search");
+    let results = on_runtime(search(&connection, &request, now())).expect("search");
     let elapsed = start.elapsed();
     assert!(!results.hits.is_empty(), "query {query:?} matched nothing");
     elapsed
@@ -373,11 +405,11 @@ fn run_multi_account(query: &str, account: AccountScope) -> Duration {
 /// without migration 0012 this is ~20 s against a 100 ms budget.
 fn bench_unified_common_word(c: &mut Criterion) {
     c.bench_function("search_unified_common_word", |b| {
-        b.iter(|| run_multi_account(COMMON_WORD, AccountScope::Unified))
+        b.iter(|| on_runtime(run_multi_account(COMMON_WORD, AccountScope::Unified)))
     });
     assert_budget(
         "unified, common-word worst case",
-        run_multi_account(COMMON_WORD, AccountScope::Unified),
+        on_runtime(run_multi_account(COMMON_WORD, AccountScope::Unified)),
     );
 }
 
@@ -388,11 +420,11 @@ fn bench_unified_common_word(c: &mut Criterion) {
 fn bench_account_scoped_common_word(c: &mut Criterion) {
     let scoped = AccountScope::Account(multi_account_corpus().first);
     c.bench_function("search_account_scoped_common_word", |b| {
-        b.iter(|| run_multi_account(COMMON_WORD, scoped))
+        b.iter(|| on_runtime(run_multi_account(COMMON_WORD, scoped)))
     });
     assert_budget(
         "account-scoped, common-word worst case",
-        run_multi_account(COMMON_WORD, scoped),
+        on_runtime(run_multi_account(COMMON_WORD, scoped)),
     );
 }
 
@@ -404,9 +436,12 @@ fn bench_account_scoped_common_word(c: &mut Criterion) {
 /// per keystroke would be the one place the `<100 ms` budget quietly leaks.
 fn bench_facets_worst_case(c: &mut Criterion) {
     c.bench_function("search_facets_common_word", |b| {
-        b.iter(|| run_facets(COMMON_WORD))
+        b.iter(|| on_runtime(run_facets(COMMON_WORD)))
     });
-    assert_budget("facets, common-word worst case", run_facets(COMMON_WORD));
+    assert_budget(
+        "facets, common-word worst case",
+        on_runtime(run_facets(COMMON_WORD)),
+    );
 }
 
 criterion_group!(

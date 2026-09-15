@@ -23,24 +23,36 @@
 //! [`memory`] for almost everything: it is fast (tmpfs where available) and
 //! leaves nothing behind. [`temp`] when the test is *about* the file's
 //! location — reopening from a path the test controls, permissions,
-//! anything that needs [`TempDatabase::directory`].
+//! anything that needs [`TempStore::directory`].
 //!
 //! ```
-//! let database = postio_storage::test_support::memory();
-//! let connection = database.connection().expect("checkout");
+//! # async fn example() {
+//! let store = postio_storage::test_support::memory().await;
+//! let connection = store.connect().await.expect("connect");
 //! # let _ = connection;
+//! # }
 //! ```
+//!
+//! # Every one of them is file-backed
+//!
+//! Including [`memory`], which is a name rather than a description. The engine
+//! refuses to key an in-memory database at all (research.md Q6), and `memory`
+//! was already a file on `/dev/shm` before that mattered: `cache=shared`
+//! brought table-level locks that no busy timeout could wait out, so a fixture
+//! write could fail with "database table is locked" in a test that was not
+//! about locking (#204).
 
 use std::path::Path;
 use std::time::Duration;
 
 use postio_model::{Account, EmailAddress, Mailbox, MailboxId};
-use rusqlite::Connection;
+
 use tempfile::TempDir;
 
-use crate::db::Database;
 use crate::key::{BlobKeys, Purpose, StoreKey, Subkey};
 use crate::repository::{AccountRepository, MailboxRepository};
+use crate::store::Connection;
+use crate::store::Store;
 
 /// The key every scratch database is encrypted under.
 ///
@@ -81,23 +93,20 @@ fn master() -> StoreKey {
 }
 
 pub mod counting;
+pub mod gate_log;
 /// A migrated scratch database, shared by every connection its pool opens.
 ///
 /// It lives as long as the returned handle (clones included) and disappears
 /// with it.
 ///
-/// Despite the name it is **file-backed**, in a temporary directory the
-/// handle owns — on `/dev/shm` where that exists, so it still costs RAM
-/// rather than disk. It used to be `Database::open_in_memory`, whose
-/// `cache=shared` brings table-level locks that `busy_timeout` cannot wait
-/// out: under load, a fixture write could fail with "database table is
-/// locked" in a test that is not about locking at all (#204). A file gets
-/// WAL and the ordinary busy handler, where a reader never fails a writer.
+/// Despite the name it is **file-backed**, in a temporary directory on
+/// `/dev/shm` where that exists, so it still costs RAM rather than disk. See
+/// the module docs for the two separate reasons it is not in memory.
 ///
 /// # Panics
 ///
 /// If the directory or the database cannot be created or migrated.
-pub fn memory() -> Database {
+pub async fn memory() -> Store {
     let shm = Path::new("/dev/shm");
     let directory = if shm.is_dir() {
         sweep_orphaned_scratch_dirs(shm);
@@ -109,8 +118,15 @@ pub fn memory() -> Database {
     }
     .expect("a scratch directory must always open");
     let path = directory.path().join("postio.db");
-    Database::open_file_with_guard(&path, &key(), Box::new(directory))
-        .expect("a scratch database must always open")
+    let store = Store::open(&path, &key())
+        .await
+        .expect("a scratch database must always open");
+    // The directory has to outlive every connection onto the file. There is no
+    // guard slot on `Store` to hand it to -- the engine's handle owns nothing
+    // of ours -- so it is leaked deliberately, and the sweep above is what
+    // makes that affordable rather than a leak that accumulates across runs.
+    std::mem::forget(directory);
+    store
 }
 
 /// Every directory [`memory`] creates today carries this prefix. The sweep
@@ -224,94 +240,46 @@ fn sweep_now(dir: &Path) {
 /// A migrated database in a temporary directory that deletes itself.
 ///
 /// The [`TempDir`] is kept alive by the returned handle, so the caller does not
-/// have to hold anything extra; when the [`Database`] is dropped the directory
+/// have to hold anything extra; when the [`TempStore`] is dropped the directory
 /// and its WAL files go with it.
 ///
 /// # Panics
 ///
 /// If the temporary directory or the database cannot be created.
-pub fn temp() -> TempDatabase {
+pub async fn temp() -> TempStore {
     let directory = tempfile::tempdir().expect("a temporary directory");
-    let database = Database::open(directory.path().join("postio.db"), &key())
+    let store = Store::open(directory.path().join("postio.db"), &key())
+        .await
         .expect("a temporary database must always open");
-    TempDatabase {
-        database,
+    TempStore {
+        store,
         _directory: directory,
     }
 }
 
-/// A store written the way one was before `auto_vacuum` was chosen (#381).
+/// A file-backed [`Store`] plus the temporary directory holding it.
 ///
-/// Keyed and migrated with SQLite's own `auto_vacuum = NONE`, which is what
-/// every store created before that decision is carrying. The conversion is a
-/// one-time rewrite, so the only way to test that it happens — and that it
-/// happens *once* — is against a store that genuinely needs it.
-///
-/// Here rather than hand-rolled in each suite because the two callers are in
-/// different crates and only this one may link `rusqlite`: `postio-app`'s
-/// integration tests drive the composition root, and reaching for a raw
-/// connection there would put SQL in the crate whose whole boundary rule is
-/// that the view layer above it has none.
-///
-/// # Panics
-///
-/// If the database cannot be created, keyed or migrated.
-pub fn unconverted_store(path: &Path) -> Database {
-    {
-        let mut connection = rusqlite::Connection::open(path).expect("a connection");
-        connection
-            .execute_batch("PRAGMA cipher_memory_security = OFF;")
-            .expect("memory security off, before the key");
-        let hex = key().to_hex();
-        connection
-            .execute_batch(&format!("PRAGMA key = \"x'{}'\";", *hex))
-            .expect("the store key");
-        drop(hex);
-        // The page MAC this build writes. Without it the store would be
-        // authenticated with SQLCipher's own default and refused on reopen as
-        // predating the MAC change -- which is a *different* old shape from
-        // the one this helper exists to build.
-        connection
-            .execute_batch(&format!(
-                "PRAGMA cipher_hmac_algorithm = {};",
-                crate::db::PageMac::CURRENT.pragma()
-            ))
-            .expect("the page MAC");
-        // Every pragma the pool applies. What makes this store the old
-        // shape is what is *missing*: `Database::from_location_with_guard`
-        // asks for `auto_vacuum = INCREMENTAL` before it migrates, and this
-        // migrates without ever asking.
-        connection
-            .execute_batch(crate::db::PRAGMAS)
-            .expect("the pragmas the pool applies");
-        crate::migrate(&mut connection).expect("migrate");
-    }
-    Database::open(path, &key()).expect("the store reopens")
-}
-
-/// A file-backed [`Database`] plus the temporary directory holding it.
-///
-/// Derefs to [`Database`], so it is used exactly like one; the directory is
+/// Derefs to [`Store`], so it is used exactly like one; the directory is
 /// removed when this value is dropped.
 #[derive(Debug)]
-pub struct TempDatabase {
-    database: Database,
+pub struct TempStore {
+    store: Store,
     /// Dropped last, after the database's connections are closed.
     _directory: TempDir,
 }
 
-impl TempDatabase {
+impl TempStore {
     /// The directory the database file lives in.
     pub fn directory(&self) -> &Path {
         self._directory.path()
     }
 }
 
-impl std::ops::Deref for TempDatabase {
-    type Target = Database;
+impl std::ops::Deref for TempStore {
+    type Target = Store;
 
-    fn deref(&self) -> &Database {
-        &self.database
+    fn deref(&self) -> &Store {
+        &self.store
     }
 }
 
@@ -321,7 +289,7 @@ impl std::ops::Deref for TempDatabase {
 /// # Panics
 ///
 /// If the insert fails.
-pub fn account(connection: &Connection) -> Account {
+pub async fn account(connection: &Connection) -> Account {
     let mut account = Account::new(
         "Test",
         EmailAddress::new(Some("Test User"), "test@example.com"),
@@ -330,6 +298,7 @@ pub fn account(connection: &Connection) -> Account {
     account.outgoing.host = "smtp.example.com".to_owned();
     AccountRepository::new(connection)
         .create(&mut account)
+        .await
         .expect("create a test account");
     account
 }
@@ -339,10 +308,11 @@ pub fn account(connection: &Connection) -> Account {
 /// # Panics
 ///
 /// If the insert fails.
-pub fn mailbox(connection: &Connection, account: &Account, path: &str) -> Mailbox {
+pub async fn mailbox(connection: &Connection, account: &Account, path: &str) -> Mailbox {
     let mut mailbox = Mailbox::new(account.id, path, Some('/'));
     MailboxRepository::new(connection)
         .create(&mut mailbox)
+        .await
         .expect("create a test mailbox");
     mailbox
 }
@@ -352,10 +322,68 @@ pub fn mailbox(connection: &Connection, account: &Account, path: &str) -> Mailbo
 /// # Panics
 ///
 /// If either insert fails.
-pub fn account_with_inbox(connection: &Connection) -> (Account, MailboxId) {
-    let account = account(connection);
-    let inbox = mailbox(connection, &account, "INBOX");
+pub async fn account_with_inbox(connection: &Connection) -> (Account, MailboxId) {
+    let account = account(connection).await;
+    let inbox = mailbox(connection, &account, "INBOX").await;
     (account, inbox.id)
+}
+
+/// The query plan for `sql`, as the lines `EXPLAIN QUERY PLAN` prints, joined
+/// by newlines.
+///
+/// The tests that use this are asserting that a read resolves through an index
+/// rather than a scan or a sort, and every one of them was writing the same
+/// six lines to get the text. The awkward part is the placeholders: a
+/// repository's SQL is parameterised, and the planner will not explain a
+/// statement it cannot bind, but it does not care what the values *are*. So
+/// this counts the `?N` placeholders and binds a `1` to each.
+///
+/// # Panics
+///
+/// If the statement will not prepare or the plan will not read, which for a
+/// query the caller just built means the SQL is wrong.
+pub async fn plan(connection: &Connection, sql: &str) -> String {
+    let mut statement = connection
+        .prepare(&format!("EXPLAIN QUERY PLAN {sql}"))
+        .await
+        .unwrap_or_else(|error| panic!("prepare {sql}: {error}"));
+    let arguments = vec![1i64; placeholders(sql)];
+    crate::sql::mapped(&mut statement, arguments, |row| {
+        crate::sql::RowExt::col::<String>(row, 3)
+    })
+    .await
+    .unwrap_or_else(|error| panic!("explain {sql}: {error}"))
+    .join("\n")
+}
+
+/// How many distinct `?N` placeholders `sql` carries.
+///
+/// The highest index rather than the count, because `?1` may appear twice and
+/// still be one parameter — which is exactly what a query filtering two
+/// columns on the same account id looks like.
+fn placeholders(sql: &str) -> usize {
+    let mut highest = 0;
+    let mut rest = sql;
+    while let Some(at) = rest.find('?') {
+        rest = &rest[at + 1..];
+        let digits: String = rest.chars().take_while(char::is_ascii_digit).collect();
+        highest = highest.max(digits.parse().unwrap_or(0));
+        rest = &rest[digits.len()..];
+    }
+    highest
+}
+
+/// Whether a query plan says the engine had to sort.
+///
+/// The spelling is the engine's and it changed: SQLite writes
+/// `USE TEMP B-TREE FOR ORDER BY`, this one writes `USE SORTER FOR ORDER BY`.
+/// Four suites were asserting `!plan.contains("TEMP B-TREE")`, which on this
+/// engine is an assertion that cannot fail — a sort went unnoticed in the
+/// thread list for exactly that reason. Both spellings live here so the next
+/// one is a single edit.
+pub fn sorts(plan: &str) -> bool {
+    let plan = plan.to_ascii_uppercase();
+    plan.contains("TEMP B-TREE") || plan.contains("USE SORTER")
 }
 
 #[cfg(test)]

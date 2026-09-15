@@ -61,155 +61,161 @@ fn press_j(window: &Window) {
 }
 
 pub fn the_pane_follows_the_cursor_and_says_why_a_body_is_missing() {
-    let state_dir = tempfile::tempdir().expect("a state directory");
-    // SAFETY: first statement of a single-threaded test.
-    unsafe { std::env::set_var("XDG_STATE_HOME", state_dir.path()) };
+    crate::gtk_case(async {
+        let state_dir = tempfile::tempdir().expect("a state directory");
+        // SAFETY: first statement of a single-threaded test.
+        unsafe { std::env::set_var("XDG_STATE_HOME", state_dir.path()) };
 
-    if adw::init().is_err() || gdk::Display::default().is_none() {
-        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
-        return;
-    }
-    let display = gdk::Display::default().unwrap();
-    fonts::install().expect("the embedded fonts should install");
-    style::install(&display);
-    app::install_icons(&display);
+        if adw::init().is_err() || gdk::Display::default().is_none() {
+            eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
+            return;
+        }
+        let display = gdk::Display::default().unwrap();
+        fonts::install().expect("the embedded fonts should install");
+        style::install(&display);
+        app::install_icons(&display);
 
-    let database = test_support::memory();
-    let report = seed_small(&database, 11);
-    assert!(
-        report.message_count > 1,
-        "need at least two rows to move between"
-    );
-    let directory = tempfile::tempdir().expect("a blob directory");
-    let blobs = BlobStore::open(
-        directory.path().to_path_buf(),
-        &postio_storage::test_support::blob_keys(),
-    )
-    .expect("a blob store");
+        let database = test_support::memory().await;
+        let report = seed_small(&database, 11).await;
+        assert!(
+            report.message_count > 1,
+            "need at least two rows to move between"
+        );
+        let directory = tempfile::tempdir().expect("a blob directory");
+        let blobs = BlobStore::open(
+            directory.path().to_path_buf(),
+            &postio_storage::test_support::blob_keys(),
+        )
+        .expect("a blob store");
 
-    // Every message but the newest flagged, before anything is wired: the
-    // Flagged view is where rows are genuinely single messages (see the
-    // module comment). The newest is left out because the folder view the
-    // window opens on has already reported it — its row *is* that message —
-    // and the cursor's dedup would then swallow the Flagged view's own
-    // first report, leaving the pane unfilled.
-    let flagged_total: u32 = {
-        let connection = database.connection().expect("a connection");
-        connection
-            .execute(
-                "UPDATE messages SET flagged = 1 WHERE id NOT IN \
-                 (SELECT id FROM messages ORDER BY received_at DESC LIMIT 1)",
-                [],
-            )
-            .expect("the fixture writes");
-        connection
-            .query_row(
+        // Every message but the newest flagged, before anything is wired: the
+        // Flagged view is where rows are genuinely single messages (see the
+        // module comment). The newest is left out because the folder view the
+        // window opens on has already reported it — its row *is* that message —
+        // and the cursor's dedup would then swallow the Flagged view's own
+        // first report, leaving the pane unfilled.
+        let flagged_total: u32 = {
+            let connection = database.connect().await.expect("a connection");
+            connection
+                .execute(
+                    "UPDATE messages SET flagged = 1 WHERE id NOT IN \
+                     (SELECT id FROM messages ORDER BY received_at DESC LIMIT 1)",
+                    (),
+                )
+                .await
+                .expect("the fixture writes");
+            postio_storage::sql::one(
+                &connection,
                 "SELECT COUNT(*) FROM messages WHERE flagged = 1",
-                [],
-                |row| row.get(0),
+                (),
+                |row| postio_storage::sql::RowExt::col(row, 0),
             )
+            .await
             .expect("a count")
-    };
+        };
 
-    let (bridge, _replies) = Bridge::new(handler_fn(|_, _| async {})).expect("a runtime");
-    let (sink, _events) = event_channel();
-    let wiring = Wiring::new(
-        database.clone(),
-        blobs,
-        bridge.handle(),
-        sink,
-        bridge.commands(),
-    );
+        let (bridge, _replies) = Bridge::new(handler_fn(|_, _| async {})).expect("a runtime");
+        let (sink, _events) = event_channel();
+        let wiring = Wiring::new(
+            database.clone(),
+            blobs,
+            bridge.handle(),
+            sink,
+            bridge.commands(),
+        );
 
-    let window = Window::default();
-    window.present();
-    while glib::MainContext::default().iteration(false) {}
+        let window = Window::default();
+        window.present();
+        while glib::MainContext::default().iteration(false) {}
 
-    // ── the same call `run` makes ────────────────────────────────────────
-    let wired = feed_the_window(&window, &wiring).expect("the seeded store has an account");
+        // ── the same call `run` makes ────────────────────────────────────────
+        let wired = feed_the_window(&window, &wiring)
+            .await
+            .expect("the seeded store has an account");
 
-    // Into the Flagged view, the way the sidebar's row would take it — but
-    // only after the sidebar's own default pick has landed: the folder list
-    // loads asynchronously and picking the default folder is what it does
-    // on arrival, which would stomp a scope opened before it. Then wait for
-    // the swap itself, because the model keeps the folder's rows until the
-    // Flagged page answers.
-    let list = window.list();
-    assert!(
-        settle_until(|| list.model().n_items() > 0),
-        "the opening folder never filled, so no scope can be left"
-    );
-    wired
-        .feeds
-        .messages
-        .open(postio_model::ListScope::Flagged(report.account.id));
-    assert!(
-        settle_until(|| list.model().n_items() == flagged_total),
-        "the Flagged view never filled"
-    );
+        // Into the Flagged view, the way the sidebar's row would take it — but
+        // only after the sidebar's own default pick has landed: the folder list
+        // loads asynchronously and picking the default folder is what it does
+        // on arrival, which would stomp a scope opened before it. Then wait for
+        // the swap itself, because the model keeps the folder's rows until the
+        // Flagged page answers.
+        let list = window.list();
+        assert!(
+            settle_until(async || list.model().n_items() > 0).await,
+            "the opening folder never filled, so no scope can be left"
+        );
+        wired
+            .feeds
+            .messages
+            .open(postio_model::ListScope::Flagged(report.account.id));
+        assert!(
+            settle_until(async || list.model().n_items() == flagged_total).await,
+            "the Flagged view never filled"
+        );
 
-    // ── an untouched list shows the row it selected ──────────────────────
-    // The cursor is autoselected onto row 0 the moment the list has rows.
-    // That is not somebody *choosing* a message, but the pane fills for it
-    // all the same (#601): a window that opens with a row selected and
-    // nothing beside it reads as a broken app, which is #70's complaint
-    // wearing a different hat.
-    //
-    // What the autoselect must not do is start #71's dwell clock — that
-    // would mark the newest message read for no reason but that Postio was
-    // opened. `dwell_wiring` is where that is asserted, over the real timer.
-    assert!(
-        settle_until(|| window.reading()),
-        "the view opened with a row under the cursor and an empty pane \
-         beside it"
-    );
+        // ── an untouched list shows the row it selected ──────────────────────
+        // The cursor is autoselected onto row 0 the moment the list has rows.
+        // That is not somebody *choosing* a message, but the pane fills for it
+        // all the same (#601): a window that opens with a row selected and
+        // nothing beside it reads as a broken app, which is #70's complaint
+        // wearing a different hat.
+        //
+        // What the autoselect must not do is start #71's dwell clock — that
+        // would mark the newest message read for no reason but that Postio was
+        // opened. `dwell_wiring` is where that is asserted, over the real timer.
+        assert!(
+            settle_until(async || window.reading()).await,
+            "the view opened with a row under the cursor and an empty pane \
+             beside it"
+        );
 
-    // ── `j` moves the cursor, and the pane follows it ────────────────────
-    let first = list.cursor_id().expect("the cursor is on a row");
-    press_j(&window);
-    assert!(
-        settle_until(|| list.cursor_id() != Some(first)),
-        "`j` did not move the cursor, so this test cannot say anything \
-         about what the pane did"
-    );
-    let second = list.cursor_id().expect("the cursor is on a row");
-    assert_ne!(first, second, "the cursor should be on a different message");
+        // ── `j` moves the cursor, and the pane follows it ────────────────────
+        let first = list.cursor_id().expect("the cursor is on a row");
+        press_j(&window);
+        assert!(
+            settle_until(async || list.cursor_id() != Some(first)).await,
+            "`j` did not move the cursor, so this test cannot say anything \
+             about what the pane did"
+        );
+        let second = list.cursor_id().expect("the cursor is on a row");
+        assert_ne!(first, second, "the cursor should be on a different message");
 
-    // ── Cause B: moving the cursor fills the pane, with no Return ────────
-    // On `0.1.0` this column stayed blank until the user found out that
-    // Return was required, which is what made a working mail client look
-    // like a broken one.
-    assert!(
-        settle_until(|| window.reading()),
-        "the cursor moved to another message and the reading pane never \
-         filled. Nothing feeds the reader from the cursor."
-    );
-    assert!(
-        window.reader().widget().is_visible(),
-        "the pane says it is reading and the reader is not on screen"
-    );
+        // ── Cause B: moving the cursor fills the pane, with no Return ────────
+        // On `0.1.0` this column stayed blank until the user found out that
+        // Return was required, which is what made a working mail client look
+        // like a broken one.
+        assert!(
+            settle_until(async || window.reading()).await,
+            "the cursor moved to another message and the reading pane never \
+             filled. Nothing feeds the reader from the cursor."
+        );
+        assert!(
+            window.reader().widget().is_visible(),
+            "the pane says it is reading and the reader is not on screen"
+        );
 
-    // ── Cause A: and it says why there is no body ────────────────────────
-    // Every seeded message is `BodyState::NotFetched`, so there is nothing
-    // on this machine to draw. The pane must say which kind of nothing that
-    // is rather than render blank -- the bug was that "still downloading"
-    // and "broken" were the same picture.
-    //
-    // `Offline`, not `Partial`: no engine was ever started, so `Folders`'
-    // connection tracker is still at its own starting answer -- "offline,
-    // never synced" -- and the pane has to say that honestly rather than
-    // promise a backfill nothing here is running (issue #117;
-    // `reading_offline.rs` covers the online and reconnecting cases this
-    // test does not touch).
-    assert_eq!(
-        window.reader().absent(),
-        Some(Absent::Offline),
-        "a message with no downloaded body and no engine ever started must \
-         say so, not promise a backfill that cannot run"
-    );
+        // ── Cause A: and it says why there is no body ────────────────────────
+        // Every seeded message is `BodyState::NotFetched`, so there is nothing
+        // on this machine to draw. The pane must say which kind of nothing that
+        // is rather than render blank -- the bug was that "still downloading"
+        // and "broken" were the same picture.
+        //
+        // `Offline`, not `Partial`: no engine was ever started, so `Folders`'
+        // connection tracker is still at its own starting answer -- "offline,
+        // never synced" -- and the pane has to say that honestly rather than
+        // promise a backfill nothing here is running (issue #117;
+        // `reading_offline.rs` covers the online and reconnecting cases this
+        // test does not touch).
+        assert_eq!(
+            window.reader().absent(),
+            Some(Absent::Offline),
+            "a message with no downloaded body and no engine ever started must \
+             say so, not promise a backfill that cannot run"
+        );
 
-    // ── and none of it dialled anything ──────────────────────────────────
-    // No engine was started. The pane filled from the local store alone,
-    // which is what makes the offline state honest rather than a spinner
-    // waiting on a socket.
+        // ── and none of it dialled anything ──────────────────────────────────
+        // No engine was started. The pane filled from the local store alone,
+        // which is what makes the offline state honest rather than a spinner
+        // waiting on a socket.
+    });
 }

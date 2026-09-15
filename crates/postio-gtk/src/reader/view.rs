@@ -365,6 +365,7 @@ impl Reader {
         view.set_accessible_role(gtk::AccessibleRole::Article);
         view.connect_decide_policy(handle_decide_policy);
         paint_ground(&view);
+        crate::web_process::watch(&view);
         // The scheme can change while the application runs, and the widget
         // background is not a document, so no re-render fixes it.
         let dark_notify = adw::StyleManager::default().connect_dark_notify({

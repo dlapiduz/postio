@@ -41,17 +41,21 @@ use postio_session::Wiring;
 use postio_storage::seed::{seed_extra_account, seed_small};
 use postio_storage::{BlobStore, test_support};
 
-fn settle_until(done: impl Fn() -> bool) -> bool {
+async fn settle_until<F, Fut>(done: F) -> bool
+where
+    F: Fn() -> Fut,
+    Fut: std::future::Future<Output = bool>,
+{
     let deadline =
         std::time::Instant::now() + postio_test_support::scaled(std::time::Duration::from_secs(10));
     while std::time::Instant::now() < deadline {
         while glib::MainContext::default().iteration(false) {}
-        if done() {
+        if done().await {
             return true;
         }
-        std::thread::sleep(std::time::Duration::from_millis(10));
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
     }
-    done()
+    done().await
 }
 
 fn settle() {
@@ -59,165 +63,169 @@ fn settle() {
 }
 
 pub fn a_connection_event_a_scope_cycle_and_the_trackers_all_agree_with_appstate() {
-    let state_dir = tempfile::tempdir().expect("a state directory");
-    // SAFETY: first statement of a single-threaded test.
-    unsafe { std::env::set_var("XDG_STATE_HOME", state_dir.path()) };
+    crate::gtk_case(async {
+        let state_dir = tempfile::tempdir().expect("a state directory");
+        // SAFETY: first statement of a single-threaded test.
+        unsafe { std::env::set_var("XDG_STATE_HOME", state_dir.path()) };
 
-    if adw::init().is_err() || gdk::Display::default().is_none() {
-        eprintln!("skipping: no display (run under `scripts/test-headless.sh`)");
-        return;
-    }
-    let display = gdk::Display::default().unwrap();
-    fonts::install().expect("the embedded fonts should install");
-    style::install(&display);
-    app::install_icons(&display);
+        if adw::init().is_err() || gdk::Display::default().is_none() {
+            eprintln!("skipping: no display (run under `scripts/test-headless.sh`)");
+            return;
+        }
+        let display = gdk::Display::default().unwrap();
+        fonts::install().expect("the embedded fonts should install");
+        style::install(&display);
+        app::install_icons(&display);
 
-    let database = test_support::memory();
-    let first = seed_small(&database, 11);
-    let second = seed_extra_account(&database, "Second", "grace@example.org", 12);
+        let database = test_support::memory().await;
+        let first = seed_small(&database, 11).await;
+        let second = seed_extra_account(&database, "Second", "grace@example.org", 12).await;
 
-    let directory = tempfile::tempdir().expect("a blob directory");
-    let blobs = BlobStore::open(
-        directory.path().to_path_buf(),
-        &postio_storage::test_support::blob_keys(),
-    )
-    .expect("a blob store");
+        let directory = tempfile::tempdir().expect("a blob directory");
+        let blobs = BlobStore::open(
+            directory.path().to_path_buf(),
+            &postio_storage::test_support::blob_keys(),
+        )
+        .expect("a blob store");
 
-    // ── `run`'s own arrangement: one hub, one subscription ──────────────
-    let state = SharedState::default();
-    let bus = postio_app::actions::wire(
-        postio_core::dispatch::DispatcherBuilder::new(),
-        postio_app::actions::Actions::new(database.clone(), state.clone()),
-    )
-    .build();
-    let wired: Vec<postio_core::CommandId> = bus.wired().collect();
-    let hub = EventHub::new();
-    let engine = hub.sink();
-    let bridge = Bridge::builder()
-        .build_with_events(bus, hub.sink())
-        .expect("a runtime");
-    let wiring = Wiring::new(
-        database,
-        blobs,
-        bridge.handle(),
-        engine.clone(),
-        bridge.commands(),
-    );
+        // ── `run`'s own arrangement: one hub, one subscription ──────────────
+        let state = SharedState::default();
+        let bus = postio_app::actions::wire(
+            postio_core::dispatch::DispatcherBuilder::new(),
+            postio_app::actions::Actions::new(database.clone(), state.clone()),
+        )
+        .build();
+        let wired: Vec<postio_core::CommandId> = bus.wired().collect();
+        let hub = EventHub::new();
+        let engine = hub.sink();
+        let bridge = Bridge::builder()
+            .build_with_events(bus, hub.sink())
+            .expect("a runtime");
+        let wiring = Wiring::new(
+            database,
+            blobs,
+            bridge.handle(),
+            engine.clone(),
+            bridge.commands(),
+        );
 
-    let window = Window::default();
-    window.present();
-    settle();
+        let window = Window::default();
+        window.present();
+        settle();
 
-    let feeds = feed_the_window(&window, &wiring)
-        .expect("the seeded store has an account")
-        .feeds;
-    commands::install(
-        &window,
-        &feeds,
-        state.clone(),
-        wiring.commands.clone(),
-        wired,
-    );
-    let notifier = notifications::Notifier::new(
-        wiring.database.clone(),
-        wiring.store.clone(),
-        wiring.runtime.clone(),
-        Default::default(),
-    );
-    commands::drain(
-        &window,
-        &feeds,
-        hub.subscribe("window"),
-        notifier,
-        state.clone(),
-    );
+        let feeds = feed_the_window(&window, &wiring)
+            .await
+            .expect("the seeded store has an account")
+            .feeds;
+        commands::install(
+            &window,
+            &feeds,
+            state.clone(),
+            wiring.commands.clone(),
+            wired,
+        );
+        let notifier = notifications::Notifier::new(
+            wiring.database.clone(),
+            wiring.store.clone(),
+            wiring.runtime.clone(),
+            Default::default(),
+        );
+        commands::drain(
+            &window,
+            &feeds,
+            hub.subscribe("window"),
+            notifier,
+            state.clone(),
+        );
 
-    assert!(
-        settle_until(|| window.list().model().n_items() > 0),
-        "the window drew no mail at all, so nothing below can be concluded"
-    );
-    assert!(
-        settle_until(|| window.sidebar().account_names().len() == 2),
-        "the fixture seeded two accounts and the strip does not show them"
-    );
-    // What criterion 2 below actually observes: the strip's own scope
-    // selection, the same signal `connect_scope_selected`'s real listener
-    // (re-pointing the folder tree and the list) reacts to. Recording it
-    // here rather than polling `feeds.messages.scope()` keeps the assertion
-    // about *cycling*, not about how long a folder-tree reload after an
-    // account switch takes to settle -- a separate, slower concern
-    // `gtk_folder_sections.rs` already covers.
-    let picked: std::rc::Rc<std::cell::RefCell<Vec<postio_model::AccountScope>>> =
-        std::rc::Rc::default();
-    window.sidebar().connect_scope_selected({
-        let picked = std::rc::Rc::clone(&picked);
-        move |scope| picked.borrow_mut().push(scope)
+        assert!(
+            settle_until(async || window.list().model().n_items() > 0).await,
+            "the window drew no mail at all, so nothing below can be concluded"
+        );
+        assert!(
+            settle_until(async || window.sidebar().account_names().len() == 2).await,
+            "the fixture seeded two accounts and the strip does not show them"
+        );
+        // What criterion 2 below actually observes: the strip's own scope
+        // selection, the same signal `connect_scope_selected`'s real listener
+        // (re-pointing the folder tree and the list) reacts to. Recording it
+        // here rather than polling `feeds.messages.scope()` keeps the assertion
+        // about *cycling*, not about how long a folder-tree reload after an
+        // account switch takes to settle -- a separate, slower concern
+        // `gtk_folder_sections.rs` already covers.
+        let picked: std::rc::Rc<std::cell::RefCell<Vec<postio_model::AccountScope>>> =
+            std::rc::Rc::default();
+        window.sidebar().connect_scope_selected({
+            let picked = std::rc::Rc::clone(&picked);
+            move |scope| picked.borrow_mut().push(scope)
+        });
+
+        // ── 1. a connection event reaching the bus fills AppState::accounts() ─
+        assert!(
+            state.read(|app_state| app_state.accounts().is_empty()),
+            "nothing has reported yet; if this is already non-empty the test \
+             below proves nothing about the wiring"
+        );
+        engine.emit(Event::ConnectionChanged {
+            account: first.account.id,
+            state: ConnectionState::Online,
+        });
+        assert!(
+            settle_until(async || state.read(|app_state| !app_state.accounts().is_empty())).await,
+            "AppState::accounts() is still empty after a connection event reached \
+             the bus -- set_connection has no caller"
+        );
+        assert!(
+            state.read(|app_state| app_state.accounts().contains(&first.account.id)),
+            "the account the event named should be the one AppState now knows about"
+        );
+
+        // ── 2. `g a` cycles the scope through `Window::act`, the keybinding's
+        //       own door ──────────────────────────────────────────────────────
+        window.act(Command::NextScope);
+        settle();
+        window.act(Command::NextScope);
+        settle();
+        let seen = picked.borrow().clone();
+        assert_eq!(
+            seen.len(),
+            2,
+            "two g a presses should have picked two rows through Window::act, \
+             the same door the keybinding uses: {seen:?}"
+        );
+        assert_ne!(
+            seen[0], seen[1],
+            "the second g a landed on the same scope as the first, so nothing \
+             actually cycled: {seen:?}"
+        );
+
+        // ── 3. AppState::connection agrees with the frontend's own Trackers ──
+        engine.emit(Event::ConnectionChanged {
+            account: second.account.id,
+            state: ConnectionState::Offline,
+        });
+        assert!(
+            settle_until(
+                async || state.read(|app_state| app_state.connection(second.account.id))
+                    == ConnectionState::Offline
+            )
+            .await,
+            "AppState never heard the account went offline"
+        );
+        let from_state = state.read(|app_state| app_state.connection(second.account.id));
+        let from_trackers = feeds
+            .folders
+            .statuses()
+            .into_iter()
+            .find(|(id, _)| *id == second.account.id)
+            .map(|(_, status)| status.state);
+        assert_eq!(
+            Some(from_state),
+            from_trackers,
+            "AppState and the frontend's Trackers disagree about the same account: \
+             AppState says {from_state:?}, Trackers says {from_trackers:?}"
+        );
+
+        bridge.shutdown();
     });
-
-    // ── 1. a connection event reaching the bus fills AppState::accounts() ─
-    assert!(
-        state.read(|app_state| app_state.accounts().is_empty()),
-        "nothing has reported yet; if this is already non-empty the test \
-         below proves nothing about the wiring"
-    );
-    engine.emit(Event::ConnectionChanged {
-        account: first.account.id,
-        state: ConnectionState::Online,
-    });
-    assert!(
-        settle_until(|| state.read(|app_state| !app_state.accounts().is_empty())),
-        "AppState::accounts() is still empty after a connection event reached \
-         the bus -- set_connection has no caller"
-    );
-    assert!(
-        state.read(|app_state| app_state.accounts().contains(&first.account.id)),
-        "the account the event named should be the one AppState now knows about"
-    );
-
-    // ── 2. `g a` cycles the scope through `Window::act`, the keybinding's
-    //       own door ──────────────────────────────────────────────────────
-    window.act(Command::NextScope);
-    settle();
-    window.act(Command::NextScope);
-    settle();
-    let seen = picked.borrow().clone();
-    assert_eq!(
-        seen.len(),
-        2,
-        "two g a presses should have picked two rows through Window::act, \
-         the same door the keybinding uses: {seen:?}"
-    );
-    assert_ne!(
-        seen[0], seen[1],
-        "the second g a landed on the same scope as the first, so nothing \
-         actually cycled: {seen:?}"
-    );
-
-    // ── 3. AppState::connection agrees with the frontend's own Trackers ──
-    engine.emit(Event::ConnectionChanged {
-        account: second.account.id,
-        state: ConnectionState::Offline,
-    });
-    assert!(
-        settle_until(
-            || state.read(|app_state| app_state.connection(second.account.id))
-                == ConnectionState::Offline
-        ),
-        "AppState never heard the account went offline"
-    );
-    let from_state = state.read(|app_state| app_state.connection(second.account.id));
-    let from_trackers = feeds
-        .folders
-        .statuses()
-        .into_iter()
-        .find(|(id, _)| *id == second.account.id)
-        .map(|(_, status)| status.state);
-    assert_eq!(
-        Some(from_state),
-        from_trackers,
-        "AppState and the frontend's Trackers disagree about the same account: \
-         AppState says {from_state:?}, Trackers says {from_trackers:?}"
-    );
-
-    bridge.shutdown();
 }

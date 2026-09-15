@@ -38,104 +38,107 @@ use postio_storage::seed::seed_small;
 use postio_storage::{BlobStore, test_support};
 
 pub fn an_event_from_a_producer_that_is_not_the_bus_reaches_the_panes() {
-    let state_dir = tempfile::tempdir().expect("a state directory");
-    // SAFETY: first statement of a single-threaded test.
-    unsafe { std::env::set_var("XDG_STATE_HOME", state_dir.path()) };
+    crate::gtk_case(async {
+        let state_dir = tempfile::tempdir().expect("a state directory");
+        // SAFETY: first statement of a single-threaded test.
+        unsafe { std::env::set_var("XDG_STATE_HOME", state_dir.path()) };
 
-    if adw::init().is_err() || gdk::Display::default().is_none() {
-        eprintln!("skipping: no display (run under `scripts/test-headless.sh`)");
-        return;
-    }
-    let display = gdk::Display::default().unwrap();
-    fonts::install().expect("the embedded fonts should install");
-    style::install(&display);
-    app::install_icons(&display);
+        if adw::init().is_err() || gdk::Display::default().is_none() {
+            eprintln!("skipping: no display (run under `scripts/test-headless.sh`)");
+            return;
+        }
+        let display = gdk::Display::default().unwrap();
+        fonts::install().expect("the embedded fonts should install");
+        style::install(&display);
+        app::install_icons(&display);
 
-    let database = test_support::memory();
-    let report = seed_small(&database, 11);
-    assert!(report.message_count > 0, "the fixture seeded no mail");
-    let directory = tempfile::tempdir().expect("a blob directory");
-    let blobs = BlobStore::open(
-        directory.path().to_path_buf(),
-        &postio_storage::test_support::blob_keys(),
-    )
-    .expect("a blob store");
+        let database = test_support::memory().await;
+        let report = seed_small(&database, 11).await;
+        assert!(report.message_count > 0, "the fixture seeded no mail");
+        let directory = tempfile::tempdir().expect("a blob directory");
+        let blobs = BlobStore::open(
+            directory.path().to_path_buf(),
+            &postio_storage::test_support::blob_keys(),
+        )
+        .expect("a blob store");
 
-    // ── exactly `run`'s arrangement ─────────────────────────────────────
-    // One hub. The bus emits into it through the bridge; the sync engine
-    // holds a sink of its own on the same hub; the window subscribes once.
-    let hub = EventHub::new();
-    let engine = hub.sink();
-    let bridge = Bridge::builder()
-        .build_with_events(handler_fn(|_, _| async {}), hub.sink())
-        .expect("a runtime");
-    let wiring = Wiring::new(
-        database,
-        blobs,
-        bridge.handle(),
-        engine.clone(),
-        bridge.commands(),
-    );
+        // ── exactly `run`'s arrangement ─────────────────────────────────────
+        // One hub. The bus emits into it through the bridge; the sync engine
+        // holds a sink of its own on the same hub; the window subscribes once.
+        let hub = EventHub::new();
+        let engine = hub.sink();
+        let bridge = Bridge::builder()
+            .build_with_events(handler_fn(|_, _| async {}), hub.sink())
+            .expect("a runtime");
+        let wiring = Wiring::new(
+            database,
+            blobs,
+            bridge.handle(),
+            engine.clone(),
+            bridge.commands(),
+        );
 
-    let window = Window::default();
-    window.present();
-    while glib::MainContext::default().iteration(false) {}
+        let window = Window::default();
+        window.present();
+        while glib::MainContext::default().iteration(false) {}
 
-    let feeds = feed_the_window(&window, &wiring)
-        .expect("the seeded store has an account")
-        .feeds;
-    let notifier = notifications::Notifier::new(
-        wiring.database.clone(),
-        wiring.store.clone(),
-        wiring.runtime.clone(),
-        Default::default(),
-    );
-    // The one line `open_account` runs, over the one subscription it now
-    // takes instead of a stream per producer.
-    commands::drain(
-        &window,
-        &feeds,
-        hub.subscribe("window"),
-        notifier,
-        SharedState::default(),
-    );
+        let feeds = feed_the_window(&window, &wiring)
+            .await
+            .expect("the seeded store has an account")
+            .feeds;
+        let notifier = notifications::Notifier::new(
+            wiring.database.clone(),
+            wiring.store.clone(),
+            wiring.runtime.clone(),
+            Default::default(),
+        );
+        // The one line `open_account` runs, over the one subscription it now
+        // takes instead of a stream per producer.
+        commands::drain(
+            &window,
+            &feeds,
+            hub.subscribe("window"),
+            notifier,
+            SharedState::default(),
+        );
 
-    let list = window.list();
-    assert!(
-        settle_until(|| list.model().n_items() > 0),
-        "the window was fed {} messages and the list is empty, so nothing \
-         below could fail",
-        report.message_count
-    );
-    let first = list.model().peek(0).expect("a first row");
-    // The multi-select set, which is what `commands::apply` clears --
-    // `select_message` moves the cursor, which is a different thing.
-    list.select_all();
-    assert!(
-        !list.selection().is_empty(),
-        "nothing selected, so clearing it would prove nothing"
-    );
+        let list = window.list();
+        assert!(
+            settle_until(async || list.model().n_items() > 0).await,
+            "the window was fed {} messages and the list is empty, so nothing \
+             below could fail",
+            report.message_count
+        );
+        let first = list.model().peek(0).expect("a first row");
+        // The multi-select set, which is what `commands::apply` clears --
+        // `select_message` moves the cursor, which is a different thing.
+        list.select_all();
+        assert!(
+            !list.selection().is_empty(),
+            "nothing selected, so clearing it would prove nothing"
+        );
 
-    // ── the assertion ───────────────────────────────────────────────────
-    // The sync engine is not a command handler and is never handed a sink by
-    // the bridge; before the hub it had a channel of its own that the window
-    // had to be given separately. If that wiring is wrong, mail arrives and
-    // the panes never hear about it.
-    engine.emit(Event::MessagesRemoved {
-        account: report.account.id,
-        mailbox: feeds
-            .messages
-            .mailbox()
-            .expect("the list is showing a mailbox"),
-        messages: vec![first],
+        // ── the assertion ───────────────────────────────────────────────────
+        // The sync engine is not a command handler and is never handed a sink by
+        // the bridge; before the hub it had a channel of its own that the window
+        // had to be given separately. If that wiring is wrong, mail arrives and
+        // the panes never hear about it.
+        engine.emit(Event::MessagesRemoved {
+            account: report.account.id,
+            mailbox: feeds
+                .messages
+                .mailbox()
+                .expect("the list is showing a mailbox"),
+            messages: vec![first],
+        });
+
+        assert!(
+            settle_until(async || list.selection().is_empty()).await,
+            "an event emitted by a producer reached no pane. The hub delivered it \
+             and every layer's own tests pass; what is missing is between them — \
+             the window is subscribed to something the producers do not write to."
+        );
+
+        bridge.shutdown();
     });
-
-    assert!(
-        settle_until(|| list.selection().is_empty()),
-        "an event emitted by a producer reached no pane. The hub delivered it \
-         and every layer's own tests pass; what is missing is between them — \
-         the window is subscribed to something the producers do not write to."
-    );
-
-    bridge.shutdown();
 }

@@ -100,5 +100,6 @@ pub mod style;
 pub mod thread_row;
 pub mod toast;
 pub mod unavailable;
+pub mod web_process;
 pub mod widgets;
 pub mod window;

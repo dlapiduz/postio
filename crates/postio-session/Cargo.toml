@@ -43,19 +43,13 @@ tracing-log = "0.2"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt", "ansi"] }
 
 [dev-dependencies]
+# The patience dial (#842), so the indexer test's wait scales with the machine.
+postio-test-support.workspace = true
 # Throwaway migrated databases, so a verb is an ordinary function over a real
 # schema rather than something only a running application can exercise. This
 # is the whole argument for the crate: the verbs are testable without a
 # toolkit, and they were not while they lived beside a GTK binary.
 postio-storage = { workspace = true, features = ["test-support"] }
-# `store_key.rs` builds a *plaintext* store to prove `open_store_at` encrypts
-# it. Nothing shipping here touches SQL, so this is dev-only -- and the
-# features match `postio-storage`'s, because one `links = "sqlite3"` crate in
-# the graph means the feature selecting SQLCipher has to agree everywhere
-# (ADR 0014).
-rusqlite = { version = "0.40.2", features = [
-    "bundled-sqlcipher-vendored-openssl",
-] }
 # The unkeyed digest a blob written before ADR 0014 was named by, so the
 # fixture is the shape a real pre-release store has rather than a plausible
 # one.

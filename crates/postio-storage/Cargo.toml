@@ -12,10 +12,11 @@ repository.workspace = true
 # Test-only: exposes the `test_support` throwaway-database helpers. Off by
 # default; downstream crates enable it from their dev-dependencies so nothing
 # ships in a normal build.
-# `rusqlite/trace` is what `test_support::counting` reads statement and row
-# counts from (#100). It rides on this feature rather than on the plain
-# dependency so an ordinary build still carries no tracing binding at all.
-test-support = ["dep:tempfile", "postio-model/test-corpus", "rusqlite/trace"]
+# `counting` used to ride on `rusqlite/trace`, which read statement and row
+# counts off SQLite's trace hook (#100). Turso exposes no such hook, so the
+# instrument counts at this crate's own seam instead -- see research.md Q5 for
+# what that can and cannot see.
+test-support = ["dep:tempfile", "postio-model/test-corpus"]
 
 [dependencies]
 blake3 = "1.8.7"
@@ -30,21 +31,36 @@ zeroize = "1.9.0"
 # native dependency, and the 24-byte nonce is what makes a random per-blob
 # nonce safe without a counter to keep.
 chacha20poly1305 = "0.11.0"
+# `sync` only, and no runtime. `WriteGate` parks its waiters on a
+# `tokio::sync::Notify` rather than a `Condvar`, because a condvar blocks the
+# *thread* and every thread here is a runtime worker -- see `store::GateInner`.
+# Whoever calls this crate still supplies the runtime.
+tokio = { version = "1", default-features = false, features = ["sync", "macros"] }
 chrono = { version = "0.4.45", default-features = false, features = ["std", "clock"] }
-postio-model = { version = "0.2.0", path = "../postio-model" }
-# SQLCipher, not plain SQLite (ADR 0014 Q1). `bundled-sqlcipher-vendored-openssl`
-# keeps the Flatpak and contributor machines hermetic; the system-libcrypto
-# variant is the recorded alternative if vendored OpenSSL's build cost ever
-# earns its removal. sccache absorbs it machine-wide after the first build.
-rusqlite = { version = "0.40.2", features = [
-    "bundled-sqlcipher-vendored-openssl",
-] }
+postio-model = { version = "0.3.0", path = "../postio-model" }
+# Turso, the Rust rewrite of SQLite (specs/004-turso-store). Encryption is
+# the engine's own AES-256-GCM rather than SQLCipher's AES-CBC + HMAC, which
+# takes `openssl-src` out of the graph entirely -- with it goes the 28 s
+# uncacheable build step per cold tree and the `atexit` workaround #794 and
+# #699 needed. Both the encryption and the full-text search are marked
+# experimental upstream and neither has been audited; spec.md makes "no
+# plaintext in the file" and "another key is refused" acceptance criteria
+# rather than assumptions for that reason.
+#
+# `default-features = false` because the default set includes `mimalloc`,
+# and that feature makes a *library* install a `#[global_allocator]` into
+# whatever binary links it — an allocator choice belongs to the binary, and
+# `postio-app` makes it explicitly. `fts` stays: the search index is built
+# on the engine's full-text index method.
+turso = { version = "=0.8.0-pre.11", default-features = false, features = ["fts"] }
 serde_json = "1.0.151"
 tempfile = { version = "3.27.0", optional = true }
 # Blob compression (ADR 0017). `zstd` rather than a pure-Rust decoder because
 # the store must compress as well as decompress; the C library is BSD-3-Clause,
 # which `deny.toml` already allows.
-zstd = "0.14.0"
+# 0.13 rather than newest: the engine's fts (tantivy) is on 0.13, and one
+# version means one wrapper over the single zstd-sys both share.
+zstd = "0.13"
 thiserror = "2.0.20"
 tracing = "0.1"
 
@@ -56,13 +72,16 @@ postio-storage = { path = ".", features = ["test-support"] }
 tempfile = "3.27.0"
 blake3 = "1.8.7"
 chrono = { version = "0.4.45", default-features = false, features = ["std", "clock"] }
-rusqlite = { version = "0.40.2", features = [
-    "bundled-sqlcipher-vendored-openssl",
-    "trace",
-] }
+turso = { version = "=0.8.0-pre.11", default-features = false, features = ["fts"] }
+# Tests only. The crate is async but brings no runtime of its own -- whoever
+# calls it supplies one, and postio-runtime is the only thing that does.
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "sync"] }
 
-[lints.rust]
-# Not the workspace floor: see EXCEPTIONS in scripts/checks/check-lint-floor.py.
-# One FFI call in `db.rs` stops libcrypto registering an `atexit` handler.
-unsafe_code = "deny"
-missing_docs = "warn"
+# The workspace floor, in full: the SQLCipher-era `unsafe` (an
+# `OPENSSL_init_crypto` FFI call against libcrypto's atexit handler) went with
+# the engine swap, so there is no reason left to weaken `unsafe_code` from
+# `forbid` -- and inheriting the floor is what puts `let_underscore_future`
+# back on the crate whose own `DraftRepository::delete` is the dropped-future
+# bug that lint exists for.
+[lints]
+workspace = true

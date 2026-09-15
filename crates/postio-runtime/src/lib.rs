@@ -51,5 +51,5 @@ pub use engine::{
 // whole life of this project.
 pub use postio_sync::{AttachmentPolicy, BackfillPolicy};
 pub use store::{
-    ListScope, MailStore, MessagePage, MessageSummary, PageRequest, Read, SqliteStore, StoreError,
+    ListScope, LocalStore, MailStore, MessagePage, MessageSummary, PageRequest, Read, StoreError,
 };

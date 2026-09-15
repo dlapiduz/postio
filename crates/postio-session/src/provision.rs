@@ -48,7 +48,7 @@ use postio_account::secret::{AccountKey, Password, SecretError, SecretStore};
 use postio_model::account::{AuthMethod, TransportSecurity};
 use postio_model::ids::AccountId;
 use postio_model::{Account, EmailAddress, Identity};
-use postio_storage::Database;
+use postio_storage::Store;
 use postio_storage::repository::AccountRepository;
 
 /// What one provisioning run did.
@@ -180,7 +180,7 @@ fn security(encryption: Encryption) -> TransportSecurity {
 /// credential just stored is deleted again; see the [module docs](self) for
 /// why that leftover would be harmless even if the delete failed.
 pub async fn provision(
-    database: &Database,
+    database: &Store,
     secrets: &dyn SecretStore,
     mut account: Account,
     password: Password,
@@ -190,9 +190,10 @@ pub async fn provision(
     // Read before writing anything: an address already here is not an error
     // and must not cost a keyring round trip, let alone a write.
     {
-        let connection = database.connection().map_err(ProvisionError::Store)?;
+        let connection = database.connect().await.map_err(ProvisionError::Store)?;
         let existing = AccountRepository::new(&connection)
             .list_enabled()
+            .await
             .map_err(ProvisionError::Store)?
             .into_iter()
             .find(|found| found.address.address.eq_ignore_ascii_case(&address));
@@ -208,8 +209,10 @@ pub async fn provision(
         .map_err(ProvisionError::Credential)?;
 
     let written = {
-        let connection = database.connection().map_err(ProvisionError::Store)?;
-        AccountRepository::new(&connection).create(&mut account)
+        let connection = database.connect().await.map_err(ProvisionError::Store)?;
+        AccountRepository::new(&connection)
+            .create(&mut account)
+            .await
     };
     match written {
         Ok(id) => Ok(Provisioned::Created(id)),

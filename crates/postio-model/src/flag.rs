@@ -87,11 +87,6 @@ impl Flag {
         matches!(self, Self::Recent)
     }
 
-    /// Whether this flag is one of the RFC 3501 system flags.
-    pub fn is_system(&self) -> bool {
-        !matches!(self, Self::Keyword(_))
-    }
-
     /// Sort rank, so system flags order ahead of keywords deterministically.
     fn rank(&self) -> u8 {
         match self {

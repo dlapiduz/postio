@@ -45,14 +45,6 @@ impl MailboxFilter {
             ..Self::all()
         }
     }
-
-    /// Mailboxes matching an IMAP list pattern.
-    pub fn matching(pattern: impl Into<String>) -> Self {
-        Self {
-            pattern: pattern.into(),
-            subscribed_only: false,
-        }
-    }
 }
 
 impl Default for MailboxFilter {

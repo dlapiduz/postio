@@ -24,6 +24,13 @@
 # (10.2s). Each says in its own doc comment that what it produces is numbers a
 # person reads. Together with the six, 75.6s off every pull request.
 #
+# Four of the nine have since gone, with the thing they measured. `hmac_cost`
+# timed SQLCipher's per-page HMAC-SHA512 against SHA-256, `header_block_size`
+# weighed a zstd-compressed header block, and `measurements::` read
+# `cipher_page_size` -- none of which the engine has any more. Turso
+# authenticates a page as part of AES-256-GCM rather than beside it, so the
+# ratio `hmac_cost` existed to report is not a number this store can have.
+#
 # The filter is written once, negated, and `profile.nightly` lifts it with
 # `all()` rather than repeating it -- nextest config has no bindings, and a
 # second copy of an expression this long is a second thing to keep true.
@@ -38,7 +45,7 @@
 # `error: no tests to run` and names the profile that excluded it. To run one,
 # ask for the profile that owns it:
 #
-#     cargo nextest run --profile nightly -E 'binary(hmac_cost)'
+#     cargo nextest run --profile nightly -E 'binary(cache_pressure)'
 [profile.default]
 # A test that hangs should fail, not stall the run. The GTK suites already
 # carry their own deadlines (`POSTIO_TEST_PATIENCE` scales them); this is the
@@ -46,7 +53,7 @@
 # that never answers, a compositor that went away mid-test.
 slow-timeout = { period = "60s", terminate-after = 4 }
 
-default-filter = 'not (binary(hmac_cost) + binary(cache_pressure) + binary(header_block_size) + binary(idle_store_cpu) + binary(smtp_wait_cpu) + (package(postio-storage) & test(/^measurements::/)) + (package(postio-index) & test(/^body_index_size::/)) + (package(postio-app) & test(/^navigation_cost::/)))'
+default-filter = 'not (binary(cache_pressure) + binary(idle_store_cpu) + binary(smtp_wait_cpu) + (package(postio-index) & test(/^body_index_size::/)) + (package(postio-app) & test(/^navigation_cost::/)))'
 
 # Retries are OFF by default, deliberately. A retry turns a real failure into
 # a slow pass, and this project's characteristic bug is something that works
@@ -120,6 +127,20 @@ test-group = 'webkit'
 [[profile.default.overrides]]
 filter = 'package(postio-app)'
 retries = 2
+
+# `total_hits_stops_counting_at_the_cap` builds TOTAL_HITS_CAP + 50 = 10,050
+# messages through the real repository, and on this engine every insert pays
+# the fts index per document (the arithmetic is in
+# `docs/notes/2026-09-13-what-the-engine-swap-could-not-keep.md`): 139s and
+# 288s on two idle runs of this workstation -- honest work with tantivy-merge
+# variance, not a wedge -- and the 60s x 4 backstop above terminated it at
+# 240s the first time the gate chain ran it beside other suites. 480s is the
+# nightly profile's ratio (~1.7x the worst measured run) applied here.
+# Making the bulk fixture cheap on this engine is noted as follow-up in
+# `2026-09-13-what-the-frontend-audit-found-and-what-remains.md`.
+[[profile.default.overrides]]
+filter = 'package(postio-index) & test(=executor::total_hits_stops_counting_at_the_cap)'
+slow-timeout = { period = "120s", terminate-after = 4 }
 
 # CI wants the same thresholds but a machine-readable trail of what flaked.
 [profile.ci]

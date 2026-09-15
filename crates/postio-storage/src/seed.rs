@@ -47,12 +47,12 @@ use postio_model::{
     Account, Attachment, BodyState, EmailAddress, Flag, FlagSet, Mailbox, MailboxRole, Message,
     RfcMessageId, ids::MessageId, test_corpus,
 };
-use rusqlite::{Connection, params};
 
-use crate::db::Database;
 use crate::repository::{
-    ContactRepository, MailboxRepository, MessageRepository, Scope, StoredBody, ThreadingRepository,
+    ContactRepository, MailboxRepository, MessageRepository, StoredBody, ThreadingRepository,
 };
+use crate::sql::{self, RowExt as _, bind};
+use crate::store::{Connection, Store};
 use crate::test_support;
 
 /// What one seed call produced.
@@ -121,8 +121,8 @@ fn anchor() -> DateTime<Utc> {
 /// If a write fails — the caller has a broken store, which is a test failure
 /// worth panicking on rather than threading a `Result` through every call site
 /// that wants one.
-pub fn seed_small(database: &Database, seed: u64) -> SeedReport {
-    seed_small_into(database, false, seed)
+pub async fn seed_small(database: &Store, seed: u64) -> SeedReport {
+    seed_small_into(database, false, seed).await
 }
 
 /// [`seed_small`], plus the corpus' own bodies written into `blobs`.
@@ -142,8 +142,8 @@ pub fn seed_small(database: &Database, seed: u64) -> SeedReport {
 /// # Panics
 ///
 /// If a write fails, as [`seed_small`] does.
-pub fn seed_small_with_bodies(database: &Database, seed: u64) -> SeedReport {
-    seed_small_into(database, true, seed)
+pub async fn seed_small_with_bodies(database: &Store, seed: u64) -> SeedReport {
+    seed_small_into(database, true, seed).await
 }
 
 /// The seeded account: `test_support::account` plus the identity a real one
@@ -162,8 +162,8 @@ pub fn seed_small_with_bodies(database: &Database, seed: u64) -> SeedReport {
 /// their own and `idx_identities_one_default` allows exactly one, so putting
 /// it there makes three suites collide over a fixture they did not ask to
 /// change.
-fn seeded_account(connection: &rusqlite::Connection) -> Account {
-    let mut account = test_support::account(connection);
+async fn seeded_account(connection: &Connection) -> Account {
+    let mut account = test_support::account(connection).await;
     // Not marked default, which is the one concession to the fixtures around
     // it. `idx_identities_one_default` allows a single default per account and
     // several suites add a default of their own to a seeded account; claiming
@@ -175,14 +175,15 @@ fn seeded_account(connection: &rusqlite::Connection) -> Account {
     account.identities = vec![identity];
     crate::repository::AccountRepository::new(connection)
         .update(&mut account)
+        .await
         .expect("give the seeded account its identity");
     account
 }
 
-fn seed_small_into(database: &Database, with_bodies: bool, seed: u64) -> SeedReport {
-    let connection = database.connection().expect("a checked-out connection");
-    let account = seeded_account(&connection);
-    let folders = create_folders(&connection, &account);
+async fn seed_small_into(database: &Store, with_bodies: bool, seed: u64) -> SeedReport {
+    let connection = database.connect().await.expect("a checked-out connection");
+    let account = seeded_account(&connection).await;
+    let folders = create_folders(&connection, &account).await;
     let mut rng = Rng::new(seed);
 
     let mut message_count = 0;
@@ -199,15 +200,15 @@ fn seed_small_into(database: &Database, with_bodies: bool, seed: u64) -> SeedRep
         message.flags = assign_flags(&mut rng, mailbox.role);
         message.sync.body_state = BodyState::NotFetched;
 
-        let id = file_message(&connection, account.id, message);
+        let id = file_message(&connection, account.id, message).await;
         if with_bodies {
-            write_body(&connection, id, &body);
+            write_body(&connection, id, &body).await;
         }
         message_count += 1;
     }
 
     SeedReport {
-        mailboxes: load_folders(&connection, &account),
+        mailboxes: load_folders(&connection, &account).await,
         account,
         message_count,
     }
@@ -227,13 +228,13 @@ fn seed_small_into(database: &Database, with_bodies: bool, seed: u64) -> SeedRep
 /// # Panics
 ///
 /// If a write fails, as [`seed_small`] does.
-pub fn seed_extra_account(
-    database: &Database,
+pub async fn seed_extra_account(
+    database: &Store,
     display: &str,
     address: &str,
     seed: u64,
 ) -> SeedReport {
-    let connection = database.connection().expect("a checked-out connection");
+    let connection = database.connect().await.expect("a checked-out connection");
     let mut account = Account::new(display, EmailAddress::new(Some(display), address));
     account.incoming.host = "imap.example.net".to_owned();
     account.outgoing.host = "smtp.example.net".to_owned();
@@ -249,9 +250,10 @@ pub fn seed_extra_account(
     account.identities = vec![identity];
     crate::repository::AccountRepository::new(&connection)
         .create(&mut account)
+        .await
         .expect("create a seeded account");
 
-    let folders = create_folders(&connection, &account);
+    let folders = create_folders(&connection, &account).await;
     let mut rng = Rng::new(seed);
     let mut message_count = 0;
     for fixture in test_corpus::all() {
@@ -264,12 +266,12 @@ pub fn seed_extra_account(
         message.date = Some(received_at);
         message.flags = assign_flags(&mut rng, mailbox.role);
         message.sync.body_state = BodyState::NotFetched;
-        file_message(&connection, account.id, message);
+        file_message(&connection, account.id, message).await;
         message_count += 1;
     }
 
     SeedReport {
-        mailboxes: load_folders(&connection, &account),
+        mailboxes: load_folders(&connection, &account).await,
         account,
         message_count,
     }
@@ -290,40 +292,53 @@ pub fn seed_extra_account(
 /// # Panics
 ///
 /// If a write fails.
-pub fn seed_large(database: &Database, seed: u64, message_count: usize) -> SeedReport {
-    let connection = database.connection().expect("a checked-out connection");
-    let account = seeded_account(&connection);
-    let folders = create_folders(&connection, &account);
+pub async fn seed_large(database: &Store, seed: u64, message_count: usize) -> SeedReport {
+    let connection = database.connect().await.expect("a checked-out connection");
+    let account = seeded_account(&connection).await;
+    let folders = create_folders(&connection, &account).await;
     let mut rng = Rng::new(seed);
 
     let mut inserted = 0;
     while inserted < message_count {
         let end = (inserted + BATCH_SIZE).min(message_count);
-        let scope = Scope::open(&connection).expect("open a seed batch");
-        for n in inserted..end {
-            let mailbox = weighted_mailbox(&folders, &mut rng);
-            let mut message = synthetic_message(n, &account, mailbox, &mut rng);
-            MessageRepository::new(&scope)
-                .create(&mut message)
-                .expect("insert a synthetic message");
-            record_correspondents(&scope, &message);
-        }
-        scope.commit().expect("commit a seed batch");
+        // Generated before the transaction opens, written inside it. The
+        // generator is pure and holds `rng` and `folders`, which an `async
+        // move` closure would take from the loop that still needs them.
+        let batch: Vec<_> = (inserted..end)
+            .map(|n| {
+                let mailbox = weighted_mailbox(&folders, &mut rng);
+                synthetic_message(n, &account, mailbox, &mut rng)
+            })
+            .collect();
+
+        sql::in_scope(&connection, move |scope| async move {
+            for mut message in batch {
+                MessageRepository::new(&scope)
+                    .create(&mut message)
+                    .await
+                    .expect("insert a synthetic message");
+                record_correspondents(&scope, &message).await;
+            }
+            Ok::<_, crate::Error>(())
+        })
+        .await
+        .expect("commit a seed batch");
         inserted = end;
     }
 
     SeedReport {
-        mailboxes: load_folders(&connection, &account),
+        mailboxes: load_folders(&connection, &account).await,
         account,
         message_count: inserted,
     }
 }
 
-fn create_folders(connection: &Connection, account: &Account) -> Vec<Mailbox> {
-    FOLDERS
-        .iter()
-        .map(|path| test_support::mailbox(connection, account, path))
-        .collect()
+async fn create_folders(connection: &Connection, account: &Account) -> Vec<Mailbox> {
+    let mut folders = Vec::with_capacity(FOLDERS.len());
+    for path in FOLDERS {
+        folders.push(test_support::mailbox(connection, account, path).await);
+    }
+    folders
 }
 
 /// Reloads every folder, with whatever counts the inserts left behind.
@@ -340,9 +355,10 @@ fn create_folders(connection: &Connection, account: &Account) -> Vec<Mailbox> {
 /// the production path works. If these counts are ever wrong again, that is a
 /// bug in the triggers and it should be found here rather than papered over.
 /// See `postio-bl2`.
-fn load_folders(connection: &Connection, account: &Account) -> Vec<Mailbox> {
+async fn load_folders(connection: &Connection, account: &Account) -> Vec<Mailbox> {
     MailboxRepository::new(connection)
         .list_for_account(account.id)
+        .await
         .expect("reload seeded mailboxes")
 }
 
@@ -364,73 +380,75 @@ fn load_folders(connection: &Connection, account: &Account) -> Vec<Mailbox> {
 /// # Panics
 ///
 /// If the store cannot be written.
-pub fn thread_seeded_messages(
-    database: &Database,
+pub async fn thread_seeded_messages(
+    database: &Store,
     account: postio_model::AccountId,
     per_thread: usize,
 ) -> u32 {
     assert!(per_thread > 0, "a conversation holds at least one message");
-    let connection = database.connection().expect("a checked-out connection");
+    let connection = database.connect().await.expect("a checked-out connection");
 
+    // `all_unbounded`: a seeder threading the whole corpus is the shape that
+    // exception exists for, and a limit here would leave a fixture partly
+    // threaded -- which is worse than slow, because every assertion above it
+    // would still pass.
     let rows: Vec<(i64, Option<String>)> = {
-        let mut statement = connection
-            .prepare(
-                "SELECT id, subject FROM messages WHERE account_id = ?1
-                  ORDER BY received_at DESC, id DESC",
-            )
-            .expect("prepare the seeded message list");
-        let rows = statement
-            .query_map([account.get()], |row| {
-                Ok((row.get::<_, i64>(0)?, row.get::<_, Option<String>>(1)?))
-            })
-            .expect("read the seeded message list");
-        rows.collect::<rusqlite::Result<_>>()
-            .expect("collect the seeded message list")
+        sql::all_unbounded(
+            &connection,
+            "SELECT id, subject FROM messages WHERE account_id = ?1
+              ORDER BY received_at DESC, id DESC",
+            [account.get()],
+            |row| Ok((row.col::<i64>(0)?, row.col::<Option<String>>(1)?)),
+        )
+        .await
+        .expect("read the seeded message list")
     };
 
-    let scope = Scope::open(&connection).expect("open a threading batch");
-    let mut threads = 0;
-    for chunk in rows.chunks(per_thread) {
-        // A real thread's subject is one of its own messages' (`recompute_in`
-        // reads the oldest member's), never a constant -- and a benchmark
-        // that gave every seeded thread the identical literal subject once
-        // sent `unified_page`'s subject-coalescing query chasing all 13,000
-        // of them as candidates for every page row, which is what #619's
-        // budget miss actually was, not a query-plan problem: instrumenting
-        // confirmed every one of the top 100 raw threads shared this one
-        // literal subject, and fixing only that (nothing in `unified_page`
-        // itself) took `cargo bench`'s own measurement from 18.6-19.5ms to
-        // 1.7-1.9ms. Any member's subject keeps every seeded thread's
-        // subject as distinct as its messages' already are, which is "the
-        // same shape of data" this function promises rather than a
-        // pathological one no real mailbox produces.
-        let subject = chunk
-            .first()
-            .and_then(|(_, subject)| subject.as_deref())
-            .unwrap_or("seeded conversation");
-        scope
-            .execute(
-                "INSERT INTO threads (account_id, subject, message_count, unread_count,
-                                      has_attachments, is_flagged, first_at, last_at)
-                 VALUES (?1, ?2, 0, 0, 0, 0, 0, 0)",
-                params![account.get(), subject],
-            )
-            .expect("insert a seeded thread");
-        let thread = scope.last_insert_rowid();
-        for (id, _) in chunk {
+    sql::in_scope(&connection, |scope| async move {
+        let mut threads = 0;
+        for chunk in rows.chunks(per_thread) {
+            // A real thread's subject is one of its own messages' (`recompute_in`
+            // reads the oldest member's), never a constant -- and a benchmark
+            // that gave every seeded thread the identical literal subject once
+            // sent `unified_page`'s subject-coalescing query chasing all 13,000
+            // of them as candidates for every page row, which is what #619's
+            // budget miss actually was, not a query-plan problem: instrumenting
+            // confirmed every one of the top 100 raw threads shared this one
+            // literal subject, and fixing only that (nothing in `unified_page`
+            // itself) took `cargo bench`'s own measurement from 18.6-19.5ms to
+            // 1.7-1.9ms. Any member's subject keeps every seeded thread's
+            // subject as distinct as its messages' already are, which is "the
+            // same shape of data" this function promises rather than a
+            // pathological one no real mailbox produces.
+            let subject = chunk
+                .first()
+                .and_then(|(_, subject)| subject.as_deref())
+                .unwrap_or("seeded conversation");
             scope
                 .execute(
-                    "UPDATE messages SET thread_id = ?1 WHERE id = ?2",
-                    [thread, *id],
+                    "INSERT INTO threads (account_id, subject, message_count, unread_count,
+                                      has_attachments, is_flagged, first_at, last_at)
+                 VALUES (?1, ?2, 0, 0, 0, 0, 0, 0)",
+                    bind![account.get(), subject],
                 )
-                .expect("file a seeded message into its thread");
+                .await
+                .expect("insert a seeded thread");
+            let thread = scope.last_insert_rowid();
+            for (id, _) in chunk {
+                scope
+                    .execute(
+                        "UPDATE messages SET thread_id = ?1 WHERE id = ?2",
+                        [thread, *id],
+                    )
+                    .await
+                    .expect("file a seeded message into its thread");
+            }
+            threads += 1;
         }
-        threads += 1;
-    }
-    // The aggregates, in one statement rather than per thread.
-    scope
-        .execute(
-            "UPDATE threads SET
+        // The aggregates, in one statement rather than per thread.
+        scope
+            .execute(
+                "UPDATE threads SET
                  message_count = (SELECT count(*) FROM messages m
                                    WHERE m.thread_id = threads.id AND m.deleted_locally = 0),
                  unread_count  = (SELECT count(*) FROM messages m
@@ -441,11 +459,14 @@ pub fn thread_seeded_messages(
                  last_at  = coalesce((SELECT max(received_at) FROM messages m
                                        WHERE m.thread_id = threads.id), 0)
                WHERE account_id = ?1",
-            [account.get()],
-        )
-        .expect("recompute the seeded thread aggregates");
-    scope.commit().expect("commit the threading batch");
-    threads
+                [account.get()],
+            )
+            .await
+            .expect("recompute the seeded thread aggregates");
+        Ok::<_, crate::Error>(threads)
+    })
+    .await
+    .expect("commit the threading batch")
 }
 
 /// Inserts `message`, files it into a thread, and remembers who wrote it.
@@ -453,7 +474,7 @@ pub fn thread_seeded_messages(
 ///
 /// Compressed into the row by the repository, the same path real mail takes
 /// (ADR 0020).
-fn write_body(connection: &Connection, id: MessageId, body: &postio_model::MessageBody) {
+async fn write_body(connection: &Connection, id: MessageId, body: &postio_model::MessageBody) {
     if body.text.is_none() && body.html.is_none() {
         // Nothing to store. The row keeps `NotFetched`, which is true: this
         // fixture has no body to have fetched.
@@ -478,21 +499,24 @@ fn write_body(connection: &Connection, id: MessageId, body: &postio_model::Messa
             },
             BodyState::Full,
         )
+        .await
         .expect("store a seeded body");
 }
 
-fn file_message(
+async fn file_message(
     connection: &Connection,
     account_id: postio_model::AccountId,
     mut message: Message,
 ) -> MessageId {
     MessageRepository::new(connection)
         .create(&mut message)
+        .await
         .expect("insert a seeded message");
     ThreadingRepository::new(connection, account_id)
         .thread(&message)
+        .await
         .expect("thread a seeded message");
-    record_correspondents(connection, &message);
+    record_correspondents(connection, &message).await;
     message.id
 }
 
@@ -508,8 +532,11 @@ fn file_message(
 /// Not fatal: a sighting that will not record leaves the store's *mail*
 /// perfectly good, and panicking here would turn a completion list into a
 /// broken fixture.
-fn record_correspondents(connection: &Connection, message: &Message) {
-    if let Err(error) = ContactRepository::new(connection).record_message(message) {
+async fn record_correspondents(connection: &Connection, message: &Message) {
+    if let Err(error) = ContactRepository::new(connection)
+        .record_message(message)
+        .await
+    {
         tracing::warn!(%error, "could not record a seeded message's correspondents");
     }
 }
@@ -661,10 +688,10 @@ mod tests {
     use super::*;
     use crate::repository::ContactRepository;
 
-    #[test]
-    fn seeding_twice_with_the_same_seed_gives_the_same_store() {
-        let first = seed_small(&test_support::memory(), 7);
-        let second = seed_small(&test_support::memory(), 7);
+    #[tokio::test]
+    async fn seeding_twice_with_the_same_seed_gives_the_same_store() {
+        let first = seed_small(&test_support::memory().await, 7).await;
+        let second = seed_small(&test_support::memory().await, 7).await;
 
         assert_eq!(first.message_count, second.message_count);
         for role in [MailboxRole::Inbox, MailboxRole::Sent, MailboxRole::Archive] {
@@ -676,10 +703,10 @@ mod tests {
         }
     }
 
-    #[test]
-    fn a_different_seed_gives_a_different_distribution() {
-        let a = seed_small(&test_support::memory(), 1);
-        let b = seed_small(&test_support::memory(), 2);
+    #[tokio::test]
+    async fn a_different_seed_gives_a_different_distribution() {
+        let a = seed_small(&test_support::memory().await, 1).await;
+        let b = seed_small(&test_support::memory().await, 2).await;
 
         assert_eq!(a.message_count, b.message_count, "same corpus, either way");
         assert_ne!(
@@ -689,19 +716,20 @@ mod tests {
         );
     }
 
-    #[test]
-    fn every_folder_exists_and_the_cached_counts_are_not_lies() {
-        let database = test_support::memory();
-        let report = seed_small(&database, 3);
+    #[tokio::test]
+    async fn every_folder_exists_and_the_cached_counts_are_not_lies() {
+        let database = test_support::memory().await;
+        let report = seed_small(&database, 3).await;
 
         assert_eq!(report.mailboxes.len(), FOLDERS.len());
         let total: u32 = report.mailboxes.iter().map(|m| m.counts.total).sum();
         assert_eq!(total as usize, report.message_count);
 
-        let connection = database.connection().unwrap();
+        let connection = database.connect().await.unwrap();
         for mailbox in &report.mailboxes {
             let actual = MessageRepository::new(&connection)
                 .count(&crate::repository::ListQuery::mailbox(mailbox.id))
+                .await
                 .unwrap();
             assert_eq!(
                 actual, mailbox.counts.total,
@@ -711,16 +739,17 @@ mod tests {
         }
     }
 
-    #[test]
-    fn corpus_replies_land_in_the_same_thread_as_their_root() {
-        let database = test_support::memory();
-        let report = seed_small(&database, 11);
-        let connection = database.connection().unwrap();
+    #[tokio::test]
+    async fn corpus_replies_land_in_the_same_thread_as_their_root() {
+        let database = test_support::memory().await;
+        let report = seed_small(&database, 11).await;
+        let connection = database.connect().await.unwrap();
 
         let root = test_corpus::load("list-thread-01-root").parse();
         let threading = ThreadingRepository::new(&connection, report.account.id);
         let thread_id = threading
             .thread_of(root.rfc_message_id.as_ref().unwrap())
+            .await
             .expect("looking up the root's thread must not fail")
             .expect("the root fixture was seeded and threaded");
 
@@ -728,26 +757,28 @@ mod tests {
         assert_eq!(
             threading
                 .thread_of(reply.rfc_message_id.as_ref().unwrap())
+                .await
                 .expect("looking up the reply's thread must not fail"),
             Some(thread_id),
             "a reply fixture must land in its root's thread"
         );
     }
 
-    #[test]
-    fn seeding_with_bodies_writes_mail_the_reader_can_actually_read() {
-        let database = test_support::memory();
-        let report = seed_small_with_bodies(&database, 11);
+    #[tokio::test]
+    async fn seeding_with_bodies_writes_mail_the_reader_can_actually_read() {
+        let database = test_support::memory().await;
+        let report = seed_small_with_bodies(&database, 11).await;
 
-        let connection = database.connection().expect("a connection");
+        let connection = database.connect().await.expect("a connection");
         let repository = MessageRepository::new(&connection);
         let page = repository
             .page(&crate::repository::ListQuery::account(report.account.id).limit(u32::MAX))
+            .await
             .expect("the seeded messages");
 
         let mut readable = 0;
         for row in &page {
-            let Some(body) = repository.body(row.id).expect("a body record") else {
+            let Some(body) = repository.body(row.id).await.expect("a body record") else {
                 continue;
             };
             for text in [body.text, body.html].into_iter().flatten() {
@@ -765,19 +796,21 @@ mod tests {
         );
     }
 
-    #[test]
-    fn no_message_pretends_to_have_a_body_that_was_never_written() {
-        let database = test_support::memory();
-        let report = seed_small(&database, 4);
-        let connection = database.connection().unwrap();
+    #[tokio::test]
+    async fn no_message_pretends_to_have_a_body_that_was_never_written() {
+        let database = test_support::memory().await;
+        let report = seed_small(&database, 4).await;
+        let connection = database.connect().await.unwrap();
 
         for mailbox in &report.mailboxes {
             let rows = MessageRepository::new(&connection)
                 .page(&crate::repository::ListQuery::mailbox(mailbox.id).limit(u32::MAX))
+                .await
                 .unwrap();
             for row in rows {
                 let message = MessageRepository::new(&connection)
                     .get(row.id)
+                    .await
                     .unwrap()
                     .expect("the row just listed");
                 assert_eq!(message.sync.body_state, BodyState::NotFetched);
@@ -786,42 +819,43 @@ mod tests {
         }
     }
 
-    #[test]
-    fn the_large_variant_inserts_exactly_as_many_messages_as_asked() {
-        let database = test_support::memory();
-        let report = seed_large(&database, 5, 250);
+    #[tokio::test]
+    async fn the_large_variant_inserts_exactly_as_many_messages_as_asked() {
+        let database = test_support::memory().await;
+        let report = seed_large(&database, 5, 250).await;
 
         assert_eq!(report.message_count, 250);
         let total: u32 = report.mailboxes.iter().map(|m| m.counts.total).sum();
         assert_eq!(total, 250);
     }
 
-    #[test]
-    fn the_large_variant_batches_across_more_than_one_transaction() {
+    #[tokio::test]
+    async fn the_large_variant_batches_across_more_than_one_transaction() {
         // A message count that spans several BATCH_SIZE-sized transactions,
         // to prove batching does not drop or duplicate rows at the seam.
-        let database = test_support::memory();
-        let report = seed_large(&database, 9, BATCH_SIZE * 2 + 137);
+        let database = test_support::memory().await;
+        let report = seed_large(&database, 9, BATCH_SIZE * 2 + 137).await;
 
         assert_eq!(report.message_count, BATCH_SIZE * 2 + 137);
         let total: u32 = report.mailboxes.iter().map(|m| m.counts.total).sum();
         assert_eq!(total as usize, report.message_count);
     }
 
-    #[test]
-    fn a_seeded_store_knows_who_has_written_to_it() {
+    #[tokio::test]
+    async fn a_seeded_store_knows_who_has_written_to_it() {
         // `postio-3ta`. Contacts are recorded by the *sync* path, and a seeded
         // store never goes near it — so every screenshot, demo and test built
         // on one had an `@` palette and a recipient completion that were
         // empty however much mail was in the store. A fixture that models a
         // synced account has to model this too, or the surfaces that read it
         // cannot be told apart from the ones nobody wired up.
-        let database = test_support::memory();
-        let report = seed_small(&database, 7);
-        let connection = database.connection().expect("a checked-out connection");
+        let database = test_support::memory().await;
+        let report = seed_small(&database, 7).await;
+        let connection = database.connect().await.expect("a checked-out connection");
 
         let contacts = ContactRepository::new(&connection)
             .search(Some(report.account.id), "", 1_000)
+            .await
             .expect("read the seeded correspondents");
 
         assert!(
@@ -835,6 +869,7 @@ mod tests {
         // still not resemble a synced account.
         let senders: std::collections::BTreeSet<String> = MessageRepository::new(&connection)
             .page(&crate::repository::ListQuery::account(report.account.id).limit(u32::MAX))
+            .await
             .expect("read the seeded mail")
             .into_iter()
             .filter_map(|row| row.from)
@@ -849,17 +884,18 @@ mod tests {
         );
     }
 
-    #[test]
-    fn the_large_variant_records_its_correspondents_too() {
+    #[tokio::test]
+    async fn the_large_variant_records_its_correspondents_too() {
         // Its senders come from a small fixed pool, so this is a handful of
         // rows however many messages there are — and the benches and paging
         // fixtures built on it look like an account somebody actually uses.
-        let database = test_support::memory();
-        let report = seed_large(&database, 9, 500);
-        let connection = database.connection().expect("a checked-out connection");
+        let database = test_support::memory().await;
+        let report = seed_large(&database, 9, 500).await;
+        let connection = database.connect().await.expect("a checked-out connection");
 
         let contacts = ContactRepository::new(&connection)
             .search(Some(report.account.id), "", 1_000)
+            .await
             .expect("read the seeded correspondents");
 
         assert!(

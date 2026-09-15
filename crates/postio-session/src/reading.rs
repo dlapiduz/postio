@@ -22,7 +22,7 @@ use std::rc::Rc;
 use postio_model::MessageBody;
 use postio_model::ids::MessageId;
 use postio_storage::repository::{DraftRepository, MessageRepository};
-use postio_storage::{BlobStore, Database};
+use postio_storage::{BlobStore, Store};
 use postio_ui::reader::document::Absent;
 use postio_ui::reader::parts::BlobSource;
 
@@ -32,8 +32,8 @@ use postio_ui::reader::parts::BlobSource;
 /// body not yet — which is the ordinary state of a mailbox mid-backfill, not
 /// a fault. Replying to one just quotes nothing, the same way any degraded
 /// state here should: fewer words in the draft, never a broken one.
-pub fn load_body(connection: &postio_storage::PooledConnection, id: MessageId) -> MessageBody {
-    let Ok(Some(stored)) = MessageRepository::new(connection).body(id) else {
+pub async fn load_body(connection: &postio_storage::Checkout, id: MessageId) -> MessageBody {
+    let Ok(Some(stored)) = MessageRepository::new(connection).body(id).await else {
         return MessageBody::default();
     };
     MessageBody {
@@ -95,8 +95,8 @@ pub enum Body {
 ///
 /// [`BodyState`]: postio_model::message::BodyState
 /// [`Absent::Offline`]: Absent::Offline
-pub fn load_body_or_reason(
-    connection: &postio_storage::PooledConnection,
+pub async fn load_body_or_reason(
+    connection: &postio_storage::Checkout,
     id: MessageId,
     is_offline: bool,
 ) -> Body {
@@ -107,7 +107,7 @@ pub fn load_body_or_reason(
     // because autosave writes it on a keystroke. Reading the message row
     // would say "still downloading" about words the user is looking at in
     // another pane. #166.
-    if let Ok(Some(draft)) = DraftRepository::new(connection).by_message(id) {
+    if let Ok(Some(draft)) = DraftRepository::new(connection).by_message(id).await {
         // A draft is the user's own text in Postio's own buffer: nothing
         // decoded it from anything, so there is nothing to caveat.
         return Body::Ready {
@@ -119,7 +119,7 @@ pub fn load_body_or_reason(
     let repository = MessageRepository::new(connection);
 
     // Has anything been downloaded for this message at all?
-    match repository.get(id) {
+    match repository.get(id).await {
         // `\Draft` is set, but the `by_message` lookup above found no local
         // buffer: this row belongs to another client's draft. Its body may
         // well be stored already, but showing it as an ordinary, readable
@@ -147,7 +147,7 @@ pub fn load_body_or_reason(
         }
     }
 
-    let stored = match repository.body(id) {
+    let stored = match repository.body(id).await {
         Ok(Some(stored)) => stored,
         // The row went between the two reads above and here.
         Ok(None) => return Body::Absent(Absent::Missing),
@@ -195,12 +195,28 @@ pub fn load_body_or_reason(
 /// Shared with the search preview, which has the same problem with a
 /// different notion of "the message on screen" — hence the closure rather
 /// than a widget.
+/// # Why this blocks
+///
+/// [`BlobSource::resolve`] is synchronous, because WebKit calls it
+/// synchronously while laying out a document: the `cid:` URI has to resolve
+/// to bytes before the image can be placed, and there is nothing to hand a
+/// future to. It was a blocking read before too -- `rusqlite` on this thread
+/// -- so a runtime of its own here is the same work through the async API,
+/// not new work on the frame path.
+///
+/// Through [`crate::blocking::now`], which is the part that is easy to get
+/// half right: a runtime built here and blocked on *panics* when this is
+/// called from a thread that is already a runtime worker, which the
+/// application never is and every test is.
 pub fn cid_source(
     showing: impl Fn() -> Option<MessageId> + 'static,
-    database: Database,
+    database: Store,
     blobs: BlobStore,
 ) -> Rc<dyn BlobSource> {
-    Rc::new(move |content_id: &str| resolve_cid(&database, &blobs, showing()?, content_id))
+    Rc::new(move |content_id: &str| {
+        let message = showing()?;
+        crate::blocking::now(resolve_cid(&database, &blobs, message, content_id))
+    })
 }
 
 /// One inline part of `message`, by its `Content-ID`.
@@ -223,15 +239,16 @@ pub fn cid_source(
 /// commitment working rather than a gap to fill in later: fetching here would
 /// be the tracking pixel the reader spends so much effort blocking, arriving
 /// through the back door.
-pub fn resolve_cid(
-    database: &Database,
+pub async fn resolve_cid(
+    database: &Store,
     blobs: &BlobStore,
     message: MessageId,
     content_id: &str,
 ) -> Option<(Vec<u8>, String)> {
-    let connection = database.connection().ok()?;
+    let connection = database.connect().await.ok()?;
     let part = MessageRepository::new(&connection)
         .get(message)
+        .await
         .ok()??
         .attachments
         .into_iter()

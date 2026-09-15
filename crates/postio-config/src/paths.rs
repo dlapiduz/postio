@@ -79,11 +79,6 @@ where
     Err(ConfigError::NoConfigDir)
 }
 
-/// The directory holding Postio's configuration.
-pub fn config_dir() -> Result<PathBuf> {
-    config_dir_from(|key| std::env::var(key).ok(), Platform::host())
-}
-
 /// Full path to `config.toml`, resolved from an arbitrary environment lookup.
 ///
 /// `$POSTIO_CONFIG` overrides everything when set.

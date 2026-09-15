@@ -82,7 +82,6 @@ jobs:
             libgtk-4-dev \
             libadwaita-1-dev \
             libwebkitgtk-6.0-dev \
-            libsqlite3-dev \
             libsecret-1-dev \
             libglib2.0-dev \
             libpango1.0-dev

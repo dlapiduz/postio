@@ -40,13 +40,14 @@ use postio_model::ids::MessageId;
 use postio_session::{Wiring, actions};
 use postio_storage::repository::MessageRepository;
 use postio_storage::seed::seed_small;
-use postio_storage::{BlobStore, Database, test_support};
+use postio_storage::{BlobStore, Store, test_support};
 
 /// Which mailbox holds `message`, straight out of the database.
-fn mailbox_of(database: &Database, message: MessageId) -> i64 {
-    let connection = database.connection().expect("a connection");
+async fn mailbox_of(database: &Store, message: MessageId) -> i64 {
+    let connection = database.connect().await.expect("a connection");
     MessageRepository::new(&connection)
         .get(message)
+        .await
         .expect("a read")
         .expect("the message is still there")
         .mailbox_id
@@ -54,105 +55,108 @@ fn mailbox_of(database: &Database, message: MessageId) -> i64 {
 }
 
 pub fn pressing_a_archives_the_row_in_the_database() {
-    let state_dir = tempfile::tempdir().expect("a state directory");
-    // SAFETY: first statement of a single-threaded test.
-    unsafe { std::env::set_var("XDG_STATE_HOME", state_dir.path()) };
+    crate::gtk_case(async {
+        let state_dir = tempfile::tempdir().expect("a state directory");
+        // SAFETY: first statement of a single-threaded test.
+        unsafe { std::env::set_var("XDG_STATE_HOME", state_dir.path()) };
 
-    if adw::init().is_err() || gdk::Display::default().is_none() {
-        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
-        return;
-    }
-    let display = gdk::Display::default().unwrap();
-    fonts::install().expect("the embedded fonts should install");
-    style::install(&display);
-    app::install_icons(&display);
+        if adw::init().is_err() || gdk::Display::default().is_none() {
+            eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
+            return;
+        }
+        let display = gdk::Display::default().unwrap();
+        fonts::install().expect("the embedded fonts should install");
+        style::install(&display);
+        app::install_icons(&display);
 
-    let database = test_support::memory();
-    let report = seed_small(&database, 11);
-    let archive = report
-        .mailbox(MailboxRole::Archive)
-        .expect("the fixture has an archive folder")
-        .id
-        .get();
-    let directory = tempfile::tempdir().expect("a blob directory");
-    let blobs = BlobStore::open(
-        directory.path().to_path_buf(),
-        &postio_storage::test_support::blob_keys(),
-    )
-    .expect("a blob store");
+        let database = test_support::memory().await;
+        let report = seed_small(&database, 11).await;
+        let archive = report
+            .mailbox(MailboxRole::Archive)
+            .expect("the fixture has an archive folder")
+            .id
+            .get();
+        let directory = tempfile::tempdir().expect("a blob directory");
+        let blobs = BlobStore::open(
+            directory.path().to_path_buf(),
+            &postio_storage::test_support::blob_keys(),
+        )
+        .expect("a blob store");
 
-    // The real bus, over the real store — the piece that was a no-op.
-    let state = SharedState::default();
-    // Composed exactly as `run` composes it, through the same `wire`.
-    let bus = actions::wire(
-        postio_core::dispatch::DispatcherBuilder::new(),
-        actions::Actions::new(database.clone(), state.clone()),
-    )
-    .build();
-    let wired: Vec<CommandId> = bus.wired().collect();
-    assert!(
-        wired.contains(&CommandId::Archive),
-        "the bus does not answer archive, so this test cannot mean anything"
-    );
+        // The real bus, over the real store — the piece that was a no-op.
+        let state = SharedState::default();
+        // Composed exactly as `run` composes it, through the same `wire`.
+        let bus = actions::wire(
+            postio_core::dispatch::DispatcherBuilder::new(),
+            actions::Actions::new(database.clone(), state.clone()),
+        )
+        .build();
+        let wired: Vec<CommandId> = bus.wired().collect();
+        assert!(
+            wired.contains(&CommandId::Archive),
+            "the bus does not answer archive, so this test cannot mean anything"
+        );
 
-    let (bridge, _replies) = Bridge::new(bus).expect("a runtime");
-    let (sink, _events) = event_channel();
-    let wiring = Wiring::new(
-        database.clone(),
-        blobs,
-        bridge.handle(),
-        sink,
-        bridge.commands(),
-    );
+        let (bridge, _replies) = Bridge::new(bus).expect("a runtime");
+        let (sink, _events) = event_channel();
+        let wiring = Wiring::new(
+            database.clone(),
+            blobs,
+            bridge.handle(),
+            sink,
+            bridge.commands(),
+        );
 
-    let window = Window::default();
-    window.present();
-    while glib::MainContext::default().iteration(false) {}
+        let window = Window::default();
+        window.present();
+        while glib::MainContext::default().iteration(false) {}
 
-    let feeds = feed_the_window(&window, &wiring)
-        .expect("the seeded store has an account")
-        .feeds;
-    commands::install(&window, &feeds, state, wiring.commands.clone(), wired);
+        let feeds = feed_the_window(&window, &wiring)
+            .await
+            .expect("the seeded store has an account")
+            .feeds;
+        commands::install(&window, &feeds, state, wiring.commands.clone(), wired);
 
-    let list = window.list();
-    assert!(
-        settle_until(|| list.model().n_items() > 0),
-        "no rows to press a key on"
-    );
+        let list = window.list();
+        assert!(
+            settle_until(async || list.model().n_items() > 0).await,
+            "no rows to press a key on"
+        );
 
-    // `j` puts the cursor on a row. Nothing is *selected* — a plain click
-    // clears the selection in this list — so this is also the daily case:
-    // an action with an empty selection has to act on the cursor row.
-    window.handle_key(
-        gdk::Key::from_name("j").unwrap(),
-        gdk::ModifierType::empty(),
-    );
-    while glib::MainContext::default().iteration(false) {}
-    let focused = list.cursor_id().expect("`j` moved the cursor onto a row");
-    let before = mailbox_of(&database, focused);
-    assert_ne!(
-        before, archive,
-        "the fixture put the first row in the archive already, so archiving it \
-         would prove nothing"
-    );
+        // `j` puts the cursor on a row. Nothing is *selected* — a plain click
+        // clears the selection in this list — so this is also the daily case:
+        // an action with an empty selection has to act on the cursor row.
+        window.handle_key(
+            gdk::Key::from_name("j").unwrap(),
+            gdk::ModifierType::empty(),
+        );
+        while glib::MainContext::default().iteration(false) {}
+        let focused = list.cursor_id().expect("`j` moved the cursor onto a row");
+        let before = mailbox_of(&database, focused).await;
+        assert_ne!(
+            before, archive,
+            "the fixture put the first row in the archive already, so archiving it \
+             would prove nothing"
+        );
 
-    // ── the keystroke ───────────────────────────────────────────────────
-    window.handle_key(
-        gdk::Key::from_name("a").unwrap(),
-        gdk::ModifierType::empty(),
-    );
+        // ── the keystroke ───────────────────────────────────────────────────
+        window.handle_key(
+            gdk::Key::from_name("a").unwrap(),
+            gdk::ModifierType::empty(),
+        );
 
-    // The bus runs on the runtime's threads, so the write lands a moment
-    // after the key press. Poll the database rather than the widget: the
-    // widget is what every other test already checks.
-    let moved = settle_until(|| mailbox_of(&database, focused) == archive);
+        // The bus runs on the runtime's threads, so the write lands a moment
+        // after the key press. Poll the database rather than the widget: the
+        // widget is what every other test already checks.
+        let moved = settle_until(async || mailbox_of(&database, focused).await == archive).await;
 
-    assert!(
-        moved,
-        "`a` resolved through the keymap and the registry and the row never \
-         moved. Every layer in that chain has its own passing tests; what has \
-         no test without this one is whether they are joined. See postio-bl2."
-    );
+        assert!(
+            moved,
+            "`a` resolved through the keymap and the registry and the row never \
+             moved. Every layer in that chain has its own passing tests; what has \
+             no test without this one is whether they are joined. See postio-bl2."
+        );
 
-    bridge.shutdown();
+        bridge.shutdown();
+    });
 }

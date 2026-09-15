@@ -45,86 +45,90 @@ fn press(window: &Window, key: &str, modifiers: gdk::ModifierType) {
 }
 
 pub fn the_detach_key_reaches_the_composer_in_a_wired_application() {
-    let state_dir = tempfile::tempdir().expect("a state directory");
-    // SAFETY: first statement of a single-threaded test.
-    unsafe { std::env::set_var("XDG_STATE_HOME", state_dir.path()) };
+    crate::gtk_case(async {
+        let state_dir = tempfile::tempdir().expect("a state directory");
+        // SAFETY: first statement of a single-threaded test.
+        unsafe { std::env::set_var("XDG_STATE_HOME", state_dir.path()) };
 
-    if adw::init().is_err() || gdk::Display::default().is_none() {
-        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
-        return;
-    }
-    let display = gdk::Display::default().unwrap();
-    fonts::install().expect("the embedded fonts should install");
-    style::install(&display);
-    app::install_icons(&display);
+        if adw::init().is_err() || gdk::Display::default().is_none() {
+            eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
+            return;
+        }
+        let display = gdk::Display::default().unwrap();
+        fonts::install().expect("the embedded fonts should install");
+        style::install(&display);
+        app::install_icons(&display);
 
-    let database = test_support::memory();
-    let report = seed_small(&database, 11);
-    assert!(report.message_count > 0, "the fixture seeded no mail");
-    let directory = tempfile::tempdir().expect("a blob directory");
-    let blobs = BlobStore::open(
-        directory.path().to_path_buf(),
-        &postio_storage::test_support::blob_keys(),
-    )
-    .expect("a blob store");
+        let database = test_support::memory().await;
+        let report = seed_small(&database, 11).await;
+        assert!(report.message_count > 0, "the fixture seeded no mail");
+        let directory = tempfile::tempdir().expect("a blob directory");
+        let blobs = BlobStore::open(
+            directory.path().to_path_buf(),
+            &postio_storage::test_support::blob_keys(),
+        )
+        .expect("a blob store");
 
-    let (bridge, _replies) = Bridge::new(handler_fn(|_, _| async {})).expect("a runtime");
-    let (sink, _events) = event_channel();
-    let wiring = Wiring::new(database, blobs, bridge.handle(), sink, bridge.commands());
+        let (bridge, _replies) = Bridge::new(handler_fn(|_, _| async {})).expect("a runtime");
+        let (sink, _events) = event_channel();
+        let wiring = Wiring::new(database, blobs, bridge.handle(), sink, bridge.commands());
 
-    let window = Window::default();
-    window.present();
-    settle();
+        let window = Window::default();
+        window.present();
+        settle();
 
-    // ── the same call `run` makes: this is what mounts the composer ──────
-    let _wired = feed_the_window(&window, &wiring).expect("the seeded store has an account");
-    settle();
+        // ── the same call `run` makes: this is what mounts the composer ──────
+        let _wired = feed_the_window(&window, &wiring)
+            .await
+            .expect("the seeded store has an account");
+        settle();
 
-    let composer = window.composer();
-    assert!(!composer.is_open(), "nothing is being composed yet");
+        let composer = window.composer();
+        assert!(!composer.is_open(), "nothing is being composed yet");
 
-    // ── `c` — the key on the design canvas, not a method call ────────────
-    press(&window, "c", gdk::ModifierType::empty());
-    assert!(
-        composer.is_open(),
-        "`c` did not reach the composer, so this test cannot say anything \
-         about detaching"
-    );
-    assert_eq!(window.context(), Context::Composer);
-    assert!(!composer.is_detached(), "in-place is the default");
+        // ── `c` — the key on the design canvas, not a method call ────────────
+        press(&window, "c", gdk::ModifierType::empty());
+        assert!(
+            composer.is_open(),
+            "`c` did not reach the composer, so this test cannot say anything \
+             about detaching"
+        );
+        assert_eq!(window.context(), Context::Composer);
+        assert!(!composer.is_detached(), "in-place is the default");
 
-    // ── `ctrl+shift+o` — the whole point ─────────────────────────────────
-    press(
-        &window,
-        "o",
-        gdk::ModifierType::CONTROL_MASK | gdk::ModifierType::SHIFT_MASK,
-    );
+        // ── `ctrl+shift+o` — the whole point ─────────────────────────────────
+        press(
+            &window,
+            "o",
+            gdk::ModifierType::CONTROL_MASK | gdk::ModifierType::SHIFT_MASK,
+        );
 
-    let host = composer.detached_window().expect(
-        "the key resolved to nothing a person could see. Every layer under \
-         this one passes; that is the shape of bug postio-bl2 is about — \
-         check what is *between* the registry and the composer.",
-    );
-    assert!(composer.is_detached());
-    assert!(host.is_visible(), "a window nobody can see is not a window");
-    assert!(!host.is_modal(), "the main window must stay usable");
-    assert_eq!(
-        window.context(),
-        Context::List,
-        "and the main window got its keyboard back, so mail can still be read"
-    );
+        let host = composer.detached_window().expect(
+            "the key resolved to nothing a person could see. Every layer under \
+             this one passes; that is the shape of bug postio-bl2 is about — \
+             check what is *between* the registry and the composer.",
+        );
+        assert!(composer.is_detached());
+        assert!(host.is_visible(), "a window nobody can see is not a window");
+        assert!(!host.is_modal(), "the main window must stay usable");
+        assert_eq!(
+            window.context(),
+            Context::List,
+            "and the main window got its keyboard back, so mail can still be read"
+        );
 
-    // ── the key in the detached window puts it back, through the same
-    //    registry: one command, two containers ───────────────────────────
-    composer.handle_key(
-        gdk::Key::from_name("o").unwrap(),
-        gdk::ModifierType::CONTROL_MASK | gdk::ModifierType::SHIFT_MASK,
-    );
-    settle();
+        // ── the key in the detached window puts it back, through the same
+        //    registry: one command, two containers ───────────────────────────
+        composer.handle_key(
+            gdk::Key::from_name("o").unwrap(),
+            gdk::ModifierType::CONTROL_MASK | gdk::ModifierType::SHIFT_MASK,
+        );
+        settle();
 
-    assert!(!composer.is_detached(), "and it came home");
-    assert!(composer.is_open(), "still one composition, still open");
-    assert_eq!(window.context(), Context::Composer);
+        assert!(!composer.is_detached(), "and it came home");
+        assert!(composer.is_open(), "still one composition, still open");
+        assert_eq!(window.context(), Context::Composer);
 
-    bridge.shutdown();
+        bridge.shutdown();
+    });
 }

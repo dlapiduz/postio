@@ -4,7 +4,7 @@
 //! be recorded, and a number arrived at by arithmetic would have been worth
 //! nothing: the question is how many *pages* SQLite stops carrying, and that
 //! depends on the tokenizer, the b-tree fanout and how much of a mail corpus
-//! is repeated words. So this builds a store, fills it, and asks `dbstat`.
+//! is repeated words. So this builds a store, fills it, and weighs it.
 //!
 //! That saving has since been taken — `b4a54bfe` dropped
 //! `search_documents.body` and the bodies left SQLite — and this measured a
@@ -14,11 +14,17 @@
 //! finally executed it, and it failed on the first run.
 //!
 //! What is left is the live half, and it is the half worth keeping: what the
-//! metadata index and the body index each cost against the corpus that
-//! produced them. The corpus is measured at its source — the strings
-//! `a_body` builds — rather than from a column, which is both what the
-//! schema now permits and the better question: it compares an index against
-//! its input rather than against a second copy of it.
+//! metadata and the body index cost against the corpus that produced them.
+//! The corpus is measured at its source — the strings `a_body` builds —
+//! rather than from a column, which is both what the schema now permits and
+//! the better question: it compares an index against its input rather than
+//! against a second copy of it.
+//!
+//! **Weighed on disk, because this engine has no `dbstat`.** There is no
+//! per-b-tree accounting to ask for, so the store is measured as a file
+//! between steps and each figure is a delta. Coarser than `dbstat` in that it
+//! cannot separate a table from its index; truer in that it counts everything
+//! the step adds to the file, which is the number that reaches a disk.
 //!
 //! POSTIO-MEASUREMENT: its output is numbers a person reads, so it runs on
 //! the nightly timer rather than the merge path. `.config/nextest.toml`'s
@@ -36,7 +42,6 @@ use postio_index::index::{ensure_schema, index_body};
 use postio_model::{BodyState, EmailAddress, Message};
 use postio_storage::repository::MessageRepository;
 use postio_storage::test_support;
-use rusqlite::Connection;
 
 /// Mail-shaped text: a few hundred words with the repetition real mail has —
 /// a quoted parent, a signature, the same handful of names.
@@ -59,65 +64,66 @@ fn a_body(n: usize) -> String {
     text
 }
 
-fn table_bytes(connection: &Connection, name: &str) -> i64 {
-    // `dbstat` reports real page usage per b-tree, including the shadow
-    // tables an FTS5 index is made of -- which is the only honest way to
-    // compare a virtual table with an ordinary column.
-    connection
-        .query_row(
-            "SELECT coalesce(sum(pgsize), 0) FROM dbstat
-              WHERE name = ?1 OR name LIKE ?1 || '\\_%' ESCAPE '\\'",
-            [name],
-            |row| row.get(0),
-        )
-        .expect("dbstat")
+/// What the store weighs on disk, right now.
+///
+/// The log is folded back into the file first, or this reads a database whose
+/// newest pages are still in `postio.db-wal`.
+async fn store_bytes(store: &postio_storage::test_support::TempStore) -> i64 {
+    store.truncate_log().await.expect("fold the log back in");
+    std::fs::metadata(store.directory().join("postio.db"))
+        .expect("the store is on disk")
+        .len() as i64
 }
 
-#[test]
-fn what_the_bodies_cost_in_each_place() {
+#[tokio::test]
+async fn what_the_bodies_cost_in_each_place() {
     const MESSAGES: usize = 5_000;
 
-    let database = test_support::temp();
-    let connection = database.connection().expect("checkout");
-    ensure_schema(&connection).expect("schema");
-    let (account, mailbox) = test_support::account_with_inbox(&connection);
+    let database = test_support::temp().await;
+    let connection = database.connect().await.expect("checkout");
+    ensure_schema(&connection).await.expect("schema");
+    let (account, mailbox) = test_support::account_with_inbox(&connection).await;
     let messages = MessageRepository::new(&connection);
 
+    let empty = store_bytes(&database).await;
+
     let mut text: i64 = 0;
+    let mut ids = Vec::with_capacity(MESSAGES);
     for n in 0..MESSAGES {
         let mut message = Message::new(account.id, mailbox, chrono::Utc::now());
         message.subject = Some(format!("Re: engine notes {n}"));
         message.from = vec![EmailAddress::new(Some("Ada Lovelace"), "ada@example.com")];
         message.sync.body_state = BodyState::Full;
-        messages.create(&mut message).expect("create");
-        let body = a_body(n);
-        text += body.len() as i64;
-        index_body(&connection, message.id.get(), Some(&body)).expect("index");
+        messages.create(&mut message).await.expect("create");
+        text += a_body(n).len() as i64;
+        ids.push(message.id.get());
     }
-    let documents = table_bytes(&connection, "search_documents");
-    let metadata_index = table_bytes(&connection, "messages_fts");
-    let body_index = table_bytes(&connection, "message_bodies_fts");
+    // The mail and its metadata index, with no body text anywhere yet.
+    let metadata = store_bytes(&database).await - empty;
+
+    for (n, id) in ids.iter().enumerate() {
+        index_body(&connection, *id, Some(&a_body(n)))
+            .await
+            .expect("index");
+    }
+    let bodies = store_bytes(&database).await - empty - metadata;
 
     let mb = |bytes: i64| bytes as f64 / (1024.0 * 1024.0);
     println!("\n{MESSAGES} messages, {:.1} MB of body text\n", mb(text));
     println!(
-        "  search_documents (the metadata)                {:>8.2} MB",
-        mb(documents)
+        "  the mail and its metadata index add            {:>8.2} MB",
+        mb(metadata)
     );
     println!(
-        "  messages_fts     (the metadata index)          {:>8.2} MB",
-        mb(metadata_index)
-    );
-    println!(
-        "  message_bodies_fts (the body index)            {:>8.2} MB",
-        mb(body_index)
+        "  the body text and its index add                {:>8.2} MB",
+        mb(bodies)
     );
     println!(
         "\n  the body text these were built from           {:>8.2} MB",
         mb(text)
     );
     println!(
-        "  ... what the three tables above cost of it     {:>8.1} %\n",
-        100.0 * (documents + metadata_index + body_index) as f64 / text as f64
+        "  ... what the whole store costs of it           {:>8.1} %\n",
+        100.0 * (metadata + bodies) as f64 / text as f64
     );
 }

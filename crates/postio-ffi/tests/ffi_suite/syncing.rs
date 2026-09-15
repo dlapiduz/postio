@@ -14,14 +14,15 @@ fn session() -> std::sync::Arc<Session> {
     Session::open(SessionOptions::in_memory()).expect("an in-memory session")
 }
 
-#[test]
-fn a_store_with_no_accounts_starts_nothing_and_says_so() {
+#[tokio::test(flavor = "multi_thread")]
+async fn a_store_with_no_accounts_starts_nothing_and_says_so() {
     // Not an error. A fresh store with no account configured is the ordinary
     // first-run state, and treating it as a failure would put an error on
     // screen for someone who has simply not finished setting up.
     let session = session();
     let started = session
         .start_syncing()
+        .await
         .expect("no accounts is not a failure");
     assert_eq!(
         started, 0,
@@ -30,15 +31,15 @@ fn a_store_with_no_accounts_starts_nothing_and_says_so() {
     session.shutdown();
 }
 
-#[test]
-fn starting_twice_is_harmless() {
+#[tokio::test(flavor = "multi_thread")]
+async fn starting_twice_is_harmless() {
     // `postio-app`'s own comment records that a second `start_syncing` used
     // to run a duplicate pass. An application lifecycle will call this twice
     // — a window reopening, a wake from sleep — and doubling the engines
     // would double every connection to the server.
     let session = session();
-    let first = session.start_syncing().expect("first start");
-    let second = session.start_syncing().expect("second start");
+    let first = session.start_syncing().await.expect("first start");
+    let second = session.start_syncing().await.expect("second start");
     assert_eq!(first, second, "a second start produced a different result");
     session.shutdown();
 }
@@ -139,19 +140,19 @@ fn sync_progress_reaches_the_frontend() {
     session.shutdown();
 }
 
-#[test]
-fn a_seeded_account_is_seen_by_the_starter() {
+#[tokio::test(flavor = "multi_thread")]
+async fn a_seeded_account_is_seen_by_the_starter() {
     // Guards the account read itself: a `start_syncing` that could not see a
     // configured account would answer zero for ever and look exactly like the
     // no-accounts case above.
-    let database = test_support::memory();
+    let database = test_support::memory().await;
     {
-        let connection = database.connection().expect("a connection");
-        test_support::account_with_inbox(&connection);
+        let connection = database.connect().await.expect("a connection");
+        test_support::account_with_inbox(&connection).await;
     }
     let session = Session::open(SessionOptions::in_memory_with(database)).expect("a session");
     assert_eq!(
-        session.configured_accounts(),
+        session.configured_accounts().await,
         1,
         "the configured account was not seen"
     );

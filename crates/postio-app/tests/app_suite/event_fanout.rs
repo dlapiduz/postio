@@ -41,20 +41,21 @@ use postio_storage::repository::MessageRepository;
 use postio_storage::test_support;
 
 struct World {
-    database: postio_storage::Database,
+    database: postio_storage::Store,
     message: MessageId,
     dispatcher: postio_core::Dispatcher,
 }
 
-fn world() -> World {
-    let database = test_support::memory();
+async fn world() -> World {
+    let database = test_support::memory().await;
     let message = {
-        let connection = database.connection().expect("a connection");
-        let (account, inbox) = test_support::account_with_inbox(&connection);
-        test_support::mailbox(&connection, &account, "Archive");
+        let connection = database.connect().await.expect("a connection");
+        let (account, inbox) = test_support::account_with_inbox(&connection).await;
+        test_support::mailbox(&connection, &account, "Archive").await;
         let mut message = Message::new(account.id, inbox, Utc::now());
         MessageRepository::new(&connection)
             .create(&mut message)
+            .await
             .expect("a message")
     };
     let actions = Actions::new(database.clone(), SharedState::default());
@@ -66,10 +67,11 @@ fn world() -> World {
 }
 
 impl World {
-    fn mailbox_of(&self, message: MessageId) -> postio_model::MailboxId {
-        let connection = self.database.connection().expect("a connection");
+    async fn mailbox_of(&self, message: MessageId) -> postio_model::MailboxId {
+        let connection = self.database.connect().await.expect("a connection");
         MessageRepository::new(&connection)
             .get(message)
+            .await
             .expect("a read")
             .expect("the message is still there")
             .mailbox_id
@@ -90,100 +92,108 @@ fn engine_noise() -> Event {
 }
 
 pub fn a_second_frontend_sees_everything_the_window_sees() {
-    let world = world();
-    let before = world.mailbox_of(world.message);
+    crate::gtk_case(async {
+        let world = world().await;
+        let before = world.mailbox_of(world.message).await;
 
-    // Exactly `run`'s arrangement: one hub, the bus built on a sink from it,
-    // the engine holding another, and each consumer subscribing for itself.
-    let hub = EventHub::new();
-    let engine = hub.sink();
-    let window = hub.subscribe("window");
-    let mcp = hub.subscribe("mcp");
-    let bridge = Bridge::builder()
-        .build_with_events(world.dispatcher.clone(), hub.sink())
-        .expect("the runtime starts");
+        // Exactly `run`'s arrangement: one hub, the bus built on a sink from it,
+        // the engine holding another, and each consumer subscribing for itself.
+        let hub = EventHub::new();
+        let engine = hub.sink();
+        let window = hub.subscribe("window");
+        let mcp = hub.subscribe("mcp");
+        let bridge = Bridge::builder()
+            .build_with_events(world.dispatcher.clone(), hub.sink())
+            .expect("the runtime starts");
 
-    let mine = bridge
-        .commands()
-        .send_tracked(Command::Archive {
-            target: MessageTarget::Messages(vec![world.message]),
-        })
-        .expect("running");
-    engine.emit(engine_noise());
-    bridge.shutdown();
+        let mine = bridge
+            .commands()
+            .send_tracked(Command::Archive {
+                target: MessageTarget::Messages(vec![world.message]),
+            })
+            .expect("running");
+        engine.emit(engine_noise());
+        bridge.shutdown();
 
-    // The verb really ran, so what follows is correlating something.
-    assert_ne!(world.mailbox_of(world.message), before, "nothing moved");
-
-    for (label, events) in [("window", &window), ("mcp", &mcp)] {
-        let all = drain(events);
-
-        // The engine's events reach this subscriber too. Before the hub the
-        // engine had a channel of its own and a consumer had to be handed it
-        // separately; a second frontend would have gone blind to every socket
-        // state change in the application.
-        assert!(
-            all.iter().any(|it| it.event == engine_noise()),
-            "{label} never saw the producer that is not a command handler: {all:?}"
+        // The verb really ran, so what follows is correlating something.
+        assert_ne!(
+            world.mailbox_of(world.message).await,
+            before,
+            "nothing moved"
         );
 
-        let ours: Vec<Event> = all
-            .iter()
-            .filter(|envelope| envelope.is_from(mine))
-            .map(|envelope| envelope.event.clone())
-            .collect();
-        assert!(
-            matches!(
-                ours.last(),
-                Some(Event::InvocationFinished {
-                    outcome: InvocationOutcome::Completed,
-                    ..
-                })
-            ),
-            "{label} has no answer to the tracked send: {ours:?}"
-        );
-        assert!(
-            ours.iter()
-                .any(|event| matches!(event, Event::MessagesRemoved { .. })),
-            "{label} did not see the real handler's own events: {ours:?}"
-        );
-        // The hub filters nothing (ADR 0013 Q3), so the engine's untagged
-        // event must not be attributed to anyone's invocation.
-        assert!(
-            !ours.iter().any(|event| *event == engine_noise()),
-            "{label} attributed the engine's event to a command: {ours:?}"
-        );
-    }
+        for (label, events) in [("window", &window), ("mcp", &mcp)] {
+            let all = drain(events);
+
+            // The engine's events reach this subscriber too. Before the hub the
+            // engine had a channel of its own and a consumer had to be handed it
+            // separately; a second frontend would have gone blind to every socket
+            // state change in the application.
+            assert!(
+                all.iter().any(|it| it.event == engine_noise()),
+                "{label} never saw the producer that is not a command handler: {all:?}"
+            );
+
+            let ours: Vec<Event> = all
+                .iter()
+                .filter(|envelope| envelope.is_from(mine))
+                .map(|envelope| envelope.event.clone())
+                .collect();
+            assert!(
+                matches!(
+                    ours.last(),
+                    Some(Event::InvocationFinished {
+                        outcome: InvocationOutcome::Completed,
+                        ..
+                    })
+                ),
+                "{label} has no answer to the tracked send: {ours:?}"
+            );
+            assert!(
+                ours.iter()
+                    .any(|event| matches!(event, Event::MessagesRemoved { .. })),
+                "{label} did not see the real handler's own events: {ours:?}"
+            );
+            // The hub filters nothing (ADR 0013 Q3), so the engine's untagged
+            // event must not be attributed to anyone's invocation.
+            assert!(
+                !ours.iter().any(|event| *event == engine_noise()),
+                "{label} attributed the engine's event to a command: {ours:?}"
+            );
+        }
+    });
 }
 
 pub fn one_subscription_carries_both_of_the_applications_producers() {
-    // The fan-in half, and the reason the `Vec<Option<EventStream>>` handoff
-    // could go: the window used to collect one stream per producer by hand.
-    let world = world();
-    let hub = EventHub::new();
-    let engine = hub.sink();
-    let window = hub.subscribe("window");
-    let bridge = Bridge::builder()
-        .build_with_events(world.dispatcher.clone(), hub.sink())
-        .expect("the runtime starts");
+    crate::gtk_case(async {
+        // The fan-in half, and the reason the `Vec<Option<EventStream>>` handoff
+        // could go: the window used to collect one stream per producer by hand.
+        let world = world().await;
+        let hub = EventHub::new();
+        let engine = hub.sink();
+        let window = hub.subscribe("window");
+        let bridge = Bridge::builder()
+            .build_with_events(world.dispatcher.clone(), hub.sink())
+            .expect("the runtime starts");
 
-    engine.emit(engine_noise());
-    bridge
-        .commands()
-        .send(Command::Archive {
-            target: MessageTarget::Messages(vec![world.message]),
-        })
-        .expect("running");
-    bridge.shutdown();
+        engine.emit(engine_noise());
+        bridge
+            .commands()
+            .send(Command::Archive {
+                target: MessageTarget::Messages(vec![world.message]),
+            })
+            .expect("running");
+        bridge.shutdown();
 
-    let all = drain(&window);
-    assert!(
-        all.iter().any(|it| it.event == engine_noise()),
-        "the engine's half is missing from the window's one stream: {all:?}"
-    );
-    assert!(
-        all.iter()
-            .any(|it| matches!(it.event, Event::MessagesRemoved { .. })),
-        "the bus's half is missing from the window's one stream: {all:?}"
-    );
+        let all = drain(&window);
+        assert!(
+            all.iter().any(|it| it.event == engine_noise()),
+            "the engine's half is missing from the window's one stream: {all:?}"
+        );
+        assert!(
+            all.iter()
+                .any(|it| matches!(it.event, Event::MessagesRemoved { .. })),
+            "the bus's half is missing from the window's one stream: {all:?}"
+        );
+    });
 }

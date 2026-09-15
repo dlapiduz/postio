@@ -47,104 +47,107 @@ fn press(window: &Window, keys: &[&str]) {
 }
 
 pub fn pressing_g_i_shows_the_inbox() {
-    let state_dir = tempfile::tempdir().expect("a state directory");
-    // SAFETY: first statement of a single-threaded test.
-    unsafe { std::env::set_var("XDG_STATE_HOME", state_dir.path()) };
+    crate::gtk_case(async {
+        let state_dir = tempfile::tempdir().expect("a state directory");
+        // SAFETY: first statement of a single-threaded test.
+        unsafe { std::env::set_var("XDG_STATE_HOME", state_dir.path()) };
 
-    if adw::init().is_err() || gdk::Display::default().is_none() {
-        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
-        return;
-    }
-    let display = gdk::Display::default().unwrap();
-    fonts::install().expect("the embedded fonts should install");
-    style::install(&display);
-    app::install_icons(&display);
+        if adw::init().is_err() || gdk::Display::default().is_none() {
+            eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
+            return;
+        }
+        let display = gdk::Display::default().unwrap();
+        fonts::install().expect("the embedded fonts should install");
+        style::install(&display);
+        app::install_icons(&display);
 
-    let database = test_support::memory();
-    let report = seed_small(&database, 11);
-    let inbox = report
-        .mailbox(MailboxRole::Inbox)
-        .expect("the fixture has an inbox")
-        .id;
-    let archive = report
-        .mailbox(MailboxRole::Archive)
-        .expect("the fixture has an archive")
-        .id;
-    let directory = tempfile::tempdir().expect("a blob directory");
-    let blobs = BlobStore::open(
-        directory.path().to_path_buf(),
-        &postio_storage::test_support::blob_keys(),
-    )
-    .expect("a blob store");
+        let database = test_support::memory().await;
+        let report = seed_small(&database, 11).await;
+        let inbox = report
+            .mailbox(MailboxRole::Inbox)
+            .expect("the fixture has an inbox")
+            .id;
+        let archive = report
+            .mailbox(MailboxRole::Archive)
+            .expect("the fixture has an archive")
+            .id;
+        let directory = tempfile::tempdir().expect("a blob directory");
+        let blobs = BlobStore::open(
+            directory.path().to_path_buf(),
+            &postio_storage::test_support::blob_keys(),
+        )
+        .expect("a blob store");
 
-    let state = SharedState::default();
-    let bus = actions::wire(
-        postio_core::dispatch::DispatcherBuilder::new(),
-        actions::Actions::new(database.clone(), state.clone()),
-    )
-    .build();
-    let wired: Vec<CommandId> = bus.wired().collect();
+        let state = SharedState::default();
+        let bus = actions::wire(
+            postio_core::dispatch::DispatcherBuilder::new(),
+            actions::Actions::new(database.clone(), state.clone()),
+        )
+        .build();
+        let wired: Vec<CommandId> = bus.wired().collect();
 
-    let (bridge, _replies) = Bridge::new(bus).expect("a runtime");
-    let (sink, _events) = event_channel();
-    let wiring = Wiring::new(
-        database.clone(),
-        blobs,
-        bridge.handle(),
-        sink,
-        bridge.commands(),
-    );
+        let (bridge, _replies) = Bridge::new(bus).expect("a runtime");
+        let (sink, _events) = event_channel();
+        let wiring = Wiring::new(
+            database.clone(),
+            blobs,
+            bridge.handle(),
+            sink,
+            bridge.commands(),
+        );
 
-    let window = Window::default();
-    window.present();
-    while glib::MainContext::default().iteration(false) {}
+        let window = Window::default();
+        window.present();
+        while glib::MainContext::default().iteration(false) {}
 
-    let feeds = feed_the_window(&window, &wiring)
-        .expect("the seeded store has an account")
-        .feeds;
-    commands::install(&window, &feeds, state, wiring.commands.clone(), wired);
+        let feeds = feed_the_window(&window, &wiring)
+            .await
+            .expect("the seeded store has an account")
+            .feeds;
+        commands::install(&window, &feeds, state, wiring.commands.clone(), wired);
 
-    assert!(
-        settle_until(|| window.sidebar().selected().is_some()),
-        "the window never settled on a folder, so there is nothing to move away \
-         from"
-    );
+        assert!(
+            settle_until(async || window.sidebar().selected().is_some()).await,
+            "the window never settled on a folder, so there is nothing to move away \
+             from"
+        );
 
-    // Somewhere that is not the inbox, so arriving at it means something.
-    window.open_mailbox(archive);
-    assert!(
-        settle_until(|| window.sidebar().selected() == Some(archive)),
-        "the fixture could not be moved off the inbox"
-    );
+        // Somewhere that is not the inbox, so arriving at it means something.
+        window.open_mailbox(archive);
+        assert!(
+            settle_until(async || window.sidebar().selected() == Some(archive)).await,
+            "the fixture could not be moved off the inbox"
+        );
 
-    // ── the keystroke ────────────────────────────────────────────────────
-    press(&window, &["g", "i"]);
+        // ── the keystroke ────────────────────────────────────────────────────
+        press(&window, &["g", "i"]);
 
-    assert!(
-        settle_until(|| window.sidebar().selected() == Some(inbox)),
-        "`g i` did not reach the inbox: the sidebar is still showing {:?}",
-        window.sidebar().selected()
-    );
+        assert!(
+            settle_until(async || window.sidebar().selected() == Some(inbox)).await,
+            "`g i` did not reach the inbox: the sidebar is still showing {:?}",
+            window.sidebar().selected()
+        );
 
-    // ── `g` is a letter to somebody who is writing ───────────────────────
-    // FR-042. `g` is one of the commonest letters in English prose, so a
-    // sequence that fires while a draft is being typed would make the
-    // composer unusable -- and it would do it by *navigating away*, which is
-    // the worst available outcome for unsaved words.
-    window.open_mailbox(archive);
-    assert!(settle_until(|| window.sidebar().selected() == Some(archive)));
+        // ── `g` is a letter to somebody who is writing ───────────────────────
+        // FR-042. `g` is one of the commonest letters in English prose, so a
+        // sequence that fires while a draft is being typed would make the
+        // composer unusable -- and it would do it by *navigating away*, which is
+        // the worst available outcome for unsaved words.
+        window.open_mailbox(archive);
+        assert!(settle_until(async || window.sidebar().selected() == Some(archive)).await);
 
-    press(&window, &["c"]);
-    assert!(
-        settle_until(|| window.composer().is_open()),
-        "`c` did not open the composer, so nothing here would be typing into it \
-         and a pass below would mean nothing"
-    );
-    press(&window, &["g", "i"]);
+        press(&window, &["c"]);
+        assert!(
+            settle_until(async || window.composer().is_open()).await,
+            "`c` did not open the composer, so nothing here would be typing into it \
+             and a pass below would mean nothing"
+        );
+        press(&window, &["g", "i"]);
 
-    assert_eq!(
-        window.sidebar().selected(),
-        Some(archive),
-        "`g i` typed into the composer navigated away from the draft"
-    );
+        assert_eq!(
+            window.sidebar().selected(),
+            Some(archive),
+            "`g i` typed into the composer navigated away from the draft"
+        );
+    })
 }

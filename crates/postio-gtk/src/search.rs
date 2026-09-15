@@ -616,19 +616,12 @@ impl Panel {
             return;
         };
 
-        // The term alone on the face, and the count in the description --
-        // which is the rule `refine_chip` states and the reason it gives:
-        // this column is 212px wide and a scannable shortlist beats a wide
-        // one. A first draft put `hannah — 66 messages` on the face and the
-        // offer came out visibly larger than every chip beside it.
-        let button = gtk::Button::with_label(term);
-        button.add_css_class("postio-refine-chip");
-        // The same control the refinements use, for the same reasons: the
-        // keyboard reaches it, `Enter` activates it, and a screen reader
-        // calls it a button rather than reading a sentence and stopping.
+        // The same control the refinements use, built the same one way:
+        // `chip_button` owns the face-is-the-term-alone rule and the hug —
+        // both of which shipped broken once each, because this call site
+        // was a hand copy of `refine_chip` and the fixes landed in the copy.
         let spoken = format!("Search for {} instead", offer_text(term, documents));
-        button.set_tooltip_text(Some(&spoken));
-        button.update_property(&[gtk::accessible::Property::Label(&spoken)]);
+        let button = crate::widgets::chip_button(term, &spoken);
         let term = term.to_owned();
         button.connect_clicked(glib::clone!(
             #[weak(rename_to = panel)]
@@ -639,12 +632,6 @@ impl Panel {
                 }
             }
         ));
-        // Hugging its text, like a refine chip. Those sit in a `FlowBox`,
-        // which sizes a child to its content; this sits in a `Box`, which
-        // stretches one to the full 212px column -- so the offer came out as
-        // a full-width slab beside pills, which is the same complaint the
-        // wide label drew and a different cause.
-        button.set_halign(gtk::Align::Start);
         imp.suggestion.append(&button);
         imp.suggestion.set_visible(true);
     }
@@ -749,13 +736,13 @@ impl Panel {
         imp.nothing.set_visible(false);
 
         let column = gtk::Box::new(gtk::Orientation::Vertical, 0);
-        column.append(&kicker("Scope"));
+        column.append(&crate::widgets::kicker("Scope"));
         column.append(&imp.scopes);
 
         let rule = gtk::Separator::new(gtk::Orientation::Horizontal);
         rule.add_css_class("postio-rule");
         column.append(&rule);
-        column.append(&kicker("Refine"));
+        column.append(&crate::widgets::kicker("Refine"));
         column.append(&imp.chips);
         column.append(&imp.nothing);
         imp.suggestion.set_visible(false);
@@ -793,16 +780,11 @@ impl Panel {
     }
 
     fn refine_chip(&self, refinement: &Refinement) -> gtk::Button {
-        let button = gtk::Button::with_label(&refinement.token);
-        button.add_css_class("postio-refine-chip");
         // A button, not a label with a click handler: the keyboard reaches it,
         // `Enter` and `Space` activate it, and a screen reader calls it what
         // it is. The count rides in the description rather than on the face —
         // the column is 212px wide and a scannable shortlist beats a wide one.
-        button.set_tooltip_text(Some(&spoken_refinement(refinement)));
-        button.update_property(&[gtk::accessible::Property::Label(&spoken_refinement(
-            refinement,
-        ))]);
+        let button = crate::widgets::chip_button(&refinement.token, &spoken_refinement(refinement));
         let token = refinement.token.clone();
         button.connect_clicked(glib::clone!(
             #[weak(rename_to = panel)]
@@ -866,14 +848,6 @@ fn set_scope_count(row: &gtk::ListBoxRow, scope: Scope, hits: u64) {
         1 => format!("{}, 1 match", scope.label()),
         hits => format!("{}, {hits} matches", scope.label()),
     })]);
-}
-
-/// A section heading, in the sidebar's own kicker type.
-fn kicker(text: &str) -> gtk::Label {
-    let label = gtk::Label::new(Some(text));
-    label.add_css_class("postio-kicker");
-    label.set_xalign(0.0);
-    label
 }
 
 // ---------------------------------------------------------------------------

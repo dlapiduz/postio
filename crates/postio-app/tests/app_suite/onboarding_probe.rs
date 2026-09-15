@@ -180,24 +180,28 @@ fn autoconfig_xml() -> String {
 ///
 /// The probe is answered on the runtime and crosses back over a channel, so
 /// the status is not there the instant `probe()` returns.
-fn settle_until(done: impl Fn() -> bool) -> bool {
+async fn settle_until<F, Fut>(done: F) -> bool
+where
+    F: Fn() -> Fut,
+    Fut: std::future::Future<Output = bool>,
+{
     let deadline =
         std::time::Instant::now() + postio_test_support::scaled(std::time::Duration::from_secs(10));
     while std::time::Instant::now() < deadline {
         while glib::MainContext::default().iteration(false) {}
-        if done() {
+        if done().await {
             return true;
         }
-        std::thread::sleep(std::time::Duration::from_millis(10));
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
     }
-    done()
+    done().await
 }
 
 /// A window with the onboarding screen installed over `transport`.
-fn onboard(
+async fn onboard(
     transport: Arc<dyn DiscoveryTransport>,
 ) -> (Window, Onboarding, Bridge, tempfile::TempDir) {
-    let database = test_support::memory();
+    let database = test_support::memory().await;
     let directory = tempfile::tempdir().expect("a blob directory");
     let blobs = BlobStore::open(
         directory.path().to_path_buf(),
@@ -230,7 +234,8 @@ fn onboard(
         None,
         transport,
         std::sync::Arc::new(postio_account::oauth::browser::SystemBrowserOpener),
-    );
+    )
+    .await;
 
     let screen = window
         .content()
@@ -240,103 +245,105 @@ fn onboard(
 }
 
 pub fn the_probe_call_site_drives_the_screen_from_a_transport_it_was_given() {
-    let state_dir = tempfile::tempdir().expect("a state directory");
-    // SAFETY: first statement of a single-threaded test.
-    unsafe { std::env::set_var("XDG_STATE_HOME", state_dir.path()) };
+    crate::gtk_case(async {
+        let state_dir = tempfile::tempdir().expect("a state directory");
+        // SAFETY: first statement of a single-threaded test.
+        unsafe { std::env::set_var("XDG_STATE_HOME", state_dir.path()) };
 
-    if adw::init().is_err() || gdk::Display::default().is_none() {
-        eprintln!("skipping: no display (run under `scripts/test-headless.sh`)");
-        return;
-    }
-    let display = gdk::Display::default().unwrap();
-    fonts::install().expect("the embedded fonts should install");
-    style::install(&display);
-    app::install_icons(&display);
+        if adw::init().is_err() || gdk::Display::default().is_none() {
+            eprintln!("skipping: no display (run under `scripts/test-headless.sh`)");
+            return;
+        }
+        let display = gdk::Display::default().unwrap();
+        fonts::install().expect("the embedded fonts should install");
+        style::install(&display);
+        app::install_icons(&display);
 
-    // ── a domain that publishes settings ────────────────────────────────
+        // ── a domain that publishes settings ────────────────────────────────
 
-    let transport = Arc::new(MockTransport::publishing(&autoconfig_xml()));
-    let (_window, screen, bridge, _directory) = onboard(transport.clone());
+        let transport = Arc::new(MockTransport::publishing(&autoconfig_xml()));
+        let (_window, screen, bridge, _directory) = onboard(transport.clone()).await;
 
-    screen.set_address("ada@example.com");
-    screen.probe();
-    assert!(
-        matches!(screen.status(), Status::Probing),
-        "the probe did not put the screen into its waiting state: {:?}",
-        screen.status()
-    );
-
-    let settled = settle_until(|| !screen.status().is_busy());
-    assert!(settled, "the probe never came back: {:?}", screen.status());
-    assert!(
-        transport.was_called(),
-        "the screen answered without ever asking the transport it was given, \
-         so `probe()` is still building one of its own"
-    );
-
-    let Status::Found(settings) = screen.status() else {
-        panic!(
-            "a domain publishing a full autoconfig document did not land on \
-             Found: {:?}",
+        screen.set_address("ada@example.com");
+        screen.probe();
+        assert!(
+            matches!(screen.status(), Status::Probing),
+            "the probe did not put the screen into its waiting state: {:?}",
             screen.status()
         );
-    };
-    assert_eq!(
-        settings.imap.host, "mail.example.com",
-        "the screen showed servers that did not come from the document"
-    );
-    assert_eq!(settings.smtp.host, "send.example.com");
 
-    // ── the token the transport was handed is the caller's (#57) ────────
+        let settled = settle_until(async || !screen.status().is_busy()).await;
+        assert!(settled, "the probe never came back: {:?}", screen.status());
+        assert!(
+            transport.was_called(),
+            "the screen answered without ever asking the transport it was given, \
+             so `probe()` is still building one of its own"
+        );
 
-    assert!(
-        !transport.ever_called_with_a_spent_token(),
-        "the transport was handed a token that was already cancelled"
-    );
+        let Status::Found(settings) = screen.status() else {
+            panic!(
+                "a domain publishing a full autoconfig document did not land on \
+                 Found: {:?}",
+                screen.status()
+            );
+        };
+        assert_eq!(
+            settings.imap.host, "mail.example.com",
+            "the screen showed servers that did not come from the document"
+        );
+        assert_eq!(settings.smtp.host, "send.example.com");
 
-    // A second probe restarts the cancellation, which must stop the first.
-    // Driving it through the real closure rather than `ProbeCancellation`
-    // directly is the point: the unit test for `restart()` passes either way.
-    //
-    // The first probe's token is taken *before* the second starts. `restart()`
-    // runs synchronously inside `probe()`, so this is settled the moment the
-    // call returns — no waiting on the runtime, and nothing for a loaded
-    // machine to reorder.
-    let first = transport
-        .held_token()
-        .expect("the transport was handed a token");
-    screen.set_status(Status::Manual { suggestion: None });
-    screen.probe();
-    assert!(
-        first.is_cancelled(),
-        "starting a second probe left the first one's socket open — the \
-         composition root is dropping the token again, which is #57"
-    );
+        // ── the token the transport was handed is the caller's (#57) ────────
 
-    bridge.shutdown();
+        assert!(
+            !transport.ever_called_with_a_spent_token(),
+            "the transport was handed a token that was already cancelled"
+        );
 
-    // ── a domain that publishes nothing falls back to manual entry ──────
+        // A second probe restarts the cancellation, which must stop the first.
+        // Driving it through the real closure rather than `ProbeCancellation`
+        // directly is the point: the unit test for `restart()` passes either way.
+        //
+        // The first probe's token is taken *before* the second starts. `restart()`
+        // runs synchronously inside `probe()`, so this is settled the moment the
+        // call returns — no waiting on the runtime, and nothing for a loaded
+        // machine to reorder.
+        let first = transport
+            .held_token()
+            .expect("the transport was handed a token");
+        screen.set_status(Status::Manual { suggestion: None });
+        screen.probe();
+        assert!(
+            first.is_cancelled(),
+            "starting a second probe left the first one's socket open — the \
+             composition root is dropping the token again, which is #57"
+        );
 
-    let quiet = Arc::new(MockTransport::publishing_nothing());
-    let (_window, screen, bridge, _directory) = onboard(quiet.clone());
+        bridge.shutdown();
 
-    screen.set_address("ada@example.com");
-    screen.probe();
-    let settled = settle_until(|| !screen.status().is_busy());
-    assert!(settled, "the probe never came back: {:?}", screen.status());
-    assert!(quiet.was_called(), "nothing asked the transport");
+        // ── a domain that publishes nothing falls back to manual entry ──────
 
-    assert!(
-        matches!(screen.status(), Status::Manual { .. }),
-        "a domain publishing nothing did not fall back to manual entry: {:?}",
-        screen.status()
-    );
+        let quiet = Arc::new(MockTransport::publishing_nothing());
+        let (_window, screen, bridge, _directory) = onboard(quiet.clone()).await;
 
-    bridge.shutdown();
+        screen.set_address("ada@example.com");
+        screen.probe();
+        let settled = settle_until(async || !screen.status().is_busy()).await;
+        assert!(settled, "the probe never came back: {:?}", screen.status());
+        assert!(quiet.was_called(), "nothing asked the transport");
 
-    // The window this test built joins GTK's toplevel list at
-    // construction and stays there, holding a WebProcess, until it is
-    // destroyed -- which at exit() is a segfault after a passing test
-    // (#794). No harness here to sweep, so the test does it.
-    postio_gtk::window::close_all_windows();
+        assert!(
+            matches!(screen.status(), Status::Manual { .. }),
+            "a domain publishing nothing did not fall back to manual entry: {:?}",
+            screen.status()
+        );
+
+        bridge.shutdown();
+
+        // The window this test built joins GTK's toplevel list at
+        // construction and stays there, holding a WebProcess, until it is
+        // destroyed -- which at exit() is a segfault after a passing test
+        // (#794). No harness here to sweep, so the test does it.
+        postio_gtk::window::close_all_windows();
+    });
 }

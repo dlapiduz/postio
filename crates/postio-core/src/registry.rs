@@ -80,7 +80,7 @@ pub enum Recovery {
 /// 0005's consequences asked for that to be settled once rather than
 /// special-cased at every surface, so it is data on the row — the same shape
 /// the rest of this table already uses — and every surface evaluates it
-/// through [`available`].
+/// through [`reachable_in`], which asks [`Requirement::met_by`] per row.
 ///
 /// **The shape for the next one:** add a variant here, give it a line in
 /// [`Availability`], and answer it in [`Requirement::met_by`]. Nothing at a
@@ -1907,15 +1907,6 @@ pub fn reachable(context: Context) -> impl Iterator<Item = ActionSpec> {
         .map(|spec| ActionSpec::from(*spec))
         .collect();
     for_context(context).map(ActionSpec::from).chain(extensions)
-}
-
-/// Whether `spec` is reachable in `context` *and* satisfied by `state`.
-///
-/// The one place a surface asks "can the user do this right now". Splitting
-/// it from [`ActionSpec::available_in`] keeps the context question — which is
-/// most of them — free of state nobody else needs.
-pub fn available(spec: &ActionSpec, context: Context, state: Availability) -> bool {
-    spec.available_in(context) && spec.requires.met_by(state)
 }
 
 /// Every command reachable in `context` for a window in `state`.

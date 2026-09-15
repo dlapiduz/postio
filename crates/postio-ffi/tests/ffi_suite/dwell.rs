@@ -16,24 +16,25 @@ use postio_storage::repository::MessageRepository;
 use postio_storage::test_support;
 
 /// Whether the store says `message` carries `\Seen`.
-fn is_read(database: &postio_storage::Database, message: i64) -> bool {
-    let connection = database.connection().expect("a connection");
+async fn is_read(database: &postio_storage::Store, message: i64) -> bool {
+    let connection = database.connect().await.expect("a connection");
     MessageRepository::new(&connection)
         .get(postio_model::ids::MessageId::new(message))
+        .await
         .expect("a read")
         .is_some_and(|message| message.flags.contains(&Flag::Seen))
 }
 
 /// A store with one unread message, and the session over it.
-fn one_unread() -> (std::sync::Arc<Session>, postio_storage::Database, i64) {
-    let database = test_support::memory();
+async fn one_unread() -> (std::sync::Arc<Session>, postio_storage::Store, i64) {
+    let database = test_support::memory().await;
     let (mailbox, message) = {
-        let connection = database.connection().expect("a connection");
-        let (account, inbox) = test_support::account_with_inbox(&connection);
+        let connection = database.connect().await.expect("a connection");
+        let (account, inbox) = test_support::account_with_inbox(&connection).await;
         let repository = MessageRepository::new(&connection);
         let mut message = Message::new(account.id, inbox, Utc::now());
         message.flags.remove(&Flag::Seen);
-        repository.create(&mut message).expect("a message");
+        repository.create(&mut message).await.expect("a message");
         (inbox, message.id.get())
     };
     // The real action handlers on the bus. An in-memory session's default
@@ -62,14 +63,17 @@ fn one_unread() -> (std::sync::Arc<Session>, postio_storage::Database, i64) {
     (session, database, message)
 }
 
-#[test]
-fn a_dwell_marks_the_message_read() {
-    let (session, database, message) = one_unread();
-    assert!(!is_read(&database, message), "the fixture starts unread");
+#[tokio::test(flavor = "multi_thread")]
+async fn a_dwell_marks_the_message_read() {
+    let (session, database, message) = one_unread().await;
+    assert!(
+        !is_read(&database, message).await,
+        "the fixture starts unread"
+    );
 
     session.mark_read_on_dwell(message);
     assert!(
-        settle_until(|| is_read(&database, message)),
+        settle_until(async || is_read(&database, message).await).await,
         "the cursor rested on a message and it was never marked read"
     );
     session.shutdown();
@@ -99,17 +103,21 @@ fn the_arming_decision_crosses_whole() {
 
 /// Drive until `done`, or give up. The verb is local-first: it writes and
 /// returns, and the write lands on the runtime a moment later.
-fn settle_until(done: impl Fn() -> bool) -> bool {
+async fn settle_until<F, Fut>(done: F) -> bool
+where
+    F: Fn() -> Fut,
+    Fut: std::future::Future<Output = bool>,
+{
     // Scaled, so `POSTIO_TEST_PATIENCE` reaches it. A hand-rolled deadline
     // measures the process it runs in, which on a shared machine is a flake
     // nobody can reproduce alone (#842, #957).
     let deadline =
         std::time::Instant::now() + postio_test_support::scaled(std::time::Duration::from_secs(10));
     while std::time::Instant::now() < deadline {
-        if done() {
+        if done().await {
             return true;
         }
-        std::thread::sleep(std::time::Duration::from_millis(10));
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
     }
-    done()
+    done().await
 }

@@ -4,7 +4,8 @@ Paste the block below to an agent. It assumes a checkout of this repository
 and nothing else; everything it needs to know that is not in `CLAUDE.md` is
 stated inline.
 
-Written 2026-09-02 against 93 open issues, 38 of them `ready`.
+Written 2026-09-02 against 93 open issues, 38 of them `ready`; the figures
+below — test counts, suite timings, label coverage — are from that date.
 
 ---
 
@@ -70,7 +71,7 @@ wants.
 | | what it runs | cost |
 |---|---|---|
 | `scripts/test-fast.sh` | changed crates, `--lib` | seconds |
-| `scripts/test-sanity.sh` | whole workspace, `--lib` — 1,313 tests | ~5s warm |
+| `scripts/test-sanity.sh` | whole workspace, `--lib` — 1,313 tests on 2026-09-02 | ~5s warm |
 | `scripts/issue-land.sh` | sanity tier + clippy + invariants | the default |
 | `scripts/issue-land.sh --full` | the above plus per-crate integration suites | minutes |
 
@@ -114,8 +115,8 @@ Each of these is a day's worth of tuition. Do not re-learn them.
   deterministic mechanism underneath the flake — a leak, a missing
   disconnect — over reproducing the crash.
 - **Measure before optimising.** Two confident diagnoses were wrong this way.
-  The suite spends 108s executing tests inside a ~497s step; the cost is
-  linking, not running.
+  On 2026-09-02 the suite spent 108s executing tests inside a ~497s step; the
+  cost was linking, not running.
 - **A red check on your PR may not be yours.** Read it before assuming: one
   was a cancelled runner, one was a pre-existing flake in a crate the branch
   never touched. Fix it if it is yours, record evidence on the issue if it is

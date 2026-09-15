@@ -53,7 +53,7 @@ fn settings() -> AccountSettings {
 async fn a_fresh_store_gains_an_account_and_the_password_goes_to_the_keyring() {
     // The sentence #649 is about: a store this helper touched has an account
     // in it, and the password is in the keyring rather than anywhere on disk.
-    let database = test_support::temp();
+    let database = test_support::temp().await;
     let keyring = MemorySecretStore::new();
 
     let outcome = provision(
@@ -70,9 +70,10 @@ async fn a_fresh_store_gains_an_account_and_the_password_goes_to_the_keyring() {
         other => panic!("a fresh store should have created one, got {other:?}"),
     };
 
-    let connection = database.connection().expect("checkout");
+    let connection = database.connect().await.expect("checkout");
     let accounts = AccountRepository::new(&connection)
         .list_enabled()
+        .await
         .expect("read the accounts");
     assert_eq!(accounts.len(), 1);
     assert_eq!(accounts[0].id, id);
@@ -96,7 +97,7 @@ async fn a_keyring_that_refuses_leaves_no_account_behind() {
     // The example this replaced (`postio-app/examples/provision.rs`) wrote
     // the row first and the credential second, so a locked keyring left
     // exactly that wreck behind.
-    let database = test_support::temp();
+    let database = test_support::temp().await;
     let keyring = MemorySecretStore::locked();
 
     let error = provision(
@@ -113,9 +114,10 @@ async fn a_keyring_that_refuses_leaves_no_account_behind() {
         "the error has to say what to do about it, got: {error}"
     );
 
-    let connection = database.connection().expect("checkout");
+    let connection = database.connect().await.expect("checkout");
     let accounts = AccountRepository::new(&connection)
         .list_enabled()
+        .await
         .expect("read the accounts");
     assert!(
         accounts.is_empty(),
@@ -132,7 +134,7 @@ async fn provisioning_an_address_that_is_already_there_leaves_it_alone() {
     // between two. Nor may it overwrite a credential that already works: a
     // re-run with the wrong password in the environment would otherwise
     // break an account that was syncing perfectly well.
-    let database = test_support::temp();
+    let database = test_support::temp().await;
     let keyring = MemorySecretStore::new();
 
     let first = provision(
@@ -157,10 +159,11 @@ async fn provisioning_an_address_that_is_already_there_leaves_it_alone() {
         other => panic!("the second run should have found the first, got {other:?}"),
     }
 
-    let connection = database.connection().expect("checkout");
+    let connection = database.connect().await.expect("checkout");
     assert_eq!(
         AccountRepository::new(&connection)
             .list_enabled()
+            .await
             .expect("read the accounts")
             .len(),
         1,

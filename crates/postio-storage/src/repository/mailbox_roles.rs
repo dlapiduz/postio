@@ -14,9 +14,10 @@
 
 use chrono::Utc;
 use postio_model::{AccountId, MailboxRole};
-use rusqlite::{Connection, params};
 
 use crate::error::Result;
+use crate::sql::{self, RowExt as _, bind};
+use crate::store::Connection;
 
 /// Read and write an account's role map on one connection.
 pub struct MailboxRoleRepository<'a> {
@@ -31,18 +32,16 @@ impl<'a> MailboxRoleRepository<'a> {
 
     /// Every role the account has mapped, with the path it is mapped to,
     /// ordered by role so the answer is the same on every call.
-    pub fn for_account(&self, account: AccountId) -> Result<Vec<(MailboxRole, String)>> {
-        let mut statement = self
-            .connection
-            .prepare("SELECT role, path FROM mailbox_roles WHERE account_id = ?1 ORDER BY role")?;
-        let rows = statement.query_map([account.get()], |row| {
-            let role: String = row.get(0)?;
-            let path: String = row.get(1)?;
-            Ok((role, path))
-        })?;
+    pub async fn for_account(&self, account: AccountId) -> Result<Vec<(MailboxRole, String)>> {
+        let rows: Vec<(String, String)> = sql::all(
+            self.connection,
+            "SELECT role, path FROM mailbox_roles WHERE account_id = ?1 ORDER BY role",
+            [account.get()],
+            |row| Ok((row.col(0)?, row.col(1)?)),
+        )
+        .await?;
         let mut pairs = Vec::new();
-        for row in rows {
-            let (role, path) = row?;
+        for (role, path) in rows {
             // A role the CHECK admits is one `from_name` parses; anything else
             // would be a schema change nobody made here.
             if let Some(role) = MailboxRole::from_name(&role) {
@@ -54,50 +53,54 @@ impl<'a> MailboxRoleRepository<'a> {
 
     /// Map `role` to the folder at `path` for this account, replacing any
     /// earlier choice for the role.
-    pub fn set(&self, account: AccountId, role: MailboxRole, path: &str) -> Result<()> {
-        self.connection.execute(
-            "INSERT INTO mailbox_roles (account_id, role, path, updated_at)
+    pub async fn set(&self, account: AccountId, role: MailboxRole, path: &str) -> Result<()> {
+        self.connection
+            .execute(
+                "INSERT INTO mailbox_roles (account_id, role, path, updated_at)
              VALUES (?1, ?2, ?3, ?4)
              ON CONFLICT (account_id, role) DO UPDATE
              SET path = excluded.path, updated_at = excluded.updated_at",
-            params![
-                account.get(),
-                role.as_str(),
-                path,
-                Utc::now().timestamp_millis()
-            ],
-        )?;
+                bind![
+                    account.get(),
+                    role.as_str(),
+                    path,
+                    Utc::now().timestamp_millis()
+                ],
+            )
+            .await?;
         Ok(())
     }
 
     /// Forget the account's choice for `role`, so it resolves automatically
     /// again. Clearing a role that was never mapped is not an error.
-    pub fn clear(&self, account: AccountId, role: MailboxRole) -> Result<()> {
-        self.connection.execute(
-            "DELETE FROM mailbox_roles WHERE account_id = ?1 AND role = ?2",
-            params![account.get(), role.as_str()],
-        )?;
+    pub async fn clear(&self, account: AccountId, role: MailboxRole) -> Result<()> {
+        self.connection
+            .execute(
+                "DELETE FROM mailbox_roles WHERE account_id = ?1 AND role = ?2",
+                bind![account.get(), role.as_str()],
+            )
+            .await?;
         // A choice supersedes a refusal: the user has answered the question
         // another way, so the record of the server saying no is stale and
         // must not keep suppressing an attempt.
-        self.clear_refusal(account, role)
+        self.clear_refusal(account, role).await
     }
 
     /// Every role this account's server has refused to create a folder for,
     /// with the server's own words (spec 003, FR-031).
-    pub fn refusals(&self, account: AccountId) -> Result<Vec<(MailboxRole, String)>> {
-        let mut statement = self.connection.prepare(
+    pub async fn refusals(&self, account: AccountId) -> Result<Vec<(MailboxRole, String)>> {
+        let rows: Vec<(String, String)> = sql::all(
+            self.connection,
             "SELECT role, reason FROM mailbox_role_refusals
               WHERE account_id = ?1
               ORDER BY role",
-        )?;
-        let rows = statement.query_map([account.get()], |row| {
-            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
-        })?;
+            [account.get()],
+            |row| Ok((row.col(0)?, row.col(1)?)),
+        )
+        .await?;
 
         let mut refusals = Vec::new();
-        for row in rows {
-            let (role, reason) = row?;
+        for (role, reason) in rows {
             // Same rule as `for_account` directly above: a role the CHECK
             // admits is one `from_name` parses, so anything else would be a
             // schema change nobody made here.
@@ -113,19 +116,21 @@ impl<'a> MailboxRoleRepository<'a> {
     ///
     /// Replaces any earlier refusal for the role: what matters is the current
     /// answer and the current reason, not how many times it has been given.
-    pub fn refuse(&self, account: AccountId, role: MailboxRole, reason: &str) -> Result<()> {
-        self.connection.execute(
-            "INSERT INTO mailbox_role_refusals (account_id, role, refused_at, reason)
+    pub async fn refuse(&self, account: AccountId, role: MailboxRole, reason: &str) -> Result<()> {
+        self.connection
+            .execute(
+                "INSERT INTO mailbox_role_refusals (account_id, role, refused_at, reason)
              VALUES (?1, ?2, ?3, ?4)
              ON CONFLICT (account_id, role) DO UPDATE
              SET refused_at = excluded.refused_at, reason = excluded.reason",
-            params![
-                account.get(),
-                role.as_str(),
-                Utc::now().timestamp_millis(),
-                reason
-            ],
-        )?;
+                bind![
+                    account.get(),
+                    role.as_str(),
+                    Utc::now().timestamp_millis(),
+                    reason
+                ],
+            )
+            .await?;
         Ok(())
     }
 
@@ -134,11 +139,13 @@ impl<'a> MailboxRoleRepository<'a> {
     /// Called when the folder turns up or the role is mapped by hand — both
     /// mean the question has been answered by something other than another
     /// attempt. Clearing one that was never recorded is not an error.
-    pub fn clear_refusal(&self, account: AccountId, role: MailboxRole) -> Result<()> {
-        self.connection.execute(
-            "DELETE FROM mailbox_role_refusals WHERE account_id = ?1 AND role = ?2",
-            params![account.get(), role.as_str()],
-        )?;
+    pub async fn clear_refusal(&self, account: AccountId, role: MailboxRole) -> Result<()> {
+        self.connection
+            .execute(
+                "DELETE FROM mailbox_role_refusals WHERE account_id = ?1 AND role = ?2",
+                bind![account.get(), role.as_str()],
+            )
+            .await?;
         Ok(())
     }
 }

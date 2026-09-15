@@ -2,10 +2,9 @@
 """Self-test for issue-land.sh's log rotation (#710).
 
 A gate failure's diagnosis often lives in the *whole* run's output rather
-than in the failing test's own block -- SQLCipher, for one, prints its
-reason to stderr as C `fprintf`, which `cargo test`'s per-test capture
-never holds. `docs/notes/2026-09-05-the-sqlcipher-key-error-does-not-mean-
-what-it-says.md` ends by asking the next occurrence to keep that output.
+than in the failing test's own block -- a C library printing straight to
+stderr as `fprintf`, for one, is output `cargo test`'s per-test capture
+never holds (SQLCipher was the live example when this was written).
 
 The obvious response to a flaked landing is to land again, and that used to
 truncate the log -- so the evidence survived exactly as long as it took to

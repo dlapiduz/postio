@@ -2,7 +2,7 @@
 
 use std::sync::{Arc, Mutex};
 
-use postio_core::bridge::{Bridge, CommandSender, EventStream, event_channel, handler_fn};
+use postio_core::bridge::{Bridge, CommandSender, EventStream, handler_fn};
 use postio_session::Wiring;
 
 use crate::event::UiEvent;
@@ -74,7 +74,7 @@ pub struct SessionOptions {
     #[cfg(feature = "testing")]
     in_memory: bool,
     #[cfg(feature = "testing")]
-    seeded: Option<postio_storage::Database>,
+    seeded: Option<postio_storage::Store>,
     #[cfg(feature = "testing")]
     seeded_blobs: Option<(postio_storage::BlobStore, tempfile::TempDir)>,
     #[cfg(feature = "testing")]
@@ -157,7 +157,7 @@ impl SessionOptions {
     /// there is no way to reach in afterwards -- the wiring is private, which
     /// is the point of it.
     #[cfg(feature = "testing")]
-    pub fn in_memory_with(database: postio_storage::Database) -> Self {
+    pub fn in_memory_with(database: postio_storage::Store) -> Self {
         Self {
             seeded: Some(database),
             ..Self::in_memory()
@@ -319,9 +319,11 @@ pub struct Session {
     /// so that a row lookup -- which happens on every table redraw -- does not
     /// contend with whatever else is holding the session.
     list: Arc<Mutex<postio_ui::list::ListWindow<crate::RowFfi>>>,
-    /// What the window is currently showing, so a page fetch knows what to
-    /// ask the store for.
-    scope: Mutex<Option<postio_runtime::store::ListScope>>,
+    /// What the window is showing, what a page of it means and what an event
+    /// does to it — [`postio_ui::paging::Paging`], the policy `postio-gtk`'s
+    /// feed follows too, so a page fetch and an event reaction are one rule
+    /// on both frontends.
+    paging: Mutex<postio_ui::paging::Paging>,
     /// What the user has marked, and where the keyboard is.
     ///
     /// Held here rather than passed in with every [`Session::invoke`] (#721).
@@ -410,9 +412,10 @@ pub struct Session {
     offline: Arc<std::sync::atomic::AtomicBool>,
     /// The engines this session started, kept alive for as long as it is.
     ///
-    /// Retained rather than leaked, for the reason `postio-app` records: the
-    /// store is SQLCipher, and dropping an engine at process exit is exactly
-    /// when libcrypto goes away underneath a thread still encrypting a page.
+    /// Retained rather than leaked, for the reason `postio-app` records:
+    /// dropping an engine at process exit can leave a sync pass's write torn
+    /// mid-commit, and the pre-1.0 store engine's recovery is not one to bet
+    /// on when waiting for the pass is cheap.
     engines: Mutex<Vec<postio_runtime::Engine>>,
     /// `[keys]` as this installation has it.
     ///
@@ -566,7 +569,7 @@ impl Session {
     /// table against it and pages arrive behind, the same as for a folder.
     #[uniffi::method(name = "search")]
     pub fn search_ffi(&self, query: String) -> u64 {
-        self.search(&query)
+        blocking(self.search(&query))
     }
 
     /// Leave search and restore the scope that was open.
@@ -621,6 +624,16 @@ impl Session {
     #[uniffi::method(name = "cheatSheet")]
     pub fn cheat_sheet_ffi(&self, context: crate::UiContext) -> Vec<crate::PaletteEntryFfi> {
         self.cheat_sheet(context)
+    }
+
+    /// The `?` sheet, grouped the way the product groups it.
+    /// See [`Session::cheat_sheet_sections`].
+    #[uniffi::method(name = "cheatSheetSections")]
+    pub fn cheat_sheet_sections_ffi(
+        &self,
+        context: crate::UiContext,
+    ) -> Vec<crate::CheatSectionFfi> {
+        self.cheat_sheet_sections(context)
     }
 
     /// Whether `message` is marked, for a row deciding how to draw itself.
@@ -715,7 +728,7 @@ impl Session {
     /// and refuse navigations. It composes no reader HTML of its own.
     #[uniffi::method(name = "readerDocument")]
     pub fn reader_document_ffi(&self, message: i64, remote: crate::RemoteImagesFfi) -> String {
-        self.reader_document(message, remote)
+        blocking(self.reader_document(message, remote))
     }
 
     /// One inline part of `message`, by its `Content-ID`.
@@ -724,7 +737,7 @@ impl Session {
     /// broken image, deliberately — never a fetch.
     #[uniffi::method(name = "resolveCid")]
     pub fn resolve_cid_ffi(&self, message: i64, content_id: String) -> Option<crate::InlinePart> {
-        self.resolve_cid(message, content_id)
+        blocking(self.resolve_cid(message, content_id))
     }
 
     /// Tell the engine whether the machine currently has a connection.
@@ -749,19 +762,29 @@ impl Session {
     /// happens on the engine's own runtime.
     #[uniffi::method(name = "startSyncing")]
     pub fn start_syncing_ffi(&self) -> Result<u32, SessionError> {
-        self.start_syncing()
+        blocking(self.start_syncing())
     }
 
     /// How many accounts are configured and enabled.
     #[uniffi::method(name = "configuredAccounts")]
     pub fn configured_accounts_ffi(&self) -> u32 {
-        self.configured_accounts()
+        blocking(self.configured_accounts())
     }
 
     /// Every folder of every enabled account, for the sidebar.
     #[uniffi::method(name = "mailboxes")]
     pub fn mailboxes_ffi(&self) -> Vec<crate::MailboxFfi> {
-        self.mailboxes()
+        blocking(self.mailboxes())
+    }
+
+    /// Every configured account, in the order the pane lists them.
+    ///
+    /// Synchronous at the boundary like `mailboxes`: the settings pane reads
+    /// it from a computed property, and an async crossing for a handful of
+    /// rows would push a `Task` into every caller. See [`Session::accounts`].
+    #[uniffi::method(name = "accounts")]
+    pub fn accounts_ffi(&self) -> Vec<crate::AccountFfi> {
+        blocking(self.accounts())
     }
 
     /// The binding in force for a command, for drawing a native accelerator.
@@ -811,23 +834,6 @@ impl Session {
             })
             .collect()
     }
-    /// Every configured account, in the order the pane lists them.
-    ///
-    /// Disabled ones included: a list that hid them would make "where did my
-    /// account go" the next question. An empty answer means no store, which
-    /// on a machine that has never signed in is exactly the claim.
-    pub fn accounts(&self) -> Vec<crate::AccountFfi> {
-        let Some((database, _)) = self.store_and_blobs() else {
-            return Vec::new();
-        };
-        let Ok(connection) = database.connection() else {
-            return Vec::new();
-        };
-        postio_storage::repository::AccountRepository::new(&connection)
-            .list()
-            .map(|accounts| accounts.iter().map(crate::AccountFfi::of).collect())
-            .unwrap_or_default()
-    }
 }
 
 // ---------------------------------------------------------------------------
@@ -835,6 +841,25 @@ impl Session {
 // should. Test-only methods belong here.
 // ---------------------------------------------------------------------------
 impl Session {
+    /// Every configured account, in the order the pane lists them.
+    ///
+    /// Disabled ones included: a list that hid them would make "where did my
+    /// account go" the next question. An empty answer means no store, which
+    /// on a machine that has never signed in is exactly the claim.
+    pub async fn accounts(&self) -> Vec<crate::AccountFfi> {
+        let Some((database, _)) = self.store_and_blobs() else {
+            return Vec::new();
+        };
+        let Ok(connection) = database.connect().await else {
+            return Vec::new();
+        };
+        postio_storage::repository::AccountRepository::new(&connection)
+            .list()
+            .await
+            .map(|accounts| accounts.iter().map(crate::AccountFfi::of).collect())
+            .unwrap_or_default()
+    }
+
     /// Opens a session, or says why it could not.
     ///
     /// # This blocks
@@ -847,7 +872,14 @@ impl Session {
     /// it on the main actor**: it belongs in a launch task, with the unlock
     /// surface shown if it comes back [`SessionError::KeyringLocked`].
     pub fn open(options: SessionOptions) -> Result<Arc<Self>, SessionError> {
-        let (sink, events) = event_channel();
+        // A hub rather than a channel: the frontend drains one subscription
+        // and the body indexer another, the way `postio-app`'s window and
+        // indexer share its hub. This boundary had no body indexer before
+        // and relied on the fetch to write the search row -- which it no
+        // longer does anywhere.
+        let hub = postio_core::bridge::EventHub::new();
+        let sink = hub.sink();
+        let events = hub.subscribe("frontend");
 
         // Read before anything moves out of `options`, and once: both paths
         // below build the same configuration from it.
@@ -872,18 +904,34 @@ impl Session {
                 Some(database) => database,
                 None => {
                     // A fresh key per session, from the OS RNG. The database
-                    // lives and dies inside this process, so there is nothing
-                    // to reopen it with later — and an in-memory session still
-                    // runs the encrypted path, which is the whole point of ADR
-                    // 0014 Q3's "nothing tests a plaintext configuration that
-                    // no longer ships". No keyring is touched.
+                    // lives and dies with this process, so there is nothing
+                    // to reopen it with later — and it still runs the
+                    // encrypted path, which is the whole point of ADR 0014
+                    // Q3's "nothing tests a plaintext configuration that no
+                    // longer ships". No keyring is touched.
+                    //
+                    // A file in a temporary directory rather than an
+                    // in-memory database: the engine refuses to key one
+                    // (research.md Q6), and `test_support::memory` has been a
+                    // file on /dev/shm since #204 for a separate reason.
+                    // Neither survives the process, which is what "in memory"
+                    // meant to a caller of this.
                     let key = postio_storage::key::StoreKey::generate()
                         .derive(postio_storage::key::Purpose::Database);
-                    postio_storage::Database::open_in_memory(&key).map_err(|error| {
-                        SessionError::StoreUnavailable {
+                    let scratch =
+                        tempfile::tempdir().map_err(|error| SessionError::StoreUnavailable {
                             message: error.to_string(),
-                        }
-                    })?
+                        })?;
+                    let store = blocking(postio_storage::Store::open(
+                        scratch.path().join("postio.db"),
+                        &key,
+                    ))
+                    .map_err(|error| SessionError::StoreUnavailable {
+                        message: error.to_string(),
+                    })?;
+                    // The directory has to outlive every connection onto it.
+                    std::mem::forget(scratch);
+                    store
                 }
             };
             let (blobs, scratch) = match options.seeded_blobs {
@@ -917,6 +965,11 @@ impl Session {
                 .with_backfill(postio_session::backfill_policy(&sync_config))
                 .with_watch(postio_session::watch_policy(&sync_config));
             let keys = config.keys;
+            postio_session::spawn_body_indexer(
+                wiring.database.clone(),
+                wiring.events.subscribe("indexer"),
+                &wiring.runtime,
+            );
             return Ok(Arc::new(Session {
                 wiring: Mutex::new(Some(wiring)),
                 resolver: Mutex::new(build_resolver(&keys)),
@@ -932,7 +985,7 @@ impl Session {
                 outcome: Mutex::new(None),
                 resting: Mutex::new(None),
                 anchor: Mutex::new(None),
-                scope: Mutex::new(None),
+                paging: Mutex::new(postio_ui::paging::Paging::default()),
                 in_flight: Arc::default(),
                 reconnects: Arc::default(),
                 offline: Arc::default(),
@@ -962,7 +1015,12 @@ impl Session {
         let path = options
             .store_path
             .unwrap_or_else(postio_session::paths::store_path);
-        let (database, blobs) = postio_session::open_store_at(path, &key)
+        // Blocked on `runtime`, which exists by now: opening the store is
+        // async, and this constructor's documented contract is that it
+        // blocks. That is what the sentence above about the keyring is
+        // already telling a Swift caller -- do not invoke this on the main
+        // actor -- and it covers the store open for exactly the same reason.
+        let (database, blobs) = blocking(postio_session::open_store_at(path, &key))
             .map_err(|message| SessionError::StoreUnavailable { message })?;
 
         let config = load_config(&source);
@@ -974,6 +1032,11 @@ impl Session {
             .with_secrets(secrets)
             .with_backfill(postio_session::backfill_policy(&sync_config))
             .with_watch(postio_session::watch_policy(&sync_config));
+        postio_session::spawn_body_indexer(
+            wiring.database.clone(),
+            wiring.events.subscribe("indexer"),
+            &wiring.runtime,
+        );
         Ok(Arc::new(Session {
             wiring: Mutex::new(Some(wiring)),
             resolver: Mutex::new(build_resolver(&keys)),
@@ -990,7 +1053,7 @@ impl Session {
             outcome: Mutex::new(None),
             resting: Mutex::new(None),
             anchor: Mutex::new(None),
-            scope: Mutex::new(None),
+            paging: Mutex::new(postio_ui::paging::Paging::default()),
             in_flight: Arc::default(),
             reads: Arc::default(),
             reconnects: Arc::default(),
@@ -1021,11 +1084,11 @@ impl Session {
     /// conversion back would be a second mapping to keep in step with the
     /// first, for no caller that needs one.
     fn open_list_scope(&self, listed: postio_runtime::store::ListScope) -> u64 {
-        let Some((store, runtime)) = self.reader() else {
+        let Some((store, _runtime)) = self.reader() else {
             return 0;
         };
-        let total = runtime.block_on(store.list_count(listed)).unwrap_or(0);
-        *self.scope.lock().expect("scope lock") = Some(listed);
+        let total = blocking(store.list_count(listed)).unwrap_or(0);
+        self.paging.lock().expect("paging lock").open(listed);
         // "These twelve" means something else the moment the list does, and an
         // action carrying a selection across would land on mail the user
         // cannot see. The cursor goes with it: it named a row in a list that
@@ -1036,7 +1099,7 @@ impl Session {
         *self.hits.lock().expect("hits lock") = None;
         *self.resting.lock().expect("resting lock") = None;
         *self.account_scope.lock().expect("account scope lock") =
-            self.resolve_account_scope(listed);
+            blocking(self.resolve_account_scope(listed));
         self.list.lock().expect("list lock").reset(total)
     }
 
@@ -1107,7 +1170,7 @@ impl Session {
             // The shared conversion, not a second one: `ScopeFfi` becomes a
             // `ListScope` on the way in, and `aim::view_scope` is the one
             // rule for what a whole-view gesture is relative to (#670).
-            scope: self.scope.lock().expect("scope lock").and_then(|scope| {
+            scope: self.scope_in_view().and_then(|scope| {
                 postio_core::aim::view_scope(scope, &self.reachable.lock().expect("reachable lock"))
             }),
             selection: &selection,
@@ -1252,7 +1315,10 @@ impl Session {
     /// resolve is `Unified`, which is the conservative answer: it withholds
     /// the commands that need a single account rather than offering one that
     /// would have nowhere to act.
-    fn resolve_account_scope(&self, scope: postio_runtime::store::ListScope) -> postio_core::Scope {
+    async fn resolve_account_scope(
+        &self,
+        scope: postio_runtime::store::ListScope,
+    ) -> postio_core::Scope {
         use postio_runtime::store::ListScope;
         match scope {
             // The Outbox names its account as plainly as these two do: every
@@ -1265,11 +1331,12 @@ impl Session {
                 let Some((database, _)) = self.store_and_blobs() else {
                     return postio_core::Scope::Unified;
                 };
-                let Ok(connection) = database.connection() else {
+                let Ok(connection) = database.connect().await else {
                     return postio_core::Scope::Unified;
                 };
                 postio_storage::repository::MailboxRepository::new(&connection)
                     .get(mailbox)
+                    .await
                     .ok()
                     .flatten()
                     .map(|mailbox| postio_core::Scope::Account(mailbox.account_id))
@@ -1356,8 +1423,29 @@ impl Session {
     /// same list read two ways"* (#658). Building them separately would mean
     /// two places deciding what "available here" means, and they would
     /// disagree.
+    ///
+    /// The flat form. [`Session::cheat_sheet_sections`] is what a `?` overlay
+    /// should draw: the same rows, grouped the way the product groups them.
     pub fn cheat_sheet(&self, context: crate::UiContext) -> Vec<crate::PaletteEntryFfi> {
         self.palette_entries("", context)
+    }
+
+    /// The `?` sheet, grouped: Everywhere, the box's prefixes, the reader's
+    /// own surface, then one section per extension namespace.
+    ///
+    /// The grouping is [`postio_ui::cheatsheet::sections`]'s — the same
+    /// function the GTK overlay draws from, so the two frontends teach the
+    /// same sheet. The flat [`Session::cheat_sheet`] predates it and is what
+    /// an ungrouped list should keep using.
+    pub fn cheat_sheet_sections(&self, context: crate::UiContext) -> Vec<crate::CheatSectionFfi> {
+        postio_ui::cheatsheet::sections(
+            &self.keymap(),
+            postio_core::Context::from(context),
+            self.availability(),
+        )
+        .into_iter()
+        .map(crate::CheatSectionFfi::from)
+        .collect()
     }
 
     /// The bindings in force, resolved for this platform.
@@ -1655,18 +1743,25 @@ impl Session {
     }
 
     /// Read one page into the window, behind the caller.
+    ///
+    /// What the page *is* — an offset read of the scope, or a slice of the
+    /// search ranking — is [`postio_ui::paging::Paging::fetch_for`]'s answer,
+    /// the same one `postio-gtk`'s feed gets; only the crossing to the store
+    /// and back is this boundary's.
     fn fetch(&self, generation: u64, page: u32) {
-        // Search hits are ranked, not sorted, so no `ListScope` describes
-        // them and the store cannot page them. They are read by id instead --
-        // the same page of the same window, filled from a different call.
-        if self.hits.lock().expect("hits lock").is_some() {
-            self.fetch_hits(generation, page);
-            return;
+        let fetch = self.paging.lock().expect("paging lock").fetch_for(page);
+        match fetch {
+            None => {}
+            Some(postio_ui::paging::Fetch::Scope(request)) => self.fetch_scope(generation, request),
+            Some(postio_ui::paging::Fetch::Hits { ids, .. }) => {
+                self.fetch_hits(generation, page, ids);
+            }
         }
+    }
+
+    /// One page of the scope in view, read by offset.
+    fn fetch_scope(&self, generation: u64, request: postio_ui::paging::PageRequest) {
         let Some((store, runtime)) = self.reader() else {
-            return;
-        };
-        let Some(scope) = *self.scope.lock().expect("scope lock") else {
             return;
         };
         let local = self.local.0.clone();
@@ -1677,23 +1772,29 @@ impl Session {
         in_flight.fetch_add(1, ordering);
         self.reads.fetch_add(1, ordering);
         runtime.spawn(async move {
-            let request = postio_runtime::store::PageRequest {
-                scope,
-                offset: page * postio_ui::list::PAGE_SIZE,
-                limit: postio_ui::list::PAGE_SIZE,
+            let wanted = postio_runtime::store::PageRequest {
+                scope: request.scope,
+                offset: request.offset,
+                limit: request.limit,
             };
-            if let Ok(fetched) = store.list_page(request).await {
-                let rows = crate::list::rows_of(fetched);
-                let delivered = list
-                    .lock()
-                    .expect("list lock")
-                    .deliver(generation, page, rows);
+            if let Ok(fetched) = store.list_page(wanted).await {
+                let page = crate::list::page_of(fetched);
+                let delivered = {
+                    let mut list = list.lock().expect("list lock");
+                    // The count and the rows come from one read, so every
+                    // page corrects the total the scope was opened with —
+                    // for the generation it was asked in, and no other.
+                    if list.generation() == generation {
+                        let _ = list.set_total(page.total);
+                    }
+                    list.deliver(generation, request.page, page.rows)
+                };
                 // A page for a scope the user has already left is dropped
                 // rather than drawn, and saying nothing about it is the point:
                 // an event here would tell the frontend to reload rows that
                 // belong to a folder it is no longer showing.
                 if !delivered.stale {
-                    let _ = local.try_send(UiEvent::PageReady { page });
+                    let _ = local.try_send(UiEvent::PageReady { page: request.page });
                 }
             }
             in_flight.fetch_sub(1, ordering);
@@ -1706,24 +1807,10 @@ impl Session {
     /// relevance order, and asking the store for "rows 50..100 of this scope"
     /// would re-sort them by date. So the window pages over the *ranking*,
     /// and each page names the ids it wants.
-    fn fetch_hits(&self, generation: u64, page: u32) {
+    fn fetch_hits(&self, generation: u64, page: u32, wanted: Vec<postio_model::ids::MessageId>) {
         let Some((store, runtime)) = self.reader() else {
             return;
         };
-        let wanted: Vec<postio_model::ids::MessageId> = {
-            let held = self.hits.lock().expect("hits lock");
-            let Some(hits) = held.as_ref() else { return };
-            let first = (page * postio_ui::list::PAGE_SIZE) as usize;
-            hits.iter()
-                .skip(first)
-                .take(postio_ui::list::PAGE_SIZE as usize)
-                .map(|hit| postio_model::ids::MessageId::new(hit.message))
-                .collect()
-        };
-        if wanted.is_empty() {
-            return;
-        }
-
         let local = self.local.0.clone();
         let list = self.list.clone();
         let in_flight = self.in_flight.clone();
@@ -1774,8 +1861,8 @@ impl Session {
     ///
     /// The scope being left is remembered, so clearing comes back to it
     /// rather than reloading the world.
-    pub fn search(&self, query: &str) -> u64 {
-        let Some((_, runtime)) = self.reader() else {
+    pub async fn search(&self, query: &str) -> u64 {
+        let Some((_, _runtime)) = self.reader() else {
             return 0;
         };
         let Some((database, _)) = self.store_and_blobs() else {
@@ -1788,7 +1875,7 @@ impl Session {
         {
             let mut resting = self.resting.lock().expect("resting lock");
             if resting.is_none() {
-                *resting = *self.scope.lock().expect("scope lock");
+                *resting = self.scope_in_view();
             }
         }
 
@@ -1799,8 +1886,8 @@ impl Session {
         // visible — a claim the application should be willing to make on
         // screen rather than only in a note.
         let started = std::time::Instant::now();
-        let found = runtime.block_on(async {
-            let connection = database.connection().ok()?;
+        let found = blocking(async {
+            let connection = database.connect().await.ok()?;
             postio_session::search::execute(
                 &connection,
                 account,
@@ -1808,6 +1895,7 @@ impl Session {
                 postio_search::facets::Scope::AllMail,
                 postio_search::ResultOrder::Relevance,
             )
+            .await
         });
 
         let elapsed = started.elapsed();
@@ -1837,14 +1925,19 @@ impl Session {
             })
             .unwrap_or_default();
 
-        let total = hits.len() as u32;
+        let ranking: Vec<postio_model::ids::MessageId> = hits
+            .iter()
+            .map(|hit| postio_model::ids::MessageId::new(hit.message))
+            .collect();
         *self.hits.lock().expect("hits lock") = Some(hits);
         *self.outcome.lock().expect("outcome lock") = Some(outcome);
-        // No `ListScope` describes a ranking, so there is none while a search
-        // is on screen. `aim` sees `None` and refuses a whole-view gesture,
-        // which is the conservative answer: "select everything matching this
-        // query" is a predicate the engine has no way to evaluate yet.
-        *self.scope.lock().expect("scope lock") = None;
+        // The ranking is the list now; the scope is set aside, not left, and
+        // `scope_in_view` says why nothing sees it until the search closes.
+        let total = self
+            .paging
+            .lock()
+            .expect("paging lock")
+            .show_results(ranking);
         self.drop_selection_and_cursor();
         self.list.lock().expect("list lock").reset(total)
     }
@@ -1862,8 +1955,10 @@ impl Session {
         *self.outcome.lock().expect("outcome lock") = None;
         let resting = self.resting.lock().expect("resting lock").take();
         match resting {
+            // Opening the scope again is leaving the results.
             Some(scope) => self.open_list_scope(scope),
             None => {
+                self.paging.lock().expect("paging lock").close_results();
                 self.drop_selection_and_cursor();
                 self.list.lock().expect("list lock").reset(0)
             }
@@ -1980,7 +2075,7 @@ impl Session {
     /// * `postio-font:` — the eight vendored faces, through
     ///   `postio_ui::reader::document::font_bytes`, which answers only for
     ///   names in its `FACES` table and `None` for everything else.
-    pub fn reader_document(&self, message: i64, remote: crate::RemoteImagesFfi) -> String {
+    pub async fn reader_document(&self, message: i64, remote: crate::RemoteImagesFfi) -> String {
         use postio_ui::reader::document::{
             Rendering, Sheet, absent_html, body_html, document_for, sheet_for, suits_reader_view,
             wrap_document,
@@ -1997,7 +2092,7 @@ impl Session {
                 Sheet::Theme,
             );
         };
-        let Ok(connection) = database.connection() else {
+        let Ok(connection) = database.connect().await else {
             return wrap_document(
                 &absent_html(postio_ui::reader::document::Absent::Missing),
                 postio_body::RemoteImages::Blocked,
@@ -2005,7 +2100,9 @@ impl Session {
             );
         };
         let offline = self.offline.load(std::sync::atomic::Ordering::SeqCst);
-        match postio_session::reading::load_body_or_reason(&connection, message.into(), offline) {
+        match postio_session::reading::load_body_or_reason(&connection, message.into(), offline)
+            .await
+        {
             // `encoding_problems` is bound and not used here, and that is a
             // gap rather than a decision: this frontend renders a document
             // and has no native strip to put a caveat in, the way the GTK
@@ -2062,9 +2159,10 @@ impl Session {
     /// parts. `None` when the bytes are not already here, which is the
     /// privacy commitment rather than a gap: fetching would be the tracking
     /// pixel arriving through the back door.
-    pub fn resolve_cid(&self, message: i64, content_id: String) -> Option<crate::InlinePart> {
+    pub async fn resolve_cid(&self, message: i64, content_id: String) -> Option<crate::InlinePart> {
         let (database, blobs) = self.store_and_blobs()?;
         postio_session::reading::resolve_cid(&database, &blobs, message.into(), &content_id)
+            .await
             .map(|(bytes, mime_type)| crate::InlinePart { bytes, mime_type })
     }
 
@@ -2073,24 +2171,25 @@ impl Session {
     /// Blocks on a local read, like `openScope` does and for the same reason:
     /// a sidebar is drawn before anything can be selected in it, and the read
     /// is a few milliseconds of SQLite rather than the network.
-    pub fn mailboxes(&self) -> Vec<crate::MailboxFfi> {
+    pub async fn mailboxes(&self) -> Vec<crate::MailboxFfi> {
         let mut folders = Vec::new();
         let Some((database, _)) = self.store_and_blobs() else {
             return folders;
         };
-        let Ok(connection) = database.connection() else {
+        let Ok(connection) = database.connect().await else {
             return folders;
         };
-        let Ok(accounts) =
-            postio_storage::repository::AccountRepository::new(&connection).list_enabled()
+        let Ok(accounts) = postio_storage::repository::AccountRepository::new(&connection)
+            .list_enabled()
+            .await
         else {
             return folders;
         };
-        let Some((store, runtime)) = self.reader() else {
+        let Some((store, _runtime)) = self.reader() else {
             return folders;
         };
         for account in accounts {
-            if let Ok(mut found) = runtime.block_on(store.mailboxes(account.id)) {
+            if let Ok(mut found) = blocking(store.mailboxes(account.id)) {
                 // The rows that are views rather than folders -- Flagged,
                 // Snoozed, and the Outbox when it holds something. Built by
                 // the same shared layer the GTK feed asks, which is the whole
@@ -2166,15 +2265,16 @@ impl Session {
     ///
     /// ADR 0005 Q3: the first account is not special, so this counts every
     /// enabled one rather than looking for a primary.
-    pub fn configured_accounts(&self) -> u32 {
+    pub async fn configured_accounts(&self) -> u32 {
         let Some((database, _)) = self.store_and_blobs() else {
             return 0;
         };
-        let Ok(connection) = database.connection() else {
+        let Ok(connection) = database.connect().await else {
             return 0;
         };
         postio_storage::repository::AccountRepository::new(&connection)
             .list_enabled()
+            .await
             .map(|accounts| accounts.len() as u32)
             .unwrap_or(0)
     }
@@ -2203,7 +2303,7 @@ impl Session {
     /// Does not block: `engine::start_all` spawns onto the runtime the
     /// session already holds, and the connection attempt happens there. The
     /// UI never awaits the network.
-    pub fn start_syncing(&self) -> Result<u32, SessionError> {
+    pub async fn start_syncing(&self) -> Result<u32, SessionError> {
         // Idempotent. An application lifecycle calls this twice more often
         // than once — a window reopening, a wake from sleep — and a second
         // set of engines would double every connection to the server.
@@ -2211,44 +2311,47 @@ impl Session {
             return Ok(self.engines.lock().expect("engines lock").len() as u32);
         }
 
-        let guard = self.wiring.lock().expect("wiring lock");
-        let Some(wiring) = guard.as_ref() else {
-            return Err(SessionError::StoreUnavailable {
-                message: "the session has been shut down".to_string(),
-            });
+        // Cloned out and the guard dropped, rather than held across the awaits
+        // below. A `std::sync::MutexGuard` across an `.await` is a lock held
+        // for as long as the future is suspended -- and this one is suspended
+        // on the network -- so a second caller reaching this method would
+        // block a runtime worker until a server answered. `Wiring` is handles
+        // over `Arc`s; cloning it copies no mail.
+        let wiring = {
+            let guard = self.wiring.lock().expect("wiring lock");
+            match guard.as_ref() {
+                Some(wiring) => wiring.clone(),
+                None => {
+                    return Err(SessionError::StoreUnavailable {
+                        message: "the session has been shut down".to_string(),
+                    });
+                }
+            }
         };
+        let wiring = &wiring;
 
-        let accounts =
-            {
-                let connection = wiring.database.connection().map_err(|error| {
-                    SessionError::StoreUnavailable {
-                        message: error.to_string(),
-                    }
-                })?;
-                postio_storage::repository::AccountRepository::new(&connection)
-                    .list_enabled()
-                    .map_err(|error| SessionError::StoreUnavailable {
-                        message: error.to_string(),
-                    })?
-            };
+        let accounts = {
+            let connection = wiring.database.connect().await.map_err(|error| {
+                SessionError::StoreUnavailable {
+                    message: error.to_string(),
+                }
+            })?;
+            postio_storage::repository::AccountRepository::new(&connection)
+                .list_enabled()
+                .await
+                .map_err(|error| SessionError::StoreUnavailable {
+                    message: error.to_string(),
+                })?
+        };
         if accounts.is_empty() {
             return Ok(0);
         }
 
-        let started = postio_session::engine::start_all(
-            &accounts,
-            &wiring.database,
-            wiring.blobs.clone(),
-            wiring.events.clone(),
-            wiring.secrets.clone(),
-            wiring.mailbox_roles.clone(),
-            wiring.backfill,
-            wiring.watch,
-            &wiring.egress,
-        )
-        .map_err(|refusal| SessionError::StoreUnavailable {
-            message: refusal.to_string(),
-        })?;
+        let started = postio_session::engine::start_all(&accounts, wiring)
+            .await
+            .map_err(|refusal| SessionError::StoreUnavailable {
+                message: refusal.to_string(),
+            })?;
 
         let count = started.len() as u32;
         for (_, engine) in started {
@@ -2354,9 +2457,25 @@ impl Session {
     /// index, and re-running the query is the frontend's call, not a
     /// reconnection's.
     fn open_mailbox(&self) -> Option<postio_model::MailboxId> {
-        match *self.scope.lock().expect("scope lock") {
-            Some(postio_runtime::store::ListScope::Mailbox(mailbox)) => Some(mailbox),
-            _ => None,
+        self.scope_in_view()
+            .and_then(postio_runtime::store::ListScope::mailbox)
+    }
+
+    /// The scope the window is showing, or `None` while a search is.
+    ///
+    /// No `ListScope` describes a ranking, so there is none while a search
+    /// is on screen: `aim` sees `None` and refuses a whole-view gesture,
+    /// which is the conservative answer — "select everything matching this
+    /// query" is a predicate the engine has no way to evaluate yet — and a
+    /// reconnection finds no mailbox to refresh. The scope is set aside in
+    /// [`postio_ui::paging::Paging`], not forgotten, and `resting` is what
+    /// brings it back when the search closes.
+    fn scope_in_view(&self) -> Option<postio_runtime::store::ListScope> {
+        let paging = self.paging.lock().expect("paging lock");
+        if paging.showing_results() {
+            None
+        } else {
+            paging.scope()
         }
     }
 
@@ -2367,7 +2486,7 @@ impl Session {
     }
 
     /// The database and blob store, while the session is open.
-    fn store_and_blobs(&self) -> Option<(postio_storage::Database, postio_storage::BlobStore)> {
+    fn store_and_blobs(&self) -> Option<(postio_storage::Store, postio_storage::BlobStore)> {
         let guard = self.wiring.lock().expect("wiring lock");
         let wiring = guard.as_ref()?;
         Some((wiring.database.clone(), wiring.blobs.clone()))
@@ -2418,73 +2537,84 @@ impl Session {
         // Whichever speaks first. The engine's stream ends when the session
         // shuts down, and that is what must end the frontend's loop -- so a
         // closed engine stream wins even if the local one is merely idle.
-        let event = tokio::select! {
-            engine = self.events.next() => engine.map(UiEvent::from),
+        tokio::select! {
+            engine = self.events.next() => engine.map(|event| self.cross(event)),
             local = self.local.1.recv() => local.ok(),
-        }?;
-        self.recount_if_the_list_changed(&event);
-        Some(event)
+        }
     }
 
     /// [`next_event`](Self::next_event), for callers that are not async.
     ///
     /// Rust-only. Swift always awaits.
     pub fn next_event_blocking(&self) -> Option<UiEvent> {
-        let event = self.events.next_blocking().map(UiEvent::from)?;
-        self.recount_if_the_list_changed(&event);
-        Some(event)
+        self.events.next_blocking().map(|event| self.cross(event))
     }
 
-    /// Re-count the open scope when an event says its contents moved.
+    /// One engine event on its way to the frontend: the window reacts to it
+    /// first, so that by the time the frontend redraws on it the count and
+    /// the pages already say what the event said.
+    fn cross(&self, event: postio_core::Event) -> UiEvent {
+        self.react(&event);
+        UiEvent::from(event)
+    }
+
+    /// What the window does when an event says the list moved.
     ///
-    /// **`open_scope` counts once**, because a table asks how tall it is
-    /// before it draws and that question cannot await. Everything after that
-    /// arrives as an event — and a frontend's whole answer to an event is to
-    /// reload its table, which asks `row_count`, which reads the total that
-    /// one count set. Nothing ever set it again.
-    ///
-    /// So a folder opened while it was empty and filled a moment later by the
-    /// first sync stayed empty on screen: 99 messages in the store, "No
-    /// messages" in the list, every layer doing exactly what it was written
-    /// to do. Found by running the application against a real account (#1150);
-    /// invisible to every test, because no test had a list whose contents
-    /// changed after it was opened.
+    /// [`postio_ui::paging::Paging::plan`]'s table, the one `postio-gtk`'s
+    /// feed follows: new mail in the open scope is inserted at the top,
+    /// changed rows have the pages holding them re-read in place, and a scope
+    /// whose membership or order moved is reloaded. Before the table crossed
+    /// the boundary this was "count again, and reset if the count moved" —
+    /// which drew a filled folder that had been opened empty (#1150) and
+    /// nothing else: a flag set on macOS stayed undrawn, because a flag does
+    /// not move the count.
     ///
     /// It belongs here rather than in either frontend for the reason the whole
-    /// boundary does: the count is the window's, the window is here, and a
-    /// frontend that re-opened the scope to refresh it would be making a
-    /// navigation decision to fix a bookkeeping one. `postio-gtk`'s feed does
-    /// the same thing on the same events, one layer up.
+    /// boundary does: the window is here, and a frontend that re-opened the
+    /// scope to refresh it would be making a navigation decision to fix a
+    /// bookkeeping one.
     ///
-    /// Deliberately not `PageReady` — that is this boundary telling itself a
-    /// page landed, and re-counting there would reset the window inside its
-    /// own fetch.
-    fn recount_if_the_list_changed(&self, event: &UiEvent) {
-        if !matches!(
-            event,
-            UiEvent::MessageListChanged { .. }
-                | UiEvent::MessagesChanged { .. }
-                | UiEvent::MessagesRemoved { .. }
-                | UiEvent::NewMail { .. }
-        ) {
-            return;
-        }
-        // A search holds its own ranking; its hits do not change because a
-        // folder did, and re-counting would reset the window to a folder's
-        // size while showing search results.
-        if self.is_searching() {
-            return;
-        }
-        let Some(scope) = *self.scope.lock().expect("scope lock") else {
-            return;
-        };
-        let Some((store, runtime)) = self.reader() else {
-            return;
-        };
-        let total = runtime.block_on(store.list_count(scope)).unwrap_or(0);
-        let mut list = self.list.lock().expect("list lock");
-        if list.total() != total {
-            list.reset(total);
+    /// A reload still counts synchronously — `open_scope`'s reason: the table
+    /// asks how tall it is the moment it hears the event, and that question
+    /// cannot await — and then re-reads the first page. The rows on screen
+    /// stay until their replacements land; a reset would blank the table
+    /// under the cursor. A search is never reloaded: its ranking does not
+    /// change because a folder did.
+    fn react(&self, event: &postio_core::Event) {
+        let plan = self.paging.lock().expect("paging lock").plan(event);
+        match plan {
+            postio_ui::paging::Plan::Ignore => {}
+            postio_ui::paging::Plan::InsertAtTop(count) => {
+                self.list.lock().expect("list lock").inserted_at_top(count);
+            }
+            postio_ui::paging::Plan::Refetch(messages) => {
+                let (generation, pages) = {
+                    let list = self.list.lock().expect("list lock");
+                    (list.generation(), list.pages_holding(messages))
+                };
+                for page in pages {
+                    self.fetch(generation, page);
+                }
+            }
+            postio_ui::paging::Plan::Reload => {
+                let Some(scope) = self.scope_in_view() else {
+                    return;
+                };
+                let Some((store, _runtime)) = self.reader() else {
+                    return;
+                };
+                let total = blocking(store.list_count(scope)).unwrap_or(0);
+                let generation = {
+                    let mut list = self.list.lock().expect("list lock");
+                    list.invalidate();
+                    let _ = list.set_total(total);
+                    list.generation()
+                };
+                // A list that shrank to nothing stops asking for pages, so the
+                // reload asks once itself, or an emptied folder would keep
+                // showing the rows it used to have.
+                self.fetch(generation, 0);
+            }
         }
     }
 
@@ -2522,4 +2652,29 @@ impl Session {
             })
         })
     }
+}
+
+/// Run `future` to completion on this thread, blocking until it answers.
+///
+/// # Why the FFI blocks
+///
+/// The exported surface is synchronous, because that is what a Swift caller
+/// asked for: `session.search(query)` returns a count, not a task. The store
+/// underneath is async now, so something has to turn a future back into a
+/// value, and it is here rather than in every method.
+///
+/// These were blocking reads before as well -- the storage layer was
+/// synchronous and these methods called it directly. What changed is the
+/// spelling. The contract on the surface is unchanged and is documented on
+/// `Session::open`: a caller must not invoke these on the main actor.
+///
+/// # One implementation, in `postio-session`
+///
+/// This used to be a fourth copy of the same four lines, and it was the copy
+/// that had only half of them: a runtime built here and blocked on panics
+/// outright when the caller is already on one. `postio_session::blocking::now`
+/// is the whole of it, and the reason it is shared is that every crate that
+/// has needed this has got it wrong once.
+fn blocking<T>(future: impl std::future::Future<Output = T>) -> T {
+    postio_session::blocking::now(future)
 }

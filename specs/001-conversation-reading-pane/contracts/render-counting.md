@@ -4,8 +4,9 @@
 are gated as counts, not timings, because the causes of a budget are the same
 number on any machine and a millisecond is not defensible on a shared runner.
 
-Modelled on `postio_storage::test_support::counting`, which reads statements,
-rows and trigger firings off SQLite's trace hook and exposes `counted(|| …)`.
+Modelled on `postio_storage::test_support::counting`, which counts statements
+and rows at the crate's own `sql` seam — this engine has no trace hook, and
+`counting::scans` covers the structural half — and exposes `counted(|| …)`.
 That one cannot see this feature's defect: a duplicate document load issues no
 extra queries.
 

@@ -622,12 +622,6 @@ impl ScriptedConnector {
         self
     }
 
-    /// Makes every plaintext connect fail with `reason`.
-    pub fn failing_tcp(mut self, reason: impl Into<String>) -> Self {
-        self.tcp_failure = Some(reason.into());
-        self
-    }
-
     /// Makes every connection go silent after it has served `commands`.
     ///
     /// The server stops answering, so the next read sees EOF — a connection

@@ -17,7 +17,7 @@ use postio_index::{SearchRequest, search};
 use postio_model::AccountScope;
 use postio_search::facets::Scope;
 use postio_search::{ParsedQuery, ResultOrder, SearchResults};
-use postio_storage::PooledConnection;
+use postio_storage::Checkout;
 
 /// How many hits one run brings back.
 ///
@@ -42,8 +42,8 @@ const SNIPPET_HITS: usize = 50;
 /// database. A query that simply matches nothing is `Some` with no hits,
 /// because those are different answers and the surface says different things
 /// about them.
-pub fn execute(
-    connection: &PooledConnection,
+pub async fn execute(
+    connection: &Checkout,
     account: AccountScope,
     query: &ParsedQuery,
     scope: Scope,
@@ -67,9 +67,10 @@ pub fn execute(
         },
         Utc::now(),
     )
+    .await
     .map_err(|error| tracing::warn!(%error, "the search did not run"))
     .ok()?;
-    snippet_hits(connection, query, &mut results);
+    snippet_hits(connection, query, &mut results).await;
     Some(results)
 }
 
@@ -91,7 +92,7 @@ pub fn execute(
 /// the string highlighted is the string that was indexed, rather than a second
 /// guess at it, and `postio_search::highlight`'s token rule is FTS5's own. A
 /// message with no local body gets no excerpt rather than a wrong one.
-fn snippet_hits(connection: &PooledConnection, query: &ParsedQuery, results: &mut SearchResults) {
+async fn snippet_hits(connection: &Checkout, query: &ParsedQuery, results: &mut SearchResults) {
     let terms = postio_search::highlight::terms(query);
     if terms.is_empty() {
         // A structured-only query — `is:unread`, `in:archive` — has nothing to
@@ -100,7 +101,7 @@ fn snippet_hits(connection: &PooledConnection, query: &ParsedQuery, results: &mu
         return;
     }
     for hit in results.hits.iter_mut().take(SNIPPET_HITS) {
-        let body = crate::reading::load_body(connection, hit.message_id);
+        let body = crate::reading::load_body(connection, hit.message_id).await;
         if let Some(text) = postio_index::index::indexable_text(&body) {
             hit.snippet = postio_search::highlight::snippet(&text, &terms);
         }

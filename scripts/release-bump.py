@@ -74,15 +74,59 @@ def bump_internal_pins(root: Path, old: str, new: str) -> None:
             manifest.write_text(replaced, encoding="utf-8")
 
 
+def escape(text: str) -> str:
+    """The three characters XML will not take literally.
+
+    A commit subject can carry any of them (`fix(gtk): <details> & undo`),
+    and the metainfo is parsed by appstreamcli before it is shown."""
+    return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+
+def describe(notes: str, indent: str) -> str:
+    """The notes as AppStream markup: a `- ` line is a list item, any other
+    non-empty line a paragraph, a blank line a boundary.
+
+    The notes are written for the GitHub release page -- a paragraph or two
+    and a list of what changed -- and GNOME Software shows the same entry.
+    One `<p>` around the whole file rendered the list as a run-on sentence
+    there; this keeps the shape the author gave it. Only what a release
+    note actually uses: paragraphs and one level of bullets."""
+    blocks: list[str] = []
+    items: list[str] = []
+
+    def flush_items() -> None:
+        if items:
+            inner = "".join(f"{indent}  <li>{item}</li>\n" for item in items)
+            blocks.append(f"{indent}<ul>\n{inner}{indent}</ul>\n")
+            items.clear()
+
+    for raw in notes.splitlines():
+        line = raw.strip()
+        if line.startswith("- "):
+            items.append(escape(line[2:].strip()))
+        elif line:
+            flush_items()
+            blocks.append(f"{indent}<p>{escape(line)}</p>\n")
+        else:
+            flush_items()
+    flush_items()
+    return "".join(blocks)
+
+
 def insert_changelog_entry(
     metainfo: str, *, version: str, date: str, notes: str
 ) -> str:
-    """Newest release first, matching every existing entry in the file."""
+    """Newest release first, matching every existing entry in the file.
+
+    A 0.x release is `type="development"`: AppStream's word for a
+    pre-release, which GNOME Software and Flathub read. Without it a 0.x
+    build is listed as stable, which it is not."""
     indent = "    "
+    kind = ' type="development"' if version.startswith("0.") else ""
     entry = (
-        f'{indent}<release version="{version}" date="{date}">\n'
+        f'{indent}<release version="{version}" date="{date}"{kind}>\n'
         f"{indent}  <description>\n"
-        f"{indent}    <p>\n{notes.rstrip()}\n{indent}    </p>\n"
+        f"{describe(notes, indent + '    ')}"
         f"{indent}  </description>\n"
         f"{indent}</release>\n"
     )

@@ -30,103 +30,111 @@ use postio_storage::seed::seed_small;
 use postio_storage::{BlobStore, test_support};
 
 pub fn opening_the_app_costs_zero_connections_and_the_log_is_auditable() {
-    let state_dir = tempfile::tempdir().expect("a state directory");
-    // SAFETY: first statement of a single-threaded test.
-    unsafe { std::env::set_var("XDG_STATE_HOME", state_dir.path()) };
+    crate::gtk_case(async {
+        let state_dir = tempfile::tempdir().expect("a state directory");
+        // SAFETY: first statement of a single-threaded test.
+        unsafe { std::env::set_var("XDG_STATE_HOME", state_dir.path()) };
 
-    if adw::init().is_err() || gdk::Display::default().is_none() {
-        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
-        return;
-    }
-    let display = gdk::Display::default().unwrap();
-    fonts::install().expect("the embedded fonts should install");
-    style::install(&display);
-    app::install_icons(&display);
+        if adw::init().is_err() || gdk::Display::default().is_none() {
+            eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
+            return;
+        }
+        let display = gdk::Display::default().unwrap();
+        fonts::install().expect("the embedded fonts should install");
+        style::install(&display);
+        app::install_icons(&display);
 
-    let database = test_support::memory();
-    let report = seed_small(&database, 47);
-    let account = report.account.id;
-    let directory = tempfile::tempdir().expect("a blob directory");
-    let blobs = BlobStore::open(
-        directory.path().to_path_buf(),
-        &postio_storage::test_support::blob_keys(),
-    )
-    .expect("a blob store");
+        let database = test_support::memory().await;
+        let report = seed_small(&database, 47).await;
+        let account = report.account.id;
+        let directory = tempfile::tempdir().expect("a blob directory");
+        let blobs = BlobStore::open(
+            directory.path().to_path_buf(),
+            &postio_storage::test_support::blob_keys(),
+        )
+        .expect("a blob store");
 
-    let (bridge, _replies) =
-        postio_core::bridge::Bridge::new(postio_core::bridge::handler_fn(|_, _| async {}))
-            .expect("a runtime");
-    let (sink, _events) = postio_core::bridge::event_channel();
-    let wiring = Wiring::new(
-        database.clone(),
-        blobs.clone(),
-        bridge.handle(),
-        sink,
-        bridge.commands(),
-    );
+        let (bridge, _replies) =
+            postio_core::bridge::Bridge::new(postio_core::bridge::handler_fn(|_, _| async {}))
+                .expect("a runtime");
+        let (sink, _events) = postio_core::bridge::event_channel();
+        let wiring = Wiring::new(
+            database.clone(),
+            blobs.clone(),
+            bridge.handle(),
+            sink,
+            bridge.commands(),
+        );
 
-    let window = Window::default();
-    window.present();
-    settle();
-    let _wired = feed_the_window(&window, &wiring).expect("the seeded store has an account");
-    settle();
+        let window = Window::default();
+        window.present();
+        settle();
+        let _wired = feed_the_window(&window, &wiring)
+            .await
+            .expect("the seeded store has an account");
+        settle();
 
-    // ── 1. nothing left this machine ─────────────────────────────────────
-    {
-        let connection = database.connection().expect("a connection");
-        assert_eq!(
+        // ── 1. nothing left this machine ─────────────────────────────────────
+        {
+            let connection = database.connect().await.expect("a connection");
+            assert_eq!(
+                EgressLogRepository::new(&connection)
+                    .count()
+                    .await
+                    .expect("count"),
+                0,
+                "feeding the whole window made an outbound connection — the \
+                 privacy claim just became false in the default suite"
+            );
+        }
+
+        // ── 2. a transport's report reaches the store, account stamped ───────
+        wiring.egress.for_account(account).record(EgressEvent {
+            at: chrono::Utc::now(),
+            subsystem: EgressSubsystem::Imap,
+            account: None,
+            host: "imap.example.com".to_string(),
+            port: 993,
+            outcome: EgressOutcome::Connected,
+        });
+        let landed = settle_until(async || {
+            let connection = database.connect().await.expect("a connection");
             EgressLogRepository::new(&connection)
                 .count()
-                .expect("count"),
-            0,
-            "feeding the whole window made an outbound connection — the \
-             privacy claim just became false in the default suite"
+                .await
+                .expect("count")
+                == 1
+        })
+        .await;
+        assert!(
+            landed,
+            "the recorder's writer thread never persisted the event"
         );
-    }
+        {
+            let connection = database.connect().await.expect("a connection");
+            let rows = EgressLogRepository::new(&connection)
+                .recent(10)
+                .await
+                .expect("recent");
+            assert_eq!(rows[0].account, Some(account));
+            assert_eq!(rows[0].host, "imap.example.com");
+        }
 
-    // ── 2. a transport's report reaches the store, account stamped ───────
-    wiring.egress.for_account(account).record(EgressEvent {
-        at: chrono::Utc::now(),
-        subsystem: EgressSubsystem::Imap,
-        account: None,
-        host: "imap.example.com".to_string(),
-        port: 993,
-        outcome: EgressOutcome::Connected,
-    });
-    let landed = settle_until(|| {
-        let connection = database.connection().expect("a connection");
-        EgressLogRepository::new(&connection)
-            .count()
-            .expect("count")
-            == 1
-    });
-    assert!(
-        landed,
-        "the recorder's writer thread never persisted the event"
-    );
-    {
-        let connection = database.connection().expect("a connection");
-        let rows = EgressLogRepository::new(&connection)
-            .recent(10)
-            .expect("recent");
-        assert_eq!(rows[0].account, Some(account));
-        assert_eq!(rows[0].host, "imap.example.com");
-    }
+        // ── 3. opening settings lists it ─────────────────────────────────────
+        window.act(postio_core::Command::Settings);
+        settle();
+        // From the panel, not from the main window: settings is a window of its
+        // own since #1179, so its widgets are no longer descendants of this one.
+        let listed = find(&window.settings().upcast(), &|widget| {
+            widget.has_css_class("postio-settings-egress-row")
+        });
+        assert!(
+            listed.is_some(),
+            "the settings panel lists no connections over a log that holds one"
+        );
 
-    // ── 3. opening settings lists it ─────────────────────────────────────
-    window.act(postio_core::Command::Settings);
-    settle();
-    // From the panel, not from the main window: settings is a window of its
-    // own since #1179, so its widgets are no longer descendants of this one.
-    let listed = find(&window.settings().upcast(), &|widget| {
-        widget.has_css_class("postio-settings-egress-row")
+        bridge.shutdown();
     });
-    assert!(
-        listed.is_some(),
-        "the settings panel lists no connections over a log that holds one"
-    );
-
-    bridge.shutdown();
 }
 
 /// Depth-first search of a widget tree.

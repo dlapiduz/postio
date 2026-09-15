@@ -68,8 +68,8 @@ use chrono::{DateTime, Utc};
 use postio_account::backend::{BackendError, Capabilities, Capability, FlagChange, MailBackend};
 use postio_model::{AccountId, MailboxId, Operation, OperationId, OperationTarget};
 use postio_storage::BlobStore;
+use postio_storage::Connection;
 use postio_storage::repository::{MailboxRepository, MessageRepository, OperationQueueRepository};
-use rusqlite::Connection;
 
 use crate::coalesce::{Step, coalesce};
 use crate::retry::RetryPolicy;
@@ -225,6 +225,7 @@ impl<'a> Drainer<'a> {
         // heal. It reads before it writes and is a no-op in the ordinary case.
         match postio_storage::repository::DraftRepository::new(connection)
             .fail_orphaned_sends(account)
+            .await
         {
             Ok(0) => {}
             Ok(healed) => tracing::warn!(
@@ -236,7 +237,7 @@ impl<'a> Drainer<'a> {
         }
 
         let queue = OperationQueueRepository::new(connection);
-        let batch = queue.pending(account, now)?;
+        let batch = queue.pending(account, now).await?;
         if batch.is_empty() {
             return Ok(DrainReport::default());
         }
@@ -257,8 +258,10 @@ impl<'a> Drainer<'a> {
         // Marked done rather than deleted: the local write they accompanied did
         // happen, and undo may still want to find them.
         for id in &plan.obsolete {
-            queue.mark_done(*id, now)?;
-            queue.note(*id, "folded into an operation that undid it")?;
+            queue.mark_done(*id, now).await?;
+            queue
+                .note(*id, "folded into an operation that undid it")
+                .await?;
         }
 
         let capabilities = self.backend.capabilities().await?;
@@ -276,7 +279,9 @@ impl<'a> Drainer<'a> {
                 target = step.target.id()
             );
             let outcome = async {
-                let outcome = self.run(connection, step, &capabilities, &mut resync)?;
+                let outcome = self
+                    .run(connection, step, &capabilities, &mut resync)
+                    .await?;
                 Ok::<_, crate::drain::SyncError>(match outcome {
                     Pending::Settled(outcome) => outcome,
                     Pending::Send(context) => {
@@ -289,7 +294,8 @@ impl<'a> Drainer<'a> {
             let _entered = span.enter();
             tracing::debug!(outcome = ?outcome, "operation settled");
             drop(_entered);
-            self.settle(connection, step, outcome, now, &mut report)?;
+            self.settle(connection, step, outcome, now, &mut report)
+                .await?;
         }
 
         report.needs_resync = resync.into_iter().map(MailboxId::new).collect();
@@ -298,14 +304,14 @@ impl<'a> Drainer<'a> {
 
     /// Looks a step up locally: either it is ready to send, or it is already
     /// decided.
-    fn run(
+    async fn run(
         &self,
         connection: &Connection,
         step: &Step,
         _capabilities: &Capabilities,
         resync: &mut BTreeSet<i64>,
     ) -> Result<Pending> {
-        Ok(match self.resolve(connection, step)? {
+        Ok(match self.resolve(connection, step).await? {
             Resolved::Ready(context) => Pending::Send(context),
             Resolved::Obsolete { reason, mailbox } => {
                 if let Some(mailbox) = mailbox {
@@ -432,10 +438,10 @@ impl<'a> Drainer<'a> {
     }
 
     /// Looks up everything the backend call needs, or says why it cannot run.
-    fn resolve(&self, connection: &Connection, step: &Step) -> Result<Resolved> {
+    async fn resolve(&self, connection: &Connection, step: &Step) -> Result<Resolved> {
         if let Operation::Send { draft } = &step.operation {
             return Ok(
-                match crate::send::resolve(connection, self.smtp.as_ref(), *draft)? {
+                match crate::send::resolve(connection, self.smtp.as_ref(), *draft).await? {
                     crate::send::ResolvedSend::Ready(job) => Resolved::Ready(Context {
                         operation: step.operation.clone(),
                         path: String::new(),
@@ -454,7 +460,7 @@ impl<'a> Drainer<'a> {
                 },
             );
         }
-        if let Some(resolved) = self.resolve_draft(connection, step)? {
+        if let Some(resolved) = self.resolve_draft(connection, step).await? {
             return Ok(resolved);
         }
         if matches!(
@@ -476,7 +482,8 @@ impl<'a> Drainer<'a> {
             // (#940, #531).
             let snapshot = match step.operation {
                 Operation::CrossAccountRemove { .. } => OperationQueueRepository::new(connection)
-                    .get(step.head())?
+                    .get(step.head())
+                    .await?
                     .and_then(|row| row.source_remote_id),
                 _ => None,
             };
@@ -507,7 +514,7 @@ impl<'a> Drainer<'a> {
         // The message is read once: it carries both the mailbox a flag change
         // applies to and the UID every message operation needs.
         let message = match step.target {
-            OperationTarget::Message(id) => MessageRepository::new(connection).get(id)?,
+            OperationTarget::Message(id) => MessageRepository::new(connection).get(id).await?,
             _ => None,
         };
 
@@ -550,7 +557,8 @@ impl<'a> Drainer<'a> {
                 let snapshot = match &step.operation {
                     Operation::Move { .. } | Operation::Delete { .. } => {
                         OperationQueueRepository::new(connection)
-                            .get(step.head())?
+                            .get(step.head())
+                            .await?
                             .and_then(|row| row.source_remote_id)
                     }
                     _ => None,
@@ -572,7 +580,7 @@ impl<'a> Drainer<'a> {
         };
 
         let mailboxes = MailboxRepository::new(connection);
-        let Some(source) = mailboxes.get(mailbox)? else {
+        let Some(source) = mailboxes.get(mailbox).await? else {
             return Ok(Resolved::Impossible(format!(
                 "mailbox {} is no longer in the local store",
                 mailbox.get()
@@ -580,7 +588,7 @@ impl<'a> Drainer<'a> {
         };
         let destination = match destination {
             None => None,
-            Some(id) => match mailboxes.get(id)? {
+            Some(id) => match mailboxes.get(id).await? {
                 Some(mailbox) => Some(mailbox.path),
                 None => {
                     return Ok(Resolved::Impossible(format!(
@@ -608,13 +616,17 @@ impl<'a> Drainer<'a> {
     /// Split out rather than folded into [`Drainer::resolve`]'s match because
     /// neither names a message: a draft has no row in `messages` and, in the
     /// discard case, no row anywhere at all by the time this runs.
-    fn resolve_draft(&self, connection: &Connection, step: &Step) -> Result<Option<Resolved>> {
+    async fn resolve_draft(
+        &self,
+        connection: &Connection,
+        step: &Step,
+    ) -> Result<Option<Resolved>> {
         let resolved = match (&step.operation, step.target) {
             (Operation::SaveDraft { mailbox }, OperationTarget::Draft(draft)) => {
-                crate::drafts::resolve_save(connection, self.blobs, draft, *mailbox)?
+                crate::drafts::resolve_save(connection, self.blobs, draft, *mailbox).await?
             }
             (Operation::DiscardDraft { mailbox, remote_id }, _) => {
-                crate::drafts::resolve_discard(connection, *mailbox, remote_id.clone())?
+                crate::drafts::resolve_discard(connection, *mailbox, remote_id.clone()).await?
             }
             // A draft operation whose target is not a draft is a row written
             // by hand or by a newer Postio; it names nothing this build can
@@ -645,7 +657,7 @@ impl<'a> Drainer<'a> {
     }
 
     /// Writes an outcome back onto every row behind a step.
-    fn settle(
+    async fn settle(
         &self,
         connection: &Connection,
         step: &Step,
@@ -659,7 +671,7 @@ impl<'a> Drainer<'a> {
         match outcome {
             Outcome::Applied => {
                 for id in &step.rows {
-                    queue.mark_done(*id, now)?;
+                    queue.mark_done(*id, now).await?;
                 }
                 report.applied += rows;
             }
@@ -667,26 +679,28 @@ impl<'a> Drainer<'a> {
                 // Settled, not failed: there was nothing for the server to do.
                 // The reason is recorded so it stays explicable in a bug report.
                 for id in &step.rows {
-                    queue.mark_done(*id, now)?;
-                    queue.note(*id, &reason)?;
+                    queue.mark_done(*id, now).await?;
+                    queue.note(*id, &reason).await?;
                 }
                 report.obsolete += rows;
             }
             Outcome::Retry { reason, after } => {
-                let attempts = self.attempts(connection, step)? + 1;
+                let attempts = self.attempts(connection, step).await? + 1;
                 if self.policy.is_exhausted(attempts) {
                     let reason = format!("{reason} (gave up after {attempts} attempts)");
-                    self.fail(connection, &queue, step, &reason, now, report)?;
+                    self.fail(connection, &queue, step, &reason, now, report)
+                        .await?;
                 } else {
                     let retry_at = self.policy.next_attempt_at(now, attempts, after);
                     for id in &step.rows {
-                        queue.defer(*id, retry_at, &reason)?;
+                        queue.defer(*id, retry_at, &reason).await?;
                     }
                     report.deferred += rows;
                 }
             }
             Outcome::Failed { reason } => {
-                self.fail(connection, &queue, step, &reason, now, report)?;
+                self.fail(connection, &queue, step, &reason, now, report)
+                    .await?;
             }
             Outcome::Uncertain { reason } => {
                 // Settled, and deliberately not retried: the payload may
@@ -695,8 +709,8 @@ impl<'a> Drainer<'a> {
                 // queue's work here is over either way -- what is unresolved
                 // is the *message*, which the draft's own state carries.
                 for id in &step.rows {
-                    queue.mark_done(*id, now)?;
-                    queue.note(*id, &reason)?;
+                    queue.mark_done(*id, now).await?;
+                    queue.note(*id, &reason).await?;
                 }
                 report.uncertain.push(FailedOperation {
                     rows: step.rows.clone(),
@@ -709,7 +723,7 @@ impl<'a> Drainer<'a> {
         Ok(())
     }
 
-    fn fail(
+    async fn fail(
         &self,
         connection: &Connection,
         queue: &OperationQueueRepository<'_>,
@@ -719,7 +733,7 @@ impl<'a> Drainer<'a> {
         report: &mut DrainReport,
     ) -> Result<()> {
         for id in &step.rows {
-            queue.mark_failed(*id, now, reason)?;
+            queue.mark_failed(*id, now, reason).await?;
         }
         // A send that has given up has to say so on the draft as well.
         //
@@ -744,6 +758,7 @@ impl<'a> Drainer<'a> {
         if let postio_model::Operation::Send { draft } = step.operation
             && let Err(error) = postio_storage::repository::DraftRepository::new(connection)
                 .set_state(draft, postio_model::DraftState::Failed)
+                .await
         {
             tracing::warn!(%error, "a send gave up but the draft could not be marked");
         }
@@ -760,11 +775,11 @@ impl<'a> Drainer<'a> {
     ///
     /// The most of any of them, so a folded batch backs off on its worst member
     /// rather than its luckiest.
-    fn attempts(&self, connection: &Connection, step: &Step) -> Result<u32> {
+    async fn attempts(&self, connection: &Connection, step: &Step) -> Result<u32> {
         let queue = OperationQueueRepository::new(connection);
         let mut attempts = 0;
         for id in &step.rows {
-            if let Some(row) = queue.get(*id)? {
+            if let Some(row) = queue.get(*id).await? {
                 attempts = attempts.max(row.attempts);
             }
         }

@@ -24,6 +24,7 @@ mod executor;
 mod group_filter;
 mod header_index;
 mod header_index_size;
+mod ranking_weights;
 mod schema_upgrade;
 mod search_statement_budget;
 mod startup_index_budget;

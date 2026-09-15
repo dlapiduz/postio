@@ -88,18 +88,19 @@ fn cpu() -> Duration {
 }
 
 /// Page deep into `mailbox` and back, with the cache set to `kib`.
-fn sweep(
-    database: &postio_storage::Database,
+async fn sweep(
+    database: &postio_storage::Store,
     mailbox: postio_model::MailboxId,
     kib: i64,
 ) -> (Duration, usize) {
-    let connection = database.connection().expect("a connection");
+    let connection = database.connect().await.expect("a connection");
     connection
-        .pragma_update(None, "cache_size", -kib)
+        .execute(&format!("PRAGMA cache_size = {}", -kib), ())
+        .await
         .expect("set the cache");
     // So each size starts from the same place rather than inheriting the last
     // one's pages -- without this the sweep measures the order it ran in.
-    let _ = connection.pragma_update(None, "shrink_memory", 1i64);
+    let _ = connection.execute("PRAGMA shrink_memory", ()).await;
 
     let before = cpu();
     let mut seen = 0usize;
@@ -107,6 +108,7 @@ fn sweep(
         for offset in (0..80_000).step_by(500) {
             seen += MessageRepository::new(&connection)
                 .page_at(&ListQuery::mailbox(mailbox), offset)
+                .await
                 .expect("a page")
                 .len();
         }
@@ -114,10 +116,10 @@ fn sweep(
     (cpu().saturating_sub(before), seen)
 }
 
-#[test]
-fn a_cache_below_the_working_set_costs_cpu() {
-    let database = test_support::memory();
-    let report = seed_large(&database, 11, MESSAGES);
+#[tokio::test]
+async fn a_cache_below_the_working_set_costs_cpu() {
+    let database = test_support::memory().await;
+    let report = seed_large(&database, 11, MESSAGES).await;
     // The inbox: `seed_large` weights most of its messages there.
     let mailbox = report
         .mailboxes
@@ -131,7 +133,7 @@ fn a_cache_below_the_working_set_costs_cpu() {
     let started = Instant::now();
     let mut burned = Vec::new();
     for kib in SIZES {
-        let (cost, seen) = sweep(&database, mailbox, kib);
+        let (cost, seen) = sweep(&database, mailbox, kib).await;
         assert!(seen > 0, "the workload read nothing at {kib} KiB");
         eprintln!("cache {kib:>7} KiB -> {cost:?}");
         burned.push(cost);

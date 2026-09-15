@@ -55,6 +55,7 @@ use postio_gtk::window::Window;
 use postio_gtk::{app, fonts, style};
 use postio_model::TransportSecurity;
 use postio_session::{Wiring, actions};
+use postio_storage::bind;
 use postio_storage::repository::AccountRepository;
 use postio_storage::{BlobStore, test_support};
 
@@ -62,19 +63,20 @@ use postio_storage::{BlobStore, test_support};
 ///
 /// Phase 3 identifies the message it delivered rather than counting rows —
 /// see there for why.
-fn id_of(
-    database: &postio_storage::Database,
+async fn id_of(
+    database: &postio_storage::Store,
     rfc_message_id: &str,
 ) -> Option<postio_model::MessageId> {
-    let connection = database.connection().ok()?;
-    connection
-        .query_row(
-            "SELECT id FROM messages WHERE rfc_message_id = ?1 AND deleted_locally = 0",
-            [rfc_message_id],
-            |row| row.get::<_, i64>(0),
-        )
-        .ok()
-        .map(postio_model::MessageId::new)
+    let connection = database.connect().await.ok()?;
+    postio_storage::sql::one(
+        &connection,
+        "SELECT id FROM messages WHERE rfc_message_id = ?1 AND deleted_locally = 0",
+        bind![rfc_message_id],
+        |row| postio_storage::sql::RowExt::col::<i64>(row, 0),
+    )
+    .await
+    .ok()
+    .map(postio_model::MessageId::new)
 }
 
 /// The corpus messages the server starts with, and the list must show.
@@ -87,8 +89,12 @@ const DELIVERED_MESSAGE_ID: &str = "<harbour-dev.20260302T081200.a1@lists.exampl
 const INBOX_PATH: &str = "INBOX";
 const ARCHIVE_PATH: &str = "Archive";
 
-#[test]
-fn a_keystroke_reaches_the_server_and_a_delivery_reaches_the_list() {
+/// `multi_thread`, and the flavour is load-bearing:
+/// `postio_session::blocking::now` is how a synchronous GTK callback reads the
+/// store, and it reaches for `block_in_place`, which panics outright on a
+/// current_thread runtime. `app_suite`'s `gtk_case` is the same shape.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_keystroke_reaches_the_server_and_a_delivery_reaches_the_list() {
     let state_dir = tempfile::tempdir().expect("a state directory");
     // SAFETY: first statement of a single-threaded test.
     unsafe { std::env::set_var("XDG_STATE_HOME", state_dir.path()) };
@@ -113,39 +119,41 @@ fn a_keystroke_reaches_the_server_and_a_delivery_reaches_the_list() {
 
     // ── the server: real wire bytes on an ephemeral loopback port ─────────
     //
-    // Its own runtime, kept for the life of the test: the server's accept
-    // loop and sessions live on it, while the engine brings a runtime of its
-    // own — exactly as the app and a real server own their halves.
-    let server_runtime = tokio::runtime::Runtime::new().expect("a server runtime");
-    let server = server_runtime.block_on(
-        TestServer::builder()
-            .account("test@example.com")
-            .password("hunter2")
-            .mailbox(TestMailbox::new("INBOX").corpus(SEEDED))
-            .mailbox(TestMailbox::new("Archive").attributes(["\\Archive"]))
-            .start(),
-    );
+    // On this test's own runtime. The server's accept loop and sessions live
+    // there while the engine brings a runtime of its own -- exactly as the app
+    // and a real server own their halves, which is what this used to build a
+    // third runtime to say. It cannot any more: the test is async now, so
+    // `Runtime::new().block_on()` here is a runtime started from inside one.
+    let server = TestServer::builder()
+        .account("test@example.com")
+        .password("hunter2")
+        .mailbox(TestMailbox::new("INBOX").corpus(SEEDED))
+        .mailbox(TestMailbox::new("Archive").attributes(["\\Archive"]))
+        .start()
+        .await;
 
     // ── the store: empty except the account row pointing at that server ───
     //
     // Nothing else is seeded. Every mailbox and message the window will show
     // has to arrive over the wire, which is the point.
-    let database = test_support::memory();
+    let database = test_support::memory().await;
     {
-        let connection = database.connection().expect("a connection");
-        let mut account = test_support::account(&connection);
+        let connection = database.connect().await.expect("a connection");
+        let mut account = test_support::account(&connection).await;
         account.incoming.host = server.addr().ip().to_string();
         account.incoming.port = server.addr().port();
         account.incoming.security = TransportSecurity::None;
         account.incoming.username = server.account().to_owned();
         AccountRepository::new(&connection)
             .update(&mut account)
+            .await
             .expect("the account row points at the test server");
     }
     let secrets: Arc<dyn SecretStore> = Arc::new(MemorySecretStore::new());
     let key = AccountKey::new("test@example.com");
-    server_runtime
-        .block_on(secrets.store(&key, &Password::new("hunter2")))
+    secrets
+        .store(&key, &Password::new("hunter2"))
+        .await
         .expect("the memory store accepts a password");
 
     let directory = tempfile::tempdir().expect("a blob directory");
@@ -181,6 +189,7 @@ fn a_keystroke_reaches_the_server_and_a_delivery_reaches_the_list() {
     while glib::MainContext::default().iteration(false) {}
 
     let feeds = feed_the_window(&window, &wiring)
+        .await
         .expect("the store has an account")
         .feeds;
     commands::install(
@@ -211,22 +220,28 @@ fn a_keystroke_reaches_the_server_and_a_delivery_reaches_the_list() {
 
     // The production entry: reads the account row, builds the real connector
     // and pool, spawns the engine, starts the watch.
-    start_syncing(&window, &wiring);
+    start_syncing(&window, &wiring).await;
 
     // ── 1. wire → window: the first sync fills the list ───────────────────
     let list = window.list();
     let deadline = Instant::now() + postio_test_support::scaled(Duration::from_secs(120));
     while Instant::now() < deadline && list.model().n_items() != SEEDED.len() as u32 {
         while glib::MainContext::default().iteration(false) {}
-        std::thread::sleep(Duration::from_millis(20));
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
     }
     if list.model().n_items() != SEEDED.len() as u32 {
-        let connection = database.connection().expect("a connection");
-        let messages: i64 = connection
-            .query_row("SELECT count(*) FROM messages", [], |r| r.get(0))
+        let connection = database.connect().await.expect("a connection");
+        let messages: i64 =
+            postio_storage::sql::one(&connection, "SELECT count(*) FROM messages", (), |r| {
+                postio_storage::sql::RowExt::col(r, 0)
+            })
+            .await
             .unwrap_or(-1);
-        let mailboxes: i64 = connection
-            .query_row("SELECT count(*) FROM mailboxes", [], |r| r.get(0))
+        let mailboxes: i64 =
+            postio_storage::sql::one(&connection, "SELECT count(*) FROM mailboxes", (), |r| {
+                postio_storage::sql::RowExt::col(r, 0)
+            })
+            .await
             .unwrap_or(-1);
         panic!(
             "first sync never reached the list: server saw {} commands (first: {:?}), store holds {mailboxes} mailboxes / {messages} messages, list shows {} rows; sidebar default_mailbox={:?} selected={:?} list feed mailbox={:?}",
@@ -256,9 +271,10 @@ fn a_keystroke_reaches_the_server_and_a_delivery_reaches_the_list() {
         .cursor_id()
         .expect("`j` should put the cursor on a synced row");
     let uid = {
-        let connection = database.connection().expect("a connection");
+        let connection = database.connect().await.expect("a connection");
         postio_storage::repository::MessageRepository::new(&connection)
             .get(focused)
+            .await
             .expect("a read")
             .expect("the cursor row is in the store")
             .server
@@ -281,24 +297,26 @@ fn a_keystroke_reaches_the_server_and_a_delivery_reaches_the_list() {
     let deadline = Instant::now() + postio_test_support::scaled(Duration::from_secs(120));
     while Instant::now() < deadline && server.uids(ARCHIVE_PATH).is_empty() {
         while glib::MainContext::default().iteration(false) {}
-        std::thread::sleep(Duration::from_millis(20));
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
     }
     if server.uids(ARCHIVE_PATH).is_empty() {
-        let connection = database.connection().expect("a connection");
-        let states: String = connection
-            .prepare("SELECT op_type, state, coalesce(last_error,'-') FROM operation_queue")
-            .and_then(|mut st| {
-                st.query_map([], |r| {
-                    Ok(format!(
-                        "{}:{}:{}",
-                        r.get::<_, String>(0)?,
-                        r.get::<_, String>(1)?,
-                        r.get::<_, String>(2)?
-                    ))
-                })
-                .map(|rows| rows.filter_map(Result::ok).collect::<Vec<_>>().join(", "))
-            })
-            .unwrap_or_else(|e| format!("? ({e})"));
+        let connection = database.connect().await.expect("a connection");
+        let states: String = postio_storage::sql::all(
+            &connection,
+            "SELECT op_type, state, coalesce(last_error,'-') FROM operation_queue",
+            (),
+            |row| {
+                Ok(format!(
+                    "{}:{}:{}",
+                    postio_storage::sql::RowExt::col::<String>(row, 0)?,
+                    postio_storage::sql::RowExt::col::<String>(row, 1)?,
+                    postio_storage::sql::RowExt::col::<String>(row, 2)?
+                ))
+            },
+        )
+        .await
+        .map(|rows| rows.join(", "))
+        .unwrap_or_else(|error| format!("? ({error})"));
         let tail: Vec<String> = server.commands().into_iter().rev().take(6).collect();
         panic!(
             "the archive never landed on the server: queue [{states}], server INBOX={:?} Archive={:?}, last commands={tail:?}",
@@ -339,7 +357,7 @@ fn a_keystroke_reaches_the_server_and_a_delivery_reaches_the_list() {
     // archive is doing in the background.
     let commands_before = server.commands().len();
     assert!(
-        id_of(&database, DELIVERED_MESSAGE_ID).is_none(),
+        id_of(&database, DELIVERED_MESSAGE_ID).await.is_none(),
         "the fixture phase 3 delivers is already in the store, so its arrival \
          would prove nothing"
     );
@@ -349,16 +367,19 @@ fn a_keystroke_reaches_the_server_and_a_delivery_reaches_the_list() {
     let mut delivered = None;
     while Instant::now() < deadline {
         while glib::MainContext::default().iteration(false) {}
-        delivered = id_of(&database, DELIVERED_MESSAGE_ID);
+        delivered = id_of(&database, DELIVERED_MESSAGE_ID).await;
         if delivered.is_some_and(|id| list.model().position_of(id).is_some()) {
             break;
         }
-        std::thread::sleep(Duration::from_millis(20));
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
     }
     if !delivered.is_some_and(|id| list.model().position_of(id).is_some()) {
-        let connection = database.connection().expect("a connection");
-        let local: i64 = connection
-            .query_row("SELECT count(*) FROM messages", [], |r| r.get(0))
+        let connection = database.connect().await.expect("a connection");
+        let local: i64 =
+            postio_storage::sql::one(&connection, "SELECT count(*) FROM messages", (), |r| {
+                postio_storage::sql::RowExt::col(r, 0)
+            })
+            .await
             .unwrap_or(-1);
         let after: Vec<String> = server
             .commands()
@@ -383,8 +404,11 @@ fn a_keystroke_reaches_the_server_and_a_delivery_reaches_the_list() {
     // this in the same place, right after the GTK loop returns.
     postio_runtime::stop_retained();
 
-    // The server's runtime must not block teardown on its live sessions.
-    server_runtime.shutdown_background();
+    // The server's sessions used to be on a runtime of their own, shut down
+    // in the background here so live connections could not hold teardown up.
+    // They are on this test's runtime now, which `#[tokio::test]` drops when
+    // the body returns -- and dropping a runtime does not wait for detached
+    // tasks either, so the property is unchanged.
 
     // The window this test built joins GTK's toplevel list at
     // construction and stays there, holding a WebProcess, until it is

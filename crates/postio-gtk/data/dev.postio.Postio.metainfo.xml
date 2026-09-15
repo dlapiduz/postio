@@ -10,10 +10,13 @@
   </developer>
   <description>
     <p>
-      Postio is a local-first email client for IMAP and SMTP accounts. Mail
-      is stored on your machine, searched instantly offline, and read the
-      way a native GNOME application should feel: fast, keyboard-first, and
-      quiet about what it sends over the network.
+      Postio is a local-first email client for IMAP, Gmail and JMAP
+      accounts. Mail is stored on your machine in an encrypted store with
+      its own full-text index, searched instantly offline, and read the way
+      a native GNOME application should feel: fast, keyboard-first, and
+      quiet about what it sends over the network. Several accounts share one
+      unified inbox; every action lands locally first and reaches the server
+      in the background, so it works the same offline.
     </p>
     <p>
       Nothing leaves this machine that you did not ask for: remote images
@@ -22,10 +25,48 @@
     </p>
   </description>
   <launchable type="desktop-id">dev.postio.Postio.desktop</launchable>
-  <url type="homepage">https://example.com/postio</url>
-  <url type="bugtracker">https://example.com/postio/issues</url>
+  <url type="homepage">https://dlapiduz.github.io/postio/</url>
+  <url type="help">https://dlapiduz.github.io/postio/docs/</url>
+  <url type="bugtracker">https://github.com/dlapiduz/postio/issues</url>
+  <url type="vcs-browser">https://github.com/dlapiduz/postio</url>
   <content_rating type="oars-1.1"/>
+  <!-- The same renders the landing page shows, served from it. They are
+       fixture mail on reserved domains, drawn by `cargo run -p postio-app
+       --example shot` over a seeded store; regenerate them with the app. -->
+  <screenshots>
+    <screenshot type="default">
+      <image>https://dlapiduz.github.io/postio/assets/img/conversation.png</image>
+      <caption>Reading a conversation: folders, the message list and the thread, driven from the keyboard</caption>
+    </screenshot>
+    <screenshot>
+      <image>https://dlapiduz.github.io/postio/assets/img/search.png</image>
+      <caption>Search with scope and refinement panels, and a matched message previewed with its hits highlighted</caption>
+    </screenshot>
+    <screenshot>
+      <image>https://dlapiduz.github.io/postio/assets/img/bulk-select.png</image>
+      <caption>Three messages selected, with the list header turned into the action bar</caption>
+    </screenshot>
+    <screenshot>
+      <image>https://dlapiduz.github.io/postio/assets/img/compose.png</image>
+      <caption>Replying inside the reading pane, with the quoted message folded under the reply</caption>
+    </screenshot>
+    <screenshot>
+      <image>https://dlapiduz.github.io/postio/assets/img/inbox-dark.png</image>
+      <caption>The same inbox in the dark theme</caption>
+    </screenshot>
+  </screenshots>
   <releases>
+    <release version="0.3.0" date="2026-09-11" type="development">
+      <description>
+        <p>The multiple-accounts and OAuth milestone. Its tag was cut on 2026-09-11, but the release workflow failed before publishing anything, so no bundle was ever shipped under this number; 0.4.0 is the first release that carries this work.</p>
+        <ul>
+          <li>Several accounts, each synced by its own engine, and a unified inbox that groups threads across accounts at read time.</li>
+          <li>Moving mail between accounts as a safe saga, and search scoped to one account with account:.</li>
+          <li>OAuth 2 sign-in through the system browser with PKCE; OAUTHBEARER and XOAUTH2 on IMAP and SMTP; automatic re-authentication when a refresh grant expires.</li>
+          <li>Gmail REST and JMAP backends behind the same MailBackend seam as IMAP.</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.2.0" date="2026-09-02">
       <description>
         <p>

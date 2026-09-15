@@ -20,30 +20,31 @@ use postio_storage::{BlobStore, test_support};
 use crate::harness;
 
 use harness::BlobDir;
+use postio_storage::bind;
 
 /// An engine over a seeded database and a mock server, with an event stream to
 /// read what it announced.
-fn engine() -> (
+async fn engine() -> (
     Engine,
-    postio_storage::Database,
+    postio_storage::Store,
     postio_storage::seed::SeedReport,
     EventStream,
     BlobDir,
 ) {
-    let (engine, database, report, events, _backend, directory) = engine_with_backend();
+    let (engine, database, report, events, _backend, directory) = engine_with_backend().await;
     (engine, database, report, events, directory)
 }
 
 /// As [`engine`], keeping the mock so a test can make it fail.
-fn engine_with_backend() -> (
+async fn engine_with_backend() -> (
     Engine,
-    postio_storage::Database,
+    postio_storage::Store,
     postio_storage::seed::SeedReport,
     EventStream,
     Arc<MockBackend>,
     BlobDir,
 ) {
-    engine_with(|_| {})
+    engine_with(|_| {}).await
 }
 
 /// Like `engine_with_backend`, but `prepare` runs on the mock **before**
@@ -54,17 +55,17 @@ fn engine_with_backend() -> (
 /// expected Err. Observed exactly once, during a gate run whose machine load
 /// collapsed mid-suite (#330). A fault that precedes the spawn leaves no
 /// schedule that can connect first.
-fn engine_with(
+async fn engine_with(
     prepare: impl FnOnce(&MockBackend),
 ) -> (
     Engine,
-    postio_storage::Database,
+    postio_storage::Store,
     postio_storage::seed::SeedReport,
     EventStream,
     Arc<MockBackend>,
     BlobDir,
 ) {
-    engine_with_backfill(prepare, Default::default())
+    engine_with_backfill(prepare, Default::default()).await
 }
 
 /// As [`engine_with`], with the backfill policy stated rather than defaulted.
@@ -74,19 +75,19 @@ fn engine_with(
 /// and the interactive one can arrive to find nothing left to do. See
 /// `a_body_the_user_asked_for_is_indexed_as_well_as_stored`, which is where
 /// that race was observed.
-fn engine_with_backfill(
+async fn engine_with_backfill(
     prepare: impl FnOnce(&MockBackend),
     backfill: postio_sync::BackfillPolicy,
 ) -> (
     Engine,
-    postio_storage::Database,
+    postio_storage::Store,
     postio_storage::seed::SeedReport,
     EventStream,
     Arc<MockBackend>,
     BlobDir,
 ) {
-    let database = test_support::memory();
-    let report = seed_small(&database, 11);
+    let database = test_support::memory().await;
+    let report = seed_small(&database, 11).await;
     let directory = tempfile::tempdir().expect("a blob directory");
     let blobs = BlobStore::open(
         directory.path().to_path_buf(),
@@ -125,7 +126,7 @@ fn engine_with_backfill(
 
 #[tokio::test]
 async fn an_empty_queue_drains_to_nothing() {
-    let (engine, _database, _report, _events, _directory) = engine();
+    let (engine, _database, _report, _events, _directory) = engine().await;
 
     let summary = engine
         .drain()
@@ -148,10 +149,10 @@ async fn a_drain_settles_the_rows_it_finds() {
     // `postio-sync`'s to test and it does; the mock here holds no matching
     // message, so this row settles as obsolete rather than applied, which is
     // still the drain doing its job.
-    let (engine, database, report, _events, _directory) = engine();
+    let (engine, database, report, _events, _directory) = engine().await;
     let inbox = report.mailbox(MailboxRole::Inbox).expect("an inbox");
 
-    let message = queue_a_flag_change(&database, &report, inbox.id);
+    let message = queue_a_flag_change(&database, &report, inbox.id).await;
     let _ = message;
 
     engine.drain().await.expect("a drain pass");
@@ -160,9 +161,13 @@ async fn a_drain_settles_the_rows_it_finds() {
     // engine drains on its own when the link comes up, so this explicit one
     // may well find the queue already empty. Before any of this existed, the
     // row sat pending for ever.
-    let still_pending = with_store(&database, "reading the queue", |connection| {
-        OperationQueueRepository::new(connection).pending(report.account.id, Utc::now())
-    });
+    let still_pending = with_store(&database, "reading the queue", async |connection| {
+        let connection = &connection;
+        OperationQueueRepository::new(connection)
+            .pending(report.account.id, Utc::now())
+            .await
+    })
+    .await;
     assert!(
         still_pending.is_empty(),
         "the row was left pending after a drain: {still_pending:?}"
@@ -173,7 +178,7 @@ async fn a_drain_settles_the_rows_it_finds() {
 async fn seeding_the_backfill_finds_bodies_worth_having() {
     // postio-26c: `seed` existed and nothing called it, so no body was ever
     // fetched for a message the user had not opened.
-    let (engine, _database, report, _events, _directory) = engine();
+    let (engine, _database, report, _events, _directory) = engine().await;
     let inbox = report.mailbox(MailboxRole::Inbox).expect("an inbox");
 
     let queued = engine
@@ -193,10 +198,10 @@ async fn a_seeded_body_is_actually_fetched() {
     // one, so every message stayed headers-only for ever. The loop has to
     // take a claim, fetch it, and report what became of it — otherwise the
     // queue grows and the reading pane shows nothing.
-    let (engine, database, report, _events, _directory) = engine();
+    let (engine, database, report, _events, _directory) = engine().await;
     let inbox = report.mailbox(MailboxRole::Inbox).expect("an inbox");
 
-    let candidates = give_the_inbox_uids(&database, inbox.id);
+    let candidates = give_the_inbox_uids(&database, inbox.id).await;
 
     let queued = engine
         .seed_backfill(inbox.id, 10)
@@ -253,10 +258,10 @@ async fn a_backfill_says_how_far_it_has_got_without_being_asked() {
     // bodies, not the list -- reached the frontend as no event at all. The
     // sidebar drew `idle`, which is worse than silence: a user watching
     // `idle` while the log fetches bodies concludes it is stuck.
-    let (engine, database, report, events, _directory) = engine();
+    let (engine, database, report, events, _directory) = engine().await;
     let inbox = report.mailbox(MailboxRole::Inbox).expect("an inbox");
 
-    let candidates = give_the_inbox_uids(&database, inbox.id);
+    let candidates = give_the_inbox_uids(&database, inbox.id).await;
 
     let queued = engine
         .seed_backfill(inbox.id, 10)
@@ -355,14 +360,16 @@ async fn a_sync_pass_puts_the_servers_mail_in_the_local_store() {
     // postio-uif. `sync_mailbox` and `resync_mailbox` were written, tested
     // and never called, so the local store only ever held what something
     // else had put there and a fresh account stayed empty for ever.
-    let database = test_support::memory();
+    let database = test_support::memory().await;
     let account =
-        postio_storage::test_support::account(&database.connection().expect("a connection"));
+        postio_storage::test_support::account(&database.connect().await.expect("a connection"))
+            .await;
     let mailbox = {
-        let connection = database.connection().expect("a connection");
+        let connection = database.connect().await.expect("a connection");
         let mut mailbox = postio_model::Mailbox::new(account.id, "INBOX", Some('/'));
         postio_storage::repository::MailboxRepository::new(&connection)
             .create(&mut mailbox)
+            .await
             .expect("the folder is created");
         mailbox
     };
@@ -374,7 +381,7 @@ async fn a_sync_pass_puts_the_servers_mail_in_the_local_store() {
         "the server had mail and none of it arrived: {summary:?}"
     );
 
-    let stored = stored_in(&database, mailbox.id);
+    let stored = stored_in(&database, mailbox.id).await;
     assert_eq!(
         stored, summary.inserted,
         "the pass said it wrote rows the store does not have"
@@ -406,14 +413,16 @@ async fn a_resync_that_finds_new_mail_announces_it() {
     // postio-du6: `Event::NewMail` existed, was consumed by
     // `postio_gtk::feed`, and nothing ever emitted it -- the trigger a
     // desktop notification needs simply never fired.
-    let database = test_support::memory();
+    let database = test_support::memory().await;
     let account =
-        postio_storage::test_support::account(&database.connection().expect("a connection"));
+        postio_storage::test_support::account(&database.connect().await.expect("a connection"))
+            .await;
     let mailbox = {
-        let connection = database.connection().expect("a connection");
+        let connection = database.connect().await.expect("a connection");
         let mut mailbox = postio_model::Mailbox::new(account.id, "INBOX", Some('/'));
         postio_storage::repository::MailboxRepository::new(&connection)
             .create(&mut mailbox)
+            .await
             .expect("the folder is created");
         mailbox
     };
@@ -463,14 +472,16 @@ async fn mail_arriving_on_a_resync_is_an_arrival_rather_than_a_reload() {
     // The engine knows which this was: `arrived` accounts for every insert,
     // and nothing was updated or re-threaded. A change that can describe
     // itself precisely must not also ask for a reload.
-    let database = test_support::memory();
+    let database = test_support::memory().await;
     let account =
-        postio_storage::test_support::account(&database.connection().expect("a connection"));
+        postio_storage::test_support::account(&database.connect().await.expect("a connection"))
+            .await;
     let mailbox = {
-        let connection = database.connection().expect("a connection");
+        let connection = database.connect().await.expect("a connection");
         let mut mailbox = postio_model::Mailbox::new(account.id, "INBOX", Some('/'));
         postio_storage::repository::MailboxRepository::new(&connection)
             .create(&mut mailbox)
+            .await
             .expect("the folder is created");
         mailbox
     };
@@ -516,14 +527,16 @@ async fn a_finished_sync_queues_the_bodies_it_just_learned_about() {
     // messages missing a body changes, so it is exactly when the backfill is
     // worth seeding again. Seeding anywhere else means fetching bodies for
     // mail that has not arrived, or not fetching them for mail that has.
-    let database = test_support::memory();
+    let database = test_support::memory().await;
     let account =
-        postio_storage::test_support::account(&database.connection().expect("a connection"));
+        postio_storage::test_support::account(&database.connect().await.expect("a connection"))
+            .await;
     let mailbox = {
-        let connection = database.connection().expect("a connection");
+        let connection = database.connect().await.expect("a connection");
         let mut mailbox = postio_model::Mailbox::new(account.id, "INBOX", Some('/'));
         postio_storage::repository::MailboxRepository::new(&connection)
             .create(&mut mailbox)
+            .await
             .expect("the folder is created");
         mailbox
     };
@@ -567,14 +580,16 @@ async fn mail_that_arrives_while_the_app_is_open_turns_up() {
     // postio-e4n. The engine synced when the link came up and never again, so
     // a Postio left open all afternoon showed nothing that arrived during it
     // — which for a mail client is the whole job.
-    let database = test_support::memory();
+    let database = test_support::memory().await;
     let account =
-        postio_storage::test_support::account(&database.connection().expect("a connection"));
+        postio_storage::test_support::account(&database.connect().await.expect("a connection"))
+            .await;
     let mailbox = {
-        let connection = database.connection().expect("a connection");
+        let connection = database.connect().await.expect("a connection");
         let mut mailbox = postio_model::Mailbox::new(account.id, "INBOX", Some('/'));
         postio_storage::repository::MailboxRepository::new(&connection)
             .create(&mut mailbox)
+            .await
             .expect("the folder is created");
         mailbox
     };
@@ -603,7 +618,7 @@ async fn mail_that_arrives_while_the_app_is_open_turns_up() {
 
     let after = tokio::time::timeout(std::time::Duration::from_secs(15), async {
         loop {
-            let count = stored_in(&database, mailbox.id);
+            let count = stored_in(&database, mailbox.id).await;
             if count > before {
                 return count;
             }
@@ -618,7 +633,7 @@ async fn mail_that_arrives_while_the_app_is_open_turns_up() {
 
 #[tokio::test]
 async fn a_message_nobody_has_is_nothing_to_fetch() {
-    let (engine, _database, _report, _events, _directory) = engine();
+    let (engine, _database, _report, _events, _directory) = engine().await;
 
     let wanted = engine
         .request_body(postio_model::ids::MessageId::new(987_654))
@@ -632,7 +647,7 @@ async fn a_message_nobody_has_is_nothing_to_fetch() {
 async fn the_engine_answers_after_the_handle_is_cloned() {
     // Cloning gives another handle to the same thread; both have to work, or
     // the composition root cannot hand one to each surface that needs it.
-    let (engine, _database, _report, _events, _directory) = engine();
+    let (engine, _database, _report, _events, _directory) = engine().await;
     let second = engine.clone();
 
     let (first, second) = tokio::join!(engine.drain(), second.drain());
@@ -652,9 +667,9 @@ async fn a_connection_that_will_not_open_leaves_the_queue_where_it_is() {
     // it races the supervisor's first connection (#330). A server refusing
     // credentials refuses everyone, from the first dial.
     let (engine, database, report, events, _backend, _directory) =
-        engine_with(|backend| backend.fail_all(Fault::AuthFailed));
+        engine_with(|backend| backend.fail_all(Fault::AuthFailed)).await;
     let inbox = report.mailbox(MailboxRole::Inbox).expect("an inbox");
-    let message = queue_a_flag_change(&database, &report, inbox.id);
+    let message = queue_a_flag_change(&database, &report, inbox.id).await;
 
     let error = engine
         .drain()
@@ -662,9 +677,10 @@ async fn a_connection_that_will_not_open_leaves_the_queue_where_it_is() {
         .expect_err("the credentials were refused");
     assert!(!error.message().is_empty());
 
-    let connection = database.connection().expect("a connection");
+    let connection = database.connect().await.expect("a connection");
     let pending = OperationQueueRepository::new(&connection)
         .pending(report.account.id, Utc::now())
+        .await
         .expect("the queue reads");
     assert_eq!(
         pending.len(),
@@ -700,7 +716,7 @@ async fn a_refused_password_blocks_and_a_new_one_unblocks() {
     // cached healthy session and an empty queue makes no backend call at
     // all -- Ok(empty) where this test expects Err (#330).
     let (engine, _database, _report, events, backend, _directory) =
-        engine_with(|backend| backend.fail_all(Fault::AuthFailed));
+        engine_with(|backend| backend.fail_all(Fault::AuthFailed)).await;
 
     engine
         .drain()
@@ -740,9 +756,9 @@ async fn a_connection_that_dies_mid_drain_parks_the_link_at_once() {
     // already cost the user one action; waiting for the next poll to admit it
     // costs another. Whatever hit the broken connection tells the supervisor
     // directly.
-    let (engine, database, report, _events, backend, _directory) = engine_with_backend();
+    let (engine, database, report, _events, backend, _directory) = engine_with_backend().await;
     let inbox = report.mailbox(MailboxRole::Inbox).expect("an inbox");
-    queue_a_flag_change(&database, &report, inbox.id);
+    queue_a_flag_change(&database, &report, inbox.id).await;
 
     // Connect, so the link is genuinely up first.
     engine.drain().await.expect("a first pass connects");
@@ -751,7 +767,7 @@ async fn a_connection_that_dies_mid_drain_parks_the_link_at_once() {
         "the link should be up before this test means anything"
     );
 
-    queue_a_flag_change(&database, &report, inbox.id);
+    queue_a_flag_change(&database, &report, inbox.id).await;
     backend.inject(Fault::Disconnect);
     let error = engine.drain().await.expect_err("the session died");
     assert!(!error.message().is_empty());
@@ -769,7 +785,7 @@ async fn no_network_is_not_a_backoff() {
     // there is nothing to retry against, so attempts are not spent and the
     // status line says "offline" rather than counting down to a reconnection
     // that cannot succeed.
-    let (engine, _database, _report, events, _backend, _directory) = engine_with_backend();
+    let (engine, _database, _report, events, _backend, _directory) = engine_with_backend().await;
 
     let link = engine
         .set_network(NetworkState::Down)
@@ -800,13 +816,10 @@ async fn no_network_is_not_a_backoff() {
 }
 
 /// Wait until the store stops changing, and say where it settled.
-async fn settle(
-    database: &postio_storage::Database,
-    mailbox: postio_model::ids::MailboxId,
-) -> usize {
+async fn settle(database: &postio_storage::Store, mailbox: postio_model::ids::MailboxId) -> usize {
     let mut last = usize::MAX;
     for _ in 0..100 {
-        let count = stored_in(database, mailbox);
+        let count = stored_in(database, mailbox).await;
         if count == last {
             return count;
         }
@@ -818,24 +831,28 @@ async fn settle(
 
 /// Run `work` against the store, retrying while it is locked.
 ///
-/// The engine writes while these tests read and write, and an in-memory
-/// database uses SQLite's *shared cache* — where meeting a writer gives
-/// `SQLITE_LOCKED`, which `busy_timeout` does not cover, unlike the
-/// `SQLITE_BUSY` a real installation would see. A file in WAL mode never hits
-/// this; it is the price of a database that costs nothing to create, and it
-/// belongs in the tests rather than in the pragmas.
-fn with_store<T>(
-    database: &postio_storage::Database,
-    what: &str,
-    work: impl Fn(&postio_storage::PooledConnection) -> postio_storage::Result<T>,
-) -> T {
+/// The engine writes while these tests read and write, and a database this
+/// small can meet a writer on a read. The retry belongs in the tests rather
+/// than in the pragmas: a real installation is a file in WAL mode with a
+/// `busy_timeout` behind it, and widening that to cover a test fixture would
+/// be widening it for everyone.
+///
+/// `work` is an async closure taking the connection by value. It cannot borrow
+/// the checkout instead: an async closure returning a future that borrows its
+/// argument needs a lifetime this signature has no way to name, and the
+/// checkout is a cheap handle -- `Clone` over the engine's own `Arc` -- so
+/// handing it over costs nothing.
+async fn with_store<T, F, Fut>(database: &postio_storage::Store, what: &str, work: F) -> T
+where
+    F: Fn(postio_storage::Checkout) -> Fut,
+    Fut: std::future::Future<Output = postio_storage::Result<T>>,
+{
     for _ in 0..100 {
-        let connection = database.connection().expect("a connection");
-        match work(&connection) {
+        let connection = database.connect().await.expect("a connection");
+        match work(connection).await {
             Ok(value) => return value,
             Err(_) => {
-                drop(connection);
-                std::thread::sleep(std::time::Duration::from_millis(20));
+                tokio::time::sleep(std::time::Duration::from_millis(20)).await;
             }
         }
     }
@@ -843,16 +860,22 @@ fn with_store<T>(
 }
 
 /// How many messages the local store holds for `mailbox`.
-fn stored_in(database: &postio_storage::Database, mailbox: postio_model::ids::MailboxId) -> usize {
-    with_store(database, "counting messages", |connection| {
+async fn stored_in(
+    database: &postio_storage::Store,
+    mailbox: postio_model::ids::MailboxId,
+) -> usize {
+    with_store(database, "counting messages", async |connection| {
+        let connection = &connection;
         postio_storage::repository::MessageRepository::new(connection)
             .count(&postio_storage::repository::ListQuery {
                 scope: postio_storage::repository::ListScope::Mailbox(mailbox),
                 limit: 0,
                 after: None,
             })
+            .await
             .map(|count| count as usize)
     })
+    .await
 }
 
 /// One more message, of the kind `server` holds.
@@ -869,7 +892,7 @@ fn arriving_message() -> Vec<u8> {
 
 /// An engine over `database`, for a test that builds its own store.
 fn engine_over(
-    database: &postio_storage::Database,
+    database: &postio_storage::Store,
     account: postio_model::ids::AccountId,
     backend: MockBackend,
 ) -> (Engine, EventStream, BlobDir) {
@@ -879,7 +902,7 @@ fn engine_over(
 /// As [`engine_over`], keeping the mock so a test can change what the server
 /// holds while the engine is running.
 fn engine_over_arc(
-    database: &postio_storage::Database,
+    database: &postio_storage::Store,
     account: postio_model::ids::AccountId,
     backend: Arc<MockBackend>,
 ) -> (Engine, EventStream, BlobDir) {
@@ -924,7 +947,7 @@ fn engine_over_arc(
 /// rather than a bare `TempDir`.
 #[tokio::test]
 async fn releasing_the_blob_directory_stops_the_engine_first() {
-    let (_engine, _database, _report, _events, _backend, directory) = engine_with_backend();
+    let (_engine, _database, _report, _events, _backend, directory) = engine_with_backend().await;
     // A handle the harness does not own, so there is still something to ask
     // after the bundle has gone. `Engine::stop` closes the job channel for
     // every handle, not just the last one, which is what makes this readable.
@@ -978,16 +1001,17 @@ fn server() -> MockBackend {
 /// it exists to fill a screenshot, not to stand in for a synced mailbox — and
 /// `needing_backfill` will not offer a message it cannot ask the server for.
 /// A backfill test has to supply that itself.
-fn give_the_inbox_uids(
-    database: &postio_storage::Database,
+async fn give_the_inbox_uids(
+    database: &postio_storage::Store,
     mailbox: postio_model::ids::MailboxId,
 ) -> usize {
-    let connection = database.connection().expect("a connection");
+    let connection = database.connect().await.expect("a connection");
     let touched = connection
         .execute(
             "UPDATE messages SET uid = id, remote_id = '1:' || id WHERE mailbox_id = ?1",
             [mailbox.get()],
         )
+        .await
         .expect("the fixture writes");
     // A fixture that quietly matched nothing is worse than one that fails:
     // the `UPDATE` succeeds, and the test goes on to blame whatever it
@@ -999,34 +1023,38 @@ fn give_the_inbox_uids(
         "the fixture gave uids to no messages at all: mailbox {mailbox} is \
          empty, so nothing after this can mean what it says"
     );
-    touched
+    touched as usize
 }
 
 /// Queue one flag change against the newest message in `mailbox`.
-fn queue_a_flag_change(
-    database: &postio_storage::Database,
+async fn queue_a_flag_change(
+    database: &postio_storage::Store,
     report: &postio_storage::seed::SeedReport,
     mailbox: postio_model::ids::MailboxId,
 ) -> postio_model::ids::MessageId {
-    with_store(database, "queueing a flag change", |connection| {
-        let page = postio_storage::repository::MessageRepository::new(connection).page(
-            &postio_storage::repository::ListQuery {
+    with_store(database, "queueing a flag change", async |connection| {
+        let connection = &connection;
+        let page = postio_storage::repository::MessageRepository::new(connection)
+            .page(&postio_storage::repository::ListQuery {
                 scope: postio_storage::repository::ListScope::Mailbox(mailbox),
                 limit: 1,
                 after: None,
-            },
-        )?;
+            })
+            .await?;
         let message = page.first().expect("the inbox has mail").id;
-        OperationQueueRepository::new(connection).enqueue(
-            report.account.id,
-            OperationTarget::Message(message),
-            &Operation::SetFlags {
-                flags: postio_model::FlagSet::from_iter([postio_model::Flag::Seen]),
-            },
-            Utc::now(),
-        )?;
+        OperationQueueRepository::new(connection)
+            .enqueue(
+                report.account.id,
+                OperationTarget::Message(message),
+                &Operation::SetFlags {
+                    flags: postio_model::FlagSet::from_iter([postio_model::Flag::Seen]),
+                },
+                Utc::now(),
+            )
+            .await?;
         Ok(message)
     })
+    .await
 }
 
 /// What the engine announced, drained without blocking.
@@ -1044,8 +1072,8 @@ async fn a_draft_saved_while_connected_reaches_the_server_without_being_asked() 
     // composer autosaves on the GTK thread and the queue is just a table. So
     // the loop asks, and a draft typed on a machine that never disconnects
     // still goes out. Before this it waited for the next *reconnection*.
-    let database = test_support::memory();
-    let report = seed_small(&database, 12);
+    let database = test_support::memory().await;
+    let report = seed_small(&database, 12).await;
     let drafts_mailbox = report
         .mailbox(MailboxRole::Drafts)
         .expect("the seed has a Drafts folder");
@@ -1062,9 +1090,10 @@ async fn a_draft_saved_while_connected_reaches_the_server_without_being_asked() 
     );
     identity.is_default = true;
     {
-        let connection = database.connection().expect("checkout");
+        let connection = database.connect().await.expect("checkout");
         postio_storage::repository::IdentityRepository::new(&connection)
             .create(&mut identity)
+            .await
             .expect("create the identity");
     }
 
@@ -1120,9 +1149,10 @@ async fn a_draft_saved_while_connected_reaches_the_server_without_being_asked() 
     draft.subject = "Written while the wire was up".to_owned();
     draft.body.text = Some("A thought, mid-thought.".to_owned());
     {
-        let connection = database.connection().expect("checkout");
+        let connection = database.connect().await.expect("checkout");
         postio_storage::repository::DraftRepository::new(&connection)
             .save_and_sync(&mut draft, Utc::now())
+            .await
             .expect("save and queue");
     }
 
@@ -1162,15 +1192,16 @@ async fn a_fresh_account_learns_its_folders_from_the_server() {
     // local table, and nothing ever LISTed the server to fill it. An account
     // that has never synced has no folders at all, so this is the pass
     // everything else waits on.
-    let database = test_support::memory();
+    let database = test_support::memory().await;
     let account = {
-        let connection = database.connection().expect("checkout");
+        let connection = database.connect().await.expect("checkout");
         let mut account = postio_model::Account::new(
             "Test",
             postio_model::EmailAddress::new(Some("Ada Lovelace"), "ada@example.com"),
         );
         postio_storage::repository::AccountRepository::new(&connection)
             .create(&mut account)
+            .await
             .expect("create the account");
         account
     };
@@ -1211,9 +1242,10 @@ async fn a_fresh_account_learns_its_folders_from_the_server() {
 
     let folders = tokio::time::timeout(std::time::Duration::from_secs(15), async {
         loop {
-            let connection = database.connection().expect("checkout");
+            let connection = database.connect().await.expect("checkout");
             let found = postio_storage::repository::MailboxRepository::new(&connection)
                 .list_for_account(account.id)
+                .await
                 .expect("list");
             drop(connection);
             if !found.is_empty() {
@@ -1255,9 +1287,9 @@ async fn a_requested_body_does_not_wait_for_the_supervisors_first_tick() {
     // sent first exactly the way production does, has to finish well under
     // that -- 2s is generous against the ~20-40ms this takes once the
     // connection is not gated behind an unrelated tick.
-    let (engine, database, report, _events, _directory) = engine();
+    let (engine, database, report, _events, _directory) = engine().await;
     let inbox = report.mailbox(MailboxRole::Inbox).expect("an inbox");
-    give_the_inbox_uids(&database, inbox.id);
+    give_the_inbox_uids(&database, inbox.id).await;
 
     // `give_the_inbox_uids` sets `uid = id` for every seeded message, and
     // `server()` only holds ten of them (UIDs 1..=10) -- so the message
@@ -1266,14 +1298,17 @@ async fn a_requested_body_does_not_wait_for_the_supervisors_first_tick() {
     let message = with_store(
         &database,
         "a message the mock actually holds",
-        |connection| {
-            Ok(connection.query_row(
+        async |connection| {
+            postio_storage::sql::one(
+                &connection,
                 "SELECT id FROM messages WHERE mailbox_id = ?1 AND uid BETWEEN 1 AND 10 LIMIT 1",
-                [inbox.id.get()],
-                |row| row.get::<_, i64>(0),
-            )?)
+                bind![inbox.id.get()],
+                |row| postio_storage::sql::RowExt::col::<i64>(row, 0),
+            )
+            .await
         },
-    );
+    )
+    .await;
     let message = postio_model::ids::MessageId::new(message);
 
     let wanted = engine.request_body(message).await.expect("request_body");
@@ -1284,9 +1319,13 @@ async fn a_requested_body_does_not_wait_for_the_supervisors_first_tick() {
 
     tokio::time::timeout(std::time::Duration::from_secs(2), async {
         loop {
-            let landed = with_store(&database, "reading raw_blob_id", |connection| {
-                postio_storage::repository::MessageRepository::new(connection).get(message)
+            let landed = with_store(&database, "reading raw_blob_id", async |connection| {
+                let connection = &connection;
+                postio_storage::repository::MessageRepository::new(connection)
+                    .get(message)
+                    .await
             })
+            .await
             .expect("the message exists")
             .raw_blob_id
             .is_some();
@@ -1303,14 +1342,19 @@ async fn a_requested_body_does_not_wait_for_the_supervisors_first_tick() {
     );
 }
 
-/// #327: the body a *person* asked for is indexed too, not only a backfill's.
+/// #327: the body a *person* asked for reaches the index too, not only a
+/// backfill's.
 ///
 /// The two arrive by different routes — `Job::RequestBody` jumps the queue
 /// with `Lane::Interactive`, a backfill is seeded per mailbox at startup —
 /// and search coverage that followed only the second would be bounded by
 /// whatever the backfill happened to have reached. The engine settles both
-/// through one `pump_body`, so this asserts the property at the layer where
-/// that claim is actually testable rather than trusting the shared call.
+/// through one `pump_body`, and neither writes the search row itself any
+/// more: a stored body with no row is the indexer's queue, drained by
+/// `postio_session::spawn_body_indexer` off the sync lane. So this asserts
+/// the engine's half of the contract — the body the user asked for lands in
+/// the queue — and then that one indexer batch, run the way the session runs
+/// it, makes the body findable.
 #[tokio::test]
 async fn a_body_the_user_asked_for_is_indexed_as_well_as_stored() {
     // The background lane is off, and that is load-bearing rather than tidy.
@@ -1330,14 +1374,23 @@ async fn a_body_the_user_asked_for_is_indexed_as_well_as_stored() {
             background: false,
             ..Default::default()
         },
-    );
+    )
+    .await;
     let inbox = report.mailbox(MailboxRole::Inbox).expect("an inbox");
-    give_the_inbox_uids(&database, inbox.id);
+    give_the_inbox_uids(&database, inbox.id).await;
 
-    with_store(&database, "creating the search schema", |connection| {
-        postio_index::index::ensure_schema(connection).expect("the search schema");
-        Ok(())
-    });
+    with_store(
+        &database,
+        "creating the search schema",
+        async |connection| {
+            let connection = &connection;
+            postio_index::index::ensure_schema(connection)
+                .await
+                .expect("the search schema");
+            Ok(())
+        },
+    )
+    .await;
 
     // The same constraint the test above documents: a message the mock
     // actually holds, so this is about indexing and not about a UID nobody
@@ -1345,38 +1398,44 @@ async fn a_body_the_user_asked_for_is_indexed_as_well_as_stored() {
     let message = with_store(
         &database,
         "a message the mock actually holds",
-        |connection| {
-            Ok(connection.query_row(
+        async |connection| {
+            postio_storage::sql::one(
+                &connection,
                 "SELECT id FROM messages WHERE mailbox_id = ?1 AND uid BETWEEN 1 AND 10 LIMIT 1",
-                [inbox.id.get()],
-                |row| row.get::<_, i64>(0),
-            )?)
+                bind![inbox.id.get()],
+                |row| postio_storage::sql::RowExt::col::<i64>(row, 0),
+            )
+            .await
         },
-    );
+    )
+    .await;
     let message = postio_model::ids::MessageId::new(message);
 
     // `search_documents.body` no longer exists: #379 moved the text corpus
     // into `message_bodies_fts`, which is contentless and stores the words
-    // rather than the body. So "is it indexed" is a rowid lookup now, not a
-    // column read -- and the failure has to propagate, because the
+    // rather than the body. So "is it indexed" is a column read on `messages`
+    // -- `body_search` is NULL until `index_body` has run and the empty string
+    // after it -- and the failure has to propagate, because the
     // `unwrap_or_default()` this replaces turned "no such column" into "not
     // indexed yet" and left the poll below reading a dead query until it
     // timed out.
-    let body_is_indexed = |id: i64| {
+    let body_is_indexed = async |id: i64| {
         with_store(
             &database,
             "looking for the indexed body",
-            move |connection| {
-                Ok(connection.query_row(
-                    "SELECT count(*) FROM message_bodies_fts WHERE rowid = ?1",
-                    [id],
-                    |row| row.get::<_, i64>(0),
-                )? > 0)
+            async |connection| {
+                postio_storage::sql::exists(
+                    &connection,
+                    "SELECT 1 FROM message_search_bodies WHERE message_id = ?1",
+                    bind![id],
+                )
+                .await
             },
         )
+        .await
     };
     assert!(
-        !body_is_indexed(message.get()),
+        !body_is_indexed(message.get()).await,
         "the body is not local yet, so nothing about it can be in the index"
     );
 
@@ -1385,9 +1444,26 @@ async fn a_body_the_user_asked_for_is_indexed_as_well_as_stored() {
         "there was nothing to fetch for a message the mock holds"
     );
 
+    // The engine's half: the body lands, and lands in the indexer's queue --
+    // a stored body with no search row (`messages_missing_body_text`).
+    // Neither the store nor the fetch writes the row any more; the session's
+    // indexer drains the queue off the sync lane.
+    let pending = async |id: i64| {
+        with_store(
+            &database,
+            "asking the indexer's queue",
+            async |connection| {
+                let queue = postio_index::index::messages_missing_body_text(&connection, 100)
+                    .await
+                    .expect("the indexer's queue");
+                Ok(queue.contains(&id))
+            },
+        )
+        .await
+    };
     tokio::time::timeout(std::time::Duration::from_secs(5), async {
         loop {
-            if body_is_indexed(message.get()) {
+            if pending(message.get()).await {
                 return;
             }
             tokio::time::sleep(std::time::Duration::from_millis(20)).await;
@@ -1395,9 +1471,40 @@ async fn a_body_the_user_asked_for_is_indexed_as_well_as_stored() {
     })
     .await
     .expect(
-        "the body the user opened landed in the blob store and never reached \
-         the search index, so search covers only whatever the background \
-         backfill happened to have fetched (#327)",
+        "the body the user opened never landed as a body the indexer would \
+         pick up, so search covers only whatever the background backfill \
+         happened to have fetched (#327)",
+    );
+    assert!(
+        !body_is_indexed(message.get()).await,
+        "the fetch wrote the search row itself, on the sync lane"
+    );
+
+    // The indexer's half, one batch of it, the way the session runs it.
+    with_store(&database, "one indexer batch", async |connection| {
+        let messages = postio_storage::repository::MessageRepository::new(&connection);
+        let queue = postio_index::index::messages_missing_body_text(&connection, 100)
+            .await
+            .expect("the indexer's queue");
+        for id in queue {
+            let stored = messages
+                .body(postio_model::ids::MessageId::new(id))
+                .await?
+                .unwrap_or_default();
+            let body = postio_model::MessageBody {
+                text: stored.text,
+                html: stored.html,
+            };
+            postio_index::index::index_body_of(&connection, id, &body)
+                .await
+                .expect("index a body");
+        }
+        Ok(())
+    })
+    .await;
+    assert!(
+        body_is_indexed(message.get()).await,
+        "one indexer batch over the queue did not reach the body the user asked for"
     );
 }
 
@@ -1413,20 +1520,20 @@ async fn a_body_the_user_asked_for_is_indexed_as_well_as_stored() {
 /// mailbox is bigger than a batch. Ten and three rather than a real 40,000
 /// and 200, because the property is the same and the fixture is not the
 /// point.
-fn engine_seeding_in_batches(
+async fn engine_seeding_in_batches(
     messages: u32,
     seed_batch: u32,
 ) -> (
     Engine,
-    postio_storage::Database,
+    postio_storage::Store,
     postio_model::ids::MailboxId,
     Arc<MockBackend>,
     BlobDir,
 ) {
-    let database = test_support::memory();
-    let connection = database.connection().expect("a connection");
-    let account = test_support::account(&connection);
-    let inbox = test_support::mailbox(&connection, &account, "INBOX");
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("a connection");
+    let account = test_support::account(&connection).await;
+    let inbox = test_support::mailbox(&connection, &account, "INBOX").await;
     drop(connection);
 
     let directory = tempfile::tempdir().expect("a blob directory");
@@ -1485,10 +1592,14 @@ fn engine_seeding_in_batches(
 }
 
 /// Wait until `done`, or give up and answer what it saw last.
-async fn until(done: impl Fn() -> bool) -> bool {
+async fn until<F, Fut>(done: F) -> bool
+where
+    F: Fn() -> Fut,
+    Fut: std::future::Future<Output = bool>,
+{
     tokio::time::timeout(std::time::Duration::from_secs(20), async {
         loop {
-            if done() {
+            if done().await {
                 return;
             }
             tokio::time::sleep(std::time::Duration::from_millis(50)).await;
@@ -1499,25 +1610,39 @@ async fn until(done: impl Fn() -> bool) -> bool {
 }
 
 /// How many messages `mailbox` holds locally at all, body or no body.
-fn headers_in(database: &postio_storage::Database, mailbox: postio_model::ids::MailboxId) -> i64 {
-    with_store(database, "counting headers", |connection| {
-        Ok(connection.query_row(
+async fn headers_in(
+    database: &postio_storage::Store,
+    mailbox: postio_model::ids::MailboxId,
+) -> i64 {
+    with_store(database, "counting headers", async |connection| {
+        let connection = &connection;
+        postio_storage::sql::one(
+            connection,
             "SELECT count(*) FROM messages WHERE mailbox_id = ?1",
-            [mailbox.get()],
-            |row| row.get::<_, i64>(0),
-        )?)
+            bind![mailbox.get()],
+            |row| postio_storage::sql::RowExt::col::<i64>(row, 0),
+        )
+        .await
     })
+    .await
 }
 
 /// How many of `mailbox`'s messages have their body on this machine.
-fn bodies_local(database: &postio_storage::Database, mailbox: postio_model::ids::MailboxId) -> i64 {
-    with_store(database, "counting local bodies", |connection| {
-        Ok(connection.query_row(
+async fn bodies_local(
+    database: &postio_storage::Store,
+    mailbox: postio_model::ids::MailboxId,
+) -> i64 {
+    with_store(database, "counting local bodies", async |connection| {
+        let connection = &connection;
+        postio_storage::sql::one(
+            connection,
             "SELECT count(*) FROM messages WHERE mailbox_id = ?1 AND body_state = 'full'",
-            [mailbox.get()],
-            |row| row.get::<_, i64>(0),
-        )?)
+            bind![mailbox.get()],
+            |row| postio_storage::sql::RowExt::col::<i64>(row, 0),
+        )
+        .await
     })
+    .await
 }
 
 /// #318: a cap was implemented as a one-shot.
@@ -1538,13 +1663,13 @@ async fn a_mailbox_larger_than_one_seed_is_covered_without_anyone_opening_it() {
     const MESSAGES: u32 = 10;
     const BATCH: u32 = 3;
     let (engine, database, inbox, _backend, _directory) =
-        engine_seeding_in_batches(MESSAGES, BATCH);
+        engine_seeding_in_batches(MESSAGES, BATCH).await;
 
     // The engine syncs and backfills on its own initiative once the link is
     // up; nothing here asks it to, which is the point.
-    let covered = until(|| bodies_local(&database, inbox) == i64::from(MESSAGES)).await;
+    let covered = until(async || bodies_local(&database, inbox).await == i64::from(MESSAGES)).await;
 
-    let local = bodies_local(&database, inbox);
+    let local = bodies_local(&database, inbox).await;
     assert!(
         covered,
         "{local} of {MESSAGES} bodies are local and the backfill has stopped. \
@@ -1570,10 +1695,11 @@ async fn a_mailbox_larger_than_one_seed_is_covered_without_anyone_opening_it() {
 #[tokio::test]
 async fn mail_arriving_after_startup_is_backfilled_without_being_opened() {
     const MESSAGES: u32 = 4;
-    let (engine, database, inbox, backend, _directory) = engine_seeding_in_batches(MESSAGES, 2);
+    let (engine, database, inbox, backend, _directory) =
+        engine_seeding_in_batches(MESSAGES, 2).await;
 
     assert!(
-        until(|| bodies_local(&database, inbox) == i64::from(MESSAGES)).await,
+        until(async || bodies_local(&database, inbox).await == i64::from(MESSAGES)).await,
         "the mailbox it started with never finished, so nothing below is \
          about mail that arrived later"
     );
@@ -1595,12 +1721,13 @@ async fn mail_arriving_after_startup_is_backfilled_without_being_opened() {
         .await
         .expect("the mock accepts a delivery");
 
-    let arrived = until(|| bodies_local(&database, inbox) == i64::from(MESSAGES) + 1).await;
+    let arrived =
+        until(async || bodies_local(&database, inbox).await == i64::from(MESSAGES) + 1).await;
     assert!(
         arrived,
         "a message delivered after startup has {} of {} bodies local: it got \
          a row and no body, and would have waited to be opened (#318)",
-        bodies_local(&database, inbox),
+        bodies_local(&database, inbox).await,
         MESSAGES + 1
     );
 
@@ -1621,10 +1748,12 @@ async fn mail_arriving_after_startup_is_backfilled_without_being_opened() {
 /// top-up that keeps finding rows it cannot use would never stop.
 #[tokio::test]
 async fn the_top_up_does_not_outrank_the_policy_it_runs_under() {
-    let database = test_support::memory();
-    let connection = database.connection().expect("a connection");
-    let account = test_support::account(&connection);
-    let inbox = test_support::mailbox(&connection, &account, "INBOX").id;
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("a connection");
+    let account = test_support::account(&connection).await;
+    let inbox = test_support::mailbox(&connection, &account, "INBOX")
+        .await
+        .id;
     drop(connection);
 
     let directory = tempfile::tempdir().expect("a blob directory");
@@ -1681,7 +1810,7 @@ async fn the_top_up_does_not_outrank_the_policy_it_runs_under() {
 
     // Long enough for the headers to land and the queue to settle.
     assert!(
-        until(|| headers_in(&database, inbox) == 6).await,
+        until(async || headers_in(&database, inbox).await == 6).await,
         "the headers never synced, so nothing below is about the backfill"
     );
 
@@ -1714,7 +1843,7 @@ async fn the_top_up_does_not_outrank_the_policy_it_runs_under() {
     // thread sends is a job the engine's loop must serve before it may sync
     // or backfill again, so polling it would starve the very work under test.
     assert!(
-        until(|| headers_in(&database, inbox) == 7).await,
+        until(async || headers_in(&database, inbox).await == 7).await,
         "the delivery never reached the store, so the re-seed it triggers \
          never happened"
     );
@@ -1722,7 +1851,7 @@ async fn the_top_up_does_not_outrank_the_policy_it_runs_under() {
     tokio::time::sleep(std::time::Duration::from_secs(2)).await;
 
     assert_eq!(
-        bodies_local(&database, inbox),
+        bodies_local(&database, inbox).await,
         0,
         "the background lane fetched a body over `max_body_bytes`, so the \
          top-up is going around the policy rather than under it"
@@ -1792,19 +1921,19 @@ fn server_with_an_attachment() -> MockBackend {
 /// An engine over an empty store and [`server_with_an_attachment`], which
 /// discovers INBOX and syncs it on its own — no seeded rows, so every row the
 /// test reads was written by the engine doing what it does in the app.
-fn engine_over_a_real_sync(
+async fn engine_over_a_real_sync(
     backfill: postio_sync::BackfillPolicy,
 ) -> (
     Engine,
-    postio_storage::Database,
+    postio_storage::Store,
     postio_model::AccountId,
     BlobDir,
-    test_support::TempDatabase,
+    test_support::TempStore,
 ) {
-    let database = test_support::temp();
+    let database = test_support::temp().await;
     let account = {
-        let connection = database.connection().expect("checkout");
-        test_support::account(&connection)
+        let connection = database.connect().await.expect("checkout");
+        test_support::account(&connection).await
     };
     let directory = tempfile::tempdir().expect("a blob directory");
     let blobs = BlobStore::open(
@@ -1844,15 +1973,19 @@ fn engine_over_a_real_sync(
 }
 
 /// Waits for `look` to answer `Some`, or gives up saying what it was after.
-async fn until_some<T>(
-    database: &postio_storage::Database,
-    what: &str,
-    look: impl Fn(&postio_storage::PooledConnection) -> Option<T>,
-) -> T {
+///
+/// `look` takes the checkout by value for the reason [`with_store`] gives:
+/// an async closure whose future borrows its argument needs a lifetime this
+/// signature cannot name, and a checkout is a cheap handle to hand over.
+async fn until_some<T, F, Fut>(database: &postio_storage::Store, what: &str, look: F) -> T
+where
+    F: Fn(postio_storage::Checkout) -> Fut,
+    Fut: std::future::Future<Output = Option<T>>,
+{
     tokio::time::timeout(std::time::Duration::from_secs(20), async {
         loop {
-            if let Ok(connection) = database.connection()
-                && let Some(found) = look(&connection)
+            if let Ok(connection) = database.connect().await
+                && let Some(found) = look(connection).await
             {
                 return found;
             }
@@ -1865,34 +1998,42 @@ async fn until_some<T>(
 
 /// The one message the mock holds, once the engine has synced it.
 async fn the_synced_message(
-    database: &postio_storage::Database,
+    database: &postio_storage::Store,
     account: postio_model::AccountId,
 ) -> postio_model::MessageId {
-    until_some(database, "the message reach the store", |connection| {
-        let mailboxes = postio_storage::repository::MailboxRepository::new(connection)
-            .list_for_account(account)
-            .ok()?;
-        let inbox = mailboxes.iter().find(|mailbox| mailbox.path == "INBOX")?;
-        postio_storage::repository::MessageRepository::new(connection)
-            .page(&postio_storage::repository::ListQuery {
-                scope: postio_storage::repository::ListScope::Mailbox(inbox.id),
-                limit: 1,
-                after: None,
-            })
-            .ok()?
-            .first()
-            .map(|row| row.id)
-    })
+    until_some(
+        database,
+        "the message reach the store",
+        async |connection| {
+            let connection = &connection;
+            let mailboxes = postio_storage::repository::MailboxRepository::new(connection)
+                .list_for_account(account)
+                .await
+                .ok()?;
+            let inbox = mailboxes.iter().find(|mailbox| mailbox.path == "INBOX")?;
+            postio_storage::repository::MessageRepository::new(connection)
+                .page(&postio_storage::repository::ListQuery {
+                    scope: postio_storage::repository::ListScope::Mailbox(inbox.id),
+                    limit: 1,
+                    after: None,
+                })
+                .await
+                .ok()?
+                .first()
+                .map(|row| row.id)
+        },
+    )
     .await
 }
 
-fn attachment_blob(
-    database: &postio_storage::Database,
+async fn attachment_blob(
+    database: &postio_storage::Store,
     message: postio_model::MessageId,
 ) -> Option<postio_model::BlobId> {
-    let connection = database.connection().ok()?;
+    let connection = database.connect().await.ok()?;
     postio_storage::repository::MessageRepository::new(&connection)
         .get(message)
+        .await
         .ok()??
         .attachments
         .first()?
@@ -1906,12 +2047,14 @@ async fn the_default_policy_syncs_the_words_and_leaves_the_payload_on_the_server
     // the engine runs, the mailbox lands, search has the words, and the
     // eleven-twelfths of the mailbox that is payload bytes stays where it is.
     let (engine, database, account, _directory, _temp_database) =
-        engine_over_a_real_sync(postio_sync::BackfillPolicy::default());
+        engine_over_a_real_sync(postio_sync::BackfillPolicy::default()).await;
     let message = the_synced_message(&database, account).await;
 
-    let state = until_some(&database, "the text land", |connection| {
+    let state = until_some(&database, "the text land", async |connection| {
+        let connection = &connection;
         let row = postio_storage::repository::MessageRepository::new(connection)
             .get(message)
+            .await
             .ok()??;
         (row.sync.body_state != postio_model::BodyState::HeadersOnly).then_some(row.sync.body_state)
     })
@@ -1923,7 +2066,7 @@ async fn the_default_policy_syncs_the_words_and_leaves_the_payload_on_the_server
         "text local, payload not"
     );
     assert_eq!(
-        attachment_blob(&database, message),
+        attachment_blob(&database, message).await,
         None,
         "nothing speculative pulls a payload under the default policy"
     );
@@ -1936,14 +2079,16 @@ async fn opening_an_attachment_asks_the_engine_for_that_one_section() {
     // else in this test touches the network, so the bytes arriving are the
     // request having gone all the way out and back.
     let (engine, database, account, _directory, _temp_database) =
-        engine_over_a_real_sync(postio_sync::BackfillPolicy::default());
+        engine_over_a_real_sync(postio_sync::BackfillPolicy::default()).await;
     let message = the_synced_message(&database, account).await;
 
     // Wait for the text first: `request_payloads` reads the attachment rows,
     // and asking before the header sync has written them proves nothing.
-    until_some(&database, "the text land", |connection| {
+    until_some(&database, "the text land", async |connection| {
+        let connection = &connection;
         let row = postio_storage::repository::MessageRepository::new(connection)
             .get(message)
+            .await
             .ok()??;
         (row.sync.body_state == postio_model::BodyState::Partial).then_some(())
     })
@@ -1959,12 +2104,18 @@ async fn opening_an_attachment_asks_the_engine_for_that_one_section() {
     // attachment's blob id and the message's `body_state` separately, so a
     // read taken between the two sees `Partial` for a payload that is already
     // on disk. See the note in `eager_drains_the_payloads_with_nobody_asking`.
-    let row = until_some(&database, "the payload land and settle", |connection| {
-        let row = postio_storage::repository::MessageRepository::new(connection)
-            .get(message)
-            .ok()??;
-        (row.sync.body_state == postio_model::BodyState::Full).then_some(row)
-    })
+    let row = until_some(
+        &database,
+        "the payload land and settle",
+        async |connection| {
+            let connection = &connection;
+            let row = postio_storage::repository::MessageRepository::new(connection)
+                .get(message)
+                .await
+                .ok()??;
+            (row.sync.body_state == postio_model::BodyState::Full).then_some(row)
+        },
+    )
     .await;
 
     assert!(
@@ -1972,7 +2123,7 @@ async fn opening_an_attachment_asks_the_engine_for_that_one_section() {
         "every part is local now"
     );
     assert!(
-        attachment_blob(&database, message).is_some(),
+        attachment_blob(&database, message).await.is_some(),
         "and the blob it names is in the store"
     );
     drop(engine);
@@ -1987,7 +2138,8 @@ async fn eager_drains_the_payloads_with_nobody_asking() {
         engine_over_a_real_sync(postio_sync::BackfillPolicy {
             attachments: postio_sync::AttachmentPolicy::Eager,
             ..Default::default()
-        });
+        })
+        .await;
     let message = the_synced_message(&database, account).await;
 
     // Wait for the state this asserts, not for the blob that precedes it.
@@ -1999,12 +2151,18 @@ async fn eager_drains_the_payloads_with_nobody_asking() {
     // blob and the message still says `Partial`. Waiting on the blob and then
     // reading `body_state` in the next breath is a coin toss, and page
     // encryption slowed the second write just enough to start losing it.
-    let settled = until_some(&database, "the payload land and settle", |connection| {
-        let row = postio_storage::repository::MessageRepository::new(connection)
-            .get(message)
-            .ok()??;
-        (row.sync.body_state == postio_model::BodyState::Full).then_some(row)
-    })
+    let settled = until_some(
+        &database,
+        "the payload land and settle",
+        async |connection| {
+            let connection = &connection;
+            let row = postio_storage::repository::MessageRepository::new(connection)
+                .get(message)
+                .await
+                .ok()??;
+            (row.sync.body_state == postio_model::BodyState::Full).then_some(row)
+        },
+    )
     .await;
 
     assert!(
@@ -2012,7 +2170,7 @@ async fn eager_drains_the_payloads_with_nobody_asking() {
         "`full` means the payload is here, not merely asked for"
     );
     assert!(
-        attachment_blob(&database, message).is_some(),
+        attachment_blob(&database, message).await.is_some(),
         "and the blob it names is in the store"
     );
     drop(engine);
@@ -2050,15 +2208,19 @@ fn a_server_with_many_folders() -> MockBackend {
 /// A condition rather than a duration, for the reason every wait in this
 /// repository is: a fixed pump is long enough on an idle workstation and not
 /// on a loaded runner.
-async fn within(bound: std::time::Duration, done: impl Fn() -> bool) -> bool {
+async fn within<F, Fut>(bound: std::time::Duration, done: F) -> bool
+where
+    F: Fn() -> Fut,
+    Fut: std::future::Future<Output = bool>,
+{
     let deadline = std::time::Instant::now() + postio_test_support::scaled(bound);
     while std::time::Instant::now() < deadline {
-        if done() {
+        if done().await {
             return true;
         }
         tokio::time::sleep(std::time::Duration::from_millis(20)).await;
     }
-    done()
+    done().await
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -2081,8 +2243,8 @@ async fn a_queued_action_does_not_wait_out_a_sync_wave() {
     // call, and the assertion below allows three seconds -- so this is not a
     // bet about scheduling, it is the difference between "at the next
     // opportunity" and "after everything else".
-    let database = test_support::memory();
-    let report = seed_small(&database, 11);
+    let database = test_support::memory().await;
+    let report = seed_small(&database, 11).await;
     let directory = tempfile::tempdir().expect("a blob directory");
     let blobs = BlobStore::open(
         directory.path().to_path_buf(),
@@ -2119,23 +2281,26 @@ async fn a_queued_action_does_not_wait_out_a_sync_wave() {
     // nothing -- `handle_link_transition` drains before it queues the
     // folders, which is the path that already works.
     assert!(
-        within(std::time::Duration::from_secs(20), || backend.calls() >= 8).await,
+        within(std::time::Duration::from_secs(20), async || backend.calls()
+            >= 8)
+        .await,
         "the engine never started syncing folders, so there is no wave to interrupt"
     );
 
     let inbox = report.mailbox(MailboxRole::Inbox).expect("an inbox");
-    queue_a_flag_change(&database, &report, inbox.id);
+    queue_a_flag_change(&database, &report, inbox.id).await;
 
     // The user's action, while the engine is mid-wave. It has to reach the
     // wire at the next opportunity -- not after every remaining folder. The
     // queue emptying is what says it went: `drain` removes a row only once
     // the server has taken it.
-    let drained = within(std::time::Duration::from_secs(3), || {
-        let Ok(connection) = database.connection() else {
+    let drained = within(std::time::Duration::from_secs(3), async || {
+        let Ok(connection) = database.connect().await else {
             return false;
         };
         OperationQueueRepository::new(&connection)
             .pending(report.account.id, Utc::now())
+            .await
             .is_ok_and(|due| due.is_empty())
     })
     .await;

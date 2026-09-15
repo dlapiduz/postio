@@ -72,12 +72,6 @@ impl ConnectionSettings {
         )
     }
 
-    /// Sets how long a connect or handshake may take.
-    pub fn with_connect_timeout(mut self, timeout: Duration) -> Self {
-        self.connect_timeout = timeout;
-        self
-    }
-
     /// Sets which SASL mechanism the credential is presented with.
     pub fn with_auth(mut self, auth: AuthMethod) -> Self {
         self.auth = auth;

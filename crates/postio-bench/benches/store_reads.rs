@@ -22,7 +22,7 @@
 //! # Running
 //!
 //! ```sh
-//! cargo bench -p postio-runtime --bench store_reads
+//! cargo bench -p postio-bench --bench store_reads
 //! ```
 //!
 //! CI compiles this and does not time it: a shared runner is too noisy to
@@ -43,10 +43,30 @@ use criterion::{Criterion, criterion_group, criterion_main};
 use postio_core::perf_budget::{INTERACTION_BUDGET, check_budget};
 use postio_model::MailboxRole;
 use postio_model::ids::MailboxId;
-use postio_runtime::store::{ListScope, MailStore, PageRequest, SqliteStore};
+use postio_runtime::store::{ListScope, LocalStore, PageRequest};
 use postio_storage::repository::{ThreadListQuery, ThreadRepository, UnifiedThreadListQuery};
 use postio_storage::seed::{seed_large, thread_seeded_messages};
 use postio_storage::test_support;
+
+/// The runtime every async call in this bench is driven on.
+///
+/// Criterion's `iter` takes a synchronous closure and calls it on this thread,
+/// where there is no ambient runtime -- so `block_on` here is the plain thing
+/// rather than the trap it is everywhere else in this workspace. Multi-threaded
+/// because a store read may reach `block_in_place`.
+fn on_runtime<T>(future: impl std::future::Future<Output = T>) -> T {
+    use std::sync::OnceLock;
+    static RUNTIME: OnceLock<tokio::runtime::Runtime> = OnceLock::new();
+    RUNTIME
+        .get_or_init(|| {
+            tokio::runtime::Builder::new_multi_thread()
+                .worker_threads(2)
+                .enable_all()
+                .build()
+                .expect("a runtime for the benches")
+        })
+        .block_on(future)
+}
 
 /// A folder big enough that loading it would be the bug.
 const HUGE: usize = 100_000;
@@ -58,19 +78,19 @@ const SMALL: usize = 1_000;
 const PAGE: u32 = 50;
 
 /// A store over a seeded mailbox, and the mailbox to read.
-fn seeded(messages: usize) -> (SqliteStore, MailboxId, test_support::TempDatabase) {
+async fn seeded(messages: usize) -> (LocalStore, MailboxId, test_support::TempStore) {
     // A file rather than memory: WAL and `mmap_size` are part of what makes
     // the read fast and neither applies to an in-memory database. Measuring
     // the wrong storage engine would be worse than not measuring.
-    let database = test_support::temp();
-    let report = seed_large(&database, 7, messages);
+    let database = on_runtime(test_support::temp());
+    let report = on_runtime(seed_large(&database, 7, messages));
     let inbox = report.mailbox(MailboxRole::Inbox).expect("an inbox").id;
-    let store = SqliteStore::new(&database);
+    let store = LocalStore::new(&database);
     (store, inbox, database)
 }
 
 /// Read one page, the way the list does.
-fn read(runtime: &tokio::runtime::Runtime, store: &SqliteStore, mailbox: MailboxId, offset: u32) {
+fn read(runtime: &tokio::runtime::Runtime, store: &LocalStore, mailbox: MailboxId, offset: u32) {
     let page = runtime
         .block_on(store.message_page(PageRequest {
             scope: ListScope::Mailbox(mailbox),
@@ -87,8 +107,8 @@ fn bench_message_page(c: &mut Criterion) {
         .build()
         .expect("a runtime");
 
-    let (small, small_inbox, _small_dir) = seeded(SMALL);
-    let (huge, huge_inbox, huge_dir) = seeded(HUGE);
+    let (small, small_inbox, _small_dir) = on_runtime(seeded(SMALL));
+    let (huge, huge_inbox, huge_dir) = on_runtime(seeded(HUGE));
 
     c.bench_function("message page, 1k mailbox", |b| {
         b.iter(|| read(&runtime, &small, small_inbox, 0))
@@ -138,9 +158,9 @@ fn bench_message_page(c: &mut Criterion) {
     // held to the same 16ms as every other thing a person does.
     //
     // A store of its own, because "cold" here means the boundary cache is
-    // empty rather than the page cache: `SqliteStore` remembers where each
+    // empty rather than the page cache: `LocalStore` remembers where each
     // page it has read began, and the reads above have populated it.
-    let cold = SqliteStore::new(&huge_dir);
+    let cold = LocalStore::new(&huge_dir);
     let start = Instant::now();
     read(&runtime, &cold, huge_inbox, deep);
     let measured = start.elapsed();
@@ -168,8 +188,8 @@ fn bench_message_page(c: &mut Criterion) {
 ///   one, so scrolling costs 176µs at any depth. A jump to a page nobody has
 ///   visited still walks, once.
 fn bench_where_the_time_goes(c: &mut Criterion) {
-    let (_store, inbox, database) = seeded(HUGE);
-    let connection = database.connection().expect("a connection");
+    let (_store, inbox, database) = on_runtime(seeded(HUGE));
+    let connection = on_runtime(database.connect()).expect("a connection");
     let messages = postio_storage::repository::MessageRepository::new(&connection);
     let query = postio_storage::repository::ListQuery {
         scope: postio_storage::repository::ListScope::Mailbox(inbox),
@@ -177,13 +197,13 @@ fn bench_where_the_time_goes(c: &mut Criterion) {
         after: None,
     };
     c.bench_function("part: count(*)", |b| {
-        b.iter(|| black_box(messages.count(&query).expect("count")))
+        b.iter(|| black_box(on_runtime(messages.count(&query)).expect("count")))
     });
     c.bench_function("part: page_at(0)", |b| {
-        b.iter(|| black_box(messages.page_at(&query, 0).expect("page")))
+        b.iter(|| black_box(on_runtime(messages.page_at(&query, 0)).expect("page")))
     });
     c.bench_function("part: page_at(50k)", |b| {
-        b.iter(|| black_box(messages.page_at(&query, (HUGE / 2) as u32).expect("page")))
+        b.iter(|| black_box(on_runtime(messages.page_at(&query, (HUGE / 2) as u32)).expect("page")))
     });
 }
 
@@ -207,22 +227,24 @@ const PER_THREAD: usize = 4;
 /// would separate from 1k here.
 fn bench_thread_page(c: &mut Criterion) {
     let seeded_threads = |messages: usize| {
-        let database = test_support::temp();
-        let report = seed_large(&database, 7, messages);
+        let database = on_runtime(test_support::temp());
+        let report = on_runtime(seed_large(&database, 7, messages));
         let inbox = report.mailbox(MailboxRole::Inbox).expect("an inbox").id;
-        thread_seeded_messages(&database, report.account.id, PER_THREAD);
+        on_runtime(thread_seeded_messages(
+            &database,
+            report.account.id,
+            PER_THREAD,
+        ));
         (database, report.account.id, inbox)
     };
 
     let (small, small_account, small_inbox) = seeded_threads(SMALL);
     let (huge, huge_account, huge_inbox) = seeded_threads(HUGE);
 
-    let read = |database: &test_support::TempDatabase, query: &ThreadListQuery| {
-        let connection = database.connection().expect("a connection");
+    let read = |database: &test_support::TempStore, query: &ThreadListQuery| {
+        let connection = on_runtime(database.connect()).expect("a connection");
         black_box(
-            ThreadRepository::new(&connection)
-                .page(query)
-                .expect("a page of threads"),
+            on_runtime(ThreadRepository::new(&connection).page(query)).expect("a page of threads"),
         );
     };
 
@@ -239,11 +261,11 @@ fn bench_thread_page(c: &mut Criterion) {
     // Ten pages in, by cursor — which is how the list actually scrolls, and
     // the case that has to stay flat.
     let deep = {
-        let connection = huge.connection().expect("a connection");
+        let connection = on_runtime(huge.connect()).expect("a connection");
         let threads = ThreadRepository::new(&connection);
         let mut query = huge_query.clone();
         for _ in 0..10 {
-            let page = threads.page(&query).expect("a page of threads");
+            let page = on_runtime(threads.page(&query)).expect("a page of threads");
             let Some(last) = page.last() else { break };
             query = huge_query.clone().after(last.cursor());
         }
@@ -276,25 +298,30 @@ fn bench_thread_page(c: &mut Criterion) {
 /// claim under test is the same as every other page here: the cost is the
 /// page's, not the mailbox's, and it fits the interaction budget.
 fn bench_unified_page(c: &mut Criterion) {
-    let database = test_support::temp();
-    let first = seed_large(&database, 7, HUGE / 2);
-    thread_seeded_messages(&database, first.account.id, PER_THREAD);
+    let database = on_runtime(test_support::temp());
+    let first = on_runtime(seed_large(&database, 7, HUGE / 2));
+    on_runtime(thread_seeded_messages(
+        &database,
+        first.account.id,
+        PER_THREAD,
+    ));
     // A second account of the same size: the unified list's whole point.
     let second = {
-        let connection = database.connection().expect("a connection");
+        let connection = on_runtime(database.connect()).expect("a connection");
         let mut account = postio_model::Account::new(
             "Second",
             postio_model::EmailAddress::new(None::<String>, "grace@example.org"),
         );
-        postio_storage::repository::AccountRepository::new(&connection)
-            .create(&mut account)
-            .expect("second account");
-        let inbox = test_support::mailbox(&connection, &account, "INBOX");
+        on_runtime(
+            postio_storage::repository::AccountRepository::new(&connection).create(&mut account),
+        )
+        .expect("second account");
+        let inbox = on_runtime(test_support::mailbox(&connection, &account, "INBOX"));
         // A modest second corpus, written directly: seed_large seeds one
         // account per store, and what this bench needs from the second is
         // rows to group against, not another 50k of them.
         let messages = postio_storage::repository::MessageRepository::new(&connection);
-        connection.execute_batch("BEGIN").expect("begin");
+        on_runtime(connection.execute_batch("BEGIN")).expect("begin");
         for i in 0..2_000u32 {
             let mut message = postio_model::Message::new(
                 account.id,
@@ -302,19 +329,18 @@ fn bench_unified_page(c: &mut Criterion) {
                 chrono::Utc::now() - chrono::Duration::minutes(i as i64),
             );
             message.subject = Some(format!("Cross-account update {i}"));
-            messages.create(&mut message).expect("a message");
+            on_runtime(messages.create(&mut message)).expect("a message");
         }
-        connection.execute_batch("COMMIT").expect("commit");
-        thread_seeded_messages(&database, account.id, PER_THREAD);
+        on_runtime(connection.execute_batch("COMMIT")).expect("commit");
+        on_runtime(thread_seeded_messages(&database, account.id, PER_THREAD));
         account.id
     };
     let _ = second;
 
     let read = |query: &UnifiedThreadListQuery| {
-        let connection = database.connection().expect("a connection");
+        let connection = on_runtime(database.connect()).expect("a connection");
         black_box(
-            ThreadRepository::new(&connection)
-                .unified_page(query)
+            on_runtime(ThreadRepository::new(&connection).unified_page(query))
                 .expect("a unified page"),
         );
     };

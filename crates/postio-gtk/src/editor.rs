@@ -150,6 +150,7 @@ fn view_with(
     view.set_accessible_role(gtk::AccessibleRole::TextBox);
     view.connect_decide_policy(handle_decide_policy);
     paint_ground(&view);
+    crate::web_process::watch(&view);
     // The scheme can change while a draft is open, and the only right answer
     // is a new sheet rather than a new document: reloading would take the
     // caret and the undo history with it (FR-075).

@@ -1,6 +1,17 @@
 # ADR 0020 — Message bodies live in SQLite; the blob store keeps attachments
 
-- **Status:** Accepted (2026-08-27)
+- **Status:** Accepted (2026-08-27). **Compression half superseded** by
+  [ADR 0038](0038-the-store-is-turso-not-sqlcipher.md) (2026-09-13): the
+  engine's full-text index is an index over the body column and cannot
+  tokenise compressed bytes, so bodies are plain `TEXT` and
+  `body_dictionaries` is gone. The rows-not-blobs half — bodies in the
+  database, attachments and raw `.eml` in the blob store — stands.
+  **Amended again 2026-09-14 (specs/004-turso-store):** bodies are no
+  longer plain `TEXT`. Once the body index moved to its own folded table
+  (`message_search_bodies`), the body column was free to shrink again, and
+  `crates/postio-storage/src/body_codec.rs` restored per-row zstd (level 3,
+  no dictionary) wherever the frame is smaller than the text.
+  `body_dictionaries` stays gone.
 - **Date:** 2026-08-27
 - **Decision by:** the maintainer, asking two questions in sequence — *"are all
   the bodies just out there in the open?"* and *"why not store the bodies
@@ -18,6 +29,8 @@
   Attachment payloads and raw `.eml` stay in the content-addressed blob
   store.** Compression is done in Rust rather than by a SQLite extension. No
   page compression, which ADR 0017 already settled and this does not disturb.
+  *(2026-09-14: per value with zstd, yes — `body_codec`, level 3 — but with
+  no dictionary and no sibling table; see the status line.)*
 
 ---
 
@@ -39,6 +52,10 @@ by is the one the product deliberately avoids:
 | text axis, uncompressed | 1.43 GB | — |
 | per-value zstd (1.57x) | 0.91 GB | **compression saves 36%** |
 | with a trained dictionary (2.19x) | 0.65 GB | **a further 28%** |
+
+*(The dictionary row is history: `body_dictionaries` went with the engine
+(ADR 0038) and `body_codec` compresses each value without one, so the
+planning number is the per-value row.)*
 
 The earlier amendment even contains the right row — *"0.15 GB payloads →
 24.3%"* — labelled as the mailing-list edge case. It is not an edge case. It is
@@ -70,11 +87,13 @@ And two things rows buy that files cannot:
 
 - **SQLCipher covers them for free** (#300). The most sensitive bytes in the
   product need no second encryption mechanism, no second key, no second
-  correct implementation of an AEAD.
+  correct implementation of an AEAD. *(ADR 0038: the engine's AES-256-GCM
+  page encryption now, for the same reason — one mechanism, one key.)*
 - **The metadata leak closes.** A file per body leaks its count, its ciphertext
   length and its mtime *even when the contents are encrypted* — message sizes
   are a real fingerprint, and mtimes trace when mail arrived and was read. Rows
-  inside one SQLCipher file leak none of it. This is what prompted the
+  inside one encrypted database file *(SQLCipher then; the engine's own page
+  encryption since ADR 0038)* leak none of it. This is what prompted the
   question, and it is the strongest argument here.
 
 **And it dissolves the dictionary hazard.** The earlier amendment deferred the
@@ -96,6 +115,13 @@ instinct and deserved a real answer.
 | **SQLite3MultipleCiphers** | encryption only, ChaCha20-Poly1305 | No compression, but a serious candidate for #300 — actively maintained, and its recommended cipher carries tamper detection, unlike SQLCipher's AES-CBC. |
 | **`sqlite-zstd`** | transparent row-level zstd **with automatic dictionary training** | Exactly this decision, as a maintained library. Blocked on integration — see below. |
 
+*(A survey dated 2026-08-27, made against `rusqlite` and SQLCipher. Since
+ADR 0038 the engine is Turso: the `links = "sqlite3"` conflict below cannot
+arise because `libsqlite3-sys` is not in the graph at all, and the
+tamper-detection point in the SQLite3MultipleCiphers row is met by
+AES-256-GCM. The conclusion — compress in Rust — is the one `body_codec`
+implements.)*
+
 `sqlite-zstd` is the right shape and cannot be linked. Measured, not assumed:
 its latest release wants `libsqlite3-sys ^0.33`, Postio's rusqlite 0.40 wants
 `^0.38`, and cargo's `links = "sqlite3"` rule permits exactly one. The
@@ -108,13 +134,16 @@ should think hard about — for a component whose Rust equivalent is small.
 **Also worth correcting:** ADR 0017 rejected compression VFSs because stacking
 one under SQLCipher is a build and correctness problem. That is right, and it
 does not apply here. **Row compression sits above the pager and page encryption
-below it**; they never meet, and the resulting order is compress-then-encrypt,
+below it** *(as true of Turso's page encryption as it was of SQLCipher's)*;
+they never meet, and the resulting order is compress-then-encrypt,
 which is what ADR 0017 requires anyway. "No page compression" and "no row
 compression" are different claims and only the first was decided.
 
 Measured in ~40 lines against a real `rusqlite` in WAL mode, storing a trained
 dictionary as a row: values round-trip, and compression behaves as expected.
-zstd is already a dependency. There is no library-shaped hole here.
+zstd is already a dependency. There is no library-shaped hole here. *(History:
+`rusqlite` left the graph with ADR 0038, and the dictionary row with the
+engine's index; `body_codec` is the ~40 lines, minus the dictionary.)*
 
 ## What this does not change
 
@@ -149,6 +178,16 @@ taking deliberately rather than by default:
   the history, not the mechanism. The moment anybody else installs Postio, the
   chain starts again from this new 0001.
 
+> **Amended 2026-09-14 (ADR 0038): the licence was spent a second time, and
+> this time the mechanism went too.** `0001_initial_schema.sql`, the version
+> row, `migrate` and its report are all gone: `crates/postio-storage/src/schema.rs`
+> holds the schema as one `HEAD` constant and says at its top that there are
+> no migrations — a store the old engine wrote cannot be opened by the new
+> one, so there is nothing for a migration to carry forward, and every
+> existing store is rebuilt by resyncing. `schema.rs` also says the licence
+> does not generalise: the day a release has a second installation, numbered
+> forward-only migrations return.
+
 **This is a one-time licence, not a policy.** It is available because the user
 count is one and it should be spent here rather than saved.
 
@@ -164,7 +203,8 @@ count is one and it should be spent here rather than saved.
   standing between the user's prose and a stolen laptop.
 - **#300 becomes the urgent one.** Once bodies are rows, SQLCipher *is* the
   body encryption. It was already `ready`/p2; this makes it the single highest
-  security item.
+  security item. *(ADR 0038: the engine's page encryption is, now — the point
+  stands with the mechanism swapped.)*
 - The database grows by roughly 0.9 GB on a large account, with `VACUUM` and
   backup consequences a directory of files does not have. Worth watching; not
   worth trading the metadata leak for.

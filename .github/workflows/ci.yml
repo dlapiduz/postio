@@ -188,6 +188,19 @@ jobs:
       # enable that rule. Output is redacted by default -- these logs are
       # public. Run the script locally with --reveal to see the offending
       # values.
+      # `check-unused-deps.py` skips, saying so, without cargo-machete -- so
+      # this job installs it, and the gate is real here whatever a
+      # workstation has. Cached on the install script's hash, the way
+      # nextest is: the key changes exactly when the pin does.
+      - name: Cache cargo-machete
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ~/.cargo/bin/cargo-machete
+          key: ${{ runner.os }}-cargo-machete-${{ hashFiles('scripts/install-machete.sh') }}
+
+      - name: Install cargo-machete
+        run: scripts/install-machete.sh
+
       - name: Run every repository invariant
         env:
           POSTIO_DENY_NAMES: ${{ secrets.POSTIO_DENY_NAMES }}
@@ -547,10 +560,20 @@ jobs:
       # Still inside `dbus-run-session`, for the same reason as before: mutter
       # wants a session bus and a runner has none. `--profile ci` is where
       # fail-fast is turned off, alongside the retry override for #957.
+      #
+      # Everything but the two WebKit-heavy crates. `postio-gtk` and
+      # `postio-app` run in the two jobs below: their suites are the ones a
+      # dying web process on this runner's software-GL stack can take down,
+      # and they are the ones nextest has to serialise (the `webkit` group),
+      # so together they were ~13 of this job's ~15 minutes. Apart, a WebKit
+      # flake re-runs one job rather than the whole workspace, and the engine
+      # crates report in a few minutes.
       - name: cargo nextest run
         env:
           POSTIO_TEST_PATIENCE: "3"
-        run: dbus-run-session -- cargo nextest run --workspace --profile ci
+        run: >-
+          dbus-run-session -- cargo nextest run --workspace --profile ci
+          -E 'not (package(postio-gtk) + package(postio-app))'
 
       # **nextest does not run doctests**, and does not say so. They are
       # compiled and run by rustdoc, not by a test binary it can list, so this
@@ -573,6 +596,76 @@ jobs:
       # the property this depends on (`actions/cache` preserving mtimes
       # through extraction) and what silently breaks if that ever stops
       # being true.
+
+  # The two WebKit-heavy crates, one job each -- see the `test` job's
+  # nextest step for why they are apart from the workspace and from each
+  # other. Same runner, same compositor, same patience; their own build
+  # caches, because the artifacts `cargo test -p postio-gtk` produces are not
+  # the ones the workspace job keeps, and two jobs saving one cache key race.
+  #
+  # `postio_gtk::web_process` is the other half of the split: a web process
+  # that dies now fails the case in one turn of the loop rather than at
+  # nextest's cap, so a flake here costs seconds and a retry, not four
+  # minutes and a red run.
+  test-gtk:
+    name: Tests (GTK widgets)
+    runs-on: ubuntu-26.04
+    needs: changes
+    if: needs.changes.outputs.rust == 'yes'
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: ./.github/actions/rust-workspace
+        with:
+          save-cache: "true"
+          cache-name: "build-gtk"
+      - name: Restore mtimes from commit history
+        run: scripts/restore-mtimes.py
+      - name: Give the GTK suites a runtime directory
+        run: |
+          runtime="${RUNNER_TEMP:-/tmp}/xdg"
+          mkdir -p "$runtime" && chmod 700 "$runtime"
+          echo "XDG_RUNTIME_DIR=$runtime" >> "$GITHUB_ENV"
+      - name: Cache cargo-nextest
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ~/.cargo/bin/cargo-nextest
+          key: ${{ runner.os }}-cargo-nextest-${{ hashFiles('scripts/install-nextest.sh') }}
+      - name: Install cargo-nextest
+        run: scripts/install-nextest.sh
+      - name: cargo nextest run -p postio-gtk
+        env:
+          POSTIO_TEST_PATIENCE: "3"
+        run: dbus-run-session -- cargo nextest run -p postio-gtk --profile ci
+
+  test-app:
+    name: Tests (application)
+    runs-on: ubuntu-26.04
+    needs: changes
+    if: needs.changes.outputs.rust == 'yes'
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: ./.github/actions/rust-workspace
+        with:
+          save-cache: "true"
+          cache-name: "build-app"
+      - name: Restore mtimes from commit history
+        run: scripts/restore-mtimes.py
+      - name: Give the GTK suites a runtime directory
+        run: |
+          runtime="${RUNNER_TEMP:-/tmp}/xdg"
+          mkdir -p "$runtime" && chmod 700 "$runtime"
+          echo "XDG_RUNTIME_DIR=$runtime" >> "$GITHUB_ENV"
+      - name: Cache cargo-nextest
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ~/.cargo/bin/cargo-nextest
+          key: ${{ runner.os }}-cargo-nextest-${{ hashFiles('scripts/install-nextest.sh') }}
+      - name: Install cargo-nextest
+        run: scripts/install-nextest.sh
+      - name: cargo nextest run -p postio-app
+        env:
+          POSTIO_TEST_PATIENCE: "3"
+        run: dbus-run-session -- cargo nextest run -p postio-app --profile ci
 
   # The macOS half, and the link.
   #
@@ -726,6 +819,21 @@ jobs:
       - name: Install cargo-nextest
         run: scripts/install-nextest.sh
 
+      # `test-ffi-bindgen.py` builds `postio-ffi` -- most of the workspace --
+      # inside a 900 s patience window, and this job cached only the
+      # registry, so every run was a cold build on a macOS runner:
+      # 2026-09-14 saw it cross the cap twice, on the two pushes that changed
+      # Cargo.lock. The build artifacts are cached now, and the patience dial
+      # is doubled for the cold run that follows a lock change -- the base
+      # stays the number that is right on a warm runner.
+      - name: Cache the build
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: target
+          key: ${{ runner.os }}-tooling-target-${{ hashFiles('rust-toolchain.toml') }}-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-tooling-target-${{ hashFiles('rust-toolchain.toml') }}-
+
       # `CI` is what `scripts/lib/prereq.py` reads to decide that a missing
       # prerequisite is a broken runner rather than somebody's laptop. Set
       # explicitly, the way the Swift job sets it, rather than relied upon:
@@ -734,4 +842,5 @@ jobs:
       - name: Prove the tooling still holds itself up on macOS
         env:
           CI: "true"
+          POSTIO_TEST_PATIENCE: "2"
         run: scripts/run-self-tests.sh --logs "$RUNNER_TEMP/self-test-logs"

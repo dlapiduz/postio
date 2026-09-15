@@ -1,6 +1,7 @@
 # ADR 0004 — The composer's document, and where it lives
 
-- **Status:** Accepted — **GO** (2026-08-24)
+- **Status:** Accepted — **GO** (2026-08-24); amended 2026-09-14, see the
+  notes below — built as decided
 - **Date:** 2026-08-24
 - **Issue:** [#30 Model the composer document before building the rich text editor](https://github.com/dlapiduz/postio/issues/30) (P0)
 - **Builds on:** [ADR 0003](0003-rich-text-compose.md), which chose a restricted
@@ -8,7 +9,7 @@
   the document is*. This ADR answers **where it lives, who may parse HTML, and
   what "sanitised on the way out" actually means.**
 - **Related:** `docs/ARCHITECTURE.md` §11 and §13,
-  `docs/architecture-review-2026-08.md` §6
+  `docs/archive/architecture-review-2026-08.md` §6
 - **Decision:** a new domain-rank crate, **`postio-body`**, owns the document,
   the HTML subset, the parser, the serialiser, quoting and sanitisation — in
   both directions. `postio-model` does **not** gain an HTML parser.
@@ -25,15 +26,19 @@ Measured at `0e0ec08`.
 |---|---|---|
 | `MessageBody { text, html }` | Built | `model/src/message.rs:18` |
 | `Draft.body: MessageBody` | Built | `model/src/draft.rs:122` |
-| `drafts.body_html` column | Built | `0001_initial_schema.sql:320` |
+| `drafts.body_html` column | Built | `crates/postio-storage/src/schema.rs` |
 | `multipart/alternative` on send | Built, round-trip tested | `model/src/outgoing.rs` |
-| Incoming sanitisation (ammonia) | Built | `gtk/src/reader/sanitize.rs` |
-| Quote folding | Built | `gtk/src/reader/quote.rs` |
-| `Document`, HTML→text, HTML parse | **Absent** | — |
-| Composer body | A `gtk::TextView` | `gtk/src/composer.rs:279` |
+| Incoming sanitisation (ammonia) | Built | `crates/postio-body/src/sanitize.rs` (was `gtk/src/reader/sanitize.rs`) |
+| Quote folding | Built | `crates/postio-body/src/quote.rs` (was `gtk/src/reader/quote.rs`) |
+| `Document`, HTML→text, HTML parse | **Built** | `crates/postio-body/src/document.rs`, `parse.rs` |
+| Composer body | **Built** — `crate::editor::Editor`, a WebView (was a `gtk::TextView`) | `crates/postio-gtk/src/editor.rs` |
 
 So the reader half is finished and in the wrong crate, and the composer half
 does not exist. That is the shape of the work.
+
+> **Amended 2026-09-14:** that sentence describes `0e0ec08`; the table's
+> *Where* column was rewritten to where each piece is now. Everything this
+> ADR decided to move or build was moved or built.
 
 ---
 
@@ -45,10 +50,10 @@ before anyone counted the dependency cost. Counting it changes the answer.
 
 **`postio-model` is the crate every other crate waits on.** It is depended on
 by `postio-core`, `postio-search`, `postio-storage`, `postio-index`,
-`postio-imap`, `postio-smtp`, `postio-sync`, `postio-runtime`, `postio-gtk` and
-`postio-app` — the whole workspace, directly or through one hop. Its
-dependency list today is four crates (`chrono`, `mail-builder`, `mail-parser`,
-`serde`).
+`postio-account` (then `postio-imap`), `postio-smtp`, `postio-sync`,
+`postio-runtime`, `postio-gtk` and `postio-app` — the whole workspace (ten
+crates then, twenty at 0.4.0), directly or through one hop. Its dependency
+list today is four crates (`chrono`, `mail-builder`, `mail-parser`, `serde`).
 
 An HTML parser is not a small addition. `ammonia` pulls `html5ever`,
 `markup5ever`, `tendril` and a generated tag table; putting it in
@@ -311,6 +316,8 @@ the HTML already stored. Rejected in Q3.
   `postio-body` has no SQL and no toolkit, and the existing `postio-gtk` rule
   is unaffected. Worth adding `postio-body` to the pure-leaf set if that check
   ever grows from two crates to a graph rule (`ARCHITECTURE.md`, known gaps).
+  *(It grew: the check guards ten crates at 0.4.0, `postio-body` among them —
+  no `rusqlite`/`turso`, no `gtk4`.)*
 - `docs/ARCHITECTURE.md` §13 stops being "decided, not yet built" for the
   *placement* half and gains the crate to the diagram.
 - ~700 lines come out of `postio-gtk`, against the ~3,400 the review counted.

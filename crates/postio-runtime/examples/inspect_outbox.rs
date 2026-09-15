@@ -17,14 +17,15 @@
 //!   to `unconfirmed` when it next runs the operation, so this resolves on
 //!   its own *if* the operation is still there.
 //!
-//! # Why this is safe to point at a personal store
+//! # Point it at a copy of a store you care about
 //!
-//! The same three guarantees as [`inspect_mailboxes`], for the same reasons:
-//! the database is opened `SQLITE_OPEN_READ_ONLY` and then put in
-//! `PRAGMA query_only`, so nothing here can write — not a checkpoint, not a
-//! vacuum, not a migration; the keyring entry is **retrieved, never minted**,
-//! because minting would replace the key a populated store is encrypted
-//! under; and it selects ids, states, timestamps and counts only.
+//! The same rules as [`inspect_mailboxes`], for the same reasons: the engine
+//! has no read-only open, so the safety is this instruction rather than a
+//! file mode — nothing below writes, and a copy protects the live store from
+//! the engine's own recovery on open. The keyring entry is **retrieved,
+//! never minted**, because minting would replace the key a populated store
+//! is encrypted under; and it selects ids, states, timestamps and counts
+//! only.
 //!
 //! **No subject, no address, no body, and no `last_error` text** — an SMTP
 //! rejection routinely quotes the recipient back, so the error is reported as
@@ -38,9 +39,9 @@
 
 use postio_account::secret::{AccountKey, KeyringSecretStore, SecretStore};
 use postio_storage::key::{Purpose, STORE_KEY_ENTRY, StoreKey};
-use rusqlite::{Connection, OpenFlags};
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let path = dirs_store_path();
     println!("store: {}", path.display());
     if !path.exists() {
@@ -48,16 +49,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     let secrets = KeyringSecretStore::default();
-    let runtime = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()?;
-    let stored = runtime.block_on(secrets.retrieve(&AccountKey::new(STORE_KEY_ENTRY)))?;
+    let stored = secrets.retrieve(&AccountKey::new(STORE_KEY_ENTRY)).await?;
     if stored.is_empty() {
         return Err("the store key entry is empty; refusing to mint one".into());
     }
     let key = StoreKey::from_hex(stored.expose())?.derive(Purpose::Database);
 
-    let connection = open_store(&path, &key)?;
+    let store = postio_storage::Store::open(&path, &key).await?;
+    let connection = store.connect().await?;
 
     let now = chrono::Utc::now().timestamp();
     println!("now:   {now}\n");
@@ -66,28 +65,72 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     //
     // The same predicates the list uses, so a disagreement between this and
     // the screen is itself the finding.
-    let counted = |sql: &str| -> rusqlite::Result<i64> {
-        connection.query_row(sql, [], |row| row.get::<_, i64>(0))
-    };
+    async fn counted(
+        connection: &postio_storage::Checkout,
+        sql: &str,
+    ) -> Result<i64, postio_storage::Error> {
+        postio_storage::sql::scalar(connection, sql, ()).await
+    }
     println!(
         "messages.send_state: queued {}  sending {}  failed {}  unconfirmed {}  sent {}",
-        counted("SELECT count(*) FROM messages WHERE send_state = 'queued'")?,
-        counted("SELECT count(*) FROM messages WHERE send_state = 'sending'")?,
-        counted("SELECT count(*) FROM messages WHERE send_state = 'failed'")?,
-        counted("SELECT count(*) FROM messages WHERE send_state = 'unconfirmed'")?,
-        counted("SELECT count(*) FROM messages WHERE send_state = 'sent'")?,
+        counted(
+            &connection,
+            "SELECT count(*) FROM messages WHERE send_state = 'queued'"
+        )
+        .await?,
+        counted(
+            &connection,
+            "SELECT count(*) FROM messages WHERE send_state = 'sending'"
+        )
+        .await?,
+        counted(
+            &connection,
+            "SELECT count(*) FROM messages WHERE send_state = 'failed'"
+        )
+        .await?,
+        counted(
+            &connection,
+            "SELECT count(*) FROM messages WHERE send_state = 'unconfirmed'"
+        )
+        .await?,
+        counted(
+            &connection,
+            "SELECT count(*) FROM messages WHERE send_state = 'sent'"
+        )
+        .await?,
     );
     println!(
         "drafts.state:        queued {}  sending {}  failed {}  unconfirmed {}  editing {}\n",
-        counted("SELECT count(*) FROM drafts WHERE state = 'queued'")?,
-        counted("SELECT count(*) FROM drafts WHERE state = 'sending'")?,
-        counted("SELECT count(*) FROM drafts WHERE state = 'failed'")?,
-        counted("SELECT count(*) FROM drafts WHERE state = 'unconfirmed'")?,
-        counted("SELECT count(*) FROM drafts WHERE state = 'editing'")?,
+        counted(
+            &connection,
+            "SELECT count(*) FROM drafts WHERE state = 'queued'"
+        )
+        .await?,
+        counted(
+            &connection,
+            "SELECT count(*) FROM drafts WHERE state = 'sending'"
+        )
+        .await?,
+        counted(
+            &connection,
+            "SELECT count(*) FROM drafts WHERE state = 'failed'"
+        )
+        .await?,
+        counted(
+            &connection,
+            "SELECT count(*) FROM drafts WHERE state = 'unconfirmed'"
+        )
+        .await?,
+        counted(
+            &connection,
+            "SELECT count(*) FROM drafts WHERE state = 'editing'"
+        )
+        .await?,
     );
 
     // ── every draft that is not merely being written ─────────────────────
-    let mut statement = connection.prepare(
+    let rows = postio_storage::sql::all(
+        &connection,
         "SELECT d.id, d.account_id, d.state, d.message_id, d.updated_at,
                 m.send_state, m.send_at,
                 q.id, q.state, q.attempts, q.next_attempt_at,
@@ -99,40 +142,43 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                  AND q.op_type = 'send'
           WHERE d.state <> 'editing'
           ORDER BY d.account_id, d.id",
-    )?;
-    let rows = statement.query_map([], |row| {
-        Ok((
-            row.get::<_, i64>(0)?,
-            row.get::<_, i64>(1)?,
-            row.get::<_, String>(2)?,
-            row.get::<_, Option<i64>>(3)?,
-            row.get::<_, i64>(4)?,
-            row.get::<_, Option<String>>(5)?,
-            row.get::<_, Option<i64>>(6)?,
-            row.get::<_, Option<i64>>(7)?,
-            row.get::<_, Option<String>>(8)?,
-            row.get::<_, Option<i64>>(9)?,
-            row.get::<_, Option<i64>>(10)?,
-            row.get::<_, Option<i64>>(11)?,
-        ))
-    })?;
+        (),
+        |row| {
+            use postio_storage::sql::RowExt as _;
+            Ok((
+                row.col::<i64>(0)?,
+                row.col::<i64>(1)?,
+                row.col::<String>(2)?,
+                row.col::<Option<i64>>(3)?,
+                row.col::<i64>(4)?,
+                row.col::<Option<String>>(5)?,
+                row.col::<Option<i64>>(6)?,
+                row.col::<Option<i64>>(7)?,
+                row.col::<Option<String>>(8)?,
+                row.col::<Option<i64>>(9)?,
+                row.col::<Option<i64>>(10)?,
+                row.col::<Option<i64>>(11)?,
+            ))
+        },
+    )
+    .await?;
 
     let mut any = false;
-    for row in rows {
-        let (
-            id,
-            account,
-            state,
-            message,
-            updated,
-            send_state,
-            send_at,
-            op,
-            op_state,
-            attempts,
-            next,
-            error_len,
-        ) = row?;
+    for (
+        id,
+        account,
+        state,
+        message,
+        updated,
+        send_state,
+        send_at,
+        op,
+        op_state,
+        attempts,
+        next,
+        error_len,
+    ) in rows
+    {
         any = true;
         println!("draft {id} (account {account})");
         println!("  drafts.state    {state}");
@@ -218,59 +264,6 @@ fn dirs_store_path() -> std::path::PathBuf {
             let home = std::env::var("HOME").expect("HOME");
             std::path::Path::new(&home).join(".local/share/postio/postio.db")
         })
-}
-
-/// Open the store read-only under `mac`, or say it is not the one.
-///
-/// **The MAC has to be named.** `PRAGMA cipher_hmac_algorithm` decides how
-/// pages are authenticated and cannot be changed once one has been read, so a
-/// reader that leaves it alone gets SQLCipher's default — SHA-512 — and a
-/// store written under SHA-256 answers `hmac check failed for pgno=1` and
-/// `file is not a database`. That is what this example did until it was
-/// pointed at a real store: the key was right and the pages would not open.
-///
-/// `db.rs` calls the two `PageMac::Sha256` (what a new store gets) and
-/// `PageMac::Sha512` (what older ones carry, read but never written), and
-/// that type is `pub(crate)` — so the strings are spelled here and the caller
-/// tries both rather than guessing.
-fn open_under(
-    path: &std::path::Path,
-    key: &postio_storage::key::Subkey,
-    mac: &str,
-) -> Result<Connection, Box<dyn std::error::Error>> {
-    let connection = Connection::open_with_flags(
-        path,
-        OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
-    )?;
-    connection.execute_batch("PRAGMA cipher_memory_security = OFF;")?;
-    {
-        let hex = key.to_hex();
-        connection.execute_batch(&format!("PRAGMA key = \"x'{}'\";", *hex))?;
-    }
-    // After the key and before anything reads a page, which is what SQLCipher
-    // requires of this one.
-    connection.execute_batch(&format!("PRAGMA cipher_hmac_algorithm = {mac};"))?;
-    connection.execute_batch("PRAGMA query_only = ON;")?;
-    // The probe: `sqlite_schema` is page 1, so this is the cheapest read that
-    // proves both the key and the MAC.
-    connection.query_row("SELECT count(*) FROM sqlite_schema", [], |row| {
-        row.get::<_, i64>(0)
-    })?;
-    Ok(connection)
-}
-
-/// The store, opened under whichever MAC it was written with.
-fn open_store(
-    path: &std::path::Path,
-    key: &postio_storage::key::Subkey,
-) -> Result<Connection, Box<dyn std::error::Error>> {
-    // Newest first: a store made by this build is SHA-256.
-    match open_under(path, key, "HMAC_SHA256") {
-        Ok(connection) => Ok(connection),
-        Err(_) => open_under(path, key, "HMAC_SHA512").map_err(|error| {
-            format!("the store opened under neither HMAC_SHA256 nor HMAC_SHA512: {error}").into()
-        }),
-    }
 }
 
 /// A duration in seconds, said the way a person reads one.

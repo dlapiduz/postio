@@ -33,15 +33,27 @@ const SEEN_KEY: &str = "orientation_seen";
 
 /// Wire the strip to the sync engine, to the store, and to every command
 /// the window runs.
-pub fn install(window: &Window, wiring: &Wiring, feeds: &Feeds) {
+pub async fn install(window: &Window, wiring: &Wiring, feeds: &Feeds) {
     let state = Rc::new(RefCell::new(Orientation::default()));
 
     // Has some earlier run already shown it? The answer is in SQLite, so it
     // arrives asynchronously — which is exactly why [`Orientation`] takes
     // its four inputs in any order rather than assuming this one is first.
-    let answer = crate::search::ask(&wiring.database, &wiring.runtime, |connection| {
-        SettingsRepository::new(connection).get(SEEN_KEY).ok()
-    });
+    // `ask` spawns onto the runtime, so the closure must own everything it
+    // touches rather than borrowing `wiring`.
+    let answer = crate::search::ask(
+        &wiring.database,
+        &wiring.runtime,
+        move |connection| async move {
+            SettingsRepository::new(&connection)
+                .get(SEEN_KEY)
+                .await
+                .ok()
+        },
+    );
+    // Cloned, not borrowed: `act` awaits now, so the block holds this across
+    // an await point and a `'static` task cannot carry a borrow.
+    let wiring = wiring.clone();
     glib::spawn_future_local(glib::clone!(
         #[weak]
         window,
@@ -56,7 +68,14 @@ pub fn install(window: &Window, wiring: &Wiring, feeds: &Feeds) {
             // worse than one that quietly never appears.
             let seen = !matches!(answer.recv().await, Ok(Some(None)));
             let effect = state.borrow_mut().remembered(seen);
-            act(&window, &wiring, effect);
+            // POSTIO-GLIB-SAFE: nothing under this await wants a reactor. The
+            // network work it reaches is spawned onto the runtime and answers over a
+            // channel -- `onboarding::probe_with_offer` is the shape -- and what is
+            // left is store reads, whose futures this engine makes self-contained.
+            // Measured rather than assumed: `app_suite::glib_main_context` opens a
+            // store and reads it on this context with no runtime anywhere, and fails
+            // loudly if that stops being true.
+            act(&window, &wiring, effect).await;
         }
     ));
 
@@ -71,10 +90,12 @@ pub fn install(window: &Window, wiring: &Wiring, feeds: &Feeds) {
         #[strong]
         state,
         move |status| {
-            if status.last_sync.is_some() {
-                let effect = state.borrow_mut().synced();
-                act(&window, &wiring, effect);
-            }
+            postio_session::blocking::now(async {
+                if status.last_sync.is_some() {
+                    let effect = state.borrow_mut().synced();
+                    act(&window, &wiring, effect).await;
+                }
+            })
         }
     ));
 
@@ -91,20 +112,22 @@ pub fn install(window: &Window, wiring: &Wiring, feeds: &Feeds) {
         #[strong]
         state,
         move || {
-            let effect = state.borrow_mut().retire();
-            act(&window, &wiring, effect);
+            postio_session::blocking::now(async {
+                let effect = state.borrow_mut().retire();
+                act(&window, &wiring, effect).await;
+            })
         }
     ));
 }
 
 /// Carry out what the state machine decided.
-fn act(window: &Window, wiring: &Wiring, effect: Effect) {
+async fn act(window: &Window, wiring: &Wiring, effect: Effect) {
     match effect {
         Effect::Nothing => {}
         Effect::Show => window.orientation().set_visible(true),
         Effect::Retire => {
             window.orientation().set_visible(false);
-            remember(wiring);
+            remember(wiring).await;
         }
     }
 }
@@ -116,14 +139,15 @@ fn act(window: &Window, wiring: &Wiring, effect: Effect) {
 /// string either way. Spawned rather than awaited — ADR 0012 Q4 asks for a
 /// strip that does not block the list, and that includes not blocking it on
 /// the way out.
-fn remember(wiring: &Wiring) {
+async fn remember(wiring: &Wiring) {
     let database = wiring.database.clone();
-    wiring.runtime.spawn_blocking(move || {
-        let Ok(connection) = database.connection() else {
+    wiring.runtime.spawn(async move {
+        let Ok(connection) = database.connect().await else {
             return;
         };
-        if let Err(error) =
-            SettingsRepository::new(&connection).set(SEEN_KEY, &Utc::now().to_rfc3339())
+        if let Err(error) = SettingsRepository::new(&connection)
+            .set(SEEN_KEY, &Utc::now().to_rfc3339())
+            .await
         {
             tracing::warn!(%error, "could not remember that the orientation was seen");
         }

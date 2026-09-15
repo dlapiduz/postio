@@ -45,173 +45,179 @@ use postio_storage::{BlobStore, test_support};
 /// The generous default is right when the next thing to happen is the thing
 /// being waited for. It is wrong when the wait is a *probe* — asking whether
 /// this row has attachments — because every miss then costs the full budget.
-fn settle_for(budget: std::time::Duration, done: impl Fn() -> bool) -> bool {
+async fn settle_for(budget: std::time::Duration, done: impl Fn() -> bool) -> bool {
     let deadline = std::time::Instant::now() + postio_test_support::scaled(budget);
     while std::time::Instant::now() < deadline {
         while glib::MainContext::default().iteration(false) {}
         if done() {
             return true;
         }
-        std::thread::sleep(std::time::Duration::from_millis(10));
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
     }
     done()
 }
 
 pub fn opening_a_message_fills_the_pane_and_its_chips_open_the_parts_tree() {
-    let state_dir = tempfile::tempdir().expect("a state directory");
-    // SAFETY: first statement of a single-threaded test.
-    unsafe { std::env::set_var("XDG_STATE_HOME", state_dir.path()) };
+    crate::gtk_case(async {
+        let state_dir = tempfile::tempdir().expect("a state directory");
+        // SAFETY: first statement of a single-threaded test.
+        unsafe { std::env::set_var("XDG_STATE_HOME", state_dir.path()) };
 
-    if adw::init().is_err() || gdk::Display::default().is_none() {
-        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
-        return;
-    }
-    let display = gdk::Display::default().unwrap();
-    fonts::install().expect("the embedded fonts should install");
-    style::install(&display);
-    app::install_icons(&display);
+        if adw::init().is_err() || gdk::Display::default().is_none() {
+            eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
+            return;
+        }
+        let display = gdk::Display::default().unwrap();
+        fonts::install().expect("the embedded fonts should install");
+        style::install(&display);
+        app::install_icons(&display);
 
-    let database = test_support::memory();
-    let report = seed_small(&database, 11);
-    assert!(report.message_count > 0, "the fixture seeded no mail");
-    let directory = tempfile::tempdir().expect("a blob directory");
-    let blobs = BlobStore::open(
-        directory.path().to_path_buf(),
-        &postio_storage::test_support::blob_keys(),
-    )
-    .expect("a blob store");
+        let database = test_support::memory().await;
+        let report = seed_small(&database, 11).await;
+        assert!(report.message_count > 0, "the fixture seeded no mail");
+        let directory = tempfile::tempdir().expect("a blob directory");
+        let blobs = BlobStore::open(
+            directory.path().to_path_buf(),
+            &postio_storage::test_support::blob_keys(),
+        )
+        .expect("a blob store");
 
-    // Every message but the newest flagged, before anything is wired: the
-    // Flagged view is where rows are genuinely single messages (see the
-    // module comment). The newest is left out because the folder view the
-    // window opens on has already reported it — its row *is* that message —
-    // and the cursor's dedup would then swallow the Flagged view's own
-    // first report, leaving the pane unfilled.
-    let flagged_total: u32 = {
-        let connection = database.connection().expect("a connection");
-        connection
-            .execute(
-                "UPDATE messages SET flagged = 1 WHERE id NOT IN \
-                 (SELECT id FROM messages ORDER BY received_at DESC LIMIT 1)",
-                [],
-            )
-            .expect("the fixture writes");
-        connection
-            .query_row(
+        // Every message but the newest flagged, before anything is wired: the
+        // Flagged view is where rows are genuinely single messages (see the
+        // module comment). The newest is left out because the folder view the
+        // window opens on has already reported it — its row *is* that message —
+        // and the cursor's dedup would then swallow the Flagged view's own
+        // first report, leaving the pane unfilled.
+        let flagged_total: u32 = {
+            let connection = database.connect().await.expect("a connection");
+            connection
+                .execute(
+                    "UPDATE messages SET flagged = 1 WHERE id NOT IN \
+                     (SELECT id FROM messages ORDER BY received_at DESC LIMIT 1)",
+                    (),
+                )
+                .await
+                .expect("the fixture writes");
+            postio_storage::sql::one(
+                &connection,
                 "SELECT COUNT(*) FROM messages WHERE flagged = 1",
-                [],
-                |row| row.get(0),
+                (),
+                |row| postio_storage::sql::RowExt::col(row, 0),
             )
+            .await
             .expect("a count")
-    };
+        };
 
-    let (bridge, _replies) = Bridge::new(handler_fn(|_, _| async {})).expect("a runtime");
-    let (sink, _events) = event_channel();
-    let wiring = Wiring::new(
-        database.clone(),
-        blobs,
-        bridge.handle(),
-        sink,
-        bridge.commands(),
-    );
+        let (bridge, _replies) = Bridge::new(handler_fn(|_, _| async {})).expect("a runtime");
+        let (sink, _events) = event_channel();
+        let wiring = Wiring::new(
+            database.clone(),
+            blobs,
+            bridge.handle(),
+            sink,
+            bridge.commands(),
+        );
 
-    let window = Window::default();
-    window.present();
-    while glib::MainContext::default().iteration(false) {}
+        let window = Window::default();
+        window.present();
+        while glib::MainContext::default().iteration(false) {}
 
-    // ── the same call `run` makes ───────────────────────────────────────
-    let wired = feed_the_window(&window, &wiring).expect("the seeded store has an account");
+        // ── the same call `run` makes ───────────────────────────────────────
+        let wired = feed_the_window(&window, &wiring)
+            .await
+            .expect("the seeded store has an account");
 
-    // Into the Flagged view, the way the sidebar's row would take it — but
-    // only after the sidebar's own default pick has landed: the folder list
-    // loads asynchronously and picking the default folder is what it does
-    // on arrival, which would stomp a scope opened before it. Then wait for
-    // the swap itself, because the model keeps the folder's rows until the
-    // Flagged page answers.
-    let list = window.list();
-    assert!(
-        settle_until(|| list.model().n_items() > 0),
-        "the opening folder never filled, so no scope can be left"
-    );
-    wired
-        .feeds
-        .messages
-        .open(postio_model::ListScope::Flagged(report.account.id));
-    assert!(
-        settle_until(|| list.model().n_items() == flagged_total),
-        "the Flagged view never filled, so there is nothing to open"
-    );
+        // Into the Flagged view, the way the sidebar's row would take it — but
+        // only after the sidebar's own default pick has landed: the folder list
+        // loads asynchronously and picking the default folder is what it does
+        // on arrival, which would stomp a scope opened before it. Then wait for
+        // the swap itself, because the model keeps the folder's rows until the
+        // Flagged page answers.
+        let list = window.list();
+        assert!(
+            settle_until(async || list.model().n_items() > 0).await,
+            "the opening folder never filled, so no scope can be left"
+        );
+        wired
+            .feeds
+            .messages
+            .open(postio_model::ListScope::Flagged(report.account.id));
+        assert!(
+            settle_until(async || list.model().n_items() == flagged_total).await,
+            "the Flagged view never filled, so there is nothing to open"
+        );
 
-    // ── the pane starts on the autoselected row (#601) ──────────────────
-    // Cleared here so what follows is about *opening* a message rather than
-    // about the row the window happened to open on.
-    assert!(
-        settle_until(|| window.reading()),
-        "the view opened with a row under the cursor and an empty pane"
-    );
-    window.clear_reader();
-    assert!(!window.reading(), "the pane was just cleared");
+        // ── the pane starts on the autoselected row (#601) ──────────────────
+        // Cleared here so what follows is about *opening* a message rather than
+        // about the row the window happened to open on.
+        assert!(
+            settle_until(async || window.reading()).await,
+            "the view opened with a row under the cursor and an empty pane"
+        );
+        window.clear_reader();
+        assert!(!window.reading(), "the pane was just cleared");
 
-    // ── open the first row, the way a double click or `Enter` does ──────
-    activate_first_row(&window);
+        // ── open the first row, the way a double click or `Enter` does ──────
+        activate_first_row(&window);
 
-    assert!(
-        settle_until(|| window.reading()),
-        "the message was activated and the reading pane never filled. The \
-         reader renders bodies and the store holds them; what is missing is \
-         between them."
-    );
-    assert!(
-        window.reader().widget().is_visible(),
-        "the pane says it is reading and the reader is not on screen"
-    );
+        assert!(
+            settle_until(async || window.reading()).await,
+            "the message was activated and the reading pane never filled. The \
+             reader renders bodies and the store holds them; what is missing is \
+             between them."
+        );
+        assert!(
+            window.reader().widget().is_visible(),
+            "the pane says it is reading and the reader is not on screen"
+        );
 
-    // ── the chips, and the tree behind them ─────────────────────────────
-    //
-    // `postio-v62`. The MIME tree was built, tested and rendered, and nothing
-    // in the running application could open it: the only entry point is a
-    // chip in a reader, and until `postio-y39y` there was no reader.
-    let with_parts = settle_until_row(&window, |window| !chips(window).is_empty());
-    assert!(
-        with_parts,
-        "no message in the corpus showed an attachment chip; either the seed          has no attachments or the chips are not being fed"
-    );
+        // ── the chips, and the tree behind them ─────────────────────────────
+        //
+        // `postio-v62`. The MIME tree was built, tested and rendered, and nothing
+        // in the running application could open it: the only entry point is a
+        // chip in a reader, and until `postio-y39y` there was no reader.
+        let with_parts = settle_until_row(&window, |window| !chips(window).is_empty()).await;
+        assert!(
+            with_parts,
+            "no message in the corpus showed an attachment chip; either the seed          has no attachments or the chips are not being fed"
+        );
 
-    assert!(
-        !window.parts().is_visible(),
-        "the panel is what a chip opens, not something already open"
-    );
-    chips(&window)[0].emit_clicked();
-    while glib::MainContext::default().iteration(false) {}
+        assert!(
+            !window.parts().is_visible(),
+            "the panel is what a chip opens, not something already open"
+        );
+        chips(&window)[0].emit_clicked();
+        while glib::MainContext::default().iteration(false) {}
 
-    assert!(
-        window.parts().is_visible(),
-        "a chip asks; the panel is where the verbs live"
-    );
-    let nodes = window.parts().nodes();
-    assert!(
-        nodes.len() > 1,
-        "the tree should hold a root and at least one part, not {}",
-        nodes.len()
-    );
-    assert!(
-        nodes.iter().any(|node| node.is_leaf()),
-        "a tree of nothing but containers means the parts never arrived"
-    );
+        assert!(
+            window.parts().is_visible(),
+            "a chip asks; the panel is where the verbs live"
+        );
+        let nodes = window.parts().nodes();
+        assert!(
+            nodes.len() > 1,
+            "the tree should hold a root and at least one part, not {}",
+            nodes.len()
+        );
+        assert!(
+            nodes.iter().any(|node| node.is_leaf()),
+            "a tree of nothing but containers means the parts never arrived"
+        );
 
-    // ── and none of it fetched anything ─────────────────────────────────
-    //
-    // The seed marks every message `BodyState::NotFetched` and this test
-    // never starts an engine, so there is nothing on this machine to draw
-    // from. The panel opening anyway is the point: it is drawn from
-    // `BODYSTRUCTURE` metadata, which is what lets a message that has never
-    // been downloaded still say what came with it.
-    assert!(
-        nodes.iter().all(|node| !node.downloaded),
-        "nothing was downloaded, so no node should claim to be"
-    );
+        // ── and none of it fetched anything ─────────────────────────────────
+        //
+        // The seed marks every message `BodyState::NotFetched` and this test
+        // never starts an engine, so there is nothing on this machine to draw
+        // from. The panel opening anyway is the point: it is drawn from
+        // `BODYSTRUCTURE` metadata, which is what lets a message that has never
+        // been downloaded still say what came with it.
+        assert!(
+            nodes.iter().all(|node| !node.downloaded),
+            "nothing was downloaded, so no node should claim to be"
+        );
 
-    bridge.shutdown();
+        bridge.shutdown();
+    });
 }
 
 /// Every attachment chip currently under the message body.
@@ -229,14 +235,14 @@ fn chips(window: &Window) -> Vec<gtk::Button> {
 
 /// Activate rows in turn until `done`, because only some messages in the
 /// corpus carry attachments and which one lands where depends on the seed.
-fn settle_until_row(window: &Window, done: impl Fn(&Window) -> bool) -> bool {
+async fn settle_until_row(window: &Window, done: impl Fn(&Window) -> bool) -> bool {
     let list = window.list();
     for position in 0..list.model().n_items().min(40) {
         activate_row(window, position);
         // A probe, not a wait: the read is local and the chips are drawn on
         // the same reply as the body, so a row that has not answered in this
         // long has nothing to show.
-        if settle_for(std::time::Duration::from_millis(400), || done(window)) {
+        if settle_for(std::time::Duration::from_millis(400), || done(window)).await {
             return true;
         }
     }

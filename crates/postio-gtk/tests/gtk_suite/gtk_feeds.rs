@@ -310,9 +310,14 @@ pub fn the_panes_follow_the_account_the_sync_and_the_folder_you_pick() {
     assert_eq!(window.sidebar().selected(), Some(MailboxId::new(INBOX)));
     assert_eq!(window.list().model().n_items(), 940);
     assert_eq!(feeds.messages.mailbox(), Some(MailboxId::new(INBOX)));
+    // Eleven, not the twelve the inbox opened with: the count was moved to
+    // 11 above (and the sidebar badge followed it there), and the header
+    // above the rows follows a reload the same way the badge does. It used
+    // to keep its open-time value, so the two disagreed -- a real store read
+    // "32 unread" over a store holding two.
     assert_eq!(
         header(&window),
-        ("Inbox".to_string(), "12 unread".to_string())
+        ("Inbox".to_string(), "11 unread".to_string())
     );
 
     // ── picking a folder changes what the list shows ──────────────────────

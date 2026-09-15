@@ -534,8 +534,23 @@ impl EventHub {
     /// The subscription starts at *now*. Everything before it is in the
     /// store (ADR 0013 Q4).
     pub fn subscribe(&self, label: impl Into<String>) -> EventStream {
+        self.inner.subscribe(label)
+    }
+
+    /// How many subscriptions are live, last time anybody looked.
+    pub fn subscribers(&self) -> usize {
+        self.inner
+            .read()
+            .iter()
+            .filter(|subscription| !subscription.events.is_closed())
+            .count()
+    }
+}
+
+impl HubInner {
+    fn subscribe(&self, label: impl Into<String>) -> EventStream {
         let (sender, receiver) = async_channel::unbounded();
-        let mut subscribers = self.inner.write();
+        let mut subscribers = self.write();
         // A consumer that went away leaves a queue nothing will ever read,
         // and every emit would keep paying for it. Under the write lock a
         // subscribe already takes, so the emit path stays a read lock.
@@ -547,14 +562,22 @@ impl EventHub {
         });
         EventStream(receiver)
     }
+}
 
-    /// How many subscriptions are live, last time anybody looked.
-    pub fn subscribers(&self) -> usize {
-        self.inner
-            .read()
-            .iter()
-            .filter(|subscription| !subscription.events.is_closed())
-            .count()
+impl EventSink {
+    /// A private stream for one consumer, when this sink is on a hub.
+    ///
+    /// `None` for a sink from [`event_channel`]: that pair has one reader and
+    /// no room for a second. What this is for is a component handed only a
+    /// sink — the session's body indexer, wired from a `Wiring` — that has
+    /// to listen as well as speak: on a hub it subscribes like the window
+    /// does, and a test that wired a plain channel gets the component's
+    /// catch-up behaviour and no events, which is what a plain channel says.
+    pub fn subscribe(&self, label: impl Into<String>) -> Option<EventStream> {
+        match &self.events {
+            EventTarget::Hub(inner) => Some(inner.subscribe(label)),
+            EventTarget::Direct(_) => None,
+        }
     }
 }
 
@@ -750,8 +773,8 @@ impl Bridge {
     /// timeout. Detached background work does not extend it: a wedged socket
     /// must not keep the window on screen.
     ///
-    /// Do not call this from inside the runtime; tokio forbids dropping a
-    /// runtime from an async context.
+    /// Safe to call from inside another runtime — see [`Bridge::stop`], which
+    /// is where that is arranged.
     pub fn shutdown(mut self) {
         self.stop();
     }
@@ -762,8 +785,9 @@ impl Bridge {
 
         if let (Some(runtime), Some(pump)) = (self.runtime.as_ref(), self.pump.take()) {
             let timeout = self.shutdown_timeout;
-            let drained =
-                runtime.block_on(async move { tokio::time::timeout(timeout, pump).await.is_ok() });
+            let drained = blocking(|| {
+                runtime.block_on(async move { tokio::time::timeout(timeout, pump).await.is_ok() })
+            });
             // A miss here is not proof of a hang: dropping the timed-out
             // await does not abort the pump task (a dropped JoinHandle
             // detaches; it does not cancel -- see the sync engine's own
@@ -783,9 +807,45 @@ impl Bridge {
         if let Some(runtime) = self.runtime.take() {
             // Detached tasks get dropped rather than waited for; the timeout
             // only covers threads that are mid-blocking-call.
-            runtime.shutdown_timeout(self.shutdown_timeout);
+            let timeout = self.shutdown_timeout;
+            blocking(move || runtime.shutdown_timeout(timeout));
         }
     }
+}
+
+/// Run `work`, which blocks this thread, from wherever the caller happens to
+/// be.
+///
+/// # Why this is not just calling it
+///
+/// `Runtime::block_on` and dropping a runtime both panic outright when the
+/// calling thread is already driving a runtime — *"Cannot start a runtime from
+/// within a runtime"*. In production the caller is the UI thread at quit,
+/// which is not a runtime thread, and calling them directly was right.
+///
+/// It stopped being right when the storage layer went async: every test that
+/// stands up a window now drives its body with `block_on`, so `shutdown()` is
+/// reached from inside a runtime and a correct shutdown became a panic. That
+/// is the tests' shape rather than the application's, but a shutdown that can
+/// only be called from one kind of thread is a trap either way.
+///
+/// `block_in_place` is the answer and it needs a multi-threaded runtime -- so
+/// every runtime in this workspace is one, including the single-worker ones
+/// that exist only to drive a dedicated thread. `postio_session::blocking`
+/// carries the same guard and the story behind it: a `current_thread` runtime
+/// here aborts the process without unwinding.
+fn blocking<T>(work: impl FnOnce() -> T) -> T {
+    if let Ok(handle) = tokio::runtime::Handle::try_current() {
+        assert!(
+            handle.runtime_flavor() != tokio::runtime::RuntimeFlavor::CurrentThread,
+            "a bridge shutdown was reached from inside a current-thread \
+             runtime, which cannot stand aside for `block_in_place`. Whichever \
+             runtime drives this has to be built \
+             `new_multi_thread().worker_threads(1)`."
+        );
+        return tokio::task::block_in_place(work);
+    }
+    work()
 }
 
 impl Drop for Bridge {

@@ -25,7 +25,7 @@ use std::path::{Path, PathBuf};
 
 use postio_model::MessageId;
 use postio_runtime::Engine;
-use postio_storage::{BlobStore, Database};
+use postio_storage::{BlobStore, Store};
 
 /// How long an exported filename may get before the extension.
 ///
@@ -124,7 +124,7 @@ pub fn unique_names<'a>(subjects: impl IntoIterator<Item = Option<&'a str>>) -> 
 /// user dragged these messages by name; fetching them is the thing they asked
 /// for. With no engine, that message is an error rather than an empty file.
 pub async fn export_messages(
-    database: &Database,
+    database: &Store,
     blobs: &BlobStore,
     engine: Option<Engine>,
     into: &Path,
@@ -136,9 +136,12 @@ pub async fn export_messages(
     let subjects: Vec<Option<String>> = messages
         .iter()
         .map(|message| {
-            crate::reading::read_message(database, *message)
-                .map(|row| row.subject)
-                .unwrap_or_default()
+            postio_session::blocking::now(async {
+                crate::reading::read_message(database, *message)
+                    .await
+                    .map(|row| row.subject)
+                    .unwrap_or_default()
+            })
         })
         .collect();
     let names = unique_names(subjects.iter().map(Option::as_deref));
@@ -147,7 +150,7 @@ pub async fn export_messages(
 
     let mut written = Vec::new();
     for (message, name) in messages.iter().zip(names) {
-        let raw = match crate::reading::raw_blob(database, *message)? {
+        let raw = match crate::reading::raw_blob(database, *message).await? {
             Some(raw) => raw,
             None => {
                 let engine = engine.clone().ok_or(
@@ -188,7 +191,7 @@ pub async fn export_messages(
 /// the same name. It already refuses to let a part called `../../.bashrc`
 /// steer where the file goes.
 pub async fn export_part(
-    database: &Database,
+    database: &Store,
     blobs: &BlobStore,
     engine: Option<Engine>,
     into: &Path,
@@ -218,7 +221,7 @@ pub async fn export_part(
 /// the bytes have to exist somewhere both processes can see. They are copies
 /// of mail that is already stored, so [`crate::paths::export_dir`] puts them
 /// under the cache directory, where the system is allowed to reclaim them.
-pub fn install(window: &postio_gtk::window::Window, wiring: &crate::Wiring) {
+pub async fn install(window: &postio_gtk::window::Window, wiring: &crate::Wiring) {
     let database = wiring.database.clone();
     let blobs = wiring.blobs.clone();
     let engine = wiring.engine.clone();
@@ -261,18 +264,18 @@ mod tests {
 
     /// A store with an account and an inbox, and a blob directory beside it.
     struct World {
-        database: Database,
+        database: Store,
         blobs: BlobStore,
         account: postio_model::Account,
         inbox: postio_model::MailboxId,
         _directory: tempfile::TempDir,
     }
 
-    fn world() -> World {
-        let database = test_support::memory();
+    async fn world() -> World {
+        let database = test_support::memory().await;
         let (account, inbox) = {
-            let connection = database.connection().expect("a connection");
-            test_support::account_with_inbox(&connection)
+            let connection = database.connect().await.expect("a connection");
+            test_support::account_with_inbox(&connection).await
         };
         let directory = tempfile::tempdir().expect("a blob directory");
         let blobs = BlobStore::open(directory.path(), &postio_storage::test_support::blob_keys())
@@ -288,13 +291,14 @@ mod tests {
 
     impl World {
         /// A message whose raw source is `raw`, or which has none at all.
-        fn message(&self, subject: Option<&str>, raw: Option<&[u8]>) -> MessageId {
-            let connection = self.database.connection().expect("a connection");
+        async fn message(&self, subject: Option<&str>, raw: Option<&[u8]>) -> MessageId {
+            let connection = self.database.connect().await.expect("a connection");
             let mut message = Message::new(self.account.id, self.inbox, Utc::now());
             message.subject = subject.map(str::to_string);
             message.raw_blob_id = raw.map(|bytes| self.blobs.put(bytes).expect("a blob"));
             MessageRepository::new(&connection)
                 .create(&mut message)
+                .await
                 .expect("a message")
         }
     }
@@ -306,34 +310,28 @@ Subject: Lunch on Thursday\r\n\
 \r\n\
 Half past twelve?\r\n";
 
-    fn exported(
+    async fn exported(
         world: &World,
         into: &Path,
         messages: &[MessageId],
     ) -> Result<Vec<PathBuf>, String> {
-        tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .expect("a runtime")
-            .block_on(export_messages(
-                &world.database,
-                &world.blobs,
-                None,
-                into,
-                messages,
-            ))
+        // Awaited, not blocked on: the test is already a `#[tokio::test]`,
+        // and building a second runtime inside one panics.
+        export_messages(&world.database, &world.blobs, None, into, messages).await
     }
 
-    #[test]
-    fn an_exported_message_is_the_bytes_the_server_sent() {
+    #[tokio::test(flavor = "multi_thread")]
+    async fn an_exported_message_is_the_bytes_the_server_sent() {
         // An .eml file that is not byte-identical to the source is one another
         // client may refuse, and the whole point of dragging out is that it
         // opens somewhere else.
-        let world = world();
-        let message = world.message(Some("Lunch on Thursday"), Some(RAW));
+        let world = world().await;
+        let message = world.message(Some("Lunch on Thursday"), Some(RAW)).await;
         let into = tempfile::tempdir().expect("a directory");
 
-        let files = exported(&world, into.path(), &[message]).expect("it exports");
+        let files = exported(&world, into.path(), &[message])
+            .await
+            .expect("it exports");
 
         assert_eq!(files.len(), 1);
         assert_eq!(
@@ -343,15 +341,18 @@ Half past twelve?\r\n";
         assert_eq!(std::fs::read(&files[0]).expect("a file"), RAW);
     }
 
-    #[test]
-    fn a_whole_thread_arrives_as_separate_files() {
-        let world = world();
-        let messages: Vec<MessageId> = (0..3)
-            .map(|_| world.message(Some("Lunch on Thursday"), Some(RAW)))
-            .collect();
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_whole_thread_arrives_as_separate_files() {
+        let world = world().await;
+        let mut messages: Vec<MessageId> = Vec::new();
+        for _ in 0..3 {
+            messages.push(world.message(Some("Lunch on Thursday"), Some(RAW)).await);
+        }
         let into = tempfile::tempdir().expect("a directory");
 
-        let files = exported(&world, into.path(), &messages).expect("it exports");
+        let files = exported(&world, into.path(), &messages)
+            .await
+            .expect("it exports");
 
         assert_eq!(files.len(), 3);
         let names: Vec<String> = files
@@ -372,16 +373,18 @@ Half past twelve?\r\n";
         }
     }
 
-    #[test]
-    fn the_files_come_back_in_the_order_they_were_asked_for() {
+    #[tokio::test(flavor = "multi_thread")]
+    async fn the_files_come_back_in_the_order_they_were_asked_for() {
         // The drop hands over a `text/uri-list`, and a list in a different
         // order than the person selected reads as the wrong mail.
-        let world = world();
-        let first = world.message(Some("One"), Some(b"one"));
-        let second = world.message(Some("Two"), Some(b"two"));
+        let world = world().await;
+        let first = world.message(Some("One"), Some(b"one")).await;
+        let second = world.message(Some("Two"), Some(b"two")).await;
         let into = tempfile::tempdir().expect("a directory");
 
-        let files = exported(&world, into.path(), &[second, first]).expect("it exports");
+        let files = exported(&world, into.path(), &[second, first])
+            .await
+            .expect("it exports");
 
         let names: Vec<&str> = files
             .iter()
@@ -390,29 +393,31 @@ Half past twelve?\r\n";
         assert_eq!(names, vec!["Two.eml", "One.eml"]);
     }
 
-    #[test]
-    fn a_subject_cannot_write_outside_the_directory_it_was_given() {
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_subject_cannot_write_outside_the_directory_it_was_given() {
         // The naming rules are unit-tested above; this is the one that matters
         // in practice, because it is a real write to a real filesystem.
-        let world = world();
-        let message = world.message(Some("../../escaped"), Some(RAW));
+        let world = world().await;
+        let message = world.message(Some("../../escaped"), Some(RAW)).await;
         let into = tempfile::tempdir().expect("a directory");
 
-        let files = exported(&world, into.path(), &[message]).expect("it exports");
+        let files = exported(&world, into.path(), &[message])
+            .await
+            .expect("it exports");
 
         assert_eq!(files[0].parent(), Some(into.path()));
         assert!(files[0].exists());
     }
 
-    #[test]
-    fn a_message_that_was_never_downloaded_is_an_error_not_an_empty_file() {
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_message_that_was_never_downloaded_is_an_error_not_an_empty_file() {
         // Silence here would hand a file manager a zero-byte .eml, which
         // looks like a successful drag and is a lost message.
-        let world = world();
-        let message = world.message(Some("Never fetched"), None);
+        let world = world().await;
+        let message = world.message(Some("Never fetched"), None).await;
         let into = tempfile::tempdir().expect("a directory");
 
-        let outcome = exported(&world, into.path(), &[message]);
+        let outcome = exported(&world, into.path(), &[message]).await;
 
         assert!(outcome.is_err(), "{outcome:?}");
         assert_eq!(
@@ -439,12 +444,12 @@ Content-Disposition: attachment; filename=\"figures.csv\"\r\n\
 one,two\r\n\
 --edge--\r\n";
 
-    #[test]
-    fn an_exported_part_is_the_bytes_the_sender_attached() {
-        let world = world();
+    #[tokio::test(flavor = "multi_thread")]
+    async fn an_exported_part_is_the_bytes_the_sender_attached() {
+        let world = world().await;
         let parsed = postio_model::mime::parse(WITH_ATTACHMENT);
         let message = {
-            let connection = world.database.connection().expect("a connection");
+            let connection = world.database.connect().await.expect("a connection");
             let mut message = Message::new(world.account.id, world.inbox, Utc::now());
             message.subject = Some("The plan".into());
             message.raw_blob_id = Some(world.blobs.put(WITH_ATTACHMENT).expect("a blob"));
@@ -455,10 +460,13 @@ one,two\r\n\
                 .collect();
             MessageRepository::new(&connection)
                 .create(&mut message)
+                .await
                 .expect("a message")
         };
 
-        let row = crate::reading::read_message(&world.database, message).expect("the row");
+        let row = crate::reading::read_message(&world.database, message)
+            .await
+            .expect("the row");
         let attachment = row
             .attachments
             .iter()
@@ -477,19 +485,16 @@ one,two\r\n\
         };
 
         let into = tempfile::tempdir().expect("a directory");
-        let path = tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .expect("a runtime")
-            .block_on(export_part(
-                &world.database,
-                &world.blobs,
-                None,
-                into.path(),
-                message,
-                &node,
-            ))
-            .expect("it exports");
+        let path = export_part(
+            &world.database,
+            &world.blobs,
+            None,
+            into.path(),
+            message,
+            &node,
+        )
+        .await
+        .expect("it exports");
 
         assert_eq!(
             path.file_name().unwrap().to_str().unwrap(),
@@ -502,12 +507,12 @@ one,two\r\n\
         assert_eq!(std::fs::read(&path).expect("the file"), b"one,two");
     }
 
-    #[test]
-    fn a_container_has_no_bytes_to_export() {
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_container_has_no_bytes_to_export() {
         // `multipart/mixed` is a wrapper. Exporting it would write an empty
         // file named after something that was never a file.
-        let world = world();
-        let message = world.message(Some("The plan"), Some(WITH_ATTACHMENT));
+        let world = world().await;
+        let message = world.message(Some("The plan"), Some(WITH_ATTACHMENT)).await;
         let node = postio_gtk::parts::Node {
             part_id: String::new(),
             depth: 0,
@@ -520,28 +525,25 @@ one,two\r\n\
         };
 
         let into = tempfile::tempdir().expect("a directory");
-        let outcome = tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .expect("a runtime")
-            .block_on(export_part(
-                &world.database,
-                &world.blobs,
-                None,
-                into.path(),
-                message,
-                &node,
-            ));
+        let outcome = export_part(
+            &world.database,
+            &world.blobs,
+            None,
+            into.path(),
+            message,
+            &node,
+        )
+        .await;
 
         assert!(outcome.is_err(), "{outcome:?}");
         assert_eq!(std::fs::read_dir(into.path()).unwrap().count(), 0);
     }
 
-    #[test]
-    fn exporting_nothing_writes_nothing_and_is_not_an_error() {
-        let world = world();
+    #[tokio::test(flavor = "multi_thread")]
+    async fn exporting_nothing_writes_nothing_and_is_not_an_error() {
+        let world = world().await;
         let into = tempfile::tempdir().expect("a directory");
-        assert_eq!(exported(&world, into.path(), &[]), Ok(Vec::new()));
+        assert_eq!(exported(&world, into.path(), &[]).await, Ok(Vec::new()));
     }
 
     #[test]

@@ -36,141 +36,147 @@ use postio_storage::seed::seed_small;
 use postio_storage::{BlobStore, test_support};
 
 pub fn one_gesture_renders_once_and_reselecting_renders_nothing() {
-    let state_dir = tempfile::tempdir().expect("a state directory");
-    // SAFETY: first statement of a single-threaded test.
-    unsafe { std::env::set_var("XDG_STATE_HOME", state_dir.path()) };
+    crate::gtk_case(async {
+        let state_dir = tempfile::tempdir().expect("a state directory");
+        // SAFETY: first statement of a single-threaded test.
+        unsafe { std::env::set_var("XDG_STATE_HOME", state_dir.path()) };
 
-    if adw::init().is_err() || gdk::Display::default().is_none() {
-        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
-        return;
-    }
-    let display = gdk::Display::default().unwrap();
-    fonts::install().expect("the embedded fonts should install");
-    style::install(&display);
-    app::install_icons(&display);
+        if adw::init().is_err() || gdk::Display::default().is_none() {
+            eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
+            return;
+        }
+        let display = gdk::Display::default().unwrap();
+        fonts::install().expect("the embedded fonts should install");
+        style::install(&display);
+        app::install_icons(&display);
 
-    let database = test_support::memory();
-    let report = seed_small(&database, 11);
-    assert!(
-        report.message_count > 1,
-        "need at least two rows to move between"
-    );
-    let directory = tempfile::tempdir().expect("a blob directory");
-    let blobs = BlobStore::open(
-        directory.path().to_path_buf(),
-        &postio_storage::test_support::blob_keys(),
-    )
-    .expect("a blob store");
+        let database = test_support::memory().await;
+        let report = seed_small(&database, 11).await;
+        assert!(
+            report.message_count > 1,
+            "need at least two rows to move between"
+        );
+        let directory = tempfile::tempdir().expect("a blob directory");
+        let blobs = BlobStore::open(
+            directory.path().to_path_buf(),
+            &postio_storage::test_support::blob_keys(),
+        )
+        .expect("a blob store");
 
-    // Every message but the newest flagged, before anything is wired: the
-    // Flagged view is where rows are genuinely single messages (see the
-    // module comment). The newest is left out because the folder view the
-    // window opens on has already reported it — its row *is* that message —
-    // and the cursor's dedup would then swallow the Flagged view's own
-    // first report, leaving the pane unfilled.
-    let flagged_total: u32 = {
-        let connection = database.connection().expect("a connection");
-        connection
-            .execute(
-                "UPDATE messages SET flagged = 1 WHERE id NOT IN \
-                 (SELECT id FROM messages ORDER BY received_at DESC LIMIT 1)",
-                [],
-            )
-            .expect("the fixture writes");
-        connection
-            .query_row(
+        // Every message but the newest flagged, before anything is wired: the
+        // Flagged view is where rows are genuinely single messages (see the
+        // module comment). The newest is left out because the folder view the
+        // window opens on has already reported it — its row *is* that message —
+        // and the cursor's dedup would then swallow the Flagged view's own
+        // first report, leaving the pane unfilled.
+        let flagged_total: u32 = {
+            let connection = database.connect().await.expect("a connection");
+            connection
+                .execute(
+                    "UPDATE messages SET flagged = 1 WHERE id NOT IN \
+                     (SELECT id FROM messages ORDER BY received_at DESC LIMIT 1)",
+                    (),
+                )
+                .await
+                .expect("the fixture writes");
+            postio_storage::sql::one(
+                &connection,
                 "SELECT COUNT(*) FROM messages WHERE flagged = 1",
-                [],
-                |row| row.get(0),
+                (),
+                |row| postio_storage::sql::RowExt::col(row, 0),
             )
+            .await
             .expect("a count")
-    };
+        };
 
-    let (bridge, _replies) = Bridge::new(handler_fn(|_, _| async {})).expect("a runtime");
-    let (sink, _events) = event_channel();
-    let wiring = Wiring::new(
-        database.clone(),
-        blobs,
-        bridge.handle(),
-        sink,
-        bridge.commands(),
-    );
+        let (bridge, _replies) = Bridge::new(handler_fn(|_, _| async {})).expect("a runtime");
+        let (sink, _events) = event_channel();
+        let wiring = Wiring::new(
+            database.clone(),
+            blobs,
+            bridge.handle(),
+            sink,
+            bridge.commands(),
+        );
 
-    let window = Window::default();
-    window.present();
-    while glib::MainContext::default().iteration(false) {}
-
-    // ── the same call `run` makes ────────────────────────────────────────
-    let wired = feed_the_window(&window, &wiring).expect("the seeded store has an account");
-
-    // Into the Flagged view, the way the sidebar's row would take it — but
-    // only after the sidebar's own default pick has landed: the folder list
-    // loads asynchronously and picking the default folder is what it does
-    // on arrival, which would stomp a scope opened before it. Then wait for
-    // the swap itself, because the model keeps the folder's rows until the
-    // Flagged page answers.
-    let list = window.list();
-    assert!(
-        settle_until(|| list.model().n_items() > 0),
-        "the opening folder never filled, so no scope can be left"
-    );
-    wired
-        .feeds
-        .messages
-        .open(postio_model::ListScope::Flagged(report.account.id));
-    assert!(
-        settle_until(|| list.model().n_items() == flagged_total),
-        "the Flagged view never filled"
-    );
-
-    assert!(
-        settle_until(|| window.reading()),
-        "the pane never filled for the autoselected row, so nothing below \
-         can be attributed to a gesture"
-    );
-
-    // ── moving the cursor renders exactly once ───────────────────────────
-    let before = postio_ui::test_support::renders_issued();
-    let first = list.cursor_id().expect("the cursor is on a row");
-    window.handle_key(gdk::Key::j, gdk::ModifierType::empty());
-    assert!(
-        settle_until(|| list.cursor_id() != Some(first)),
-        "`j` did not move the cursor, so this test cannot say what the pane did"
-    );
-    assert!(
-        settle_until(|| postio_ui::test_support::renders_issued() > before),
-        "the cursor moved to another message and nothing rendered"
-    );
-    // Let any second load that is coming actually arrive, or this asserts
-    // that a race has not finished rather than that it cannot happen.
-    for _ in 0..40 {
+        let window = Window::default();
+        window.present();
         while glib::MainContext::default().iteration(false) {}
-        std::thread::sleep(std::time::Duration::from_millis(5));
-    }
-    let moved = postio_ui::test_support::renders_issued();
-    assert_eq!(
-        moved - before,
-        1,
-        "one keystroke, {} renders. A gesture that loads the same document \
-         twice is #749: a full teardown and reload the user sees as a flash, \
-         with every other test still green",
-        moved - before
-    );
 
-    // ── and activating the row already under the cursor renders nothing ──
-    //
-    // The exact shape #749 found: `report_cursor` deduplicates, `activated`
-    // did not, so Enter on the current row went straight through to a second
-    // complete load of a document already on screen.
-    window.handle_key(gdk::Key::Return, gdk::ModifierType::empty());
-    for _ in 0..40 {
-        while glib::MainContext::default().iteration(false) {}
-        std::thread::sleep(std::time::Duration::from_millis(5));
-    }
-    assert_eq!(
-        postio_ui::test_support::renders_issued(),
-        moved,
-        "Enter on the row the cursor was already on re-rendered a document \
-         that was already on screen"
-    );
+        // ── the same call `run` makes ────────────────────────────────────────
+        let wired = feed_the_window(&window, &wiring)
+            .await
+            .expect("the seeded store has an account");
+
+        // Into the Flagged view, the way the sidebar's row would take it — but
+        // only after the sidebar's own default pick has landed: the folder list
+        // loads asynchronously and picking the default folder is what it does
+        // on arrival, which would stomp a scope opened before it. Then wait for
+        // the swap itself, because the model keeps the folder's rows until the
+        // Flagged page answers.
+        let list = window.list();
+        assert!(
+            settle_until(async || list.model().n_items() > 0).await,
+            "the opening folder never filled, so no scope can be left"
+        );
+        wired
+            .feeds
+            .messages
+            .open(postio_model::ListScope::Flagged(report.account.id));
+        assert!(
+            settle_until(async || list.model().n_items() == flagged_total).await,
+            "the Flagged view never filled"
+        );
+
+        assert!(
+            settle_until(async || window.reading()).await,
+            "the pane never filled for the autoselected row, so nothing below \
+             can be attributed to a gesture"
+        );
+
+        // ── moving the cursor renders exactly once ───────────────────────────
+        let before = postio_ui::test_support::renders_issued();
+        let first = list.cursor_id().expect("the cursor is on a row");
+        window.handle_key(gdk::Key::j, gdk::ModifierType::empty());
+        assert!(
+            settle_until(async || list.cursor_id() != Some(first)).await,
+            "`j` did not move the cursor, so this test cannot say what the pane did"
+        );
+        assert!(
+            settle_until(async || postio_ui::test_support::renders_issued() > before).await,
+            "the cursor moved to another message and nothing rendered"
+        );
+        // Let any second load that is coming actually arrive, or this asserts
+        // that a race has not finished rather than that it cannot happen.
+        for _ in 0..40 {
+            while glib::MainContext::default().iteration(false) {}
+            tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+        }
+        let moved = postio_ui::test_support::renders_issued();
+        assert_eq!(
+            moved - before,
+            1,
+            "one keystroke, {} renders. A gesture that loads the same document \
+             twice is #749: a full teardown and reload the user sees as a flash, \
+             with every other test still green",
+            moved - before
+        );
+
+        // ── and activating the row already under the cursor renders nothing ──
+        //
+        // The exact shape #749 found: `report_cursor` deduplicates, `activated`
+        // did not, so Enter on the current row went straight through to a second
+        // complete load of a document already on screen.
+        window.handle_key(gdk::Key::Return, gdk::ModifierType::empty());
+        for _ in 0..40 {
+            while glib::MainContext::default().iteration(false) {}
+            tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+        }
+        assert_eq!(
+            postio_ui::test_support::renders_issued(),
+            moved,
+            "Enter on the row the cursor was already on re-rendered a document \
+             that was already on screen"
+        );
+    });
 }

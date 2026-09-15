@@ -4,8 +4,8 @@
 //! Canvas 3e. Type an address, Postio finds the servers, you confirm, then
 //! choose a sync window (#876) — the canvas draws a local-store format
 //! picker beside that step and `postio-hiy` records that decision as
-//! dropped, so it is not here: every account is single SQLite/SQLCipher
-//! store (ADR 0014), and there is no format to choose.
+//! dropped, so it is not here: every account is one encrypted local store
+//! (ADR 0014, ADR 0038), and there is no format to choose.
 //!
 //! # What this widget will not do
 //!
@@ -1117,9 +1117,7 @@ impl Onboarding {
         self.set_valign(gtk::Align::Center);
         self.set_accessible_role(gtk::AccessibleRole::Group);
 
-        let kicker = gtk::Label::new(Some("Add account"));
-        kicker.add_css_class("postio-kicker");
-        kicker.set_xalign(0.0);
+        let kicker = crate::widgets::kicker("Add account");
         kicker.set_hexpand(true);
         kicker.set_accessible_role(gtk::AccessibleRole::Presentation);
 

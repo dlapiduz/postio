@@ -282,7 +282,7 @@ fn slow_counting_token_endpoint() -> (url::Url, Arc<AtomicUsize>) {
             counter.fetch_add(1, Ordering::SeqCst);
             // Long enough that a pool opening three sessions has all three
             // waiting on this one request, which is the shape being tested.
-            std::thread::sleep(Duration::from_millis(150));
+            std::thread::sleep(std::time::Duration::from_millis(150));
 
             let body = format!(r#"{{"access_token":"{TOKEN}","expires_in":3600}}"#);
             let response = format!(

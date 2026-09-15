@@ -1,5 +1,11 @@
 # An aggregate hides from a row count (2026-09-11, #1479)
 
+The step counter this note leans on went with the engine: ADR 0038's Turso
+has no trace hook and no `SQLITE_STMTSTATUS_VM_STEP`. The blindness named
+here is still real, and `counting::scans` — the planner asked whether the
+query *can* be cheap — is what stands in, with limits of its own; see
+`2026-09-13-what-the-engine-swap-could-not-keep.md` §2.
+
 Startup on a real store (223 MB, ~81k messages) measured 1249.7 ms against
 a 500 ms budget, and 1044.1 ms of it was the first frame. Nothing was
 waiting on the network — `start_syncing` runs *after* the frame and the log

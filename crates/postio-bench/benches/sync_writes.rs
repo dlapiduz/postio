@@ -102,11 +102,31 @@ use postio_core::perf_budget::{SYNC_WRITE_BUDGET, check_budget};
 use postio_model::{
     Account, EmailAddress, Mailbox, MailboxRole, Message, RfcMessageId, Uid, UidValidity,
 };
+use postio_storage::Connection;
 use postio_storage::repository::{ContactRepository, MessageRepository, ThreadingRepository};
 use postio_storage::seed::{seed_large, thread_seeded_messages};
-use postio_storage::test_support::{self, TempDatabase};
+use postio_storage::test_support::{self, TempStore};
 use postio_sync::{DEFAULT_BATCH_SIZE, commit_batch};
-use rusqlite::{Connection, Transaction, TransactionBehavior};
+
+/// The runtime every async call in this bench is driven on.
+///
+/// Criterion's `iter` takes a synchronous closure and calls it on this thread,
+/// where there is no ambient runtime -- so `block_on` here is the plain thing
+/// rather than the trap it is everywhere else in this workspace. Multi-threaded
+/// because a store read may reach `block_in_place`.
+fn on_runtime<T>(future: impl std::future::Future<Output = T>) -> T {
+    use std::sync::OnceLock;
+    static RUNTIME: OnceLock<tokio::runtime::Runtime> = OnceLock::new();
+    RUNTIME
+        .get_or_init(|| {
+            tokio::runtime::Builder::new_multi_thread()
+                .worker_threads(2)
+                .enable_all()
+                .build()
+                .expect("a runtime for the benches")
+        })
+        .block_on(future)
+}
 
 /// Store sizes to sweep, in messages already stored before the batch lands.
 ///
@@ -144,11 +164,11 @@ const UID_VALIDITY: UidValidity = UidValidity::new(1);
 /// Seeded *and threaded*: `seed_large` alone inserts and records
 /// correspondents but never calls the threading pass, which would leave
 /// `thread_links` empty — the one table this bench most needs populated.
-fn filled(stored: usize) -> (TempDatabase, Account, Mailbox) {
-    let database = test_support::temp();
-    let report = seed_large(&database, 7, stored);
+async fn filled(stored: usize) -> (TempStore, Account, Mailbox) {
+    let database = test_support::temp().await;
+    let report = seed_large(&database, 7, stored).await;
     if stored > 0 {
-        thread_seeded_messages(&database, report.account.id, PER_THREAD);
+        thread_seeded_messages(&database, report.account.id, PER_THREAD).await;
     }
     let inbox = report
         .mailbox(MailboxRole::Inbox)
@@ -197,22 +217,22 @@ fn batch(account: &Account, mailbox: &Mailbox, run: u32) -> Vec<Message> {
 }
 
 /// Write one batch through the real path, and report what it cost per message.
-fn write_one(
-    database: &TempDatabase,
+async fn write_one(
+    database: &TempStore,
     account: &Account,
     mailbox: &Mailbox,
     run: u32,
 ) -> std::time::Duration {
-    let connection = database.connection().expect("a checked-out connection");
+    let connection = database.connect().await.expect("a checked-out connection");
     let mut messages = batch(account, mailbox, run);
     let started = Instant::now();
-    commit_batch(
+    on_runtime(commit_batch(
         &connection,
         mailbox,
         Some(account),
         &BTreeSet::new(),
         &mut messages,
-    )
+    ))
     .expect("the batch commits");
     started.elapsed()
 }
@@ -271,20 +291,20 @@ struct Measured {
 /// The phases are measured after the whole-path number, in the order the
 /// write path runs them: threading and contact recording both need the rows
 /// the upsert wrote, so neither can be measured before one.
-fn measure(stored: usize) -> Measured {
-    let (database, account, inbox) = filled(stored);
-    let connection = database.connection().expect("a checked-out connection");
+async fn measure(stored: usize) -> Measured {
+    let (database, account, inbox) = filled(stored).await;
+    let connection = database.connect().await.expect("a checked-out connection");
     let mut run = 0;
 
     for _ in 0..WARMUP {
         run += 1;
-        write_one(&database, &account, &inbox, run);
+        write_one(&database, &account, &inbox, run).await;
     }
 
     let mut whole = Duration::ZERO;
     for _ in 0..BATCHES {
         run += 1;
-        whole += write_one(&database, &account, &inbox, run);
+        whole += write_one(&database, &account, &inbox, run).await;
     }
 
     let mut upsert = Duration::ZERO;
@@ -292,12 +312,13 @@ fn measure(stored: usize) -> Measured {
         run += 1;
         let mut messages = batch(&account, &inbox, run);
         let started = Instant::now();
-        let unit = Transaction::new_unchecked(&connection, TransactionBehavior::Immediate)
-            .expect("a transaction");
+        let unit = connection.clone();
+        on_runtime(unit.execute("BEGIN IMMEDIATE", ())).expect("a transaction");
         MessageRepository::new(&unit)
             .upsert_batch(&mut messages)
+            .await
             .expect("upsert");
-        unit.commit().expect("commit");
+        on_runtime(unit.execute("COMMIT", ())).expect("commit");
         upsert += started.elapsed();
     }
 
@@ -306,13 +327,13 @@ fn measure(stored: usize) -> Measured {
         run += 1;
         let written = upserted(&connection, &account, &inbox, run);
         let started = Instant::now();
-        let unit = Transaction::new_unchecked(&connection, TransactionBehavior::Immediate)
-            .expect("a transaction");
+        let unit = connection.clone();
+        on_runtime(unit.execute("BEGIN IMMEDIATE", ())).expect("a transaction");
         let threads = ThreadingRepository::new(&unit, account.id);
         for message in &written {
-            threads.thread(message).expect("thread");
+            threads.thread(message).await.expect("thread");
         }
-        unit.commit().expect("commit");
+        on_runtime(unit.execute("COMMIT", ())).expect("commit");
         threading += started.elapsed();
     }
 
@@ -321,13 +342,13 @@ fn measure(stored: usize) -> Measured {
         run += 1;
         let written = upserted(&connection, &account, &inbox, run);
         let started = Instant::now();
-        let unit = Transaction::new_unchecked(&connection, TransactionBehavior::Immediate)
-            .expect("a transaction");
+        let unit = connection.clone();
+        on_runtime(unit.execute("BEGIN IMMEDIATE", ())).expect("a transaction");
         let recorder = ContactRepository::new(&unit);
         for message in &written {
-            recorder.record_message(message).expect("record");
+            on_runtime(recorder.record_message(message)).expect("record");
         }
-        unit.commit().expect("commit");
+        on_runtime(unit.execute("COMMIT", ())).expect("commit");
         contacts += started.elapsed();
     }
 
@@ -346,7 +367,7 @@ fn measure(stored: usize) -> Measured {
 ///
 /// The WAL counts. During a long first sync it is where recent writes live,
 /// and a page read back out of it is as real as one read from the database.
-fn on_disk(database: &TempDatabase) -> u64 {
+fn on_disk(database: &TempStore) -> u64 {
     let file = database.directory().join("postio.db");
     let wal = database.directory().join("postio.db-wal");
     [file, wal]
@@ -364,12 +385,10 @@ fn upserted(
     run: u32,
 ) -> Vec<Message> {
     let mut messages = batch(account, mailbox, run);
-    let unit = Transaction::new_unchecked(connection, TransactionBehavior::Immediate)
-        .expect("a transaction");
-    MessageRepository::new(&unit)
-        .upsert_batch(&mut messages)
-        .expect("upsert");
-    unit.commit().expect("commit");
+    let unit = connection.clone();
+    on_runtime(unit.execute("BEGIN IMMEDIATE", ())).expect("a transaction");
+    on_runtime(MessageRepository::new(&unit).upsert_batch(&mut messages)).expect("upsert");
+    on_runtime(unit.execute("COMMIT", ())).expect("commit");
     messages
 }
 
@@ -381,7 +400,7 @@ fn main() {
 
     let mut results = Vec::new();
     for &stored in SIZES {
-        let measured = measure(stored);
+        let measured = on_runtime(measure(stored));
         println!(
             "{:>9}  {:>9}  {:>12}  {:>10}  {:>10}  {:>10}",
             measured.stored,

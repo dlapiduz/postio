@@ -80,8 +80,8 @@ fn server(messages: u32) -> MockBackend {
     backend
 }
 
-#[test]
-fn stop_returns_inside_the_grace_while_a_backfill_is_pumping() {
+#[tokio::test]
+async fn stop_returns_inside_the_grace_while_a_backfill_is_pumping() {
     let captured = Captured::default();
     // Globally, not per-thread: the engine works on a thread of its own, and
     // `set_default` would leave that thread — the one whose warning this
@@ -94,8 +94,8 @@ fn stop_returns_inside_the_grace_while_a_backfill_is_pumping() {
     tracing::subscriber::set_global_default(subscriber)
         .expect("this test binary runs one test and owns the subscriber");
 
-    let database = test_support::memory();
-    let report = seed_small(&database, 11);
+    let database = test_support::memory().await;
+    let report = seed_small(&database, 11).await;
     let directory = tempfile::tempdir().expect("a blob directory");
     let blobs = BlobStore::open(
         directory.path().to_path_buf(),
@@ -134,7 +134,7 @@ fn stop_returns_inside_the_grace_while_a_backfill_is_pumping() {
             waited.elapsed() < Duration::from_secs(90),
             "the backfill never started pumping bodies"
         );
-        std::thread::sleep(Duration::from_millis(25));
+        tokio::time::sleep(std::time::Duration::from_millis(25)).await;
     }
 
     let stopping = Instant::now();
@@ -157,19 +157,19 @@ fn stop_returns_inside_the_grace_while_a_backfill_is_pumping() {
     // Nothing was lost with the queue: whatever was still unfetched — the
     // interrupted body included — is re-derivable from `body_state`, so the
     // next session's seed offers it again.
-    let connection = database.connection().expect("a connection");
+    let connection = database.connect().await.expect("a connection");
     let mailboxes = MailboxRepository::new(&connection)
         .list_for_account(report.account.id)
+        .await
         .expect("reading the account's folders");
-    let remaining: usize = mailboxes
-        .iter()
-        .map(|mailbox| {
-            MessageRepository::new(&connection)
-                .needing_backfill_from(mailbox.id, 500, 0)
-                .map(|candidates| candidates.len())
-                .unwrap_or(0)
-        })
-        .sum();
+    let mut remaining: usize = 0;
+    for mailbox in &mailboxes {
+        remaining += MessageRepository::new(&connection)
+            .needing_backfill_from(mailbox.id, 500, 0)
+            .await
+            .map(|candidates| candidates.len())
+            .unwrap_or(0);
+    }
     assert!(
         remaining > 0,
         "stopping mid-backfill left nothing to resume; the stop came too late to prove anything"

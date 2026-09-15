@@ -8,24 +8,19 @@
 
 use postio_model::mailbox::MailboxRole;
 use postio_model::{AccountId, MailboxId};
-use postio_runtime::store::{ListScope, MailStore, PageRequest, SqliteStore};
+use postio_runtime::store::{ListScope, LocalStore, PageRequest};
 use postio_storage::seed::{seed_large, thread_seeded_messages};
 use postio_storage::test_support;
 
-fn store(
+async fn store(
     messages: usize,
     per_thread: usize,
-) -> (
-    SqliteStore,
-    AccountId,
-    MailboxId,
-    test_support::TempDatabase,
-) {
-    let database = test_support::temp();
-    let report = seed_large(&database, 7, messages);
+) -> (LocalStore, AccountId, MailboxId, test_support::TempStore) {
+    let database = test_support::temp().await;
+    let report = seed_large(&database, 7, messages).await;
     let inbox = report.mailbox(MailboxRole::Inbox).expect("an inbox").id;
-    thread_seeded_messages(&database, report.account.id, per_thread);
-    let store = SqliteStore::new(&database);
+    thread_seeded_messages(&database, report.account.id, per_thread).await;
+    let store = LocalStore::new(&database);
     (store, report.account.id, inbox, database)
 }
 
@@ -39,7 +34,7 @@ fn request(scope: ListScope, offset: u32, limit: u32) -> PageRequest {
 
 #[tokio::test]
 async fn a_folder_answers_conversations_rather_than_messages() {
-    let (store, _account, inbox, _database) = store(200, 4);
+    let (store, _account, inbox, _database) = store(200, 4).await;
 
     let page = store
         .thread_page(request(ListScope::Mailbox(inbox), 0, 20))
@@ -66,7 +61,7 @@ async fn a_folder_answers_conversations_rather_than_messages() {
 
 #[tokio::test]
 async fn the_thread_count_matches_the_rows_the_window_would_produce() {
-    let (store, _account, inbox, _database) = store(100, 4);
+    let (store, _account, inbox, _database) = store(100, 4).await;
 
     let total = store
         .thread_count(ListScope::Mailbox(inbox))
@@ -86,7 +81,7 @@ async fn a_query_view_says_it_lists_messages_rather_than_answering_wrongly() {
     // Folders thread; query views list messages (ADR 0015). Answering Flagged
     // with conversations would be the wrong answer rather than a missing one,
     // so it is refused where a caller can see it.
-    let (store, account, _inbox, _database) = store(20, 4);
+    let (store, account, _inbox, _database) = store(20, 4).await;
 
     let error = store
         .thread_page(request(ListScope::Flagged(account), 0, 10))
@@ -106,7 +101,7 @@ async fn paging_conversations_never_repeats_or_skips_a_row() {
     // by seeking to a remembered boundary and skipping the remainder, so an
     // off-by-one in the marks shows up as a duplicated or missing row rather
     // than as an error.
-    let (store, _account, inbox, _database) = store(400, 4);
+    let (store, _account, inbox, _database) = store(400, 4).await;
 
     let mut seen: Vec<postio_model::ids::MessageId> = Vec::new();
     for page in 0..5 {
@@ -135,7 +130,7 @@ async fn the_two_windows_over_one_folder_do_not_confuse_each_others_marks() {
     // row counts. One set of seek marks would have each read clearing the
     // other's, which would show up as paging that silently walks from the top
     // every time — slow rather than wrong, and so easy to miss.
-    let (store, _account, inbox, _database) = store(400, 4);
+    let (store, _account, inbox, _database) = store(400, 4).await;
 
     for page in 0..4 {
         let messages = store
@@ -163,10 +158,10 @@ async fn the_two_windows_over_one_folder_do_not_confuse_each_others_marks() {
 /// catch it.
 #[tokio::test]
 async fn the_unified_scope_pages_every_account_without_repeating_a_row() {
-    let database = test_support::temp();
-    postio_storage::seed::seed_small(&database, 3);
-    postio_storage::seed::seed_extra_account(&database, "Second", "grace@example.org", 4);
-    let store = SqliteStore::new(&database);
+    let database = test_support::temp().await;
+    postio_storage::seed::seed_small(&database, 3).await;
+    postio_storage::seed::seed_extra_account(&database, "Second", "grace@example.org", 4).await;
+    let store = LocalStore::new(&database);
 
     let first = store
         .thread_page(request(ListScope::Unified, 0, 10))
@@ -231,11 +226,11 @@ async fn paging_a_folder_counts_it_once_rather_than_once_per_page() {
     // Counted, not timed: the count is a statement, and statements are what
     // `postio_storage`'s trace hook sees. Six pages of the same folder should
     // not cost six counts.
-    let database = test_support::temp();
-    let report = seed_large(&database, 7, 600);
+    let database = test_support::temp().await;
+    let report = seed_large(&database, 7, 600).await;
     let inbox = report.mailbox(MailboxRole::Inbox).expect("an inbox").id;
-    thread_seeded_messages(&database, report.account.id, 4);
-    let store = SqliteStore::new(&database);
+    thread_seeded_messages(&database, report.account.id, 4).await;
+    let store = LocalStore::new(&database);
 
     // One page, to establish what a page costs including its first count.
     let first = store
@@ -279,11 +274,11 @@ async fn a_folder_that_gains_a_message_is_counted_again() {
     // The witness is `mailboxes.total_count`, maintained by the counting
     // triggers -- so this asserts the trigger and the cache agree, not just
     // that the cache has an invalidation path.
-    let database = test_support::temp();
-    let report = seed_large(&database, 7, 300);
+    let database = test_support::temp().await;
+    let report = seed_large(&database, 7, 300).await;
     let inbox = report.mailbox(MailboxRole::Inbox).expect("an inbox").id;
-    thread_seeded_messages(&database, report.account.id, 4);
-    let store = SqliteStore::new(&database);
+    thread_seeded_messages(&database, report.account.id, 4).await;
+    let store = LocalStore::new(&database);
 
     let first = store
         .thread_page(request(ListScope::Mailbox(inbox), 0, 50))
@@ -292,7 +287,7 @@ async fn a_folder_that_gains_a_message_is_counted_again() {
 
     // New mail, through the repository the sync uses, so the triggers run.
     {
-        let connection = database.connection().expect("a connection");
+        let connection = database.connect().await.expect("a connection");
         let mut arrival = postio_model::Message::new(
             report.account.id,
             inbox,
@@ -305,6 +300,7 @@ async fn a_folder_that_gains_a_message_is_counted_again() {
         )];
         postio_storage::repository::MessageRepository::new(&connection)
             .create(&mut arrival)
+            .await
             .expect("the arrival");
     }
 

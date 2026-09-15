@@ -1,20 +1,28 @@
 # ADR 0014 — The local store encrypts itself
 
-- **Status:** Accepted — **GO** (2026-08-25)
+- **Status:** Accepted — **GO** (2026-08-25). **Mechanism amended** by
+  [ADR 0038](0038-the-store-is-turso-not-sqlcipher.md) (2026-09-13): the
+  database engine is Turso with its own AES-256-GCM page encryption rather
+  than SQLCipher, and there is no migration path. Everything below about the
+  threat model, the key hierarchy and the no-plaintext-fallback rule is
+  unchanged and still in force.
 - **Date:** 2026-08-25
 - **Issue:** [#143](https://github.com/dlapiduz/postio/issues/143), decided by
   the maintainer: Postio encrypts at rest itself — relying on OS disk
   encryption is not enough. This ADR chooses the mechanism and prices its
   consequences; [#297](https://github.com/dlapiduz/postio/issues/297) tracked
   writing it.
-- **Related:** the keyring posture in `postio-imap/src/secret.rs` (no
+- **Related:** the keyring posture in `postio-account/src/secret.rs` (no
   plaintext fallback, ever), the permissions hardening of #142,
   `docs/PRODUCT.md`'s privacy commitments, the perf budgets in CLAUDE.md.
-- **Decision:** **SQLCipher for the database, per-blob AEAD for the blob
+- **Decision:** **SQLCipher for the database** *(amended by ADR 0038: the
+  engine is Turso, encrypting its own pages)*, **per-blob AEAD for the blob
   store, one master key in the Secret Service keyring, no plaintext
   fallback.** Blob ids become *keyed* BLAKE3 hashes so deduplication
   survives without cross-store content correlation. New stores encrypt from
-  first open; the pre-release migration path is drain-and-reencrypt. The
+  first open; the pre-release migration path is drain-and-reencrypt
+  *(amended by ADR 0038: no migration path — a store is rebuilt by
+  resyncing)*. The
   README's mmap-backed memory numbers are a casualty and are re-measured.
 
 ---
@@ -38,13 +46,23 @@ pragmas.
 
 ## Q1 — The database: SQLCipher
 
-The database is where the metadata, the threading, the FTS5 index and the
-sync state live, and FTS5 is what rules most alternatives out: index
-content is derived from message content, so an "encrypt the bodies, leave
-the index" design leaks what it claims to protect.
+The database is where the metadata, the threading, the full-text index and
+the sync state live, and the full-text index is what rules most alternatives
+out: index content is derived from message content, so an "encrypt the
+bodies, leave the index" design leaks what it claims to protect. *(FTS5 when
+this was written; the `USING fts` indexes of ADR 0038 are derived from the
+same content, and the conclusion is unchanged.)*
 
 **Decision: SQLCipher, via rusqlite's `bundled-sqlcipher-vendored-openssl`
 feature.**
+
+> **Amended 2026-09-14 (ADR 0038):** the mechanism is Turso's own page
+> encryption, AES-256-GCM (`CIPHER = "aes256gcm"` in
+> `crates/postio-storage/src/store.rs`), reached through
+> `Store::open(&path, &key)` and the engine's `.with_encryption(...)`.
+> SQLCipher, `rusqlite` and the vendored OpenSSL left the graph with it.
+> The bullets below describe the SQLCipher arrangement as it was; the
+> amendment after them says what each one means now.
 
 - Page-level encryption below SQLite's own machinery, so **FTS5, WAL, the
   migrations and every repository work unchanged** — the encryption is
@@ -59,6 +77,19 @@ feature.**
   recorded alternative if the vendored OpenSSL's build cost ever earns its
   removal; both are Apache-2.0-compatible for `deny.toml`.
 
+> **Amended 2026-09-14 (ADR 0038), bullet by bullet.** Page-level, below
+> the engine's own machinery, is still the shape, and WAL and every
+> repository still work unchanged above `Store::open` — but FTS5 and the
+> migrations are not there to be unchanged: the search index is the
+> engine's `USING fts` (`crates/postio-index/src/index.rs`) and there are
+> no migrations at all (`crates/postio-storage/src/schema.rs` holds one
+> `HEAD`). There is no `PRAGMA key`: the raw 32-byte subkey
+> (`Purpose::Database`, `crates/postio-storage/src/key.rs`) is handed to
+> `Store::open`, which builds the engine's `EncryptionOpts` — the reasoning
+> for a raw key over a passphrase KDF is unchanged. The vendored-build
+> bullet is dead: nothing is vendored, and `openssl-src` is gone from the
+> graph.
+
 **Rejected:**
 
 - **fscrypt / filesystem-level** — the development box itself runs btrfs,
@@ -66,9 +97,12 @@ feature.**
   cannot perform for the user; and "Postio encrypts at rest" would then be
   true only on some filesystems, which is the accidental posture #143
   existed to end.
-- **Encrypting bodies but not the index** — leaks via FTS5, above.
+- **Encrypting bodies but not the index** — leaks via the full-text index,
+  above.
 - **Hand-rolled page or file encryption over SQLite** — reimplementing
-  SQLCipher with new mistakes.
+  SQLCipher with new mistakes. *(Anachronistic since ADR 0038, and still
+  rejected: what replaced SQLCipher is the engine's own page encryption,
+  not a hand-rolled layer.)*
 - **SQLite SEE** — proprietary; a licence cannot be a dependency of an MIT
   mail client.
 
@@ -129,18 +163,33 @@ truths — are what the drain-first ordering protects; everything else is
 refetchable. No mail may be lost by a migration that dies half-way, which
 the swap-last ordering is for.
 
+> **Amended 2026-09-14 (ADR 0038): none of this happened, and it cannot.**
+> There is no `sqlcipher_export()` and no encrypted sibling to swap in: the
+> engine changed under the store, a file the old engine wrote cannot be
+> opened by the new one, and every existing store is rebuilt by resyncing
+> (`crates/postio-storage/src/schema.rs`, "There are no migrations"). The
+> ordering above — drain the queue first, swap last — is kept as the shape
+> any future in-place migration would take; `schema.rs` says the licence
+> does not generalise, and the day a release has a second installation the
+> question is open again.
+
 ## Q5 — What it costs, and the gate that decides
 
 - **The mmap story dies.** `PRAGMA mmap_size` is meaningless over
   encrypted pages, so the README's "file-backed 256 MiB map" memory
   narrative goes with it; pages come through the page cache with a
   decrypt on read. The README numbers get re-measured, not hand-adjusted.
+  *(Still true under ADR 0038, for a simpler reason: `mmap_size` is set
+  nowhere in `crates/` — the engine reads pages through its own cache.)*
 - **Per-page decrypt overhead** lands exactly where the budgets watch:
   startup < 500 ms, interaction < 16 ms, search < 100 ms. The existing
   benches are the gate — `store_reads`, `search_budget`, the startup
   trace — and the budgets do not move for this feature. First levers if a
   bench trips: `cache_size`, `cipher_memory_security = OFF` (its
-  memory-wiping defence is not part of this threat model).
+  memory-wiping defence is not part of this threat model). *(ADR 0038:
+  `cipher_memory_security` is SQLCipher's and does not exist on this
+  engine. `cache_size = -65536` is the one tuning lever `store.rs` sets,
+  beside `busy_timeout = 5000` and `temp_store = 2`.)*
 - **Build cost:** vendored OpenSSL is the heaviest new compile in the
   graph. sccache absorbs it machine-wide after the first build (#178) —
   *since #736*: as first landed, sccache was wired in as a rustc wrapper
@@ -152,12 +201,23 @@ the swap-last ordering is for.
   normalization. `scripts/cc-wrapper.sh`, wired in as `[env] CC` and
   fronting **ccache**, is what makes this bullet true.
 
+> **Amended 2026-09-14 (ADR 0038):** gone with the engine. There is no
+> vendored OpenSSL, no `openssl-src`, no `libsqlite3-sys` and no C build
+> step in the store's graph, which is half of why the engine changed
+> (ADR 0038, "Why the engine changed at all"). The bullet stands as the
+> record of what that build cost while it lasted.
+
 ## What would falsify this
 
 - A bench showing SQLCipher cannot meet the 100 ms search budget on the
   120k-message index after the cache levers — that reopens Q1 toward the
   system-crypto build first and the fscrypt-where-available posture
-  second, not toward shipping a blown budget.
+  second, not toward shipping a blown budget. *(ADR 0038: read "the
+  engine's page encryption" for SQLCipher. There is no system-crypto build
+  to fall back to, so the first door is the `cache_size` lever and the
+  second is still fscrypt-where-available. What actually reopened Q1 was
+  not the search budget but SQLCipher's per-page HMAC cost — ADR 0038,
+  "Why the engine changed at all".)*
 - The keyed-id change breaking an assumption that blob names are
   recomputable from content alone — nothing in the tree does this today
   (`BlobStore` is the only namer), and the boundary check keeps outside
@@ -167,13 +227,16 @@ the swap-last ordering is for.
 
 ## Consequences
 
-- `postio-storage` gains the SQLCipher feature, the keyed-id and AEAD blob
-  format, `temp_store = MEMORY`, and a store-key parameter threaded from
-  the composition root; `postio-session` fetches the key through the
-  existing `SecretStore` before `Database::open`.
+- `postio-storage` gains the SQLCipher feature *(ADR 0038: the `turso`
+  crate with its `fts` feature, and `CIPHER = "aes256gcm"`; there is no
+  SQLCipher feature)*, the keyed-id and AEAD blob format,
+  `temp_store = MEMORY`, and a store-key parameter threaded from the
+  composition root; `postio-session` fetches the key through the existing
+  `SecretStore` before `Store::open` (`crates/postio-session/src/lib.rs`).
 - Implementation lands as three sequenced `ready` issues — key service,
   encrypted database + bench re-baseline, blob format + migration — plus a
   docs issue for the privacy page. Filed with this ADR.
 - `deny.toml` inherits OpenSSL via `openssl-src`; licences already allowed.
+  *(ADR 0038: no longer — `openssl-src` left the graph with SQLCipher.)*
 - The README's performance section gets re-measured numbers and loses the
   mmap paragraph; CLAUDE.md's budgets are unchanged.
