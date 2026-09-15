@@ -68,6 +68,7 @@ type ExtCommandHandler = Box<dyn Fn(postio_core::ExtId)>;
 type KeymapHandler = Box<dyn Fn(&postio_core::Keymap)>;
 /// See [`Window::connect_storage_changed`].
 type StorageHandler = Box<dyn Fn(Option<u64>)>;
+type MailtoHandler = Box<dyn Fn(postio_model::mailto::Mailto)>;
 
 /// The default size, from canvas 1b: a 1120px board over a 52px header bar.
 ///
@@ -272,6 +273,11 @@ mod imp {
         /// Whoever owns the store side of `[storage] max_bytes` — see
         /// [`Window::connect_storage_changed`](super::Window::connect_storage_changed).
         pub storage_changed: std::cell::RefCell<Vec<StorageHandler>>,
+        /// Whoever can turn a `mailto:` link into a draft — see
+        /// [`Window::connect_mailto`](super::Window::connect_mailto) — and
+        /// the links that arrived before anyone could.
+        pub mailto_handler: std::cell::RefCell<Option<MailtoHandler>>,
+        pub mailto_pending: std::cell::RefCell<Vec<postio_model::mailto::Mailto>>,
         /// The keymap currently in force, once one has been applied, so a
         /// surface built later can be handed it rather than waiting for the
         /// next edit.
@@ -2792,6 +2798,37 @@ impl Window {
     pub(crate) fn notify_storage_changed(&self, max_bytes: Option<u64>) {
         for handler in self.imp().storage_changed.borrow().iter() {
             handler(max_bytes);
+        }
+    }
+
+    /// A `mailto:` link the desktop handed this application.
+    ///
+    /// The window cannot act on it: a new message is *from* an account, and
+    /// which one is the composition root's to say, once the store is open.
+    /// So this hands the link to whoever [`connect_mailto`](Self::connect_mailto)
+    /// connected, and holds it — in order, for as long as it takes — when
+    /// nobody has yet. A cold launch from a browser is exactly that gap: the
+    /// link is the first thing to arrive and the account is the last.
+    pub fn deliver_mailto(&self, mailto: postio_model::mailto::Mailto) {
+        // Taken out of the cell before it is called: a handler that opens the
+        // composer can reach back into this window, and a borrow held across
+        // that is the `borrow_mut` panic this crate has met before.
+        let handler = self.imp().mailto_handler.borrow();
+        match handler.as_ref() {
+            Some(handler) => handler(mailto),
+            None => self.imp().mailto_pending.borrow_mut().push(mailto),
+        }
+    }
+
+    /// Called with every `mailto:` link, including the ones that arrived
+    /// before this was connected, oldest first. One listener: connecting
+    /// again replaces the last one, which is what a composition root that is
+    /// fed a second time wants.
+    pub fn connect_mailto(&self, handler: impl Fn(postio_model::mailto::Mailto) + 'static) {
+        *self.imp().mailto_handler.borrow_mut() = Some(Box::new(handler));
+        let pending = std::mem::take(&mut *self.imp().mailto_pending.borrow_mut());
+        for mailto in pending {
+            self.deliver_mailto(mailto);
         }
     }
 

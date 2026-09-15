@@ -78,7 +78,36 @@ pub fn build_with(timeline: Timeline) -> adw::Application {
     let app = adw::Application::builder()
         .application_id(APP_ID)
         .resource_base_path(resources::PREFIX)
+        // The desktop entry says `Exec=postio %U` and registers the
+        // `mailto` scheme, so a link clicked in a browser arrives here as a
+        // file to open. Without this flag GApplication has nowhere to put it
+        // and drops it: the app launched, empty, and every layer between the
+        // entry and the composer was individually correct.
+        .flags(gio::ApplicationFlags::HANDLES_OPEN)
         .build();
+
+    // `open` replaces `activate` when there is something to open, so it does
+    // the same first -- one window, raised if it is already there -- and then
+    // hands each link to the window, which holds it until the composition
+    // root has an account to compose from (`Window::deliver_mailto`).
+    app.connect_open(|app, files, _hint| {
+        app.activate();
+        let Some(window) = app.active_window().and_downcast::<Window>() else {
+            return;
+        };
+        for file in files {
+            let uri = file.uri();
+            match postio_model::mailto::Mailto::parse(&uri) {
+                Some(mailto) => window.deliver_mailto(mailto),
+                // The scheme only: a URI is an address, and an address never
+                // goes in a log.
+                None => tracing::warn!(
+                    scheme = uri.split(':').next().unwrap_or(""),
+                    "asked to open a URI whose scheme Postio does not handle; ignored"
+                ),
+            }
+        }
+    });
 
     app.connect_activate(move |app| {
         // Launching Postio a second time raises the window that is already

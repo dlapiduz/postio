@@ -145,6 +145,14 @@ them, not proactively; `config.toml` can change both behaviours.
 
 Add a second account any time with `Ctrl+Shift+N`.
 
+Postio registers itself for `mailto:` links, so a link clicked in a browser
+or a "share by email" from another application opens the composer with the
+address, subject and body filled in. To make it the default mail client:
+
+```bash
+xdg-mime default dev.postio.Postio.desktop x-scheme-handler/mailto
+```
+
 ## Everyday use
 
 | Keys | Does |
