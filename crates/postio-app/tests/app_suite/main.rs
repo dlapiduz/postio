@@ -39,6 +39,7 @@ mod keystroke;
 mod label_wiring;
 mod large_folder_open;
 mod list_contract;
+mod mailto_uri;
 mod manual_sync;
 mod navigation_cost;
 mod onboarding_probe;
@@ -118,6 +119,10 @@ const CASES: &[(&str, fn())] = &[
     (
         "list_contract::the_list_output_stays_libtest_shaped",
         list_contract::the_list_output_stays_libtest_shaped as fn(),
+    ),
+    (
+        "mailto_uri::a_mailto_link_opens_the_composer_with_the_address_filled_in",
+        mailto_uri::a_mailto_link_opens_the_composer_with_the_address_filled_in as fn(),
     ),
     (
         "account_connection_wiring::a_connection_event_a_scope_cycle_and_the_trackers_all_agree_with_appstate",

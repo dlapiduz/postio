@@ -107,6 +107,18 @@ both behaviours.
 Add a second account any time with `Ctrl+Shift+N`; the unified inbox
 groups their threads together.
 
+## Links from other applications
+
+Postio registers itself for `mailto:` links, so a link clicked in a browser
+or a "share by email" from another application opens the composer with the
+address, subject and body filled in — in the running Postio if there is
+one, or in a fresh one once it has opened your mail. To make it the default
+mail client for your desktop:
+
+```bash
+xdg-mime default dev.postio.Postio.desktop x-scheme-handler/mailto
+```
+
 From there, drive it from the keyboard: `j`/`k` to move, `Enter` to open,
 `e` to reply, `a` to archive, `u` to undo anything, `/` to search
 (`from:ada is:unread …`), `Ctrl+K` for the command palette, `?` for the

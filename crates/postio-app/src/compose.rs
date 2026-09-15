@@ -80,6 +80,7 @@ pub async fn install(
 ) {
     let composer = window.composer();
     composer.set_account(account);
+    install_mailto(window, &composer, account);
     install_identities(window, &composer, &database, account).await;
     install_signature_default(&composer, window, database.clone(), account);
 
@@ -98,6 +99,29 @@ pub async fn install(
     install_attach(&composer, blobs.clone(), runtime.clone());
     install_inline_image(&composer, blobs.clone(), runtime).await;
     install_attachment_bytes(&composer, blobs);
+}
+
+/// A `mailto:` link opens the composer on a draft for `account`.
+///
+/// The link arrives at the window (`postio_gtk::app` hands every URI the
+/// desktop passes to `Window::deliver_mailto`), and this is the half that
+/// knows which account a new message is from. Connecting here is also what
+/// releases a link that arrived *before* the store was fed — a cold launch
+/// from a browser — which the window holds until somebody can act on it.
+///
+/// `Composer::open`, not `resume`: one composition at a time is the
+/// composer's rule, so a link arriving mid-composition puts the keyboard
+/// back in the draft already open rather than replacing what was typed.
+/// That is said in the log, at info, because from the browser's side the
+/// click did nothing.
+fn install_mailto(window: &Window, composer: &Composer, account: AccountId) {
+    let composer = composer.clone();
+    window.connect_mailto(move |mailto| {
+        if composer.is_open() {
+            tracing::info!("a mailto link arrived while a composition was open; kept the open one");
+        }
+        composer.open(mailto.into_draft(account));
+    });
 }
 
 /// Writes pasted image bytes into `blobs` and mints a `Content-ID` for the

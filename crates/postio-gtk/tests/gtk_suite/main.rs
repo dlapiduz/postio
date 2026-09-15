@@ -98,6 +98,8 @@ mod gtk_list_reload;
 mod gtk_list_select_message;
 mod gtk_list_state;
 mod gtk_live_config;
+mod gtk_mailto_open;
+mod gtk_mailto_seam;
 mod gtk_move_picker;
 mod gtk_new_mail_scroll;
 mod gtk_next_scope;
@@ -523,6 +525,14 @@ const CASES: &[(&str, fn())] = &[
     (
         "gtk_new_mail_scroll::new_mail_reveals_itself_at_the_top_and_nowhere_else",
         gtk_new_mail_scroll::new_mail_reveals_itself_at_the_top_and_nowhere_else as fn(),
+    ),
+    (
+        "gtk_mailto_open::opening_a_mailto_uri_delivers_the_link_to_the_window",
+        gtk_mailto_open::opening_a_mailto_uri_delivers_the_link_to_the_window as fn(),
+    ),
+    (
+        "gtk_mailto_seam::a_mailto_delivered_before_anyone_listens_is_handed_over_in_order",
+        gtk_mailto_seam::a_mailto_delivered_before_anyone_listens_is_handed_over_in_order as fn(),
     ),
     (
         "gtk_move_picker::m_opens_the_folder_picker_and_the_folder_picked_becomes_the_move",
