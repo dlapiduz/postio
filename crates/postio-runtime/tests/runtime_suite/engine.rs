@@ -767,8 +767,17 @@ async fn a_connection_that_dies_mid_drain_parks_the_link_at_once() {
         "the link should be up before this test means anything"
     );
 
+    // The fault first, and persistent, not `inject` after the enqueue. The
+    // engine drains queued work on its own the moment its loop notices a row
+    // (`handle_link_transition`), and on a two-core runner that drain ran
+    // between the enqueue and the one-shot fault: it applied the row against
+    // a healthy mock, the explicit drain below found nothing pending, made no
+    // backend call, and returned `Ok` where the session was supposed to have
+    // died -- twice in a row on CI, never in fifteen runs here. Armed before
+    // the row exists, whichever drain takes the row is the one that hits the
+    // dead connection, and `observe` is what this test is about either way.
+    backend.fail_all(Fault::Disconnect);
     queue_a_flag_change(&database, &report, inbox.id).await;
-    backend.inject(Fault::Disconnect);
     let error = engine.drain().await.expect_err("the session died");
     assert!(!error.message().is_empty());
 
