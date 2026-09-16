@@ -1631,6 +1631,35 @@ pub async fn reindex_account(
     Ok(done)
 }
 
+/// The account a message with no origin comes from: the one marked default,
+/// or the first enabled one when nobody has marked any.
+///
+/// The reader of #960's marker, and the whole of its fence (#1161): this is
+/// consulted for a new message and for a `mailto:` link, and for nothing
+/// else. A reply comes from the account that received the mail, which
+/// `postio_model::reply` already decides; the sidebar opens on
+/// [`first_account`] whatever is marked, because which account is shown
+/// first is not what the marker means. A marked account that has been
+/// disabled is not marked for this purpose either -- `list_enabled` does
+/// not return it -- so the fallback is the same as no marker at all.
+pub async fn composing_account(database: &Store) -> Option<postio_model::Account> {
+    let connection = database
+        .connect()
+        .await
+        .map_err(|error| tracing::error!(%error, "cannot read the accounts: {error}"))
+        .ok()?;
+    let enabled = AccountRepository::new(&connection)
+        .list_enabled()
+        .await
+        .map_err(|error| tracing::error!(%error, "cannot read the accounts: {error}"))
+        .ok()?;
+    enabled
+        .iter()
+        .position(|account| account.is_default)
+        .map(|index| enabled[index].clone())
+        .or_else(|| enabled.into_iter().next())
+}
+
 /// The account to open, if the store holds one.
 ///
 /// Read straight off a connection rather than through [`MailStore`]: which

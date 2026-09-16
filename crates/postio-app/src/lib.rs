@@ -650,9 +650,16 @@ pub async fn feed_the_window(window: &Window, wiring: &Wiring) -> Option<Wired> 
     // is exactly what #325 was.
     let showing = reading::Showing::default();
 
+    // The account a new message comes from is the one marked default, which
+    // is not necessarily the one the window opened on (#960, #1161): the
+    // marker means "new messages come from here" and nothing about order.
+    let composing = postio_session::composing_account(&wiring.database)
+        .await
+        .map(|chosen| chosen.id)
+        .unwrap_or(account.id);
     compose::install(
         window,
-        account.id,
+        composing,
         wiring.database.clone(),
         wiring.blobs.clone(),
         wiring.runtime.clone(),

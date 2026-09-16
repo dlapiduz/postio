@@ -15,6 +15,7 @@ mod body_arrives;
 mod bulk_keystroke;
 mod click_preview;
 mod command_wiring;
+mod compose_default_account;
 mod compose_detach;
 mod compose_typing;
 mod composer_warm;
@@ -119,6 +120,11 @@ const CASES: &[(&str, fn())] = &[
     (
         "list_contract::the_list_output_stays_libtest_shaped",
         list_contract::the_list_output_stays_libtest_shaped as fn(),
+    ),
+    (
+        "compose_default_account::a_new_message_comes_from_the_default_account_and_a_reply_does_not",
+        compose_default_account::a_new_message_comes_from_the_default_account_and_a_reply_does_not
+            as fn(),
     ),
     (
         "mailto_uri::a_mailto_link_opens_the_composer_with_the_address_filled_in",
