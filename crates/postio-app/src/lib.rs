@@ -1382,6 +1382,27 @@ pub fn open_the_store(
     });
 }
 
+/// Worker threads for the bridge runtime.
+///
+/// What runs here is I/O-bound command handling: the sync engine has a
+/// thread and a runtime of its own, GTK owns the UI thread, and the store
+/// has its own pool. Tokio's default is one worker per logical CPU -- eight
+/// parked threads on an eight-core machine for work that two absorb, and
+/// more on bigger ones. Thread count is also memory shape: glibc opens up
+/// to `8 x cores` malloc arenas as threads contend, and an arena keeps a
+/// burst's allocations after the burst ends (#1502).
+const BRIDGE_WORKER_THREADS: usize = 2;
+
+/// The blocking pool's ceiling.
+///
+/// Its users are the background passes spawned after first frame -- the
+/// body index catch-up and the dictionary trainer among them -- and the
+/// odd synchronous store read. Eight lets them run beside each other while
+/// stopping the pool from climbing toward tokio's default of 512 during a
+/// burst. Tokio parks an idle blocking thread and drops it after ten
+/// seconds, so this bounds the peak, not the idle count.
+const BRIDGE_BLOCKING_THREADS: usize = 8;
+
 /// Build the bus, the runtime and the wiring over a store that is already
 /// open.
 ///
@@ -1414,6 +1435,8 @@ fn assemble(
     // sink; it holds one of its own on the same hub.
     let sink = hub.sink();
     let bridge = Bridge::builder()
+        .worker_threads(BRIDGE_WORKER_THREADS)
+        .max_blocking_threads(BRIDGE_BLOCKING_THREADS)
         .build_with_events(bus, hub.sink())
         .map_err(|error| {
             tracing::error!(%error, "no runtime, so no mail: {error}");

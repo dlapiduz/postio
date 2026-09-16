@@ -609,6 +609,7 @@ impl fmt::Debug for HubInner {
 #[derive(Debug, Clone)]
 pub struct BridgeBuilder {
     worker_threads: Option<usize>,
+    max_blocking_threads: Option<usize>,
     shutdown_timeout: Duration,
 }
 
@@ -616,6 +617,7 @@ impl Default for BridgeBuilder {
     fn default() -> Self {
         BridgeBuilder {
             worker_threads: None,
+            max_blocking_threads: None,
             shutdown_timeout: DEFAULT_SHUTDOWN_TIMEOUT,
         }
     }
@@ -631,6 +633,16 @@ impl BridgeBuilder {
     /// core; tests that only need ordering set this to 1 to stay cheap.
     pub fn worker_threads(mut self, threads: usize) -> Self {
         self.worker_threads = Some(threads.max(1));
+        self
+    }
+
+    /// The most threads the blocking pool may grow to. Defaults to tokio's
+    /// 512, which is a ceiling nothing here approaches on purpose but that
+    /// a burst of `spawn_blocking` calls can climb toward -- and every
+    /// thread is another malloc arena for the burst's allocations to
+    /// linger in after it ends (#1502).
+    pub fn max_blocking_threads(mut self, threads: usize) -> Self {
+        self.max_blocking_threads = Some(threads.max(1));
         self
     }
 
@@ -684,6 +696,9 @@ impl BridgeBuilder {
         builder.enable_io().enable_time().thread_name("postio-core");
         if let Some(threads) = self.worker_threads {
             builder.worker_threads(threads);
+        }
+        if let Some(threads) = self.max_blocking_threads {
+            builder.max_blocking_threads(threads);
         }
         let runtime = builder.build()?;
 
