@@ -1,5 +1,13 @@
 # Postio
 
+[![CI](https://github.com/dlapiduz/postio/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/dlapiduz/postio/actions/workflows/ci.yml)
+[![Nightly](https://github.com/dlapiduz/postio/actions/workflows/nightly.yml/badge.svg)](https://github.com/dlapiduz/postio/actions/workflows/nightly.yml)
+[![Latest release](https://github.com/dlapiduz/postio/actions/workflows/release.yml/badge.svg)](https://github.com/dlapiduz/postio/releases)
+
+<!-- Only GitHub's own badges: a shields.io or Codecov image would tell a
+     third party the address of everyone who reads this page, which is the
+     thing this README is promising Postio never does (#101, ADR 0011 §5). -->
+
 **A local-first, keyboard-first email client for people who have too much
 email.** Read less. Find anything. Act faster.
 
