@@ -201,6 +201,21 @@ jobs:
       - name: Install cargo-machete
         run: scripts/install-machete.sh
 
+      # `test-check-dependency-policy.py`'s two real cases skipped here for
+      # want of cargo-deny -- the supply-chain job has it, inside its own
+      # action's container, and this job never did -- so the check script
+      # nothing else exercises was green untested on every run (#1290).
+      # Under CI a missing prerequisite now fails the self-test rather than
+      # skipping it (`scripts/lib/prereq.py`), so the tool has to be here.
+      - name: Cache cargo-deny
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ~/.cargo/bin/cargo-deny
+          key: ${{ runner.os }}-cargo-deny-${{ hashFiles('scripts/install-cargo-deny.sh') }}
+
+      - name: Install cargo-deny
+        run: scripts/install-cargo-deny.sh
+
       - name: Run every repository invariant
         env:
           POSTIO_DENY_NAMES: ${{ secrets.POSTIO_DENY_NAMES }}
@@ -818,6 +833,17 @@ jobs:
 
       - name: Install cargo-nextest
         run: scripts/install-nextest.sh
+
+      # The same two dependency-policy cases run here (#1290); see the
+      # boundaries job for why the tool has to be on PATH.
+      - name: Cache cargo-deny
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ~/.cargo/bin/cargo-deny
+          key: ${{ runner.os }}-cargo-deny-${{ hashFiles('scripts/install-cargo-deny.sh') }}
+
+      - name: Install cargo-deny
+        run: scripts/install-cargo-deny.sh
 
       # `test-ffi-bindgen.py` builds `postio-ffi` -- most of the workspace --
       # inside a 900 s patience window, and this job cached only the
