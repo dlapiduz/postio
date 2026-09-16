@@ -111,17 +111,6 @@ crates/postio-model/src/mime.rs:234:9: replace <impl std::fmt::Display for Unpar
 crates/postio-model/src/mime.rs:341:37: replace match guard end > start with true in list_id_from_text
 crates/postio-model/src/mime.rs:341:41: replace > with >= in list_id_from_text
 crates/postio-model/src/mime.rs:376:9: delete field body_state from struct ParsedMessage expression in empty
-crates/postio-model/src/mime.rs:676:9: replace && with || in message_id
-crates/postio-model/src/mime.rs:677:9: replace && with || in message_id
-crates/postio-model/src/mime.rs:678:9: replace && with || in message_id
-crates/postio-model/src/mime.rs:763:22: replace == with != in tag_ends_at
-crates/postio-model/src/mime.rs:764:12: replace += with *= in tag_ends_at
-crates/postio-model/src/mime.rs:764:12: replace += with -= in tag_ends_at
-crates/postio-model/src/mime.rs:776:31: replace + with * in tag_ends_at
-crates/postio-model/src/mime.rs:776:31: replace + with - in tag_ends_at
-crates/postio-model/src/mime.rs:776:9: delete match arm Some(b'>') in tag_ends_at
-crates/postio-model/src/mime.rs:778:57: replace + with * in tag_ends_at
-crates/postio-model/src/mime.rs:778:57: replace + with - in tag_ends_at
 crates/postio-model/src/mime.rs:792:32: replace + with * in preview
 crates/postio-model/src/mime.rs:792:32: replace + with - in preview
 crates/postio-model/src/mime.rs:792:44: replace + with * in preview

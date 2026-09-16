@@ -1173,4 +1173,53 @@ mod preview_is_not_markup {
             "a bracketed address was mistaken for markup: {snippet:?}"
         );
     }
+
+    // The first cargo-mutants baseline (#510) left every mutation of
+    // `tag_ends_at`'s arithmetic and every `&&` in `message_id` alive: no
+    // test told the difference (#1470). These do. Each case is chosen so
+    // that exactly one of the surviving mutants gives a different answer.
+
+    #[test]
+    fn without_tags_drops_a_closing_tag_and_only_a_tag() {
+        // `bytes.get(at) == Some(&b'/')`: with `!=`, a closing tag's slash
+        // is not stepped over and `</b>` survives as text.
+        assert_eq!(without_tags("a</b>c"), "ac");
+        // `at += 1` after the slash: `*=` leaves `at` at 1 and `-=` at 0, so
+        // the name check reads the slash or the `<` and refuses the tag.
+        assert_eq!(without_tags("<i>x</i>y"), "xy");
+        // A `<` that starts no tag is text: a digit, a space, the end.
+        assert_eq!(without_tags("3 < 4 and <3"), "3 < 4 and <3");
+        assert_eq!(without_tags("a <"), "a <");
+    }
+
+    #[test]
+    fn without_tags_ends_an_attributed_tag_at_its_own_close() {
+        // `at + close + 1`: with `*`, the span is wrong by a factor and
+        // either eats text after the tag or leaves part of the tag in.
+        assert_eq!(without_tags("<p class=\"x\">hi</p>"), "hi");
+        assert_eq!(without_tags("<br/>then"), "then");
+        assert_eq!(without_tags("<a href=\"u\">t</a> u"), "t u");
+        // An attributed tag that never closes is text, not a swallowed rest.
+        assert_eq!(without_tags("<p class=\"x\" oops"), "<p class=\"x\" oops");
+    }
+}
+
+#[cfg(test)]
+mod message_ids {
+    use super::*;
+
+    /// Each of the three `&&` in `message_id`, loosened to `||`, lets exactly
+    /// one of these through (#1470). A `Message-ID` is what threading keys
+    /// on, so what is accepted as one is load-bearing well beyond parsing.
+    #[test]
+    fn a_message_id_needs_every_one_of_its_four_conditions() {
+        assert!(message_id("<a@example.com>").is_some());
+        assert!(message_id("<>").is_none(), "empty");
+        assert!(message_id("<no-at-sign>").is_none(), "no @");
+        assert!(message_id("<a b@example.com>").is_none(), "whitespace");
+        assert!(message_id("<a@<b>>").is_none(), "a bracket inside");
+        // And a bare token with an @ but no brackets is still one: the
+        // brackets are the wrapper, not the identity.
+        assert!(message_id("a@example.com").is_some());
+    }
 }
