@@ -28,12 +28,19 @@ use postio_config::{Checked, Density};
 /// The property under test is "a burst becomes one reload", not any
 /// particular number of milliseconds, so the window is sized to hold a burst
 /// on the slowest machine that runs this rather than the fastest.
-const DEBOUNCE: Duration = Duration::from_millis(300);
+///
+/// 300ms was the second try, and it failed the same way twice more on CI
+/// (#1529): five `open`/`write`/`close` cycles on a runner sharing its box
+/// with a full workspace test run straddled the window, the debounce closed
+/// mid-burst, and a second reload landed inside the quiet period. A second is
+/// longer than any burst a loaded runner has produced, and the suite pays it
+/// once, in this file.
+const DEBOUNCE: Duration = Duration::from_millis(1000);
 /// Generous: a loaded CI box can take a while to deliver an inotify event.
 const EXPECT: Duration = Duration::from_secs(5);
 /// How long "and nothing else happened" is worth waiting for. Longer than
 /// DEBOUNCE, or it could not observe a second window opening at all.
-const QUIET: Duration = Duration::from_millis(600);
+const QUIET: Duration = Duration::from_millis(1500);
 
 struct TempDir(PathBuf);
 
