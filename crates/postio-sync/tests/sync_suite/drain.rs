@@ -16,7 +16,7 @@ use postio_storage::repository::{
     MailboxRepository, MessageRepository, OperationQueueRepository, QueuedOperation,
 };
 use postio_storage::test_support;
-use postio_sync::{DrainReport, Drainer, RetryPolicy};
+use postio_sync::{DrainReport, Drainer, FailedOperation, RetryPolicy};
 
 const INBOX: &str = "INBOX";
 const ARCHIVE: &str = "Archive";
@@ -856,4 +856,31 @@ async fn a_queued_send_is_reported_rather_than_left_pending_forever() {
     assert_eq!(report.failed.len(), 1);
     assert_eq!(report.failed[0].op_type, "send");
     assert!(report.failed[0].reason.contains("SMTP"));
+}
+
+/// A failed operation's toast says what did not happen before it says why
+/// (#1487). The reason alone -- "550 mailbox unavailable" -- reads as a fact
+/// about the world rather than as the fate of something the person asked
+/// for, and the toast has no other context to lend it.
+#[test]
+fn a_failed_operation_says_what_did_not_happen_then_why() {
+    let failed = FailedOperation {
+        rows: Vec::new(),
+        target: postio_model::operation::OperationTarget::Message(
+            postio_model::ids::MessageId::new(7),
+        ),
+        op_type: "send",
+        reason: "550 mailbox unavailable".to_owned(),
+    };
+    assert_eq!(failed.said(), "Not sent \u{2014} 550 mailbox unavailable");
+
+    let moved = FailedOperation {
+        op_type: "move",
+        reason: "the message is no longer in the local store".to_owned(),
+        ..failed
+    };
+    assert_eq!(
+        moved.said(),
+        "Not moved \u{2014} the message is no longer in the local store"
+    );
 }

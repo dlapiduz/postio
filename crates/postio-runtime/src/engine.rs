@@ -2082,11 +2082,7 @@ async fn drain(
         coalesced: report.coalesced,
         obsolete: report.obsolete,
         deferred: report.deferred,
-        failed: report
-            .failed
-            .iter()
-            .map(|failure| failure.reason.clone())
-            .collect(),
+        failed: report.failed.iter().map(|failure| failure.said()).collect(),
         uncertain: report
             .uncertain
             .iter()

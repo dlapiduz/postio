@@ -105,6 +105,32 @@ pub struct FailedOperation {
     pub reason: String,
 }
 
+impl FailedOperation {
+    /// The sentence the person sees: what did not happen, then why.
+    ///
+    /// The reason on its own -- "the draft has no recipients", "550 mailbox
+    /// unavailable" -- reads as a fact about the world rather than as the
+    /// fate of something they asked for, and a toast has no other context
+    /// to lend it. The draft's own status line says "Not sent" for the same
+    /// reason, and this is the same sentence in the other place it is
+    /// shown (#1487).
+    pub fn said(&self) -> String {
+        let what = match self.op_type {
+            "send" => "Not sent",
+            "move" => "Not moved",
+            "delete" => "Not deleted",
+            "expunge" => "Not expunged",
+            "append" => "Not uploaded",
+            "set_flags" | "clear_flags" => "Flags not changed",
+            "save_draft" => "Draft not saved",
+            "discard_draft" => "Draft not discarded",
+            "cross_account_copy" | "cross_account_remove" => "Not moved across accounts",
+            other => return format!("{other} failed \u{2014} {}", self.reason),
+        };
+        format!("{what} \u{2014} {}", self.reason)
+    }
+}
+
 /// What one drain pass did.
 ///
 /// Counted in *queue rows* rather than steps, so the numbers add up to what was
