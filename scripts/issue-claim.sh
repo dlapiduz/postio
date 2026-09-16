@@ -161,9 +161,16 @@ if [ -n "$RESUME" ]; then
         exit 2
     fi
     RESUME_TREE="$WORKTREES/issue-$RESUME"
+    # The tree is usually still there: `--resume` is for coming back to a
+    # branch whose PR went red, and the tree it was worked in was left behind
+    # by whatever ended that session. Its existence used to be refused
+    # outright, before the lock below could say whether anyone was in it --
+    # which refused the ordinary case, and named no way out (#1422). Whether
+    # the tree is somebody's is the lock's question; a tree nobody holds is
+    # reused, which is also what a plain claim does with a landed tree.
+    REUSE_TREE=0
     if [ -d "$RESUME_TREE" ]; then
-        echo "$RESUME_TREE already exists; a session may be in it." >&2
-        exit 2
+        REUSE_TREE=1
     fi
     mkdir -p "$WORKTREES" "$CLAIMS"
     # `|| true` used to be here, so a resume walked straight through another
@@ -186,8 +193,27 @@ if [ -n "$RESUME" ]; then
     fi
     printf '%s\n' "$RESUME_TREE" > "$CLAIMS/issue-$RESUME.owner"
     git -C "$REPO_ROOT" fetch --quiet origin "$RESUME_BRANCH" "$BASE"
-    git -C "$REPO_ROOT" branch --quiet -D "$RESUME_BRANCH" 2>/dev/null || true
-    git -C "$REPO_ROOT" worktree add --quiet --track -b "$RESUME_BRANCH" "$RESUME_TREE" "origin/$RESUME_BRANCH"
+    if [ "$REUSE_TREE" = 1 ]; then
+        # Back into the tree that was left behind, on the branch it holds,
+        # brought up to what the PR has. Fast-forward only: a tree that has
+        # diverged from origin has work in it somebody should look at, and
+        # guessing which side wins is not this script's call.
+        HOLDING="$(git -C "$RESUME_TREE" rev-parse --abbrev-ref HEAD 2>/dev/null || true)"
+        if [ "$HOLDING" != "$RESUME_BRANCH" ]; then
+            echo "$RESUME_TREE holds '${HOLDING:-nothing}', not $RESUME_BRANCH; not resuming into it." >&2
+            echo "Move it aside, or: scripts/issue-release.sh $RESUME" >&2
+            rm -f "$CLAIMS/issue-$RESUME.owner"; rmdir "$CLAIMS/issue-$RESUME" 2>/dev/null || true
+            exit 2
+        fi
+        if ! git -C "$RESUME_TREE" merge --quiet --ff-only "origin/$RESUME_BRANCH" 2>/dev/null; then
+            echo "$RESUME_TREE has diverged from origin/$RESUME_BRANCH; reconcile it by hand first." >&2
+            rm -f "$CLAIMS/issue-$RESUME.owner"; rmdir "$CLAIMS/issue-$RESUME" 2>/dev/null || true
+            exit 2
+        fi
+    else
+        git -C "$REPO_ROOT" branch --quiet -D "$RESUME_BRANCH" 2>/dev/null || true
+        git -C "$REPO_ROOT" worktree add --quiet --track -b "$RESUME_BRANCH" "$RESUME_TREE" "origin/$RESUME_BRANCH"
+    fi
     # The base comes from the open PR, not from `$BASE`.
     #
     # `--base` is a *claim*-time argument and nobody passes it to `--resume`;
