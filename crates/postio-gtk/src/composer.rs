@@ -761,7 +761,7 @@ mod imp {
         /// kind, attachments, and what it is a reply to.
         pub draft: RefCell<Draft>,
         /// The account a *fresh* composition starts from -- what
-        /// [`Composer::set_account`] was told, kept apart from the draft
+        /// [`Composer::set_account`](super::Composer::set_account) was told, kept apart from the draft
         /// cell. Reading it off the cell meant a reply, which fills the cell
         /// with the answered message's account, quietly became where the next
         /// new message came from too (#960's fence, #1161).
