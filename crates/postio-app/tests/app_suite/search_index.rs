@@ -69,11 +69,21 @@ pub fn a_store_the_application_opened_can_be_searched() {
     });
 }
 
-/// Every message the seeded store put in the list, newest first.
+/// Every message the seeded store put where All mail looks, newest first.
+///
+/// The seed files mail into Drafts, Trash and Junk too, and `hits` searches
+/// All mail, which leaves those three out (#1523). A sample drawn from them
+/// would be absent from the results for a reason that has nothing to do
+/// with whether its body was indexed.
 async fn all_messages(database: &Store) -> Vec<MessageId> {
     let connection = database.connect().await.expect("a connection");
     let mut statement = connection
-        .prepare("SELECT id FROM messages ORDER BY received_at DESC")
+        .prepare(
+            "SELECT m.id FROM messages m \
+             JOIN mailboxes b ON b.id = m.mailbox_id \
+             WHERE b.role NOT IN ('drafts', 'junk', 'trash') \
+             ORDER BY m.received_at DESC",
+        )
         .await
         .expect("a statement");
     let rows = postio_storage::sql::mapped(&mut statement, (), |row| {
