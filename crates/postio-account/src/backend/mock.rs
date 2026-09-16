@@ -429,6 +429,10 @@ struct State {
     /// Whether `existing_uids` refuses. See
     /// [`MockBackend::refuse_uid_listing`].
     refuse_uid_listing: bool,
+    /// Whether `COPY`/`MOVE` answer without a `COPYUID`, as a UIDPLUS
+    /// server may (RFC 4315 §3: UIDNOTSTICKY, or no `SELECT` right on the
+    /// destination). See [`MockBackend::omit_uid_mappings`].
+    omit_uid_mappings: bool,
 }
 
 /// One served fetch, in [`MockBackend::fetch_order`].
@@ -609,6 +613,18 @@ impl MockBackend {
     /// complete then, by walking the UID space as it did before #727.
     pub fn refuse_uid_listing(&self) {
         self.state().refuse_uid_listing = true;
+    }
+
+    /// Makes `COPY` and `MOVE` succeed without reporting the new UIDs, while
+    /// the server goes on advertising UIDPLUS.
+    ///
+    /// RFC 4315 §3 says a UIDPLUS server SHOULD return `COPYUID`, and names
+    /// two cases where it will not: a `UIDNOTSTICKY` destination, and a
+    /// destination the client may append to but not select. The message
+    /// moved either way; what the client does not learn is where it landed.
+    /// Reading that silence as "the message was gone" is #903.
+    pub fn omit_uid_mappings(&self) {
+        self.state().omit_uid_mappings = true;
     }
 
     /// Makes [`MailBackend::create_mailbox`] refuse with `reason`, as a server
@@ -920,6 +936,7 @@ impl MockBackendBuilder {
                 faults: Vec::new(),
                 persistent_fault: None,
                 refuse_uid_listing: false,
+                omit_uid_mappings: false,
                 latency: Duration::ZERO,
                 calls: 0,
                 refuse_creates: None,
@@ -1434,7 +1451,11 @@ impl MockBackend {
             }
         }
 
-        Ok(if uid_plus { mapping } else { Vec::new() })
+        Ok(if uid_plus && !state.omit_uid_mappings {
+            mapping
+        } else {
+            Vec::new()
+        })
     }
 }
 

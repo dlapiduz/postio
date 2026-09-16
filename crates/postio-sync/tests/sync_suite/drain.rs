@@ -389,6 +389,51 @@ async fn a_message_deleted_remotely_settles_the_operation_and_asks_for_a_resync(
 }
 
 #[tokio::test]
+async fn a_move_confirmed_without_copyuid_is_applied_and_the_destination_resynced() {
+    // RFC 4315 §3: a UIDPLUS server SHOULD return COPYUID and MAY omit it --
+    // a UIDNOTSTICKY destination, or one the account may write to but not
+    // select. Absence means the new UIDs are unknown, which the client
+    // "can discover by selecting the destination mailbox". It does not mean
+    // the message was gone, and reading it that way settled a successful
+    // move as obsolete, never retried it, and condemned the *source* to a
+    // resync (#903).
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    let local = local(&connection).await;
+    let backend = server().await;
+    backend.omit_uid_mappings();
+
+    enqueue(
+        &connection,
+        &local,
+        Operation::Move {
+            from: local.inbox,
+            to: local.archive,
+        },
+        at(9),
+    )
+    .await;
+
+    let report = Drainer::new(&backend)
+        .drain(&connection, local.account, at(10))
+        .await
+        .expect("drain");
+
+    assert_eq!(
+        report.applied, 1,
+        "the server moved the message; a missing COPYUID is not a missing message"
+    );
+    assert_eq!(report.obsolete, 0, "nothing was obsolete: {report:?}");
+    assert_eq!(count(&backend, INBOX).await, 0);
+    assert_eq!(count(&backend, ARCHIVE).await, 1);
+    assert_eq!(
+        report.needs_resync,
+        vec![local.archive],
+        "the destination is where the UIDs can be discovered, so it is what gets resynced"
+    );
+}
+
+#[tokio::test]
 async fn a_message_moved_on_both_sides_does_not_move_twice() {
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
@@ -421,13 +466,19 @@ async fn a_message_moved_on_both_sides_does_not_move_twice() {
         .await
         .expect("drain");
 
-    assert_eq!(report.obsolete, 1);
+    // On the wire this is indistinguishable from a server that moved the
+    // message and omitted COPYUID (RFC 4315 §3), so it settles the same way
+    // (#903): applied, nothing duplicated, and the destination resynced --
+    // which is where both readings are reconciled, because it is where the
+    // message is.
+    assert_eq!(report.applied, 1);
+    assert_eq!(report.obsolete, 0);
     assert_eq!(
         count(&backend, ARCHIVE).await,
         1,
         "one copy, not two: the message is not duplicated by replaying our intent"
     );
-    assert_eq!(report.needs_resync, vec![local.inbox]);
+    assert_eq!(report.needs_resync, vec![local.archive]);
 }
 
 #[tokio::test]

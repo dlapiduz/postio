@@ -362,14 +362,31 @@ impl<'a> Drainer<'a> {
                     .move_messages(&context.path, &context.ids, destination)
                     .await
                     .map(|mapping| {
-                        // Without UIDPLUS an empty mapping is the ordinary
-                        // answer and says nothing about whether anything moved,
-                        // so it must not be read as a vanished message.
-                        if capabilities.contains(Capability::UidPlus) {
-                            vanished_if_untouched(mapping.is_empty())
-                        } else {
-                            Outcome::Applied
+                        // An empty mapping is not a vanished message, with or
+                        // without UIDPLUS. Without it, nothing is ever
+                        // reported. With it, RFC 4315 §3 says a server SHOULD
+                        // return COPYUID and MAY omit it -- a UIDNOTSTICKY
+                        // destination, or one the account may write to but
+                        // not select -- and absence means the new UIDs are
+                        // unknown, which "the client can discover by
+                        // selecting the destination mailbox". Reading it as
+                        // the message being gone settled a move that had
+                        // succeeded as obsolete, never retried a move that
+                        // had not, and condemned the source folder to a
+                        // resync for nothing (#903). So: applied, and the
+                        // destination is what gets resynced, because that is
+                        // where the answer is.
+                        if capabilities.contains(Capability::UidPlus) && mapping.is_empty() {
+                            let landed = match &context.operation {
+                                Operation::Move { to, .. } => Some(*to),
+                                Operation::Delete { trash, .. } => Some(*trash),
+                                _ => None,
+                            };
+                            if let Some(landed) = landed {
+                                resync.insert(landed.get());
+                            }
                         }
+                        Outcome::Applied
                     })
             }
             Operation::CrossAccountCopy { .. } | Operation::CrossAccountRemove { .. } => {
