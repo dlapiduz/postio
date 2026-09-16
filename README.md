@@ -192,6 +192,9 @@ subject:invoice -in:archive is:unread
 `is:read` `is:flagged` `before:` `after:` `larger:` `smaller:` `account:`
 `group:` `header:` `body:`
 
+A search covers every folder except drafts, junk and trash; `in:trash` (or
+`in:junk`, `in:drafts`) reaches those when you mean them.
+
 The complete, generated keyboard reference is
 [`docs/keybindings.md`](docs/keybindings.md); every binding can be changed
 in `config.toml`.

@@ -37,8 +37,12 @@
 /// picked. `in:` is still there for naming one folder exactly.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Scope {
-    /// Everything in the account. The default, because search is how you
-    /// find the thing you filed somewhere and forgot.
+    /// Every folder except drafts, junk and trash. The default, because
+    /// search is how you find the thing you filed somewhere and forgot --
+    /// and those three are the folders a search almost never means, the ones
+    /// that turned one correspondent's name into sixty-six hits (#1523). Sent
+    /// stays in. An `in:` naming one of the three reaches it; the executor
+    /// lifts the exclusion for any query that names a folder.
     #[default]
     AllMail,
     /// Only what is still in the inbox.

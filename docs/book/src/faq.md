@@ -61,6 +61,11 @@ virtual folder. `from:ada after:2026-01-01 has:attach` is the kind of query
 you can type, and results begin appearing as you type it. When a query
 finds nothing, Postio suggests the spelling that would.
 
+"All mail" means every folder except drafts, junk and trash — the three a
+search almost never means, and the ones that turn "66 hits" into a number
+nobody can act on. Sent is included. Name one of the three with `in:`
+(`in:trash invoice`) and the search reaches it.
+
 ## What happens if I lose access to my keyring?
 
 Postio stores your mail credentials in your OS keyring and encrypts your

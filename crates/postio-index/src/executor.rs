@@ -469,7 +469,11 @@ async fn corpus_complete(connection: &Connection, request: &SearchRequest<'_>) -
         conditions.push("m.account_id = ?".to_string());
         params.push(turso::Value::Integer(id.get()));
     }
-    if let Some((sql, values)) = scope_condition(request.scope, request.account) {
+    if let Some((sql, values)) = scope_condition(
+        request.scope,
+        request.account,
+        names_a_folder(request.query),
+    ) {
         conditions.push(sql);
         params.extend(values);
     }
@@ -891,7 +895,11 @@ impl Plan {
             has_match = true;
         }
 
-        if let Some((sql, mut values)) = scope_condition(request.scope, request.account) {
+        if let Some((sql, mut values)) = scope_condition(
+            request.scope,
+            request.account,
+            names_a_folder(request.query),
+        ) {
             conditions.push(sql);
             params.append(&mut values);
         }
@@ -1407,9 +1415,21 @@ impl Plan {
 /// Scoped by mailbox *role* rather than by id, because the scope has to mean
 /// the same thing on every account and before any folder has been chosen. See
 /// [`Scope::Lists`] for why "lists" is a role test and not a `List-Id` one.
-fn scope_condition(scope: Scope, account: AccountScope) -> Option<(String, Vec<turso::Value>)> {
+fn scope_condition(
+    scope: Scope,
+    account: AccountScope,
+    names_a_folder: bool,
+) -> Option<(String, Vec<turso::Value>)> {
     let role = match scope {
-        Scope::AllMail => return None,
+        // "All mail" is every folder except drafts, junk and trash
+        // (maintainer's decision, #1523): a search is navigation, and what a
+        // person is navigating to is almost never a draft of what they were
+        // going to say, something they binned, or spam. Sent stays in. An
+        // `in:` anywhere in the query lifts the exclusion, because a query
+        // that names a folder is already confined to it, and the one thing
+        // the exclusion could then do is hide the folder they named.
+        Scope::AllMail if names_a_folder => return None,
+        Scope::AllMail => "role NOT IN ('drafts', 'junk', 'trash')",
         Scope::Inbox => "role = 'inbox'",
         Scope::Lists => "role = 'regular'",
     };
@@ -1427,6 +1447,16 @@ fn scope_condition(scope: Scope, account: AccountScope) -> Option<(String, Vec<t
             Vec::new(),
         ),
     })
+}
+
+/// Whether the query confines itself to a folder with an `in:` of its own.
+///
+/// Only an affirmative one: `-in:trash` is a person keeping the default
+/// exclusion and adding to it, not asking to see the trash.
+fn names_a_folder(query: &ParsedQuery) -> bool {
+    query
+        .filters()
+        .any(|clause| !clause.negated && matches!(clause.filter, Filter::In(_)))
 }
 
 /// Translates one structured filter into a SQL condition (unnegated) plus its

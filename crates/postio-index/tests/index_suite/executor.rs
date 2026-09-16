@@ -1629,3 +1629,95 @@ async fn a_message_whose_headers_are_not_indexed_yet_is_not_a_false_negative_for
         "and once it is indexed it is found -- nothing else had to change"
     );
 }
+
+/// One "quarterly" in the inbox, and one each in drafts, junk and trash.
+async fn a_quarterly_in_every_role(connection: &Connection) -> postio_model::Account {
+    let (account, inbox) = test_support::account_with_inbox(connection).await;
+    message(
+        connection,
+        &account,
+        inbox,
+        "ada",
+        "Quarterly report",
+        at(9),
+    )
+    .await;
+    for (path, role) in [
+        ("Drafts", postio_model::MailboxRole::Drafts),
+        ("Junk", postio_model::MailboxRole::Junk),
+        ("Trash", postio_model::MailboxRole::Trash),
+    ] {
+        let mut mailbox = postio_model::Mailbox::new(account.id, path, Some('/'));
+        mailbox.role = role;
+        postio_storage::repository::MailboxRepository::new(connection)
+            .create(&mut mailbox)
+            .await
+            .expect("create a folder with a role");
+        message(
+            connection,
+            &account,
+            mailbox.id,
+            "bob",
+            "Quarterly leftovers",
+            at(10),
+        )
+        .await;
+    }
+    account
+}
+
+#[tokio::test]
+async fn all_mail_leaves_out_drafts_junk_and_trash_unless_in_names_one() {
+    // Maintainer's decision (#1523): a search is navigation, and what a
+    // person is navigating to is almost never a draft of what they were
+    // going to say, something they binned, or spam. Sent stays in. An
+    // explicit `in:` reaches any of the three, because then they said so.
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    postio_index::index::ensure_schema(&connection)
+        .await
+        .expect("schema");
+    let account = a_quarterly_in_every_role(&connection).await;
+
+    let hits = async |text: &str| {
+        let query = parse(text, at(12).date_naive());
+        let request = SearchRequest {
+            account: AccountScope::Account(account.id),
+            query: &query,
+            scope: Scope::AllMail,
+            limit: 10,
+            order: postio_search::ResultOrder::Relevance,
+        };
+        search(&connection, &request, at(12))
+            .await
+            .expect("search")
+            .total_hits
+    };
+
+    assert_eq!(
+        hits("quarterly").await,
+        1,
+        "All mail means every folder except drafts, junk and trash"
+    );
+    assert_eq!(hits("quarterly in:trash").await, 1, "in: reaches the trash");
+    assert_eq!(hits("quarterly in:junk").await, 1, "in: reaches junk");
+    assert_eq!(hits("quarterly in:drafts").await, 1, "in: reaches drafts");
+
+    // The scope column counts what switching would show, so it has to agree.
+    let query = parse("quarterly", at(12).date_naive());
+    let request = SearchRequest {
+        account: AccountScope::Account(account.id),
+        query: &query,
+        scope: Scope::AllMail,
+        limit: 10,
+        order: postio_search::ResultOrder::Relevance,
+    };
+    let facets = postio_index::executor::facets(&connection, &request)
+        .await
+        .expect("facets");
+    assert_eq!(
+        facets.hits(Scope::AllMail),
+        1,
+        "\"All mail 4\" over a list of one row is a number nobody can act on"
+    );
+}
