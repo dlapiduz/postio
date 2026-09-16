@@ -163,12 +163,6 @@ crates/postio-search/src/size.rs:38:27: replace || with && in parse_size
 crates/postio-search/src/size.rs:38:36: replace < with <= in parse_size
 crates/postio-search/src/size.rs:38:36: replace < with == in parse_size
 crates/postio-search/src/size.rs:38:51: replace > with >= in parse_size
-crates/postio-sync/src/backfill.rs:1008:19: replace > with < in seed_payloads
-crates/postio-sync/src/backfill.rs:1008:19: replace > with == in seed_payloads
-crates/postio-sync/src/backfill.rs:1008:19: replace > with >= in seed_payloads
-crates/postio-sync/src/backfill.rs:1008:31: replace < with <= in seed_payloads
-crates/postio-sync/src/backfill.rs:1011:16: replace += with *= in seed_payloads
-crates/postio-sync/src/backfill.rs:1011:16: replace += with -= in seed_payloads
 crates/postio-sync/src/backfill.rs:1026:59: replace && with || in pending_payloads
 crates/postio-sync/src/backfill.rs:1353:15: replace += with *= in fetch_text_parts
 crates/postio-sync/src/backfill.rs:1375:27: replace |= with &= in fetch_text_parts

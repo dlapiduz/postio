@@ -2413,3 +2413,72 @@ async fn a_backfilled_body_waits_for_the_write_a_person_is_doing() {
         "waiting for the gate must not cost the body: {outcome:?}"
     );
 }
+
+/// `seed_payloads` walks past a window it cannot use (#318), and the
+/// comparisons that decide when to stop walking were the densest cluster of
+/// surviving mutants in the first baseline (#1470): no test told `queued > 0`
+/// from `>= 0`, or `read < limit` from `<=`. Two partial messages and a
+/// window of one message tell them apart. The second seed finds the newest
+/// already queued and has to reach the older one behind it; the third finds
+/// both queued and has to stop at the folder's end rather than walk for
+/// ever.
+#[tokio::test]
+async fn seeding_payloads_walks_past_a_window_that_is_already_queued() {
+    let inbox = MockMailbox::new(INBOX)
+        .uid_validity(UidValidity::new(VALIDITY))
+        .message(with_a_payload(1, "first.pdf"))
+        .message(with_a_payload(2, "second.pdf"));
+    let backend = MockBackend::builder().mailbox(inbox).build();
+    backend.connect().await.expect("connect");
+
+    let local = local().await;
+    let rows = headers(&local, &backend).await;
+    assert_eq!(rows.len(), 2, "the fixture is two messages");
+    for (id, uid) in &rows {
+        fetch_body(
+            &local.connection,
+            &local.blobs,
+            &backend,
+            &request(&local.inbox, *id, *uid, 4_096),
+            BackfillPolicy::default().max_inline_bytes,
+            &CancelToken::new(),
+        )
+        .await
+        .expect("text");
+    }
+
+    let mut backfill = Backfill::new(BackfillPolicy {
+        attachments: AttachmentPolicy::Eager,
+        ..policy()
+    });
+    let window = 1;
+
+    assert_eq!(
+        seed_payloads(&local.connection, &mut backfill, local.inbox.id, window)
+            .await
+            .expect("seed"),
+        1,
+        "the first window is the newest message, and it queues"
+    );
+    assert_eq!(
+        seed_payloads(&local.connection, &mut backfill, local.inbox.id, window)
+            .await
+            .expect("seed"),
+        1,
+        "the newest is already queued, so the seed has to reach the window \
+         behind it rather than answer the same row again"
+    );
+    assert_eq!(
+        seed_payloads(&local.connection, &mut backfill, local.inbox.id, window)
+            .await
+            .expect("seed"),
+        0,
+        "both are queued: an empty window is the end of the folder, not a \
+         reason to keep walking"
+    );
+
+    let queued: Vec<_> = std::iter::from_fn(|| backfill.next_body())
+        .map(|claim| claim.request.message)
+        .collect();
+    assert_eq!(queued.len(), 2, "each message queued once: {queued:?}");
+}
