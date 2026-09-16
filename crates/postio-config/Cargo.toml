@@ -11,9 +11,9 @@ repository.workspace = true
 [dependencies]
 notify = "8.2.0"
 postio-model.workspace = true
-serde = { version = "1.0.229", features = ["derive"] }
-thiserror = "2.0.20"
-toml = "1.1.4"
+serde = { workspace = true }
+thiserror = { workspace = true }
+toml = { workspace = true }
 toml_edit = "0.25"
 
 [lints.rust]

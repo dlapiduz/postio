@@ -9,7 +9,7 @@ publish.workspace = true
 repository.workspace = true
 
 [dependencies]
-chrono = { version = "0.4.45", default-features = false, features = ["std", "clock"] }
+chrono = { workspace = true, features = ["std"] }
 # The HTML-to-text extraction the `body` column requires. Owned here rather
 # than left to every caller: "raw markup must never reach this column" is a
 # rule about the column, and a rule enforced by the crate that holds it
@@ -21,14 +21,14 @@ postio-storage = { workspace = true }
 # The engine, for its Row and Value types. postio-index is the one crate
 # besides postio-storage that speaks SQL -- it maintains the search index
 # over the same tables (ADR 0016).
-turso = { version = "=0.8.0-pre.11", default-features = false, features = ["fts"] }
-thiserror = "2.0.20"
-tracing = "0.1"
+turso = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
 
 [dev-dependencies]
 postio-storage = { workspace = true, features = ["test-support"] }
 # Tests only: the engine is async, so its tests need a runtime.
-tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
 
 [lints]
 workspace = true

@@ -11,7 +11,7 @@ repository.workspace = true
 [dependencies]
 # `time` only: `settle_until_async` backs off with `tokio::time::sleep`, because a
 # thread sleep in an async waiter parks a runtime worker.
-tokio = { version = "1", default-features = false, features = ["time"] }
+tokio = { workspace = true, features = ["time"] }
 
 [lints]
 workspace = true

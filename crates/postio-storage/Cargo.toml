@@ -19,14 +19,14 @@ repository.workspace = true
 test-support = ["dep:tempfile", "postio-model/test-corpus"]
 
 [dependencies]
-blake3 = "1.8.7"
+blake3 = { workspace = true }
 # The store's master key comes from the kernel's entropy pool and nowhere
 # else (ADR 0014 Q3). `getrandom` is the OS RNG with no generator in front of
 # it to be reproduced.
 getrandom = "0.4.3"
 # Key material overwrites itself when it drops, the same discipline
 # `postio-account`'s `Password` already keeps.
-zeroize = "1.9.0"
+zeroize = { workspace = true }
 # Blob contents are XChaCha20-Poly1305 (ADR 0014 Q2). Pure Rust, no new
 # native dependency, and the 24-byte nonce is what makes a random per-blob
 # nonce safe without a counter to keep.
@@ -35,8 +35,8 @@ chacha20poly1305 = "0.11.0"
 # `tokio::sync::Notify` rather than a `Condvar`, because a condvar blocks the
 # *thread* and every thread here is a runtime worker -- see `store::GateInner`.
 # Whoever calls this crate still supplies the runtime.
-tokio = { version = "1", default-features = false, features = ["sync", "macros"] }
-chrono = { version = "0.4.45", default-features = false, features = ["std", "clock"] }
+tokio = { workspace = true, features = ["macros", "sync"] }
+chrono = { workspace = true, features = ["std"] }
 postio-model = { version = "0.3.0", path = "../postio-model" }
 # Turso, the Rust rewrite of SQLite (specs/004-turso-store). Encryption is
 # the engine's own AES-256-GCM rather than SQLCipher's AES-CBC + HMAC, which
@@ -52,30 +52,30 @@ postio-model = { version = "0.3.0", path = "../postio-model" }
 # whatever binary links it — an allocator choice belongs to the binary, and
 # `postio-app` makes it explicitly. `fts` stays: the search index is built
 # on the engine's full-text index method.
-turso = { version = "=0.8.0-pre.11", default-features = false, features = ["fts"] }
-serde_json = "1.0.151"
-tempfile = { version = "3.27.0", optional = true }
+turso = { workspace = true }
+serde_json = { workspace = true }
+tempfile = { workspace = true, optional = true }
 # Blob compression (ADR 0017). `zstd` rather than a pure-Rust decoder because
 # the store must compress as well as decompress; the C library is BSD-3-Clause,
 # which `deny.toml` already allows.
 # 0.13 rather than newest: the engine's fts (tantivy) is on 0.13, and one
 # version means one wrapper over the single zstd-sys both share.
 zstd = "0.13"
-thiserror = "2.0.20"
-tracing = "0.1"
+thiserror = { workspace = true }
+tracing = { workspace = true }
 
 [dev-dependencies]
 # Self dev-dependency so `cargo test -p postio-storage` gets the harness without
 # making `test-support` a default feature.
 postio-model = { path = "../postio-model", features = ["test-corpus"] }
 postio-storage = { path = ".", features = ["test-support"] }
-tempfile = "3.27.0"
-blake3 = "1.8.7"
-chrono = { version = "0.4.45", default-features = false, features = ["std", "clock"] }
-turso = { version = "=0.8.0-pre.11", default-features = false, features = ["fts"] }
+tempfile = { workspace = true }
+blake3 = { workspace = true }
+chrono = { workspace = true, features = ["std"] }
+turso = { workspace = true }
 # Tests only. The crate is async but brings no runtime of its own -- whoever
 # calls it supplies one, and postio-runtime is the only thing that does.
-tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "sync"] }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "sync", "time"] }
 
 # The workspace floor, in full: the SQLCipher-era `unsafe` (an
 # `OPENSSL_init_crypto` FFI call against libcrypto's atexit handler) went with

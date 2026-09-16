@@ -14,8 +14,8 @@ workspace = true
 [dependencies]
 # The conversation header writes a date span, and a span is a decision (which
 # ends carry a year, when a month is written once) rather than a format string.
-chrono = { version = "0.4.45", default-features = false, features = ["std", "clock"] }
-thiserror = "2.0.20"
+chrono = { workspace = true, features = ["std"] }
+thiserror = { workspace = true }
 postio-body = { version = "0.3.0", path = "../postio-body" }
 postio-config = { version = "0.3.0", path = "../postio-config" }
 postio-core = { version = "0.3.0", path = "../postio-core" }

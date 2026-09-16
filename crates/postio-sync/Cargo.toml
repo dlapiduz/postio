@@ -9,8 +9,8 @@ publish.workspace = true
 repository.workspace = true
 
 [dependencies]
-async-trait = "0.1.92"
-chrono = { version = "0.4.45", default-features = false, features = ["std", "clock"] }
+async-trait = { workspace = true }
+chrono = { workspace = true, features = ["std"] }
 # `default-features = false` drops `io-imap` and its TLS stack: all this crate
 # needs is the `MailBackend` seam and its mock. See ADR 0001 and the feature
 # comment in `postio-account/Cargo.toml`.
@@ -24,14 +24,14 @@ postio-index.workspace = true
 postio-model.workspace = true
 postio-smtp.workspace = true
 postio-storage.workspace = true
-secrecy = "0.10.3"
-thiserror = "2.0.20"
-tracing = "0.1"
+secrecy = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
 
 [dev-dependencies]
 # Decoding the SASL PLAIN argument a transcript recorded, so a test can say
 # *which* credential reached the server rather than only that one did.
-base64 = "0.23.1"
+base64 = { workspace = true }
 # Tests only: the real io-imap-backed backend and the in-process IMAP server
 # it can be pointed at, so the engine can be driven over a loopback socket
 # rather than only against the mock. Everything above still goes through
@@ -40,7 +40,7 @@ base64 = "0.23.1"
 # the protocol crate out of the engine's dependency graph.
 postio-account = { path = "../postio-account", features = ["imap", "test-server"] }
 postio-storage = { workspace = true, features = ["test-support"] }
-tokio = { version = "1.53.1", features = ["rt-multi-thread", "macros", "time"] }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "time"] }
 
 [lints]
 workspace = true

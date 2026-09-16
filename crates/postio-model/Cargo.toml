@@ -15,16 +15,16 @@ repository.workspace = true
 test-corpus = []
 
 [dependencies]
-chrono = { version = "0.4.45", default-features = false, features = ["std", "clock", "serde"] }
+chrono = { workspace = true, features = ["serde", "std"] }
 mail-builder = { version = "0.5.0", default-features = false }
 mail-parser = { version = "0.11.8", features = ["full_encoding"] }
-serde = { version = "1.0.229", features = ["derive"] }
+serde = { workspace = true }
 # The diacritic fold the search engine's tokenizer does not do. No SQL, no
 # engine -- a property of the text, which is what this crate is for.
 unicode-normalization = "0.1"
 
 [dev-dependencies]
-serde_json = "1.0.151"
+serde_json = { workspace = true }
 # Self dev-dependency so `cargo test -p postio-model` exercises the corpus
 # loader without making `test-corpus` a default feature.
 postio-model = { path = ".", features = ["test-corpus"] }
