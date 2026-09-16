@@ -152,6 +152,15 @@ case " $* " in
         grep -E '^\[timing\]|^issue:|^crates:|https://github.com/|^merged\.|auto-merge|MERGE DID NOT|Checks failed|hit a conflict|^Refusing|^error|^issue-land exit' "$LAND_LOG" || true
         echo "--- last lines ---"
         tail -n 5 "$LAND_LOG"
+        # A full disk fails a gate as a compile error, or as SIGBUS from
+        # inside a test binary, and the tell is several lines up in a log
+        # that mostly scrolls past (#1428, #1460). Said in those words, with
+        # what is free now, so nobody spends the afternoon on "my branch
+        # does not build".
+        if grep -qE 'No space left on device|os error 28|signal: 7, SIGBUS' "$LAND_LOG"; then
+            echo "disk:   the disk was full -- the compile error or SIGBUS above is what that looks like, not your diff."
+            echo "        free now: $(df -Ph "$TREE" | awk 'NR==2 { print $4 " of " $2 }'); scripts/worktree-reap.sh says what holds the rest."
+        fi
         # Said out loud, because a flake's diagnosis is usually in the
         # attempt before this one and nobody looks for a file they have not
         # been told about (#710).
@@ -175,11 +184,19 @@ case " $* " in
         # session, by the session that had just been asked to keep them.
         [ -f "$LAND_LOG" ] && mv -f "$LAND_LOG" "$LAND_LOG.1" 2>/dev/null
         : > "$LAND_LOG"
+        # The child's last line is its exit status -- and, when the log
+        # carries the signature of a full disk, one line naming that first,
+        # because `--status` is not the only way this log gets read.
+        CHILD='bash "$0" "${@:2}"; status=$?
+            if [ "$status" -ne 0 ] && grep -qE "No space left on device|os error 28|signal: 7, SIGBUS" "$1"; then
+                echo "disk full: the failure above is what a full disk looks like, not your diff (scripts/issue-land.sh --status; scripts/worktree-reap.sh)"
+            fi
+            echo "issue-land exit $status"'
         if command -v setsid >/dev/null 2>&1; then
-            setsid bash -c 'bash "$0" "${@:1}"; echo "issue-land exit $?"' "$0" ${DETACHED_ARGS[@]+"${DETACHED_ARGS[@]}"} \
+            setsid bash -c "$CHILD" "$0" "$LAND_LOG" ${DETACHED_ARGS[@]+"${DETACHED_ARGS[@]}"} \
                 > "$LAND_LOG" 2>&1 < /dev/null &
         else
-            nohup bash -c 'bash "$0" "${@:1}"; echo "issue-land exit $?"' "$0" ${DETACHED_ARGS[@]+"${DETACHED_ARGS[@]}"} \
+            nohup bash -c "$CHILD" "$0" "$LAND_LOG" ${DETACHED_ARGS[@]+"${DETACHED_ARGS[@]}"} \
                 > "$LAND_LOG" 2>&1 < /dev/null &
         fi
         printf '%s\n' "$!" > "$LAND_PID"
@@ -223,6 +240,27 @@ while [ $# -gt 0 ]; do
         *) echo "unknown argument: $1" >&2; exit 2 ;;
     esac
 done
+
+# Free space before a gate can run out of it. A gate chain writes gigabytes
+# of incremental output, and a disk that fills partway through fails as a
+# compile error or as SIGBUS -- never as itself -- on every session at once
+# (#1428, #1460). Fifty-two worktrees with a target/ each is how it filled;
+# `scripts/worktree-reap.sh` is how it empties. Refused below the floor,
+# said out loud below four times the floor.
+DISK_FLOOR_GB="${POSTIO_LAND_DISK_FLOOR_GB:-4}"
+FREE_KB=$(df -Pk "$TREE" 2>/dev/null | awk 'NR==2 { print $4 }')
+if [ -n "${FREE_KB:-}" ]; then
+    FREE_GB=$((FREE_KB / 1024 / 1024))
+    if [ "$FREE_GB" -lt "$DISK_FLOOR_GB" ]; then
+        echo "Refusing to land with ${FREE_GB} GB free under $TREE (floor ${DISK_FLOOR_GB} GB; POSTIO_LAND_DISK_FLOOR_GB)." >&2
+        echo "A gate chain needs more than that, and running out fails as a compile error or SIGBUS rather than as a full disk." >&2
+        echo "scripts/worktree-reap.sh lists the worktrees holding the space and reclaims the ones nothing will miss." >&2
+        exit 2
+    fi
+    if [ "$FREE_GB" -lt $((DISK_FLOOR_GB * 4)) ]; then
+        echo "warning: ${FREE_GB} GB free under $TREE. A gate that fails oddly is probably the disk; scripts/worktree-reap.sh reclaims landed worktrees."
+    fi
+fi
 
 if [ "$BRANCH" = "main" ]; then
     echo "Refusing to run on main. This lands a branch from a worktree;" >&2

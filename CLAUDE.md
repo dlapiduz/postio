@@ -401,7 +401,13 @@ things stay shared:
   crates are dropped and rebuilt — they carry the tree's absolute path, and
   cargo does not notice a move — so the sanity tier is about a minute, not
   the 19 of a cold tree. It is a copy, not the sharing #76 forbids. `--fresh` forces a new tree, `--cold` an unseeded one, and
-  `--reuse` is the strict form that refuses instead of falling back.
+  `--reuse` is the strict form that refuses instead of falling back. Trees nobody
+  will miss -- clean, every commit upstream by patch id, quiet for a day --
+  are reclaimed by `scripts/worktree-reap.sh` (a report by default, `--reap`
+  acts; a dirty tree is never touched, and one with unlanded commits loses
+  only its `target/`). A landing refuses below a floor of free disk and
+  names a full disk as such, because a full disk otherwise fails as a
+  compile error or SIGBUS (#1428, #1460).
 - **The main checkout** `~/src/postio` is for coordination, not work. A hook
   refuses the destructive commands there (`git add -A`, `reset --hard`,
   `stash`, `cargo fmt --all`, editing the root `Cargo.toml`, …) because other

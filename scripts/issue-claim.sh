@@ -799,6 +799,20 @@ while IFS=$'\t' read -r NUM TITLE; do
                 continue
             fi
         fi
+        # A seeded tree costs about 5 GB of real disk (`du` says 11; the
+        # reflink shares the rest), and seeding one onto a disk that cannot
+        # hold it is how #1428 began: the landing that followed died of a
+        # compile error that was not one. Below the floor, the reaper's
+        # report says what is holding the space and how to get it back
+        # (#1460). A warning rather than a refusal, because the tree may
+        # still fit and the person reading this can decide.
+        CLAIM_FREE_GB=$(( $(df -Pk "$WORKTREES" 2>/dev/null | awk 'NR==2 { print $4 }' || echo 0) / 1024 / 1024 ))
+        if [ "${CLAIM_FREE_GB:-0}" -lt "${POSTIO_CLAIM_DISK_FLOOR_GB:-16}" ]; then
+            echo "warning: ${CLAIM_FREE_GB} GB free under $WORKTREES, and a seeded tree is about 5 GB of it." >&2
+            if [ -x "$REPO_ROOT/scripts/worktree-reap.sh" ]; then
+                "$REPO_ROOT/scripts/worktree-reap.sh" >&2 || true
+            fi
+        fi
         git -C "$REPO_ROOT" worktree add --quiet -b "$BRANCH" "$TREE" "origin/$BASE"
         seed_target "$TREE"
     fi
