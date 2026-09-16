@@ -67,7 +67,7 @@ type Hint = (&'static str, &'static str);
 struct Content {
     icon: &'static str,
     icon_class: &'static str,
-    title: &'static str,
+    title: String,
     detail: String,
     hints: Vec<Hint>,
 }
@@ -82,7 +82,11 @@ fn plural(count: u64, noun: &str) -> String {
 
 fn describe(state: &State, now: Instant) -> Content {
     match state {
-        State::InboxZero { last_sync, stored } => {
+        State::InboxZero {
+            last_sync,
+            stored,
+            mailbox,
+        } => {
             let synced = match last_sync {
                 Some(at) => format!(
                     "Last synced {} ago.",
@@ -90,12 +94,19 @@ fn describe(state: &State, now: Instant) -> Content {
                 ),
                 None => "Never synced yet.".to_string(),
             };
+            // The inbox's emptiness is an achievement; any other folder's is
+            // a fact about that folder, named so it cannot be mistaken for
+            // the inbox (#1535).
+            let (title, lead) = match mailbox {
+                None => ("Inbox is empty".to_string(), "Nothing left to triage. "),
+                Some(name) => (format!("{name} is empty"), ""),
+            };
             Content {
                 icon: "emblem-ok-symbolic",
                 icon_class: "inbox-zero",
-                title: "Inbox is empty",
+                title,
                 detail: format!(
-                    "Nothing left to triage. {} still in the local store and searchable. {synced}",
+                    "{lead}{} still in the local store and searchable. {synced}",
                     plural(*stored, "message")
                 ),
                 hints: vec![("Search all mail", "/"), ("Compose", "c")],
@@ -104,7 +115,7 @@ fn describe(state: &State, now: Instant) -> Content {
         State::Offline { queued } => Content {
             icon: "network-offline-symbolic",
             icon_class: "offline",
-            title: "Offline — reading local mail",
+            title: "Offline — reading local mail".to_string(),
             detail: if *queued == 0 {
                 "Everything already synced still opens.".to_string()
             } else {
@@ -118,7 +129,7 @@ fn describe(state: &State, now: Instant) -> Content {
         State::Failing { reason } => Content {
             icon: "dialog-error-symbolic",
             icon_class: "failing",
-            title: "Sync failed",
+            title: "Sync failed".to_string(),
             detail: format!("{reason} Local mail is untouched."),
             hints: vec![("Retry now", "R")],
         },
@@ -136,7 +147,7 @@ fn describe(state: &State, now: Instant) -> Content {
         State::NoMatches { query, incomplete } => Content {
             icon: "system-search-symbolic",
             icon_class: "no-matches",
-            title: "No matches",
+            title: "No matches".to_string(),
             // The caveat goes *after* the query, not instead of it: what was
             // searched for is still the thing to change. But "nothing
             // matches" reads as proof the mail does not exist, so an
@@ -162,7 +173,7 @@ fn describe(state: &State, now: Instant) -> Content {
             Content {
                 icon: "content-loading-symbolic",
                 icon_class: "opening",
-                title,
+                title: title.to_string(),
                 detail: detail.to_string(),
                 hints: Vec::new(),
             }
@@ -173,7 +184,7 @@ fn describe(state: &State, now: Instant) -> Content {
             // Named in the title, because the account is the fact. A title
             // that said "Some accounts are offline" would make the reader
             // open something else to find out which.
-            title: "Showing local mail",
+            title: "Showing local mail".to_string(),
             detail: format!(
                 "{} not reachable, so {} mail is what was already synced. \
                  Everything here still opens.",
@@ -209,6 +220,11 @@ mod imp {
         pub detail: gtk::Label,
         pub hints: gtk::Box,
         pub inputs: RefCell<(SyncStatus, u64, u64, u64, Option<String>)>,
+        /// The folder in view, by the name the sidebar shows, when it is
+        /// not the inbox -- what an empty plate is titled with (#1535). Its
+        /// own cell for the reason `accounts` has one: it arrives from the
+        /// sidebar's pick, not from the status feed.
+        pub place: RefCell<Option<String>>,
         /// The accounts an aggregate view is drawing, when it is one.
         ///
         /// `None` is an ordinary single-account view, which is what every
@@ -241,6 +257,7 @@ mod imp {
                 detail: gtk::Label::new(None),
                 hints: gtk::Box::new(gtk::Orientation::Horizontal, 16),
                 inputs: RefCell::new((SyncStatus::default(), 0, 0, 0, None)),
+                place: RefCell::new(None),
                 accounts: RefCell::new(None),
                 opening: RefCell::new(None),
                 tick: RefCell::new(None),
@@ -372,6 +389,17 @@ impl ListStateView {
         self.render();
     }
 
+    /// Which folder the empty plate is about: `None` for the inbox, the
+    /// sidebar's name for any other folder. Call it when the folder in view
+    /// changes; the plate re-titles itself.
+    pub fn set_place(&self, mailbox: Option<String>) {
+        if *self.imp().place.borrow() == mailbox {
+            return;
+        }
+        *self.imp().place.borrow_mut() = mailbox;
+        self.render();
+    }
+
     /// Say that there is no store behind this window yet, and what it is
     /// waiting on — or that there is one now (#1114).
     ///
@@ -482,9 +510,23 @@ impl ListStateView {
         }
         let (status, item_count, stored, queued, searching) = imp.inputs.borrow().clone();
         let aggregate = imp.accounts.borrow().clone();
+        let place = imp.place.borrow().clone();
         match &aggregate {
-            Some(accounts) => derive_aggregate(accounts, item_count, stored, searching.as_deref()),
-            None => derive(&status, item_count, stored, queued, searching.as_deref()),
+            Some(accounts) => derive_aggregate(
+                accounts,
+                item_count,
+                stored,
+                searching.as_deref(),
+                place.as_deref(),
+            ),
+            None => derive(
+                &status,
+                item_count,
+                stored,
+                queued,
+                searching.as_deref(),
+                place.as_deref(),
+            ),
         }
     }
 
@@ -507,7 +549,7 @@ impl ListStateView {
             }
             imp.icon.add_css_class(content.icon_class);
 
-            imp.title.set_text(content.title);
+            imp.title.set_text(&content.title);
             imp.detail.set_text(&content.detail);
 
             let spoken = content
@@ -711,6 +753,7 @@ mod tests {
             State::InboxZero {
                 last_sync: Some(now - Duration::from_secs(12)),
                 stored: 4291,
+                mailbox: None,
             },
             State::Offline { queued: 2 },
             State::Failing {
@@ -737,6 +780,7 @@ mod tests {
             State::InboxZero {
                 last_sync: None,
                 stored: 0,
+                mailbox: None,
             },
             State::Offline { queued: 0 },
             State::Failing {
@@ -761,6 +805,7 @@ mod tests {
             &State::InboxZero {
                 last_sync: None,
                 stored: 4291,
+                mailbox: None,
             },
             now,
         );
@@ -770,11 +815,41 @@ mod tests {
             &State::InboxZero {
                 last_sync: Some(now - Duration::from_secs(12)),
                 stored: 4291,
+                mailbox: None,
             },
             now,
         );
         assert!(recently.detail.contains("Last synced"));
         assert!(recently.detail.contains("12s"));
+    }
+
+    #[test]
+    fn an_empty_folder_is_named_and_not_called_the_inbox() {
+        let now = Instant::now();
+        let archive = describe(
+            &State::InboxZero {
+                last_sync: None,
+                stored: 4291,
+                mailbox: Some("Archive".to_string()),
+            },
+            now,
+        );
+        assert_eq!(archive.title, "Archive is empty");
+        assert!(
+            !archive.detail.contains("triage"),
+            "an empty archive is not an inbox cleared: {}",
+            archive.detail
+        );
+        let inbox = describe(
+            &State::InboxZero {
+                last_sync: None,
+                stored: 4291,
+                mailbox: None,
+            },
+            now,
+        );
+        assert_eq!(inbox.title, "Inbox is empty");
+        assert!(inbox.detail.contains("Nothing left to triage"));
     }
 
     #[test]

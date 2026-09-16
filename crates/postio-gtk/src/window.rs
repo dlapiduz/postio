@@ -1337,6 +1337,7 @@ impl Window {
             let feed = feed.clone();
             let folders = folders.clone();
             let list = list.clone();
+            let list_state = self.list_state();
             std::rc::Rc::new(move |choice| {
                 // A view row is in `mailboxes()` like any other — it just has
                 // no id — so the header above the rows is named the same way
@@ -1354,9 +1355,13 @@ impl Window {
                     // on the way to the header above the rows. Among its
                     // siblings, because a role's twin is named by the
                     // server, not by the role (#501).
-                    list.set_mailbox(
-                        &crate::sidebar::display_name(&mailbox, &folders.mailboxes()),
-                        mailbox.counts.unread,
+                    let name = crate::sidebar::display_name(&mailbox, &folders.mailboxes());
+                    list.set_mailbox(&name, mailbox.counts.unread);
+                    // And the empty plate is titled with the same word, so
+                    // an empty Archive says so rather than "Inbox is empty"
+                    // (#1535). The inbox itself keeps its own line.
+                    list_state.set_place(
+                        (mailbox.role != postio_model::mailbox::MailboxRole::Inbox).then_some(name),
                     );
                 }
                 // The sidebar deals in row ids; everything below here deals

@@ -28,12 +28,22 @@ use crate::status::SyncStatus;
 /// stay out of the way.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum State {
-    /// Nothing left to triage in the mailbox in view.
+    /// Nothing in the mailbox in view.
+    ///
+    /// The inbox's emptiness is an achievement and is announced as one; any
+    /// other folder's is a fact about that folder, which the plate names
+    /// rather than calling it the inbox. Every empty folder used to say
+    /// "Inbox is empty" (#1535), and it read as the application having lost
+    /// track of where it was.
     InboxZero {
         /// When the last sync completed; `None` before the first one.
         last_sync: Option<Instant>,
         /// Messages still in the local store, elsewhere, and searchable.
         stored: u64,
+        /// The folder, by the name the sidebar shows, when it is not the
+        /// inbox. `None` is the inbox -- or a view nobody named, which is
+        /// what a window built for a test of one widget has.
+        mailbox: Option<String>,
     },
     /// No connection right now; local mail is still fully usable.
     Offline {
@@ -234,12 +244,17 @@ impl State {
 /// user's chair both mean "not connected right now, local mail still
 /// works," and a fourth named state for a transition that resolves itself
 /// would be a state nobody could tell apart from the one before it.
+///
+/// `mailbox` is the folder in view by the name the sidebar shows, or `None`
+/// for the inbox: it is what the empty plate is titled with, and nothing
+/// else here reads it.
 pub fn derive(
     status: &SyncStatus,
     item_count: u64,
     stored: u64,
     queued: u64,
     searching: Option<&str>,
+    mailbox: Option<&str>,
 ) -> Option<State> {
     // A search answers for itself, ahead of the connection. The index is
     // local and it answered completely, so "Offline — reading local mail"
@@ -266,6 +281,7 @@ pub fn derive(
         ConnectionState::Online if item_count == 0 => Some(State::InboxZero {
             last_sync: status.last_sync,
             stored,
+            mailbox: mailbox.map(str::to_owned),
         }),
         ConnectionState::Online => None,
     }
@@ -320,6 +336,7 @@ pub fn derive_aggregate(
     item_count: u64,
     stored: u64,
     searching: Option<&str>,
+    mailbox: Option<&str>,
 ) -> Option<State> {
     let absent: Vec<String> = accounts
         .iter()
@@ -349,6 +366,7 @@ pub fn derive_aggregate(
                 .min()
                 .flatten(),
             stored,
+            mailbox: mailbox.map(str::to_owned),
         });
     }
     None
@@ -440,12 +458,37 @@ mod tests {
 
     #[test]
     fn an_empty_online_mailbox_is_inbox_zero() {
-        let derived = derive(&status(ConnectionState::Online), 0, 4291, 0, None);
+        let derived = derive(&status(ConnectionState::Online), 0, 4291, 0, None, None);
         assert_eq!(
             derived,
             Some(State::InboxZero {
                 last_sync: None,
                 stored: 4291,
+                mailbox: None,
+            })
+        );
+    }
+
+    #[test]
+    fn an_empty_folder_says_which_folder_it_is() {
+        // Every empty folder said "Inbox is empty" (#1535): Archive, Junk, a
+        // label, a folder still loading. It read as the application having
+        // lost track of where it was, and one paging fault was reported as
+        // "I click into another folder and it just shows the inbox is empty".
+        let derived = derive(
+            &status(ConnectionState::Online),
+            0,
+            4291,
+            0,
+            None,
+            Some("Archive"),
+        );
+        assert_eq!(
+            derived,
+            Some(State::InboxZero {
+                last_sync: None,
+                stored: 4291,
+                mailbox: Some("Archive".to_string()),
             })
         );
     }
@@ -460,6 +503,7 @@ mod tests {
             4291,
             0,
             Some("from:ada invoice"),
+            None,
         );
         assert_eq!(
             derived,
@@ -486,7 +530,7 @@ mod tests {
         ] {
             assert!(
                 matches!(
-                    derive(&status(state), 0, 4291, 2, Some("invoice")),
+                    derive(&status(state), 0, 4291, 2, Some("invoice"), None),
                     Some(State::NoMatches { .. })
                 ),
                 "{state:?} spoke over the search"
@@ -504,7 +548,8 @@ mod tests {
                 14,
                 4291,
                 0,
-                Some("invoice")
+                Some("invoice"),
+                None
             ),
             None,
             "a search with hits invented a state of its own"
@@ -515,6 +560,7 @@ mod tests {
             4291,
             2,
             Some("invoice"),
+            None,
         );
         assert_eq!(derived, Some(State::Offline { queued: 2 }));
         assert_eq!(
@@ -527,7 +573,7 @@ mod tests {
     #[test]
     fn a_populated_online_mailbox_has_no_named_state() {
         assert_eq!(
-            derive(&status(ConnectionState::Online), 12, 4291, 0, None),
+            derive(&status(ConnectionState::Online), 12, 4291, 0, None, None),
             None
         );
     }
@@ -542,7 +588,7 @@ mod tests {
         // lived: this state was always right, only how much of the pane it
         // took was wrong.
         assert_eq!(
-            derive(&status(ConnectionState::Offline), 12, 0, 2, None),
+            derive(&status(ConnectionState::Offline), 12, 0, 2, None, None),
             Some(State::Offline { queued: 2 })
         );
     }
@@ -575,6 +621,7 @@ mod tests {
         let empty = State::InboxZero {
             last_sync: None,
             stored: 0,
+            mailbox: None,
         };
         assert_eq!(empty.placement(0), Placement::Full);
     }
@@ -582,7 +629,7 @@ mod tests {
     #[test]
     fn connecting_reads_the_same_as_offline() {
         assert_eq!(
-            derive(&status(ConnectionState::Connecting), 0, 0, 0, None),
+            derive(&status(ConnectionState::Connecting), 0, 0, 0, None, None),
             Some(State::Offline { queued: 0 })
         );
     }
@@ -597,7 +644,7 @@ mod tests {
             ..SyncStatus::default()
         };
         assert_eq!(
-            derive(&with_reason, 0, 0, 0, None),
+            derive(&with_reason, 0, 0, 0, None, None),
             Some(State::Failing {
                 reason: "AUTHENTICATIONFAILED".to_string(),
             })
@@ -606,7 +653,8 @@ mod tests {
         let without_reason = status(ConnectionState::Failing {
             reason: postio_core::FailureReason::Auth,
         });
-        let State::Failing { reason } = derive(&without_reason, 0, 0, 0, None).unwrap() else {
+        let State::Failing { reason } = derive(&without_reason, 0, 0, 0, None, None).unwrap()
+        else {
             panic!("failing status did not produce a failing state");
         };
         assert!(!reason.is_empty(), "a failing state never shows nothing");
@@ -638,7 +686,7 @@ mod aggregate_tests {
             ("Personal", ConnectionState::Online),
         ]);
         assert_eq!(
-            derive_aggregate(&accounts, 40, 4291, None),
+            derive_aggregate(&accounts, 40, 4291, None, None),
             None,
             "a complete view has nothing to disclose, and a banner that is \
              always up is a banner nobody reads"
@@ -651,7 +699,7 @@ mod aggregate_tests {
             ("Work", ConnectionState::Online),
             ("Personal", ConnectionState::Offline),
         ]);
-        let derived = derive_aggregate(&accounts, 40, 4291, None);
+        let derived = derive_aggregate(&accounts, 40, 4291, None, None);
         assert_eq!(
             derived,
             Some(State::Partial {
@@ -680,7 +728,7 @@ mod aggregate_tests {
             ),
         ]);
         assert_eq!(
-            derive_aggregate(&accounts, 40, 4291, None),
+            derive_aggregate(&accounts, 40, 4291, None, None),
             Some(State::Partial {
                 accounts: vec!["Personal".to_owned()],
             })
@@ -698,7 +746,7 @@ mod aggregate_tests {
             ("Work", ConnectionState::Online),
             ("Personal", ConnectionState::Connecting),
         ]);
-        assert_eq!(derive_aggregate(&accounts, 40, 4291, None), None);
+        assert_eq!(derive_aggregate(&accounts, 40, 4291, None, None), None);
     }
 
     #[test]
@@ -709,7 +757,7 @@ mod aggregate_tests {
             ("Archive", ConnectionState::Offline),
         ]);
         assert_eq!(
-            derive_aggregate(&accounts, 40, 4291, None),
+            derive_aggregate(&accounts, 40, 4291, None, None),
             Some(State::Partial {
                 accounts: vec!["Work".to_owned(), "Archive".to_owned()],
             }),
@@ -728,7 +776,7 @@ mod aggregate_tests {
             ("Work", ConnectionState::Online),
             ("Personal", ConnectionState::Offline),
         ]);
-        let derived = derive_aggregate(&accounts, 0, 4291, Some("invoice"));
+        let derived = derive_aggregate(&accounts, 0, 4291, Some("invoice"), None);
         assert_eq!(
             derived,
             Some(State::NoMatches {
@@ -747,7 +795,7 @@ mod aggregate_tests {
             ("Personal", ConnectionState::Online),
         ]);
         assert_eq!(
-            derive_aggregate(&accounts, 0, 4291, Some("invoice")),
+            derive_aggregate(&accounts, 0, 4291, Some("invoice"), None),
             Some(State::NoMatches {
                 query: "invoice".to_owned(),
                 incomplete: Vec::new(),
@@ -764,10 +812,11 @@ mod aggregate_tests {
             ("Personal", ConnectionState::Online),
         ]);
         assert_eq!(
-            derive_aggregate(&accounts, 0, 4291, None),
+            derive_aggregate(&accounts, 0, 4291, None, None),
             Some(State::InboxZero {
                 last_sync: None,
                 stored: 4291,
+                mailbox: None,
             })
         );
     }
@@ -780,7 +829,7 @@ mod aggregate_tests {
             ("Work", ConnectionState::Online),
             ("Personal", ConnectionState::Offline),
         ]);
-        let derived = derive_aggregate(&accounts, 0, 4291, None);
+        let derived = derive_aggregate(&accounts, 0, 4291, None, None);
         assert_eq!(
             derived,
             Some(State::Partial {
@@ -796,6 +845,6 @@ mod aggregate_tests {
         // correctly, because the user asked for that. It is expressed as the
         // caller passing only enabled accounts -- an empty list is a view
         // with nothing to disclose rather than one that is degraded.
-        assert_eq!(derive_aggregate(&[], 0, 0, None), None);
+        assert_eq!(derive_aggregate(&[], 0, 0, None, None), None);
     }
 }
