@@ -591,6 +591,17 @@ pub async fn existing_uids(
         if cancel.is_cancelled() {
             return Err(BackendError::Cancelled);
         }
+        // Bracketed by the skip counter for the same reason `fetch_batch` is,
+        // and it should have been from the start. `io-imap` drops an untagged
+        // response it cannot decode and completes the command `Ok` — so a
+        // `* SEARCH` line it could not parse does not fail the SEARCH, it
+        // silently removes every UID that line carried. An empty result is
+        // indistinguishable from an empty mailbox, which is how a 60,934
+        // message Archive listed nothing at all and was believed.
+        skip_counter::install();
+        let _exclusive = skip_counter::exclusive_measurement().await;
+        let before_skips = skip_counter::skipped_untagged_responses();
+
         let found = session
             .search(
                 Vec1::from(SearchKey::All),
@@ -598,6 +609,17 @@ pub async fn existing_uids(
             )
             .await
             .map_err(|error| session.command_error("SEARCH", error))?;
+
+        let skipped = skip_counter::skipped_untagged_responses() - before_skips;
+        if skipped > 0 {
+            return Err(BackendError::Disconnected {
+                context: format!("SEARCH on {mailbox}"),
+                reason: format!(
+                    "{skipped} untagged response(s) could not be decoded, so the \
+                     UID listing is missing whatever they carried"
+                ),
+            });
+        }
 
         // **A listing short of `EXISTS` is a misread, not an answer.**
         //
