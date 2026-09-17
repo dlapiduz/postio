@@ -501,3 +501,48 @@ async fn a_server_that_refuses_to_list_uids_still_syncs() {
         "the fallback walk found the same mail"
     );
 }
+
+/// A UID listing shorter than `EXISTS` is not believed.
+///
+/// The failure this pins cost a real mailbox its mail. `existing_uids` is a
+/// `UID SEARCH ALL`, and a server that answers it with fewer UIDs than the
+/// `SELECT` just reported has under-reported — but the pass had no reason to
+/// doubt it, enumerated the handful it was told about, completed, and stamped
+/// `last_full_sync_at`. From then on every pass planned `Incremental` against
+/// a mailbox that was never enumerated, so the backlog was not merely slow to
+/// arrive, it was unreachable: an INBOX holding thousands held one message and
+/// stayed that way across restarts.
+///
+/// `EXISTS` is the cross-check and it costs nothing — the same `SELECT` that
+/// opened the mailbox already reported it. A listing short of it is discarded
+/// in favour of walking the UID space, which is the path a refusal already
+/// takes and is correct by construction.
+///
+/// A listing *longer* than `EXISTS` is fine and deliberately not rejected:
+/// mail may arrive between the `SELECT` and the `SEARCH`, and that direction
+/// costs nothing.
+#[tokio::test]
+async fn a_uid_listing_short_of_exists_is_not_believed() {
+    let backend = server_with_messages(5).await;
+    // SELECT still reports EXISTS = 5; only the listing is short.
+    backend.truncate_uid_listing(1);
+
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    let (_account, inbox) = local(&connection).await;
+
+    let report = sync_mailbox(&connection, &backend, &inbox, &CancelToken::new(), |_| {})
+        .await
+        .expect("a short UID listing must not fail the pass");
+
+    assert_eq!(
+        report.inserted, 5,
+        "the pass must not stop at the messages a short listing named"
+    );
+    let stored = known_uids(&connection, inbox.id, postio_model::Generation::new(1)).await;
+    assert_eq!(
+        stored.iter().copied().collect::<Vec<u32>>(),
+        vec![1, 2, 3, 4, 5],
+        "every message the mailbox holds is stored, not just the listed one"
+    );
+}

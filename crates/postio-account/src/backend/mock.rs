@@ -429,6 +429,9 @@ struct State {
     /// Whether `existing_uids` refuses. See
     /// [`MockBackend::refuse_uid_listing`].
     refuse_uid_listing: bool,
+    /// How many UIDs `existing_uids` answers with, when the listing is short
+    /// of what the mailbox holds. See [`MockBackend::truncate_uid_listing`].
+    truncate_uid_listing: Option<usize>,
     /// Whether `COPY`/`MOVE` answer without a `COPYUID`, as a UIDPLUS
     /// server may (RFC 4315 §3: UIDNOTSTICKY, or no `SELECT` right on the
     /// destination). See [`MockBackend::omit_uid_mappings`].
@@ -613,6 +616,20 @@ impl MockBackend {
     /// complete then, by walking the UID space as it did before #727.
     pub fn refuse_uid_listing(&self) {
         self.state().refuse_uid_listing = true;
+    }
+
+    /// Makes [`MailBackend::existing_uids`] answer with only the newest
+    /// `keep` UIDs, while `SELECT` goes on reporting the true `EXISTS`.
+    ///
+    /// Not a fault and not a refusal: the call *succeeds* and under-reports,
+    /// which is the shape that costs a mailbox its mail. A pass that believes
+    /// a short listing enumerates the few it was told about, completes, and
+    /// stamps `last_full_sync_at` — after which every later pass is
+    /// incremental against a mailbox that was never enumerated, and the
+    /// backlog is unreachable. Observed against a real server, where an INBOX
+    /// holding thousands listed one UID and `EXISTS` said otherwise.
+    pub fn truncate_uid_listing(&self, keep: usize) {
+        self.state().truncate_uid_listing = Some(keep);
     }
 
     /// Makes `COPY` and `MOVE` succeed without reporting the new UIDs, while
@@ -936,6 +953,7 @@ impl MockBackendBuilder {
                 faults: Vec::new(),
                 persistent_fault: None,
                 refuse_uid_listing: false,
+                truncate_uid_listing: None,
                 omit_uid_mappings: false,
                 latency: Duration::ZERO,
                 calls: 0,
@@ -1302,13 +1320,19 @@ impl MailBackend for MockBackend {
             });
         }
         let index = self.locate(&state, mailbox, "SEARCH")?;
-        Ok(Some(
-            state.mailboxes[index]
-                .messages
-                .iter()
-                .map(|message| Uid::new(message.uid))
-                .collect(),
-        ))
+        let mut uids: Vec<Uid> = state.mailboxes[index]
+            .messages
+            .iter()
+            .map(|message| Uid::new(message.uid))
+            .collect();
+        // The newest are kept, because that is what a listing cut short
+        // plausibly holds and it keeps the truncation from looking like an
+        // empty mailbox.
+        if let Some(keep) = state.truncate_uid_listing {
+            uids.sort_unstable_by_key(|uid| std::cmp::Reverse(uid.get()));
+            uids.truncate(keep);
+        }
+        Ok(Some(uids))
     }
 
     async fn append(

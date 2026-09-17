@@ -281,6 +281,40 @@ pub(crate) async fn enumerate(
     // records the same sparseness from the other side (an inbox of ninety-two
     // messages whose UID ceiling was 63,022).
     let present = existing_uids(backend, mailbox, cancel).await?;
+
+    // A listing shorter than `EXISTS` is not believed.
+    //
+    // `UID SEARCH ALL` is the optimisation above; `EXISTS` is what the
+    // `SELECT` that opened this mailbox already reported, so the cross-check
+    // is free. A server that names fewer UIDs than it just said it holds has
+    // under-reported, and believing it is the expensive mistake: the pass
+    // enumerates the few it was told about, *completes*, and
+    // `complete_full_sync` stamps `last_full_sync_at` — after which
+    // `SyncState::plan` sees `has_synced()` and every later pass is
+    // incremental against a mailbox that was never enumerated. The backlog is
+    // then not slow, it is unreachable, and no restart recovers it.
+    //
+    // Discarding the listing costs a slower pass and nothing else: `None` is
+    // the path a refused `SEARCH` already takes, walking the UID space as
+    // every backend did before #727.
+    //
+    // Only the short direction. A listing *longer* than `EXISTS` is the
+    // ordinary race — mail delivered between the `SELECT` and the `SEARCH` —
+    // and the ceiling filter below already handles it.
+    let present = match present {
+        Some(uids) if (uids.len() as u32) < selected.exists => {
+            tracing::warn!(
+                mailbox = mailbox.id.get(),
+                listed = uids.len(),
+                exists = selected.exists,
+                "the server listed fewer UIDs than it says the mailbox holds; \
+                 walking the UID space instead"
+            );
+            None
+        }
+        other => other,
+    };
+
     let mut missing: Vec<u32> = match present {
         Some(uids) => uids
             .into_iter()
