@@ -404,6 +404,7 @@ impl Store {
             store.apply_schema().await?;
         } else {
             store.prove_the_key_fits().await?;
+            store.prove_the_schema_matches().await?;
         }
 
         Ok(store)
@@ -459,7 +460,42 @@ impl Store {
         let connection = self.connect_bare()?;
         connection.execute("PRAGMA foreign_keys = OFF", ()).await?;
         connection.execute_batch(schema::HEAD).await?;
+        // Stamped in the same breath as the schema it describes, so the two
+        // cannot be written apart. See `prove_the_schema_matches`.
+        connection
+            .execute(
+                &format!("PRAGMA user_version = {}", schema::FINGERPRINT),
+                (),
+            )
+            .await?;
         Ok(())
+    }
+
+    /// Refuses a store whose schema is not the one this build compiles
+    /// against.
+    ///
+    /// [`prove_the_key_fits`](Self::prove_the_key_fits) answers "can this file
+    /// be read at all", and a store written by an *earlier build of this
+    /// engine* passes it: same cipher, same key, same file format. So it opens,
+    /// and then fails one statement at a time on whatever column has been
+    /// added since. Met on 2026-09-17 against a store two hours older than
+    /// `messages.body_parsed_with`, which opened, synced, and warned
+    /// `no such column` once per folder for as long as it ran.
+    ///
+    /// There are no migrations ([`schema::HEAD`] argues why), so this cannot
+    /// repair anything and does not try. It refuses, names the remedy, and
+    /// leaves the file alone — "rebuilt by resyncing" means the old one has to
+    /// survive being refused.
+    async fn prove_the_schema_matches(&self) -> Result<()> {
+        let connection = self.connect_bare()?;
+        let found: i64 = crate::sql::scalar(&connection, "PRAGMA user_version", ()).await?;
+        if found == schema::FINGERPRINT {
+            return Ok(());
+        }
+        Err(Error::SchemaFromAnotherBuild {
+            found,
+            expected: schema::FINGERPRINT,
+        })
     }
 
     /// How many bytes the file is holding that nothing is using.

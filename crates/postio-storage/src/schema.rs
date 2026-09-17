@@ -40,6 +40,45 @@
 //! Everything else is the schema as it was, transcribed by applying the
 //! twenty migrations and dumping the result rather than by retyping it.
 
+/// What this schema hashes to, for `PRAGMA user_version`.
+///
+/// # Why a hash rather than a number someone maintains
+///
+/// A hand-kept version integer has to be remembered, and the failure it
+/// guards against is exactly the one where somebody did not: a column was
+/// added to [`HEAD`] and nothing else changed, so an older store went on
+/// opening and failing one statement at a time. Hashing the schema text
+/// cannot be forgotten — edit `HEAD` at all and the stamp moves with it.
+///
+/// It is deliberately *not* a version. Nothing is ordered, nothing is
+/// comparable, and there is no "newer": two builds either agree or they do
+/// not, which is the only question with an answer while there are no
+/// migrations.
+///
+/// FNV-1a, 32 bits, which is what `user_version` has room for. A collision
+/// would let a mismatched store through — the failure this started from
+/// rather than a new one — and 32 bits against the handful of schemas a
+/// single-user alpha sees is not worth a hashing dependency.
+pub const FINGERPRINT: i64 = fingerprint_of(HEAD);
+
+/// FNV-1a over the schema text, at compile time.
+///
+/// Folded through `i32` because that is what `user_version` is: a signed
+/// 32-bit field. Hashing to `u32` and widening instead makes every hash above
+/// `i32::MAX` read back negative, so the stamp never equals itself and every
+/// store demands a resync on its second open.
+const fn fingerprint_of(schema: &str) -> i64 {
+    let bytes = schema.as_bytes();
+    let mut hash: u32 = 0x811c_9dc5;
+    let mut index = 0;
+    while index < bytes.len() {
+        hash ^= bytes[index] as u32;
+        hash = hash.wrapping_mul(0x0100_0193);
+        index += 1;
+    }
+    hash as i32 as i64
+}
+
 /// Every table, index and trigger the store needs, in one batch.
 ///
 /// Creation order is tables, then indexes, then triggers, and tables are in

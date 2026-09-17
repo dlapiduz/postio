@@ -160,6 +160,30 @@ pub enum Error {
          has"
     )]
     WrongStoreKey,
+    /// The store opened, but its schema is not the one this build expects.
+    ///
+    /// Its own variant because it is the case [`Error::WrongStoreKey`] cannot
+    /// reach. A store written by an earlier build of *this* engine decrypts
+    /// perfectly — same cipher, same key, same file format — so nothing at the
+    /// door objects, and the mismatch surfaces later as `no such column` on
+    /// whichever statement names something added since, one statement at a
+    /// time, indefinitely.
+    ///
+    /// There are no migrations (`crate::schema::HEAD` says why), so the remedy
+    /// is to sync again, and this is the only thing in a position to say so.
+    #[error(
+        "the local store was written by a different build of Postio: its \
+         schema is stamped {found} and this build expects {expected}. There \
+         are no migrations -- a store is rebuilt by syncing again, which costs \
+         the mail's download and loses nothing the server still has. The file \
+         is intact and untouched: nothing here rewrites a store it will not use"
+    )]
+    SchemaFromAnotherBuild {
+        /// The fingerprint the file carries.
+        found: i64,
+        /// The fingerprint this build's schema hashes to.
+        expected: i64,
+    },
     /// A stored message body could not be read back.
     ///
     /// The row holds something that is not the text it claims to be. Much
