@@ -3,10 +3,17 @@
 //! A message body is hostile input that has to render correctly anyway. The
 //! four rules, each backed by a real API rather than a promise:
 //!
-//! * **JavaScript is off**, at the `WebKitSettings` level, along with every
-//!   other scripting-adjacent surface (`WebGL`, `WebRTC`, IndexedDB-style
-//!   storage, the offline application cache) — a script disabled by policy in
-//!   one place and reachable through another is not disabled.
+//! * **A message's script never runs. Postio's own does.** Those are two
+//!   settings: `enable_javascript_markup(false)` refuses a `<script>`
+//!   element, an event-handler attribute and a `javascript:` href, and the
+//!   document's `Content-Security-Policy` sends `script-src 'none'` — a
+//!   sender is refused twice. `enable_javascript` itself is deliberately
+//!   **on**, because an injected script is exempt from the page's CSP and
+//!   the conversation rail needs one: see `hardened_settings` for the whole
+//!   argument. Every other scripting-adjacent surface is off outright
+//!   (`WebGL`, `WebRTC`, `WebAudio`, the media stack, IndexedDB-style
+//!   storage) — a script disabled by policy in one place and reachable
+//!   through another is not disabled.
 //! * **Nothing is fetched.** [`postio_body::sanitize_body`] never leaves a
 //!   remote `src` in the markup unless the caller explicitly allows it
 //!   (`postio-xxz`), so there is nothing in the DOM to fetch in the first
