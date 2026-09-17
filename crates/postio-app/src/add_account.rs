@@ -96,7 +96,8 @@ pub async fn open(
     transport: Arc<dyn DiscoveryTransport>,
 ) -> adw::Dialog {
     let screen = Onboarding::new();
-    screen.focus_address();
+    // A fresh form starts at its first field, which is the name.
+    screen.focus_name();
 
     let dialog = adw::Dialog::builder()
         .title("Add account")

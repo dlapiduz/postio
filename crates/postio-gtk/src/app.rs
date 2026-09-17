@@ -73,10 +73,38 @@ pub fn build() -> adw::Application {
 
 /// As [`build`], recording into a timeline the caller already owns.
 pub fn build_with(timeline: Timeline) -> adw::Application {
+    build_with_id(timeline, APP_ID)
+}
+
+/// As [`build_with`], under an application id of the caller's choosing.
+///
+/// # Why a test needs this
+///
+/// A `GApplication` exports itself on the session bus at a path derived from
+/// its id, and two of them cannot share one. `NON_UNIQUE` only declines the
+/// *name*; the object is exported either way. So a second test registering
+/// [`APP_ID`] in the same process gets
+///
+/// ```text
+/// An object is already exported for the interface org.gtk.Application
+///   at /dev/postio/Postio
+/// ```
+///
+/// which is a real constraint and not a quirk of the harness: the gtk suite
+/// is one binary, by design.
+///
+/// CI never saw it. A runner with no session bus registers nothing, so the
+/// export cannot collide there — it fails only on a machine with a real bus,
+/// which is to say on a developer's, which is the worst place to find it.
+///
+/// A test that is *about* the id — that the desktop entry and the icon agree
+/// with it — keeps [`build`]. A test that merely needs an application takes
+/// an id of its own.
+pub fn build_with_id(timeline: Timeline, application_id: &str) -> adw::Application {
     resources::register();
 
     let app = adw::Application::builder()
-        .application_id(APP_ID)
+        .application_id(application_id)
         .resource_base_path(resources::PREFIX)
         // The desktop entry says `Exec=postio %U` and registers the
         // `mailto` scheme, so a link clicked in a browser arrives here as a

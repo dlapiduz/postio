@@ -34,7 +34,16 @@ pub fn opening_a_mailto_uri_delivers_the_link_to_the_window() {
     style::install(&display);
     app::install_icons(&display);
 
-    let application = app::build();
+    // An id of this test's own. `NON_UNIQUE` declines the bus *name*, but a
+    // GApplication still exports its object at a path derived from the id,
+    // and `gtk_window` registers the real APP_ID in this same process --
+    // whichever ran second got "An object is already exported for the
+    // interface org.gtk.Application at /dev/postio/Postio". Nothing here is
+    // about the id, so this one yields it.
+    let application = app::build_with_id(
+        postio_gtk::startup::Timeline::start(),
+        "dev.postio.Postio.MailtoOpenTest",
+    );
     application.set_flags(application.flags() | gio::ApplicationFlags::NON_UNIQUE);
     application
         .register(None::<&gio::Cancellable>)

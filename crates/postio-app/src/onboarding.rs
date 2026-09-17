@@ -125,7 +125,8 @@ pub async fn install(
                 screen.focus_password();
             }
         }
-        None => screen.focus_address(),
+        // A fresh form starts at its first field, which is the name.
+        None => screen.focus_name(),
     }
 
     // One per screen, shared by the two closures below: the probe replaces

@@ -43,6 +43,19 @@ pub fn return_does_the_right_thing_in_every_field() {
     window.set_content(Some(&screen));
     settle();
 
+    // ── where a fresh form starts ─────────────────────────────────────────
+    // The name is the first field (#603 put it above the address), so it is
+    // where the keyboard belongs on first run. `focus_address` kept the job
+    // it was given when the address *was* first, and onboarding opened with
+    // the cursor in the second field.
+    screen.focus_name();
+    settle();
+    assert!(
+        screen.test_name_has_focus(),
+        "a fresh onboarding form must start in its first field; opening in \
+         the address leaves the name above it looking already dealt with"
+    );
+
     // ── name: nothing to probe or submit yet, so Return moves on ──────────
     assert!(
         !screen.test_address_has_focus(),
