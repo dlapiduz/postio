@@ -75,7 +75,8 @@ use postio_model::{
 };
 use postio_storage::Connection;
 use postio_storage::repository::{
-    AccountRepository, MessageRepository, SyncStateRepository, ThreadingRepository,
+    AccountRepository, MessageRepository, OperationQueueRepository, SyncStateRepository,
+    ThreadingRepository,
 };
 use postio_storage::{Checkout, WritePriority};
 
@@ -124,6 +125,95 @@ pub enum Outcome {
         /// cannot tell the two apart.
         arrived: Vec<MessageId>,
     },
+}
+
+/// Whether the mailbox is still short of the server's `EXISTS` after an
+/// incremental pass has reconciled it.
+///
+/// # Why after, and not instead of, `plan`
+///
+/// A mailbox is short of `EXISTS` for two quite different reasons, and only
+/// one of them is a defect. The ordinary one is new mail: the server counts a
+/// delivery the moment it lands, and the local store catches up on the next
+/// pass. Checking before the pass therefore fires on *every* delivery, which
+/// would turn each new message into a full re-enumeration — caught by
+/// `loopback::an_incremental_resync_sees_a_flag_change_and_an_arrival`, which
+/// is what this comment exists to keep true.
+///
+/// After the pass, arrivals have been fetched and vanished rows removed, so
+/// the count should agree. When it still does not, the mailbox is missing
+/// mail that no delta accounts for: the state a UID listing shorter than
+/// `EXISTS` left behind, where `last_full_sync_at` is stamped on a mailbox
+/// that was never enumerated and every later pass asks what changed since a
+/// sync that never happened.
+///
+/// # Why the queue has to be consulted
+///
+/// The other way to be short is to have archived something the server has not
+/// been told about: the row has left this mailbox locally while the server
+/// still counts it. Enumerating then refetches the message the user archived
+/// and puts it back. A `failed` row counts as unsettled for exactly this
+/// reason — the local move stands, the server never heard, and it stays that
+/// way until the user clears it, so a check that looked only at `pending`
+/// would resurrect that message on every pass.
+async fn still_short_of_exists(
+    connection: &Checkout,
+    mailbox: &Mailbox,
+    previous: &postio_model::SyncState,
+    exists: u32,
+) -> Result<bool> {
+    let Some(generation) = previous.generation else {
+        return Ok(false);
+    };
+    let held = MessageRepository::new(connection)
+        .count_in(mailbox.id, generation)
+        .await?;
+    if held >= exists {
+        return Ok(false);
+    }
+    if OperationQueueRepository::new(connection)
+        .has_unsettled_in(mailbox.id)
+        .await?
+    {
+        return Ok(false);
+    }
+    tracing::warn!(
+        mailbox = mailbox.id.get(),
+        held,
+        exists,
+        "the mailbox holds less than the server says it does after an \
+         incremental pass; re-enumerating"
+    );
+    Ok(true)
+}
+
+/// Fetches what a mailbox is missing, without disturbing what it has.
+///
+/// `Coverage::Missing` because nothing renumbered: the rows on disk are as
+/// valid as any other pass's, and the shortfall is precisely the mail that was
+/// never fetched. The repair therefore costs the missing mail and nothing
+/// else, and it resumes if it is cut short.
+async fn enumerate_the_shortfall(
+    connection: &Checkout,
+    backend: &dyn MailBackend,
+    mailbox: &Mailbox,
+    cancel: &CancelToken,
+    on_progress: impl FnMut(Progress),
+) -> Result<Outcome> {
+    let report = initial::enumerate(
+        connection,
+        backend,
+        mailbox,
+        initial::DEFAULT_BATCH_SIZE,
+        initial::Coverage::Missing,
+        cancel,
+        on_progress,
+    )
+    .await?;
+    Ok(Outcome::Full {
+        reason: FullResyncReason::ShortOfExists,
+        report,
+    })
 }
 
 /// Brings `mailbox` up to date, choosing full or incremental resync per
@@ -200,7 +290,16 @@ pub async fn resync_mailbox(
                     }
                     initial::Coverage::Missing
                 }
+                // Nothing renumbered in either case, so the rows on disk are
+                // as valid as any other pass's and only what is absent is
+                // fetched. For `ShortOfExists` that is the whole point: the
+                // mail this mailbox never had, without refetching the mail it
+                // does.
                 FullResyncReason::NeverSynced => initial::Coverage::Missing,
+                // Never planned: `still_short_of_exists` decides it after an
+                // incremental pass and `enumerate_the_shortfall` runs it, so
+                // it does not reach this table.
+                FullResyncReason::ShortOfExists => initial::Coverage::Missing,
                 FullResyncReason::NoModSeq | FullResyncReason::ModSeqWentBackwards => {
                     initial::Coverage::Everything
                 }
@@ -242,6 +341,18 @@ pub async fn resync_mailbox(
                     sync_state
                         .observe(mailbox.id, &reported, Utc::now())
                         .await?;
+                    if still_short_of_exists(connection, mailbox, &previous, selected.exists)
+                        .await?
+                    {
+                        return enumerate_the_shortfall(
+                            connection,
+                            backend,
+                            mailbox,
+                            cancel,
+                            on_progress,
+                        )
+                        .await;
+                    }
                     Ok(outcome)
                 }
                 // The pull cannot be trusted, and asking the same question
@@ -277,6 +388,15 @@ pub async fn resync_mailbox(
             sync_state
                 .observe(mailbox.id, &reported, Utc::now())
                 .await?;
+            // The steady state of the poisoned mailbox, and the one that
+            // matters most: an idle server never moves `MODSEQ`, so a mailbox
+            // stamped as synced without ever having been enumerated plans
+            // `UpToDate` on every pass and agrees with itself for ever. "Up to
+            // date" has to mean "holds what the server says it holds".
+            if still_short_of_exists(connection, mailbox, &previous, selected.exists).await? {
+                return enumerate_the_shortfall(connection, backend, mailbox, cancel, on_progress)
+                    .await;
+            }
             Ok(Outcome::UpToDate)
         }
     }

@@ -543,6 +543,35 @@ impl<'a> OperationQueueRepository<'a> {
         Ok(count > 0)
     }
 
+    /// Whether anything queued against `mailbox` is still unreconciled.
+    ///
+    /// Wider than [`has_pending`](Self::has_pending) in two ways, and both are
+    /// deliberate. It asks by *mailbox* rather than by target, because the
+    /// question behind it is about the mailbox as a whole: does its local
+    /// contents already reflect a mutation the server has not been told about?
+    /// And it counts `failed` alongside `pending` and `in_flight`, because a
+    /// failed row is precisely that — the local move stands, the server never
+    /// heard, and only the user can clear it.
+    ///
+    /// What it is for: a mailbox holding fewer messages than the server's
+    /// `EXISTS` has either lost mail or is carrying a local move the server
+    /// has not caught up with, and the row counts alone cannot tell those
+    /// apart. This can. See `resync`'s short-of-`EXISTS` path — without it,
+    /// re-enumerating would refetch the very message the user just archived
+    /// and put it back in the mailbox they took it out of.
+    pub async fn has_unsettled_in(&self, mailbox: MailboxId) -> Result<bool> {
+        let count: i64 = sql::one(
+            self.connection,
+            "SELECT count(*) FROM operation_queue
+              WHERE mailbox_id = ?1
+                AND state IN ('pending', 'in_flight', 'failed')",
+            bind![mailbox.get()],
+            |row| row.col(0),
+        )
+        .await?;
+        Ok(count > 0)
+    }
+
     /// Records why a row ended up the way it did, without changing its state.
     ///
     /// For the outcome that is neither success nor failure: an operation the

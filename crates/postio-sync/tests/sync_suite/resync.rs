@@ -627,3 +627,153 @@ async fn a_pass_that_fetches_nothing_does_not_throw_away_what_the_last_one_store
          never finishes"
     );
 }
+
+/// A mailbox stamped as synced but holding almost nothing re-enumerates.
+///
+/// The state a short UID listing used to leave behind, and the reason the
+/// `EXISTS` check in `initial` is not enough on its own: that one stops a
+/// *fresh* sync from getting into this state, and does nothing for a store
+/// already in it. `last_full_sync_at` is set, so `SyncState::plan` looks at
+/// the protocol state, correctly says `Incremental`, and asks what changed
+/// since a sync that never enumerated anything. The backlog is not slow, it
+/// is unreachable, and it stays unreachable across every restart — a real
+/// INBOX sat at one message of thousands until its store was deleted.
+///
+/// `EXISTS` is what breaks the deadlock: the server says how many the mailbox
+/// holds on every `SELECT`, and a local count below it that nothing local
+/// explains means mail is missing. `Coverage::Missing` then fetches only what
+/// is absent, so the repair costs the mail it was short of and nothing else.
+#[tokio::test]
+async fn a_mailbox_holding_less_than_exists_re_enumerates() {
+    let backend = server_with_messages(5).await;
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    let (_account, inbox) = local(&connection).await;
+
+    bootstrap(&connection, &backend, &inbox).await;
+    // Poison it the way a short listing did: the mailbox is stamped as fully
+    // synced, and holds one of the five messages the server reports.
+    let thinned = ids_for(&connection, &inbox, &[1, 2, 3, 4]).await;
+    MessageRepository::new(&connection)
+        .delete(&thinned)
+        .await
+        .expect("thin the mailbox out");
+    assert_eq!(
+        known_uids(&connection, &inbox).await,
+        vec![5],
+        "the fixture is the poisoned state: stamped synced, holding one of five"
+    );
+
+    let outcome = resync_mailbox(&connection, &backend, &inbox, &CancelToken::new(), |_| {})
+        .await
+        .expect("resync");
+
+    assert!(
+        matches!(
+            outcome,
+            Outcome::Full {
+                reason: postio_model::FullResyncReason::ShortOfExists,
+                ..
+            }
+        ),
+        "a mailbox short of EXISTS must re-enumerate rather than ask what \
+         changed since a sync that never happened, got: {outcome:?}"
+    );
+    assert_eq!(
+        known_uids(&connection, &inbox).await,
+        vec![1, 2, 3, 4, 5],
+        "the mail it was short of is fetched"
+    );
+}
+
+/// ...but not while the queue still owes the server an explanation.
+///
+/// The dangerous half. A mailbox is also short of `EXISTS` immediately after
+/// the user archives something: the row has left this mailbox locally and the
+/// server, not yet told, goes on counting it. Re-enumerating then refetches
+/// the very message they archived and puts it back — the mail client undoing
+/// the user's gesture in front of them.
+///
+/// A `failed` row is the sharp case and the one seen in the wild: iCloud
+/// answered an archive's `COPY` without a tagged response, the row ended
+/// `failed`, and the local move stands with the server never told. That gap
+/// is permanent until the user clears it, so a check that only looked at
+/// `pending` would resurrect that message on every single pass.
+#[tokio::test]
+async fn a_gap_the_queue_explains_is_left_alone() {
+    let backend = server_with_messages(5).await;
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    let (account, inbox) = local(&connection).await;
+
+    bootstrap(&connection, &backend, &inbox).await;
+    let archived = MessageRepository::new(&connection)
+        .by_uid(
+            inbox.id,
+            postio_model::Generation::new(VALIDITY),
+            Uid::new(3),
+        )
+        .await
+        .expect("by_uid")
+        .expect("the message is there")
+        .id;
+    // Archived locally: gone from this mailbox, server not yet told.
+    MessageRepository::new(&connection)
+        .delete(&[archived])
+        .await
+        .expect("archive locally");
+    postio_storage::repository::OperationQueueRepository::new(&connection)
+        .enqueue(
+            account,
+            postio_model::OperationTarget::Message(archived),
+            &postio_model::Operation::Move {
+                from: inbox.id,
+                to: postio_model::MailboxId::new(inbox.id.get() + 1),
+            },
+            chrono::Utc::now(),
+        )
+        .await
+        .expect("enqueue the archive");
+
+    let outcome = resync_mailbox(&connection, &backend, &inbox, &CancelToken::new(), |_| {})
+        .await
+        .expect("resync");
+
+    assert!(
+        !matches!(
+            outcome,
+            Outcome::Full {
+                reason: postio_model::FullResyncReason::ShortOfExists,
+                ..
+            }
+        ),
+        "the queue explains the gap; re-enumerating would undo the archive"
+    );
+    assert!(
+        !known_uids(&connection, &inbox).await.contains(&3),
+        "the archived message must not come back"
+    );
+}
+
+/// The local ids behind a set of UIDs, for tests that thin a mailbox out.
+async fn ids_for(
+    connection: &Connection,
+    mailbox: &Mailbox,
+    uids: &[u32],
+) -> Vec<postio_model::MessageId> {
+    let repository = MessageRepository::new(connection);
+    let mut ids = Vec::new();
+    for uid in uids {
+        let message = repository
+            .by_uid(
+                mailbox.id,
+                postio_model::Generation::new(VALIDITY),
+                Uid::new(*uid),
+            )
+            .await
+            .expect("by_uid")
+            .expect("the message is there");
+        ids.push(message.id);
+    }
+    ids
+}

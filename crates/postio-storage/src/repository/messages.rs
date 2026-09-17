@@ -1366,6 +1366,28 @@ impl<'a> MessageRepository<'a> {
         .await
     }
 
+    /// How many messages the mailbox holds at `generation`.
+    ///
+    /// [`uids_in`](Self::uids_in)'s count without its allocation: the caller
+    /// that compares the local mailbox against the server's `EXISTS` on every
+    /// pass wants a number, and materialising a `Vec` the length of the
+    /// mailbox to call `.len()` on it is a page scan per tick.
+    ///
+    /// Counts rows, including any marked `deleted_locally`, exactly as
+    /// `uids_in` lists them — a local delete leaves the row in its mailbox and
+    /// the server still holds the message, so both sides still count it.
+    pub async fn count_in(&self, mailbox_id: MailboxId, generation: Generation) -> Result<u32> {
+        let count: i64 = sql::one(
+            self.connection,
+            "SELECT count(*) FROM messages
+              WHERE mailbox_id = ?1 AND uid_validity = ?2 AND uid IS NOT NULL",
+            bind![mailbox_id.get(), i64::from(generation.get())],
+            |row| row.col(0),
+        )
+        .await?;
+        Ok(count.max(0) as u32)
+    }
+
     /// Every message in an account carrying this `Message-ID`.
     ///
     /// A list, not an `Option`: `Message-ID` is not unique in the wild. Threads
