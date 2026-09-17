@@ -267,3 +267,36 @@ async fn a_server_that_never_sends_uidvalidity_is_still_refused() {
         "expected a protocol refusal, got {error}"
     );
 }
+
+/// A `UIDVALIDITY` the client lost is retried; one the server never sends is not.
+///
+/// Both look identical at the point of failure — the code is absent — and
+/// before the skip counter could be asked per command, both got the permanent
+/// answer. That reached a person as "Flags not changed — the server sent a
+/// response Postio could not read: INBOX SELECT carried no UIDVALIDITY", for
+/// a server that had sent `UIDVALIDITY` on the selects either side of it.
+///
+/// `io-imap` drops an untagged response it cannot decode and completes the
+/// command `Ok`, so a line lost in transit leaves exactly the same hole as
+/// one never written. The count is what tells them apart, and the two want
+/// opposite treatment: a lost line is transient and the connection that lost
+/// it is discarded; a server that will never send one must not be retried
+/// for ever.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_uidvalidity_lost_in_transit_is_transient() {
+    let server = TestServer::builder()
+        .mailbox(TestMailbox::new("INBOX").uid_validity(UidValidity::new(1_000_001)))
+        .start()
+        .await;
+    let pool = pool_over(&server).await;
+    server.quirk(Quirk::UidValidityLostToAnUndecodableLine);
+
+    let error = select(&pool, "INBOX", SelectMode::ReadWrite, Priority::Background)
+        .await
+        .expect_err("a SELECT with no readable UIDVALIDITY cannot be used");
+    assert!(
+        error.is_transient(),
+        "a line the client lost must be retried on a fresh connection, not \
+         reported to the user as the fate of what they asked for. Got: {error}"
+    );
+}

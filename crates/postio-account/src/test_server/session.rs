@@ -402,7 +402,12 @@ impl Session {
                 );
                 line(&mut out, &format!("* {} EXISTS", mailbox.messages.len()));
                 line(&mut out, "* 0 RECENT");
-                if !omit {
+                if state.has(Quirk::UidValidityLostToAnUndecodableLine) {
+                    // Sent, and unreadable: the client gets no UIDVALIDITY
+                    // and a skip it can count, which is what tells this apart
+                    // from a server that never sends one.
+                    line(&mut out, "* -1 FETCH (FLAGS ())");
+                } else if !omit {
                     line(
                         &mut out,
                         &format!(

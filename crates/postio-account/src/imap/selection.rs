@@ -253,7 +253,7 @@ impl ImapSession {
         path: &str,
         mode: SelectMode,
         want_condstore: bool,
-    ) -> BackendResult<ImapMailboxSelectData> {
+    ) -> BackendResult<(ImapMailboxSelectData, u64)> {
         let mailbox = mailbox_argument(path)?;
         let parameters = if want_condstore {
             vec![SelectParameter::CondStore]
@@ -261,14 +261,19 @@ impl ImapSession {
             Vec::new()
         };
 
+        super::skip_counter::install();
         if mode == SelectMode::ReadOnly {
             let options = ImapMailboxExamineOptions { parameters };
-            let data = self.examine(mailbox, options).await;
-            data.map_err(|error| self.command_error("EXAMINE", error))
+            let (data, skipped) =
+                super::skip_counter::measuring(self.examine(mailbox, options)).await;
+            let data = data.map_err(|error| self.command_error("EXAMINE", error))?;
+            Ok((data, skipped))
         } else {
             let options = ImapMailboxSelectOptions { parameters };
-            let data = self.select(mailbox, options).await;
-            data.map_err(|error| self.command_error("SELECT", error))
+            let (data, skipped) =
+                super::skip_counter::measuring(self.select(mailbox, options)).await;
+            let data = data.map_err(|error| self.command_error("SELECT", error))?;
+            Ok((data, skipped))
         }
     }
 
@@ -290,7 +295,7 @@ impl ImapSession {
 
         let read_only = mode == SelectMode::ReadOnly;
 
-        let mut data = self.issue_select(path, mode, want_condstore).await?;
+        let (mut data, mut skipped) = self.issue_select(path, mode, want_condstore).await?;
         // An omitted `UIDVALIDITY` gets the same second chance a disputed one
         // does, and for the same reason: the server that contradicted itself
         // in #1538 also, in the same minute, sent three `SELECT`s without the
@@ -298,9 +303,45 @@ impl ImapSession {
         // the folder for that pass.
         let mut uid_validity = match uid_validity_of(&data, path) {
             Ok(uid_validity) => uid_validity,
-            Err(_) => {
-                data = self.issue_select(path, mode, want_condstore).await?;
-                uid_validity_of(&data, path)?
+            Err(refusal) => {
+                let (retried, retried_skips) =
+                    self.issue_select(path, mode, want_condstore).await?;
+                data = retried;
+                skipped += retried_skips;
+                match uid_validity_of(&data, path) {
+                    Ok(uid_validity) => uid_validity,
+                    // **Twice missing, and now the two cases part.**
+                    //
+                    // A server that simply does not send `UIDVALIDITY` is
+                    // unusable for UID work and saying so permanently is
+                    // right — retrying it for ever burns a laptop's radio
+                    // against an answer that will not change.
+                    //
+                    // A line `io-imap` *dropped* is not the server saying
+                    // anything. It completes the command `Ok` having
+                    // discarded what it could not decode, so a required code
+                    // is simply absent, and the connection that lost one will
+                    // lose the next. That is transient: the pool discards it
+                    // and a fresh connection tries again, instead of a person
+                    // who marked a message read being told "Flags not changed
+                    // -- the server sent a response Postio could not read".
+                    //
+                    // Before `skip_counter::measuring` there was no way to
+                    // ask which had happened, so both got the permanent
+                    // answer. Now there is.
+                    Err(_) if skipped > 0 => {
+                        return Err(BackendError::Disconnected {
+                            context: format!("SELECT {path}"),
+                            reason: format!(
+                                "{path} SELECT carried no UIDVALIDITY and \
+                                 {skipped} untagged response(s) were dropped \
+                                 undecoded, so the line was lost rather than \
+                                 never sent"
+                            ),
+                        });
+                    }
+                    Err(_) => return Err(refusal),
+                }
             }
         };
 
@@ -327,7 +368,11 @@ impl ImapSession {
         let known = promised.or_else(|| self.generations.known(path));
         if known.is_some_and(|known| known != uid_validity) {
             let disputed = uid_validity;
-            data = self.issue_select(path, mode, want_condstore).await?;
+            // The skip count is not carried past here: this re-read either
+            // produced a `UIDVALIDITY` or propagated, so there is no absent
+            // code left for it to explain.
+            let (rechecked, _) = self.issue_select(path, mode, want_condstore).await?;
+            data = rechecked;
             uid_validity = uid_validity_of(&data, path)?;
             if uid_validity != disputed {
                 tracing::warn!(

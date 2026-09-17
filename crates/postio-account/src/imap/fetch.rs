@@ -112,12 +112,15 @@ async fn fetch_batch(
     }
 
     skip_counter::install();
-    let _exclusive = skip_counter::exclusive_measurement().await;
-    let before_skips = skip_counter::skipped_untagged_responses();
+    let (messages, skipped) = skip_counter::measuring(fetch_batch_inner(
+        session,
+        uid_validity,
+        uids,
+        changed_since,
+    ))
+    .await;
+    let messages = messages?;
 
-    let messages = fetch_batch_inner(session, uid_validity, uids, changed_since).await?;
-
-    let skipped = skip_counter::skipped_untagged_responses() - before_skips;
     if skipped > 0 {
         return Err(BackendError::ResyncIntegrityLost {
             mailbox: mailbox.to_owned(),
@@ -599,18 +602,13 @@ pub async fn existing_uids(
         // indistinguishable from an empty mailbox, which is how a 60,934
         // message Archive listed nothing at all and was believed.
         skip_counter::install();
-        let _exclusive = skip_counter::exclusive_measurement().await;
-        let before_skips = skip_counter::skipped_untagged_responses();
+        let (found, skipped) = skip_counter::measuring(session.search(
+            Vec1::from(SearchKey::All),
+            ImapMessageSearchOptions { uid: true },
+        ))
+        .await;
+        let found = found.map_err(|error| session.command_error("SEARCH", error))?;
 
-        let found = session
-            .search(
-                Vec1::from(SearchKey::All),
-                ImapMessageSearchOptions { uid: true },
-            )
-            .await
-            .map_err(|error| session.command_error("SEARCH", error))?;
-
-        let skipped = skip_counter::skipped_untagged_responses() - before_skips;
         if skipped > 0 {
             return Err(BackendError::Disconnected {
                 context: format!("SEARCH on {mailbox}"),

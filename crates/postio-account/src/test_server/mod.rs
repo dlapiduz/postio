@@ -138,6 +138,18 @@ pub enum Quirk {
     /// exactly like one that did not.
     MalformedFetchSequenceNumber,
 
+    /// Send the `SELECT`'s `UIDVALIDITY` on a line `io-imap` cannot decode.
+    ///
+    /// Not the same as omitting it, and the difference is the whole point:
+    /// the server *did* send it, and the client lost it. `io-imap` skips an
+    /// untagged response it cannot decode and completes the command `Ok`, so
+    /// the code is simply absent — indistinguishable from a server that never
+    /// sends one, unless something counted the skip.
+    ///
+    /// A sequence number is a `NonZeroU32`, so `* -1 FETCH (…)` cannot decode;
+    /// this emits one in place of the `UIDVALIDITY` line.
+    UidValidityLostToAnUndecodableLine,
+
     /// Answer the next `SELECT` with `generation`, then tell the truth again.
     ///
     /// A server contradicting itself about a mailbox's `UIDVALIDITY` from one
