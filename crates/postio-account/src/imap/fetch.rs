@@ -175,6 +175,20 @@ async fn fetch_batch_inner(
         .collect()
 }
 
+/// Whether a `UID SEARCH ALL` answer is too short to be an answer.
+///
+/// Its own function so the rule can be stated and tested without a server:
+/// the shape it guards against was measured, not imagined, and the boundary
+/// cases are where a careless version does damage.
+///
+/// Only the short direction counts. A listing *longer* than `EXISTS` is the
+/// ordinary race — mail delivered between the `SELECT` and the `SEARCH`, or a
+/// count that went stale in the selection cache — and refusing on it would
+/// discard healthy connections on a busy mailbox.
+fn listing_was_misread(listed: usize, exists: u32) -> bool {
+    (listed as u64) < u64::from(exists)
+}
+
 fn sequence_set_for(uids: &UidSet) -> BackendResult<SequenceSet> {
     SequenceSet::try_from(uids.to_sequence_set().as_str()).map_err(|error| BackendError::Protocol {
         reason: format!("{uids} is not a sequence set IMAP can carry: {error}"),
@@ -584,6 +598,45 @@ pub async fn existing_uids(
             )
             .await
             .map_err(|error| session.command_error("SEARCH", error))?;
+
+        // **A listing short of `EXISTS` is a misread, not an answer.**
+        //
+        // Measured against iCloud: `UID SEARCH ALL` on a 60,934-message
+        // Archive came back with *nothing*, and on a 20,324-message Sent
+        // Messages likewise. Those mailboxes are not empty and the server did
+        // not say they were — the response was not read.
+        //
+        // Refusing rather than returning it is the point, and the reason is
+        // the connection rather than the data. `ImapSession` keeps one
+        // `Fragmentizer` for its whole life, so bytes a command leaves
+        // unconsumed stay there for the next command to parse as its own. A
+        // response this size that went unread leaves a great deal behind, and
+        // every later command on the connection reads it: `SELECT` answers
+        // carrying no `UIDVALIDITY`, or a `UIDVALIDITY` of 5 — which is not a
+        // generation any server issues, it is a leftover UID from this very
+        // listing. That is the shape #1538 recorded as "a server contradicting
+        // itself under load". The server is consistent; the stream is
+        // desynchronised.
+        //
+        // So this returns a transient error, which `ConnectionPool::execute`
+        // answers by discarding the connection — the desync dies with it. And
+        // `initial::existing_uids` already treats a refusal as the downgrade
+        // it is: walk the UID space, exactly as for a server with no usable
+        // `SEARCH`.
+        if let Some(exists) = session.selected_exists(&mailbox)
+            && listing_was_misread(found.len(), exists)
+        {
+            return Err(BackendError::Disconnected {
+                context: format!("SEARCH on {mailbox}"),
+                reason: format!(
+                    "the server listed {} UIDs for a mailbox it says holds \
+                     {exists}; the response was not read whole, and this \
+                     connection cannot be trusted to parse the next one",
+                    found.len()
+                ),
+            });
+        }
+
         Ok(Some(
             found.into_iter().map(|uid| Uid::new(uid.get())).collect(),
         ))
@@ -884,5 +937,47 @@ mod tests {
     #[test]
     fn an_unparseable_date_is_none_not_an_error() {
         assert_eq!(parse_rfc2822("not a date"), None);
+    }
+}
+
+/// What a `UID SEARCH ALL` answer has to look like to be believed.
+#[cfg(test)]
+mod a_short_listing_is_a_misread {
+    use super::listing_was_misread;
+
+    /// The measurement this exists for.
+    ///
+    /// iCloud answered `UID SEARCH ALL` with nothing at all for an Archive of
+    /// 60,934 messages and a Sent Messages of 20,324. Believing it made the
+    /// mailboxes look empty; worse, the unread response stayed in the
+    /// session's `Fragmentizer` and the next command on that connection
+    /// parsed it — which is where `SELECT` answers carrying no `UIDVALIDITY`,
+    /// and a `UIDVALIDITY` of 5, came from. Five is not a generation any
+    /// server issues. It is a UID from the listing that was never read.
+    #[test]
+    fn a_listing_short_of_exists_is_refused() {
+        assert!(listing_was_misread(0, 60_934), "the Archive, as measured");
+        assert!(listing_was_misread(0, 20_324), "Sent Messages, as measured");
+        assert!(listing_was_misread(0, 35), "a small mailbox, still empty");
+        assert!(listing_was_misread(0, 1), "one message is still a mailbox");
+        assert!(listing_was_misread(172, 173), "one short is still short");
+    }
+
+    /// The control, and the half that keeps this from being harmful.
+    ///
+    /// Refusing costs the connection, so a rule that fired on a healthy
+    /// answer would churn connections on every busy mailbox. An exact count
+    /// is the ordinary case; a longer one is mail that arrived between the
+    /// `SELECT` and the `SEARCH`, or a selection cache whose count went
+    /// stale — neither is evidence of anything.
+    #[test]
+    fn a_listing_that_covers_exists_is_believed() {
+        assert!(!listing_was_misread(173, 173), "exactly right");
+        assert!(!listing_was_misread(60_934, 60_934), "exactly right, large");
+        assert!(!listing_was_misread(174, 173), "a delivery mid-command");
+        assert!(
+            !listing_was_misread(0, 0),
+            "an empty mailbox really is empty"
+        );
     }
 }

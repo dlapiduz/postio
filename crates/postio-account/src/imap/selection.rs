@@ -82,6 +82,13 @@ pub(super) struct SelectedMailbox {
     epoch: u64,
     /// When the server last confirmed it.
     confirmed_at: Instant,
+    /// What `EXISTS` said when the server last confirmed it.
+    ///
+    /// Kept so a command can sanity-check its own answer against the count
+    /// the same connection was given. Goes stale the moment mail arrives,
+    /// and only in the safe direction: a stale count is lower than the truth,
+    /// so a check against it under-fires rather than over-fires.
+    exists: u32,
 }
 
 /// The UID generation every session in a pool has observed, per mailbox.
@@ -203,6 +210,18 @@ impl ImapSession {
     /// new generation is adopted before the error is returned, so the caller
     /// that rebuilds and retries succeeds rather than looping — see the
     /// [module docs](self).
+    /// What `EXISTS` said for the mailbox currently selected on this
+    /// connection, if it is `path`.
+    ///
+    /// For a command that wants to check its own answer against the count the
+    /// same connection was handed — see `fetch::existing_uids`.
+    pub(super) fn selected_exists(&self, path: &str) -> Option<u32> {
+        self.selected
+            .as_ref()
+            .filter(|selected| selected.path == path)
+            .map(|selected| selected.exists)
+    }
+
     pub(crate) async fn ensure_selected(
         &mut self,
         path: &str,
@@ -329,6 +348,7 @@ impl ImapSession {
             uid_validity,
             epoch,
             confirmed_at: Instant::now(),
+            exists: data.exists.unwrap_or_default(),
         });
 
         if let Verdict::Changed { known } = verdict {
