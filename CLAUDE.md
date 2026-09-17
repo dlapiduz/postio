@@ -42,8 +42,10 @@ is the whole shape:
 
 ```bash
 git worktree add ~/src/postio-worktrees/<name> -b feature/<name> origin/main
-printf 'main\n' > ~/src/postio-worktrees/<name>/.git/postio-base   # or see below
 cd ~/src/postio-worktrees/<name>
+# a linked worktree's `.git` is a file, so ask git where the directory is —
+# which is what issue-land.sh does to read it back
+printf 'main\n' > "$(git rev-parse --git-dir)/postio-base"   # or see below
 # work tasks.md top to bottom, one commit per task
 scripts/issue-land.sh --detach          # lands the branch; closes nothing
 ```
