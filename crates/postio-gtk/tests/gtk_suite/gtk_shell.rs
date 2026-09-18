@@ -303,3 +303,86 @@ fn blocks<'a>(css: &'a str, selector: &str) -> Vec<&'a str> {
     }
     out
 }
+
+/// Focus stays in the workspace across the things that move panes about.
+///
+/// **This does not reproduce the reported bug**, and saying so is the point.
+/// A real session reported that minimising or maximising moves focus to the
+/// search field and pops its hint. Three mechanisms were proposed and all
+/// three are held here, passing: a breakpoint hiding the pane that has focus,
+/// an unmap and remap, and a remap that bypasses `Window::present`'s
+/// `if focus().is_none()` guard (#614) the way a window manager does.
+///
+/// So the cause is still unknown, and these are the paths now known *not* to
+/// be it -- which is worth keeping, both to stop them regressing and to stop
+/// the next session proposing them again. `Window::watch_focus` logs what
+/// actually claims focus when it happens; that is what will name it.
+pub fn hiding_the_focused_pane_keeps_focus_in_the_workspace() {
+    if adw::init().is_err() || gdk::Display::default().is_none() {
+        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
+        return;
+    }
+    let display = gdk::Display::default().unwrap();
+    fonts::install().expect("the embedded fonts should install");
+    style::install(&display);
+    app::install_icons(&display);
+
+    let window = Window::default();
+    let shell = window.shell();
+    window.present();
+    pump();
+
+    shell.set_mode(Mode::ThreePane);
+    shell.set_focused_pane(Pane::List);
+    window.list().grab_focus();
+    pump();
+    assert!(
+        gtk::prelude::GtkWindowExt::focus(&window).is_some_and(|focus| focus.is_ancestor(&shell)),
+        "sanity: focus starts in the workspace"
+    );
+
+    // What a minimise does: the width collapses, the breakpoint fires, and
+    // the pane holding focus is hidden.
+    shell.set_focused_pane(Pane::Reader);
+    shell.set_mode(Mode::MessageFocused);
+    pump();
+
+    assert!(!shell.list().is_visible(), "the focused pane was hidden");
+    let focus = gtk::prelude::GtkWindowExt::focus(&window);
+    assert!(
+        focus
+            .as_ref()
+            .is_some_and(|focus| focus.is_ancestor(&shell)),
+        "focus escaped the workspace when its pane was hidden, which is how \
+         a resize ends up in the search field: {:?}",
+        focus.map(|f| f.widget_name())
+    );
+
+    // ── and what a minimise actually does: unmap, then map again ──────────
+    // The breakpoint above is only half the story. Minimising unmaps the
+    // window entirely, and a widget that is not mapped cannot hold focus.
+    shell.set_mode(Mode::ThreePane);
+    shell.set_focused_pane(Pane::List);
+    window.list().grab_focus();
+    pump();
+
+    // `set_visible`, not `present`: a window manager restoring a minimised
+    // window maps it directly, and never calls `Window::present`, whose
+    // `if focus().is_none()` guard (#614) is the only thing putting focus
+    // back today. Using `present` here would test the guard rather than the
+    // path that loses focus.
+    window.set_visible(false);
+    pump();
+    window.set_visible(true);
+    pump();
+
+    let focus = gtk::prelude::GtkWindowExt::focus(&window);
+    assert!(
+        focus
+            .as_ref()
+            .is_some_and(|focus| focus.is_ancestor(&shell)),
+        "focus left the workspace across an unmap, which is what a minimise \
+         is: it comes back in the header's search field, hint and all: {:?}",
+        focus.map(|f| f.widget_name())
+    );
+}

@@ -1284,6 +1284,10 @@ const CASES: &[(&str, fn())] = &[
         gtk_reader_fonts::the_faces_are_fetched_over_the_scheme_and_not_carried_by_the_document as fn(),
     ),
     (
+        "gtk_shell::hiding_the_focused_pane_keeps_focus_in_the_workspace",
+        gtk_shell::hiding_the_focused_pane_keeps_focus_in_the_workspace as fn(),
+    ),
+    (
         "gtk_shell::the_plate_layout_matches_the_canvas",
         gtk_shell::the_plate_layout_matches_the_canvas as fn(),
     ),

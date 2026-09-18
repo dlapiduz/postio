@@ -390,6 +390,50 @@ impl Window {
         gtk::prelude::GtkWindowExt::present(self);
     }
 
+    /// Say when focus leaves the workspace, and to what.
+    ///
+    /// Reported from a real session: minimising or maximising the window puts
+    /// focus in the search field and pops its hint. Three candidate paths were
+    /// tested and none reproduces it --- a breakpoint hiding the focused pane,
+    /// an unmap and remap, and a remap that bypasses `present`'s
+    /// `if focus().is_none()` guard (#614); `gtk_shell` holds all three. So
+    /// the mechanism is still unknown, and the thing that would name it is
+    /// knowing *what* claims focus at the moment it happens.
+    ///
+    /// Only when focus lands outside the three panes, which is rare and is
+    /// the whole event of interest: pressing `/` does it deliberately, a
+    /// resize doing it does not. `debug`, because this is a diagnostic and
+    /// not a fault --- there is no fault to report until this says what the
+    /// widget is.
+    ///
+    /// Not a guard. Putting focus back whenever it leaves the panes would
+    /// fight the user reaching for the search field, which is the same
+    /// gesture from the outside.
+    fn watch_focus(&self) {
+        self.connect_notify_local(
+            Some("focus-widget"),
+            glib::clone!(
+                #[weak(rename_to = window)]
+                self,
+                move |_: &Window, _| {
+                    let shell = window.shell();
+                    let focus = gtk::prelude::GtkWindowExt::focus(&window);
+                    let Some(focus) = focus else {
+                        tracing::debug!("focus left the window entirely");
+                        return;
+                    };
+                    if !focus.is_ancestor(&shell) {
+                        tracing::debug!(
+                            widget = focus.type_().name(),
+                            name = focus.widget_name().as_str(),
+                            "focus moved outside the panes"
+                        );
+                    }
+                }
+            ),
+        );
+    }
+
     /// The three panes, for whoever is filling them.
     pub fn shell(&self) -> Shell {
         self.imp()
@@ -1623,6 +1667,7 @@ impl Window {
     fn build(&self) {
         self.set_title(Some("Postio"));
         self.add_css_class("postio-window");
+        self.watch_focus();
 
         // Every window carries its own scheme classes: `tokens.css` keys its
         // dark and high-contrast blocks off `:root`, which in GTK is the root
