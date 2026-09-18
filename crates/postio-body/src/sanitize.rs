@@ -13,12 +13,15 @@
 //! (`postio_gtk::reader::view::DOCUMENT_TEMPLATE`).
 //! What this module adds on top:
 //!
-//! * `<iframe>`, `<object>`, `<embed>`, `<svg>`, `<math>` and `<noscript>` are
-//!   removed tag-and-contents too. `<noscript>` is the interesting one: with
-//!   scripting off, the HTML spec has a browser parse its content as *markup*
-//!   rather than inert text, which turns a sender's "if you can't run our
-//!   JavaScript, at least load this" fallback into exactly the tracking pixel
-//!   disabling JavaScript was supposed to stop.
+//! * `<iframe>`, `<object>`, `<embed>`, `<svg>`, `<math>`, `<noscript>` and
+//!   `<title>` are removed tag-and-contents too. `<noscript>` is the
+//!   interesting one: with scripting off, the HTML spec has a browser parse
+//!   its content as *markup* rather than inert text, which turns a sender's
+//!   "if you can't run our JavaScript, at least load this" fallback into
+//!   exactly the tracking pixel disabling JavaScript was supposed to stop.
+//!   `<title>` is the dull one and was the long-lived one: dropping the
+//!   element while keeping its text put the sender's document title in the
+//!   body, at the top of most bulk mail.
 //! * Every `src` is rewritten: a `cid:` reference becomes the app's own
 //!   [`CID_SCHEME`], and — unless the caller passes [`RemoteImages::Allowed`]
 //!   — anything pointing at a remote host is dropped outright rather than
@@ -305,7 +308,13 @@ pub fn sanitize_body_in(html: &str, remote: RemoteImages, scope: Option<&str>) -
         .rm_tags([
             "link", "base", "meta", "form", "input", "button", "textarea", "select",
         ])
-        .add_clean_content_tags(["iframe", "object", "embed", "svg", "math", "noscript"])
+        // `title` is here rather than in `rm_tags` because the two differ in
+        // exactly the way that matters: `rm_tags` drops the element and keeps
+        // its text, which for a `<title>` means the sender's document title
+        // becomes the first line of their message.
+        .add_clean_content_tags([
+            "iframe", "object", "embed", "svg", "math", "noscript", "title",
+        ])
         // `cid` has to be allowed on the *input* side too: ammonia checks
         // `url_schemes` against a URL attribute's original value before
         // `attribute_filter` ever runs, so a `cid:` reference would be
@@ -1204,6 +1213,29 @@ mod tests {
         let out = sanitize_body(
             r#"<noscript><img src="https://tracker.example.org/o.gif"></noscript><p>body</p>"#,
             RemoteImages::Allowed,
+        );
+        assert_eq!(out.html, "<p>body</p>");
+    }
+
+    /// A `<title>` is the document's name, not a line of the message.
+    ///
+    /// Ammonia drops an element that is not allow-listed but *keeps its text*
+    /// — that is what makes unwrapping safe for a `<span>`. For a `<title>` it
+    /// means the sender's document title arrives as the first words of their
+    /// body, which is how `html-newsletter.eml` came to render "Harbour
+    /// Lantern Weekly - Issue 214" above its own masthead. Every template
+    /// builder emits one, so this is most bulk mail, not an edge.
+    ///
+    /// `<title>` alone, because it is the only head element with text that
+    /// was not already handled: ammonia's own defaults remove `<script>` and
+    /// `<style>` tag-and-contents, and `link`, `base` and `meta` are stripped
+    /// as elements and carry no text to keep.
+    #[test]
+    fn a_documents_title_is_not_a_line_of_its_body() {
+        let out = sanitize_body(
+            "<html><head><title>Weekly digest</title></head>\
+             <body><p>body</p></body></html>",
+            RemoteImages::Blocked,
         );
         assert_eq!(out.html, "<p>body</p>");
     }
