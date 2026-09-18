@@ -165,10 +165,20 @@ async fn still_short_of_exists(
     let Some(generation) = previous.generation else {
         return Ok(false);
     };
-    let held = MessageRepository::new(connection)
-        .count_in(mailbox.id, generation)
-        .await?;
-    if held >= exists {
+    let messages = MessageRepository::new(connection);
+    let held = messages.count_in(mailbox.id, generation).await?;
+    // Rows the store will not hold however often they are fetched: the
+    // server's copy of a draft this client wrote, which `upsert_batch`
+    // refuses so a draft is not stored twice. They are counted by the
+    // server's `EXISTS` and never by ours, so a mailbox holding drafts is
+    // permanently "short" by exactly that many -- and re-enumerating it
+    // fetches them, has them refused, and leaves the count where it was.
+    //
+    // Measured: Drafts re-enumerated on every pass, for ever, 27 held
+    // against 28 reported. A repair that cannot converge is a loop, and
+    // this is what makes the arithmetic able to balance.
+    let refused = messages.refused_rows_in(mailbox.id).await?;
+    if held.saturating_add(refused) >= exists {
         return Ok(false);
     }
     if OperationQueueRepository::new(connection)

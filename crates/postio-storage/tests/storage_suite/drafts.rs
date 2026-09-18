@@ -2164,3 +2164,58 @@ async fn a_send_whose_operation_is_gone_stops_claiming_to_be_on_its_way() {
         "a second pass found something to do, so it would churn for ever"
     );
 }
+
+/// The rows a mailbox can never hold, counted so the sync can stop asking.
+///
+/// `upsert_batch` refuses the server's copy of a draft this client wrote, so
+/// a draft that has been appended leaves the Drafts mailbox permanently one
+/// row short of the server's `EXISTS`. `sync::resync` re-enumerates a mailbox
+/// that is short, and without a count of what is deliberately absent it
+/// re-enumerated Drafts on every pass for ever -- 27 held against 28
+/// reported, the 28th being the draft, fetched and refused each time.
+#[tokio::test]
+async fn an_appended_drafts_server_copy_is_counted_as_refused() {
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    let (account, drafts_mailbox) = account_with_drafts(&connection).await;
+    let inbox = test_support::mailbox(&connection, &account, "INBOX").await;
+    let drafts = DraftRepository::new(&connection);
+    let messages = MessageRepository::new(&connection);
+
+    assert_eq!(
+        messages
+            .refused_rows_in(drafts_mailbox)
+            .await
+            .expect("count"),
+        0,
+        "a draft nobody has appended is held locally and refused nowhere"
+    );
+
+    let mut draft = a_draft(account.id);
+    drafts.save(&mut draft).await.expect("save");
+    drafts
+        .set_server_copy(
+            draft.id,
+            Some(&postio_storage::repository::ServerCopyLocation {
+                remote_id: postio_model::RemoteId::new("1707000000:42".to_owned()),
+                uid: postio_model::Uid::new(42),
+                uid_validity: postio_model::UidValidity::new(1_707_000_000),
+            }),
+        )
+        .await
+        .expect("record where the append landed");
+
+    assert_eq!(
+        messages
+            .refused_rows_in(drafts_mailbox)
+            .await
+            .expect("count"),
+        1,
+        "once the server has a copy, that row is one the store will not hold"
+    );
+    assert_eq!(
+        messages.refused_rows_in(inbox.id).await.expect("count"),
+        0,
+        "and it is the drafts mailbox that is short, not every mailbox"
+    );
+}

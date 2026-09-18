@@ -1366,6 +1366,35 @@ impl<'a> MessageRepository<'a> {
         .await
     }
 
+    /// How many rows in `mailbox` the store will refuse to hold.
+    ///
+    /// The server's copies of drafts this client wrote. `upsert_batch`
+    /// `retain`s them away so a draft is not stored twice --- once as the
+    /// local draft and once as whatever the server named the append --- which
+    /// means the mailbox is permanently one row short of the server's
+    /// `EXISTS` for each one.
+    ///
+    /// That matters to anything comparing the two. `sync::resync`
+    /// re-enumerates a mailbox holding less than `EXISTS` says, and without
+    /// this it re-enumerated Drafts on *every pass*, for ever: 27 held
+    /// against 28 reported, the 28th being the user's own draft, which the
+    /// enumeration would fetch and the upsert would refuse, leaving 27 again.
+    /// A repair that cannot converge is a loop.
+    pub async fn refused_rows_in(&self, mailbox: MailboxId) -> Result<u32> {
+        let count: i64 = sql::one(
+            self.connection,
+            "SELECT count(*)
+               FROM drafts
+               JOIN mailboxes ON mailboxes.account_id = drafts.account_id
+                             AND mailboxes.role = 'drafts'
+              WHERE drafts.remote_id IS NOT NULL AND mailboxes.id = ?1",
+            bind![mailbox.get()],
+            |row| row.col(0),
+        )
+        .await?;
+        Ok(count.max(0) as u32)
+    }
+
     /// How many messages the mailbox holds at `generation`.
     ///
     /// [`uids_in`](Self::uids_in)'s count without its allocation: the caller
