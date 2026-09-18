@@ -596,11 +596,57 @@ pub async fn commit_batch(
         report.threaded += written.len();
         // The ids `upsert_batch` assigned belong to the caller's messages, not
         // to this unit's copy of them.
-        slice.clone_from_slice(&written);
+        copy_back(slice, &written);
         drop(permit);
     }
 
     Ok(report)
+}
+
+/// Carry the ids `upsert_batch` assigned back onto the caller's messages.
+///
+/// # Why not `clone_from_slice`
+///
+/// It was, and it panicked against a real account:
+///
+/// ```text
+/// destination and source slices have different lengths
+///   postio_sync::initial::commit_batch
+///   postio_sync::resync::enumerate_the_shortfall
+/// ```
+///
+/// `upsert_batch` does not always return what it was given. It `retain`s
+/// away two kinds of row on purpose --- the server's copy of a draft Postio
+/// itself wrote, and a message the user has already moved out of this mailbox
+/// while the server has not been told --- so `written` is shorter whenever
+/// either applies. Drafts is where it showed up, re-enumerating 27 local rows
+/// against the 28 the server reported.
+///
+/// That has always been true; nothing reached it until a mailbox short of
+/// `EXISTS` started re-enumerating itself. A positional copy was wrong the
+/// whole time and merely unreachable, which is the worse kind of wrong.
+///
+/// # The shape that makes this cheap
+///
+/// `retain` preserves order, so `written` is a *subsequence* of `slice`: same
+/// messages, same order, some missing. One walk down both, matching on the
+/// remote id --- the same key both `retain`s decide on, and `None` is never
+/// dropped by either, so those align by position within the run.
+///
+/// A message that was dropped keeps whatever it arrived with, which is right:
+/// nothing was stored for it, so there is no id to carry back.
+fn copy_back(slice: &mut [Message], written: &[Message]) {
+    let mut stored = written.iter();
+    let mut next = stored.next();
+    for slot in slice.iter_mut() {
+        let Some(candidate) = next else {
+            return;
+        };
+        if candidate.server.remote_id == slot.server.remote_id {
+            *slot = candidate.clone();
+            next = stored.next();
+        }
+    }
 }
 
 /// A batch asked for ahead of time. See the read-ahead in [`enumerate`].
@@ -651,5 +697,77 @@ async fn read_ahead<'a>(
     match primed {
         Poll::Ready(answer) => ReadAhead::Answered(answer),
         Poll::Pending => ReadAhead::OnTheWire(fetching),
+    }
+}
+
+#[cfg(test)]
+mod carrying_ids_back_onto_a_shortened_batch {
+    use super::copy_back;
+    use postio_model::{AccountId, MailboxId, Message, MessageId, RemoteId};
+
+    fn message(remote: Option<&str>, id: i64) -> Message {
+        let mut message = Message::new(AccountId::new(1), MailboxId::new(1), chrono::Utc::now());
+        message.server.remote_id = remote.map(|remote| RemoteId::new(remote.to_owned()));
+        message.id = MessageId::new(id);
+        message
+    }
+
+    /// The crash, as a batch.
+    ///
+    /// `upsert_batch` drops the server's copy of a draft Postio wrote, so what
+    /// comes back is shorter than what went in and `clone_from_slice` panicked
+    /// with "destination and source slices have different lengths". Drafts is
+    /// where it happened: 27 rows held against the 28 the server reported, a
+    /// re-enumeration fetched the 28th, and it was the user's own draft.
+    #[test]
+    fn a_dropped_row_does_not_panic_and_does_not_shift_the_others() {
+        let mut slice = [
+            message(Some("1:10"), 0),
+            message(Some("1:11"), 0),
+            message(Some("1:12"), 0),
+        ];
+        // The middle one was retained away; the others came back with ids.
+        let written = [message(Some("1:10"), 101), message(Some("1:12"), 103)];
+
+        copy_back(&mut slice, &written);
+
+        assert_eq!(slice[0].id, MessageId::new(101), "the first got its id");
+        assert_eq!(
+            slice[1].id,
+            MessageId::new(0),
+            "the dropped one keeps what it arrived with -- nothing was stored \
+             for it, so there is no id to carry back"
+        );
+        assert_eq!(
+            slice[2].id,
+            MessageId::new(103),
+            "and the one after the gap got its own id, not the gap's neighbour's"
+        );
+    }
+
+    /// The ordinary case still copies straight across.
+    #[test]
+    fn nothing_dropped_is_a_plain_copy() {
+        let mut slice = [message(Some("1:10"), 0), message(Some("1:11"), 0)];
+        let written = [message(Some("1:10"), 101), message(Some("1:11"), 102)];
+
+        copy_back(&mut slice, &written);
+
+        assert_eq!(slice[0].id, MessageId::new(101));
+        assert_eq!(slice[1].id, MessageId::new(102));
+    }
+
+    /// A message with no remote id is never dropped by either `retain`, so
+    /// runs of them align by position.
+    #[test]
+    fn rows_without_a_remote_id_still_line_up() {
+        let mut slice = [message(None, 0), message(Some("1:11"), 0), message(None, 0)];
+        let written = [message(None, 201), message(None, 203)];
+
+        copy_back(&mut slice, &written);
+
+        assert_eq!(slice[0].id, MessageId::new(201));
+        assert_eq!(slice[1].id, MessageId::new(0), "the dropped one is left");
+        assert_eq!(slice[2].id, MessageId::new(203));
     }
 }
