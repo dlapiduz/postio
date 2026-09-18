@@ -938,9 +938,53 @@ fn tag_ends_at(rest: &str) -> Option<usize> {
     }
 }
 
+/// Unwraps markdown links, so a snippet is words rather than syntax.
+///
+/// A great many bulk senders write their `text/plain` part by running the
+/// HTML through a converter, and markdown is what those converters emit. The
+/// list showed the result verbatim:
+///
+/// ```text
+/// [ ](https://app.example.test/parent/home) 9/16/26 - 9/17/26 Overdue...
+/// ```
+///
+/// A label and a URL where four words of the message should be. `[label](url)`
+/// becomes `label`, and `[ ](url)` -- the wrapped logo at the top of every one
+/// of these -- becomes nothing, which is what it was worth.
+///
+/// Only the link form, and only in the snippet. A preview is a handful of
+/// words to recognise a message by; the body has its own rendering and its own
+/// reasons. Anything that is not a well-formed link is left exactly as typed,
+/// so prose containing a bracket survives it.
+fn without_markdown_links(text: &str) -> std::borrow::Cow<'_, str> {
+    if !text.contains("](") {
+        return std::borrow::Cow::Borrowed(text);
+    }
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(open) = rest.find('[') {
+        let (before, from_open) = rest.split_at(open);
+        out.push_str(before);
+        let Some(close) = from_open.find("](") else {
+            out.push_str(from_open);
+            return std::borrow::Cow::Owned(out);
+        };
+        let after_label = &from_open[close + 2..];
+        let Some(end) = after_label.find(')') else {
+            out.push_str(from_open);
+            return std::borrow::Cow::Owned(out);
+        };
+        out.push_str(&from_open[1..close]);
+        rest = &after_label[end + 1..];
+    }
+    out.push_str(rest);
+    std::borrow::Cow::Owned(out)
+}
+
 /// Flattens body text into a single-line snippet of at most [`PREVIEW_CHARS`].
 fn preview(text: &str) -> Option<String> {
     let text = without_tags(text);
+    let text = without_markdown_links(text.as_ref());
     let text = text.as_ref();
     let mut out = String::new();
     let mut truncated = false;
@@ -1221,5 +1265,68 @@ mod message_ids {
         // And a bare token with an @ but no brackets is still one: the
         // brackets are the wrapper, not the identity.
         assert!(message_id("a@example.com").is_some());
+    }
+}
+
+#[cfg(test)]
+mod a_snippet_is_words_not_syntax {
+    use super::without_markdown_links;
+
+    /// The shape measured against a real account.
+    ///
+    /// A school's daily summary, whose `text/plain` part is its HTML run
+    /// through a markdown converter. The list row showed the wrapped logo's
+    /// empty link and the URL behind it, where the first words of the message
+    /// belonged.
+    #[test]
+    fn a_converters_links_leave_only_their_labels() {
+        assert_eq!(
+            without_markdown_links("[ ](https://app.example.test/parent/home) 9/16/26 - 9/17/26"),
+            "  9/16/26 - 9/17/26",
+            "the wrapped logo leaves only the space it labelled itself with"
+        );
+        assert_eq!(
+            without_markdown_links(
+                "Assignment.[Bridges Practice #1](https://x.test/a/849) 3:59 pm"
+            ),
+            "Assignment.Bridges Practice #1 3:59 pm"
+        );
+        assert_eq!(
+            without_markdown_links("[one](http://a.test) and [two](http://b.test)"),
+            "one and two"
+        );
+    }
+
+    /// And the snippet a person actually sees has neither syntax nor URL.
+    ///
+    /// The end of the chain: `preview` collapses whitespace after this runs,
+    /// so the empty label leaves nothing behind either.
+    #[test]
+    fn the_snippet_reads_as_the_message_starts() {
+        let snippet = super::preview(
+            "[ ](https://app.example.test/parent/home) 9/16/26 - 9/17/26 Overdue Submissions",
+        )
+        .expect("a snippet");
+        assert_eq!(snippet, "9/16/26 - 9/17/26 Overdue Submissions");
+        assert!(!snippet.contains("http"), "no URL in a snippet: {snippet}");
+        assert!(!snippet.contains("]("), "and no syntax: {snippet}");
+    }
+
+    /// Prose survives unchanged, brackets and all.
+    ///
+    /// The snippet is the only place this runs, so a false positive costs a
+    /// message the words it is recognised by. Nothing that is not a
+    /// well-formed link may be touched.
+    #[test]
+    fn prose_is_left_exactly_as_typed() {
+        for prose in [
+            "I wrote [sic] in the margin (twice).",
+            "The array [1, 2, 3] and the tuple (a, b).",
+            "An unclosed [bracket and (parens",
+            "See https://example.test/agenda for the agenda.",
+            "",
+        ] {
+            assert_eq!(without_markdown_links(prose), prose, "{prose:?}");
+        }
     }
 }
