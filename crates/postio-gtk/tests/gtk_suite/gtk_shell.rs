@@ -399,16 +399,67 @@ pub fn hiding_the_focused_pane_keeps_focus_in_the_workspace() {
 
     assert!(
         !window.finder().is_open(),
-        "maximising is not a question, so the finder must not answer one: \
-         focusing the search field opens it, and a window state change that \
-         lands focus there opens it on the user's behalf"
+        "maximising is not a question, so the finder must not answer one"
+    );
+
+    // ── the transition the diagnostic caught, driven directly ─────────────
+    // A real maximise produced exactly this, in this order:
+    //
+    //     focus left the window entirely
+    //     focus moved outside the panes widget="GtkToggleButton"
+    //     focus moved outside the panes widget="GtkText"
+    //
+    // GTK gives focus back by walking the focus chain from the start, the
+    // header is first, and arriving in the search field opens the finder.
+    // Headless GTK will not produce the window state change itself, so the
+    // transition is made here: away from the window, then into the chrome.
+    shell.set_mode(Mode::ThreePane);
+    window.list().grab_focus();
+    pump();
+
+    gtk::prelude::GtkWindowExt::set_focus(&window, None::<&gtk::Widget>);
+    pump();
+    search_field(&window).grab_focus();
+    pump();
+
+    assert!(
+        !window.finder().is_open(),
+        "focus returning to the search field after leaving the window is the \
+         window taking it back, not a question: the box must stay shut"
     );
     let focus = gtk::prelude::GtkWindowExt::focus(&window);
     assert!(
-        focus
-            .as_ref()
-            .is_some_and(|focus| focus.is_ancestor(&shell)),
-        "focus left the workspace across maximise/restore: {:?}",
+        focus.as_ref().is_some_and(|f| f.is_ancestor(&shell)),
+        "and focus belongs back in the panes, not the chrome: {:?}",
         focus.map(|f| f.widget_name())
     );
+
+    // ── the control: reaching for the field deliberately still works ──────
+    search_field(&window).grab_focus();
+    pump();
+    assert!(
+        window.finder().is_open(),
+        "a person going to the search field from the panes is asking, and \
+         must still get the box"
+    );
+    window.close_finder();
+    pump();
+}
+
+/// The header's one text box, which is also the finder's.
+fn search_field(window: &Window) -> gtk::Text {
+    fn find(widget: &gtk::Widget) -> Option<gtk::Text> {
+        if let Some(text) = widget.downcast_ref::<gtk::Text>() {
+            return Some(text.clone());
+        }
+        let mut child = widget.first_child();
+        while let Some(current) = child {
+            if let Some(found) = find(&current) {
+                return Some(found);
+            }
+            child = current.next_sibling();
+        }
+        None
+    }
+    find(window.upcast_ref::<gtk::Widget>()).expect("the header has a text field")
 }

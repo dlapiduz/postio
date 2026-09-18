@@ -410,27 +410,79 @@ impl Window {
     /// fight the user reaching for the search field, which is the same
     /// gesture from the outside.
     fn watch_focus(&self) {
+        // Whether focus has just been away from the window altogether. That
+        // transition is the whole of the signal: see `restore_focus_after`.
+        let was_away = std::rc::Rc::new(std::cell::Cell::new(false));
         self.connect_notify_local(
             Some("focus-widget"),
             glib::clone!(
                 #[weak(rename_to = window)]
                 self,
+                #[strong]
+                was_away,
                 move |_: &Window, _| {
                     let shell = window.shell();
                     let focus = gtk::prelude::GtkWindowExt::focus(&window);
                     let Some(focus) = focus else {
                         tracing::debug!("focus left the window entirely");
+                        was_away.set(true);
                         return;
                     };
-                    if !focus.is_ancestor(&shell) {
-                        tracing::debug!(
-                            widget = focus.type_().name(),
-                            name = focus.widget_name().as_str(),
-                            "focus moved outside the panes"
-                        );
+                    if focus.is_ancestor(&shell) {
+                        was_away.set(false);
+                        return;
+                    }
+                    tracing::debug!(
+                        widget = focus.type_().name(),
+                        name = focus.widget_name().as_str(),
+                        "focus moved outside the panes"
+                    );
+                    if was_away.replace(false) {
+                        window.restore_focus_after(&focus);
                     }
                 }
             ),
+        );
+    }
+
+    /// Put focus back in the panes after the window took it back.
+    ///
+    /// Maximising or restoring the window moves focus out of the window
+    /// entirely and then GTK puts it back by walking the focus chain from the
+    /// start. The header is first, so it lands on the sidebar toggle and then
+    /// on the search field's `GtkText` --- measured, in that order:
+    ///
+    /// ```text
+    /// focus left the window entirely
+    /// focus moved outside the panes widget="GtkToggleButton"
+    /// focus moved outside the panes widget="GtkText"
+    /// ```
+    ///
+    /// Focus arriving in that field *opens the finder* (`Finder::attach`, and
+    /// deliberately: a click there asks the same question `/` asks). So
+    /// maximising the window opened the command box over the reader, with its
+    /// hints, on a gesture that was about the window.
+    ///
+    /// # Why the `None` in between is the whole signal
+    ///
+    /// A person clicking the search field goes pane → field. The window
+    /// taking focus back goes field-or-pane → *nothing* → chrome. Only the
+    /// second has focus leave the window on the way, so only the second is
+    /// answered here --- clicking the header still works exactly as it did,
+    /// and no timer or heuristic is involved.
+    ///
+    /// The finder is dismissed as well as focus moved: it opened the instant
+    /// focus arrived, before this runs, so moving focus away would otherwise
+    /// leave the box up with nothing in it.
+    fn restore_focus_after(&self, taken_by: &gtk::Widget) {
+        // `close_finder` rather than the finder's own `dismiss`: it also puts
+        // back the context and pane the box borrowed when it opened, which is
+        // the half a bare close would leave behind.
+        self.close_finder();
+        self.list().grab_focus();
+        tracing::debug!(
+            widget = taken_by.type_().name(),
+            "the window took focus back on a state change; returned it to the list"
         );
     }
 
