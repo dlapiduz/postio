@@ -706,6 +706,21 @@ impl Engine {
 /// doing nothing most of the time — and it is only the *floor*: whatever hits
 /// a broken connection tells the supervisor directly through `observe`, so
 /// the common case does not wait for a tick at all.
+/// How many bodies to fetch between two sync waves.
+///
+/// The number that decides whether a mailbox becomes *readable* while the rest
+/// of the account is still being enumerated. Zero was the old behaviour and it
+/// meant the inbox's bodies waited for every other folder's headers; unbounded
+/// would invert it, and a folder of forty thousand messages would never finish
+/// its headers because its own bodies kept queueing in front of them.
+///
+/// Eight is a batch, not a budget: enough that a few seconds of enumeration
+/// buys a screenful of readable mail, small enough that the wave loop keeps
+/// its turn. It is checked against the job inbox and the operation queue
+/// between each one anyway, so the cost of it being briefly wrong is one body
+/// on the wire — the same bound the backfill below this loop already accepts.
+const BODIES_BETWEEN_WAVES: usize = 8;
+
 const POLL_INTERVAL: Duration = Duration::from_secs(5);
 
 /// The engine's thread: a runtime and a connection of its own.
@@ -826,6 +841,39 @@ fn run(parts: EngineParts, store: Store, inbox: async_channel::Receiver<Job>, bu
                 {
                     state.busy.set("a sync wave");
                     sync_wave(&parts, &store, &mut state, &inbox).await;
+
+                    // **Bodies between waves, not only after the last one.**
+                    //
+                    // A sync seeds the backfill for the folder it just
+                    // changed, so the inbox's bodies are queued the moment its
+                    // headers land -- and used to sit there, because the only
+                    // `pump_body` was below this loop and this loop does not
+                    // end until every folder is enumerated. Measured against a
+                    // real account: the inbox's 174 headers were in after 7
+                    // seconds, and two minutes later not one body had been
+                    // fetched, because Archive's 60,934 and Sent Messages'
+                    // 20,324 headers were still going. A list you cannot read
+                    // is not a synced mailbox.
+                    //
+                    // `BODIES_BETWEEN_WAVES` at a time, so this interleaves
+                    // rather than inverting the order: headers still win
+                    // overall, and a folder of forty thousand still gets
+                    // through. The inbox is served first without being asked
+                    // for, because it syncs first and so seeds first, and the
+                    // queue hands them back in that order.
+                    //
+                    // Every guard the loop below uses applies here too, for
+                    // the same reasons: a job, a queued operation and going
+                    // offline all outrank a body nobody asked for.
+                    let mut fetched = 0;
+                    while fetched < BODIES_BETWEEN_WAVES
+                        && nothing_asked(&inbox)
+                        && state.supervisor.link().is_online()
+                        && !has_queued_work(&parts, &store).await
+                        && pump_body(&parts, &store, &mut state, &inbox).await
+                    {
+                        fetched += 1;
+                    }
                 }
 
                 // A wave that yielded to queued work has to be followed by the

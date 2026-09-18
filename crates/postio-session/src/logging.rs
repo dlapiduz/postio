@@ -233,7 +233,25 @@ const OTHERS: &str = "warn";
 /// reader is not even parsing for the user's benefit at that point -- it is
 /// building a search excerpt. `off` rather than `error`, because unlike
 /// `imap_codec` there is no level of it worth keeping by default.
-const QUIET: &[(&str, &str)] = &[("imap_codec", "error"), ("html5ever", "off")];
+/// `tantivy` is the third, and the loudest measured so far. Its segment
+/// updater logs *"save metas"* at `info` on every commit, and the body
+/// indexer commits per batch: a live first sync produced **26,340 of 26,444
+/// lines** — 99.5% of the file — and the twenty that described what the sync
+/// was actually doing were unreadable among them.
+///
+/// `warn`, not `off`: a search index that cannot write its metadata is
+/// something to hear about. It is only the routine success that has to stop.
+///
+/// [`OTHERS`] would already have held it to `warn`, and did until a directive
+/// naming targets was used: `POSTIO_LOG=info,postio_sync=debug` sets a *global*
+/// `info` floor that every unnamed crate then rises to. Putting it here means
+/// asking Postio for more detail cannot silently turn a dependency's bookkeeping
+/// back on.
+const QUIET: &[(&str, &str)] = &[
+    ("imap_codec", "error"),
+    ("html5ever", "off"),
+    ("tantivy", "warn"),
+];
 
 /// Turn a bare level into a directive that turns *Postio* up, not the world.
 ///
@@ -333,6 +351,35 @@ mod tests {
         assert!(
             !scoped.contains("rustls"),
             "third parties are held to `warn`, not named one by one"
+        );
+    }
+
+    /// A global level asked for by name must not re-admit a flood.
+    ///
+    /// `POSTIO_LOG=info,postio_sync=debug` is what somebody types to read a
+    /// sync closely, and it is the spelling that hurts: a bare `info` inside a
+    /// comma list is EnvFilter's *global* default, so every unnamed dependency
+    /// rises to it. `tantivy` then logs "save metas" per index commit, and the
+    /// body indexer commits per batch — a live first sync put 26,340 such
+    /// lines into a 26,444-line file, burying the twenty that said what the
+    /// sync did.
+    #[test]
+    fn asking_for_more_postio_detail_does_not_re_admit_a_dependency_flood() {
+        let scoped = scope("info,postio_sync=debug");
+
+        assert!(
+            scoped.contains("tantivy=warn"),
+            "a global info floor must not turn tantivy's per-commit \
+             bookkeeping back on: {scoped}"
+        );
+        assert!(
+            scoped.find("tantivy=warn") < scoped.find("info,postio_sync=debug"),
+            "the quiet defaults go in front so what was asked for still wins: \
+             {scoped}"
+        );
+        assert!(
+            scoped.contains("postio_sync=debug"),
+            "and what was asked for is still there: {scoped}"
         );
     }
 
