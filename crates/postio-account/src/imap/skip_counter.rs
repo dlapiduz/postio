@@ -253,6 +253,24 @@ pub async fn measuring<F, T>(command: F) -> (T, u64)
 where
     F: std::future::Future<Output = T>,
 {
+    // **Boxed, or the caller's stack pays for it three times over.**
+    //
+    // This future holds the command's, `TaskLocalFuture` holds this one, and
+    // the caller holds that -- so an unboxed command is inlined at every
+    // layer. `issue_select` is measured, and it sits inside `select_now`,
+    // inside `ConnectionPool::execute`, inside `resync_mailbox`, inside
+    // `sync_wave`: by the time the state machines nest, a `SELECT` overflowed
+    // the sync thread's stack outright.
+    //
+    //     thread 'postio-sync' has overflowed its stack
+    //     #7  skip_counter::measuring::<...ImapMailboxSelect...>
+    //     #8  TaskLocalFuture<Cell<u64>, measuring<...>>
+    //     #12 ImapSession::issue_select
+    //
+    // One allocation per measured command, against a network round trip.
+    // Nothing else here can shrink it: the task local is the whole mechanism,
+    // and the layers it adds are what make the attribution exact.
+    let command = Box::pin(command);
     TASK_SKIPS
         .scope(std::cell::Cell::new(0), async move {
             let value = command.await;
