@@ -63,7 +63,7 @@ async fn a_store_full_of_textless_bodies_is_swept_once_and_left_alone() {
 
     let connection = database.connect().await.expect("checkout");
     assert!(
-        postio_index::index::messages_missing_body_text(&connection, 10)
+        postio_index::index::messages_missing_body_text(&connection, 10, None)
             .await
             .expect("candidates")
             .is_empty(),
@@ -136,7 +136,7 @@ async fn a_body_that_lands_is_indexed_a_moment_later_by_the_indexer() {
         std::time::Instant::now() + postio_test_support::scaled(std::time::Duration::from_secs(10));
     let indexed = loop {
         let connection = database.connect().await.expect("checkout");
-        let pending = postio_index::index::messages_missing_body_text(&connection, 10)
+        let pending = postio_index::index::messages_missing_body_text(&connection, 10, None)
             .await
             .expect("the queue");
         if pending.is_empty() {
@@ -152,6 +152,127 @@ async fn a_body_that_lands_is_indexed_a_moment_later_by_the_indexer() {
         "a body that landed and was announced was never indexed: nothing \
          drained the queue"
     );
+    drop(hub);
+    let _ = tokio::time::timeout(std::time::Duration::from_secs(5), indexer).await;
+}
+
+/// #1549: a burst indexes the bodies it *names*, and no others.
+///
+/// The distinction is the whole fix. The loop used to answer a burst by
+/// running a full pass — `messages_missing_body_text` over the mailbox — so a
+/// burst naming two messages indexed every outstanding message and paid a
+/// walk of the recency index to find them. On a real 61,000-message store that
+/// was 640ms of scanning per message indexed, after every burst, for as long
+/// as a sync ran.
+///
+/// So: two messages with local bodies, an event for one. Only that one is
+/// indexed. Under the old loop both would be, which is what makes this a
+/// regression test rather than a restatement.
+///
+/// The other one is not lost — the sweep at the next start is what covers it,
+/// and `a_store_full_of_textless_bodies_is_swept_once_and_left_alone` is what
+/// says the sweep still works.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_burst_indexes_the_bodies_it_names_and_leaves_the_rest_alone() {
+    use postio_core::bridge::EventHub;
+    use postio_storage::repository::StoredBody;
+
+    let database = test_support::temp().await;
+    let (account, named, unnamed) = {
+        let connection = database.connect().await.expect("checkout");
+        postio_index::index::ensure_schema(&connection)
+            .await
+            .expect("schema");
+        let (account, inbox) = test_support::account_with_inbox(&connection).await;
+        let messages = MessageRepository::new(&connection);
+
+        let store_one = |subject: &str, when| {
+            let mut message = Message::new(account.id, inbox, when);
+            message.subject = Some(subject.to_owned());
+            message
+        };
+        let mut first = store_one("Named", chrono::Utc::now());
+        let named = messages.create(&mut first).await.expect("create named");
+        let mut second = store_one("Unnamed", chrono::Utc::now() - chrono::Duration::minutes(1));
+        let unnamed = messages.create(&mut second).await.expect("create unnamed");
+
+        for message in [named, unnamed] {
+            messages
+                .set_body(
+                    message,
+                    &StoredBody {
+                        text: Some("words worth finding".to_owned()),
+                        html: None,
+                        headers: None,
+                        headers_truncated: false,
+                        encoding_problems: false,
+                    },
+                    BodyState::Full,
+                )
+                .await
+                .expect("store the body");
+        }
+        (account.id, named, unnamed)
+    };
+
+    let hub = EventHub::new();
+    let sink = hub.sink();
+    let indexer = postio_session::spawn_body_indexer(
+        database.clone(),
+        Some(hub.subscribe("indexer")),
+        &tokio::runtime::Handle::current(),
+    );
+
+    // The startup sweep runs first and indexes both — this test is about what
+    // the *burst* does, so wait for the sweep to finish rather than racing it.
+    let connection = database.connect().await.expect("checkout");
+    let deadline =
+        std::time::Instant::now() + postio_test_support::scaled(std::time::Duration::from_secs(10));
+    while !postio_index::index::messages_missing_body_text(&connection, 10, None)
+        .await
+        .expect("queue")
+        .is_empty()
+        && std::time::Instant::now() < deadline
+    {
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+    // Put both back in the queue, so the burst has something to choose from.
+    postio_index::index::clear_account_body_index(&connection, account.get())
+        .await
+        .expect("clear");
+    drop(connection);
+
+    sink.emit(postio_core::Event::BodyLoaded {
+        account,
+        message: named,
+    });
+
+    let deadline =
+        std::time::Instant::now() + postio_test_support::scaled(std::time::Duration::from_secs(10));
+    let settled = loop {
+        let connection = database.connect().await.expect("checkout");
+        let pending: Vec<i64> =
+            postio_index::index::messages_missing_body_text(&connection, 10, None)
+                .await
+                .expect("queue")
+                .iter()
+                .map(|row| row.id)
+                .collect();
+        if pending == vec![unnamed.get()] {
+            break true;
+        }
+        if std::time::Instant::now() > deadline {
+            break false;
+        }
+        drop(connection);
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    };
+    assert!(
+        settled,
+        "the burst should have indexed exactly the message it named, leaving \
+         the other for the next sweep"
+    );
+
     drop(hub);
     let _ = tokio::time::timeout(std::time::Duration::from_secs(5), indexer).await;
 }

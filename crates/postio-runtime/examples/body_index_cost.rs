@@ -105,6 +105,11 @@ async fn main() {
         )
         .await
         .expect("widen the rows");
+    // Checkpoint before measuring, or the first batches are reading a
+    // 160MB WAL and the curve is the checkpointer's rather than the query's.
+    let _ = connection
+        .execute_batch("PRAGMA wal_checkpoint(TRUNCATE)")
+        .await;
     println!(
         "seeded and widened in {:.1}s",
         started.elapsed().as_secs_f64()
@@ -121,15 +126,21 @@ async fn main() {
     let mut indexed = 0usize;
     let mut first: Option<Duration> = None;
     let mut last = Duration::ZERO;
+    // Carried between batches, which is the fix #1549 asked for: without it
+    // every batch restarts at the newest message and walks past everything
+    // the previous batches indexed.
+    let mut cursor: Option<postio_index::index::Candidate> = None;
     loop {
         let started = Instant::now();
-        let candidates = postio_index::index::messages_missing_body_text(&connection, BATCH)
+        let found = postio_index::index::messages_missing_body_text(&connection, BATCH, cursor)
             .await
             .expect("candidates");
         let asked = started.elapsed();
-        if candidates.is_empty() {
+        if found.is_empty() {
             break;
         }
+        cursor = found.last().copied();
+        let candidates: Vec<i64> = found.iter().map(|row| row.id).collect();
 
         // Stand in for the real write. The pass reads and decompresses a body
         // per message before this; that half is linear in the batch and is not
@@ -192,10 +203,37 @@ async fn explain(connection: &Checkout) {
                                    WHERE b.message_id = m.id)
                 ORDER BY m.received_at DESC
                 LIMIT 200";
-    println!("\nEXPLAIN QUERY PLAN:");
+    println!("\nEXPLAIN QUERY PLAN (first batch, no cursor):");
     match postio_storage::sql::all(
         connection,
         &format!("EXPLAIN QUERY PLAN {sql}"),
+        (),
+        |row| postio_storage::sql::RowExt::col::<String>(row, 3),
+    )
+    .await
+    {
+        Ok(steps) => {
+            for step in steps {
+                println!("  {step}");
+            }
+        }
+        Err(error) => println!("  ({error})"),
+    }
+
+    // The one that matters: a batch that resumes. If this is not a range
+    // seek on the index, the cursor buys nothing.
+    let resumed = "SELECT m.id, m.received_at
+                     FROM messages m
+                    WHERE m.body_state IN ('full', 'partial')
+                      AND m.received_at <= 9999
+                      AND NOT EXISTS (SELECT 1 FROM message_search_bodies b
+                                       WHERE b.message_id = m.id)
+                    ORDER BY m.received_at DESC, m.id DESC
+                    LIMIT 200";
+    println!("EXPLAIN QUERY PLAN (resumed, with cursor):");
+    match postio_storage::sql::all(
+        connection,
+        &format!("EXPLAIN QUERY PLAN {resumed}"),
         (),
         |row| postio_storage::sql::RowExt::col::<String>(row, 3),
     )

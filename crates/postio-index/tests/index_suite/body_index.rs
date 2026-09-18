@@ -172,9 +172,12 @@ async fn a_body_indexed_before_this_table_existed_is_found_by_the_maintenance_pa
     let id = a_message(&connection, "Quarterly report").await;
 
     assert_eq!(
-        messages_missing_body_text(&connection, 10)
+        messages_missing_body_text(&connection, 10, None)
             .await
-            .expect("candidates"),
+            .expect("candidates")
+            .iter()
+            .map(|row| row.id)
+            .collect::<Vec<_>>(),
         vec![id],
         "a body that is local and not indexed here is exactly the work"
     );
@@ -184,9 +187,12 @@ async fn a_body_indexed_before_this_table_existed_is_found_by_the_maintenance_pa
         .expect("catch up");
 
     assert!(
-        messages_missing_body_text(&connection, 10)
+        messages_missing_body_text(&connection, 10, None)
             .await
             .expect("candidates")
+            .iter()
+            .map(|row| row.id)
+            .collect::<Vec<_>>()
             .is_empty(),
         "and once it is here, the pass leaves it alone"
     );
@@ -212,9 +218,12 @@ async fn a_message_whose_text_is_local_but_whose_payloads_are_not_is_still_index
         .expect("the fixture writes");
 
     assert_eq!(
-        messages_missing_body_text(&connection, 10)
+        messages_missing_body_text(&connection, 10, None)
             .await
-            .expect("candidates"),
+            .expect("candidates")
+            .iter()
+            .map(|row| row.id)
+            .collect::<Vec<_>>(),
         vec![id]
     );
 }
@@ -236,9 +245,12 @@ async fn a_message_whose_body_is_still_on_the_server_is_not_a_candidate() {
         .expect("the fixture writes");
 
     assert!(
-        messages_missing_body_text(&connection, 10)
+        messages_missing_body_text(&connection, 10, None)
             .await
             .expect("candidates")
+            .iter()
+            .map(|row| row.id)
+            .collect::<Vec<_>>()
             .is_empty()
     );
 }
@@ -258,9 +270,12 @@ async fn a_message_with_nothing_to_index_leaves_the_candidate_set() {
     let id = a_message(&connection, "Report attached").await;
 
     assert_eq!(
-        messages_missing_body_text(&connection, 10)
+        messages_missing_body_text(&connection, 10, None)
             .await
-            .expect("candidates"),
+            .expect("candidates")
+            .iter()
+            .map(|row| row.id)
+            .collect::<Vec<_>>(),
         vec![id],
         "local body, never indexed: exactly the work"
     );
@@ -270,9 +285,12 @@ async fn a_message_with_nothing_to_index_leaves_the_candidate_set() {
         .expect("index nothing");
 
     assert!(
-        messages_missing_body_text(&connection, 10)
+        messages_missing_body_text(&connection, 10, None)
             .await
             .expect("candidates")
+            .iter()
+            .map(|row| row.id)
+            .collect::<Vec<_>>()
             .is_empty(),
         "tried and found empty is not the same state as never tried, \
          or the maintenance pass asks about this message for ever"

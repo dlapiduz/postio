@@ -1462,10 +1462,10 @@ async fn a_body_the_user_asked_for_is_indexed_as_well_as_stored() {
             &database,
             "asking the indexer's queue",
             async |connection| {
-                let queue = postio_index::index::messages_missing_body_text(&connection, 100)
+                let queue = postio_index::index::messages_missing_body_text(&connection, 100, None)
                     .await
                     .expect("the indexer's queue");
-                Ok(queue.contains(&id))
+                Ok(queue.iter().any(|row| row.id == id))
             },
         )
         .await
@@ -1492,10 +1492,11 @@ async fn a_body_the_user_asked_for_is_indexed_as_well_as_stored() {
     // The indexer's half, one batch of it, the way the session runs it.
     with_store(&database, "one indexer batch", async |connection| {
         let messages = postio_storage::repository::MessageRepository::new(&connection);
-        let queue = postio_index::index::messages_missing_body_text(&connection, 100)
+        let queue = postio_index::index::messages_missing_body_text(&connection, 100, None)
             .await
             .expect("the indexer's queue");
-        for id in queue {
+        for candidate in queue {
+            let id = candidate.id;
             let stored = messages
                 .body(postio_model::ids::MessageId::new(id))
                 .await?

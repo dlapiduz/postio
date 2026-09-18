@@ -1074,27 +1074,53 @@ pub fn spawn_body_indexer(
             let Some(event) = events.next().await else {
                 return;
             };
-            if !matches!(event, postio_core::Event::BodyLoaded { .. }) {
-                continue;
-            }
+            let mut pending = Vec::new();
+            note_body(&mut pending, &event);
             // Let the burst finish: a backfill announces bodies by the
-            // hundred, and one pass over all of them is the whole point.
-            // Every event that arrives meanwhile is drained, not counted.
+            // hundred, and indexing them under one write is the whole point.
+            // Every event that arrives meanwhile is drained — and, if it
+            // names a body, **kept**. That is the change #1549 asked for:
+            // the burst already says which messages arrived, so the pass
+            // indexes those instead of asking the mailbox which messages
+            // might need it. Asking cost a full walk of the recency index,
+            // which on a 61,000-message store was 640ms per message indexed,
+            // paid again after every burst.
             let quiet = tokio::time::sleep(INDEX_BODY_DEBOUNCE);
             tokio::pin!(quiet);
             loop {
                 tokio::select! {
                     () = &mut quiet => break,
                     next = events.next() => {
-                        if next.is_none() {
-                            return;
+                        match next {
+                            None => return,
+                            Some(event) => note_body(&mut pending, &event),
                         }
                     }
                 }
             }
-            body_index_pass(&database).await;
+            if pending.is_empty() {
+                continue;
+            }
+            // Deduplicated: a message can be announced more than once in a
+            // burst, and indexing it twice is a wasted read and a wasted row
+            // rewrite rather than a wrong answer.
+            pending.sort_unstable();
+            pending.dedup();
+            if let Err(error) = index_named_bodies(&database, &pending).await {
+                tracing::warn!(%error, "indexing the bodies a burst named failed: {error}");
+            }
         }
     })
+}
+
+/// Remember the message a `BodyLoaded` names; ignore every other event.
+///
+/// A free function so the drain loop and the first read share one answer to
+/// "is this an arrival, and which message was it".
+fn note_body(pending: &mut Vec<i64>, event: &postio_core::Event) {
+    if let postio_core::Event::BodyLoaded { message, .. } = event {
+        pending.push(message.get());
+    }
 }
 
 /// One pass of the indexer, and the reason it cannot fail the task: a store
@@ -1122,6 +1148,113 @@ const INDEX_BODY_BATCH: u32 = 200;
 /// hundred batches either way; the pause is what keeps the disk answering
 /// searches while it happens.
 const INDEX_BODY_BREATHER: Duration = Duration::from_millis(25);
+
+/// Read the bodies of `ids` and write their index rows, in two phases.
+///
+/// Shared by the catch-up sweep and by the event-driven path, so both index a
+/// message the same way and there is one place where a body is read, folded
+/// and written.
+///
+/// Answers how many were indexed, which is not always `ids.len()`: a message
+/// expunged between being named and being read has nothing to index, and one
+/// whose body cannot be read costs itself its body search rather than the
+/// whole batch.
+async fn index_one_batch(
+    connection: &postio_storage::Checkout,
+    ids: &[i64],
+) -> Result<usize, Box<dyn std::error::Error>> {
+    // Read first, write after, in phases: the reads decompress a body per
+    // message and must not happen inside the write transaction below, where
+    // they would hold the one write lock through work that needs nothing of
+    // it.
+    //
+    // One repository for the whole batch, deliberately: it caches the
+    // compression dictionary it loads, so a batch of two hundred bodies
+    // builds the decoding table once rather than two hundred times.
+    let messages = postio_storage::repository::MessageRepository::new(connection);
+    let mut bodies: Vec<(i64, postio_model::MessageBody)> = Vec::with_capacity(ids.len());
+    for id in ids {
+        let message = postio_model::MessageId::new(*id);
+        let body = match messages.body(message).await {
+            Ok(Some(stored)) => postio_model::MessageBody {
+                text: stored.text,
+                html: stored.html,
+            },
+            // No such row any more -- expunged between being named and here.
+            // Nothing to index.
+            Ok(None) => postio_model::MessageBody::default(),
+            Err(error) => {
+                tracing::debug!(message = id, %error, "cannot read a body to index");
+                continue;
+            }
+        };
+        bodies.push((*id, body));
+    }
+
+    // One gated transaction per batch, not an autocommit per message. Each of
+    // those commits was its own WAL append taken without the write gate, so a
+    // long catch-up ran a stream of ungated writes against whatever the user
+    // was doing. The permit comes first, and from the background lane: a
+    // keystroke's flag write goes ahead of this whole batch.
+    let mut indexed = 0usize;
+    let _permit = connection
+        .write_gate()
+        .acquire(postio_storage::WritePriority::Background)
+        .await;
+    connection.execute_batch("BEGIN IMMEDIATE").await?;
+    for (id, body) in &bodies {
+        match postio_index::index::index_body_of(connection, *id, body).await {
+            Ok(()) => indexed += 1,
+            Err(error) => tracing::debug!(message = id, %error, "cannot index a body"),
+        }
+    }
+    connection.execute_batch("COMMIT").await?;
+    Ok(indexed)
+}
+
+/// Index exactly these messages, named by the `BodyLoaded` events that just
+/// arrived — **without asking which messages need indexing** (#1549).
+///
+/// This is the difference between a steady state that costs what it indexes
+/// and one that costs the size of the mailbox. `messages_missing_body_text`
+/// can only answer "is there anything to do" by walking every message, and on
+/// a real 61,000-message store that was 640ms of scanning to index one or two
+/// bodies — paid again after every burst of arrivals, for as long as a sync
+/// ran. A `BodyLoaded` already says which message; asking the mailbox a
+/// second time was the whole cost.
+///
+/// The sweep remains the backstop, and it must: it is what covers a body that
+/// was stored before this build existed, or one whose event was emitted while
+/// nothing was listening. It runs once per start rather than once per burst.
+pub async fn index_named_bodies(
+    database: &Store,
+    ids: &[i64],
+) -> Result<usize, Box<dyn std::error::Error>> {
+    if ids.is_empty() {
+        return Ok(0);
+    }
+    let started = std::time::Instant::now();
+    let mut indexed = 0usize;
+    // Chunked on the same bound the sweep takes, for the same reason: the
+    // batch holds a pooled connection and a write permit, and a burst of a
+    // whole backfill's worth of arrivals should not hold either indefinitely.
+    for chunk in ids.chunks(INDEX_BODY_BATCH as usize) {
+        let connection = database.connect().await?;
+        indexed += index_one_batch(&connection, chunk).await?;
+        drop(connection);
+        if chunk.len() == INDEX_BODY_BATCH as usize {
+            tokio::time::sleep(INDEX_BODY_BREATHER).await;
+        }
+    }
+    if indexed > 0 {
+        tracing::info!(
+            indexed,
+            elapsed_ms = started.elapsed().as_millis() as u64,
+            "indexed bodies"
+        );
+    }
+    Ok(indexed)
+}
 
 /// Index every message whose body is already on this machine and whose
 /// indexed text is empty. Answers how many it indexed.
@@ -1160,13 +1293,21 @@ pub async fn index_local_bodies(database: &Store) -> Result<usize, Box<dyn std::
     let started = std::time::Instant::now();
     let mut indexed = 0usize;
     let mut last_batch: Vec<i64> = Vec::new();
+    // Where the sweep got to, so the next batch resumes rather than starting
+    // at the newest message again (#1549). Carried only *within* a sweep: a
+    // later sweep starts at the top, which is what keeps a body that landed
+    // older than this cursor from being stranded.
+    let mut cursor: Option<postio_index::index::Candidate> = None;
     loop {
         let connection = database.connect().await?;
-        let candidates =
-            postio_index::index::messages_missing_body_text(&connection, INDEX_BODY_BATCH).await?;
-        if candidates.is_empty() {
+        let found =
+            postio_index::index::messages_missing_body_text(&connection, INDEX_BODY_BATCH, cursor)
+                .await?;
+        if found.is_empty() {
             break;
         }
+        cursor = found.last().copied();
+        let candidates: Vec<i64> = found.iter().map(|row| row.id).collect();
         // The candidate query's contract is that indexing a message removes
         // it from the answer. If a whole batch comes back identical, that
         // contract is broken and going around again can only spin — which is
@@ -1174,6 +1315,11 @@ pub async fn index_local_bodies(database: &Store) -> Result<usize, Box<dyn std::
         // attachment-only messages ran this loop at 100% of a core for as
         // long as the app was open. Stopping leaves the index exactly as
         // caught-up as it was ever going to get this start.
+        //
+        // Kept even though the cursor now guarantees forward progress on its
+        // own: this asserts the *index's* contract, not the loop's, and a
+        // regression in it should still be a warning rather than a silent
+        // re-read of two hundred bodies.
         if candidates == last_batch {
             tracing::warn!(
                 batch = candidates.len(),
@@ -1182,55 +1328,7 @@ pub async fn index_local_bodies(database: &Store) -> Result<usize, Box<dyn std::
             break;
         }
 
-        // Read first, write after, in phases: the reads decompress a body per
-        // message and must not happen inside the write transaction below,
-        // where they would hold SQLite's one write lock through work that
-        // needs nothing of it.
-        //
-        // One repository for the whole batch, deliberately: it caches the
-        // compression dictionary it loads, so a batch of two hundred bodies
-        // builds the decoding table once rather than two hundred times.
-        let messages = postio_storage::repository::MessageRepository::new(&connection);
-        let mut bodies: Vec<(i64, postio_model::MessageBody)> =
-            Vec::with_capacity(candidates.len());
-        for id in &candidates {
-            let message = postio_model::MessageId::new(*id);
-            let body = match messages.body(message).await {
-                Ok(Some(stored)) => postio_model::MessageBody {
-                    text: stored.text,
-                    html: stored.html,
-                },
-                // No such row any more -- expunged between the candidate query
-                // and here. Nothing to index.
-                Ok(None) => postio_model::MessageBody::default(),
-                Err(error) => {
-                    tracing::debug!(message = id, %error, "cannot read a body to index");
-                    continue;
-                }
-            };
-            bodies.push((*id, body));
-        }
-
-        // One gated transaction per batch, not an autocommit per message.
-        // Each of those commits was its own WAL append taken without the
-        // write gate, so a long catch-up ran a stream of ungated writes
-        // against whatever the user was doing. The permit comes first, and
-        // from the background lane: a keystroke's flag write goes ahead of
-        // this whole batch.
-        {
-            let _permit = connection
-                .write_gate()
-                .acquire(postio_storage::WritePriority::Background)
-                .await;
-            connection.execute_batch("BEGIN IMMEDIATE").await?;
-            for (id, body) in &bodies {
-                match postio_index::index::index_body_of(&connection, *id, body).await {
-                    Ok(()) => indexed += 1,
-                    Err(error) => tracing::debug!(message = id, %error, "cannot index a body"),
-                }
-            }
-            connection.execute_batch("COMMIT").await?;
-        }
+        indexed += index_one_batch(&connection, &candidates).await?;
 
         let taken = candidates.len();
         last_batch = candidates;
