@@ -385,4 +385,30 @@ pub fn hiding_the_focused_pane_keeps_focus_in_the_workspace() {
          is: it comes back in the header's search field, hint and all: {:?}",
         focus.map(|f| f.widget_name())
     );
+
+    // ── the gesture as reported: maximise, then restore ───────────────────
+    shell.set_mode(Mode::ThreePane);
+    shell.set_focused_pane(Pane::List);
+    window.list().grab_focus();
+    pump();
+
+    window.maximize();
+    pump();
+    window.unmaximize();
+    pump();
+
+    assert!(
+        !window.finder().is_open(),
+        "maximising is not a question, so the finder must not answer one: \
+         focusing the search field opens it, and a window state change that \
+         lands focus there opens it on the user's behalf"
+    );
+    let focus = gtk::prelude::GtkWindowExt::focus(&window);
+    assert!(
+        focus
+            .as_ref()
+            .is_some_and(|focus| focus.is_ancestor(&shell)),
+        "focus left the workspace across maximise/restore: {:?}",
+        focus.map(|f| f.widget_name())
+    );
 }
