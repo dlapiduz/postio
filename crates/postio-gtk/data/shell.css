@@ -327,13 +327,25 @@ button.postio-compose {
 /* An offered narrowing. The outline tag from canvas 2b: mono, because it is
    a token the user could have typed, and hollow rather than filled so it
    reads as something on offer next to the solid chips already in the query. */
-.postio-refine-chip {
-  min-height: 22px;
-  padding: 2px 7px;
+/* Every text chip's box, in one place. A chip class below carries colour
+   and face only; the metrics live here and in the three --postio-chip-*
+   tokens, so two chips can no longer disagree about their height. Applied
+   by the constructors in `widgets::chip`, never by hand at a call site. */
+.postio-chip-base {
+  min-height: var(--postio-chip-height);
+  padding: var(--postio-chip-pad-y) var(--postio-chip-pad-x);
+  border-radius: var(--postio-radius-sm);
   font-family: var(--postio-font-mono);
   font-size: 0.75rem;
-  border: 1px solid var(--postio-hairline-strong);
-  border-radius: var(--postio-radius-sm);
+  /* Every chip pays for its border, drawn or not: a bordered chip beside a
+     borderless one is two pixels taller, which is exactly the drift the
+     base class exists to stop. A chip that wants a visible border recolours
+     this one rather than adding its own. */
+  border: 1px solid transparent;
+}
+
+.postio-refine-chip {
+  border-color: var(--postio-hairline-strong);
   background: none;
   box-shadow: none;
   color: var(--postio-ink-secondary);
@@ -1062,10 +1074,6 @@ button.postio-compose {
 
 /* An operator, drawn as what it is. IBM Plex Mono, because it is syntax. */
 .postio-chip {
-  font-family: var(--postio-font-mono);
-  font-size: 0.75rem;
-  padding: 2px 7px;
-  border-radius: var(--postio-radius-sm);
   background-color: var(--postio-selected-bg);
   color: var(--postio-selected-accent-text);
 }
@@ -1156,11 +1164,8 @@ button.postio-compose {
 /* The canvas' outline tag. Steel rather than red — nothing has gone wrong,
    the reader did exactly what it promises to do. */
 .postio-parts-blocked {
-  font-family: var(--postio-font-mono);
   font-size: 0.7159rem;
-  padding: 2px 7px;
-  border: 1px solid var(--postio-selected-border);
-  border-radius: var(--postio-radius-sm);
+  border-color: var(--postio-selected-border);
   color: var(--postio-accent-text);
 }
 
@@ -1491,10 +1496,7 @@ button.postio-compose {
 /* The same chip vocabulary the query bar uses for an operator: a small
    labelled tag, not a bespoke pill. */
 .postio-settings-tag {
-  font-family: var(--postio-font-mono);
   font-size: 0.7159rem;
-  padding: 2px 7px;
-  border-radius: var(--postio-radius-sm);
   background-color: var(--postio-selected-bg);
   color: var(--postio-selected-accent-text);
 }

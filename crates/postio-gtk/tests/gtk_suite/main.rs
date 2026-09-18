@@ -98,6 +98,8 @@ mod gtk_list_reload;
 mod gtk_list_select_message;
 mod gtk_list_state;
 mod gtk_live_config;
+mod gtk_mailto_open;
+mod gtk_mailto_seam;
 mod gtk_move_picker;
 mod gtk_new_mail_scroll;
 mod gtk_next_scope;
@@ -195,6 +197,14 @@ const CASES: &[(&str, fn())] = &[
     (
         "gtk_conversation::a_row_knows_whether_the_message_is_the_users_own",
         gtk_conversation::a_row_knows_whether_the_message_is_the_users_own as fn(),
+    ),
+    (
+        "gtk_reader_actions::every_send_state_verb_reaches_the_bus",
+        gtk_reader_actions::every_send_state_verb_reaches_the_bus as fn(),
+    ),
+    (
+        "gtk_reader_styles::a_body_that_has_not_arrived_says_so_in_the_thread",
+        gtk_reader_styles::a_body_that_has_not_arrived_says_so_in_the_thread as fn(),
     ),
     (
         "gtk_reader_styles::moving_between_messages_never_loads_an_error_page",
@@ -523,6 +533,14 @@ const CASES: &[(&str, fn())] = &[
     (
         "gtk_new_mail_scroll::new_mail_reveals_itself_at_the_top_and_nowhere_else",
         gtk_new_mail_scroll::new_mail_reveals_itself_at_the_top_and_nowhere_else as fn(),
+    ),
+    (
+        "gtk_mailto_open::opening_a_mailto_uri_delivers_the_link_to_the_window",
+        gtk_mailto_open::opening_a_mailto_uri_delivers_the_link_to_the_window as fn(),
+    ),
+    (
+        "gtk_mailto_seam::a_mailto_delivered_before_anyone_listens_is_handed_over_in_order",
+        gtk_mailto_seam::a_mailto_delivered_before_anyone_listens_is_handed_over_in_order as fn(),
     ),
     (
         "gtk_move_picker::m_opens_the_folder_picker_and_the_folder_picked_becomes_the_move",
@@ -945,6 +963,10 @@ const CASES: &[(&str, fn())] = &[
         gtk_widgets::an_action_bar_dispatches_the_command_its_cap_advertises as fn(),
     ),
     (
+        "gtk_widgets::every_chip_measures_the_same_height",
+        gtk_widgets::every_chip_measures_the_same_height as fn(),
+    ),
+    (
         "gtk_widgets::a_notice_never_wraps_however_long_the_sentence",
         gtk_widgets::a_notice_never_wraps_however_long_the_sentence as fn(),
     ),
@@ -1266,6 +1288,10 @@ const CASES: &[(&str, fn())] = &[
         gtk_reader_fonts::the_faces_are_fetched_over_the_scheme_and_not_carried_by_the_document as fn(),
     ),
     (
+        "gtk_shell::hiding_the_focused_pane_keeps_focus_in_the_workspace",
+        gtk_shell::hiding_the_focused_pane_keeps_focus_in_the_workspace as fn(),
+    ),
+    (
         "gtk_shell::the_plate_layout_matches_the_canvas",
         gtk_shell::the_plate_layout_matches_the_canvas as fn(),
     ),
@@ -1435,7 +1461,15 @@ pub fn settle_until(what: &str, done: impl Fn() -> bool) {
     postio_test_support::settle_until_within(
         postio_test_support::scaled(std::time::Duration::from_secs(120)),
         what,
-        || while glib::MainContext::default().iteration(false) {},
+        || {
+            while glib::MainContext::default().iteration(false) {}
+            // A document held by a dead web process is never going to
+            // arrive; fail now, naming the death, rather than at the
+            // deadline (`postio_gtk::web_process`).
+            if let Some(reason) = postio_gtk::web_process::take_death() {
+                panic!("a WebKit web process died ({reason}) while waiting for {what}");
+            }
+        },
         done,
     );
 }

@@ -22,7 +22,7 @@ use postio_core::bridge::event_channel;
 use postio_model::AccountId;
 use postio_runtime::engine::{Engine, EngineParts, NetworkSource, SystemClock};
 use postio_storage::repository::{AccountRepository, MailboxRepository, SyncStateRepository};
-use postio_storage::{BlobStore, Database, test_support};
+use postio_storage::{BlobStore, Store, test_support};
 
 use crate::harness;
 
@@ -60,7 +60,7 @@ fn server() -> MockBackend {
 }
 
 fn engine_for(
-    database: &Database,
+    database: &Store,
     account: AccountId,
     backend: Arc<MockBackend>,
 ) -> (Engine, BlobDir) {
@@ -98,10 +98,10 @@ fn engine_for(
 /// The ADR's own test: a slow account must not hold up a fast one.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn a_slow_account_does_not_hold_up_a_fast_one() {
-    let database = test_support::memory();
+    let database = test_support::memory().await;
 
     let (slow, fast) = {
-        let connection = database.connection().expect("a connection");
+        let connection = database.connect().await.expect("a connection");
         let accounts = AccountRepository::new(&connection);
 
         let mut slow_account = postio_model::Account::new(
@@ -114,13 +114,15 @@ async fn a_slow_account_does_not_hold_up_a_fast_one() {
         );
         accounts
             .create(&mut slow_account)
+            .await
             .expect("the slow account");
         accounts
             .create(&mut fast_account)
+            .await
             .expect("the fast account");
 
-        let slow_inbox = test_support::mailbox(&connection, &slow_account, "INBOX");
-        let fast_inbox = test_support::mailbox(&connection, &fast_account, "INBOX");
+        let slow_inbox = test_support::mailbox(&connection, &slow_account, "INBOX").await;
+        let fast_inbox = test_support::mailbox(&connection, &fast_account, "INBOX").await;
         (
             (slow_account.id, slow_inbox.id),
             (fast_account.id, fast_inbox.id),
@@ -167,12 +169,16 @@ async fn a_slow_account_does_not_hold_up_a_fast_one() {
     );
 
     // ── and each row reflects only its own pass ──────────────────────────
-    let connection = database.connection().expect("a connection");
+    let connection = database.connect().await.expect("a connection");
     let sync_state = SyncStateRepository::new(&connection);
     let mailboxes = MailboxRepository::new(&connection);
 
     for (account, inbox) in [slow, fast] {
-        for folder in mailboxes.list_for_account(account).expect("its folders") {
+        for folder in mailboxes
+            .list_for_account(account)
+            .await
+            .expect("its folders")
+        {
             assert_eq!(
                 folder.account_id, account,
                 "a folder was filed under an account that does not own it"
@@ -180,6 +186,7 @@ async fn a_slow_account_does_not_hold_up_a_fast_one() {
         }
         let state = sync_state
             .get(inbox)
+            .await
             .expect("its sync state")
             .expect("a pass was recorded for this account's own inbox");
         assert_eq!(

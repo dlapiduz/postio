@@ -760,6 +760,12 @@ mod imp {
         /// Everything about the draft that is not in a field: its id, account,
         /// kind, attachments, and what it is a reply to.
         pub draft: RefCell<Draft>,
+        /// The account a *fresh* composition starts from -- what
+        /// [`Composer::set_account`](super::Composer::set_account) was told, kept apart from the draft
+        /// cell. Reading it off the cell meant a reply, which fills the cell
+        /// with the answered message's account, quietly became where the next
+        /// new message came from too (#960's fence, #1161).
+        pub composing_from: Cell<AccountId>,
         pub identities: RefCell<Vec<Identity>>,
         pub sent: RefCell<Vec<DraftHandler>>,
         pub sent_later: RefCell<Vec<SendLaterHandler>>,
@@ -856,6 +862,7 @@ mod imp {
                 attachments_box: gtk::Box::new(gtk::Orientation::Vertical, 6),
                 attachments_list: gtk::ListBox::new(),
                 draft: RefCell::new(Draft::new(AccountId::UNASSIGNED)),
+                composing_from: Cell::new(AccountId::UNASSIGNED),
                 identities: RefCell::new(Vec::new()),
                 sent: RefCell::new(Vec::new()),
                 sent_later: RefCell::new(Vec::new()),
@@ -1103,7 +1110,9 @@ impl Composer {
 
     /// Throws the draft away and closes. What `ctrl+d` does once confirmed.
     pub fn discard(&self) {
-        let account = self.imp().draft.borrow().account_id;
+        // The configured account, not the discarded draft's: a discarded
+        // reply must not leave its account behind for the next `c`.
+        let account = self.account();
         self.fill(Draft::new(account));
         self.close();
     }
@@ -2172,8 +2181,20 @@ impl Composer {
         }
     }
 
+    /// The account a fresh composition starts from.
+    ///
+    /// The one [`set_account`](Self::set_account) named, when it has been
+    /// called; the draft cell's otherwise, which is what a composer built
+    /// without an account has to answer. Not the cell's first: a reply fills
+    /// the cell with the answered message's account, and reading that back
+    /// here made one reply change where every later new message came from.
     fn account(&self) -> AccountId {
-        self.imp().draft.borrow().account_id
+        let configured = self.imp().composing_from.get();
+        if configured == AccountId::UNASSIGNED {
+            self.imp().draft.borrow().account_id
+        } else {
+            configured
+        }
     }
 
     /// Sets which account a fresh `Compose` starts from.
@@ -2185,6 +2206,7 @@ impl Composer {
     /// draft, so calling it mid-compose would reassign whatever is already
     /// being written.
     pub fn set_account(&self, account_id: AccountId) {
+        self.imp().composing_from.set(account_id);
         self.imp().draft.borrow_mut().account_id = account_id;
     }
 

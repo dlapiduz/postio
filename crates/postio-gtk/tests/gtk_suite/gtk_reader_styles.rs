@@ -130,6 +130,7 @@ pub fn a_page_key_actually_turns_the_page_of_a_thread() {
         cc: String::new(),
         preview: "the first line".to_owned(),
         expanded: true,
+        absent: false,
         latest: false,
         draft: false,
         mine: false,
@@ -304,6 +305,7 @@ pub fn moving_between_messages_never_loads_an_error_page() {
         cc: String::new(),
         preview: "the first line".to_owned(),
         expanded: true,
+        absent: false,
         latest: false,
         draft: false,
         mine: false,
@@ -580,4 +582,70 @@ pub fn from_to_and_cc_share_a_column() {
              {first_value}; the addresses must begin together"
         );
     }
+}
+
+/// A message whose body has not arrived says so, in the thread document.
+///
+/// The single-message pane has explained this since `Absent::Partial` existed
+/// -- "Downloading this message / Its headers are here; the body has not
+/// arrived yet". ADR 0032 made a conversation one document, and that path
+/// never called `absent_html`: a message with no body contributed an empty
+/// section and the reader saw a message that would not open, with no reason
+/// given. Measured against a real account, where 174 headers were in and one
+/// body was.
+///
+/// Both halves matter. The words have to be the ones the other pane uses, or
+/// the app has two ways of saying one thing; and only the *open* message may
+/// say them, because `expanded_in_document` opens every message in a thread
+/// and thirty plates explaining one fact is the noise this avoided.
+pub fn a_body_that_has_not_arrived_says_so_in_the_thread() {
+    if adw::init().is_err() || gtk::gdk::Display::default().is_none() {
+        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
+        return;
+    }
+
+    let reader = postio_gtk::reader::Reader::new(std::rc::Rc::new(|_id: &str| None));
+    let waiting = |scope: &str, expanded: bool| postio_gtk::reader::view::ThreadMessage {
+        scope: scope.to_owned(),
+        sender: "Ada Norwood".to_owned(),
+        address: "ada@example.com".to_owned(),
+        when: "09:14".to_owned(),
+        recipients: String::new(),
+        cc: String::new(),
+        preview: "the first line".to_owned(),
+        expanded,
+        absent: true,
+        latest: false,
+        draft: false,
+        mine: false,
+        body: postio_model::message::MessageBody::default(),
+    };
+
+    reader.render_thread(&[waiting("1", true), waiting("2", false)]);
+    crate::settle();
+    let document = reader.test_document();
+
+    let expected =
+        postio_ui::reader::document::absent_html(postio_ui::reader::document::Absent::Partial);
+    let heading = "Downloading this message";
+    assert!(
+        document.contains(heading),
+        "an open message with no body must say the body is still coming, in \
+         the same words the single-message pane uses: {document}"
+    );
+    assert!(
+        document.contains("aria-live"),
+        "the plate carries its own live region, so a screen reader is told \
+         when the body arrives: {document}"
+    );
+    assert_eq!(
+        document.matches(heading).count(),
+        1,
+        "only the open message explains it -- every message in a thread is \
+         expanded by policy, and one fact stated thirty times is noise"
+    );
+    assert!(
+        expected.contains(heading),
+        "sanity: the words come from `absent_html`, not from this test"
+    );
 }

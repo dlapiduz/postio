@@ -53,123 +53,129 @@ fn press(window: &Window, key: &str, modifiers: gdk::ModifierType) {
 }
 
 pub fn ctrl_return_queues_the_draft_for_sending() {
-    let state_dir = tempfile::tempdir().expect("a state directory");
-    // SAFETY: first statement of a single-threaded test.
-    unsafe { std::env::set_var("XDG_STATE_HOME", state_dir.path()) };
+    crate::gtk_case(async {
+        let state_dir = tempfile::tempdir().expect("a state directory");
+        // SAFETY: first statement of a single-threaded test.
+        unsafe { std::env::set_var("XDG_STATE_HOME", state_dir.path()) };
 
-    if adw::init().is_err() || gdk::Display::default().is_none() {
-        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
-        return;
-    }
-    let display = gdk::Display::default().unwrap();
-    fonts::install().expect("the embedded fonts should install");
-    style::install(&display);
-    app::install_icons(&display);
+        if adw::init().is_err() || gdk::Display::default().is_none() {
+            eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
+            return;
+        }
+        let display = gdk::Display::default().unwrap();
+        fonts::install().expect("the embedded fonts should install");
+        style::install(&display);
+        app::install_icons(&display);
 
-    let database = test_support::memory();
-    let report = seed_small(&database, 13);
-    let account = report.account.id;
-    let directory = tempfile::tempdir().expect("a blob directory");
-    let blobs = BlobStore::open(
-        directory.path().to_path_buf(),
-        &postio_storage::test_support::blob_keys(),
-    )
-    .expect("a blob store");
+        let database = test_support::memory().await;
+        let report = seed_small(&database, 13).await;
+        let account = report.account.id;
+        let directory = tempfile::tempdir().expect("a blob directory");
+        let blobs = BlobStore::open(
+            directory.path().to_path_buf(),
+            &postio_storage::test_support::blob_keys(),
+        )
+        .expect("a blob store");
 
-    let (bridge, _replies) = Bridge::new(handler_fn(|_, _| async {})).expect("a runtime");
-    let (sink, _events) = event_channel();
-    let wiring = Wiring::new(
-        database.clone(),
-        blobs,
-        bridge.handle(),
-        sink,
-        bridge.commands(),
-    );
-
-    let window = Window::default();
-    window.present();
-    settle();
-
-    // ── the same call `run` makes: this is what wires the composer ───────
-    let _wired = feed_the_window(&window, &wiring).expect("the seeded store has an account");
-    settle();
-
-    let composer = window.composer();
-    assert!(!composer.is_open(), "nothing is being composed yet");
-
-    // ── write a message, through the keys and fields a person uses ───────
-    press(&window, "c", gdk::ModifierType::empty());
-    assert!(
-        composer.is_open(),
-        "`c` did not reach the composer, so this test cannot say anything \
-         about sending"
-    );
-    composer.test_set_to(RECIPIENT);
-    composer.test_set_subject(SUBJECT);
-    composer.test_set_body("The interlock trips at half tide.");
-    settle();
-
-    // ── ctrl+Return, travelling the registry, keymap and dispatch ────────
-    press(&window, "Return", gdk::ModifierType::CONTROL_MASK);
-
-    // ── and now ask the store, not the widget ────────────────────────────
-    let connection = database.connection().expect("a connection");
-    let queued = OperationQueueRepository::new(&connection)
-        .pending(account, chrono::Utc::now())
-        .expect("read the queue");
-    let sent = queued
-        .iter()
-        .find_map(|row| match row.operation {
-            Operation::Send { draft } => Some(draft),
-            _ => None,
-        })
-        .unwrap_or_else(|| {
-            panic!(
-                "ctrl+Return left no Operation::Send in the queue — the \
-                 composer's send seam reaches nothing. Status line says: {:?}. \
-                 Every layer under this one passes; that is the shape of bug \
-                 #423 is about.",
-                composer.status()
-            )
-        });
-
-    let draft = DraftRepository::new(&connection)
-        .get(sent)
-        .expect("read the draft")
-        .expect(
-            "the queued send names a draft that is not in the store — the \
-             close path deleted the row the operation has to build its bytes \
-             from, so the send would drain as obsolete",
+        let (bridge, _replies) = Bridge::new(handler_fn(|_, _| async {})).expect("a runtime");
+        let (sink, _events) = event_channel();
+        let wiring = Wiring::new(
+            database.clone(),
+            blobs,
+            bridge.handle(),
+            sink,
+            bridge.commands(),
         );
-    assert_eq!(
-        draft.state,
-        DraftState::Queued,
-        "a draft handed to the queue is Queued: the composer has let go of \
-         it, and it is the drainer's now until `postio-sync::send` deletes \
-         the row and files the Sent copy"
-    );
-    assert_eq!(
-        draft.subject, SUBJECT,
-        "and it is the message that was typed"
-    );
-    assert_eq!(
-        draft.to.len(),
-        1,
-        "with the recipient it was addressed to still on it"
-    );
-    assert_eq!(draft.to[0].address, RECIPIENT);
 
-    // ── the UI did not wait for SMTP, and did not lie about why ──────────
-    assert!(
-        !composer.is_open(),
-        "sending closes the composer; the message is the queue's problem now"
-    );
-    assert!(
-        !composer.status().contains("no outgoing account"),
-        "the status line still claims there is nowhere to send to, on an \
-         account that is configured: {:?}",
-        composer.status()
-    );
+        let window = Window::default();
+        window.present();
+        settle();
 
-    bridge.shutdown();
+        // ── the same call `run` makes: this is what wires the composer ───────
+        let _wired = feed_the_window(&window, &wiring)
+            .await
+            .expect("the seeded store has an account");
+        settle();
+
+        let composer = window.composer();
+        assert!(!composer.is_open(), "nothing is being composed yet");
+
+        // ── write a message, through the keys and fields a person uses ───────
+        press(&window, "c", gdk::ModifierType::empty());
+        assert!(
+            composer.is_open(),
+            "`c` did not reach the composer, so this test cannot say anything \
+             about sending"
+        );
+        composer.test_set_to(RECIPIENT);
+        composer.test_set_subject(SUBJECT);
+        composer.test_set_body("The interlock trips at half tide.");
+        settle();
+
+        // ── ctrl+Return, travelling the registry, keymap and dispatch ────────
+        press(&window, "Return", gdk::ModifierType::CONTROL_MASK);
+
+        // ── and now ask the store, not the widget ────────────────────────────
+        let connection = database.connect().await.expect("a connection");
+        let queued = OperationQueueRepository::new(&connection)
+            .pending(account, chrono::Utc::now())
+            .await
+            .expect("read the queue");
+        let sent = queued
+            .iter()
+            .find_map(|row| match row.operation {
+                Operation::Send { draft } => Some(draft),
+                _ => None,
+            })
+            .unwrap_or_else(|| {
+                panic!(
+                    "ctrl+Return left no Operation::Send in the queue — the \
+                     composer's send seam reaches nothing. Status line says: {:?}. \
+                     Every layer under this one passes; that is the shape of bug \
+                     #423 is about.",
+                    composer.status()
+                )
+            });
+
+        let draft = DraftRepository::new(&connection)
+            .get(sent)
+            .await
+            .expect("read the draft")
+            .expect(
+                "the queued send names a draft that is not in the store — the \
+                 close path deleted the row the operation has to build its bytes \
+                 from, so the send would drain as obsolete",
+            );
+        assert_eq!(
+            draft.state,
+            DraftState::Queued,
+            "a draft handed to the queue is Queued: the composer has let go of \
+             it, and it is the drainer's now until `postio-sync::send` deletes \
+             the row and files the Sent copy"
+        );
+        assert_eq!(
+            draft.subject, SUBJECT,
+            "and it is the message that was typed"
+        );
+        assert_eq!(
+            draft.to.len(),
+            1,
+            "with the recipient it was addressed to still on it"
+        );
+        assert_eq!(draft.to[0].address, RECIPIENT);
+
+        // ── the UI did not wait for SMTP, and did not lie about why ──────────
+        assert!(
+            !composer.is_open(),
+            "sending closes the composer; the message is the queue's problem now"
+        );
+        assert!(
+            !composer.status().contains("no outgoing account"),
+            "the status line still claims there is nowhere to send to, on an \
+             account that is configured: {:?}",
+            composer.status()
+        );
+
+        bridge.shutdown();
+    });
 }

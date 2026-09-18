@@ -58,7 +58,7 @@ pub enum Phase {
     /// The store key is out of the keyring and the database is open.
     ///
     /// I/O, and on a thread of its own since #1114 — a D-Bus round trip to
-    /// the keyring, SQLCipher's key derivation, the schema migrations and the
+    /// the keyring, the store's key derivation, the schema migrations and the
     /// search-index rebuild, none of which the main loop waits for any more.
     /// Separated from [`Window`](Phase::Window) by #790, which found the two
     /// of them sharing one 228 ms phase that `docs/PERFORMANCE.md` then
@@ -310,8 +310,8 @@ mod tests {
         // It cannot be that -- `present()` is called *after* `Phase::Window`
         // is marked, so the shader compile lands in `first frame`. What
         // actually sat in that gap was the blocking keyring read and the
-        // SQLCipher store open, which is I/O. It got its own phase so the
-        // trace could say which.
+        // store open, which is I/O. It got its own phase so the trace could
+        // say which.
         //
         // #1114 then moved that I/O off the main thread and behind the
         // window, which is what this half of the assertion is: the store now

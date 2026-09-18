@@ -15,13 +15,15 @@ path = "src/main.rs"
 
 [dependencies]
 adw = { version = "0.9", package = "libadwaita", features = ["v1_7"] }
-async-channel = "2.5.0"
+async-channel = { workspace = true }
 # Queue rows are stamped with when the user performed the action, so the
 # drainer replays them in the order they happened.
-chrono = { version = "0.4.45", default-features = false, features = ["std", "clock"] }
+chrono = { workspace = true, features = ["std"] }
 gtk = { version = "0.11.4", package = "gtk4", features = ["v4_20"] }
+# The binary's allocator — see main.rs. Kept in step with the version the
+# turso crate's own (disabled) default would have used.
+mimalloc = "0.1"
 postio-config.workspace = true
-postio-test-support.workspace = true
 postio-core.workspace = true
 postio-gtk.workspace = true
 postio-account.workspace = true
@@ -41,14 +43,15 @@ postio-session.workspace = true
 postio-ui.workspace = true
 postio-smtp.workspace = true
 postio-storage.workspace = true
-tokio = { version = "1.53.1", features = ["rt", "rt-multi-thread"] }
-tracing = "0.1"
+tokio = { workspace = true, features = ["rt", "rt-multi-thread"] }
+tracing = { workspace = true }
 
 [dev-dependencies]
+postio-test-support.workspace = true
 # Only the `e2e` test builds a subscriber; the application configures its
 # logging through postio-session. A [dependencies] entry is visible to
 # integration tests too, which is what hid this being test-only.
-tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt", "ansi"] }
+tracing-subscriber = { workspace = true, features = ["ansi", "env-filter"] }
 # Both are for the `shot` example, which renders surfaces the application
 # itself reaches only through postio-gtk: the search panels, and the settings
 # panel over a real config file.
@@ -65,11 +68,11 @@ postio-session.workspace = true
 # The end-to-end suite (tests/e2e.rs) syncs a real window against the
 # in-process wire-level IMAP server over loopback.
 postio-account = { workspace = true, features = ["imap", "test-server"] }
-tempfile = "3.27.0"
-tokio = { version = "1.53.1", features = ["rt-multi-thread", "macros", "time"] }
-async-trait = "0.1.92"
-serde-xml-rs = "0.8"
-url = { version = "2.5.8", default-features = false }
+tempfile = { workspace = true }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "time"] }
+async-trait = { workspace = true }
+serde-xml-rs = { workspace = true }
+url = { workspace = true }
 
 # The consolidated app suite: same custom harness as postio-gtk's
 # gtk_suite, same reasons -- see tests/app_suite/main.rs. #329.
@@ -79,5 +82,17 @@ path = "tests/app_suite/main.rs"
 harness = false
 
 [lints.rust]
+# A future nobody awaits is a statement that silently does not run. Fifty-six
+# of them survived the move to an async storage layer into a *green build* --
+# indexing calls, a settings write, a sidebar refresh -- and every one
+# compiled, warned, and did nothing. Warning-grade is not enough for a failure
+# mode whose symptom is the absence of a symptom.
+unused_must_use = "deny"
 # Not the workspace floor: see EXCEPTIONS in scripts/checks/check-lint-floor.py.
 unsafe_code = "deny"
+# A crate that keeps its own `[lints.rust]` inherits none of the workspace
+# lints, so the clippy floor's most load-bearing rule is restated here:
+# `let _ = some_async_call()` drops the future unpolled, which is how a sent
+# draft went on existing. See the workspace `[lints.clippy]`.
+[lints.clippy]
+let_underscore_future = "deny"

@@ -32,10 +32,13 @@ CI runs every one of these; a PR that fails them will not merge.
   warnings`, `rustfmt --check`, plus the repository's own checks —
   crate-boundary enforcement, the personal-data scanner, the tracking
   guard, the lint floor, and cargo-deny for licenses and advisories.
-- **Architectural invariants**: `postio-core` never links GTK;
-  `postio-gtk` never links SQL or the IMAP protocol crate; `postio-sync`
-  talks to the `MailBackend` trait, never `io-imap` types; every mutating
-  action is local-first and the UI never awaits the network.
+- **Architectural invariants**: `postio-core` and `postio-session` never
+  link GTK; `postio-gtk` never links the store engine or a protocol crate;
+  `postio-search`, `postio-body`, `postio-model` and `postio-config` are
+  pure leaves; `postio-sync` talks to the `MailBackend` trait, never
+  `io-imap` types; every mutating action is local-first and the UI never
+  awaits the network. Ten crates are guarded this way, against cargo's
+  resolved dependency graph.
 - **Privacy is a feature.** Nothing leaves the user's machine that they
   did not ask for. No telemetry, no phoning home, no logging of message
   content — bodies, subjects and recipient addresses never appear in a
@@ -57,18 +60,61 @@ its `postio-` prefix), imperative mood, and a body that explains **why**
 wrapped at 72 columns. `git config commit.template .gitmessage` sets up
 the template. Every commit is green for the crates it touches.
 
-## Contributing code
+## Developer setup
+
+The system libraries are the same ones a user building from source needs
+(the Fedora and Ubuntu lines are in [`README.md`](README.md)). Rust is
+pinned by [`rust-toolchain.toml`](rust-toolchain.toml); with
+[rustup](https://rustup.rs), the right compiler arrives on the first
+`cargo` command.
 
 ```bash
 git clone https://github.com/dlapiduz/postio && cd postio
-# system dependencies: see README.md — Fedora and Ubuntu lines are there
+scripts/install-shims.sh                     # once per machine, see below
 cargo test -p <the-crate-you-are-changing>   # the inner loop
 cargo clippy -p <crate> --all-targets -- -D warnings
 ```
 
+**`scripts/install-shims.sh` first.** `.cargo/config.toml` names the
+linker and the C compiler as bare program names (`postio-linker`,
+`postio-cc`) so that one compile cache serves every worktree (#1101). The
+claim, land, test and install scripts put them on `PATH` themselves; a
+plain `cargo build` in a fresh clone needs this once, or fails with
+"linker `postio-linker` not found".
+
+Optional, and worth it on a machine that builds this workspace often:
+
+- **`ccache` and `mold`** (`sudo dnf install ccache mold`, or `apt`).
+  ccache caches what the C build scripts in the dependency graph compile,
+  so a second target directory costs seconds instead of minutes (#736).
+  mold is selected by `scripts/linker.sh` whenever it is present, not for
+  speed (there is about a second of link to contest) but for memory: it
+  peaks well below lld, which matters on a workstation that links several
+  sessions at once (#1092). Without either, the build is unchanged.
+- **[mise](https://mise.jdx.dev)** pins the tools the gates run on
+  (Python, `gh`, `jq`, `sccache`) in [`mise.toml`](mise.toml); `mise
+  install` once, and everything resolves off `PATH` as before if you do not
+  use it. It deliberately does not pin Rust or the system libraries.
+- **`cargo-nextest`** runs the integration tiers and cannot be pinned by
+  mise; `scripts/install-nextest.sh` holds the pin and is what CI runs.
+  Without it `scripts/issue-land.sh` falls back to `cargo test` and reaches
+  the same verdict, several times slower.
+- **`gh` 2.94.0 or newer** if you use the issue scripts: `issue-claim.sh`
+  reads `--json blockedBy`, which that release added. The scripts refuse
+  up front with a sentence naming both versions rather than a traceback.
+
+Tests are headless automatically: the cargo runner puts test binaries on a
+private mutter compositor, so a GTK suite does not throw windows at your
+desktop. `POSTIO_HEADLESS=0 cargo test` watches a run. To see the app
+itself, `scripts/run-isolated.sh` builds a pinned commit with its own
+target directory and a throwaway store, and `cargo run -p postio-app` runs
+whatever is on disk.
+
+## Contributing code
+
 Fork, branch, and open a PR that says which issue it closes
 (`Closes #N`). Verify the crates you touched rather than the whole
-workspace on every edit — `cargo test --workspace` builds nine crates
+workspace on every edit — `cargo test --workspace` builds twenty crates
 including GTK and is the expensive way to find out what `-p` would have
 told you. If your change builds a user-facing surface, confirm a person
 can actually reach it in the running app; a green suite proves the

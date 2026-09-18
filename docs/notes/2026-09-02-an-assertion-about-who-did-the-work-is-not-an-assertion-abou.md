@@ -1,7 +1,8 @@
 # An assertion about who did the work is not an assertion about the work (2026-09-02, #851)
 
-`engine::a_seeded_body_is_actually_fetched` failed on CI and passed everywhere
-else:
+`engine::a_seeded_body_is_actually_fetched` (now in
+`crates/postio-runtime/tests/runtime_suite/engine.rs`) failed on CI and passed
+everywhere else:
 
 ```
 the seed left nothing worth fetching

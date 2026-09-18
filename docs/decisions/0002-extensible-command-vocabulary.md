@@ -15,7 +15,7 @@
 bead sketched `CommandId::Ext(ExtId)` — a new variant on the existing enum.
 
 This ADR exists because the sketch was written from reading the code and never
-tested against it. `docs/architecture-review-2026-08.md` §4 asserted a large
+tested against it. `docs/archive/architecture-review-2026-08.md` §4 asserted a large
 blast radius on the strength of a raw grep — **368 `CommandId::` occurrences
 across 40 files in four crates** — and the handoff prompt turned that into
 "measure before you design". This is that measurement.

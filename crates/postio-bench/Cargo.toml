@@ -22,9 +22,9 @@ path = "src/lib.rs"
 # crate in the workspace.
 [dev-dependencies]
 adw = { version = "0.9", package = "libadwaita", features = ["v1_7"] }
-chrono = { version = "0.4.45", default-features = false, features = ["std", "clock"] }
+chrono = { workspace = true, features = ["std"] }
 criterion = "0.8.2"
-futures-util = { version = "0.3.34", default-features = false, features = ["alloc"] }
+futures-util = { workspace = true }
 gtk = { version = "0.11.4", package = "gtk4", features = ["v4_20"] }
 postio-config.workspace = true
 postio-core.workspace = true
@@ -39,18 +39,11 @@ postio-storage = { workspace = true, features = ["test-support"] }
 postio-sync.workspace = true
 # Throwaway stores: a bench that measured a database it had to keep would be
 # measuring the disk it was left on.
-tempfile = "3.27.0"
-# `sync_writes` drives the write path a transaction at a time, so it holds a
-# `rusqlite` connection itself. The feature string has to match every other
-# consumer's: one `links = "sqlite3"` crate in the graph, and ADR 0014 is why
-# it is the SQLCipher one.
-rusqlite = { version = "0.40.2", features = [
-    "bundled-sqlcipher-vendored-openssl",
-] }
+tempfile = { workspace = true }
 # `store_reads` builds a multi-thread runtime and `sync_lanes` a current-thread
 # one, both by hand: the store and the sync engine are async, and a bench has
 # to own the runtime it measures them on.
-tokio = { version = "1.53.1", features = ["rt-multi-thread", "macros", "time"] }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "time"] }
 
 [lints]
 workspace = true

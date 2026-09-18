@@ -8,9 +8,10 @@
 
 use chrono::Utc;
 use postio_model::ids::{AccountId, CrossAccountMoveId, MailboxId, MessageId, RemoteId};
-use rusqlite::{Connection, OptionalExtension, params};
 
 use crate::error::{Error, Result};
+use crate::sql::{self, RowExt as _, bind};
+use crate::store::Connection;
 
 /// Where a saga is in its life. See migration 0020 for what each means.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -131,57 +132,58 @@ impl<'a> CrossAccountMoveRepository<'a> {
 
     /// Start a saga, in `copying`. The row is on disk before either queue
     /// runs anything — resumability is this insert.
-    pub fn create(&self, saga: &NewCrossAccountMove) -> Result<CrossAccountMoveId> {
+    pub async fn create(&self, saga: &NewCrossAccountMove) -> Result<CrossAccountMoveId> {
         let now = Utc::now().timestamp_millis();
-        self.connection.execute(
-            "INSERT INTO cross_account_moves
+        self.connection
+            .execute(
+                "INSERT INTO cross_account_moves
                  (source_message_id, source_account_id, source_mailbox_id,
                   target_account_id, target_mailbox_id, target_message_id,
                   raw_blob_id, rfc_message_id, phase, created_at, updated_at)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 'copying', ?9, ?9)",
-            params![
-                saga.source_message.get(),
-                saga.source_account.get(),
-                saga.source_mailbox.get(),
-                saga.target_account.get(),
-                saga.target_mailbox.get(),
-                saga.target_message.map(MessageId::get),
-                saga.raw_blob_id,
-                saga.rfc_message_id,
-                now,
-            ],
-        )?;
+                bind![
+                    saga.source_message.get(),
+                    saga.source_account.get(),
+                    saga.source_mailbox.get(),
+                    saga.target_account.get(),
+                    saga.target_mailbox.get(),
+                    saga.target_message.map(MessageId::get),
+                    saga.raw_blob_id,
+                    saga.rfc_message_id,
+                    now,
+                ],
+            )
+            .await?;
         Ok(CrossAccountMoveId::new(self.connection.last_insert_rowid()))
     }
 
     /// One saga, or `None`.
-    pub fn get(&self, id: CrossAccountMoveId) -> Result<Option<CrossAccountMove>> {
-        self.connection
-            .query_row(
-                "SELECT id, source_message_id, source_account_id, source_mailbox_id,
+    pub async fn get(&self, id: CrossAccountMoveId) -> Result<Option<CrossAccountMove>> {
+        sql::first(
+            self.connection,
+            "SELECT id, source_message_id, source_account_id, source_mailbox_id,
                         target_account_id, target_mailbox_id, target_message_id,
                         raw_blob_id, rfc_message_id, phase, confirmed_remote_id
                    FROM cross_account_moves WHERE id = ?1",
-                [id.get()],
-                |row| {
-                    let phase: String = row.get(9)?;
-                    Ok(CrossAccountMove {
-                        id: CrossAccountMoveId::new(row.get(0)?),
-                        source_message: row.get::<_, Option<i64>>(1)?.map(MessageId::new),
-                        source_account: row.get::<_, Option<i64>>(2)?.map(AccountId::new),
-                        source_mailbox: row.get::<_, Option<i64>>(3)?.map(MailboxId::new),
-                        target_account: row.get::<_, Option<i64>>(4)?.map(AccountId::new),
-                        target_mailbox: row.get::<_, Option<i64>>(5)?.map(MailboxId::new),
-                        target_message: row.get::<_, Option<i64>>(6)?.map(MessageId::new),
-                        raw_blob_id: row.get(7)?,
-                        rfc_message_id: row.get(8)?,
-                        phase: MovePhase::parse(&phase).unwrap_or(MovePhase::Aborted),
-                        confirmed_remote_id: row.get::<_, Option<String>>(10)?.map(RemoteId::new),
-                    })
-                },
-            )
-            .optional()
-            .map_err(Into::into)
+            [id.get()],
+            |row| {
+                let phase: String = row.col(9)?;
+                Ok(CrossAccountMove {
+                    id: CrossAccountMoveId::new(row.col(0)?),
+                    source_message: row.col::<Option<i64>>(1)?.map(MessageId::new),
+                    source_account: row.col::<Option<i64>>(2)?.map(AccountId::new),
+                    source_mailbox: row.col::<Option<i64>>(3)?.map(MailboxId::new),
+                    target_account: row.col::<Option<i64>>(4)?.map(AccountId::new),
+                    target_mailbox: row.col::<Option<i64>>(5)?.map(MailboxId::new),
+                    target_message: row.col::<Option<i64>>(6)?.map(MessageId::new),
+                    raw_blob_id: row.col(7)?,
+                    rfc_message_id: row.col(8)?,
+                    phase: MovePhase::parse(&phase).unwrap_or(MovePhase::Aborted),
+                    confirmed_remote_id: row.col::<Option<String>>(10)?.map(RemoteId::new),
+                })
+            },
+        )
+        .await
     }
     /// Every saga in one of `phases` whose *source* is among `sources`.
     ///
@@ -190,7 +192,7 @@ impl<'a> CrossAccountMoveRepository<'a> {
     /// to see `done` as well, since a move that finished is exactly the one
     /// a user is most likely to take back and is not "open" by any
     /// definition the forward path needed (#531).
-    pub fn for_sources(
+    pub async fn for_sources(
         &self,
         sources: &[MessageId],
         phases: &[MovePhase],
@@ -206,17 +208,18 @@ impl<'a> CrossAccountMoveRepository<'a> {
             .map(|phase| format!("'{}'", phase.as_str()))
             .collect::<Vec<_>>()
             .join(", ");
-        let mut statement = self.connection.prepare(&format!(
-            "SELECT id FROM cross_account_moves
+        let mut statement = self
+            .connection
+            .prepare(&format!(
+                "SELECT id FROM cross_account_moves
               WHERE phase IN ({list})
               ORDER BY id"
-        ))?;
-        let ids: Vec<i64> = statement
-            .query_map([], |row| row.get(0))?
-            .collect::<rusqlite::Result<_>>()?;
+            ))
+            .await?;
+        let ids: Vec<i64> = sql::mapped(&mut statement, (), |row| row.col(0)).await?;
         let mut found = Vec::new();
         for id in ids {
-            let Some(saga) = self.get(CrossAccountMoveId::new(id))? else {
+            let Some(saga) = self.get(CrossAccountMoveId::new(id)).await? else {
                 continue;
             };
             if saga
@@ -234,8 +237,8 @@ impl<'a> CrossAccountMoveRepository<'a> {
     /// Refusal is an error, not a no-op: a drainer asking for an illegal
     /// transition has misread the saga, and silently ignoring it would let
     /// the walk continue on a wrong belief.
-    pub fn transition(&self, id: CrossAccountMoveId, next: MovePhase) -> Result<()> {
-        let Some(current) = self.get(id)? else {
+    pub async fn transition(&self, id: CrossAccountMoveId, next: MovePhase) -> Result<()> {
+        let Some(current) = self.get(id).await? else {
             return Err(Error::NotFound {
                 entity: "cross-account move",
                 id: id.get(),
@@ -252,10 +255,12 @@ impl<'a> CrossAccountMoveRepository<'a> {
                 ),
             });
         }
-        self.connection.execute(
-            "UPDATE cross_account_moves SET phase = ?2, updated_at = ?3 WHERE id = ?1",
-            params![id.get(), next.as_str(), Utc::now().timestamp_millis()],
-        )?;
+        self.connection
+            .execute(
+                "UPDATE cross_account_moves SET phase = ?2, updated_at = ?3 WHERE id = ?1",
+                bind![id.get(), next.as_str(), Utc::now().timestamp_millis()],
+            )
+            .await?;
         Ok(())
     }
 
@@ -263,15 +268,21 @@ impl<'a> CrossAccountMoveRepository<'a> {
     ///
     /// `remote_id` is `Some` from APPENDUID, `None` when a Message-ID
     /// search proved presence without naming where.
-    pub fn confirm(&self, id: CrossAccountMoveId, remote_id: Option<&RemoteId>) -> Result<()> {
-        self.transition(id, MovePhase::Confirmed)?;
+    pub async fn confirm(
+        &self,
+        id: CrossAccountMoveId,
+        remote_id: Option<&RemoteId>,
+    ) -> Result<()> {
+        self.transition(id, MovePhase::Confirmed).await?;
         let Some(remote_id) = remote_id else {
             return Ok(());
         };
-        self.connection.execute(
-            "UPDATE cross_account_moves SET confirmed_remote_id = ?2 WHERE id = ?1",
-            params![id.get(), remote_id.as_str()],
-        )?;
+        self.connection
+            .execute(
+                "UPDATE cross_account_moves SET confirmed_remote_id = ?2 WHERE id = ?1",
+                bind![id.get(), remote_id.as_str()],
+            )
+            .await?;
 
         // And onto the row the user is looking at (ADR 0026, #531).
         //
@@ -289,11 +300,13 @@ impl<'a> CrossAccountMoveRepository<'a> {
         // same message. And an inverse saga (#531) has no coordinate for the
         // copy it must remove — which is the failure that reaches no server
         // and reports success.
-        self.connection.execute(
-            "UPDATE messages SET remote_id = ?2
+        self.connection
+            .execute(
+                "UPDATE messages SET remote_id = ?2
               WHERE id = (SELECT target_message_id FROM cross_account_moves WHERE id = ?1)",
-            params![id.get(), remote_id.as_str()],
-        )?;
+                bind![id.get(), remote_id.as_str()],
+            )
+            .await?;
         Ok(())
     }
 }
@@ -303,19 +316,21 @@ mod tests {
     use super::*;
     use crate::test_support;
 
-    fn a_saga(connection: &Connection) -> CrossAccountMoveId {
-        let (account, inbox) = test_support::account_with_inbox(connection);
+    async fn a_saga(connection: &Connection) -> CrossAccountMoveId {
+        let (account, inbox) = test_support::account_with_inbox(connection).await;
         let mut second = postio_model::Account::new(
             "Second",
             postio_model::EmailAddress::new(None::<String>, "grace@example.org"),
         );
         crate::repository::AccountRepository::new(connection)
             .create(&mut second)
+            .await
             .expect("second account");
-        let target = test_support::mailbox(connection, &second, "INBOX");
+        let target = test_support::mailbox(connection, &second, "INBOX").await;
         let mut message = postio_model::Message::new(account.id, inbox, Utc::now());
         let message_id = crate::repository::MessageRepository::new(connection)
             .create(&mut message)
+            .await
             .expect("a message");
         CrossAccountMoveRepository::new(connection)
             .create(&NewCrossAccountMove {
@@ -328,77 +343,83 @@ mod tests {
                 raw_blob_id: None,
                 rfc_message_id: Some("<pair@example.com>".to_string()),
             })
+            .await
             .expect("a saga")
     }
 
-    #[test]
-    fn the_phase_walk_is_forward_only_and_done_needs_confirmed() {
-        let database = test_support::memory();
-        let connection = database.connection().expect("checkout");
+    #[tokio::test]
+    async fn the_phase_walk_is_forward_only_and_done_needs_confirmed() {
+        let database = test_support::memory().await;
+        let connection = database.connect().await.expect("checkout");
         let sagas = CrossAccountMoveRepository::new(&connection);
-        let id = a_saga(&connection);
+        let id = a_saga(&connection).await;
 
         // The transition that would lose mail: deleting the source while
         // the copy is unproven. Refused however it is asked for.
         assert!(
-            sagas.transition(id, MovePhase::Done).is_err(),
+            sagas.transition(id, MovePhase::Done).await.is_err(),
             "copying -> done skips the proof, and the proof is the point"
         );
         sagas
             .transition(id, MovePhase::Unconfirmed)
+            .await
             .expect("copying -> unconfirmed: the append ran, arrival unproven");
         assert!(
-            sagas.transition(id, MovePhase::Done).is_err(),
+            sagas.transition(id, MovePhase::Done).await.is_err(),
             "unconfirmed -> done is exactly the guess the ADR forbids"
         );
         sagas
             .confirm(id, Some(&RemoteId::new("1:4242")))
+            .await
             .expect("unconfirmed -> confirmed, with the identity recorded");
-        let saga = sagas.get(id).expect("read").expect("the saga");
+        let saga = sagas.get(id).await.expect("read").expect("the saga");
         assert_eq!(saga.phase, MovePhase::Confirmed);
         assert_eq!(saga.confirmed_remote_id, Some(RemoteId::new("1:4242")));
 
         sagas
             .transition(id, MovePhase::Done)
+            .await
             .expect("confirmed -> done is the one legal ending that deletes");
         assert!(
-            sagas.transition(id, MovePhase::Copying).is_err(),
+            sagas.transition(id, MovePhase::Copying).await.is_err(),
             "done is terminal; a saga never runs backwards"
         );
     }
 
-    #[test]
-    fn an_aborted_saga_is_terminal_and_deletes_nothing() {
-        let database = test_support::memory();
-        let connection = database.connection().expect("checkout");
+    #[tokio::test]
+    async fn an_aborted_saga_is_terminal_and_deletes_nothing() {
+        let database = test_support::memory().await;
+        let connection = database.connect().await.expect("checkout");
         let sagas = CrossAccountMoveRepository::new(&connection);
-        let id = a_saga(&connection);
+        let id = a_saga(&connection).await;
 
         sagas
             .transition(id, MovePhase::Aborted)
+            .await
             .expect("a saga may abort from copying");
         assert!(
-            sagas.transition(id, MovePhase::Confirmed).is_err(),
+            sagas.transition(id, MovePhase::Confirmed).await.is_err(),
             "aborted is terminal"
         );
-        let saga = sagas.get(id).expect("read").expect("the saga");
+        let saga = sagas.get(id).await.expect("read").expect("the saga");
         assert!(
             saga.source_message.is_some(),
             "aborting touched no rows: the source copy is intact (Q13)"
         );
     }
 
-    #[test]
-    fn removing_the_target_account_leaves_the_saga_naming_nobody() {
+    #[tokio::test]
+    async fn removing_the_target_account_leaves_the_saga_naming_nobody() {
         // Q13: the CASCADE that removes an account must not silently vanish
         // a half-finished saga — SET NULL leaves the row to be aborted by
         // whoever reads it next, with the source intact.
-        let database = test_support::memory();
-        let connection = database.connection().expect("checkout");
+        let database = test_support::memory().await;
+        let connection = database.connect().await.expect("checkout");
         let sagas = CrossAccountMoveRepository::new(&connection);
-        let id = a_saga(&connection);
+        let id = a_saga(&connection).await;
         let target = sagas
             .get(id)
+            .await
             .expect("read")
             .expect("the saga")
             .target_account
@@ -406,9 +427,14 @@ mod tests {
 
         crate::repository::AccountRepository::new(&connection)
             .delete(target)
+            .await
             .expect("remove the target account");
 
-        let saga = sagas.get(id).expect("read").expect("the saga survives");
+        let saga = sagas
+            .get(id)
+            .await
+            .expect("read")
+            .expect("the saga survives");
         assert_eq!(
             saga.target_account, None,
             "the target is gone, not the saga"

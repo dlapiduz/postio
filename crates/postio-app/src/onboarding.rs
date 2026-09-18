@@ -54,7 +54,7 @@ use postio_gtk::window::Window;
 use postio_model::account::{AuthMethod, TransportSecurity};
 use postio_model::ids::AccountId;
 use postio_model::{Account, EmailAddress, Identity};
-use postio_storage::Database;
+use postio_storage::Store;
 use postio_storage::repository::AccountRepository;
 
 use crate::Wiring;
@@ -64,12 +64,13 @@ use crate::Wiring;
 /// A store that cannot be read counts as "no account": the screen is the only
 /// way forward from there anyway, and refusing to show it would leave a
 /// window with nothing in it and no way to fix that.
-pub fn needed(database: &Database) -> bool {
-    let Ok(connection) = database.connection() else {
+pub async fn needed(database: &Store) -> bool {
+    let Ok(connection) = database.connect().await else {
         return true;
     };
     AccountRepository::new(&connection)
         .list_enabled()
+        .await
         .map(|accounts| accounts.is_empty())
         .unwrap_or(true)
 }
@@ -102,7 +103,7 @@ pub fn needed(database: &Database) -> bool {
 /// had nowhere to go at all: onboarding only ran when the store held no
 /// account, so an account with a broken credential was permanent.
 #[allow(clippy::too_many_arguments)]
-pub fn install(
+pub async fn install(
     window: &Window,
     wiring: &Wiring,
     state: SharedState,
@@ -124,7 +125,8 @@ pub fn install(
                 screen.focus_password();
             }
         }
-        None => screen.focus_address(),
+        // A fresh form starts at its first field, which is the name.
+        None => screen.focus_name(),
     }
 
     // One per screen, shared by the two closures below: the probe replaces
@@ -213,8 +215,10 @@ pub fn install(
         let wiring = wiring.clone();
         let previous = previous.clone();
         move || {
-            window.set_content(previous.as_ref());
-            crate::open_account(&window, &wiring, &state, &wired, &events, &notifier);
+            postio_session::blocking::now(async {
+                window.set_content(previous.as_ref());
+                crate::open_account(&window, &wiring, &state, &wired, &events, &notifier).await;
+            })
         }
     };
     screen.connect_start_sync({
@@ -816,7 +820,7 @@ async fn run_sign_in(
 /// secrets first, then the row, rolling the secrets back if the row write
 /// fails.
 async fn persist_oauth(
-    database: &Database,
+    database: &Store,
     secrets: Arc<dyn SecretStore>,
     submission: &Submission,
     endpoints: &postio_account::oauth::Endpoints,
@@ -860,7 +864,9 @@ async fn persist_oauth(
         endpoints,
         scopes,
         refresh_token_lifetime_days,
-    ) {
+    )
+    .await
+    {
         // Roll the secrets back the same way `persist` does: nothing reads
         // a credential no account row names, but leaving one is untidy.
         let _ = secrets
@@ -872,8 +878,8 @@ async fn persist_oauth(
 }
 
 /// The row write for an OAuth sign-in: auth method, client, endpoints.
-fn save_oauth(
-    database: &Database,
+async fn save_oauth(
+    database: &Store,
     submission: &Submission,
     client: &postio_gtk::onboarding::OAuthClientSubmission,
     endpoints: &postio_account::oauth::Endpoints,
@@ -882,13 +888,15 @@ fn save_oauth(
 ) -> Result<(), String> {
     // A browser sign-in is an IMAP account today; the Gmail REST backend
     // is #546, gated on its preset row flipping after #195.
-    save(database, submission, postio_model::account::Backend::Imap)?;
+    save(database, submission, postio_model::account::Backend::Imap).await?;
     let connection = database
-        .connection()
+        .connect()
+        .await
         .map_err(|error| format!("Postio could not open its local store: {error}"))?;
     let repository = AccountRepository::new(&connection);
     let Some(mut account) = repository
         .list()
+        .await
         .map_err(|error| format!("Postio could not read its local store: {error}"))?
         .into_iter()
         .find(|account| {
@@ -910,6 +918,7 @@ fn save_oauth(
     });
     repository
         .update(&mut account)
+        .await
         .map_err(|error| format!("Postio could not record the sign-in: {error}"))
 }
 
@@ -933,7 +942,7 @@ fn save_oauth(
 /// `feed.rs` states the rule: neither loop can drive the other, so runtime
 /// work is spawned and answered over a channel.
 async fn persist(
-    database: &Database,
+    database: &Store,
     secrets: &dyn SecretStore,
     submission: &Submission,
     backend: postio_model::account::Backend,
@@ -950,7 +959,7 @@ async fn persist(
         )
     })?;
 
-    if let Err(reason) = save(database, submission, backend) {
+    if let Err(reason) = save(database, submission, backend).await {
         if let Err(error) = secrets.delete(&key).await {
             // Safe to log: no `SecretError` carries a password.
             tracing::warn!(%error, "the rolled-back credential could not be removed");
@@ -974,17 +983,19 @@ async fn persist(
 /// same address. So an existing row is *updated* — and its identities are
 /// left exactly as they are, because [`AccountRepository::update`] makes the
 /// list it is handed authoritative and every saved draft points at one.
-fn save(
-    database: &Database,
+async fn save(
+    database: &Store,
     submission: &Submission,
     backend: postio_model::account::Backend,
 ) -> Result<(), String> {
     let connection = database
-        .connection()
+        .connect()
+        .await
         .map_err(|error| format!("Postio could not open its local store: {error}"))?;
     let repository = AccountRepository::new(&connection);
     let existing = repository
         .list()
+        .await
         .map_err(|error| format!("Postio could not read its local store: {error}"))?
         .into_iter()
         .find(|account| {
@@ -1000,6 +1011,7 @@ fn save(
             account.backend = backend;
             repository
                 .update(&mut account)
+                .await
                 .map_err(|error| format!("Postio could not update the account: {error}"))
         }
         None => {
@@ -1015,6 +1027,7 @@ fn save(
             account.identities = vec![identity];
             repository
                 .create(&mut account)
+                .await
                 .map(|_| ())
                 .map_err(|error| format!("Postio could not write the account: {error}"))
         }
@@ -1316,10 +1329,11 @@ mod tests {
     use postio_account::secret::MemorySecretStore;
 
     /// The account the store holds, if it holds one.
-    fn stored(database: &Database) -> Option<Account> {
-        let connection = database.connection().expect("a connection");
+    async fn stored(database: &Store) -> Option<Account> {
+        let connection = database.connect().await.expect("a connection");
         let accounts = AccountRepository::new(&connection)
             .list()
+            .await
             .expect("the accounts should read");
         assert!(
             accounts.len() < 2,
@@ -1409,27 +1423,27 @@ mod tests {
         assert!(reason.contains("will not fall back"), "{reason}");
     }
 
-    #[test]
-    fn a_fresh_store_needs_onboarding_and_one_with_an_account_does_not() {
-        let database = postio_storage::test_support::memory();
-        assert!(needed(&database), "nothing has been provisioned yet");
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_fresh_store_needs_onboarding_and_one_with_an_account_does_not() {
+        let database = postio_storage::test_support::memory().await;
+        assert!(needed(&database).await, "nothing has been provisioned yet");
 
-        let connection = database.connection().expect("a connection");
-        let _account = postio_storage::test_support::account(&connection);
+        let connection = database.connect().await.expect("a connection");
+        let _account = postio_storage::test_support::account(&connection).await;
         drop(connection);
         assert!(
-            !needed(&database),
+            !needed(&database).await,
             "an account exists, so the screen is done"
         );
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn a_credential_that_cannot_be_stored_leaves_no_account_behind() {
         // `postio-67`: 0.1.0 wrote the row first. When the keyring write then
         // failed, the row stayed — and every launch after that opened an
         // account with no reachable password, in an application whose only
         // credential writer is the screen that never runs again.
-        let database = postio_storage::test_support::memory();
+        let database = postio_storage::test_support::memory().await;
 
         let outcome = persist(
             &database,
@@ -1441,14 +1455,14 @@ mod tests {
 
         assert!(outcome.is_err(), "a locked keyring has to fail the submit");
         assert!(
-            stored(&database).is_none(),
+            stored(&database).await.is_none(),
             "the account row outlived the credential write that failed"
         );
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn a_first_run_writes_both_the_row_and_the_credential() {
-        let database = postio_storage::test_support::memory();
+        let database = postio_storage::test_support::memory().await;
         let secrets = MemorySecretStore::new();
 
         persist(
@@ -1460,7 +1474,7 @@ mod tests {
         .await
         .expect("both writes should land");
 
-        let account = stored(&database).expect("an account row");
+        let account = stored(&database).await.expect("an account row");
         assert_eq!(account.address.address, "lena@example.com");
         assert_eq!(account.incoming.host, "imap.example.com");
         assert_eq!(
@@ -1473,9 +1487,9 @@ mod tests {
         );
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn a_name_at_onboarding_becomes_the_from_name_and_the_sidebar_label() {
-        let database = postio_storage::test_support::memory();
+        let database = postio_storage::test_support::memory().await;
         let secrets = MemorySecretStore::new();
         let mut named = submission("imap.example.com", TransportSecurity::Tls);
         named.name = "Lena Lovelace".to_owned();
@@ -1489,7 +1503,7 @@ mod tests {
         .await
         .expect("both writes should land");
 
-        let account = stored(&database).expect("an account row");
+        let account = stored(&database).await.expect("an account row");
         assert_eq!(account.display_name, "Lena Lovelace");
         assert_eq!(account.address.name.as_deref(), Some("Lena Lovelace"));
         assert_eq!(
@@ -1498,9 +1512,9 @@ mod tests {
         );
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn a_blank_name_leaves_the_address_as_the_label_exactly_as_before() {
-        let database = postio_storage::test_support::memory();
+        let database = postio_storage::test_support::memory().await;
         let secrets = MemorySecretStore::new();
 
         persist(
@@ -1512,20 +1526,21 @@ mod tests {
         .await
         .expect("both writes should land");
 
-        let account = stored(&database).expect("an account row");
+        let account = stored(&database).await.expect("an account row");
         assert_eq!(account.display_name, "lena@example.com");
         assert_eq!(account.address.name, None);
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn an_account_row_that_will_not_write_takes_its_credential_back() {
         // The other order's failure, and the reason the rollback is here: a
         // secret Postio kept for an account that does not exist is a secret
         // nobody asked it to keep.
-        let database = postio_storage::test_support::memory();
-        let connection = database.connection().expect("a connection");
+        let database = postio_storage::test_support::memory().await;
+        let connection = database.connect().await.expect("a connection");
         connection
-            .execute("ALTER TABLE accounts RENAME TO accounts_elsewhere", [])
+            .execute("ALTER TABLE accounts RENAME TO accounts_elsewhere", ())
+            .await
             .expect("the table should move out of the way");
         drop(connection);
         let secrets = MemorySecretStore::new();
@@ -1545,13 +1560,13 @@ mod tests {
         );
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn signing_in_again_repairs_the_account_rather_than_duplicating_it() {
         // What a repair run does. `startup_route` sends an account with no
         // credential back to this screen, so the second submit arrives over a
         // row that already exists — and a second row would leave
         // `first_account` picking between two.
-        let database = postio_storage::test_support::memory();
+        let database = postio_storage::test_support::memory().await;
         let secrets = MemorySecretStore::new();
         persist(
             &database,
@@ -1561,7 +1576,7 @@ mod tests {
         )
         .await
         .expect("the first run should land");
-        let first = stored(&database).expect("an account row");
+        let first = stored(&database).await.expect("an account row");
 
         persist(
             &database,
@@ -1573,7 +1588,7 @@ mod tests {
         .expect("the repair should land");
 
         // `stored` fails the test outright on a second row.
-        let repaired = stored(&database).expect("an account row");
+        let repaired = stored(&database).await.expect("an account row");
         assert_eq!(repaired.id, first.id, "the repair replaced the account");
         assert_eq!(
             repaired.incoming.host, "new.example.com",
@@ -1581,12 +1596,12 @@ mod tests {
         );
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn a_repair_keeps_the_identity_the_drafts_point_at() {
         // `AccountRepository::update` makes the identity list authoritative,
         // so a repair that rebuilt the list from scratch would delete the
         // identity every saved draft refers to.
-        let database = postio_storage::test_support::memory();
+        let database = postio_storage::test_support::memory().await;
         let secrets = MemorySecretStore::new();
         persist(
             &database,
@@ -1596,7 +1611,7 @@ mod tests {
         )
         .await
         .expect("the first run should land");
-        let before = stored(&database).expect("an account row");
+        let before = stored(&database).await.expect("an account row");
         let identity = before
             .identities
             .first()
@@ -1612,7 +1627,7 @@ mod tests {
         .await
         .expect("the repair should land");
 
-        let after = stored(&database).expect("an account row");
+        let after = stored(&database).await.expect("an account row");
         assert_eq!(
             after.identities.first().map(|i| i.id),
             Some(identity),

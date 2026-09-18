@@ -59,7 +59,7 @@ pub type Reindexing = Rc<RefCell<HashSet<AccountId>>>;
 /// through [`crate::settings_credential::install`], which needs the runtime
 /// and the secret store `wiring` carries alongside the database),
 /// rebuild-index, and each account's mailbox role map.
-pub fn install(window: &Window, wiring: &Wiring, reindexing: Reindexing, feeds: &Feeds) {
+pub async fn install(window: &Window, wiring: &Wiring, reindexing: Reindexing, feeds: &Feeds) {
     // **Not on the startup path, and not merely deferred.**
     //
     // `refresh` reads every account's `footprint` -- `count(*)` and
@@ -86,19 +86,21 @@ pub fn install(window: &Window, wiring: &Wiring, reindexing: Reindexing, feeds: 
     // viewport height: "read fresh on every open rather than cached" (#871).
     // Nothing else needs these numbers -- they are drawn in this panel and
     // nowhere else.
-    refresh(window, wiring);
+    refresh(window, wiring).await;
 
     {
         let weak = glib::object::ObjectExt::downgrade(window);
         let wiring = wiring.clone();
         let panel = window.settings();
         gtk::prelude::WidgetExt::connect_visible_notify(&panel, move |panel| {
-            if !gtk::prelude::WidgetExt::is_visible(panel) {
-                return;
-            }
-            if let Some(window) = weak.upgrade() {
-                refresh(&window, &wiring);
-            }
+            postio_session::blocking::now(async {
+                if !gtk::prelude::WidgetExt::is_visible(panel) {
+                    return;
+                }
+                if let Some(window) = weak.upgrade() {
+                    refresh(&window, &wiring).await;
+                }
+            })
         });
     }
 
@@ -112,14 +114,18 @@ pub fn install(window: &Window, wiring: &Wiring, reindexing: Reindexing, feeds: 
         let weak = weak.clone();
         let wiring = wiring.clone();
         move |id, enabled| {
-            if let Ok(connection) = wiring.database.connection()
-                && let Err(error) = AccountRepository::new(&connection).set_enabled(id, enabled)
-            {
-                tracing::warn!(%error, "could not change whether an account is enabled");
-            }
-            if let Some(window) = weak.upgrade() {
-                refresh(&window, &wiring);
-            }
+            postio_session::blocking::now(async {
+                if let Ok(connection) = wiring.database.connect().await
+                    && let Err(error) = AccountRepository::new(&connection)
+                        .set_enabled(id, enabled)
+                        .await
+                {
+                    tracing::warn!(%error, "could not change whether an account is enabled");
+                }
+                if let Some(window) = weak.upgrade() {
+                    refresh(&window, &wiring).await;
+                }
+            })
         }
     });
 
@@ -131,14 +137,16 @@ pub fn install(window: &Window, wiring: &Wiring, reindexing: Reindexing, feeds: 
             let Some(window) = weak.upgrade() else {
                 return;
             };
-            match action {
-                AccountAction::Remove => remove(&window, &wiring, id),
-                AccountAction::UpdateCredential => {
-                    crate::settings_credential::install(&window, &wiring, id)
+            postio_session::blocking::now(async {
+                match action {
+                    AccountAction::Remove => remove(&window, &wiring, id).await,
+                    AccountAction::UpdateCredential => {
+                        crate::settings_credential::install(&window, &wiring, id).await
+                    }
+                    AccountAction::RebuildIndex => rebuild_index(&window, &wiring, &reindexing, id),
+                    AccountAction::SetDefault => set_default(&window, &wiring, id).await,
                 }
-                AccountAction::RebuildIndex => rebuild_index(&window, &wiring, &reindexing, id),
-                AccountAction::SetDefault => set_default(&window, &wiring, id),
-            }
+            })
         }
     });
 
@@ -149,12 +157,14 @@ pub fn install(window: &Window, wiring: &Wiring, reindexing: Reindexing, feeds: 
         let window = window.downgrade();
         let wiring = wiring.clone();
         move |event| {
-            if !matches!(event, postio_core::Event::MailboxesChanged { .. }) {
-                return;
-            }
-            if let Some(window) = window.upgrade() {
-                refresh(&window, &wiring);
-            }
+            postio_session::blocking::now(async {
+                if !matches!(event, postio_core::Event::MailboxesChanged { .. }) {
+                    return;
+                }
+                if let Some(window) = window.upgrade() {
+                    refresh(&window, &wiring).await;
+                }
+            })
         }
     });
 
@@ -162,32 +172,34 @@ pub fn install(window: &Window, wiring: &Wiring, reindexing: Reindexing, feeds: 
         let weak = weak.clone();
         let wiring = wiring.clone();
         move |id, edit| {
-            match edit {
-                // A role mapping is not an account column: it re-roles the
-                // account's folders, is undoable, and has to announce itself
-                // so the sidebar relabels -- all of which the command owns
-                // (ADR 0035). Everything else here is a field on the row.
-                AccountEdit::MailboxRole(role, path) => {
-                    if let Some(window) = weak.upgrade() {
-                        window.act(postio_core::Command::MapMailboxRole {
-                            account: Some(id),
-                            role: Some(role),
-                            path,
-                        });
+            postio_session::blocking::now(async {
+                match edit {
+                    // A role mapping is not an account column: it re-roles the
+                    // account's folders, is undoable, and has to announce itself
+                    // so the sidebar relabels -- all of which the command owns
+                    // (ADR 0035). Everything else here is a field on the row.
+                    AccountEdit::MailboxRole(role, path) => {
+                        if let Some(window) = weak.upgrade() {
+                            window.act(postio_core::Command::MapMailboxRole {
+                                account: Some(id),
+                                role: Some(role),
+                                path,
+                            });
+                        }
+                        // No refresh here, deliberately. The command announces
+                        // `MailboxesChanged` and the subscription below redraws
+                        // from that -- which is both the local-first order (write,
+                        // emit, repaint) and the only safe one: redrawing now
+                        // would tear down the very dropdown whose signal is still
+                        // being emitted.
+                        return;
                     }
-                    // No refresh here, deliberately. The command announces
-                    // `MailboxesChanged` and the subscription below redraws
-                    // from that -- which is both the local-first order (write,
-                    // emit, repaint) and the only safe one: redrawing now
-                    // would tear down the very dropdown whose signal is still
-                    // being emitted.
-                    return;
+                    edit => edit_account(&wiring, id, edit).await,
                 }
-                edit => edit_account(&wiring, id, edit),
-            }
-            if let Some(window) = weak.upgrade() {
-                refresh(&window, &wiring);
-            }
+                if let Some(window) = weak.upgrade() {
+                    refresh(&window, &wiring).await;
+                }
+            })
         }
     });
 
@@ -195,9 +207,11 @@ pub fn install(window: &Window, wiring: &Wiring, reindexing: Reindexing, feeds: 
         let weak = weak.clone();
         let wiring = wiring.clone();
         move |id| {
-            if let Some(window) = weak.upgrade() {
-                test_connection(&window, &wiring, id);
-            }
+            postio_session::blocking::now(async {
+                if let Some(window) = weak.upgrade() {
+                    test_connection(&window, &wiring, id).await;
+                }
+            })
         }
     });
 
@@ -205,9 +219,11 @@ pub fn install(window: &Window, wiring: &Wiring, reindexing: Reindexing, feeds: 
         let weak = weak.clone();
         let wiring = wiring.clone();
         move |id, draft| {
-            if let Some(window) = weak.upgrade() {
-                save_signature(&window, &wiring, id, draft);
-            }
+            postio_session::blocking::now(async {
+                if let Some(window) = weak.upgrade() {
+                    save_signature(&window, &wiring, id, draft).await;
+                }
+            })
         }
     });
 
@@ -215,9 +231,11 @@ pub fn install(window: &Window, wiring: &Wiring, reindexing: Reindexing, feeds: 
         let weak = weak.clone();
         let wiring = wiring.clone();
         move |id, signature| {
-            if let Some(window) = weak.upgrade() {
-                delete_signature(&window, &wiring, id, signature);
-            }
+            postio_session::blocking::now(async {
+                if let Some(window) = weak.upgrade() {
+                    delete_signature(&window, &wiring, id, signature).await;
+                }
+            })
         }
     });
 }
@@ -232,13 +250,13 @@ pub fn install(window: &Window, wiring: &Wiring, reindexing: Reindexing, feeds: 
 /// `idx_signatures_name` is a unique index on `(account_id, name)`, so a
 /// second "Work" fails, and "UNIQUE constraint failed: signatures.account_id,
 /// signatures.name" is not an answer anybody can act on.
-fn save_signature(
+async fn save_signature(
     window: &Window,
     wiring: &Wiring,
     id: postio_model::ids::AccountId,
     draft: &SignatureDraft,
 ) {
-    let Ok(connection) = wiring.database.connection() else {
+    let Ok(connection) = wiring.database.connect().await else {
         return;
     };
     let signatures = SignatureRepository::new(&connection);
@@ -249,21 +267,21 @@ fn save_signature(
             // The rich variant is left exactly as it was: this editor is
             // text-only (#1086), and rewriting `html` to `None` here would
             // quietly discard a signature somebody else's tooling wrote.
-            if let Some(previous) = existing_signature(&connection, id, existing) {
+            if let Some(previous) = existing_signature(&connection, id, existing).await {
                 signature.html = previous.html;
             }
-            signatures.update(&signature)
+            signatures.update(&signature).await
         }
         None => {
             let mut signature = postio_model::Signature::new(&draft.name, &draft.text);
-            signatures.create(id, &mut signature).map(|_| ())
+            signatures.create(id, &mut signature).await.map(|_| ())
         }
     };
     drop(connection);
 
     match written {
         Ok(()) => {
-            refresh(window, wiring);
+            refresh(window, wiring).await;
             // Back to the account, with the list it now belongs to.
             window.settings().open_account_detail(id);
         }
@@ -275,13 +293,14 @@ fn save_signature(
 
 /// The stored signature `id` currently is, so an edit keeps the fields this
 /// editor does not show.
-fn existing_signature(
-    connection: &postio_storage::PooledConnection,
+async fn existing_signature(
+    connection: &postio_storage::Checkout,
     account: postio_model::ids::AccountId,
     id: postio_model::ids::SignatureId,
 ) -> Option<postio_model::Signature> {
     SignatureRepository::new(connection)
         .list_for_account(account)
+        .await
         .ok()?
         .into_iter()
         .find(|signature| signature.id == id)
@@ -307,20 +326,22 @@ fn explain_signature_failure(name: &str, error: &postio_storage::Error) -> Strin
 /// anything here -- `storage_suite/accounts.rs` is what holds that to
 /// account. The refresh below is what makes #979's row and the composer's
 /// picker agree with it without a restart.
-fn delete_signature(
+async fn delete_signature(
     window: &Window,
     wiring: &Wiring,
     id: postio_model::ids::AccountId,
     signature: postio_model::ids::SignatureId,
 ) {
-    let Ok(connection) = wiring.database.connection() else {
+    let Ok(connection) = wiring.database.connect().await else {
         return;
     };
-    let removed = SignatureRepository::new(&connection).delete(signature);
+    let removed = SignatureRepository::new(&connection)
+        .delete(signature)
+        .await;
     drop(connection);
     match removed {
         Ok(_) => {
-            refresh(window, wiring);
+            refresh(window, wiring).await;
             window.settings().open_account_detail(id);
         }
         Err(error) => window
@@ -339,11 +360,11 @@ fn delete_signature(
 /// comes back over an `async_channel`, the same crossing `search.rs` and
 /// `feed.rs` make: `rusqlite` is blocking and a connect is a round trip, and
 /// the main loop must be inside neither.
-fn test_connection(window: &Window, wiring: &Wiring, id: postio_model::ids::AccountId) {
-    let Ok(connection) = wiring.database.connection() else {
+async fn test_connection(window: &Window, wiring: &Wiring, id: postio_model::ids::AccountId) {
+    let Ok(connection) = wiring.database.connect().await else {
         return;
     };
-    let account = match AccountRepository::new(&connection).get(id) {
+    let account = match AccountRepository::new(&connection).get(id).await {
         Ok(Some(account)) => account,
         // The row went away between the press and here. The panel is already
         // showing "Testing…", so it has to be told something.
@@ -433,12 +454,12 @@ fn as_result(reachability: postio_session::reachability::Reachability) -> Result
 /// [`AccountRepository::update`] — the same read-mutate-write shape
 /// `remove`'s `mark_pending_deletion` skips only because it is a single
 /// column with its own dedicated method.
-fn edit_account(wiring: &Wiring, id: postio_model::ids::AccountId, edit: AccountEdit) {
-    let Ok(connection) = wiring.database.connection() else {
+async fn edit_account(wiring: &Wiring, id: postio_model::ids::AccountId, edit: AccountEdit) {
+    let Ok(connection) = wiring.database.connect().await else {
         return;
     };
     let repository = AccountRepository::new(&connection);
-    let Ok(Some(mut account)) = repository.get(id) else {
+    let Ok(Some(mut account)) = repository.get(id).await else {
         return;
     };
     match edit {
@@ -454,7 +475,7 @@ fn edit_account(wiring: &Wiring, id: postio_model::ids::AccountId, edit: Account
         // Handled as a command before this is reached; it writes no column.
         AccountEdit::MailboxRole(..) => return,
     }
-    if let Err(error) = repository.update(&mut account) {
+    if let Err(error) = repository.update(&mut account).await {
         tracing::warn!(%error, "could not save an account detail edit");
     }
 }
@@ -470,11 +491,11 @@ fn edit_account(wiring: &Wiring, id: postio_model::ids::AccountId, edit: Account
 /// a credential update closes, since a repaired account's own submission can
 /// turn `enabled` back on (`onboarding::configure`) and the row should say
 /// so without waiting for the next full refresh.
-pub(crate) fn refresh(window: &Window, wiring: &Wiring) {
-    let Ok(connection) = wiring.database.connection() else {
+pub(crate) async fn refresh(window: &Window, wiring: &Wiring) {
+    let Ok(connection) = wiring.database.connect().await else {
         return;
     };
-    match AccountRepository::new(&connection).list() {
+    match AccountRepository::new(&connection).list().await {
         // `list()` (unlike `list_enabled()`) has no reason to hide a
         // *disabled* account from settings -- that is exactly where you go
         // to re-enable one. A row pending removal is different: it is on
@@ -511,21 +532,25 @@ pub(crate) fn refresh(window: &Window, wiring: &Wiring) {
                 .iter()
                 .filter(|_| showing)
                 .filter_map(|account| {
-                    let footprint = messages
-                        .footprint(account.id)
-                        .inspect_err(
-                            |error| tracing::warn!(%error, "could not measure an account's mail"),
-                        )
-                        .ok()?;
-                    Some((
-                        account.id,
-                        postio_core::event::MailFootprint {
-                            total_bytes: footprint.total_bytes,
-                            attachment_bytes: footprint.attachment_bytes,
-                            local_bytes: footprint.local_bytes,
-                            complete: footprint.complete,
-                        },
-                    ))
+                    postio_session::blocking::now(async {
+                        let footprint = messages
+                            .footprint(account.id)
+                            .await
+                            .inspect_err(
+                                |error| tracing::warn!(%error, "could not measure an account's mail"),
+                            )
+                            .ok()?;
+                        Some((
+                            account.id,
+                            postio_core::event::MailFootprint {
+                                total_bytes: footprint.total_bytes,
+                                attachment_bytes: footprint.attachment_bytes,
+                                local_bytes: footprint.local_bytes,
+                                complete: footprint.complete,
+                            },
+                        ))
+
+                    })
                 })
                 .collect();
             // The account row's own token-validity line (#878, on top of
@@ -570,10 +595,12 @@ pub(crate) fn refresh(window: &Window, wiring: &Wiring) {
             }
 
             let panel = window.settings();
-            let mailboxes = accounts
-                .iter()
-                .map(|account| (account.id, account_mailboxes(&connection, account.id)))
-                .collect();
+            // A loop rather than `map().collect()`: the read awaits, and a
+            // closure cannot.
+            let mut mailboxes = Vec::with_capacity(accounts.len());
+            for account in accounts.iter() {
+                mailboxes.push((account.id, account_mailboxes(&connection, account.id).await));
+            }
             panel.set_accounts(accounts);
             panel.set_account_mailboxes(mailboxes);
             panel.set_mail_weights(
@@ -594,13 +621,14 @@ pub(crate) fn refresh(window: &Window, wiring: &Wiring) {
 /// "Automatic" name the folder it picked, and it comes from `by_role` -- the
 /// same lookup the send path files a copy through, so the label cannot
 /// disagree with where mail actually goes.
-fn account_mailboxes(
-    connection: &postio_storage::PooledConnection,
+async fn account_mailboxes(
+    connection: &postio_storage::Checkout,
     account: postio_model::ids::AccountId,
 ) -> AccountMailboxes {
     let mailboxes = MailboxRepository::new(connection);
     let folders = mailboxes
         .list_for_account(account)
+        .await
         .unwrap_or_default()
         .into_iter()
         .filter(|mailbox| mailbox.selectable)
@@ -608,6 +636,7 @@ fn account_mailboxes(
         .collect();
     let chosen = MailboxRoleRepository::new(connection)
         .for_account(account)
+        .await
         .unwrap_or_default();
     let resolved = [
         postio_model::MailboxRole::Sent,
@@ -618,15 +647,19 @@ fn account_mailboxes(
     ]
     .into_iter()
     .filter_map(|role| {
-        mailboxes
-            .by_role(account, role)
-            .ok()
-            .flatten()
-            .map(|mailbox| (role, mailbox.path))
+        postio_session::blocking::now(async {
+            mailboxes
+                .by_role(account, role)
+                .await
+                .ok()
+                .flatten()
+                .map(|mailbox| (role, mailbox.path))
+        })
     })
     .collect();
     let refused = MailboxRoleRepository::new(connection)
         .refusals(account)
+        .await
         .unwrap_or_default();
     AccountMailboxes {
         folders,
@@ -639,12 +672,15 @@ fn account_mailboxes(
 /// Marks `id` for removal, refreshes the panel to reflect it immediately,
 /// and offers a toast whose own button restores it — see the module doc for
 /// why this is not the global undo stack.
-fn remove(window: &Window, wiring: &Wiring, id: postio_model::ids::AccountId) {
+async fn remove(window: &Window, wiring: &Wiring, id: postio_model::ids::AccountId) {
     let database = &wiring.database;
-    let Ok(connection) = database.connection() else {
+    let Ok(connection) = database.connect().await else {
         return;
     };
-    match AccountRepository::new(&connection).mark_pending_deletion(id) {
+    match AccountRepository::new(&connection)
+        .mark_pending_deletion(id)
+        .await
+    {
         Ok(true) => {}
         Ok(false) => return,
         Err(error) => {
@@ -653,17 +689,19 @@ fn remove(window: &Window, wiring: &Wiring, id: postio_model::ids::AccountId) {
         }
     }
     drop(connection);
-    refresh(window, wiring);
+    refresh(window, wiring).await;
 
     let restore_window = window.clone();
     let restore_wiring = wiring.clone();
     window.show_removable_toast("Account removed", move || {
-        if let Ok(connection) = restore_wiring.database.connection()
-            && let Err(error) = AccountRepository::new(&connection).restore(id)
-        {
-            tracing::warn!(%error, "could not undo removing an account");
-        }
-        refresh(&restore_window, &restore_wiring);
+        postio_session::blocking::now(async {
+            if let Ok(connection) = restore_wiring.database.connect().await
+                && let Err(error) = AccountRepository::new(&connection).restore(id).await
+            {
+                tracing::warn!(%error, "could not undo removing an account");
+            }
+            refresh(&restore_window, &restore_wiring).await;
+        })
     });
 }
 
@@ -701,13 +739,13 @@ fn remove(window: &Window, wiring: &Wiring, id: postio_model::ids::AccountId) {
 /// window in which two rows both claim the marker. Nothing here reaches the
 /// network: which account a new message comes from is local state, before
 /// and after.
-fn set_default(window: &Window, wiring: &Wiring, id: AccountId) {
-    if let Ok(connection) = wiring.database.connection()
-        && let Err(error) = AccountRepository::new(&connection).set_default(id)
+async fn set_default(window: &Window, wiring: &Wiring, id: AccountId) {
+    if let Ok(connection) = wiring.database.connect().await
+        && let Err(error) = AccountRepository::new(&connection).set_default(id).await
     {
         tracing::warn!(%error, "could not set the default account");
     }
-    refresh(window, wiring);
+    refresh(window, wiring).await;
 }
 
 fn rebuild_index(window: &Window, wiring: &Wiring, reindexing: &Reindexing, id: AccountId) {
@@ -716,7 +754,7 @@ fn rebuild_index(window: &Window, wiring: &Wiring, reindexing: &Reindexing, id: 
     let database = wiring.database.clone();
     let events = wiring.events.clone();
     let (sender, receiver) = async_channel::unbounded::<Option<(u32, u32)>>();
-    wiring.runtime.spawn_blocking(move || {
+    wiring.runtime.spawn(async move {
         let result = postio_session::reindex_account(&database, id, |done, total| {
             events.emit(postio_core::Event::BackfillProgress {
                 account: id,
@@ -726,7 +764,7 @@ fn rebuild_index(window: &Window, wiring: &Wiring, reindexing: &Reindexing, id: 
             });
             let _ = sender.send_blocking(Some((done, total)));
         });
-        if let Err(error) = result {
+        if let Err(error) = result.await {
             tracing::warn!(%error, "could not rebuild an account's local search index");
         }
         let _ = sender.send_blocking(None);

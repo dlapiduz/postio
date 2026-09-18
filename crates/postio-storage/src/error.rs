@@ -7,9 +7,9 @@ pub type Result<T, E = Error> = std::result::Result<T, E>;
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum Error {
-    /// SQLite reported an error that is not specific to migrating.
-    #[error("sqlite: {0}")]
-    Sqlite(#[from] rusqlite::Error),
+    /// The database engine reported an error.
+    #[error("engine: {0}")]
+    Engine(#[from] turso::Error),
 
     /// The filesystem got in the way of opening the database — most often the
     /// data directory could not be created.
@@ -89,6 +89,24 @@ pub enum Error {
         source: serde_json::Error,
     },
 
+    /// A column held something that is not the type the schema declares.
+    ///
+    /// Under `rusqlite` this was `FromSqlConversionFailure`, and it arrived
+    /// with the column's index and SQL type already attached. The engine's own
+    /// accessor is sealed and treats NULL as an error rather than as `None`,
+    /// so this crate reads columns through `sql::RowExt` and this is what that
+    /// returns when the value is not what was asked for.
+    ///
+    /// Always a bug in this crate or a store written by something else: the
+    /// schema is the only writer, and it declares every one of these types.
+    #[error("{column}: {reason}")]
+    ColumnType {
+        /// Which column, by index or by name.
+        column: String,
+        /// What was expected and what was there.
+        reason: String,
+    },
+
     /// Undo was asked for on an operation that has no inverse — an expunge, an
     /// append, a send. The caller should not have offered it; see
     /// [`Operation::inverse`](postio_model::Operation::inverse).
@@ -127,83 +145,54 @@ pub enum Error {
     /// been replaced or was written by something else. **The database is not
     /// damaged** — it is intact and locked, and the right key still opens it.
     ///
-    /// A variant of its own rather than the `SQLITE_NOTADB` this is made from,
-    /// because SQLite's own wording for a wrong key is "file is not a
-    /// database", which tells a user their mail is corrupt. That sentence
-    /// reaches a screen (#404), and it would be a lie.
+    /// A variant of its own rather than the engine error it is made from,
+    /// because an engine handed the wrong key sees a page that will not
+    /// authenticate and reports it in the vocabulary of corruption. That
+    /// sentence reaches a screen (#404), and it would be a lie: the file is
+    /// intact, and the key is what does not fit it.
     #[error(
-        "the local store will not open with this key: it belongs to another \
-         installation, or the keyring entry has been replaced. The database \
-         itself is intact"
+        "the local store will not open: it belongs to another installation, \
+         the keyring entry has been replaced, or it was written by a Postio \
+         from before the storage engine changed. The file is intact and \
+         untouched either way -- nothing here rewrites a store it cannot \
+         read. A store that cannot be opened is rebuilt by syncing again, \
+         which costs the mail's download and loses nothing the server still \
+         has"
     )]
     WrongStoreKey,
-
-    /// The key is right; the store was written before the page MAC changed.
+    /// The store opened, but its schema is not the one this build expects.
     ///
-    /// SQLCipher authenticates every page, and which MAC it used is written
-    /// into the database. Postio moved from SQLCipher 4's default HMAC-SHA512
-    /// to HMAC-SHA256, which is 1.7x cheaper on the page-read path wherever
-    /// the CPU has the SHA extensions (`hmac_cost.rs`), and a store made
-    /// before that cannot be read now.
+    /// Its own variant because it is the case [`Error::WrongStoreKey`] cannot
+    /// reach. A store written by an earlier build of *this* engine decrypts
+    /// perfectly — same cipher, same key, same file format — so nothing at the
+    /// door objects, and the mismatch surfaces later as `no such column` on
+    /// whichever statement names something added since, one statement at a
+    /// time, indefinitely.
     ///
-    /// **A variant of its own, and this is the whole reason it exists.** The
-    /// symptom is identical to a wrong key — page 1 does not verify — so
-    /// without this the user is told their key belongs to another
-    /// installation, which is false and unactionable. There is nothing wrong
-    /// with the key or the mail; the file is in a format this build does not
-    /// read.
-    ///
-    /// Pre-v1 there is no migration: the mail is on the server, so the store
-    /// is rebuilt by resyncing rather than converted.
+    /// There are no migrations (`crate::schema::HEAD` says why), so the remedy
+    /// is to sync again, and this is the only thing in a position to say so.
     #[error(
-        "the local store was written before the page MAC changed and this \
-         build cannot read it. The key is correct and no mail has been lost -- \
-         the store is a cache of the server. Delete it and let it resync"
+        "the local store was written by a different build of Postio: its \
+         schema is stamped {found} and this build expects {expected}. There \
+         are no migrations -- a store is rebuilt by syncing again, which costs \
+         the mail's download and loses nothing the server still has. The file \
+         is intact and untouched: nothing here rewrites a store it will not use"
     )]
-    StorePredatesPageMac,
-
-    /// SQLCipher refused `PRAGMA key`, and it is not about the key.
+    SchemaFromAnotherBuild {
+        /// The fingerprint the file carries.
+        found: i64,
+        /// The fingerprint this build's schema hashes to.
+        expected: i64,
+    },
+    /// A stored message body could not be read back.
     ///
-    /// Its message — "PRAGMA key requires a key of one or more characters" —
-    /// reads as a claim that the key was empty, and that reading has cost
-    /// three passes at #710. The pragma prints it when the key string is
-    /// empty **or** when `sqlite3_key_v2` returns anything other than
-    /// `SQLITE_OK`, and Postio's key is a fixed-length hex rendering of a
-    /// `[u8; KEY_BYTES]`, which cannot be empty. So it is always the second
-    /// case: SQLCipher's one-time initialisation (`sqlcipher_extra_init` —
-    /// static mutexes, its private heap, the crypto provider and its first
-    /// draw of randomness) or this connection's codec setup failed.
-    ///
-    /// **The reason is already printed.** SQLCipher logs it to stderr before
-    /// returning, so a run that reports this has the diagnosis a few lines
-    /// above it: look for `sqlcipher_extra_init`, `sqlcipher_codec_ctx_init`
-    /// or `sqlcipherCodecAttach`.
-    ///
-    /// `sqlite3_initialize` retries the one-time init on its next call, so a
-    /// transient failure clears itself and later opens succeed — which is the
-    /// cluster-then-recover shape #710 keeps recording.
-    ///
-    /// A variant of its own rather than the [`Sqlite`](Self::Sqlite) it is
-    /// made from, for the same reason [`WrongStoreKey`](Self::WrongStoreKey)
-    /// is: the library's own sentence names the wrong thing, and that
-    /// sentence is what a reader acts on.
-    #[error(
-        "sqlcipher would not start its codec for this connection. This is not \
-         the store key: Postio writes a fixed-length key, and sqlcipher \
-         prints the same message for any refused key pragma. It has already \
-         logged the reason to stderr — look for `sqlcipher_extra_init`, \
-         `sqlcipher_codec_ctx_init` or `sqlcipherCodecAttach` — and it \
-         retries its one-time initialisation on the next open"
-    )]
-    CipherUnavailable,
-
-    /// A stored message body could not be compressed or read back.
-    ///
-    /// The row and this build disagree about what is in the column: a frame
-    /// that will not decode, a dictionary the database does not have, or bytes
-    /// that are not UTF-8. Deliberately loud rather than an empty body — a
-    /// reading pane that renders nothing looks the same as a message that had
-    /// nothing in it, and those are opposite facts (#70).
+    /// The row holds something that is not the text it claims to be. Much
+    /// narrower than it was: bodies are plain `TEXT` now rather than zstd
+    /// frames against a shared dictionary, so the decode that used to fail is
+    /// gone and what is left is a column whose type is wrong. Kept because
+    /// that is still reachable, and still deliberately loud rather than an
+    /// empty body -- a reading pane that renders nothing looks the same as a
+    /// message that had nothing in it, and those are opposite facts (#70).
     #[error("a stored message body could not be decoded: {reason}")]
     UnreadableBody {
         /// What about it could not be decoded.
@@ -216,51 +205,6 @@ pub enum Error {
         /// The key that was looked up.
         id: String,
     },
-
-    /// A migration's SQL failed. That migration was rolled back whole and the
-    /// database is still at the last version that committed.
-    #[error("migration {version} ({name}) failed: {source}")]
-    Migration {
-        /// The migration that failed.
-        version: u32,
-        /// Its name.
-        name: &'static str,
-        /// What SQLite said.
-        #[source]
-        source: rusqlite::Error,
-    },
-
-    /// The database was written by a newer build of Postio. Opening it would
-    /// mean guessing at columns this build has never seen, so it refuses.
-    #[error(
-        "this database is at schema version {found}, but this build of Postio only knows \
-         version {known}; it was written by a newer version"
-    )]
-    SchemaTooNew {
-        /// The version recorded in the database.
-        found: u32,
-        /// The newest version this build ships.
-        known: u32,
-    },
-
-    /// A migration left a row pointing at something that is not there.
-    ///
-    /// Foreign keys are enforced everywhere else, but they have to be off
-    /// while a migration rebuilds a table — a `DROP TABLE` with them on fires
-    /// `ON DELETE CASCADE` on the children of the table being replaced. This
-    /// is the check that runs afterwards, so a rebuild that dropped a
-    /// reference fails the migration instead of leaving a database that looks
-    /// right and is not.
-    #[error("migrating left {rows} row(s) in `{table}` pointing at a `{parent}` that is not there")]
-    MigrationBrokeReferences {
-        /// The table holding the dangling rows.
-        table: String,
-        /// The table they point at.
-        parent: String,
-        /// How many rows are dangling.
-        rows: usize,
-    },
-
     /// A store cannot be encrypted while there are operations the server has
     /// not seen yet.
     ///
@@ -276,44 +220,5 @@ pub enum Error {
     QueueNotDrained {
         /// How many rows are still pending or in flight.
         pending: usize,
-    },
-
-    /// The encrypted store this migration built did not read back correctly,
-    /// so nothing was swapped and the plaintext store is untouched.
-    ///
-    /// The one failure mode a migration is not allowed to have is losing mail,
-    /// which is why the check happens before anything is moved rather than
-    /// after.
-    #[error("the encrypted store did not verify, so nothing was replaced: {reason}")]
-    MigrationDidNotVerify {
-        /// What did not read back.
-        reason: String,
-    },
-
-    /// An already-applied migration no longer matches the one that ran.
-    /// Migrations are forward-only: add a new one rather than editing history.
-    #[error("migration {version} ({name}) no longer matches the database: {detail}")]
-    MigrationChanged {
-        /// The version whose record disagrees.
-        version: u32,
-        /// The name recorded when it was applied.
-        name: String,
-        /// How it disagrees.
-        detail: &'static str,
-    },
-
-    /// The migration list is not numbered `1..n` in ascending order. A
-    /// programming error, caught before anything is applied.
-    #[error(
-        "migration list is malformed: expected version {expected} at position {position}, \
-         found {found}"
-    )]
-    MigrationOrder {
-        /// Index into the list.
-        position: usize,
-        /// The version that belongs there.
-        expected: u32,
-        /// The version that is there.
-        found: u32,
     },
 }

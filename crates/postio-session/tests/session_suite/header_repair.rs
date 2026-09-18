@@ -23,25 +23,21 @@ const RAW: &[u8] = b"From: Ada Lovelace <ada@example.com>\r\n\
 
 /// A store holding one message whose body was fetched before blocks were
 /// stored: raw source on disk, `body_headers` NULL.
-fn a_store_from_before() -> (
-    test_support::TempDatabase,
-    BlobStore,
-    postio_model::MessageId,
-) {
-    let database = test_support::temp();
+async fn a_store_from_before() -> (test_support::TempStore, BlobStore, postio_model::MessageId) {
+    let database = test_support::temp().await;
     let blobs = BlobStore::open(
         database.directory().join("blobs"),
         &postio_storage::test_support::blob_keys(),
     )
     .expect("a blob store");
-    let connection = database.connection().expect("checkout");
-    let (account, inbox) = test_support::account_with_inbox(&connection);
+    let connection = database.connect().await.expect("checkout");
+    let (account, inbox) = test_support::account_with_inbox(&connection).await;
 
     let blob = blobs.put(RAW).expect("put the raw source");
     let mut message = postio_model::Message::new(account.id, inbox, chrono::Utc::now());
     message.raw_blob_id = Some(blob);
     let messages = MessageRepository::new(&connection);
-    let id = messages.create(&mut message).expect("create");
+    let id = messages.create(&mut message).await.expect("create");
     messages
         .set_body(
             id,
@@ -54,21 +50,25 @@ fn a_store_from_before() -> (
             },
             postio_model::BodyState::Full,
         )
+        .await
         .expect("set");
     drop(connection);
     (database, blobs, id)
 }
 
-#[test]
-fn a_block_is_rebuilt_from_the_raw_source_already_on_disk() {
-    let (database, blobs, id) = a_store_from_before();
+#[tokio::test]
+async fn a_block_is_rebuilt_from_the_raw_source_already_on_disk() {
+    let (database, blobs, id) = a_store_from_before().await;
 
-    let repaired = postio_session::repair_header_blocks(&database, &blobs).expect("the pass runs");
+    let repaired = postio_session::repair_header_blocks(&database, &blobs)
+        .await
+        .expect("the pass runs");
 
     assert_eq!(repaired, 1);
-    let connection = database.connection().expect("checkout");
+    let connection = database.connect().await.expect("checkout");
     let headers = MessageRepository::new(&connection)
         .headers(id)
+        .await
         .expect("headers")
         .expect("the row");
     assert_eq!(headers.get("x-mailer"), Some("mutt 1.5.24"));
@@ -83,37 +83,42 @@ fn a_block_is_rebuilt_from_the_raw_source_already_on_disk() {
     );
 }
 
-#[test]
-fn a_second_pass_finds_nothing_left_to_do() {
+#[tokio::test]
+async fn a_second_pass_finds_nothing_left_to_do() {
     // The contract #500's guard is watching: repairing a message has to remove
     // it from the candidate query. A pass that kept being offered the same
     // batch would run at 100% of a core for as long as the app was open.
-    let (database, blobs, _id) = a_store_from_before();
+    let (database, blobs, _id) = a_store_from_before().await;
 
     assert_eq!(
-        postio_session::repair_header_blocks(&database, &blobs).expect("first"),
+        postio_session::repair_header_blocks(&database, &blobs)
+            .await
+            .expect("first"),
         1
     );
     assert_eq!(
-        postio_session::repair_header_blocks(&database, &blobs).expect("second"),
+        postio_session::repair_header_blocks(&database, &blobs)
+            .await
+            .expect("second"),
         0,
         "the repaired message came back, so the pass cannot terminate"
     );
 }
 
-#[test]
-fn a_message_whose_raw_source_has_gone_is_left_for_the_fetch_lane() {
+#[tokio::test]
+async fn a_message_whose_raw_source_has_gone_is_left_for_the_fetch_lane() {
     // Eviction takes raw source first (PRODUCT.md §6), so this is the ordinary
     // state of the oldest mail in a store with a ceiling. The row still points
     // at a blob that is not there, and the pass must not treat "I could not
     // read it" as "there is nothing to read": writing an empty block would
     // make `header:` answer "no such header" for ever, with nothing left to
     // say otherwise.
-    let (database, blobs, id) = a_store_from_before();
-    let connection = database.connection().expect("checkout");
+    let (database, blobs, id) = a_store_from_before().await;
+    let connection = database.connect().await.expect("checkout");
     let messages = MessageRepository::new(&connection);
     let blob = messages
         .get(id)
+        .await
         .expect("get")
         .expect("row")
         .raw_blob_id
@@ -121,12 +126,15 @@ fn a_message_whose_raw_source_has_gone_is_left_for_the_fetch_lane() {
     std::fs::remove_file(blobs.path_of(&blob).expect("its path")).expect("evict it");
     drop(connection);
 
-    let repaired = postio_session::repair_header_blocks(&database, &blobs).expect("the pass runs");
+    let repaired = postio_session::repair_header_blocks(&database, &blobs)
+        .await
+        .expect("the pass runs");
 
     assert_eq!(repaired, 0, "there was nothing it could repair");
-    let connection = database.connection().expect("checkout");
+    let connection = database.connect().await.expect("checkout");
     let stored = MessageRepository::new(&connection)
         .body(id)
+        .await
         .expect("body")
         .expect("the row");
     assert_eq!(

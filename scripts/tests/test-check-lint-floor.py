@@ -81,6 +81,18 @@ def exception_stops_declaring(tmp: Path) -> None:
     p.write_text(head)
 
 
+def drop_clippy_floor(tmp: Path) -> None:
+    """An exception crate that keeps its unsafe deny but drops the clippy
+    floor -- the silent hole this check was extended to close."""
+    p = tmp / "crates" / "postio-gtk" / "Cargo.toml"
+    text = p.read_text()
+    # Remove the whole [lints.clippy] block (to the next section or EOF).
+    marker = "[lints.clippy]"
+    i = text.index(marker)
+    j = text.find("\n[", i + len(marker))
+    p.write_text(text[:i] + (text[j + 1 :] if j != -1 else ""))
+
+
 def main() -> int:
     baseline = run(sandbox(Path(tempfile.mkdtemp())))
     if baseline.returncode != 0:
@@ -95,6 +107,7 @@ def main() -> int:
             case("the workspace floor is weakened to deny", weaken_the_floor),
             case("an audited crate weakens to allow", weaken_an_exception),
             case("an audited crate declares no lints", exception_stops_declaring),
+            case("an audited crate drops the clippy floor", drop_clippy_floor),
         ]
     )
     print("\nall cases behaved" if passed else "\nsome cases did not fail", file=sys.stderr if not passed else sys.stdout)

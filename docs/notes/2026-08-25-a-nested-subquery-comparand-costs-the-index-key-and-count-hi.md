@@ -1,5 +1,12 @@
 # A nested subquery comparand costs the index key — and `count(*)` hides it (#746)
 
+The instrument this diagnosis ran on — rusqlite's `trace` feature — went
+with the engine (ADR 0038). The SQL lessons hold: a correlated subquery
+comparand still cannot be an index key, and an aggregate still hides its
+cost. What sees that now is `EXPLAIN QUERY PLAN` via
+`postio_storage::test_support::counting::scans`, not a per-statement
+profile.
+
 Every search with hits took seconds on a real store (4.5 s at 320 matches,
 ~15 s at a full candidate pool) while the same searches ran in tens of
 milliseconds on every bench corpus. A per-statement profile (rusqlite's

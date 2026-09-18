@@ -88,6 +88,7 @@ fn thread(count: usize) -> Vec<ThreadMessage> {
                 // opening policy is `conversation::expanded_on_open`, and
                 // this is the shape it lands on for a read thread.
                 expanded: last,
+                absent: false,
                 latest: last,
                 draft: false,
                 mine: false,

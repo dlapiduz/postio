@@ -63,6 +63,15 @@ runs:
     - name: Install system dependencies
       shell: bash
       run: |
+        # The runner image ships apt sources this workspace never installs
+        # from -- Google Chrome, Microsoft, and whatever else the image adds
+        # -- and `apt-get update` exits 100 when *any* of them has a bad
+        # index, even though it says itself that it ignored them and used
+        # the old ones. Two green jobs died in fifteen seconds on a CDN's
+        # hash-sum mismatch that way (#1420). Everything below comes from
+        # the Ubuntu archive, so only the Ubuntu sources are kept, and a
+        # stale Ubuntu index still fails loudly rather than quietly.
+        sudo find /etc/apt/sources.list.d -type f ! -name 'ubuntu*' -print -delete
         sudo apt-get update
         sudo apt-get install --no-install-recommends -y \
           build-essential \

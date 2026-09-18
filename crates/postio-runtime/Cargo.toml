@@ -9,14 +9,14 @@ publish.workspace = true
 repository.workspace = true
 
 [dependencies]
-async-channel = "2.5.0"
-chrono = { version = "0.4.45", default-features = false, features = ["std", "clock"] }
+async-channel = { workspace = true }
+chrono = { workspace = true, features = ["std"] }
 # `FuturesUnordered` only, for the concurrent sync wave in `engine.rs`.
 # `default-features = false` keeps the futures executor, its io traits and its
 # `Sink` machinery out of the graph -- tokio is this crate's runtime, and the
 # only thing missing from it is a way to poll a variable number of futures at
 # once. Already in the lock file via `zbus`, so it costs no extra compile.
-futures-util = { version = "0.3.34", default-features = false, features = ["alloc"] }
+futures-util = { workspace = true }
 postio-core.workspace = true
 postio-account.workspace = true
 postio-index.workspace = true
@@ -25,8 +25,8 @@ postio-search.workspace = true
 postio-smtp.workspace = true
 postio-storage.workspace = true
 postio-sync.workspace = true
-tokio = { version = "1.53.1", features = ["rt", "rt-multi-thread", "sync", "time"] }
-tracing = "0.1"
+tokio = { workspace = true, features = ["rt", "rt-multi-thread", "sync", "time"] }
+tracing = { workspace = true }
 zbus = { version = "5.19.0", default-features = false, features = ["tokio"] }
 
 [dev-dependencies]
@@ -35,22 +35,12 @@ postio-storage = { workspace = true, features = ["test-support"] }
 # The shared deadline dial: every wall-clock wait in a test answers to
 # `POSTIO_TEST_PATIENCE` (#842, #957).
 postio-test-support.workspace = true
-# The `sync_writes` bench only: the phase split has to wrap each phase in the
-# same kind of transaction `commit_batch` uses, or the numbers include a
-# commit apiece and stop being comparable to the whole they came from.
-# Features match `postio-storage`'s -- one `links = "sqlite3"` crate in the
-# graph, so the feature selecting SQLCipher has to agree everywhere (ADR 0014).
-rusqlite = { version = "0.40.2", features = [
-    "bundled-sqlcipher-vendored-openssl",
-    # `Connection::trace_v2` -- examples/store_diag.rs's per-statement timing.
-    "trace",
-] }
 # `smtp_wait_cpu.rs` implements `SmtpConnector`, which is `#[async_trait]`.
 # Already in the lock via postio-smtp, so it costs no extra compile.
-async-trait = "0.1.92"
-tempfile = "3.27.0"
-tokio = { version = "1.53.1", features = ["rt-multi-thread", "macros", "time"] }
-tracing-subscriber = { version = "0.3", features = ["fmt"] }
+async-trait = { workspace = true }
+tempfile = { workspace = true }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "time"] }
+tracing-subscriber = { workspace = true }
 
 [lints]
 workspace = true

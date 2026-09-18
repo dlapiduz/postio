@@ -16,7 +16,8 @@
 
 use std::path::PathBuf;
 
-fn main() {
+#[tokio::main]
+async fn main() {
     let mut args = std::env::args().skip(1);
     let path = args
         .next()
@@ -47,10 +48,12 @@ fn main() {
             std::process::exit(1);
         }
     };
-    let database = match postio_storage::Database::open(
+    let database = match postio_storage::Store::open(
         &path,
         &store_key.derive(postio_storage::key::Purpose::Database),
-    ) {
+    )
+    .await
+    {
         Ok(database) => database,
         Err(error) => {
             eprintln!("cannot open {}: {error}", path.display());
@@ -59,7 +62,7 @@ fn main() {
     };
 
     let started = std::time::Instant::now();
-    let report = postio_storage::seed::seed_large(&database, 7, count);
+    let report = postio_storage::seed::seed_large(&database, 7, count).await;
     println!(
         "seeded {} messages across {} folders into {} in {:.1}s",
         report.message_count,

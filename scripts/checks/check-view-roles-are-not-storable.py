@@ -39,7 +39,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 MODEL = ROOT / "crates/postio-model/src/mailbox.rs"
-SCHEMA = ROOT / "crates/postio-storage/src/migrations/0001_initial_schema.sql"
+SCHEMA = ROOT / "crates/postio-storage/src/schema.rs"
 
 
 def folder_roles(source: str) -> set[str]:
@@ -89,9 +89,10 @@ def checked_roles(schema: str) -> set[str]:
     if not match:
         raise SystemExit(
             "check-view-roles-are-not-storable: no CHECK on `mailboxes.role` in "
-            "0001_initial_schema.sql.\n"
-            "If the column moved to a later migration, point this check at it —\n"
-            "do not delete it."
+            "schema.rs.\n"
+            "The head schema is one constant there -- there are no migrations any\n"
+            "more (specs/004-turso-store). If the column moved, point this check\n"
+            "at where it went — do not delete it."
         )
     return set(re.findall(r"'(\w+)'", match.group(1)))
 

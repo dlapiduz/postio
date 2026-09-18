@@ -68,6 +68,7 @@ type ExtCommandHandler = Box<dyn Fn(postio_core::ExtId)>;
 type KeymapHandler = Box<dyn Fn(&postio_core::Keymap)>;
 /// See [`Window::connect_storage_changed`].
 type StorageHandler = Box<dyn Fn(Option<u64>)>;
+type MailtoHandler = Box<dyn Fn(postio_model::mailto::Mailto)>;
 
 /// The default size, from canvas 1b: a 1120px board over a 52px header bar.
 ///
@@ -234,18 +235,11 @@ mod imp {
         /// the box is ever opened, so a pick can never answer a move the user
         /// abandoned two openings ago.
         pub pending_move: std::cell::Cell<bool>,
-        /// The context that had the keyboard before it went to the folders,
-        /// so `Esc` puts it back where it was rather than guessing `List`.
-        pub before_sidebar: std::cell::Cell<Option<Context>>,
-        /// The context that had the keyboard before it went to the parts
-        /// panel, restored when the panel closes — see `before_sidebar`.
-        pub before_parts: std::cell::Cell<Option<Context>>,
-        /// The context that had the keyboard before it went to the account
-        /// list in settings — see `before_sidebar` (#471).
-        pub before_accounts: std::cell::Cell<Option<Context>>,
-        /// The context that had the keyboard before it went to the
-        /// keybinding list in settings — see `before_sidebar` (#1016).
-        pub before_keys: std::cell::Cell<Option<Context>>,
+        /// Where the keyboard was before it went into the folders, the parts
+        /// panel or a list in settings (#471, #1016), so leaving each puts
+        /// it back where it was rather than guessing `List`. The rule is
+        /// [`postio_ui::focus::Returns`]'s; this only holds it.
+        pub returns: std::cell::RefCell<postio_ui::focus::Returns>,
         /// Set once `keys_list`'s own `EventControllerFocus` has been
         /// added — never during `Window::new`'s own construction. See
         /// `Window::ensure_keys_focus_controller`'s own doc for why.
@@ -279,6 +273,11 @@ mod imp {
         /// Whoever owns the store side of `[storage] max_bytes` — see
         /// [`Window::connect_storage_changed`](super::Window::connect_storage_changed).
         pub storage_changed: std::cell::RefCell<Vec<StorageHandler>>,
+        /// Whoever can turn a `mailto:` link into a draft — see
+        /// [`Window::connect_mailto`](super::Window::connect_mailto) — and
+        /// the links that arrived before anyone could.
+        pub mailto_handler: std::cell::RefCell<Option<MailtoHandler>>,
+        pub mailto_pending: std::cell::RefCell<Vec<postio_model::mailto::Mailto>>,
         /// The keymap currently in force, once one has been applied, so a
         /// surface built later can be handed it rather than waiting for the
         /// next edit.
@@ -391,6 +390,102 @@ impl Window {
         gtk::prelude::GtkWindowExt::present(self);
     }
 
+    /// Say when focus leaves the workspace, and to what.
+    ///
+    /// Reported from a real session: minimising or maximising the window puts
+    /// focus in the search field and pops its hint. Three candidate paths were
+    /// tested and none reproduces it --- a breakpoint hiding the focused pane,
+    /// an unmap and remap, and a remap that bypasses `present`'s
+    /// `if focus().is_none()` guard (#614); `gtk_shell` holds all three. So
+    /// the mechanism is still unknown, and the thing that would name it is
+    /// knowing *what* claims focus at the moment it happens.
+    ///
+    /// Only when focus lands outside the three panes, which is rare and is
+    /// the whole event of interest: pressing `/` does it deliberately, a
+    /// resize doing it does not. `debug`, because this is a diagnostic and
+    /// not a fault --- there is no fault to report until this says what the
+    /// widget is.
+    ///
+    /// Not a guard. Putting focus back whenever it leaves the panes would
+    /// fight the user reaching for the search field, which is the same
+    /// gesture from the outside.
+    fn watch_focus(&self) {
+        // Whether focus has just been away from the window altogether. That
+        // transition is the whole of the signal: see `restore_focus_after`.
+        let was_away = std::rc::Rc::new(std::cell::Cell::new(false));
+        self.connect_notify_local(
+            Some("focus-widget"),
+            glib::clone!(
+                #[weak(rename_to = window)]
+                self,
+                #[strong]
+                was_away,
+                move |_: &Window, _| {
+                    let shell = window.shell();
+                    let focus = gtk::prelude::GtkWindowExt::focus(&window);
+                    let Some(focus) = focus else {
+                        tracing::debug!("focus left the window entirely");
+                        was_away.set(true);
+                        return;
+                    };
+                    if focus.is_ancestor(&shell) {
+                        was_away.set(false);
+                        return;
+                    }
+                    tracing::debug!(
+                        widget = focus.type_().name(),
+                        name = focus.widget_name().as_str(),
+                        "focus moved outside the panes"
+                    );
+                    if was_away.replace(false) {
+                        window.restore_focus_after(&focus);
+                    }
+                }
+            ),
+        );
+    }
+
+    /// Put focus back in the panes after the window took it back.
+    ///
+    /// Maximising or restoring the window moves focus out of the window
+    /// entirely and then GTK puts it back by walking the focus chain from the
+    /// start. The header is first, so it lands on the sidebar toggle and then
+    /// on the search field's `GtkText` --- measured, in that order:
+    ///
+    /// ```text
+    /// focus left the window entirely
+    /// focus moved outside the panes widget="GtkToggleButton"
+    /// focus moved outside the panes widget="GtkText"
+    /// ```
+    ///
+    /// Focus arriving in that field *opens the finder* (`Finder::attach`, and
+    /// deliberately: a click there asks the same question `/` asks). So
+    /// maximising the window opened the command box over the reader, with its
+    /// hints, on a gesture that was about the window.
+    ///
+    /// # Why the `None` in between is the whole signal
+    ///
+    /// A person clicking the search field goes pane → field. The window
+    /// taking focus back goes field-or-pane → *nothing* → chrome. Only the
+    /// second has focus leave the window on the way, so only the second is
+    /// answered here --- clicking the header still works exactly as it did,
+    /// and no timer or heuristic is involved.
+    ///
+    /// The finder is dismissed as well as focus moved: it opened the instant
+    /// focus arrived, before this runs, so moving focus away would otherwise
+    /// leave the box up with nothing in it.
+    fn restore_focus_after(&self, taken_by: &gtk::Widget) {
+        // `close_finder` rather than the finder's own `dismiss`: it also puts
+        // back the context and pane the box borrowed when it opened, which is
+        // the half a bare close would leave behind.
+        self.close_finder();
+        self.list().grab_focus();
+        tracing::debug!(
+            widget = taken_by.type_().name(),
+            "the window took focus back on a state change; returned it to the list"
+        );
+    }
+
     /// The three panes, for whoever is filling them.
     pub fn shell(&self) -> Shell {
         self.imp()
@@ -437,19 +532,13 @@ impl Window {
         // needed one. Without it `j` here reached the window's own resolver
         // first and moved the message selection instead of walking the
         // tree; see `postio-14b`.
-        if self.context() != Context::Parts {
-            self.imp().before_parts.set(Some(self.context()));
-            self.set_context(Context::Parts);
-        }
+        self.enter_surface(Context::Parts);
     }
 
     /// Put the parts panel away.
     pub fn close_parts(&self) {
         self.parts().set_visible(false);
-        if self.context() == Context::Parts {
-            let previous = self.imp().before_parts.take().unwrap_or(Context::List);
-            self.set_context(previous);
-        }
+        self.leave_surface(Context::Parts);
     }
 
     /// The rows the list is holding for `thread`.
@@ -1344,6 +1433,7 @@ impl Window {
             let feed = feed.clone();
             let folders = folders.clone();
             let list = list.clone();
+            let list_state = self.list_state();
             std::rc::Rc::new(move |choice| {
                 // A view row is in `mailboxes()` like any other — it just has
                 // no id — so the header above the rows is named the same way
@@ -1361,9 +1451,13 @@ impl Window {
                     // on the way to the header above the rows. Among its
                     // siblings, because a role's twin is named by the
                     // server, not by the role (#501).
-                    list.set_mailbox(
-                        &crate::sidebar::display_name(&mailbox, &folders.mailboxes()),
-                        mailbox.counts.unread,
+                    let name = crate::sidebar::display_name(&mailbox, &folders.mailboxes());
+                    list.set_mailbox(&name, mailbox.counts.unread);
+                    // And the empty plate is titled with the same word, so
+                    // an empty Archive says so rather than "Inbox is empty"
+                    // (#1535). The inbox itself keeps its own line.
+                    list_state.set_place(
+                        (mailbox.role != postio_model::mailbox::MailboxRole::Inbox).then_some(name),
                     );
                 }
                 // The sidebar deals in row ids; everything below here deals
@@ -1442,6 +1536,7 @@ impl Window {
             let feed = feed.clone();
             let folders = folders.clone();
             let sidebar = self.sidebar();
+            let list = list.clone();
             // Which folder tree this handler has already opened something
             // for. `None` is "not yet": generations start at zero, so zero
             // is a real value rather than a spare one.
@@ -1451,6 +1546,23 @@ impl Window {
             // emitted `MailboxesChanged` (#813).
             let picked_for = std::cell::Cell::new(None::<u64>);
             move |loaded| {
+                // Refresh the header's "N unread" for the folder already on
+                // screen, on every load. `set_mailbox` is called elsewhere
+                // only when a folder is *opened*, so without this the count
+                // above the rows kept its open-time value while a resync
+                // moved the real one -- the sidebar's badge updated and the
+                // header did not, and the two disagreed (INBOX read "32
+                // unread" over two). The name is unchanged, so this touches
+                // the count and leaves the selection alone.
+                if let Some(id) = feed.mailbox()
+                    && let Some(mailbox) = folders.mailbox(id)
+                {
+                    list.set_mailbox(
+                        &crate::sidebar::display_name(&mailbox, &folders.mailboxes()),
+                        mailbox.counts.unread,
+                    );
+                }
+
                 let generation = folders.generation();
                 if picked_for.get() == Some(generation) {
                     return;
@@ -1607,6 +1719,7 @@ impl Window {
     fn build(&self) {
         self.set_title(Some("Postio"));
         self.add_css_class("postio-window");
+        self.watch_focus();
 
         // Every window carries its own scheme classes: `tokens.css` keys its
         // dark and high-contrast blocks off `:root`, which in GTK is the root
@@ -1628,22 +1741,12 @@ impl Window {
         focus.connect_enter(glib::clone!(
             #[weak(rename_to = window)]
             self,
-            move |_| {
-                if window.context() != Context::Sidebar {
-                    window.imp().before_sidebar.set(Some(window.context()));
-                    window.set_context(Context::Sidebar);
-                }
-            }
+            move |_| window.enter_surface(Context::Sidebar)
         ));
         focus.connect_leave(glib::clone!(
             #[weak(rename_to = window)]
             self,
-            move |_| {
-                if window.context() == Context::Sidebar {
-                    let previous = window.imp().before_sidebar.take();
-                    window.set_context(previous.unwrap_or(Context::List));
-                }
-            }
+            move |_| window.leave_surface(Context::Sidebar)
         ));
         sidebar.add_controller(focus);
 
@@ -1810,22 +1913,12 @@ impl Window {
         accounts_focus.connect_enter(glib::clone!(
             #[weak(rename_to = window)]
             self,
-            move |_| {
-                if window.context() != Context::Accounts {
-                    window.imp().before_accounts.set(Some(window.context()));
-                    window.set_context(Context::Accounts);
-                }
-            }
+            move |_| window.enter_surface(Context::Accounts)
         ));
         accounts_focus.connect_leave(glib::clone!(
             #[weak(rename_to = window)]
             self,
-            move |_| {
-                if window.context() == Context::Accounts {
-                    let previous = window.imp().before_accounts.take();
-                    window.set_context(previous.unwrap_or(Context::List));
-                }
-            }
+            move |_| window.leave_surface(Context::Accounts)
         ));
         settings.accounts_list().add_controller(accounts_focus);
 
@@ -2469,8 +2562,7 @@ impl Window {
         if !self.sidebar().focus_folders() {
             return;
         }
-        self.imp().before_sidebar.set(Some(self.context()));
-        self.set_context(Context::Sidebar);
+        self.enter_surface(Context::Sidebar);
     }
 
     /// Move the keyboard one pane along: sidebar, list, reader, round.
@@ -2478,24 +2570,19 @@ impl Window {
     /// #494: bare Tab had no entry in the table at all, so its top-level
     /// meaning was whatever GTK's native focus chain produced -- "sometimes
     /// it changes panes, sometimes it changes items within a pane". This is
-    /// the deliberate version.
+    /// the deliberate version, and the table is
+    /// [`postio_ui::focus::next_pane`]'s — the macOS app walks the same one.
     ///
     /// Three panes, always the same three. The drill-in used to make the
     /// middle one sometimes a thread column instead of the list (#1003);
     /// the list is only ever the list now, and the conversation is what the
     /// reading pane holds rather than a pane of its own.
     fn cycle_pane(&self, forward: bool) {
-        let next = match (self.context(), forward) {
-            (Context::Sidebar, true) => Context::List,
-            (Context::List | Context::Conversation, true) => Context::Reader,
-            (Context::Reader, true) => Context::Sidebar,
-            (Context::Sidebar, false) => Context::Reader,
-            (Context::List | Context::Conversation, false) => Context::Sidebar,
-            (Context::Reader, false) => Context::List,
-            // Tab does not resolve to this command anywhere else -- see
-            // `PANE_SURFACES` -- so any other context means the keymap and
-            // the registry disagree. Do nothing rather than guess a pane.
-            _ => return,
+        // Tab does not resolve to this command outside the panes -- see
+        // `PANE_SURFACES` -- so no next pane means the keymap and the
+        // registry disagree. Do nothing rather than guess one.
+        let Some(next) = postio_ui::focus::next_pane(self.context(), forward) else {
+            return;
         };
         self.focus_pane(next);
     }
@@ -2528,9 +2615,38 @@ impl Window {
 
     /// Give the keyboard back to whatever had it before the folders.
     fn leave_sidebar(&self) {
-        let previous = self.imp().before_sidebar.take().unwrap_or(Context::List);
-        self.set_context(previous);
+        self.leave_surface(Context::Sidebar);
         self.list().grab_focus();
+    }
+
+    /// Record that the keyboard's context is going into `surface`, and go.
+    ///
+    /// Idempotent: a focus controller firing for a child widget of a
+    /// surface the keyboard is already in changes nothing — see
+    /// [`postio_ui::focus::Returns::enter`].
+    fn enter_surface(&self, surface: Context) {
+        // The borrow ends before `set_context` runs anything.
+        let next = self
+            .imp()
+            .returns
+            .borrow_mut()
+            .enter(surface, self.context());
+        if let Some(next) = next {
+            self.set_context(next);
+        }
+    }
+
+    /// Give the keyboard's context back to whatever had it before
+    /// `surface`, if the keyboard is in `surface` at all.
+    fn leave_surface(&self, surface: Context) {
+        let previous = self
+            .imp()
+            .returns
+            .borrow_mut()
+            .leave(surface, self.context());
+        if let Some(previous) = previous {
+            self.set_context(previous);
+        }
     }
 
     /// Hand one invocation to everything listening, in both shapes.
@@ -2784,6 +2900,37 @@ impl Window {
     pub(crate) fn notify_storage_changed(&self, max_bytes: Option<u64>) {
         for handler in self.imp().storage_changed.borrow().iter() {
             handler(max_bytes);
+        }
+    }
+
+    /// A `mailto:` link the desktop handed this application.
+    ///
+    /// The window cannot act on it: a new message is *from* an account, and
+    /// which one is the composition root's to say, once the store is open.
+    /// So this hands the link to whoever [`connect_mailto`](Self::connect_mailto)
+    /// connected, and holds it — in order, for as long as it takes — when
+    /// nobody has yet. A cold launch from a browser is exactly that gap: the
+    /// link is the first thing to arrive and the account is the last.
+    pub fn deliver_mailto(&self, mailto: postio_model::mailto::Mailto) {
+        // Taken out of the cell before it is called: a handler that opens the
+        // composer can reach back into this window, and a borrow held across
+        // that is the `borrow_mut` panic this crate has met before.
+        let handler = self.imp().mailto_handler.borrow();
+        match handler.as_ref() {
+            Some(handler) => handler(mailto),
+            None => self.imp().mailto_pending.borrow_mut().push(mailto),
+        }
+    }
+
+    /// Called with every `mailto:` link, including the ones that arrived
+    /// before this was connected, oldest first. One listener: connecting
+    /// again replaces the last one, which is what a composition root that is
+    /// fed a second time wants.
+    pub fn connect_mailto(&self, handler: impl Fn(postio_model::mailto::Mailto) + 'static) {
+        *self.imp().mailto_handler.borrow_mut() = Some(Box::new(handler));
+        let pending = std::mem::take(&mut *self.imp().mailto_pending.borrow_mut());
+        for mailto in pending {
+            self.deliver_mailto(mailto);
         }
     }
 
@@ -3190,22 +3337,12 @@ impl Window {
         keys_focus.connect_enter(glib::clone!(
             #[weak(rename_to = window)]
             self,
-            move |_| {
-                if window.context() != Context::Keys {
-                    window.imp().before_keys.set(Some(window.context()));
-                    window.set_context(Context::Keys);
-                }
-            }
+            move |_| window.enter_surface(Context::Keys)
         ));
         keys_focus.connect_leave(glib::clone!(
             #[weak(rename_to = window)]
             self,
-            move |_| {
-                if window.context() == Context::Keys {
-                    let previous = window.imp().before_keys.take();
-                    window.set_context(previous.unwrap_or(Context::List));
-                }
-            }
+            move |_| window.leave_surface(Context::Keys)
         ));
         self.settings().keys_list().add_controller(keys_focus);
     }

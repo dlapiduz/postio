@@ -166,6 +166,26 @@ impl ServerState {
         self.quirks.contains(&quirk)
     }
 
+    /// The generation a flapping `SELECT` should claim, spending the quirk.
+    ///
+    /// Removed as it fires, so the *next* `SELECT` tells the truth -- which is
+    /// the whole shape being modelled: one wrong answer, not a renumber.
+    pub(super) fn take_uid_validity_flap(&mut self) -> Option<u32> {
+        let found = self.quirks.iter().find_map(|quirk| match quirk {
+            Quirk::UidValidityFlapsOnce { generation } => Some(*generation),
+            _ => None,
+        })?;
+        self.quirks
+            .remove(&Quirk::UidValidityFlapsOnce { generation: found });
+        Some(found)
+    }
+
+    /// Whether the next `SELECT` should omit `UIDVALIDITY`, spending the quirk.
+    pub(super) fn take_uid_validity_omission(&mut self) -> bool {
+        self.quirks.contains(&Quirk::UidValidityAlwaysOmitted)
+            || self.quirks.remove(&Quirk::UidValidityOmittedOnce)
+    }
+
     pub(super) fn supports(&self, capability: &str) -> bool {
         self.capabilities
             .iter()

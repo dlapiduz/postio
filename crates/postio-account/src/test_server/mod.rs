@@ -137,6 +137,47 @@ pub enum Quirk {
     /// command `Ok`, which means a resync that lost a message's flags looks
     /// exactly like one that did not.
     MalformedFetchSequenceNumber,
+
+    /// Send the `SELECT`'s `UIDVALIDITY` on a line `io-imap` cannot decode.
+    ///
+    /// Not the same as omitting it, and the difference is the whole point:
+    /// the server *did* send it, and the client lost it. `io-imap` skips an
+    /// untagged response it cannot decode and completes the command `Ok`, so
+    /// the code is simply absent — indistinguishable from a server that never
+    /// sends one, unless something counted the skip.
+    ///
+    /// A sequence number is a `NonZeroU32`, so `* -1 FETCH (…)` cannot decode;
+    /// this emits one in place of the `UIDVALIDITY` line.
+    UidValidityLostToAnUndecodableLine,
+
+    /// Answer the next `SELECT` with `generation`, then tell the truth again.
+    ///
+    /// A server contradicting itself about a mailbox's `UIDVALIDITY` from one
+    /// `SELECT` to the next. Not hypothetical: a live account produced a burst
+    /// of these across a whole folder list, alongside three `SELECT`s that
+    /// carried no `UIDVALIDITY` at all (#1538). It matters because a client
+    /// that believes the first answer throws the folder's entire UID space
+    /// away and refetches it.
+    UidValidityFlapsOnce {
+        /// What that one `SELECT` claims instead of the truth.
+        generation: u32,
+    },
+
+    /// Leave `UIDVALIDITY` out of the next `SELECT` entirely, then behave.
+    ///
+    /// The other half of what the account in #1538 produced: alongside the
+    /// contradictions, three `SELECT`s carried no `UIDVALIDITY` line at all.
+    /// RFC 3501 §6.3.1 requires one, so this is a server fault -- but a
+    /// client that gives up on the first omission loses the folder for that
+    /// pass.
+    UidValidityOmittedOnce,
+
+    /// Never send `UIDVALIDITY` at all.
+    ///
+    /// Not a flake but a broken server, and the case that must still be
+    /// refused: a mailbox whose generation is unknowable cannot be addressed
+    /// by UID, so no number of retries makes it usable.
+    UidValidityAlwaysOmitted,
 }
 
 /// Something the server does once, to the next command that matches.

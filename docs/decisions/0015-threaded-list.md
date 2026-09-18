@@ -116,8 +116,9 @@ index the message list uses, so "page k of threads costs what page k of
 messages costs" is the same query plan rather than a claim to benchmark.
 Everything the conversation contributes — total size, unread here, flagged
 here — is a correlated subquery per row of the page over
-`idx_messages_thread_mailbox` (migration 0012). Measured: 897µs at 1k, 1.07ms
-at 100k, 1.09ms ten pages down.
+`idx_messages_thread_mailbox` (migration 0012 then; declared in
+`crates/postio-storage/src/schema.rs` now that there are no migrations).
+Measured: 897µs at 1k, 1.07ms at 100k, 1.09ms ten pages down.
 
 Every property Q1 decided survives. What changed is the table walked, so the
 falsifiability lever below is spent: nothing needs denormalising.
@@ -128,7 +129,7 @@ folder to be newest within.
 **Drafts does not thread.** Q1 did not have to say so because it was writing
 about reading mail. A draft is a document you are writing; two drafts
 answering one conversation would collapse into a single row with no way to
-reach the other. `SqliteStore::lists_conversations` is the only place this is
+reach the other. `LocalStore::lists_conversations` is the only place this is
 decided, so no frontend holds a second opinion.
 
 ## Q2 — What a collapsed row shows

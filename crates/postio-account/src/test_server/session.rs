@@ -390,7 +390,9 @@ impl Session {
         let read_only = command.name == "EXAMINE";
 
         let rendered = {
-            let state = self.shared.lock();
+            let mut state = self.shared.lock();
+            let flap = state.take_uid_validity_flap();
+            let omit = state.take_uid_validity_omission();
             state.mailbox(&path).map(|mailbox| {
                 let mut out: Vec<u8> = Vec::new();
                 line(&mut out, &format!("* FLAGS ({FLAGS})"));
@@ -400,10 +402,20 @@ impl Session {
                 );
                 line(&mut out, &format!("* {} EXISTS", mailbox.messages.len()));
                 line(&mut out, "* 0 RECENT");
-                line(
-                    &mut out,
-                    &format!("* OK [UIDVALIDITY {}] UIDs valid", mailbox.uid_validity),
-                );
+                if state.has(Quirk::UidValidityLostToAnUndecodableLine) {
+                    // Sent, and unreadable: the client gets no UIDVALIDITY
+                    // and a skip it can count, which is what tells this apart
+                    // from a server that never sends one.
+                    line(&mut out, "* -1 FETCH (FLAGS ())");
+                } else if !omit {
+                    line(
+                        &mut out,
+                        &format!(
+                            "* OK [UIDVALIDITY {}] UIDs valid",
+                            flap.unwrap_or(mailbox.uid_validity)
+                        ),
+                    );
+                }
                 line(
                     &mut out,
                     &format!("* OK [UIDNEXT {}] predicted next UID", mailbox.uid_next),

@@ -1579,7 +1579,15 @@ impl ConversationView {
                         .cloned()
                         .unwrap_or_default(),
                     preview: row.preview.clone().unwrap_or_default(),
-                    expanded: bodies.contains_key(&row.id) && expanded.contains(&row.id),
+                    // The newest opens even with no body yet, so the plate
+                    // below has somewhere to appear: a thread whose bodies
+                    // have not arrived used to open with every message shut
+                    // and nothing saying why. Everything else still waits for
+                    // its body, which is what keeps one explanation from
+                    // becoming thirty.
+                    expanded: (bodies.contains_key(&row.id) || newest == Some(row.id))
+                        && expanded.contains(&row.id),
+                    absent: !bodies.contains_key(&row.id),
                     latest: newest == Some(row.id) && rows.len() > 1,
                     draft: row.send_state.is_some(),
                     // Folded here because this is the layer that knows the

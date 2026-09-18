@@ -8,7 +8,7 @@
 use gtk::glib;
 use gtk::prelude::*;
 use postio_gtk::window::Window;
-use postio_storage::Database;
+use postio_storage::Store;
 use postio_storage::repository::EgressLogRepository;
 
 use crate::Wiring;
@@ -19,8 +19,8 @@ use crate::Wiring;
 const EGRESS_ROWS: u32 = 50;
 
 /// Wire the settings panel's connection list to the store.
-pub fn install(window: &Window, wiring: &Wiring) {
-    refresh(window, &wiring.database);
+pub async fn install(window: &Window, wiring: &Wiring) {
+    refresh(window, &wiring.database).await;
     // `map` fires every time the panel comes on screen — `Ctrl+comma`, the
     // menu, wherever — which is exactly "the moment the person looks".
     // `CommandId::Settings` never reaches `connect_command`: the window
@@ -31,18 +31,23 @@ pub fn install(window: &Window, wiring: &Wiring) {
     window.settings().connect_map({
         let database = wiring.database.clone();
         move |_| {
-            if let Some(window) = weak.upgrade() {
-                refresh(&window, &database);
-            }
+            postio_session::blocking::now(async {
+                if let Some(window) = weak.upgrade() {
+                    refresh(&window, &database).await;
+                }
+            })
         }
     });
 }
 
-fn refresh(window: &Window, database: &Database) {
-    let Ok(connection) = database.connection() else {
+async fn refresh(window: &Window, database: &Store) {
+    let Ok(connection) = database.connect().await else {
         return;
     };
-    match EgressLogRepository::new(&connection).recent(EGRESS_ROWS) {
+    match EgressLogRepository::new(&connection)
+        .recent(EGRESS_ROWS)
+        .await
+    {
         Ok(entries) => window.settings().set_egress(entries),
         Err(error) => tracing::warn!(%error, "could not read the egress log"),
     }

@@ -37,7 +37,7 @@ use postio_gtk::window::Window;
 use postio_gtk::{app, fonts, style};
 use postio_model::{BodyState, Message};
 use postio_storage::repository::{MessageRepository, StoredBody};
-use postio_storage::{BlobStore, Database, test_support};
+use postio_storage::{BlobStore, Store, test_support};
 
 /// Latin-1 octets under a `charset=utf-8` header: the mojibake a user
 /// actually reports, and the direction of it that cannot be undone. `é`
@@ -62,22 +62,22 @@ Content-Type: text/plain; charset=utf-8\r\n\
 The winter was quieter\r\n";
 
 /// Store `raw` as a message with a body, the way the backfill commits one.
-fn store(
-    database: &Database,
+async fn store(
+    database: &Store,
     account: postio_model::ids::AccountId,
     mailbox: postio_model::ids::MailboxId,
     raw: &[u8],
     subject: &str,
     received: chrono::DateTime<chrono::Utc>,
 ) -> postio_model::ids::MessageId {
-    let connection = database.connection().expect("a connection");
+    let connection = database.connect().await.expect("a connection");
     let repository = MessageRepository::new(&connection);
     let parsed = postio_model::mime::parse(raw);
 
     let mut message = Message::new(account, mailbox, received);
     message.subject = Some(subject.to_owned());
     message.sync.body_state = BodyState::Full;
-    let id = repository.create(&mut message).expect("a message");
+    let id = repository.create(&mut message).await.expect("a message");
 
     let stored = StoredBody {
         text: parsed.body.text.clone(),
@@ -91,113 +91,120 @@ fn store(
     };
     repository
         .set_body(id, &stored, BodyState::Full)
+        .await
         .expect("a body");
     id
 }
 
 pub fn a_body_that_did_not_decode_cleanly_says_so_in_the_pane() {
-    let state_dir = tempfile::tempdir().expect("a state directory");
-    // SAFETY: first statement of a single-threaded test.
-    unsafe { std::env::set_var("XDG_STATE_HOME", state_dir.path()) };
+    crate::gtk_case(async {
+        let state_dir = tempfile::tempdir().expect("a state directory");
+        // SAFETY: first statement of a single-threaded test.
+        unsafe { std::env::set_var("XDG_STATE_HOME", state_dir.path()) };
 
-    if adw::init().is_err() || gdk::Display::default().is_none() {
-        eprintln!("skipping: no display (run under scripts/test-headless.sh)");
-        return;
-    }
-    let display = gdk::Display::default().unwrap();
-    fonts::install().expect("the embedded fonts should install");
-    style::install(&display);
-    app::install_icons(&display);
+        if adw::init().is_err() || gdk::Display::default().is_none() {
+            eprintln!("skipping: no display (run under scripts/test-headless.sh)");
+            return;
+        }
+        let display = gdk::Display::default().unwrap();
+        fonts::install().expect("the embedded fonts should install");
+        style::install(&display);
+        app::install_icons(&display);
 
-    let database = test_support::memory();
-    let directory = tempfile::tempdir().expect("a blob directory");
-    let blobs = BlobStore::open(
-        directory.path().to_path_buf(),
-        &postio_storage::test_support::blob_keys(),
-    )
-    .expect("a blob store");
+        let database = test_support::memory().await;
+        let directory = tempfile::tempdir().expect("a blob directory");
+        let blobs = BlobStore::open(
+            directory.path().to_path_buf(),
+            &postio_storage::test_support::blob_keys(),
+        )
+        .expect("a blob store");
 
-    {
-        let connection = database.connection().expect("a connection");
-        let (account, inbox) = test_support::account_with_inbox(&connection);
-        drop(connection);
-        // Newest first, so the list opens on the lossy one and the control is
-        // one `j` away.
-        store(
-            &database,
-            account.id,
-            inbox,
-            CLEAN,
-            "Winter plans",
-            chrono::Utc::now() - chrono::Duration::hours(1),
+        {
+            let connection = database.connect().await.expect("a connection");
+            let (account, inbox) = test_support::account_with_inbox(&connection).await;
+            drop(connection);
+            // Newest first, so the list opens on the lossy one and the control is
+            // one `j` away.
+            store(
+                &database,
+                account.id,
+                inbox,
+                CLEAN,
+                "Winter plans",
+                chrono::Utc::now() - chrono::Duration::hours(1),
+            )
+            .await;
+            store(
+                &database,
+                account.id,
+                inbox,
+                LOSSY,
+                "Summer plans",
+                chrono::Utc::now(),
+            )
+            .await;
+        }
+
+        let (bridge, _replies) = Bridge::new(handler_fn(|_, _| async {})).expect("a runtime");
+        let (sink, _events) = event_channel();
+        let wiring = Wiring::new(
+            database.clone(),
+            blobs.clone(),
+            bridge.handle(),
+            sink,
+            bridge.commands(),
         );
-        store(
-            &database,
-            account.id,
-            inbox,
-            LOSSY,
-            "Summer plans",
-            chrono::Utc::now(),
+
+        let window = Window::default();
+        window.present();
+        while glib::MainContext::default().iteration(false) {}
+        let _wired = feed_the_window(&window, &wiring)
+            .await
+            .expect("the store has an account");
+
+        let list = window.list();
+        assert!(
+            settle_until(async || list.model().n_items() == 2).await,
+            "the two messages never reached the list"
         );
-    }
 
-    let (bridge, _replies) = Bridge::new(handler_fn(|_, _| async {})).expect("a runtime");
-    let (sink, _events) = event_channel();
-    let wiring = Wiring::new(
-        database.clone(),
-        blobs.clone(),
-        bridge.handle(),
-        sink,
-        bridge.commands(),
-    );
+        // ── the lossy one draws the caveat ───────────────────────────────────
+        activate_first_row(&window);
+        assert!(
+            settle_until(async || window.reading()).await,
+            "the message was opened and the reading pane never filled"
+        );
+        assert!(
+            settle_until(async || window.reader().shows_encoding_problems()).await,
+            "a body that decoded to U+FFFD drew no caveat, so the reader is \
+             presenting a guess as the sender's words — which is what #901 is"
+        );
 
-    let window = Window::default();
-    window.present();
-    while glib::MainContext::default().iteration(false) {}
-    let _wired = feed_the_window(&window, &wiring).expect("the store has an account");
+        // ── and the clean one does not ───────────────────────────────────────
+        // The control, and the reason the assertion above can fail: without it a
+        // notice pinned visible would satisfy this file.
+        //
+        // Waited for the *repaint*, not for the caveat to go away. `settle_until`
+        // on a negation returns the moment it holds, and it holds during the
+        // transition -- `render` clears the notice before the new body is drawn
+        // -- so a version of this that waited for `!shows_encoding_problems`
+        // would pass without the clean message ever reaching the pane, and would
+        // go on passing if the caveat were never set again for anything.
+        let painted = window.reader().paints();
+        window.list().next_row();
+        assert!(
+            settle_until(async || window.reader().paints() > painted).await,
+            "moving to the second message never repainted the reading pane, so \
+             the assertion below would be about the first one"
+        );
+        assert!(
+            !window.reader().shows_encoding_problems(),
+            "a message that decoded cleanly is carrying a decode caveat; a \
+             warning that is sometimes wrong is one people learn to ignore"
+        );
 
-    let list = window.list();
-    assert!(
-        settle_until(|| list.model().n_items() == 2),
-        "the two messages never reached the list"
-    );
-
-    // ── the lossy one draws the caveat ───────────────────────────────────
-    activate_first_row(&window);
-    assert!(
-        settle_until(|| window.reading()),
-        "the message was opened and the reading pane never filled"
-    );
-    assert!(
-        settle_until(|| window.reader().shows_encoding_problems()),
-        "a body that decoded to U+FFFD drew no caveat, so the reader is \
-         presenting a guess as the sender's words — which is what #901 is"
-    );
-
-    // ── and the clean one does not ───────────────────────────────────────
-    // The control, and the reason the assertion above can fail: without it a
-    // notice pinned visible would satisfy this file.
-    //
-    // Waited for the *repaint*, not for the caveat to go away. `settle_until`
-    // on a negation returns the moment it holds, and it holds during the
-    // transition -- `render` clears the notice before the new body is drawn
-    // -- so a version of this that waited for `!shows_encoding_problems`
-    // would pass without the clean message ever reaching the pane, and would
-    // go on passing if the caveat were never set again for anything.
-    let painted = window.reader().paints();
-    window.list().next_row();
-    assert!(
-        settle_until(|| window.reader().paints() > painted),
-        "moving to the second message never repainted the reading pane, so \
-         the assertion below would be about the first one"
-    );
-    assert!(
-        !window.reader().shows_encoding_problems(),
-        "a message that decoded cleanly is carrying a decode caveat; a \
-         warning that is sometimes wrong is one people learn to ignore"
-    );
-
-    bridge.shutdown();
+        bridge.shutdown();
+    });
 }
 
 fn activate_first_row(window: &Window) {

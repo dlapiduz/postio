@@ -67,6 +67,12 @@ impl Log for SkipCountingLogger {
             && record.args().to_string().contains(SKIPPED_UNTAGGED)
         {
             COUNT.fetch_add(1, Ordering::Relaxed);
+            // And against whichever command is running on this task, if one
+            // is measuring. `io-imap` logs the skip synchronously inside the
+            // parse, so the task in scope here *is* the command that lost the
+            // line — see `measuring`. Outside a measurement there is no task
+            // local and this is a no-op.
+            let _ = TASK_SKIPS.try_with(|counted| counted.set(counted.get() + 1));
         }
         self.inner.log(record);
     }
@@ -201,18 +207,100 @@ pub async fn exclusive_measurement() -> tokio::sync::MutexGuard<'static, ()> {
     LOCK.lock().await
 }
 
+tokio::task_local! {
+    /// Skips counted against the command currently running on this task.
+    static TASK_SKIPS: std::cell::Cell<u64>;
+}
+
+/// Runs `command` and reports how many undecodable untagged responses
+/// `io-imap` dropped *during it*.
+///
+/// # Why this can be per-command when the counter is process-wide
+///
+/// There is one [`Log`] per process, so [`skipped_untagged_responses`] cannot
+/// say whose skip it was. [`exclusive_measurement`] answered that by letting
+/// only one measurement run at a time — correct, and it serialised every
+/// command that wanted to know, which is why only the `CHANGEDSINCE` fetch
+/// could afford to ask.
+///
+/// It does not have to. `io-imap` logs the skip *synchronously*, inside the
+/// `coroutine.resume(..)` call that parsed the line, which is inside the
+/// caller's own future and so on the caller's own task. A task-local counter
+/// is in scope at exactly that moment and at no other, so the attribution is
+/// exact and two commands can measure at the same time.
+///
+/// That is what makes the check affordable everywhere rather than on one
+/// command — and every command wants it. A dropped line is not a diagnostic:
+/// it is an answer with something missing from it, and it has already cost
+/// this project a `SELECT` carrying no `UIDVALIDITY`, a `UID SEARCH` that
+/// listed nothing for a mailbox of 60,934 messages, and the resync integrity
+/// hole ADR 0001 records.
+///
+/// # What it deliberately does not decide
+///
+/// A nonzero count means *this* answer is incomplete. What that is worth
+/// differs per command: a resync fetch cannot be trusted at all, while an
+/// untagged line a server emits for its own reasons — iCloud advertises
+/// `XAPPLEPUSHSERVICE` and `X-APPLE-REMOTE-LINKS` — may mean nothing to the
+/// command that happened to be running. Turning a count into a refusal stays
+/// with the caller that knows, which is why this returns a number and not a
+/// `Result`.
+///
+/// Nested calls measure independently: the inner scope shadows the outer, so
+/// an outer measurement does not see what an inner one counted. Nothing nests
+/// today.
+pub async fn measuring<F, T>(command: F) -> (T, u64)
+where
+    F: std::future::Future<Output = T>,
+{
+    // **Boxed, or the caller's stack pays for it three times over.**
+    //
+    // This future holds the command's, `TaskLocalFuture` holds this one, and
+    // the caller holds that -- so an unboxed command is inlined at every
+    // layer. `issue_select` is measured, and it sits inside `select_now`,
+    // inside `ConnectionPool::execute`, inside `resync_mailbox`, inside
+    // `sync_wave`: by the time the state machines nest, a `SELECT` overflowed
+    // the sync thread's stack outright.
+    //
+    //     thread 'postio-sync' has overflowed its stack
+    //     #7  skip_counter::measuring::<...ImapMailboxSelect...>
+    //     #8  TaskLocalFuture<Cell<u64>, measuring<...>>
+    //     #12 ImapSession::issue_select
+    //
+    // One allocation per measured command, against a network round trip.
+    // Nothing else here can shrink it: the task local is the whole mechanism,
+    // and the layers it adds are what make the attribution exact.
+    let command = Box::pin(command);
+    TASK_SKIPS
+        .scope(std::cell::Cell::new(0), async move {
+            let value = command.await;
+            let skips = TASK_SKIPS.with(std::cell::Cell::get);
+            (value, skips)
+        })
+        .await
+}
+
 #[cfg(test)]
 mod tests {
     use std::sync::{Arc, Mutex};
 
     use super::*;
 
-    #[test]
-    fn the_logger_counts_only_the_exact_record_it_exists_to_catch() {
+    #[tokio::test]
+    async fn the_logger_counts_only_the_exact_record_it_exists_to_catch() {
         // One test function, not several: `install` and the counter are
         // process-wide, and `cargo test` runs functions within one binary
         // concurrently by default, so splitting these into separate `#[test]`
         // functions would race on the same global counter.
+        //
+        // And one function is no longer enough on its own. `per_command_
+        // attribution` below also emits the record this counts, so "nobody
+        // else is running" has to be *taken* rather than assumed: every test
+        // in this module that makes the counter move holds
+        // `exclusive_measurement` for as long as it is measuring. Asserting
+        // an exact delta on a process-wide counter is only meaningful while
+        // this is the process's only measurement.
+        let _exclusive = exclusive_measurement().await;
         install();
 
         let before = skipped_untagged_responses();
@@ -290,5 +378,97 @@ mod tests {
         }
 
         fn flush(&self) {}
+    }
+}
+
+/// Attributing a skip to the command it happened in, without a lock.
+#[cfg(test)]
+mod per_command_attribution {
+    use super::*;
+
+    /// Two commands measuring at once each see only their own skips.
+    ///
+    /// This is what `exclusive_measurement` bought by serialising, and the
+    /// reason it had to: the process-wide counter cannot say *whose* skip it
+    /// was, so two overlapping measurements each risked reporting the other's.
+    /// A task-local scope answers it directly, so nothing has to wait.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn one_command_does_not_see_another_s_skips() {
+        // Held for the whole measurement: this emits the record the
+        // process-wide counter counts, and `tests` above asserts exact
+        // deltas on it. The two concurrent measurements inside are the
+        // point of the test and are unaffected -- the lock excludes
+        // other tests, not the tasks within this one.
+        let _exclusive = exclusive_measurement().await;
+        install();
+
+        let (mine, theirs) = tokio::join!(
+            measuring(async {
+                skip_once();
+                // Let the other task run while this measurement is open —
+                // the whole point is that its skips do not land here.
+                tokio::task::yield_now().await;
+                skip_once();
+            }),
+            measuring(async {
+                tokio::task::yield_now().await;
+                skip_once();
+            }),
+        );
+
+        assert_eq!(mine.1, 2, "a command counts its own skips");
+        assert_eq!(theirs.1, 1, "and only its own, with both measuring at once");
+    }
+
+    /// A command that skipped nothing reports nothing, however busy the
+    /// process is.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_clean_command_reports_no_skips() {
+        // Held for the whole measurement: this emits the record the
+        // process-wide counter counts, and `tests` above asserts exact
+        // deltas on it. The two concurrent measurements inside are the
+        // point of the test and are unaffected -- the lock excludes
+        // other tests, not the tasks within this one.
+        let _exclusive = exclusive_measurement().await;
+        install();
+
+        let (clean, _noisy) = tokio::join!(
+            measuring(async {
+                tokio::task::yield_now().await;
+            }),
+            measuring(async {
+                skip_once();
+                tokio::task::yield_now().await;
+                skip_once();
+            }),
+        );
+
+        assert_eq!(
+            clean.1, 0,
+            "a clean command must not inherit a concurrent one's skips; \
+             discarding a healthy connection is the cost of getting this wrong"
+        );
+    }
+
+    /// The process-wide counter still moves, for `is_counting` and the
+    /// tests built on it.
+    #[tokio::test]
+    async fn the_process_wide_counter_still_moves() {
+        // Held for the whole measurement: this emits the record the
+        // process-wide counter counts, and `tests` above asserts exact
+        // deltas on it. The two concurrent measurements inside are the
+        // point of the test and are unaffected -- the lock excludes
+        // other tests, not the tasks within this one.
+        let _exclusive = exclusive_measurement().await;
+        install();
+        let before = skipped_untagged_responses();
+        let (_, skips) = measuring(async { skip_once() }).await;
+        assert_eq!(skips, 1);
+        assert_eq!(skipped_untagged_responses(), before + 1);
+    }
+
+    /// Emits exactly the record `io-imap` emits when it drops a line.
+    fn skip_once() {
+        log::debug!(target: "io_imap::send", "skipping undecodable untagged response");
     }
 }

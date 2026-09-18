@@ -29,6 +29,7 @@ on:
       - "docs/book/**"
       - "docs/keybindings.md"
       - "docs/config.md"
+      - "docs/releases/**"
       - ".github/workflows/pages.yml"
   workflow_dispatch:
 

@@ -107,19 +107,20 @@ async fn a_resync_batch_does_not_lock_out_an_interactive_write() {
     // File-backed, for the reason `concurrent_writers.rs` records: an
     // in-memory database shares a cache between the pool's connections and
     // fails in a different model entirely (#204).
-    let database = test_support::temp();
+    let database = test_support::temp().await;
 
     let (inbox, scratch) = {
-        let connection = database.connection().expect("checkout");
-        let account = test_support::account(&connection);
-        let inbox = test_support::mailbox(&connection, &account, INBOX);
+        let connection = database.connect().await.expect("checkout");
+        let account = test_support::account(&connection).await;
+        let inbox = test_support::mailbox(&connection, &account, INBOX).await;
         // The row the writers hammer lives in a mailbox of its own, so
         // nothing they do can be mistaken for something the resync did.
-        let drafts = test_support::mailbox(&connection, &account, "Drafts");
+        let drafts = test_support::mailbox(&connection, &account, "Drafts").await;
         let mut message = postio_model::Message::new(account.id, drafts.id, chrono::Utc::now());
         message.subject = Some("Being typed".into());
         let id = MessageRepository::new(&connection)
             .create(&mut message)
+            .await
             .expect("the fixture writes");
         (inbox, id)
     };
@@ -134,7 +135,7 @@ async fn a_resync_batch_does_not_lock_out_an_interactive_write() {
     // The store matches the server, so what follows is a resync and not a
     // first sync — which is the whole point: this is the ordinary path.
     {
-        let connection = database.connection().expect("checkout");
+        let connection = database.connect().await.expect("checkout");
         sync_mailbox(&connection, &backend, &inbox, &CancelToken::new(), |_| {})
             .await
             .expect("bootstrap sync");
@@ -159,21 +160,23 @@ async fn a_resync_batch_does_not_lock_out_an_interactive_write() {
     let commits = Arc::new(AtomicU64::new(0));
     // Every writer waits here until all of them — and the resync — are ready,
     // so a green run cannot mean "nothing was writing yet".
-    let ready = Arc::new(std::sync::Barrier::new(WRITERS + 1));
+    let ready = Arc::new(tokio::sync::Barrier::new(WRITERS + 1));
     let writers: Vec<_> = (0..WRITERS)
         .map(|_| {
             let database = database.clone();
             let stop = Arc::clone(&stop);
             let commits = Arc::clone(&commits);
             let ready = Arc::clone(&ready);
-            std::thread::spawn(move || -> Result<(), String> {
+            tokio::spawn(async move {
                 // Connection first and permit second, per `WriteGate`'s rules
                 // for callers. Held across the loop rather than re-checked
                 // out, because the timeout below is a property of the
                 // connection and the permit is what has to be re-taken.
-                let connection = database.connection().map_err(|e| e.to_string())?;
+                let connection = database.connect().await.map_err(|e| e.to_string())?;
                 connection
-                    .pragma_update(None, "busy_timeout", WRITER_BUSY_TIMEOUT)
+                    .busy_timeout(std::time::Duration::from_millis(u64::from(
+                        WRITER_BUSY_TIMEOUT,
+                    )))
                     .map_err(|e| e.to_string())?;
                 let messages = MessageRepository::new(&connection);
                 let mut flagged = false;
@@ -189,39 +192,42 @@ async fn a_resync_batch_does_not_lock_out_an_interactive_write() {
                 // by the time the resync starts.
                 messages
                     .set_flags(scratch, &flags(false), FlagSource::Local)
+                    .await
                     .map_err(|error| format!("the UI thread's own write failed: {error}"))?;
-                ready.wait();
+                ready.wait().await;
                 while !stop.load(Ordering::Relaxed) {
-                    std::thread::sleep(WRITER_PACE);
+                    tokio::time::sleep(WRITER_PACE).await;
                     flagged = !flagged;
-                    let _permit = database.write_gate().acquire(WritePriority::Interactive);
+                    let _permit = database
+                        .write_gate()
+                        .acquire(WritePriority::Interactive)
+                        .await;
                     // One statement, one commit — what `f` on a focused row
                     // costs, and what a draft's autosave costs.
                     messages
                         .set_flags(scratch, &flags(flagged), FlagSource::Local)
+                        .await
                         .map_err(|error| format!("the UI thread's own write failed: {error}"))?;
                     commits.fetch_add(1, Ordering::Relaxed);
                 }
-                Ok(())
+                Ok::<(), String>(())
             })
         })
         .collect();
 
     // ── the resync ───────────────────────────────────────────────────────
-    let connection = database.connection().expect("checkout");
-    ready.wait();
+    let connection = database.connect().await.expect("checkout");
+    ready.wait().await;
     let outcome = resync_mailbox(&connection, &backend, &inbox, &CancelToken::new(), |_| {}).await;
 
     stop.store(true, Ordering::Relaxed);
-    let results: Vec<_> = writers
-        .into_iter()
-        .map(|writer| writer.join().expect("a writer thread panicked"))
-        .collect();
-
     // The writers first: a lost interactive write *is* the bug, and it is
     // what a person loses a draft to.
-    for result in results {
-        result.expect("an interactive write must not lose its place to a resync");
+    for writer in writers {
+        writer
+            .await
+            .expect("a writer task panicked")
+            .expect("an interactive write must not lose its place to a resync");
     }
     outcome.expect("the resync itself must still succeed");
 

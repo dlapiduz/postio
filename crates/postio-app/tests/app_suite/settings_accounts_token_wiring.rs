@@ -35,132 +35,139 @@ use postio_storage::seed::seed_small;
 use postio_storage::{BlobStore, test_support};
 
 pub fn an_oauth_accounts_row_shows_its_real_persisted_expiry() {
-    let state_dir = tempfile::tempdir().expect("a state directory");
-    // SAFETY: first statement of a single-threaded test.
-    unsafe { std::env::set_var("XDG_STATE_HOME", state_dir.path()) };
+    crate::gtk_case(async {
+        let state_dir = tempfile::tempdir().expect("a state directory");
+        // SAFETY: first statement of a single-threaded test.
+        unsafe { std::env::set_var("XDG_STATE_HOME", state_dir.path()) };
 
-    if adw::init().is_err() || gdk::Display::default().is_none() {
-        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
-        return;
-    }
-    let display = gdk::Display::default().unwrap();
-    fonts::install().expect("the embedded fonts should install");
-    style::install(&display);
-    app::install_icons(&display);
+        if adw::init().is_err() || gdk::Display::default().is_none() {
+            eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
+            return;
+        }
+        let display = gdk::Display::default().unwrap();
+        fonts::install().expect("the embedded fonts should install");
+        style::install(&display);
+        app::install_icons(&display);
 
-    let database = test_support::memory();
-    seed_small(&database, 41);
-    let directory = tempfile::tempdir().expect("a blob directory");
-    let blobs = BlobStore::open(
-        directory.path().to_path_buf(),
-        &postio_storage::test_support::blob_keys(),
-    )
-    .expect("a blob store");
+        let database = test_support::memory().await;
+        seed_small(&database, 41).await;
+        let directory = tempfile::tempdir().expect("a blob directory");
+        let blobs = BlobStore::open(
+            directory.path().to_path_buf(),
+            &postio_storage::test_support::blob_keys(),
+        )
+        .expect("a blob store");
 
-    // A second, OAuth account: `seed_small`'s own account is a password one,
-    // and there is nothing to read a validity line off of it with.
-    let address = "grace@example.com";
-    let connection = database.connection().expect("a connection");
-    let mut second =
-        postio_model::Account::new("Grace", EmailAddress::new(None::<String>, address));
-    second.auth = postio_model::account::AuthMethod::OAuth2;
-    second.oauth = Some(postio_model::account::OAuthConfig {
-        client_id: "postio-test-client".to_owned(),
-        token_url: "https://example.com/token".to_owned(),
-        authorize_url: "https://example.com/authorize".to_owned(),
-        scopes: "mail".to_owned(),
-        refresh_token_lifetime_days: None,
+        // A second, OAuth account: `seed_small`'s own account is a password one,
+        // and there is nothing to read a validity line off of it with.
+        let address = "grace@example.com";
+        let connection = database.connect().await.expect("a connection");
+        let mut second =
+            postio_model::Account::new("Grace", EmailAddress::new(None::<String>, address));
+        second.auth = postio_model::account::AuthMethod::OAuth2;
+        second.oauth = Some(postio_model::account::OAuthConfig {
+            client_id: "postio-test-client".to_owned(),
+            token_url: "https://example.com/token".to_owned(),
+            authorize_url: "https://example.com/authorize".to_owned(),
+            scopes: "mail".to_owned(),
+            refresh_token_lifetime_days: None,
+        });
+        AccountRepository::new(&connection)
+            .create(&mut second)
+            .await
+            .expect("insert the OAuth account");
+        drop(connection);
+
+        // What #870's own persistence actually writes, through its real public
+        // seam rather than a hand-rolled stand-in for it -- `seed` is exactly
+        // what a completed sign-in calls.
+        let secrets: Arc<dyn postio_account::secret::SecretStore> =
+            Arc::new(MemorySecretStore::new());
+        let source = OwnClientTokenSource::new(
+            secrets.clone(),
+            "https://example.com/token".parse().unwrap(),
+            "postio-test-client",
+            None,
+            None,
+        );
+        source
+            .seed(
+                &AccountKey::new(address),
+                TokenResponse {
+                    access_token: Password::new("an-access-token"),
+                    refresh_token: Some(Password::new("a-refresh-token")),
+                    expires_in: Some(Duration::from_secs(41 * 24 * 60 * 60)),
+                    token_type: "Bearer".to_string(),
+                    scope: None,
+                },
+            )
+            .await
+            .expect("seeding the token succeeds");
+
+        let (bridge, _replies) =
+            postio_core::bridge::Bridge::new(postio_core::bridge::handler_fn(|_, _| async {}))
+                .expect("a runtime");
+        let (sink, _events) = postio_core::bridge::event_channel();
+        let wiring = Wiring::new(
+            database.clone(),
+            blobs.clone(),
+            bridge.handle(),
+            sink,
+            bridge.commands(),
+        )
+        .with_secrets(secrets);
+
+        let window = Window::default();
+        window.present();
+        let _wired = feed_the_window(&window, &wiring)
+            .await
+            .expect("the seeded store has an account");
+        let panel = window.settings();
+
+        assert!(
+            settle_until(async || rows(&panel).len() == 2).await,
+            "expected both accounts drawn as rows, got {} row(s)",
+            rows(&panel).len()
+        );
+
+        // `window.rs` builds the settings panel as a hidden overlay until asked
+        // for -- `is_visible()` (which `validity_in` needs, the same way
+        // `gtk_settings_accounts.rs`'s own `weight_in` does) checks the whole
+        // ancestor chain, not just the label's own property, so nothing below
+        // would ever read as visible without this.
+        window.toggle_settings();
+        assert!(
+            frames(&window, 2),
+            "the compositor never painted the settings panel"
+        );
+
+        // Re-found on every poll rather than captured once: `set_token_expiries`
+        // rebuilds the rows from scratch the same way `set_accounts` does, so a
+        // row fetched before that redraw is a detached widget the panel has
+        // already replaced, and would never pick up anything.
+        let oauth_row = |panel: &postio_gtk::settings::SettingsPanel| {
+            rows(panel).into_iter().find(|row| {
+                collect(row.upcast_ref::<gtk::Widget>(), "")
+                    .into_iter()
+                    .filter_map(|w| w.downcast::<gtk::Label>().ok())
+                    .any(|label| label.text().contains(address))
+            })
+        };
+
+        assert!(
+            settle_until(async || oauth_row(&panel).is_some_and(|row| validity_in(&row).is_some()))
+                .await,
+            "the OAuth account's row never picked up a validity line"
+        );
+        let validity = validity_in(&oauth_row(&panel).expect("the row is still there"))
+            .expect("checked above");
+        assert!(
+            validity.starts_with("token valid 4") && validity.ends_with('d'),
+            "expected roughly 41 days out, from the real value seed() persisted: {validity:?}"
+        );
+
+        bridge.shutdown();
     });
-    AccountRepository::new(&connection)
-        .create(&mut second)
-        .expect("insert the OAuth account");
-    drop(connection);
-
-    // What #870's own persistence actually writes, through its real public
-    // seam rather than a hand-rolled stand-in for it -- `seed` is exactly
-    // what a completed sign-in calls.
-    let secrets: Arc<dyn postio_account::secret::SecretStore> = Arc::new(MemorySecretStore::new());
-    let source = OwnClientTokenSource::new(
-        secrets.clone(),
-        "https://example.com/token".parse().unwrap(),
-        "postio-test-client",
-        None,
-        None,
-    );
-    let runtime = tokio::runtime::Runtime::new().expect("a runtime for the seed call");
-    runtime
-        .block_on(source.seed(
-            &AccountKey::new(address),
-            TokenResponse {
-                access_token: Password::new("an-access-token"),
-                refresh_token: Some(Password::new("a-refresh-token")),
-                expires_in: Some(Duration::from_secs(41 * 24 * 60 * 60)),
-                token_type: "Bearer".to_string(),
-                scope: None,
-            },
-        ))
-        .expect("seeding the token succeeds");
-
-    let (bridge, _replies) =
-        postio_core::bridge::Bridge::new(postio_core::bridge::handler_fn(|_, _| async {}))
-            .expect("a runtime");
-    let (sink, _events) = postio_core::bridge::event_channel();
-    let wiring = Wiring::new(
-        database.clone(),
-        blobs.clone(),
-        bridge.handle(),
-        sink,
-        bridge.commands(),
-    )
-    .with_secrets(secrets);
-
-    let window = Window::default();
-    window.present();
-    let _wired = feed_the_window(&window, &wiring).expect("the seeded store has an account");
-    let panel = window.settings();
-
-    assert!(
-        settle_until(|| rows(&panel).len() == 2),
-        "expected both accounts drawn as rows, got {} row(s)",
-        rows(&panel).len()
-    );
-
-    // `window.rs` builds the settings panel as a hidden overlay until asked
-    // for -- `is_visible()` (which `validity_in` needs, the same way
-    // `gtk_settings_accounts.rs`'s own `weight_in` does) checks the whole
-    // ancestor chain, not just the label's own property, so nothing below
-    // would ever read as visible without this.
-    window.toggle_settings();
-    assert!(
-        frames(&window, 2),
-        "the compositor never painted the settings panel"
-    );
-
-    // Re-found on every poll rather than captured once: `set_token_expiries`
-    // rebuilds the rows from scratch the same way `set_accounts` does, so a
-    // row fetched before that redraw is a detached widget the panel has
-    // already replaced, and would never pick up anything.
-    let oauth_row = |panel: &postio_gtk::settings::SettingsPanel| {
-        rows(panel).into_iter().find(|row| {
-            collect(row.upcast_ref::<gtk::Widget>(), "")
-                .into_iter()
-                .filter_map(|w| w.downcast::<gtk::Label>().ok())
-                .any(|label| label.text().contains(address))
-        })
-    };
-
-    assert!(
-        settle_until(|| oauth_row(&panel).is_some_and(|row| validity_in(&row).is_some())),
-        "the OAuth account's row never picked up a validity line"
-    );
-    let validity =
-        validity_in(&oauth_row(&panel).expect("the row is still there")).expect("checked above");
-    assert!(
-        validity.starts_with("token valid 4") && validity.ends_with('d'),
-        "expected roughly 41 days out, from the real value seed() persisted: {validity:?}"
-    );
-
-    bridge.shutdown();
 }
 
 /// The row's token-validity fact.

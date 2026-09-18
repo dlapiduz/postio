@@ -55,27 +55,30 @@ use crate::onboarding::{JmapOfferSlot, ProbeCancellation, probe, submit};
 /// Through `connect_command` rather than the command bus: the bus answers
 /// verbs over mail, and this one is answered by the composition root, which
 /// is the only place that may build a probe and write an account row.
-pub fn install(window: &Window, wiring: &Wiring) {
+pub async fn install(window: &Window, wiring: &Wiring) {
     // Weak: this handler is stored on the window itself, so a strong clone
     // is a cycle with no third party in it at all (#1072).
     let weak = glib::object::ObjectExt::downgrade(window);
     window.connect_command({
         let wiring = wiring.clone();
         move |id| {
-            if id == CommandId::AddAccount {
-                let Some(window) = weak.upgrade() else {
-                    return;
-                };
-                // Built per opening, not once: a transport is cheap, and one
-                // shared between dialogues would outlive the cancellation
-                // that is supposed to end its work.
-                open(
-                    &window,
-                    &wiring,
-                    // Discovery probes are outbound connections too (#151).
-                    Arc::new(PimalayaTransport::new().with_egress(wiring.egress.clone())),
-                );
-            }
+            postio_session::blocking::now(async {
+                if id == CommandId::AddAccount {
+                    let Some(window) = weak.upgrade() else {
+                        return;
+                    };
+                    // Built per opening, not once: a transport is cheap, and one
+                    // shared between dialogues would outlive the cancellation
+                    // that is supposed to end its work.
+                    open(
+                        &window,
+                        &wiring,
+                        // Discovery probes are outbound connections too (#151).
+                        Arc::new(PimalayaTransport::new().with_egress(wiring.egress.clone())),
+                    )
+                    .await;
+                }
+            })
         }
     });
 }
@@ -87,13 +90,14 @@ pub fn install(window: &Window, wiring: &Wiring) {
 /// [`crate::onboarding::install`]: a probe that builds its own transport can
 /// only be reached by dialling the network, and no test in the default suite
 /// may.
-pub fn open(
+pub async fn open(
     window: &Window,
     wiring: &Wiring,
     transport: Arc<dyn DiscoveryTransport>,
 ) -> adw::Dialog {
     let screen = Onboarding::new();
-    screen.focus_address();
+    // A fresh form starts at its first field, which is the name.
+    screen.focus_name();
 
     let dialog = adw::Dialog::builder()
         .title("Add account")
@@ -137,8 +141,10 @@ pub fn open(
             let wiring = wiring.clone();
             let dialog = dialog.clone();
             move |address: &str| {
-                dialog.close();
-                join(&window, &wiring, address);
+                postio_session::blocking::now(async {
+                    dialog.close();
+                    join(&window, &wiring, address).await;
+                })
             }
         };
         move |submission| {
@@ -167,15 +173,15 @@ pub fn open(
 /// is what [`crate::attach_account`] has to start an engine from, it carries
 /// the id only the insert knows, and `onboarding::save` may have *updated*
 /// an account that was already there rather than creating one.
-fn join(window: &Window, wiring: &Wiring, address: &str) {
-    let Some(account) = written(wiring, address) else {
+async fn join(window: &Window, wiring: &Wiring, address: &str) {
+    let Some(account) = written(wiring, address).await else {
         // The row was written a moment ago, so this is a store that has
         // stopped answering — which the panes are about to say far more
         // loudly than a toast would.
         tracing::error!("the account was saved and could not be read back");
         return;
     };
-    if let Err(refusal) = crate::attach_account(window, wiring, &account) {
+    if let Err(refusal) = crate::attach_account(window, wiring, &account).await {
         // The account exists and is enabled; what it has not got is an
         // engine. Said on screen rather than only logged, because the
         // sentence names the two things the user can do about it and
@@ -187,10 +193,11 @@ fn join(window: &Window, wiring: &Wiring, address: &str) {
 }
 
 /// The account row for `address`, however it was written.
-fn written(wiring: &Wiring, address: &str) -> Option<postio_model::Account> {
-    let connection = wiring.database.connection().ok()?;
+async fn written(wiring: &Wiring, address: &str) -> Option<postio_model::Account> {
+    let connection = wiring.database.connect().await.ok()?;
     AccountRepository::new(&connection)
         .list()
+        .await
         .ok()?
         .into_iter()
         .find(|account| account.address.address.eq_ignore_ascii_case(address))

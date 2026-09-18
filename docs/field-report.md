@@ -16,27 +16,29 @@ which is most of what makes the comparison useful.
 Researched 2026-08-24 via public sources; see citations at the end of each
 section. Superhuman specifics are dated — subscription products change
 pricing and feature gating often — so treat exact numbers as approximate and
-the shape of the comparison as the durable part.
+the shape of the comparison as the durable part. The **Postio column was
+refreshed 2026-09-14 for 0.4.0** against the tree; the peer research is still
+as of 2026-08-24.
 
 ---
 
 ## Comparison matrix
 
-| | Gmail | Thunderbird | Aerion | Superhuman | **Postio (v1)** |
+| | Gmail | Thunderbird | Aerion | Superhuman | **Postio (0.4.0)** |
 |---|---|---|---|---|---|
-| Protocol | proprietary API | IMAP/SMTP/POP | IMAP/SMTP + Gmail/MS APIs, Proton Bridge | **Gmail + Outlook only — no IMAP** | IMAP/SMTP |
-| Providers supported | Google only | any | Gmail, MS 365, iCloud, GMX, generic IMAP | Gmail, Outlook | one account, any IMAP+SMTP |
-| Where mail lives | Google's servers | local profile | local | **Superhuman's servers** | local SQLite + blob store |
+| Protocol | proprietary API | IMAP/SMTP/POP | IMAP/SMTP + Gmail/MS APIs, Proton Bridge | **Gmail + Outlook only — no IMAP** | IMAP/SMTP, JMAP, Gmail API |
+| Providers supported | Google only | any | Gmail, MS 365, iCloud, GMX, generic IMAP | Gmail, Outlook | any IMAP+SMTP or JMAP server, Gmail; presets are data (ADR 0006) |
+| Where mail lives | Google's servers | local profile | local | **Superhuman's servers** | local Turso store + blob store, encrypted at rest |
 | Offline | partial (PWA) | full | full | **not offered** | full, by design |
 | Keyboard-first | partial | partial, addon-dependent | yes, vim-style | yes — 100+ shortcuts, the flagship pitch | yes — founding principle |
 | Command palette | no | no | — | `Cmd+K` | `Ctrl+K`, generated from one registry |
-| Multi-account | yes | yes | yes | yes (within Gmail/Outlook) | not in v1 — roadmap #1 |
-| OAuth | native | yes | yes, CASA Tier 2 (2025-04-25) | n/a (IS Gmail/Outlook) | app password only in v1 — roadmap #2 |
-| Rich-text compose | yes | yes | yes | yes | plaintext in v1 — roadmap #3 |
-| Address book | yes | yes | CardDAV + Google/MS contacts | — | mail-history only in v1 — roadmap #4 |
-| Filters / rules | yes | yes | — | Split Inbox (fixed streams) | schema built, not wired — roadmap #5 |
+| Multi-account | yes | yes | yes | yes (within Gmail/Outlook) | yes — an engine per account, unified inbox (ADR 0005) |
+| OAuth | native | yes | yes, CASA Tier 2 (2025-04-25) | n/a (IS Gmail/Outlook) | yes — system browser + PKCE (ADR 0006); #2 tracks the verified client |
+| Rich-text compose | yes | yes | yes | yes | yes — WebView editor over Postio's own document (ADR 0003, 0004) |
+| Address book | yes | yes | CardDAV + Google/MS contacts | — | contacts and groups, filled from mail (ADR 0007); no vCard import/export, no management surface yet — #4 |
+| Filters / rules | yes | yes | — | Split Inbox (fixed streams) | saved searches pinned in the sidebar; rules designed (ADR 0008), not built — roadmap #5 |
 | AI: summarize / draft | yes (Gemini) | no | planned (Ollama) | **yes — flagship**, acquired by Grammarly Oct 2025 | deferred by design — epic #20 |
-| Read receipts / open tracking | opt-in, sender-visible only | no | — | **yes — "Read Statuses": device, count, timing** | **never — CLAUDE.md §21** |
+| Read receipts / open tracking | opt-in, sender-visible only | no | — | **yes — "Read Statuses": device, count, timing** | **never — `docs/PRODUCT.md` §21** |
 | Follow-up nudges on sent mail | "Nudges" | no | — | yes — "Auto Reminders" | not tracked (see below) |
 | Snippets / canned responses | yes ("Templates") | addon | — | yes, base tier | not tracked (see below) |
 | Pricing | free (ad-supported) | free, OSS | free, OSS | **$30–40/month subscription** | free, OSS |
@@ -103,10 +105,11 @@ maintainer call on whether and how they fit the roadmap.
    is a small feature next to what's already built (drafts, identities,
    signatures).
 2. **Follow-up reminders on sent mail.** Distinct from Snooze (#6, which
-   defers an *incoming* message) — this tracks a message you *sent* and
-   resurfaces it if nobody replies within a chosen window. No existing issue
-   covers the "resurface a sent message" half of that; Snooze covers the
-   deferral mechanism it would reuse.
+   defers an *incoming* message and has since shipped — `b`/`B`, a Snoozed
+   view) — this tracks a message you *sent* and resurfaces it if nobody
+   replies within a chosen window. No existing issue covers the "resurface a
+   sent message" half of that; Snooze is the deferral mechanism it would
+   reuse.
 3. **Split Inbox as shipped today.** Conceptually close to Smart labels
    (#8) and Mailing-list grouping (#9), but Superhuman's version is simpler
    and always-on rather than AI-classified. Worth checking #8/#9 against
@@ -119,13 +122,13 @@ Differences worth stating plainly rather than treating as backlog items,
 because Postio has already decided against them.
 
 1. **Read Statuses.** Superhuman's flagship trust feature is exactly what
-   CLAUDE.md's privacy section rules out by name: *"Read receipts are never
+   `docs/PRODUCT.md` §21 rules out by name: *"Read receipts are never
    sent automatically. `Disposition-Notification-To` is tracking with a
    friendly name."* Any comparison that invites "why doesn't Postio do
    this" should say so directly rather than read as an oversight.
 2. **Cloud-hosted, server-processed mail and AI.** Structural to
    Superhuman, not a phase it will grow out of — it's a thin client over two
-   providers' APIs. Postio's local SQLite store and blob directory are the
+   providers' APIs. Postio's local Turso store and blob directory are the
    opposite bet, made on purpose (`docs/PRODUCT.md` §6, §21).
 3. **No iCloud, no generic IMAP.** The most concrete version of the above:
    Superhuman cannot connect the account this project's own v1 targets.

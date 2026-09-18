@@ -19,19 +19,15 @@ use postio_storage::test_support;
 
 /// A store, a blob directory beside it, and one message holding one blob —
 /// its raw RFC 5322 source.
-fn store_with_a_message() -> (
-    test_support::TempDatabase,
-    BlobStore,
-    postio_model::MessageId,
-) {
-    let database = test_support::temp();
+async fn store_with_a_message() -> (test_support::TempStore, BlobStore, postio_model::MessageId) {
+    let database = test_support::temp().await;
     let blobs = BlobStore::open(
         database.directory().join("blobs"),
         &postio_storage::test_support::blob_keys(),
     )
     .expect("a blob store");
-    let connection = database.connection().expect("checkout");
-    let (account, inbox) = test_support::account_with_inbox(&connection);
+    let connection = database.connect().await.expect("checkout");
+    let (account, inbox) = test_support::account_with_inbox(&connection).await;
 
     let blob = blobs
         .put(b"the raw source of a message somebody will delete")
@@ -41,7 +37,7 @@ fn store_with_a_message() -> (
     message.server.uid_validity = Some(postio_model::UidValidity::new(1));
     message.raw_blob_id = Some(blob);
     let messages = MessageRepository::new(&connection);
-    let id = messages.create(&mut message).expect("create");
+    let id = messages.create(&mut message).await.expect("create");
     drop(connection);
     (database, blobs, id)
 }
@@ -76,18 +72,19 @@ fn blob_files(store: &BlobStore) -> Vec<std::path::PathBuf> {
     out
 }
 
-#[test]
-fn a_deleted_message_s_raw_source_is_reclaimed_by_a_later_sweep() {
+#[tokio::test]
+async fn a_deleted_message_s_raw_source_is_reclaimed_by_a_later_sweep() {
     // The headline. `MessageRepository::delete` removes the row and never
     // touches blobs -- deliberately, because the schema delegates that to this
     // sweep. Nothing called the sweep, so deleting mail freed nothing, for
     // ever.
-    let (database, blobs, id) = store_with_a_message();
-    let connection = database.connection().expect("checkout");
+    let (database, blobs, id) = store_with_a_message().await;
+    let connection = database.connect().await.expect("checkout");
     assert_eq!(blob_files(&blobs).len(), 1);
 
     MessageRepository::new(&connection)
         .delete(&[id])
+        .await
         .expect("delete");
     assert_eq!(
         blob_files(&blobs).len(),
@@ -95,35 +92,37 @@ fn a_deleted_message_s_raw_source_is_reclaimed_by_a_later_sweep() {
         "deleting the row leaves the bytes, which is the whole reason a sweep exists"
     );
 
-    let report =
-        postio_session::reclaim_orphaned_blobs(&database, &blobs, Duration::ZERO).expect("sweep");
+    let report = postio_session::reclaim_orphaned_blobs(&database, &blobs, Duration::ZERO)
+        .await
+        .expect("sweep");
 
     assert_eq!(report.removed, 1);
     assert!(report.bytes_reclaimed > 0);
     assert!(blob_files(&blobs).is_empty());
 }
 
-#[test]
-fn a_blob_still_referenced_is_never_swept() {
+#[tokio::test]
+async fn a_blob_still_referenced_is_never_swept() {
     // The other half, and the one that matters more: a sweep that took a live
     // blob would lose mail that is not refetchable if the server no longer has
     // it. `referenced_blobs` is what stands between this and that.
-    let (database, blobs, _id) = store_with_a_message();
+    let (database, blobs, _id) = store_with_a_message().await;
 
-    let report =
-        postio_session::reclaim_orphaned_blobs(&database, &blobs, Duration::ZERO).expect("sweep");
+    let report = postio_session::reclaim_orphaned_blobs(&database, &blobs, Duration::ZERO)
+        .await
+        .expect("sweep");
 
     assert_eq!(report.removed, 0);
     assert_eq!(blob_files(&blobs).len(), 1);
 }
 
-#[test]
-fn a_blob_younger_than_the_grace_period_is_left_alone() {
+#[tokio::test]
+async fn a_blob_younger_than_the_grace_period_is_left_alone() {
     // `min_age` is load-bearing rather than decoration. A blob written but not
     // yet committed to a row is indistinguishable from an orphan, so a sweep
     // with no grace period would delete the body of a message that was
     // mid-fetch. The default is an hour; production must not pass `ZERO`.
-    let database = test_support::temp();
+    let database = test_support::temp().await;
     let blobs = BlobStore::open(
         database.directory().join("blobs"),
         &postio_storage::test_support::blob_keys(),
@@ -135,18 +134,19 @@ fn a_blob_younger_than_the_grace_period_is_left_alone() {
 
     let report =
         postio_session::reclaim_orphaned_blobs(&database, &blobs, Duration::from_secs(3600))
+            .await
             .expect("sweep");
 
     assert_eq!(report.removed, 0, "too young to be called garbage");
     assert_eq!(blob_files(&blobs).len(), 1);
 }
 
-#[test]
-fn debris_from_a_torn_off_fetch_is_purged() {
+#[tokio::test]
+async fn debris_from_a_torn_off_fetch_is_purged() {
     // A cancelled fetch's writer removes its own temp file, so this is for the
     // case no destructor ran at all: a power cut or a kill -9 mid-fetch leaves
     // a `.part` file nothing will ever finish.
-    let database = test_support::temp();
+    let database = test_support::temp().await;
     let blobs = BlobStore::open(
         database.directory().join("blobs"),
         &postio_storage::test_support::blob_keys(),
@@ -181,22 +181,22 @@ fn debris_from_a_torn_off_fetch_is_purged() {
 /// Distinct bytes because the store is content-addressed: two messages filled
 /// with the same byte would share one blob, and a test about *which* blob
 /// eviction takes would be testing nothing.
-fn store_with_messages(
+async fn store_with_messages(
     count: usize,
     size: usize,
 ) -> (
-    test_support::TempDatabase,
+    test_support::TempStore,
     BlobStore,
     Vec<postio_model::BlobId>,
 ) {
-    let database = test_support::temp();
+    let database = test_support::temp().await;
     let blobs = BlobStore::open(
         database.directory().join("blobs"),
         &postio_storage::test_support::blob_keys(),
     )
     .expect("a blob store");
-    let connection = database.connection().expect("checkout");
-    let (account, inbox) = test_support::account_with_inbox(&connection);
+    let connection = database.connect().await.expect("checkout");
+    let (account, inbox) = test_support::account_with_inbox(&connection).await;
     let messages = MessageRepository::new(&connection);
 
     let mut written = Vec::new();
@@ -211,24 +211,25 @@ fn store_with_messages(
         message.server.uid = Some(postio_model::Uid::new(index as u32 + 1));
         message.server.uid_validity = Some(postio_model::UidValidity::new(1));
         message.raw_blob_id = Some(blob.clone());
-        messages.create(&mut message).expect("create");
+        messages.create(&mut message).await.expect("create");
         written.push(blob);
     }
     drop(connection);
     (database, blobs, written)
 }
 
-#[test]
-fn a_store_over_its_ceiling_loses_its_least_wanted_blobs() {
+#[tokio::test]
+async fn a_store_over_its_ceiling_loses_its_least_wanted_blobs() {
     // The sentence #862 is about: `evict_to_fit` had no production caller, so
     // a `max_bytes` in somebody's config.toml did nothing at all. Oldest mail
     // first -- the mirror of a backfill that fetches newest first.
-    let (database, blobs, written) = store_with_messages(3, 40_000);
+    let (database, blobs, written) = store_with_messages(3, 40_000).await;
     assert_eq!(blob_files(&blobs).len(), 3);
 
     // Room for the newest blob and nothing else.
     let budget = blobs.len_of(&written[2]).expect("len") + 16;
     let report = postio_session::enforce_storage_ceiling(&database, &blobs, Some(budget))
+        .await
         .expect("the pass runs")
         .expect("a ceiling was set, so a pass ran");
 
@@ -240,14 +241,15 @@ fn a_store_over_its_ceiling_loses_its_least_wanted_blobs() {
     assert!(blobs.contains(&written[2]), "this week's mail stays");
 }
 
-#[test]
-fn a_store_under_its_ceiling_loses_nothing() {
+#[tokio::test]
+async fn a_store_under_its_ceiling_loses_nothing() {
     // The other half, and the one a user notices: a ceiling they set high
     // enough must never cost them a refetch.
-    let (database, blobs, written) = store_with_messages(3, 4_000);
+    let (database, blobs, written) = store_with_messages(3, 4_000).await;
 
     let report =
         postio_session::enforce_storage_ceiling(&database, &blobs, Some(100 * 1024 * 1024))
+            .await
             .expect("the pass runs")
             .expect("a ceiling was set, so a pass ran");
 
@@ -257,19 +259,94 @@ fn a_store_under_its_ceiling_loses_nothing() {
     assert_eq!(blob_files(&blobs).len(), 3);
 }
 
-#[test]
-fn no_ceiling_means_the_pass_does_not_run_at_all() {
+#[tokio::test]
+async fn no_ceiling_means_the_pass_does_not_run_at_all() {
     // Unset is the default and the documented answer -- `[storage]`'s module
     // docs say a number here is a promise about somebody else's disk, and
     // Postio does not know how big theirs is. So no ceiling must not be read
     // as a ceiling of zero, which is the reading that would delete a whole
     // store on first start.
-    let (database, blobs, written) = store_with_messages(3, 40_000);
+    let (database, blobs, written) = store_with_messages(3, 40_000).await;
 
-    let report =
-        postio_session::enforce_storage_ceiling(&database, &blobs, None).expect("the pass runs");
+    let report = postio_session::enforce_storage_ceiling(&database, &blobs, None)
+        .await
+        .expect("the pass runs");
 
     assert!(report.is_none(), "no ceiling, so nothing to enforce");
     assert!(written.iter().all(|blob| blobs.contains(blob)));
     assert_eq!(blob_files(&blobs).len(), 3);
+}
+
+#[tokio::test]
+async fn settled_operations_past_their_retention_are_pruned_and_the_rest_kept() {
+    // `OperationQueueRepository::prune_settled` was written and tested and
+    // nothing ever called it, so the queue grew without bound -- the shape
+    // of #416. Housekeeping runs it now, and this is the contract: a done
+    // row older than the retention goes; a done row inside it stays, so a
+    // late undo still finds it; a pending row stays whatever its age.
+    use chrono::Duration;
+    use postio_model::{Message, Operation, OperationTarget};
+    use postio_storage::repository::{MessageRepository, OperationQueueRepository};
+    use postio_storage::test_support;
+
+    let database = test_support::memory().await;
+    let (old_done, recent_done, pending) = {
+        let connection = database.connect().await.expect("checkout");
+        let (account, inbox) = test_support::account_with_inbox(&connection).await;
+        let archive = test_support::mailbox(&connection, &account, "Archive").await;
+        let mut message = Message::new(account.id, inbox, chrono::Utc::now());
+        let id = MessageRepository::new(&connection)
+            .create(&mut message)
+            .await
+            .expect("create");
+        let queue = OperationQueueRepository::new(&connection);
+        let now = chrono::Utc::now();
+        let mut enqueued = Vec::new();
+        for age in [40, 2, 40] {
+            let at = now - Duration::days(age);
+            let queued = queue
+                .enqueue(
+                    account.id,
+                    OperationTarget::Message(id),
+                    &Operation::Move {
+                        from: inbox,
+                        to: archive.id,
+                    },
+                    at,
+                )
+                .await
+                .expect("enqueue");
+            enqueued.push((queued.id, at));
+        }
+        let (old_done, old_at) = enqueued[0];
+        let (recent_done, recent_at) = enqueued[1];
+        let (pending, _) = enqueued[2];
+        queue.mark_done(old_done, old_at).await.expect("settle");
+        queue
+            .mark_done(recent_done, recent_at)
+            .await
+            .expect("settle");
+        (old_done, recent_done, pending)
+    };
+
+    let removed = postio_session::prune_settled_operations(
+        &database,
+        postio_session::OPERATION_RETENTION,
+        chrono::Utc::now(),
+    )
+    .await
+    .expect("the sweep runs");
+    assert_eq!(removed, 1, "exactly the settled row past its retention");
+
+    let connection = database.connect().await.expect("checkout");
+    let queue = OperationQueueRepository::new(&connection);
+    assert!(queue.get(old_done).await.expect("read").is_none(), "gone");
+    assert!(
+        queue.get(recent_done).await.expect("read").is_some(),
+        "a late undo still finds a recently settled row"
+    );
+    assert!(
+        queue.get(pending).await.expect("read").is_some(),
+        "a pending row is never pruned, however old"
+    );
 }

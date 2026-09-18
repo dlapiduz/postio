@@ -226,7 +226,9 @@ operation you would most want it on" is the wrong place to stop.
   branch logs rather than silently settling.
 - `Actions::undo` gains the inverse-saga branch for `confirmed` and `done`,
   aborting the forward saga first in the `confirmed` case.
-- No schema migration: `operation_queue.source_remote_id` and
-  `cross_account_moves.confirmed_remote_id` both already exist.
+- No schema change: `operation_queue.source_remote_id` and
+  `cross_account_moves.confirmed_remote_id` both already exist (in
+  `crates/postio-storage/src/schema.rs`'s `HEAD` — and there are no
+  migrations to write in any case since ADR 0038).
 - The registry is untouched — no new `CommandId`, no new `UndoKind`, no new
   binding, no new cheat-sheet row.

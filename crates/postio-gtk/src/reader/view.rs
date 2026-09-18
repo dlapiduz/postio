@@ -298,6 +298,19 @@ pub struct ThreadMessage {
     pub preview: String,
     /// Whether it starts open.
     pub expanded: bool,
+    /// Whether the body has not been backfilled yet.
+    ///
+    /// A conversation is one document (ADR 0032), so a message with no body
+    /// used to contribute an empty section and say nothing -- the reader saw
+    /// a message that would not open and no reason why. `Absent::Partial`'s
+    /// plate is the answer the single-message path has always given, and this
+    /// is what carries the question into the thread.
+    ///
+    /// Only the message that is *open* shows the plate. Everything unfetched
+    /// stays the one line it already was, because
+    /// `expanded_in_document` opens every message in the thread and a plate
+    /// on each would be thirty explanations of one fact.
+    pub absent: bool,
     /// Whether this is the newest message in the thread — canvas 17's badge.
     pub latest: bool,
     /// Whether this is a draft: written here and never sent.
@@ -372,6 +385,7 @@ impl Reader {
         view.set_accessible_role(gtk::AccessibleRole::Article);
         view.connect_decide_policy(handle_decide_policy);
         paint_ground(&view);
+        crate::web_process::watch(&view);
         // The scheme can change while the application runs, and the widget
         // background is not a document, so no re-render fixes it.
         let dark_notify = adw::StyleManager::default().connect_dark_notify({
@@ -860,6 +874,21 @@ impl Reader {
         self.set_send_state(self.send_state.get());
     }
 
+    /// Press a verb wherever it is currently drawn. Test-facing.
+    ///
+    /// Across all three bars on purpose: which one holds a verb depends on
+    /// the send state, and a test that reached into one of them by name
+    /// could not have caught two bars going unconnected.
+    #[doc(hidden)]
+    pub fn test_press(&self, command: postio_core::CommandId) {
+        for bar in [&self.actions, &self.queued_actions, &self.stopped_actions] {
+            if bar.button(command).is_some() {
+                bar.press(command);
+                return;
+            }
+        }
+    }
+
     /// The action bar's widget, so a test can ask where it is mounted.
     #[doc(hidden)]
     pub fn actions_widget(&self) -> gtk::Widget {
@@ -1321,7 +1350,12 @@ impl Reader {
     ///
     /// [`Window::apply_keymap`]: crate::window::Window::apply_keymap
     pub fn set_keymap(&self, keymap: &postio_core::Keymap) {
+        // All three, for the reason `connect_command` gives: a bar nobody
+        // hands a keymap to draws a verb with no key on it, and these two are
+        // the ones a person meets when a send has gone wrong.
         self.actions.set_keymap(keymap);
+        self.queued_actions.set_keymap(keymap);
+        self.stopped_actions.set_keymap(keymap);
         // The notice's own cap, from the same keymap. Written down here it
         // would go on saying `C-o` after a rebind moved the key, which is the
         // drift `KeycapButton` exists to end (#1002).
@@ -1336,7 +1370,22 @@ impl Reader {
     /// whoever mounts the reader hands this straight to the same
     /// `Window::act` the list's row actions do.
     pub fn connect_command(&self, handler: impl Fn(postio_core::Command) + 'static) {
-        self.actions.connect_command(handler);
+        // **Every bar, not just the first.** There are three -- one per verb
+        // set `ReaderAction::for_send_state` can return -- and only the
+        // received-mail one was ever connected. So "Send again" on a failed
+        // send and "Cancel send" on a queued one were drawn, were clickable,
+        // and did nothing at all: no toast, no rejection, nothing, because
+        // the command was never raised for anything to reject.
+        //
+        // Reported as the button not working, and it looked like a dispatch
+        // or resolution bug all the way down -- the session resolves
+        // `RetrySend { draft: None }` from the row in view perfectly well.
+        // Nothing was ever asking it to.
+        let handler = std::rc::Rc::new(handler);
+        for bar in [&self.actions, &self.queued_actions, &self.stopped_actions] {
+            let handler = handler.clone();
+            bar.connect_command(move |command| handler(command));
+        }
     }
 
     /// Paint `terms` wherever they appear in the body.
@@ -1722,6 +1771,31 @@ fn compose_thread_document(
             } else {
                 RemoteImages::Blocked
             };
+            if message.absent && message.expanded {
+                // The same words the single-message pane has always used, not
+                // a second way of saying it -- `absent_html` carries the
+                // `role="status"` live region with it, so a screen reader is
+                // told when the body is still coming and told it once.
+                //
+                // `Partial` rather than a state read per message: the thread
+                // knows only that no body is here yet, which is what `Partial`
+                // means. Offline is said by the connection banner, which is
+                // about the account and not about one message.
+                //
+                // Only when it is open. A collapsed message contributes its
+                // section to the document either way, so emitting the plate
+                // for all of them puts thirty copies of one sentence into a
+                // thirty-message thread -- invisible, but each carrying an
+                // `aria-live` region, which is not invisible to a screen
+                // reader. A collapsed message is its one preview line, and
+                // that line is built from headers, which are here.
+                return postio_ui::reader::document::Rendered {
+                    html: postio_ui::reader::document::absent_html(
+                        postio_ui::reader::document::Absent::Partial,
+                    ),
+                    ..postio_ui::reader::document::Rendered::default()
+                };
+            }
             postio_ui::reader::document::body_html_in(
                 &message.body,
                 remote,

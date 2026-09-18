@@ -1,6 +1,6 @@
 # How sync works
 
-Postio keeps a complete local replica of your mail: a SQLite database for
+Postio keeps a complete local replica of your mail: an encrypted database for
 everything listable and searchable, plus a content-addressed blob store for
 raw messages and attachments. Every screen you look at — the inbox, a
 thread, a search result — is read from that local copy, never fetched live

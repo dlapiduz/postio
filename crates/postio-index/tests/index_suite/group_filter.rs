@@ -7,29 +7,33 @@ use postio_index::{SearchRequest, search};
 use postio_model::{AccountScope, EmailAddress, Message};
 use postio_search::facets::Scope;
 use postio_search::parse;
+use postio_storage::Connection;
 use postio_storage::repository::{ContactGroupRepository, ContactRepository, MessageRepository};
 use postio_storage::test_support;
-use rusqlite::Connection;
 
 fn at(hour: u32) -> chrono::DateTime<Utc> {
     Utc.with_ymd_and_hms(2026, 8, 20, hour, 0, 0).unwrap()
 }
 
 struct World {
-    _database: postio_storage::Database,
-    connection: postio_storage::PooledConnection,
+    _database: postio_storage::Store,
+    connection: postio_storage::Checkout,
     from_member: Message,
     to_member: Message,
     unrelated: Message,
 }
 
-fn world() -> World {
-    let database = test_support::memory();
-    let connection = database.connection().expect("checkout");
-    postio_index::index::ensure_schema(&connection).expect("schema");
+async fn world() -> World {
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    postio_index::index::ensure_schema(&connection)
+        .await
+        .expect("schema");
 
-    let account = test_support::account(&connection);
-    let inbox = test_support::mailbox(&connection, &account, "INBOX").id;
+    let account = test_support::account(&connection).await;
+    let inbox = test_support::mailbox(&connection, &account, "INBOX")
+        .await
+        .id;
 
     let contacts = ContactRepository::new(&connection);
     let groups = ContactGroupRepository::new(&connection);
@@ -40,6 +44,7 @@ fn world() -> World {
             &EmailAddress::new(Some("Ada"), "ada@example.com"),
             None,
         )
+        .await
         .expect("create ada");
     contacts
         .create(
@@ -47,17 +52,19 @@ fn world() -> World {
             &EmailAddress::new(Some("Quinn"), "quinn@example.net"),
             None,
         )
+        .await
         .expect("create quinn");
 
     let mut family = postio_model::ContactGroup::new(Some(account.id), "family", at(0));
-    groups.create(&mut family).expect("create group");
-    groups.add_member(family.id, ada).expect("add ada");
+    groups.create(&mut family).await.expect("create group");
+    groups.add_member(family.id, ada).await.expect("add ada");
 
     let mut from_member = Message::new(account.id, inbox, at(9));
     from_member.from = vec![EmailAddress::new(Some("Ada"), "ada@example.com")];
     from_member.subject = Some("From Ada".into());
     MessageRepository::new(&connection)
         .create(&mut from_member)
+        .await
         .expect("create");
 
     let mut to_member = Message::new(account.id, inbox, at(8));
@@ -66,6 +73,7 @@ fn world() -> World {
     to_member.subject = Some("To Ada".into());
     MessageRepository::new(&connection)
         .create(&mut to_member)
+        .await
         .expect("create");
 
     let mut unrelated = Message::new(account.id, inbox, at(7));
@@ -73,6 +81,7 @@ fn world() -> World {
     unrelated.subject = Some("From Quinn".into());
     MessageRepository::new(&connection)
         .create(&mut unrelated)
+        .await
         .expect("create");
 
     World {
@@ -84,7 +93,7 @@ fn world() -> World {
     }
 }
 
-fn run(connection: &Connection, query: &str) -> Vec<postio_model::MessageId> {
+async fn run(connection: &Connection, query: &str) -> Vec<postio_model::MessageId> {
     let parsed = parse(query, at(12).date_naive());
     let request = SearchRequest {
         account: AccountScope::Unified,
@@ -94,6 +103,7 @@ fn run(connection: &Connection, query: &str) -> Vec<postio_model::MessageId> {
         order: postio_search::ResultOrder::Relevance,
     };
     search(connection, &request, at(12))
+        .await
         .expect("search")
         .hits
         .into_iter()
@@ -101,10 +111,10 @@ fn run(connection: &Connection, query: &str) -> Vec<postio_model::MessageId> {
         .collect()
 }
 
-#[test]
-fn group_matches_a_message_from_or_to_any_member() {
-    let world = world();
-    let mut hits = run(&world.connection, "group:family");
+#[tokio::test]
+async fn group_matches_a_message_from_or_to_any_member() {
+    let world = world().await;
+    let mut hits = run(&world.connection, "group:family").await;
     hits.sort();
     let mut expected = vec![world.from_member.id, world.to_member.id];
     expected.sort();
@@ -115,25 +125,25 @@ fn group_matches_a_message_from_or_to_any_member() {
     );
 }
 
-#[test]
-fn group_negation_excludes_members() {
-    let world = world();
-    let hits = run(&world.connection, "-group:family");
+#[tokio::test]
+async fn group_negation_excludes_members() {
+    let world = world().await;
+    let hits = run(&world.connection, "-group:family").await;
     assert_eq!(hits, vec![world.unrelated.id], "everyone outside the group");
 }
 
-#[test]
-fn an_unknown_group_name_matches_nothing_never_everything() {
+#[tokio::test]
+async fn an_unknown_group_name_matches_nothing_never_everything() {
     // Same reasoning as `account:` and `in:`: an unresolvable name is an
     // empty set of members, not a dropped predicate.
-    let world = world();
-    assert!(run(&world.connection, "group:nonexistent").is_empty());
+    let world = world().await;
+    assert!(run(&world.connection, "group:nonexistent").await.is_empty());
 }
 
-#[test]
-fn group_composes_with_a_text_search() {
-    let world = world();
-    let hits = run(&world.connection, "group:family from");
+#[tokio::test]
+async fn group_composes_with_a_text_search() {
+    let world = world().await;
+    let hits = run(&world.connection, "group:family from").await;
     assert_eq!(
         hits,
         vec![world.from_member.id],

@@ -15,9 +15,11 @@ mod body_arrives;
 mod bulk_keystroke;
 mod click_preview;
 mod command_wiring;
+mod compose_default_account;
 mod compose_detach;
 mod compose_typing;
 mod composer_warm;
+mod conversation_body_arrives;
 mod conversation_by_default;
 mod conversation_reply_target;
 mod correlation;
@@ -31,11 +33,14 @@ mod egress_wiring;
 mod escape_after_finder_closed;
 mod event_fanout;
 mod focus_on_launch;
+mod folder_header_count;
+mod glib_main_context;
 mod go_to_keystroke;
 mod keystroke;
 mod label_wiring;
 mod large_folder_open;
 mod list_contract;
+mod mailto_uri;
 mod manual_sync;
 mod navigation_cost;
 mod onboarding_probe;
@@ -109,8 +114,21 @@ const CASES: &[(&str, fn())] = &[
         focus_on_launch::the_window_opens_with_the_keyboard_on_the_first_message as fn(),
     ),
     (
+        "glib_main_context::a_store_opens_and_reads_on_the_main_context_with_no_runtime",
+        glib_main_context::a_store_opens_and_reads_on_the_main_context_with_no_runtime as fn(),
+    ),
+    (
         "list_contract::the_list_output_stays_libtest_shaped",
         list_contract::the_list_output_stays_libtest_shaped as fn(),
+    ),
+    (
+        "compose_default_account::a_new_message_comes_from_the_default_account_and_a_reply_does_not",
+        compose_default_account::a_new_message_comes_from_the_default_account_and_a_reply_does_not
+            as fn(),
+    ),
+    (
+        "mailto_uri::a_mailto_link_opens_the_composer_with_the_address_filled_in",
+        mailto_uri::a_mailto_link_opens_the_composer_with_the_address_filled_in as fn(),
     ),
     (
         "account_connection_wiring::a_connection_event_a_scope_cycle_and_the_trackers_all_agree_with_appstate",
@@ -199,6 +217,14 @@ const CASES: &[(&str, fn())] = &[
         compose_typing::every_letter_can_be_typed_into_the_composer_body as fn(),
     ),
     (
+        "conversation_body_arrives::a_body_arriving_fills_in_the_open_conversation",
+        conversation_body_arrives::a_body_arriving_fills_in_the_open_conversation as fn(),
+    ),
+    (
+        "folder_header_count::the_header_count_follows_a_reload",
+        folder_header_count::the_header_count_follows_a_reload as fn(),
+    ),
+    (
         "conversation_by_default::landing_on_a_thread_row_opens_the_conversation",
         conversation_by_default::landing_on_a_thread_row_opens_the_conversation as fn(),
     ),
@@ -281,8 +307,13 @@ const CASES: &[(&str, fn())] = &[
         reading_offline::the_pane_says_offline_and_updates_the_moment_the_connection_does as fn(),
     ),
     (
-        "reclaim_pages::a_store_written_before_the_setting_is_converted_by_the_application",
-        reclaim_pages::a_store_written_before_the_setting_is_converted_by_the_application as fn(),
+        "reclaim_pages::a_store_full_of_holes_is_reclaimed_by_the_application",
+        reclaim_pages::a_store_full_of_holes_is_reclaimed_by_the_application as fn(),
+    ),
+    (
+        "reclaim_pages::the_store_still_cannot_be_told_to_reclaim_its_pages_a_little_at_a_time",
+        reclaim_pages::the_store_still_cannot_be_told_to_reclaim_its_pages_a_little_at_a_time
+            as fn(),
     ),
     (
         "reclaim_wiring::opening_a_store_reclaims_what_nothing_references",
@@ -537,30 +568,80 @@ pub fn settle() {
 /// The inverse of `settle_until`, and it needs a duration rather than a
 /// condition: proving something does *not* stop happening cannot be polled
 /// for. Three copies, now one.
-pub fn settle_while(held: impl Fn() -> bool) -> bool {
+pub async fn settle_while<F, Fut>(held: F) -> bool
+where
+    F: Fn() -> Fut,
+    Fut: std::future::Future<Output = bool>,
+{
     let deadline = std::time::Instant::now()
         + postio_test_support::scaled(std::time::Duration::from_millis(500));
     while std::time::Instant::now() < deadline {
         settle();
-        if !held() {
+        if !held().await {
             return false;
         }
-        std::thread::sleep(std::time::Duration::from_millis(10));
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
     }
-    held()
+    held().await
 }
 
-pub fn settle_until(done: impl Fn() -> bool) -> bool {
+/// Run a case's body, which is async because the store is.
+///
+/// # Why the runtime is per-thread and multi-threaded
+///
+/// The body runs on **this** thread, because everything in it touches GTK and
+/// GTK belongs to the thread that initialised it — `settle_until` iterates the
+/// default main context here, and a body driven on a worker would be calling
+/// widgets from the wrong side. `Runtime::block_on` is exactly that: the
+/// future is polled on the caller's thread.
+///
+/// `multi_thread` all the same, and the flavour is load-bearing.
+/// `postio_session::blocking::now` is how a synchronous callback reads the
+/// store — WebKit resolving a `cid:` URI mid-layout, a row asking for a
+/// sender's name — and it reaches for `block_in_place`, which panics outright
+/// on a `current_thread` runtime. Measured: `block_in_place` from inside
+/// `block_on` on a multi-threaded runtime is fine, which is the shape this is.
+///
+/// One runtime per thread rather than per case: standing a runtime up and
+/// tearing it down around ninety-four cases is ninety-four thread pools, and
+/// the cases run one at a time on one thread.
+pub fn gtk_case<F: std::future::Future<Output = ()>>(body: F) {
+    thread_local! {
+        static RUNTIME: tokio::runtime::Runtime = tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(2)
+            .enable_all()
+            .build()
+            .expect("a runtime for the app suite");
+    }
+    RUNTIME.with(|runtime| runtime.block_on(body));
+}
+
+/// Pump GTK until `done` answers true, or give up after ten seconds.
+///
+/// `done` is async because most of these conditions are now a read of the
+/// store. It runs on this thread, between iterations of the main context, so
+/// what it observes is what the application has actually committed — which is
+/// the whole reason these are `settle_until` and not a sleep.
+pub async fn settle_until<F, Fut>(done: F) -> bool
+where
+    F: Fn() -> Fut,
+    Fut: std::future::Future<Output = bool>,
+{
     let deadline =
         std::time::Instant::now() + postio_test_support::scaled(std::time::Duration::from_secs(10));
     while std::time::Instant::now() < deadline {
         settle();
-        if done() {
+        if done().await {
             return true;
         }
-        std::thread::sleep(std::time::Duration::from_millis(10));
+        // A reader whose web process died is never going to paint; fail
+        // now, naming the death, rather than at the deadline.
+        if let Some(reason) = postio_gtk::web_process::take_death() {
+            panic!("a WebKit web process died ({reason}) while settling");
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
     }
-    done()
+    done().await
 }
 
 fn main() {

@@ -237,7 +237,7 @@ fn pump_until(done: impl Fn() -> bool) {
         if done() {
             return;
         }
-        std::thread::sleep(Duration::from_millis(5));
+        std::thread::sleep(std::time::Duration::from_millis(5));
     }
     assert!(done(), "timed out waiting for the list to catch up");
 }

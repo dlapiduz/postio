@@ -1545,19 +1545,13 @@ fn row_shell(title: &str, trailing: Option<&str>) -> gtk::ListBoxRow {
 }
 
 fn chip_widget(chip: &Chip) -> gtk::Label {
-    let label = gtk::Label::new(Some(&chip.label));
-    label.add_css_class("postio-chip");
-    if chip.negated {
-        label.add_css_class("negated");
-    }
-    if !chip.complete {
-        label.add_css_class("partial");
-    }
     // Read as what it does, not as the shorthand it is written in.
-    label.update_property(&[gtk::accessible::Property::Label(&crate::search::spoken(
-        chip,
-    ))]);
-    label
+    crate::widgets::filter_chip(
+        &chip.label,
+        &crate::search::spoken(chip),
+        chip.negated,
+        !chip.complete,
+    )
 }
 
 /// The day relative dates resolve against.

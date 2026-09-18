@@ -1,9 +1,11 @@
-//! The database is SQLCipher (ADR 0014 Q1, #300).
+//! The database is encrypted (ADR 0014 Q1, #300).
 //!
-//! Page-level encryption below SQLite's own machinery, so FTS5, WAL, the
-//! migrations and every repository work unchanged and the encryption is
-//! invisible above `Database::open`. What these tests hold down is the part
-//! that is *not* invisible:
+//! Page-level encryption below the engine's own machinery, so the search
+//! index, the WAL and every repository work unchanged and the encryption is
+//! invisible above `Store::open`. It was SQLCipher's AES-256-CBC plus an
+//! HMAC; it is the engine's own AES-256-GCM now, and what these tests hold
+//! down did not change with it -- which is the point of their being about
+//! properties rather than about a cipher:
 //!
 //! * **The bytes on disk are ciphertext.** Since ADR 0020 message bodies are
 //!   rows, so this file is now what stands between a stolen laptop and the
@@ -17,7 +19,7 @@
 use postio_model::{BodyState, Message};
 use postio_storage::key::{Purpose, StoreKey, Subkey};
 use postio_storage::repository::{MessageRepository, StoredBody};
-use postio_storage::{Database, test_support};
+use postio_storage::{Store, test_support};
 
 /// A database subkey from a fixed master key, so a test can reopen a store.
 fn key(seed: u8) -> Subkey {
@@ -29,16 +31,16 @@ const SECRET_SUBJECT: &str = "Zarquon-Vindaloo-Quintessence";
 const SECRET_BODY: &str = "The frobnicator arrives on Thursday, Grimswick.";
 
 /// Writes a message carrying the two markers above, and answers the store path.
-fn a_store_with_a_secret(directory: &std::path::Path, key: &Subkey) -> std::path::PathBuf {
+async fn a_store_with_a_secret(directory: &std::path::Path, key: &Subkey) -> std::path::PathBuf {
     let path = directory.join("postio.db");
-    let database = Database::open(&path, key).expect("open");
-    let connection = database.connection().expect("checkout");
-    let (account, inbox) = test_support::account_with_inbox(&connection);
+    let database = Store::open(&path, key).await.expect("open");
+    let connection = database.connect().await.expect("checkout");
+    let (account, inbox) = test_support::account_with_inbox(&connection).await;
 
     let messages = MessageRepository::new(&connection);
     let mut message = Message::new(account.id, inbox, chrono::Utc::now());
     message.subject = Some(SECRET_SUBJECT.to_owned());
-    let id = messages.create(&mut message).expect("create");
+    let id = messages.create(&mut message).await.expect("create");
     messages
         .set_body(
             id,
@@ -48,22 +50,21 @@ fn a_store_with_a_secret(directory: &std::path::Path, key: &Subkey) -> std::path
             },
             BodyState::Full,
         )
+        .await
         .expect("store the body");
 
     // Fold the WAL back into the file, or the assertions below would be
     // reading a database whose newest pages are still in `postio.db-wal`.
-    connection
-        .execute_batch("PRAGMA wal_checkpoint(TRUNCATE)")
-        .expect("checkpoint");
     drop(connection);
+    database.truncate_log().await.expect("checkpoint");
     drop(database);
     path
 }
 
-#[test]
-fn the_database_file_holds_no_plaintext() {
+#[tokio::test]
+async fn the_database_file_holds_no_plaintext() {
     let directory = tempfile::tempdir().expect("a directory");
-    let path = a_store_with_a_secret(directory.path(), &key(1));
+    let path = a_store_with_a_secret(directory.path(), &key(1)).await;
 
     let bytes = std::fs::read(&path).expect("read the database file");
     assert!(!bytes.is_empty(), "nothing was written");
@@ -89,22 +90,29 @@ fn the_database_file_holds_no_plaintext() {
     );
 }
 
-#[test]
-fn the_same_key_reopens_the_store_and_the_mail_is_there() {
+#[tokio::test]
+async fn the_same_key_reopens_the_store_and_the_mail_is_there() {
     let directory = tempfile::tempdir().expect("a directory");
-    let path = a_store_with_a_secret(directory.path(), &key(2));
+    let path = a_store_with_a_secret(directory.path(), &key(2)).await;
 
-    let database = Database::open(&path, &key(2)).expect("reopen with the same key");
-    let connection = database.connection().expect("checkout");
-    let (id, subject): (i64, Option<String>) = connection
-        .query_row("SELECT id, subject FROM messages", [], |row| {
-            Ok((row.get(0)?, row.get(1)?))
+    let database = Store::open(&path, &key(2))
+        .await
+        .expect("reopen with the same key");
+    let connection = database.connect().await.expect("checkout");
+    let (id, subject): (i64, Option<String>) =
+        postio_storage::sql::one(&connection, "SELECT id, subject FROM messages", (), |row| {
+            Ok((
+                postio_storage::sql::RowExt::col(row, 0)?,
+                postio_storage::sql::RowExt::col(row, 1)?,
+            ))
         })
+        .await
         .expect("the message written before the store was closed");
     assert_eq!(subject.as_deref(), Some(SECRET_SUBJECT));
     assert_eq!(
         MessageRepository::new(&connection)
             .body(postio_model::MessageId::new(id))
+            .await
             .expect("body")
             .expect("the row")
             .text
@@ -114,12 +122,14 @@ fn the_same_key_reopens_the_store_and_the_mail_is_there() {
     );
 }
 
-#[test]
-fn a_wrong_key_is_refused_in_words_rather_than_reported_as_corruption() {
+#[tokio::test]
+async fn a_wrong_key_is_refused_in_words_rather_than_reported_as_corruption() {
     let directory = tempfile::tempdir().expect("a directory");
-    let path = a_store_with_a_secret(directory.path(), &key(3));
+    let path = a_store_with_a_secret(directory.path(), &key(3)).await;
 
-    let error = Database::open(&path, &key(4)).expect_err("a different key must not open it");
+    let error = Store::open(&path, &key(4))
+        .await
+        .expect_err("a different key must not open it");
     let said = error.to_string();
 
     // The sentence reaches a person: `postio_session::open_store_at` puts it
@@ -135,54 +145,68 @@ fn a_wrong_key_is_refused_in_words_rather_than_reported_as_corruption() {
     );
 }
 
-#[test]
-fn a_wrong_key_never_destroys_what_it_could_not_read() {
+#[tokio::test]
+async fn a_wrong_key_never_destroys_what_it_could_not_read() {
     // The failure that would be unforgivable: a refused open that leaves the
     // store unopenable by the *right* key afterwards.
     let directory = tempfile::tempdir().expect("a directory");
-    let path = a_store_with_a_secret(directory.path(), &key(5));
+    let path = a_store_with_a_secret(directory.path(), &key(5)).await;
 
-    Database::open(&path, &key(6)).expect_err("the wrong key");
+    Store::open(&path, &key(6))
+        .await
+        .expect_err("the wrong key");
 
-    let database = Database::open(&path, &key(5)).expect("the right key still opens it");
-    let connection = database.connection().expect("checkout");
-    let count: i64 = connection
-        .query_row("SELECT count(*) FROM messages", [], |row| row.get(0))
+    let database = Store::open(&path, &key(5))
+        .await
+        .expect("the right key still opens it");
+    let connection = database.connect().await.expect("checkout");
+    let count: i64 =
+        postio_storage::sql::one(&connection, "SELECT count(*) FROM messages", (), |row| {
+            postio_storage::sql::RowExt::col(row, 0)
+        })
+        .await
         .expect("count");
     assert_eq!(count, 1, "the mail survived a failed open");
 }
 
-#[test]
-fn temp_store_is_memory_so_sorts_never_spill_plaintext_to_disk() {
+#[tokio::test]
+async fn temp_store_is_memory_so_sorts_never_spill_plaintext_to_disk() {
     // ADR 0014's threat model closes SQLite's temp spill explicitly: an
     // encrypted database whose sort scratch lands on disk in the clear has
     // encrypted the wrong thing.
-    let database = test_support::memory();
-    let connection = database.connection().expect("checkout");
-    let pragmas = postio_storage::db::read_pragmas(&connection).expect("read the pragmas");
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    // Asked of the connection rather than of a struct this crate fills in:
+    // there is no pragma-reading helper any more, and asking the engine is
+    // the stronger question anyway -- it answers what is actually set.
+    let temp_store: i64 = postio_storage::sql::one(&connection, "PRAGMA temp_store", (), |row| {
+        postio_storage::sql::RowExt::col(row, 0)
+    })
+    .await
+    .expect("read the pragma");
     assert_eq!(
-        pragmas.temp_store, 2,
-        "temp_store must be MEMORY (2), not FILE or DEFAULT"
+        temp_store, 2,
+        "temp_store must be MEMORY (2), not FILE or DEFAULT. The engine \
+         defaults it to 0, so `Store::connect` sets it on every connection."
     );
 }
 
-#[test]
-fn the_whole_test_suite_runs_against_an_encrypted_store() {
+#[tokio::test]
+async fn the_whole_test_suite_runs_against_an_encrypted_store() {
     // `test_support` passes a fixed key, so nothing in the suite exercises a
     // plaintext configuration that no longer ships (ADR 0014 Q3). This asserts
     // the helper actually encrypts rather than merely opening.
-    let database = test_support::temp();
-    let connection = database.connection().expect("checkout");
-    let (account, inbox) = test_support::account_with_inbox(&connection);
+    let database = test_support::temp().await;
+    let connection = database.connect().await.expect("checkout");
+    let (account, inbox) = test_support::account_with_inbox(&connection).await;
     let mut message = Message::new(account.id, inbox, chrono::Utc::now());
     message.subject = Some(SECRET_SUBJECT.to_owned());
     MessageRepository::new(&connection)
         .create(&mut message)
+        .await
         .expect("create");
-    connection
-        .execute_batch("PRAGMA wal_checkpoint(TRUNCATE)")
-        .expect("checkpoint");
     drop(connection);
+    database.truncate_log().await.expect("checkpoint");
 
     let bytes = std::fs::read(database.directory().join("postio.db")).expect("read");
     assert!(

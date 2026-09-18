@@ -22,15 +22,15 @@ use postio_storage::test_support;
 ///
 /// Paged deliberately: a selection is about rows, and a window with nothing
 /// resident cannot tell "row 3 is not selected" from "row 3 is not here".
-fn listed(count: u32) -> std::sync::Arc<Session> {
-    let database = test_support::memory();
+async fn listed(count: u32) -> std::sync::Arc<Session> {
+    let database = test_support::memory().await;
     let mailbox = {
-        let connection = database.connection().expect("a connection");
-        let (account, inbox) = test_support::account_with_inbox(&connection);
+        let connection = database.connect().await.expect("a connection");
+        let (account, inbox) = test_support::account_with_inbox(&connection).await;
         let repository = MessageRepository::new(&connection);
         for _ in 0..count {
             let mut message = Message::new(account.id, inbox, Utc::now());
-            repository.create(&mut message).expect("a message");
+            repository.create(&mut message).await.expect("a message");
         }
         inbox
     };
@@ -51,9 +51,9 @@ fn id_at(session: &Session, row: u32) -> i64 {
     session.row_at(row).expect("the page has landed").id
 }
 
-#[test]
-fn moving_the_cursor_selects_nothing() {
-    let session = listed(20);
+#[tokio::test(flavor = "multi_thread")]
+async fn moving_the_cursor_selects_nothing() {
+    let session = listed(20).await;
     // The rule the whole file exists for. A list that built a selection as
     // the cursor moved would make `a` archive everything walked past, which
     // is the failure mode `PRODUCT.md` §9 is written against.
@@ -72,9 +72,9 @@ fn moving_the_cursor_selects_nothing() {
     session.shutdown();
 }
 
-#[test]
-fn space_toggles_the_row_the_cursor_is_on() {
-    let session = listed(20);
+#[tokio::test(flavor = "multi_thread")]
+async fn space_toggles_the_row_the_cursor_is_on() {
+    let session = listed(20).await;
     session.invoke("next_message");
     let first = session.cursor_message().expect("a cursor");
 
@@ -89,9 +89,9 @@ fn space_toggles_the_row_the_cursor_is_on() {
     session.shutdown();
 }
 
-#[test]
-fn the_cursor_keeps_moving_over_a_selection_without_disturbing_it() {
-    let session = listed(20);
+#[tokio::test(flavor = "multi_thread")]
+async fn the_cursor_keeps_moving_over_a_selection_without_disturbing_it() {
+    let session = listed(20).await;
     session.invoke("next_message");
     let marked = session.cursor_message().expect("a cursor");
     session.invoke("toggle_selection");
@@ -112,9 +112,9 @@ fn the_cursor_keeps_moving_over_a_selection_without_disturbing_it() {
     session.shutdown();
 }
 
-#[test]
-fn shift_extends_from_where_the_selection_started() {
-    let session = listed(20);
+#[tokio::test(flavor = "multi_thread")]
+async fn shift_extends_from_where_the_selection_started() {
+    let session = listed(20).await;
     session.invoke("next_message");
     let anchor = session.cursor_message().expect("a cursor");
 
@@ -133,9 +133,9 @@ fn shift_extends_from_where_the_selection_started() {
     session.shutdown();
 }
 
-#[test]
-fn select_all_is_a_predicate_rather_than_every_id() {
-    let session = listed(20);
+#[tokio::test(flavor = "multi_thread")]
+async fn select_all_is_a_predicate_rather_than_every_id() {
+    let session = listed(20).await;
     session.invoke("select_all");
     // `None` is the whole point: there is no list to hand back. A boundary
     // that answered a vector here would have materialised the mailbox, which
@@ -160,9 +160,9 @@ fn select_all_is_a_predicate_rather_than_every_id() {
     session.shutdown();
 }
 
-#[test]
-fn changing_folder_drops_the_selection() {
-    let session = listed(20);
+#[tokio::test(flavor = "multi_thread")]
+async fn changing_folder_drops_the_selection() {
+    let session = listed(20).await;
     session.invoke("next_message");
     session.invoke("toggle_selection");
     assert!(!session.selected_messages().unwrap_or_default().is_empty());
@@ -176,9 +176,9 @@ fn changing_folder_drops_the_selection() {
     session.shutdown();
 }
 
-#[test]
-fn escape_clears_the_selection_before_anything_else() {
-    let session = listed(20);
+#[tokio::test(flavor = "multi_thread")]
+async fn escape_clears_the_selection_before_anything_else() {
+    let session = listed(20).await;
     session.invoke("next_message");
     session.invoke("toggle_selection");
     session.invoke("back");
@@ -190,9 +190,9 @@ fn escape_clears_the_selection_before_anything_else() {
     session.shutdown();
 }
 
-#[test]
-fn a_cursor_on_a_row_whose_page_is_in_flight_finds_it_when_it_lands() {
-    let session = listed(20);
+#[tokio::test(flavor = "multi_thread")]
+async fn a_cursor_on_a_row_whose_page_is_in_flight_finds_it_when_it_lands() {
+    let session = listed(20).await;
     // The list is opened and the cursor moved before anything is resident,
     // which is what pressing `j` the instant a folder opens does. The cursor
     // has a *row* and no message: that is a real state, not an error.

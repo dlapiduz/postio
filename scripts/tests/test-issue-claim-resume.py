@@ -220,6 +220,41 @@ def main() -> int:
             if "77" not in result.stdout:
                 fail("resume", "did not name the PR being resumed", result)
 
+        # ── the tree is still there and nobody holds it: reuse it (#1422) ──
+        # The ordinary case. A session that ended any way but `issue-release`
+        # leaves its tree behind, and the claim it held is released or stale
+        # by the time anyone comes back to a red PR. The tree's existence used
+        # to be refused before the lock could say it was free.
+        shutil.rmtree(base / "claims", ignore_errors=True)
+        # Origin moved while the tree sat idle: another session's fix landed
+        # on the PR. Made in the tree and pushed, then the tree is wound back
+        # a commit, which is the state a stale tree is in.
+        (tree / "more.txt").write_text("landed since\n", encoding="utf-8")
+        git("add", "-A", cwd=tree)
+        git("commit", "-q", "-m", "feat: more of the work", cwd=tree)
+        newer = git("rev-parse", "HEAD", cwd=tree).stdout.strip()
+        git("push", "-q", "origin", "issue-4242-red-pr", cwd=tree)
+        git("reset", "-q", "--hard", "HEAD~1", cwd=tree)
+        result = claim(repo, base, stub_dir, "--resume", "4242")
+        if result.returncode != 0:
+            fail("resume-reuse", "refused the tree the resume exists to return to", result)
+        elif git("rev-parse", "HEAD", cwd=tree).stdout.strip() != newer:
+            fail("resume-reuse", "reused the tree but did not bring it up to the PR", result)
+        elif not (tree / "more.txt").is_file():
+            fail("resume-reuse", "the newer commit's file is not in the tree", result)
+
+        # ── ...unless it holds some other branch ─────────────────────────
+        shutil.rmtree(base / "claims", ignore_errors=True)
+        git("checkout", "-q", "-b", "something-else", cwd=tree)
+        result = claim(repo, base, stub_dir, "--resume", "4242")
+        if result.returncode == 0:
+            fail("resume-other-branch", "resumed into a tree holding a different branch", result)
+        elif "something-else" not in result.stderr:
+            fail("resume-other-branch", "did not say which branch the tree holds", result)
+        git("checkout", "-q", "issue-4242-red-pr", cwd=tree)
+        git("branch", "-q", "-D", "something-else", cwd=tree)
+        shutil.rmtree(base / "claims", ignore_errors=True)
+
         # ── no such branch: refuse rather than start from the base ───────
         result = claim(repo, base, stub_dir, "--resume", "4243")
         if result.returncode == 0:

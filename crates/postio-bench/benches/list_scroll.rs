@@ -21,7 +21,7 @@
 //! # Running
 //!
 //! ```sh
-//! cargo bench -p postio-gtk --bench list_scroll
+//! cargo bench -p postio-bench --bench list_scroll
 //! ```
 //!
 //! It needs a display, and skips without one. CI compiles benches but does

@@ -86,7 +86,12 @@ impl ThreadCue {
     }
 
     /// Whether the subject may be used to place this message.
-    fn subject_is_usable(&self) -> bool {
+    ///
+    /// Public because an index that loads its answers before [`assign`] runs
+    /// has to know which questions will be asked: a `ThreadIndex` built
+    /// eagerly would otherwise query by subject for every message, including
+    /// the ones `assign` would never have asked about.
+    pub fn subject_is_usable(&self) -> bool {
         self.is_reply && !self.subject.is_empty()
     }
 }

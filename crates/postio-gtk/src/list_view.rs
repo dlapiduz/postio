@@ -396,6 +396,13 @@ impl MessageListView {
     /// and an action carrying a selection across that boundary would land on
     /// mail the user cannot see. `postio-core`'s `AppState::open_mailbox`
     /// makes the same decision on its side.
+    /// How many unread the header is currently claiming — for the test that
+    /// the count follows a reload, not only a folder change.
+    #[doc(hidden)]
+    pub fn header_unread(&self) -> u32 {
+        self.imp().unread.get()
+    }
+
     pub fn set_mailbox(&self, name: &str, unread: u32) {
         let imp = self.imp();
         if imp.mailbox.replace(name.to_owned()) != name {

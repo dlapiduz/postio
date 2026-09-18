@@ -38,10 +38,12 @@
 mod account;
 mod dwell;
 mod event;
+mod focus;
 mod keys;
 mod list;
 mod logging;
 mod mailbox;
+mod notify;
 mod palette;
 mod reader;
 mod registry;
@@ -52,11 +54,16 @@ mod settings;
 pub use account::AccountFfi;
 pub use dwell::{DwellArmFfi, dwell_on_cursor};
 pub use event::{ConnectionStateFfi, FailureReasonFfi, UiEvent};
+pub use focus::next_pane;
 pub use keys::{KeyOutcomeFfi, ModifiersFfi};
 pub use list::{RowFfi, ScopeFfi};
 pub use logging::start_logging;
 pub use mailbox::{MailboxFfi, MailboxRoleFfi};
-pub use palette::PaletteEntryFfi;
+pub use notify::{
+    MailArrivalFfi, MailNotificationFfi, NotificationDecisionFfi, SuppressedFfi,
+    decide_notification,
+};
+pub use palette::{CheatRowFfi, CheatSectionFfi, PaletteEntryFfi};
 pub use reader::{InlinePart, RemoteImagesFfi};
 pub use registry::{CommandSpecFfi, MenuFfi, MenuSectionFfi, UiContext, UiRecovery, menus};
 pub use search::{ChipFfi, MatchRangeFfi, OutcomeFfi, SnippetFfi, query_chips};

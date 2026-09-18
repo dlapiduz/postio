@@ -5,10 +5,8 @@
 //! both directions is tested" and "adding a message updates the denormalized
 //! fields".
 
-use std::cell::Cell;
-
 use chrono::{DateTime, TimeZone, Utc};
-use rusqlite::Connection;
+use postio_storage::Connection;
 
 use postio_model::{
     AccountId, EmailAddress, Flag, MailboxId, Message, MessageId, Thread, ThreadId,
@@ -25,7 +23,7 @@ fn at(seconds: i64) -> DateTime<Utc> {
 }
 
 /// One message in `mailbox`, from `sender`, received at `seconds`.
-fn message(
+async fn message(
     connection: &Connection,
     account: AccountId,
     mailbox: MailboxId,
@@ -42,15 +40,17 @@ fn message(
     message.flags = [Flag::Seen].into_iter().collect();
     MessageRepository::new(connection)
         .create(&mut message)
+        .await
         .expect("create a message");
     message
 }
 
-fn a_thread(connection: &Connection, account: AccountId) -> Thread {
+async fn a_thread(connection: &Connection, account: AccountId) -> Thread {
     let mut thread = Thread::new(account);
     thread.subject = Some("tide gate interlock".to_owned());
     ThreadRepository::new(connection)
         .create(&mut thread)
+        .await
         .expect("create a thread");
     thread
 }
@@ -59,22 +59,26 @@ fn a_thread(connection: &Connection, account: AccountId) -> Thread {
 // Create, read, delete
 // ---------------------------------------------------------------------------
 
-#[test]
-fn a_thread_round_trips_with_its_membership_derived_from_its_messages() {
-    let database = test_support::memory();
-    let connection = database.connection().expect("checkout");
-    let (account, inbox) = test_support::account_with_inbox(&connection);
+#[tokio::test]
+async fn a_thread_round_trips_with_its_membership_derived_from_its_messages() {
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    let (account, inbox) = test_support::account_with_inbox(&connection).await;
     let threads = ThreadRepository::new(&connection);
 
-    let thread = a_thread(&connection, account.id);
+    let thread = a_thread(&connection, account.id).await;
     assert!(thread.id.is_assigned());
 
-    let root = message(&connection, account.id, inbox, "ada", 100);
-    let reply = message(&connection, account.id, inbox, "quinn", 200);
-    threads.add_message(thread.id, root.id).expect("add");
-    threads.add_message(thread.id, reply.id).expect("add");
+    let root = message(&connection, account.id, inbox, "ada", 100).await;
+    let reply = message(&connection, account.id, inbox, "quinn", 200).await;
+    threads.add_message(thread.id, root.id).await.expect("add");
+    threads.add_message(thread.id, reply.id).await.expect("add");
 
-    let stored = threads.get(thread.id).expect("get").expect("the thread");
+    let stored = threads
+        .get(thread.id)
+        .await
+        .expect("get")
+        .expect("the thread");
     assert_eq!(
         stored.message_ids,
         vec![root.id, reply.id],
@@ -97,31 +101,41 @@ fn a_thread_round_trips_with_its_membership_derived_from_its_messages() {
     );
 }
 
-#[test]
-fn reading_a_thread_that_is_not_there_is_none() {
-    let database = test_support::memory();
-    let connection = database.connection().expect("checkout");
+#[tokio::test]
+async fn reading_a_thread_that_is_not_there_is_none() {
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
     let threads = ThreadRepository::new(&connection);
 
-    assert!(threads.get(ThreadId::new(404)).expect("get").is_none());
-    assert!(!threads.delete(ThreadId::new(404)).expect("delete"));
+    assert!(
+        threads
+            .get(ThreadId::new(404))
+            .await
+            .expect("get")
+            .is_none()
+    );
+    assert!(!threads.delete(ThreadId::new(404)).await.expect("delete"));
 }
 
-#[test]
-fn deleting_a_thread_leaves_its_messages_alone() {
-    let database = test_support::memory();
-    let connection = database.connection().expect("checkout");
-    let (account, inbox) = test_support::account_with_inbox(&connection);
+#[tokio::test]
+async fn deleting_a_thread_leaves_its_messages_alone() {
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    let (account, inbox) = test_support::account_with_inbox(&connection).await;
     let threads = ThreadRepository::new(&connection);
 
-    let thread = a_thread(&connection, account.id);
-    let message = message(&connection, account.id, inbox, "ada", 10);
-    threads.add_message(thread.id, message.id).expect("add");
+    let thread = a_thread(&connection, account.id).await;
+    let message = message(&connection, account.id, inbox, "ada", 10).await;
+    threads
+        .add_message(thread.id, message.id)
+        .await
+        .expect("add");
 
-    assert!(threads.delete(thread.id).expect("delete"));
+    assert!(threads.delete(thread.id).await.expect("delete"));
 
     let stored = MessageRepository::new(&connection)
         .get(message.id)
+        .await
         .expect("get")
         .expect("the message survives");
     assert_eq!(
@@ -134,19 +148,23 @@ fn deleting_a_thread_leaves_its_messages_alone() {
 // Acceptance: adding a message updates the denormalized fields
 // ---------------------------------------------------------------------------
 
-#[test]
-fn adding_a_message_updates_the_threads_aggregates() {
-    let database = test_support::memory();
-    let connection = database.connection().expect("checkout");
-    let (account, inbox) = test_support::account_with_inbox(&connection);
+#[tokio::test]
+async fn adding_a_message_updates_the_threads_aggregates() {
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    let (account, inbox) = test_support::account_with_inbox(&connection).await;
     let threads = ThreadRepository::new(&connection);
     let messages = MessageRepository::new(&connection);
 
-    let thread = a_thread(&connection, account.id);
-    let root = message(&connection, account.id, inbox, "ada", 100);
-    threads.add_message(thread.id, root.id).expect("add");
+    let thread = a_thread(&connection, account.id).await;
+    let root = message(&connection, account.id, inbox, "ada", 100).await;
+    threads.add_message(thread.id, root.id).await.expect("add");
 
-    let after_root = threads.get(thread.id).expect("get").expect("the thread");
+    let after_root = threads
+        .get(thread.id)
+        .await
+        .expect("get")
+        .expect("the thread");
     assert_eq!(after_root.message_count, 1);
     assert_eq!(after_root.unread_count, 0);
     assert!(!after_root.is_flagged && !after_root.has_attachments);
@@ -161,10 +179,14 @@ fn adding_a_message_updates_the_threads_aggregates() {
         "application/pdf",
         10,
     )];
-    messages.create(&mut reply).expect("create");
-    threads.add_message(thread.id, reply.id).expect("add");
+    messages.create(&mut reply).await.expect("create");
+    threads.add_message(thread.id, reply.id).await.expect("add");
 
-    let after_reply = threads.get(thread.id).expect("get").expect("the thread");
+    let after_reply = threads
+        .get(thread.id)
+        .await
+        .expect("get")
+        .expect("the thread");
     assert_eq!(after_reply.message_count, 2);
     assert_eq!(after_reply.unread_count, 1, "the reply is unread");
     assert!(after_reply.has_unread());
@@ -177,29 +199,30 @@ fn adding_a_message_updates_the_threads_aggregates() {
     assert_eq!(after_reply.first_at, at(100), "and keeps its start");
 }
 
-#[test]
-fn the_threads_subject_is_the_normalized_subject_of_its_root() {
-    let database = test_support::memory();
-    let connection = database.connection().expect("checkout");
-    let (account, inbox) = test_support::account_with_inbox(&connection);
+#[tokio::test]
+async fn the_threads_subject_is_the_normalized_subject_of_its_root() {
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    let (account, inbox) = test_support::account_with_inbox(&connection).await;
     let threads = ThreadRepository::new(&connection);
     let messages = MessageRepository::new(&connection);
 
     let mut root = Message::new(account.id, inbox, at(10));
     root.subject = Some("Tide gate interlock".to_owned());
-    messages.create(&mut root).expect("create");
+    messages.create(&mut root).await.expect("create");
     let mut reply = Message::new(account.id, inbox, at(20));
     reply.subject = Some("Re: Re: Tide gate interlock".to_owned());
-    messages.create(&mut reply).expect("create");
+    messages.create(&mut reply).await.expect("create");
 
     let mut thread = Thread::new(account.id);
-    threads.create(&mut thread).expect("create");
-    threads.add_message(thread.id, reply.id).expect("add");
-    threads.add_message(thread.id, root.id).expect("add");
+    threads.create(&mut thread).await.expect("create");
+    threads.add_message(thread.id, reply.id).await.expect("add");
+    threads.add_message(thread.id, root.id).await.expect("add");
 
     assert_eq!(
         threads
             .get(thread.id)
+            .await
             .expect("get")
             .expect("the thread")
             .subject
@@ -209,27 +232,32 @@ fn the_threads_subject_is_the_normalized_subject_of_its_root() {
     );
 }
 
-#[test]
-fn removing_a_message_updates_the_aggregates_too() {
-    let database = test_support::memory();
-    let connection = database.connection().expect("checkout");
-    let (account, inbox) = test_support::account_with_inbox(&connection);
+#[tokio::test]
+async fn removing_a_message_updates_the_aggregates_too() {
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    let (account, inbox) = test_support::account_with_inbox(&connection).await;
     let threads = ThreadRepository::new(&connection);
 
-    let thread = a_thread(&connection, account.id);
-    let root = message(&connection, account.id, inbox, "ada", 100);
-    let reply = message(&connection, account.id, inbox, "quinn", 200);
-    threads.add_message(thread.id, root.id).expect("add");
-    threads.add_message(thread.id, reply.id).expect("add");
+    let thread = a_thread(&connection, account.id).await;
+    let root = message(&connection, account.id, inbox, "ada", 100).await;
+    let reply = message(&connection, account.id, inbox, "quinn", 200).await;
+    threads.add_message(thread.id, root.id).await.expect("add");
+    threads.add_message(thread.id, reply.id).await.expect("add");
 
-    threads.remove_message(reply.id).expect("remove");
+    threads.remove_message(reply.id).await.expect("remove");
 
-    let stored = threads.get(thread.id).expect("get").expect("the thread");
+    let stored = threads
+        .get(thread.id)
+        .await
+        .expect("get")
+        .expect("the thread");
     assert_eq!(stored.message_count, 1);
     assert_eq!(stored.last_at, at(100));
     assert_eq!(
         MessageRepository::new(&connection)
             .get(reply.id)
+            .await
             .expect("get")
             .expect("the message")
             .thread_id,
@@ -237,26 +265,31 @@ fn removing_a_message_updates_the_aggregates_too() {
     );
 }
 
-#[test]
-fn a_locally_deleted_message_leaves_the_threads_counts() {
-    let database = test_support::memory();
-    let connection = database.connection().expect("checkout");
-    let (account, inbox) = test_support::account_with_inbox(&connection);
+#[tokio::test]
+async fn a_locally_deleted_message_leaves_the_threads_counts() {
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    let (account, inbox) = test_support::account_with_inbox(&connection).await;
     let threads = ThreadRepository::new(&connection);
     let messages = MessageRepository::new(&connection);
 
-    let thread = a_thread(&connection, account.id);
-    let root = message(&connection, account.id, inbox, "ada", 100);
-    let reply = message(&connection, account.id, inbox, "quinn", 200);
-    threads.add_message(thread.id, root.id).expect("add");
-    threads.add_message(thread.id, reply.id).expect("add");
+    let thread = a_thread(&connection, account.id).await;
+    let root = message(&connection, account.id, inbox, "ada", 100).await;
+    let reply = message(&connection, account.id, inbox, "quinn", 200).await;
+    threads.add_message(thread.id, root.id).await.expect("add");
+    threads.add_message(thread.id, reply.id).await.expect("add");
 
     messages
         .set_deleted_locally(&[reply.id], true)
+        .await
         .expect("hide");
-    threads.recompute(thread.id).expect("recompute");
+    threads.recompute(thread.id).await.expect("recompute");
 
-    let stored = threads.get(thread.id).expect("get").expect("the thread");
+    let stored = threads
+        .get(thread.id)
+        .await
+        .expect("get")
+        .expect("the thread");
     assert_eq!(
         stored.message_count, 1,
         "the list hides it, so it is not counted"
@@ -273,23 +306,24 @@ fn a_locally_deleted_message_leaves_the_threads_counts() {
 // Acceptance: ordering in both directions
 // ---------------------------------------------------------------------------
 
-#[test]
-fn a_threads_messages_can_be_read_oldest_or_newest_first() {
-    let database = test_support::memory();
-    let connection = database.connection().expect("checkout");
-    let (account, inbox) = test_support::account_with_inbox(&connection);
+#[tokio::test]
+async fn a_threads_messages_can_be_read_oldest_or_newest_first() {
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    let (account, inbox) = test_support::account_with_inbox(&connection).await;
     let threads = ThreadRepository::new(&connection);
 
-    let thread = a_thread(&connection, account.id);
-    let first = message(&connection, account.id, inbox, "ada", 100);
-    let second = message(&connection, account.id, inbox, "quinn", 200);
-    let third = message(&connection, account.id, inbox, "tove", 300);
+    let thread = a_thread(&connection, account.id).await;
+    let first = message(&connection, account.id, inbox, "ada", 100).await;
+    let second = message(&connection, account.id, inbox, "quinn", 200).await;
+    let third = message(&connection, account.id, inbox, "tove", 300).await;
     for id in [first.id, second.id, third.id] {
-        threads.add_message(thread.id, id).expect("add");
+        threads.add_message(thread.id, id).await.expect("add");
     }
 
     let oldest: Vec<MessageId> = threads
         .messages(thread.id, ThreadOrder::Oldest)
+        .await
         .expect("oldest first")
         .iter()
         .map(|row| row.id)
@@ -302,6 +336,7 @@ fn a_threads_messages_can_be_read_oldest_or_newest_first() {
 
     let newest: Vec<MessageId> = threads
         .messages(thread.id, ThreadOrder::Newest)
+        .await
         .expect("newest first")
         .iter()
         .map(|row| row.id)
@@ -309,29 +344,18 @@ fn a_threads_messages_can_be_read_oldest_or_newest_first() {
     assert_eq!(newest, [third.id, second.id, first.id]);
 }
 
-#[test]
-fn reading_a_thread_in_either_direction_never_sorts() {
-    let database = test_support::memory();
-    let connection = database.connection().expect("checkout");
+#[tokio::test]
+async fn reading_a_thread_in_either_direction_never_sorts() {
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
     let threads = ThreadRepository::new(&connection);
 
     for order in [ThreadOrder::Oldest, ThreadOrder::Newest] {
         let sql = threads.explain_messages(order);
-        let mut statement = connection
-            .prepare(&format!("EXPLAIN QUERY PLAN {sql}"))
-            .expect("prepare");
-        let arguments = vec![1i64; statement.parameter_count()];
-        let plan = statement
-            .query_map(rusqlite::params_from_iter(arguments), |row| {
-                row.get::<_, String>(3)
-            })
-            .expect("plan")
-            .collect::<Result<Vec<String>, _>>()
-            .expect("collect")
-            .join("\n");
+        let plan = test_support::plan(&connection, &sql).await;
 
         assert!(
-            !plan.contains("TEMP B-TREE"),
+            !postio_storage::test_support::sorts(&plan),
             "{order:?}: the drill-in must not sort:\n{plan}"
         );
         assert!(
@@ -345,29 +369,15 @@ fn reading_a_thread_in_either_direction_never_sorts() {
 // Acceptance: the list row, count and participants, without an N+1
 // ---------------------------------------------------------------------------
 
-thread_local! {
-    static STATEMENTS: Cell<usize> = const { Cell::new(0) };
-}
-
-/// Counts every statement SQLite starts running.
-///
-/// A plain `fn`, not a closure: that is what `trace_v2` takes, so the counter
-/// has to live outside it.
-fn count_statement(event: rusqlite::trace::TraceEvent<'_>) {
-    if matches!(event, rusqlite::trace::TraceEvent::Stmt(..)) {
-        STATEMENTS.with(|count| count.set(count.get() + 1));
-    }
-}
-
-#[test]
-fn a_page_of_threads_costs_a_fixed_number_of_queries() {
-    let database = test_support::memory();
-    let connection = database.connection().expect("checkout");
-    let (account, inbox) = test_support::account_with_inbox(&connection);
+#[tokio::test]
+async fn a_page_of_threads_costs_a_fixed_number_of_queries() {
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    let (account, inbox) = test_support::account_with_inbox(&connection).await;
 
     // Twenty threads of three messages each, from three different senders.
     for index in 0..20 {
-        let thread = a_thread(&connection, account.id);
+        let thread = a_thread(&connection, account.id).await;
         for reply in 0..3 {
             let sender = ["ada", "quinn", "tove"][reply as usize];
             let message = message(
@@ -376,23 +386,21 @@ fn a_page_of_threads_costs_a_fixed_number_of_queries() {
                 inbox,
                 sender,
                 index * 1_000 + reply * 10,
-            );
+            )
+            .await;
             ThreadRepository::new(&connection)
                 .add_message(thread.id, message.id)
+                .await
                 .expect("add");
         }
     }
 
-    STATEMENTS.with(|count| count.set(0));
-    connection.trace_v2(
-        rusqlite::trace::TraceEventCodes::SQLITE_TRACE_STMT,
-        Some(count_statement),
-    );
+    postio_storage::test_support::counting::reset();
     let page = ThreadRepository::new(&connection)
         .page(&ThreadListQuery::account(account.id).limit(20))
+        .await
         .expect("page");
-    connection.trace_v2(rusqlite::trace::TraceEventCodes::empty(), None);
-    let statements = STATEMENTS.with(Cell::get);
+    let statements = postio_storage::test_support::counting::here().statements;
 
     assert_eq!(page.len(), 20);
     assert!(
@@ -424,21 +432,25 @@ fn a_page_of_threads_costs_a_fixed_number_of_queries() {
     assert!(latest.preview.is_some());
 }
 
-#[test]
-fn the_thread_list_is_newest_first_and_pages_by_cursor() {
-    let database = test_support::memory();
-    let connection = database.connection().expect("checkout");
-    let (account, inbox) = test_support::account_with_inbox(&connection);
+#[tokio::test]
+async fn the_thread_list_is_newest_first_and_pages_by_cursor() {
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    let (account, inbox) = test_support::account_with_inbox(&connection).await;
     let threads = ThreadRepository::new(&connection);
 
     for index in 0..25 {
-        let thread = a_thread(&connection, account.id);
-        let message = message(&connection, account.id, inbox, "ada", index * 100);
-        threads.add_message(thread.id, message.id).expect("add");
+        let thread = a_thread(&connection, account.id).await;
+        let message = message(&connection, account.id, inbox, "ada", index * 100).await;
+        threads
+            .add_message(thread.id, message.id)
+            .await
+            .expect("add");
     }
 
     let first = threads
         .page(&ThreadListQuery::account(account.id).limit(10))
+        .await
         .expect("page");
     assert_eq!(first.len(), 10);
     assert!(
@@ -451,6 +463,7 @@ fn the_thread_list_is_newest_first_and_pages_by_cursor() {
     loop {
         let page = threads
             .page(&ThreadListQuery::account(account.id).limit(10).after(cursor))
+            .await
             .expect("page");
         let Some(last) = page.last() else { break };
         cursor = last.cursor();
@@ -460,23 +473,24 @@ fn the_thread_list_is_newest_first_and_pages_by_cursor() {
     assert_eq!(seen.len(), 25);
     seen.dedup();
     assert_eq!(seen.len(), 25, "no thread appears twice");
-    assert_eq!(threads.count(account.id).expect("count"), 25);
+    assert_eq!(threads.count(account.id).await.expect("count"), 25);
 }
 
-#[test]
-fn a_thread_whose_messages_are_all_hidden_drops_out_of_the_list() {
-    let database = test_support::memory();
-    let connection = database.connection().expect("checkout");
-    let (account, inbox) = test_support::account_with_inbox(&connection);
+#[tokio::test]
+async fn a_thread_whose_messages_are_all_hidden_drops_out_of_the_list() {
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    let (account, inbox) = test_support::account_with_inbox(&connection).await;
     let threads = ThreadRepository::new(&connection);
     let messages = MessageRepository::new(&connection);
 
-    let thread = a_thread(&connection, account.id);
-    let only = message(&connection, account.id, inbox, "ada", 10);
-    threads.add_message(thread.id, only.id).expect("add");
+    let thread = a_thread(&connection, account.id).await;
+    let only = message(&connection, account.id, inbox, "ada", 10).await;
+    threads.add_message(thread.id, only.id).await.expect("add");
     assert_eq!(
         threads
             .page(&ThreadListQuery::account(account.id))
+            .await
             .expect("page")
             .len(),
         1
@@ -484,26 +498,28 @@ fn a_thread_whose_messages_are_all_hidden_drops_out_of_the_list() {
 
     messages
         .set_deleted_locally(&[only.id], true)
+        .await
         .expect("hide");
-    threads.recompute(thread.id).expect("recompute");
+    threads.recompute(thread.id).await.expect("recompute");
 
     assert!(
         threads
             .page(&ThreadListQuery::account(account.id))
+            .await
             .expect("page")
             .is_empty(),
         "an empty conversation is not a row the user can do anything with"
     );
     assert!(
-        threads.get(thread.id).expect("get").is_some(),
+        threads.get(thread.id).await.expect("get").is_some(),
         "but it is still there for undo to restore"
     );
 }
 
-#[test]
-fn the_thread_list_plan_never_sorts() {
-    let database = test_support::memory();
-    let connection = database.connection().expect("checkout");
+#[tokio::test]
+async fn the_thread_list_plan_never_sorts() {
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
     let threads = ThreadRepository::new(&connection);
 
     for (label, base) in [
@@ -522,21 +538,10 @@ fn the_thread_list_plan_never_sorts() {
                 });
             }
             let sql = threads.explain(&query);
-            let mut statement = connection
-                .prepare(&format!("EXPLAIN QUERY PLAN {sql}"))
-                .expect("prepare");
-            let arguments = vec![1i64; statement.parameter_count()];
-            let plan = statement
-                .query_map(rusqlite::params_from_iter(arguments), |row| {
-                    row.get::<_, String>(3)
-                })
-                .expect("plan")
-                .collect::<Result<Vec<String>, _>>()
-                .expect("collect")
-                .join("\n");
+            let plan = test_support::plan(&connection, &sql).await;
 
             assert!(
-                !plan.contains("TEMP B-TREE"),
+                !postio_storage::test_support::sorts(&plan),
                 "{label} / cursor={after}: the thread list must never sort:\n{plan}"
             );
             assert!(
@@ -577,46 +582,54 @@ fn the_thread_list_plan_never_sorts() {
 // Merge, for a late message that links two roots
 // ---------------------------------------------------------------------------
 
-#[test]
-fn merging_moves_every_message_and_leaves_one_thread() {
-    let database = test_support::memory();
-    let connection = database.connection().expect("checkout");
-    let (account, inbox) = test_support::account_with_inbox(&connection);
+#[tokio::test]
+async fn merging_moves_every_message_and_leaves_one_thread() {
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    let (account, inbox) = test_support::account_with_inbox(&connection).await;
     let threads = ThreadRepository::new(&connection);
 
-    let keep = a_thread(&connection, account.id);
-    let absorb = a_thread(&connection, account.id);
-    let older = message(&connection, account.id, inbox, "ada", 100);
-    let newer = message(&connection, account.id, inbox, "quinn", 500);
-    threads.add_message(keep.id, older.id).expect("add");
-    threads.add_message(absorb.id, newer.id).expect("add");
+    let keep = a_thread(&connection, account.id).await;
+    let absorb = a_thread(&connection, account.id).await;
+    let older = message(&connection, account.id, inbox, "ada", 100).await;
+    let newer = message(&connection, account.id, inbox, "quinn", 500).await;
+    threads.add_message(keep.id, older.id).await.expect("add");
+    threads.add_message(absorb.id, newer.id).await.expect("add");
 
-    threads.merge(keep.id, absorb.id).expect("merge");
+    threads.merge(keep.id, absorb.id).await.expect("merge");
 
-    let merged = threads.get(keep.id).expect("get").expect("the thread");
+    let merged = threads
+        .get(keep.id)
+        .await
+        .expect("get")
+        .expect("the thread");
     assert_eq!(merged.message_ids, vec![older.id, newer.id]);
     assert_eq!(merged.message_count, 2);
     assert_eq!(merged.last_at, at(500), "the aggregates were recomputed");
     assert!(
-        threads.get(absorb.id).expect("get").is_none(),
+        threads.get(absorb.id).await.expect("get").is_none(),
         "the absorbed thread is gone, not left empty"
     );
 }
 
-#[test]
-fn merging_a_thread_into_itself_does_nothing() {
-    let database = test_support::memory();
-    let connection = database.connection().expect("checkout");
-    let (account, inbox) = test_support::account_with_inbox(&connection);
+#[tokio::test]
+async fn merging_a_thread_into_itself_does_nothing() {
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    let (account, inbox) = test_support::account_with_inbox(&connection).await;
     let threads = ThreadRepository::new(&connection);
 
-    let thread = a_thread(&connection, account.id);
-    let only = message(&connection, account.id, inbox, "ada", 10);
-    threads.add_message(thread.id, only.id).expect("add");
+    let thread = a_thread(&connection, account.id).await;
+    let only = message(&connection, account.id, inbox, "ada", 10).await;
+    threads.add_message(thread.id, only.id).await.expect("add");
 
-    threads.merge(thread.id, thread.id).expect("merge");
+    threads.merge(thread.id, thread.id).await.expect("merge");
 
-    let stored = threads.get(thread.id).expect("get").expect("still there");
+    let stored = threads
+        .get(thread.id)
+        .await
+        .expect("get")
+        .expect("still there");
     assert_eq!(stored.message_count, 1);
 }
 
@@ -634,7 +647,7 @@ fn merging_a_thread_into_itself_does_nothing() {
 // the badge means the size of the conversation (ADR 0015 Q2).
 
 /// A message in `mailbox`, unread, threaded into `thread`.
-fn unread_in(
+async fn unread_in(
     connection: &Connection,
     account: AccountId,
     mailbox: MailboxId,
@@ -646,26 +659,30 @@ fn unread_in(
     message.from = vec![EmailAddress::new(Some("ada"), "ada@example.com")];
     let id = MessageRepository::new(connection)
         .create(&mut message)
+        .await
         .expect("create a message");
     let threads = ThreadRepository::new(connection);
-    threads.add_message(thread, id).expect("thread it");
+    threads.add_message(thread, id).await.expect("thread it");
     id
 }
 
-#[test]
-fn a_folder_only_shows_conversations_it_holds_a_message_of() {
-    let database = test_support::memory();
-    let connection = database.connection().expect("checkout");
-    let (account, inbox) = test_support::account_with_inbox(&connection);
-    let archive = test_support::mailbox(&connection, &account, "Archive").id;
+#[tokio::test]
+async fn a_folder_only_shows_conversations_it_holds_a_message_of() {
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    let (account, inbox) = test_support::account_with_inbox(&connection).await;
+    let archive = test_support::mailbox(&connection, &account, "Archive")
+        .await
+        .id;
 
-    let here = a_thread(&connection, account.id);
-    let elsewhere = a_thread(&connection, account.id);
-    unread_in(&connection, account.id, inbox, here.id, 10);
-    unread_in(&connection, account.id, archive, elsewhere.id, 20);
+    let here = a_thread(&connection, account.id).await;
+    let elsewhere = a_thread(&connection, account.id).await;
+    unread_in(&connection, account.id, inbox, here.id, 10).await;
+    unread_in(&connection, account.id, archive, elsewhere.id, 20).await;
 
     let page = ThreadRepository::new(&connection)
         .page(&ThreadListQuery::in_mailbox(account.id, inbox))
+        .await
         .expect("a page of threads");
 
     let ids: Vec<Option<ThreadId>> = page.iter().map(|row| row.id).collect();
@@ -677,21 +694,24 @@ fn a_folder_only_shows_conversations_it_holds_a_message_of() {
     );
 }
 
-#[test]
-fn the_row_is_drawn_from_the_newest_message_in_this_folder() {
+#[tokio::test]
+async fn the_row_is_drawn_from_the_newest_message_in_this_folder() {
     // The representative, and the reason it is scoped: a reply filed in
     // Archive is not what the Inbox row should be showing.
-    let database = test_support::memory();
-    let connection = database.connection().expect("checkout");
-    let (account, inbox) = test_support::account_with_inbox(&connection);
-    let archive = test_support::mailbox(&connection, &account, "Archive").id;
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    let (account, inbox) = test_support::account_with_inbox(&connection).await;
+    let archive = test_support::mailbox(&connection, &account, "Archive")
+        .await
+        .id;
 
-    let thread = a_thread(&connection, account.id);
-    let in_inbox = unread_in(&connection, account.id, inbox, thread.id, 10);
-    let newest_overall = unread_in(&connection, account.id, archive, thread.id, 99);
+    let thread = a_thread(&connection, account.id).await;
+    let in_inbox = unread_in(&connection, account.id, inbox, thread.id, 10).await;
+    let newest_overall = unread_in(&connection, account.id, archive, thread.id, 99).await;
 
     let page = ThreadRepository::new(&connection)
         .page(&ThreadListQuery::in_mailbox(account.id, inbox))
+        .await
         .expect("a page of threads");
 
     let latest = page[0].latest.as_ref().expect("a representative message");
@@ -703,26 +723,29 @@ fn the_row_is_drawn_from_the_newest_message_in_this_folder() {
     );
 }
 
-#[test]
-fn unread_is_counted_in_this_folder_and_the_total_is_not() {
+#[tokio::test]
+async fn unread_is_counted_in_this_folder_and_the_total_is_not() {
     // ADR 0015 Q2, exactly: a thread whose only unread member is in another
     // folder reads as handled in this one — but the badge still says how big
     // the conversation is.
-    let database = test_support::memory();
-    let connection = database.connection().expect("checkout");
-    let (account, inbox) = test_support::account_with_inbox(&connection);
-    let archive = test_support::mailbox(&connection, &account, "Archive").id;
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    let (account, inbox) = test_support::account_with_inbox(&connection).await;
+    let archive = test_support::mailbox(&connection, &account, "Archive")
+        .await
+        .id;
 
-    let thread = a_thread(&connection, account.id);
+    let thread = a_thread(&connection, account.id).await;
     // Two unread here, three unread over there.
-    unread_in(&connection, account.id, inbox, thread.id, 10);
-    unread_in(&connection, account.id, inbox, thread.id, 11);
+    unread_in(&connection, account.id, inbox, thread.id, 10).await;
+    unread_in(&connection, account.id, inbox, thread.id, 11).await;
     for second in 20..23 {
-        unread_in(&connection, account.id, archive, thread.id, second);
+        unread_in(&connection, account.id, archive, thread.id, second).await;
     }
 
     let page = ThreadRepository::new(&connection)
         .page(&ThreadListQuery::in_mailbox(account.id, inbox))
+        .await
         .expect("a page of threads");
 
     assert_eq!(page[0].unread_count, 2, "unread is this folder's slice");
@@ -732,23 +755,27 @@ fn unread_is_counted_in_this_folder_and_the_total_is_not() {
     );
 }
 
-#[test]
-fn a_folder_with_only_read_messages_of_a_thread_reads_as_handled() {
-    let database = test_support::memory();
-    let connection = database.connection().expect("checkout");
-    let (account, inbox) = test_support::account_with_inbox(&connection);
-    let archive = test_support::mailbox(&connection, &account, "Archive").id;
+#[tokio::test]
+async fn a_folder_with_only_read_messages_of_a_thread_reads_as_handled() {
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    let (account, inbox) = test_support::account_with_inbox(&connection).await;
+    let archive = test_support::mailbox(&connection, &account, "Archive")
+        .await
+        .id;
 
-    let thread = a_thread(&connection, account.id);
+    let thread = a_thread(&connection, account.id).await;
     // `message` marks Seen; `unread_in` does not.
-    let read = message(&connection, account.id, inbox, "ada", 10);
+    let read = message(&connection, account.id, inbox, "ada", 10).await;
     ThreadRepository::new(&connection)
         .add_message(thread.id, read.id)
+        .await
         .expect("thread it");
-    unread_in(&connection, account.id, archive, thread.id, 20);
+    unread_in(&connection, account.id, archive, thread.id, 20).await;
 
     let page = ThreadRepository::new(&connection)
         .page(&ThreadListQuery::in_mailbox(account.id, inbox))
+        .await
         .expect("a page of threads");
 
     assert!(
@@ -758,21 +785,24 @@ fn a_folder_with_only_read_messages_of_a_thread_reads_as_handled() {
     );
 }
 
-#[test]
-fn the_account_scoped_list_is_unchanged_by_any_of_this() {
+#[tokio::test]
+async fn the_account_scoped_list_is_unchanged_by_any_of_this() {
     // Query views still list messages and the unified thread list still spans
     // folders; scoping is something a folder asks for, not the new default.
-    let database = test_support::memory();
-    let connection = database.connection().expect("checkout");
-    let (account, inbox) = test_support::account_with_inbox(&connection);
-    let archive = test_support::mailbox(&connection, &account, "Archive").id;
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    let (account, inbox) = test_support::account_with_inbox(&connection).await;
+    let archive = test_support::mailbox(&connection, &account, "Archive")
+        .await
+        .id;
 
-    let thread = a_thread(&connection, account.id);
-    unread_in(&connection, account.id, inbox, thread.id, 10);
-    let newest = unread_in(&connection, account.id, archive, thread.id, 99);
+    let thread = a_thread(&connection, account.id).await;
+    unread_in(&connection, account.id, inbox, thread.id, 10).await;
+    let newest = unread_in(&connection, account.id, archive, thread.id, 99).await;
 
     let page = ThreadRepository::new(&connection)
         .page(&ThreadListQuery::account(account.id))
+        .await
         .expect("a page of threads");
 
     assert_eq!(page[0].unread_count, 2);
@@ -783,20 +813,26 @@ fn the_account_scoped_list_is_unchanged_by_any_of_this() {
     );
 }
 
-#[test]
-fn a_folder_scoped_thread_page_resumes_after_its_cursor() {
-    let database = test_support::memory();
-    let connection = database.connection().expect("checkout");
-    let (account, inbox) = test_support::account_with_inbox(&connection);
+#[tokio::test]
+async fn a_folder_scoped_thread_page_resumes_after_its_cursor() {
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    let (account, inbox) = test_support::account_with_inbox(&connection).await;
 
-    let threads: Vec<Thread> = (0..5).map(|_| a_thread(&connection, account.id)).collect();
+    // A loop rather than `map().collect()`: the body awaits, and a
+    // closure cannot.
+    let mut threads: Vec<Thread> = Vec::new();
+    for _ in 0..5 {
+        threads.push(a_thread(&connection, account.id).await);
+    }
     for (index, thread) in threads.iter().enumerate() {
-        unread_in(&connection, account.id, inbox, thread.id, index as i64 * 10);
+        unread_in(&connection, account.id, inbox, thread.id, index as i64 * 10).await;
     }
 
     let repository = ThreadRepository::new(&connection);
     let first = repository
         .page(&ThreadListQuery::in_mailbox(account.id, inbox).limit(2))
+        .await
         .expect("the first page");
     assert_eq!(first.len(), 2);
 
@@ -806,6 +842,7 @@ fn a_folder_scoped_thread_page_resumes_after_its_cursor() {
                 .limit(2)
                 .after(first[1].cursor()),
         )
+        .await
         .expect("the second page");
 
     assert_eq!(second.len(), 2);
@@ -824,26 +861,28 @@ fn a_folder_scoped_thread_page_resumes_after_its_cursor() {
     assert_eq!(unique.len(), seen.len(), "no row is paged twice");
 }
 
-#[test]
-fn a_hidden_message_is_not_what_a_folder_row_shows() {
+#[tokio::test]
+async fn a_hidden_message_is_not_what_a_folder_row_shows() {
     // A message hidden pending a remote delete is not a member anywhere else
     // either; the scoped representative has to agree.
-    let database = test_support::memory();
-    let connection = database.connection().expect("checkout");
-    let (account, inbox) = test_support::account_with_inbox(&connection);
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    let (account, inbox) = test_support::account_with_inbox(&connection).await;
 
-    let thread = a_thread(&connection, account.id);
-    let visible = unread_in(&connection, account.id, inbox, thread.id, 10);
-    let hidden = unread_in(&connection, account.id, inbox, thread.id, 99);
+    let thread = a_thread(&connection, account.id).await;
+    let visible = unread_in(&connection, account.id, inbox, thread.id, 10).await;
+    let hidden = unread_in(&connection, account.id, inbox, thread.id, 99).await;
     connection
         .execute(
             "UPDATE messages SET deleted_locally = 1 WHERE id = ?1",
             [hidden.get()],
         )
+        .await
         .expect("hide it");
 
     let page = ThreadRepository::new(&connection)
         .page(&ThreadListQuery::in_mailbox(account.id, inbox))
+        .await
         .expect("a page of threads");
 
     assert_eq!(
@@ -853,8 +892,8 @@ fn a_hidden_message_is_not_what_a_folder_row_shows() {
     assert_eq!(page[0].unread_count, 1);
 }
 
-#[test]
-fn thread_paging_stays_flat_over_a_hundred_thousand_messages() {
+#[tokio::test]
+async fn thread_paging_stays_flat_over_a_large_folder() {
     // The claim ADR 0015 rests on: page k of *threads* costs what page k of
     // messages costs. If the folder scoping had turned the window into
     // something linear in the size of the mailbox, this is where it shows —
@@ -867,35 +906,47 @@ fn thread_paging_stays_flat_over_a_hundred_thousand_messages() {
     // that it would not have caught much short of the linear case it names.
     // Rows produced is the same number on any machine, so it can be held to
     // the actual claim: a page of fifty costs a page of fifty, ten pages in.
-    let database = postio_storage::test_support::temp();
-    let report = postio_storage::seed::seed_large(&database, 7, 100_000);
+    //
+    // **Twenty thousand, and it was a hundred.** The assertion is a row count
+    // and a row count does not move with the corpus: what a hundred thousand
+    // bought was seeding time. On this engine that was 227 s alone and a
+    // 240 s timeout under a full-workspace run -- a test already failing the
+    // project's own rule that a case must survive a loaded runner. Five
+    // thousand conversations is still two orders of magnitude past a page of
+    // fifty and still ten pages deep, which is the whole of what the claim
+    // needs. `messages::paging_stays_flat_over_a_hundred_thousand_messages`
+    // keeps the larger corpus for the simpler query, so the scale is still
+    // covered somewhere on the merge path.
+    let database = postio_storage::test_support::temp().await;
+    let report = postio_storage::seed::seed_large(&database, 7, 20_000).await;
     let inbox = report
         .mailbox(postio_model::mailbox::MailboxRole::Inbox)
         .expect("an inbox")
         .id;
-    postio_storage::seed::thread_seeded_messages(&database, report.account.id, 4);
+    postio_storage::seed::thread_seeded_messages(&database, report.account.id, 4).await;
 
-    let connection = database.connection().expect("checkout");
+    let connection = database.connect().await.expect("checkout");
     let threads = ThreadRepository::new(&connection);
     let query = ThreadListQuery::in_mailbox(report.account.id, inbox).limit(50);
 
     postio_storage::test_support::counting::install(&connection);
-    let read = |query: &ThreadListQuery| {
+    let read = async |query: &ThreadListQuery| {
         let mut page = Vec::new();
-        let counts = postio_storage::test_support::counting::counted(|| {
-            page = threads.page(query).expect("a page of threads");
-        });
+        let counts = postio_storage::test_support::counting::counted_async(|| async {
+            page = threads.page(query).await.expect("a page of threads");
+        })
+        .await;
         (counts, page)
     };
 
-    let (first, first_page) = read(&query);
+    let (first, first_page) = read(&query).await;
     assert_eq!(first_page.len(), 50, "a page is a window, never the folder");
 
     // Ten pages in, which for messages is the same cost as the first.
     let mut cursor = first_page.last().expect("a last row").cursor();
     let mut deep = first;
     for _ in 0..10 {
-        let (counts, page) = read(&query.clone().after(cursor));
+        let (counts, page) = read(&query.clone().after(cursor)).await;
         assert_eq!(page.len(), 50);
         cursor = page.last().expect("a last row").cursor();
         deep = counts;
@@ -923,56 +974,68 @@ fn thread_paging_stays_flat_over_a_hundred_thousand_messages() {
     );
 }
 
-#[test]
-fn a_folder_scoped_count_agrees_with_the_rows_it_would_show() {
+#[tokio::test]
+async fn a_folder_scoped_count_agrees_with_the_rows_it_would_show() {
     // The count and the page must mean the same thing by "in this folder", or
     // the list model's scrollbar promises rows the window cannot produce.
-    let database = test_support::memory();
-    let connection = database.connection().expect("checkout");
-    let (account, inbox) = test_support::account_with_inbox(&connection);
-    let archive = test_support::mailbox(&connection, &account, "Archive").id;
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    let (account, inbox) = test_support::account_with_inbox(&connection).await;
+    let archive = test_support::mailbox(&connection, &account, "Archive")
+        .await
+        .id;
 
     for index in 0..4 {
-        let thread = a_thread(&connection, account.id);
-        unread_in(&connection, account.id, inbox, thread.id, index * 10);
+        let thread = a_thread(&connection, account.id).await;
+        unread_in(&connection, account.id, inbox, thread.id, index * 10).await;
     }
     for index in 0..3 {
-        let thread = a_thread(&connection, account.id);
+        let thread = a_thread(&connection, account.id).await;
         unread_in(
             &connection,
             account.id,
             archive,
             thread.id,
             100 + index * 10,
-        );
+        )
+        .await;
     }
 
     let repository = ThreadRepository::new(&connection);
     let query = ThreadListQuery::in_mailbox(account.id, inbox);
-    assert_eq!(repository.count_of(&query).expect("a count"), 4);
-    assert_eq!(repository.page(&query).expect("a page").len(), 4);
+    assert_eq!(repository.count_of(&query).await.expect("a count"), 4);
+    assert_eq!(repository.page(&query).await.expect("a page").len(), 4);
     assert_eq!(
-        repository.count(account.id).expect("an account count"),
+        repository
+            .count(account.id)
+            .await
+            .expect("an account count"),
         7,
         "the account still sees every conversation"
     );
 }
 
-#[test]
-fn a_thread_page_at_an_offset_resumes_where_the_previous_one_stopped() {
-    let database = test_support::memory();
-    let connection = database.connection().expect("checkout");
-    let (account, inbox) = test_support::account_with_inbox(&connection);
+#[tokio::test]
+async fn a_thread_page_at_an_offset_resumes_where_the_previous_one_stopped() {
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    let (account, inbox) = test_support::account_with_inbox(&connection).await;
 
-    let threads: Vec<Thread> = (0..6).map(|_| a_thread(&connection, account.id)).collect();
+    // A loop rather than `map().collect()`: the body awaits, and a
+    // closure cannot.
+    let mut threads: Vec<Thread> = Vec::new();
+    for _ in 0..6 {
+        threads.push(a_thread(&connection, account.id).await);
+    }
     for (index, thread) in threads.iter().enumerate() {
-        unread_in(&connection, account.id, inbox, thread.id, index as i64 * 10);
+        unread_in(&connection, account.id, inbox, thread.id, index as i64 * 10).await;
     }
 
     let repository = ThreadRepository::new(&connection);
     let query = ThreadListQuery::in_mailbox(account.id, inbox).limit(2);
     let all: Vec<Option<ThreadId>> = repository
         .page(&ThreadListQuery::in_mailbox(account.id, inbox))
+        .await
         .expect("every row")
         .iter()
         .map(|row| row.id)
@@ -980,6 +1043,7 @@ fn a_thread_page_at_an_offset_resumes_where_the_previous_one_stopped() {
 
     let second: Vec<Option<ThreadId>> = repository
         .page_at(&query, 2)
+        .await
         .expect("an offset page")
         .iter()
         .map(|row| row.id)
@@ -992,8 +1056,8 @@ fn a_thread_page_at_an_offset_resumes_where_the_previous_one_stopped() {
     );
 }
 
-#[test]
-fn a_message_belonging_to_no_thread_is_still_a_row() {
+#[tokio::test]
+async fn a_message_belonging_to_no_thread_is_still_a_row() {
     // The list must never hide mail. Threading runs on everything sync files
     // and can still fail — `postio-sync`'s send path discards the result with
     // `let _ =` — and a window built only over `threads` makes every such
@@ -1002,12 +1066,12 @@ fn a_message_belonging_to_no_thread_is_still_a_row() {
     //
     // So the folder window is over the representative *message* rather than
     // over `threads`, and a message with no thread is a conversation of one.
-    let database = test_support::memory();
-    let connection = database.connection().expect("checkout");
-    let (account, inbox) = test_support::account_with_inbox(&connection);
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    let (account, inbox) = test_support::account_with_inbox(&connection).await;
 
-    let threaded = a_thread(&connection, account.id);
-    unread_in(&connection, account.id, inbox, threaded.id, 10);
+    let threaded = a_thread(&connection, account.id).await;
+    unread_in(&connection, account.id, inbox, threaded.id, 10).await;
 
     // Straight into the table, exactly as a message that was never threaded
     // would sit there.
@@ -1016,10 +1080,12 @@ fn a_message_belonging_to_no_thread_is_still_a_row() {
     orphan.from = vec![EmailAddress::new(Some("Ada"), "ada@example.com")];
     let orphan = MessageRepository::new(&connection)
         .create(&mut orphan)
+        .await
         .expect("create an unthreaded message");
 
     let page = ThreadRepository::new(&connection)
         .page(&ThreadListQuery::in_mailbox(account.id, inbox))
+        .await
         .expect("a page");
 
     assert_eq!(page.len(), 2, "the unthreaded message must still be a row");
@@ -1040,24 +1106,25 @@ fn a_message_belonging_to_no_thread_is_still_a_row() {
     );
 }
 
-#[test]
-fn two_unthreaded_messages_are_two_rows_rather_than_one() {
+#[tokio::test]
+async fn two_unthreaded_messages_are_two_rows_rather_than_one() {
     // The coalesce that lets a null thread id be compared must not make every
     // unthreaded message look like a member of the same conversation.
-    let database = test_support::memory();
-    let connection = database.connection().expect("checkout");
-    let (account, inbox) = test_support::account_with_inbox(&connection);
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    let (account, inbox) = test_support::account_with_inbox(&connection).await;
 
     for second in [10, 20, 30] {
         let mut message = Message::new(account.id, inbox, at(second));
         message.subject = Some(format!("Never threaded {second}"));
         MessageRepository::new(&connection)
             .create(&mut message)
+            .await
             .expect("create an unthreaded message");
     }
 
     let repository = ThreadRepository::new(&connection);
     let query = ThreadListQuery::in_mailbox(account.id, inbox);
-    assert_eq!(repository.page(&query).expect("a page").len(), 3);
-    assert_eq!(repository.count_of(&query).expect("a count"), 3);
+    assert_eq!(repository.page(&query).await.expect("a page").len(), 3);
+    assert_eq!(repository.count_of(&query).await.expect("a count"), 3);
 }

@@ -68,14 +68,6 @@ EXCEPTIONS: dict[str, str] = {
     # routinely has three sessions compiling on it. No library code in this
     # crate uses `unsafe`.
     "postio-config": "deny",
-    # One FFI call, in `db.rs`: `OPENSSL_init_crypto(OPENSSL_INIT_NO_ATEXIT)`,
-    # behind a `Once` and a documented `# Safety`. SQLCipher pulls libcrypto
-    # in, libcrypto registers an `atexit` handler that frees its own state,
-    # and a sync thread still writing when the process exits then encrypts a
-    # page through freed memory. Declaring the symbol is the only way to say
-    # "do not register that handler"; see the call site for the coredump this
-    # comes from. No other `unsafe` in this crate.
-    "postio-storage": "deny",
 }
 
 # Ordered weakest to strongest, so "at least as strong as" is an index test.
@@ -149,6 +141,22 @@ def main() -> int:
                 failures.append(
                     f"{name}: unsafe_code = {declared!r} is weaker than the "
                     f"{weakest!r} its exception allows."
+                )
+            # A crate with its own [lints.rust] inherits none of the workspace
+            # lints -- including the clippy floor. `let_underscore_future` is
+            # the one that must survive: it is how a dropped async future (a
+            # sent draft that went on existing) is caught, and its silent
+            # absence from these five crates is exactly the hole this check
+            # now closes. Each exception restates it.
+            clippy = level_of(lints.get("clippy", {}).get("let_underscore_future"))
+            if clippy != "deny":
+                failures.append(
+                    f"{name}: is an exception, so it inherits no workspace "
+                    "clippy lints -- it must restate\n"
+                    "    [lints.clippy]\n"
+                    '    let_underscore_future = "deny"\n'
+                    f"  ({name} found {clippy!r}). A dropped async future is "
+                    "the bug this floor exists for."
                 )
             continue
 

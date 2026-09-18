@@ -9,7 +9,7 @@ publish.workspace = true
 repository.workspace = true
 
 [dependencies]
-chrono = { version = "0.4.45", default-features = false, features = ["std", "clock"] }
+chrono = { workspace = true, features = ["std"] }
 postio-model = { workspace = true }
 
 [lints]

@@ -44,68 +44,71 @@ use postio_storage::seed::seed_small;
 use postio_storage::{BlobStore, test_support};
 
 pub fn a_window_over_a_populated_store_lists_its_mail() {
-    let state_dir = tempfile::tempdir().expect("a state directory");
-    // SAFETY: first statement of a single-threaded test.
-    unsafe { std::env::set_var("XDG_STATE_HOME", state_dir.path()) };
+    crate::gtk_case(async {
+        let state_dir = tempfile::tempdir().expect("a state directory");
+        // SAFETY: first statement of a single-threaded test.
+        unsafe { std::env::set_var("XDG_STATE_HOME", state_dir.path()) };
 
-    if adw::init().is_err() || gdk::Display::default().is_none() {
-        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
-        return;
-    }
-    let display = gdk::Display::default().unwrap();
-    fonts::install().expect("the embedded fonts should install");
-    style::install(&display);
-    app::install_icons(&display);
+        if adw::init().is_err() || gdk::Display::default().is_none() {
+            eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
+            return;
+        }
+        let display = gdk::Display::default().unwrap();
+        fonts::install().expect("the embedded fonts should install");
+        style::install(&display);
+        app::install_icons(&display);
 
-    // ── a store with an account, folders and real mail in it ────────────
-    let database = test_support::memory();
-    let report = seed_small(&database, 11);
-    assert!(
-        report.message_count > 0,
-        "the fixture seeded no mail, so this test could not fail"
-    );
-    let directory = tempfile::tempdir().expect("a blob directory");
-    let blobs = BlobStore::open(
-        directory.path().to_path_buf(),
-        &postio_storage::test_support::blob_keys(),
-    )
-    .expect("a blob store");
+        // ── a store with an account, folders and real mail in it ────────────
+        let database = test_support::memory().await;
+        let report = seed_small(&database, 11).await;
+        assert!(
+            report.message_count > 0,
+            "the fixture seeded no mail, so this test could not fail"
+        );
+        let directory = tempfile::tempdir().expect("a blob directory");
+        let blobs = BlobStore::open(
+            directory.path().to_path_buf(),
+            &postio_storage::test_support::blob_keys(),
+        )
+        .expect("a blob store");
 
-    // The runtime the reads are polled on. A no-op command handler: this
-    // test is about the panes being fed, not about what a keystroke does.
-    let (bridge, _replies) = Bridge::new(handler_fn(|_, _| async {})).expect("a runtime");
-    let (sink, _events) = event_channel();
-    let wiring = Wiring::new(database, blobs, bridge.handle(), sink, bridge.commands());
+        // The runtime the reads are polled on. A no-op command handler: this
+        // test is about the panes being fed, not about what a keystroke does.
+        let (bridge, _replies) = Bridge::new(handler_fn(|_, _| async {})).expect("a runtime");
+        let (sink, _events) = event_channel();
+        let wiring = Wiring::new(database, blobs, bridge.handle(), sink, bridge.commands());
 
-    let window = Window::default();
-    window.present();
-    while glib::MainContext::default().iteration(false) {}
+        let window = Window::default();
+        window.present();
+        while glib::MainContext::default().iteration(false) {}
 
-    // ── the same call `run` makes ───────────────────────────────────────
-    let feeds = feed_the_window(&window, &wiring)
-        .expect("the seeded store has an account")
-        .feeds;
-    let _ = feeds;
+        // ── the same call `run` makes ───────────────────────────────────────
+        let feeds = feed_the_window(&window, &wiring)
+            .await
+            .expect("the seeded store has an account")
+            .feeds;
+        let _ = feeds;
 
-    // ── the folders reached the sidebar ─────────────────────────────────
-    let list = window.list();
-    let listed = settle_until(|| list.model().n_items() > 0);
+        // ── the folders reached the sidebar ─────────────────────────────────
+        let list = window.list();
+        let listed = settle_until(async || list.model().n_items() > 0).await;
 
-    assert!(
-        listed,
-        "the window was fed a store holding {} messages and the list is empty. \
-         Every layer under this one is tested and passes; that is exactly the \
-         shape of bug postio-bl2 is about — check what is *between* them.",
-        report.message_count
-    );
+        assert!(
+            listed,
+            "the window was fed a store holding {} messages and the list is empty. \
+             Every layer under this one is tested and passes; that is exactly the \
+             shape of bug postio-bl2 is about — check what is *between* them.",
+            report.message_count
+        );
 
-    // Not merely non-empty: the rows have to be the store's, and a row that
-    // draws no sender and no subject is a row the model invented.
-    let rows = list.model().n_items();
-    assert!(
-        list.model().peek(0).is_some(),
-        "the list reports {rows} rows and cannot name the first one"
-    );
+        // Not merely non-empty: the rows have to be the store's, and a row that
+        // draws no sender and no subject is a row the model invented.
+        let rows = list.model().n_items();
+        assert!(
+            list.model().peek(0).is_some(),
+            "the list reports {rows} rows and cannot name the first one"
+        );
 
-    bridge.shutdown();
+        bridge.shutdown();
+    });
 }

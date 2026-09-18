@@ -45,22 +45,24 @@ use postio_search::facets::Scope;
 use postio_search::parse;
 use postio_storage::repository::MessageRepository;
 use postio_storage::test_support;
-use postio_storage::test_support::counting::{Counts, counted, install};
+use postio_storage::test_support::counting::{Counts, counted_async, install};
 
 /// Comfortably past `executor.rs`'s `RANK_BY_RELEVANCE_LIMIT` of 2,000, so the
 /// broad query takes the too-many-to-rank path the budget is most at risk on.
 const MATCHES: usize = 2_500;
 
-fn today() -> chrono::NaiveDate {
+async fn today() -> chrono::NaiveDate {
     chrono::NaiveDate::from_ymd_opt(2026, 8, 21).expect("a real date")
 }
 
-#[test]
-fn a_search_costs_the_same_queries_however_much_it_matches() {
-    let database = test_support::memory();
-    let connection = database.connection().expect("checkout");
-    postio_index::index::ensure_schema(&connection).expect("schema");
-    let (account, mailbox) = test_support::account_with_inbox(&connection);
+#[tokio::test]
+async fn a_search_costs_the_same_queries_however_much_it_matches() {
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    postio_index::index::ensure_schema(&connection)
+        .await
+        .expect("schema");
+    let (account, mailbox) = test_support::account_with_inbox(&connection).await;
 
     // Every message carries "quarterly"; each also carries its own number, so
     // one corpus answers both a query matching everything and one matching a
@@ -72,7 +74,7 @@ fn a_search_costs_the_same_queries_however_much_it_matches() {
         let mut message = Message::new(account.id, mailbox, received);
         message.from = vec![EmailAddress::new(Some("ada"), "ada@example.com")];
         message.subject = Some(format!("quarterly report {nth}"));
-        messages.create(&mut message).expect("create message");
+        messages.create(&mut message).await.expect("create message");
         // One header block per message, the same shape: `X-Mailer` on all of
         // them so `header:x-mailer=mutt` matches everything, and the number
         // in the value so one query can pick out a single message.
@@ -80,15 +82,16 @@ fn a_search_costs_the_same_queries_however_much_it_matches() {
             .into_iter()
             .collect();
         postio_index::index::index_headers(&connection, message.id.get(), &headers)
+            .await
             .expect("index headers");
     }
 
-    let broad_query = parse("quarterly", today());
-    let narrow_query = parse(&format!("{}", MATCHES - 1), today());
+    let broad_query = parse("quarterly", today().await);
+    let narrow_query = parse(&format!("{}", MATCHES - 1), today().await);
     let now = Utc.with_ymd_and_hms(2026, 8, 21, 12, 0, 0).unwrap();
 
     install(&connection);
-    let run = |query, limit| {
+    let run = async |query, limit| {
         let request = SearchRequest {
             account: AccountScope::Account(account.id),
             query,
@@ -97,17 +100,19 @@ fn a_search_costs_the_same_queries_however_much_it_matches() {
             order: postio_search::ResultOrder::Relevance,
         };
         let mut hits = 0;
-        let counts: Counts = counted(|| {
+        let counts: Counts = counted_async(async || {
             hits = search(&connection, &request, now)
+                .await
                 .expect("a page of results")
                 .hits
                 .len();
-        });
+        })
+        .await;
         (counts, hits)
     };
 
-    let (broad, broad_hits) = run(&broad_query, 25);
-    let (narrow, narrow_hits) = run(&narrow_query, 25);
+    let (broad, broad_hits) = run(&broad_query, 25).await;
+    let (narrow, narrow_hits) = run(&narrow_query, 25).await;
 
     assert_eq!(broad_hits, 25, "a broad query should fill a page of 25");
     assert!(
@@ -129,7 +134,7 @@ fn a_search_costs_the_same_queries_however_much_it_matches() {
     // teeth: one extra query inside the counted block moves the number. #100
     // asks that each counted budget fail when the invariant it guards is
     // deliberately broken, and an N+1 is exactly this, once per hit.
-    let with_one_more = counted(|| {
+    let with_one_more = counted_async(async || {
         let request = SearchRequest {
             account: AccountScope::Account(account.id),
             query: &broad_query,
@@ -137,13 +142,18 @@ fn a_search_costs_the_same_queries_however_much_it_matches() {
             limit: 25,
             order: postio_search::ResultOrder::Relevance,
         };
-        let _ = search(&connection, &request, now).expect("a page of results");
-        let _: i64 = connection
-            .query_row("SELECT count(*) FROM messages", [], |row| row.get(0))
+        let _ = search(&connection, &request, now)
+            .await
+            .expect("a page of results");
+        let _: i64 =
+            postio_storage::sql::one(&connection, "SELECT count(*) FROM messages", (), |row| {
+                postio_storage::sql::RowExt::col(row, 0)
+            })
+            .await
             .expect("one more query, standing in for a per-hit lookup");
     });
     assert_eq!(
-        with_one_more.statements,
+        with_one_more.await.statements,
         broad.statements + 1,
         "adding a query to the counted block did not change the count, so the \
          equalities either side of this are not measuring what they claim"
@@ -155,13 +165,13 @@ fn a_search_costs_the_same_queries_however_much_it_matches() {
     // A `header:` that matches the whole mailbox must cost what one matching
     // a single message costs; anything else is a per-match read on a path
     // that returns identical results either way.
-    let header_broad_query = parse("header:x-mailer=mutt", today());
+    let header_broad_query = parse("header:x-mailer=mutt", today().await);
     let header_narrow_query = parse(
         &format!("header:x-mailer=\"build {}\"", MATCHES - 1),
-        today(),
+        today().await,
     );
-    let (header_broad, header_broad_hits) = run(&header_broad_query, 25);
-    let (header_narrow, header_narrow_hits) = run(&header_narrow_query, 25);
+    let (header_broad, header_broad_hits) = run(&header_broad_query, 25).await;
+    let (header_narrow, header_narrow_hits) = run(&header_narrow_query, 25).await;
 
     assert_eq!(
         header_broad_hits, 25,
@@ -180,7 +190,7 @@ fn a_search_costs_the_same_queries_however_much_it_matches() {
         header_broad.statements, header_narrow.statements
     );
 
-    let (header_wide, header_wide_hits) = run(&header_broad_query, 100);
+    let (header_wide, header_wide_hits) = run(&header_broad_query, 100).await;
     assert_eq!(header_wide_hits, 100, "a page of 100 should come back full");
     assert_eq!(
         header_wide.statements, header_broad.statements,
@@ -191,7 +201,7 @@ fn a_search_costs_the_same_queries_however_much_it_matches() {
 
     // The other shape an N+1 takes: per *hit* rather than per match. A wider
     // page must not cost more queries either — the pool is hydrated in one.
-    let (wide, wide_hits) = run(&broad_query, 100);
+    let (wide, wide_hits) = run(&broad_query, 100).await;
     assert_eq!(wide_hits, 100, "a page of 100 should come back full");
     assert_eq!(
         wide.statements, broad.statements,

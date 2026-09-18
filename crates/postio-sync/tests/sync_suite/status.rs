@@ -24,10 +24,10 @@ async fn a_full_pass_leaves_the_tracker_idle_with_a_last_sync_time() {
     let backend = MockBackend::builder().mailbox(mailbox).build();
     backend.connect().await.expect("connect");
 
-    let database = test_support::memory();
-    let connection = database.connection().expect("checkout");
-    let account = test_support::account(&connection);
-    let inbox = test_support::mailbox(&connection, &account, INBOX);
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    let account = test_support::account(&connection).await;
+    let inbox = test_support::mailbox(&connection, &account, INBOX).await;
 
     let mut tracker = StatusTracker::new();
     let mut reported = Vec::new();

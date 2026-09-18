@@ -3,7 +3,9 @@
 - **Status:** Accepted — maintainer-directed (2026-08-27), **Q5a added
   2026-08-27** ([#570](https://github.com/dlapiduz/postio/issues/570)),
   **Q6 amended 2026-09-01** by ADR 0023
-  ([#768](https://github.com/dlapiduz/postio/issues/768))
+  ([#768](https://github.com/dlapiduz/postio/issues/768)); **built** as the
+  read-only slice the decision line describes (`macos/`,
+  `crates/postio-ffi`; compose still deferred)
 - **Date:** 2026-08-27
 - **Issue:** [#557](https://github.com/dlapiduz/postio/issues/557), under
   [#15](https://github.com/dlapiduz/postio/issues/15) and epic
@@ -61,6 +63,16 @@ at all.** `tracing-journald`, `oo7` and `zbus` all compile and link there; they
 fail at *runtime*, gracefully, which they were already written to do. The only
 boundary is `glib-2.0` via `pkg-config`, and it falls exactly on `postio-gtk`
 and `postio-app`.
+
+> **Measured 2026-08-27, when the workspace had fifteen crates and
+> `postio-account` was still `postio-imap` (#153); the block above is the
+> record of what was run.** The workspace has twenty crates now
+> (`Cargo.toml` members), `postio-ffi` and `postio-ui` among them, and the
+> exclusion set is unchanged: `postio-gtk` and `postio-app` are still the
+> only two behind `glib-2.0`. The Swift frontend this ADR plans is built —
+> `macos/Package.swift`, `macos/Sources/Postio` and `macos/Sources/PostioKit`
+> over `crates/postio-ffi` — as the read-only slice the decision line
+> describes; compose is still deferred.
 
 Two consequences. The port has no porting phase — it begins at the extraction
 and the boundary. And the enforced crate boundaries turn out to have done
@@ -145,8 +157,8 @@ the routing decision degrades to matching on message text.
 
 **And it costs the workspace no `unsafe`.** The plan expected UniFFI's
 generated scaffolding to force `postio-ffi` into `check-lint-floor.py`'s
-exception list at `deny`, the way `postio-gtk`, `postio-app` and `postio-imap`
-sit there. Tested on uniffi 0.29.5 rather than assumed: the crate compiles with
+exception list at `deny`, the way `postio-gtk`, `postio-app` and
+`postio-account` sit there. Tested on uniffi 0.29.5 rather than assumed: the crate compiles with
 `uniffi::setup_scaffolding!()` and `#[uniffi::export]` under the workspace's
 `unsafe_code = "forbid"`, and `forbid` is genuinely in force — a hand-written
 `unsafe` block in the same crate is rejected. **No exception is needed, and the

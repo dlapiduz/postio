@@ -85,3 +85,16 @@ leaves its tree behind permanently. Nothing collects them.
 
 #1428 carries both halves: something should reclaim them, and a landing
 that fails on `No space left on device` should say so in those words.
+
+## What was done about it (2026-09-15)
+
+`scripts/worktree-reap.sh` reclaims under the rules above -- a dirty tree
+is never touched, one with commits not upstream by patch id loses only
+its `target/`, and a clean landed tree quiet for a day goes whole, branch
+and claim lock included; the tree it runs from is never a candidate.
+`issue-claim.sh` prints its report before seeding a fresh tree onto a
+disk below 16 GB free. `issue-land.sh` refuses below 4 GB free, warns
+below 16, and when a run's log carries `os error 28` or `signal: 7,
+SIGBUS`, both `--status` and the detached child's own last lines say the
+disk was full rather than leaving the compile error to speak. The two
+self-tests are `test-worktree-reap.py` and `test-issue-land-disk-full.py`.

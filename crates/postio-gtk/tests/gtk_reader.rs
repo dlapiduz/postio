@@ -544,7 +544,7 @@ fn the_reader_renders_and_hardens_the_corpus() {
                 );
                 let _ = tx.send(());
             }
-            std::thread::sleep(Duration::from_millis(10));
+            std::thread::sleep(std::time::Duration::from_millis(10));
         }
     });
 
@@ -619,7 +619,7 @@ fn the_reader_renders_and_hardens_the_corpus() {
                 );
                 let _ = styled_tx.send(());
             }
-            std::thread::sleep(Duration::from_millis(10));
+            std::thread::sleep(std::time::Duration::from_millis(10));
         }
     });
 
@@ -683,6 +683,7 @@ fn the_reader_renders_and_hardens_the_corpus() {
     view_original_reaches_one_message_of_a_thread();
     one_senders_styling_cannot_reach_another_message();
     a_whole_thread_costs_one_web_process();
+    a_dead_web_process_fails_the_wait_for_it_at_once();
     an_allowed_senders_images_survive_the_thread_document();
     the_show_verb_actually_grants_consent();
     a_messages_own_verb_names_that_message();
@@ -763,6 +764,7 @@ fn view_original_reaches_one_message_of_a_thread() {
         cc: String::new(),
         preview: "preview".to_owned(),
         expanded: true,
+        absent: false,
         latest: false,
         draft: false,
         mine: false,
@@ -926,7 +928,7 @@ fn load_and_read_title(markup: bool, document: &str) -> (String, String) {
         let deadline = Instant::now() + postio_test_support::scaled(Duration::from_secs(5));
         while answer.borrow().is_none() && Instant::now() < deadline {
             while glib::MainContext::default().iteration(false) {}
-            std::thread::sleep(Duration::from_millis(5));
+            std::thread::sleep(std::time::Duration::from_millis(5));
         }
         let injected = answer.borrow_mut().take().unwrap_or_default();
 
@@ -1262,6 +1264,7 @@ fn an_allowed_senders_images_survive_the_thread_document() {
         cc: String::new(),
         preview: "preview".to_owned(),
         expanded: true,
+        absent: false,
         latest,
         draft: false,
         mine: false,
@@ -1334,6 +1337,7 @@ fn the_show_verb_actually_grants_consent() {
         cc: String::new(),
         preview: "preview".to_owned(),
         expanded: true,
+        absent: false,
         latest: false,
         draft: false,
         mine: false,
@@ -1421,6 +1425,7 @@ fn a_messages_own_verb_names_that_message() {
         cc: String::new(),
         preview: "preview".to_owned(),
         expanded: true,
+        absent: false,
         latest: false,
         draft: false,
         mine: false,
@@ -1558,7 +1563,7 @@ fn the_shipped_reader_refuses_a_senders_script() {
     let deadline = Instant::now() + postio_test_support::scaled(Duration::from_secs(5));
     while answer.borrow().is_none() && Instant::now() < deadline {
         while glib::MainContext::default().iteration(false) {}
-        std::thread::sleep(Duration::from_millis(5));
+        std::thread::sleep(std::time::Duration::from_millis(5));
     }
     let injected = answer.borrow_mut().take().unwrap_or_default();
     window.set_visible(false);
@@ -1601,6 +1606,7 @@ fn the_rail_hears_which_message_is_on_screen() {
         cc: String::new(),
         preview: "preview".to_owned(),
         expanded: true,
+        absent: false,
         latest: false,
         draft: false,
         mine: false,
@@ -1838,6 +1844,7 @@ fn fifty_conversations_hold_what_one_holds() {
                 cc: String::new(),
                 preview: format!("conversation {n}"),
                 expanded: true,
+                absent: false,
                 latest: index == 2,
                 draft: false,
                 mine: false,
@@ -2027,7 +2034,7 @@ fn wait_for_connection(rx: &mpsc::Receiver<()>, timeout: Duration) -> bool {
             return true;
         }
         glib::MainContext::default().iteration(false);
-        std::thread::sleep(Duration::from_millis(10));
+        std::thread::sleep(std::time::Duration::from_millis(10));
     }
     false
 }
@@ -2060,7 +2067,12 @@ fn wait_for(flag: &Rc<RefCell<bool>>, timeout: Duration) {
     let deadline = Instant::now() + postio_test_support::scaled(timeout);
     while !*flag.borrow() && Instant::now() < deadline {
         while glib::MainContext::default().iteration(false) {}
-        std::thread::sleep(Duration::from_millis(10));
+        // A document held by a dead web process is never going to finish
+        // loading; say so now rather than at the deadline.
+        if let Some(reason) = postio_gtk::web_process::take_death() {
+            panic!("a WebKit web process died ({reason}) while waiting for a load");
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
     }
     assert!(*flag.borrow(), "the WebView never finished loading");
 }
@@ -2081,7 +2093,7 @@ fn pump_for(duration: Duration) {
     let deadline = Instant::now() + duration;
     while Instant::now() < deadline {
         glib::MainContext::default().iteration(false);
-        std::thread::sleep(Duration::from_millis(10));
+        std::thread::sleep(std::time::Duration::from_millis(10));
     }
 }
 
@@ -2244,6 +2256,7 @@ fn a_whole_thread_costs_one_web_process() {
                 cc: String::new(),
                 preview: "the first line".into(),
                 expanded: index + 1 == count,
+                absent: false,
                 latest: index + 1 == count,
                 draft: false,
                 mine: false,
@@ -2267,16 +2280,23 @@ fn a_whole_thread_costs_one_web_process() {
     eprintln!("2 messages {short:?}, 30 messages {long:?}");
     window.set_visible(false);
 
+    // Compared as sets of pids, not as counts: the readers the earlier cases
+    // left alive are WebKit's to reap, and one of theirs exiting between two
+    // samples made a length comparison see "no new process" when this view's
+    // had plainly appeared (CI, 2026-09-14: `[.., 74179]` became
+    // `[.., 74321]`). What the claim is about is the processes *this* reader
+    // adds.
+    let spawned: Vec<_> = short.iter().filter(|pid| !before.contains(pid)).collect();
     assert_eq!(
-        short.len(),
-        before.len() + 1,
+        spawned.len(),
+        1,
         "the thread never rendered, or it cost more than one view's process \
          ({before:?} -> {short:?}), and either way the count below proves \
          nothing"
     );
-    assert_eq!(
-        long.len(),
-        short.len(),
+    let grown: Vec<_> = long.iter().filter(|pid| !short.contains(pid)).collect();
+    assert!(
+        grown.is_empty(),
         "a thirty-message thread cost more web processes than a two-message \
          one ({short:?} -> {long:?}), which is the whole claim of ADR 0032"
     );
@@ -2288,5 +2308,72 @@ fn a_whole_thread_costs_one_web_process() {
         document.matches("<details").count(),
         30,
         "the document does not hold the whole thread"
+    );
+}
+
+/// A web process that dies fails the wait for it at once, not at the deadline.
+///
+/// CI, 2026-09-14: a web process died under an editor test on the runner's
+/// software GL stack, every bounded wait after it ran to its scaled
+/// deadline, and the case hit nextest's 240 s cap. `postio_gtk::web_process`
+/// hears the death from WebKit itself; this proves the wait helpers listen.
+fn a_dead_web_process_fails_the_wait_for_it_at_once() {
+    if adw::init().is_err() || gdk::Display::default().is_none() {
+        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
+        return;
+    }
+
+    let window = gtk::Window::new();
+    let reader = Reader::with_allowlist(
+        Rc::new(NoBlobs),
+        RemoteImageAllowList::default(),
+        scratch_path("dead-web-process"),
+    );
+    window.set_child(Some(&reader.widget()));
+    window.present();
+
+    let finished = track_load_finished(&reader);
+    reader.render(
+        &postio_model::MessageBody {
+            text: Some("alive".to_owned()),
+            html: None,
+        },
+        None,
+    );
+    wait_for(&finished, Duration::from_secs(5));
+
+    let before = postio_gtk::web_process::deaths();
+    reader.view().terminate_web_process();
+    // The signal arrives through the main loop, not from the call.
+    let deadline = Instant::now() + postio_test_support::scaled(Duration::from_secs(5));
+    while postio_gtk::web_process::deaths() == before && Instant::now() < deadline {
+        pump();
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    assert_eq!(
+        postio_gtk::web_process::deaths(),
+        before + 1,
+        "the death was counted"
+    );
+    assert!(
+        postio_gtk::web_process::last_death().is_some(),
+        "and its reason kept"
+    );
+
+    // A wait begun after the death fails now, naming it, not at its deadline.
+    let never = Rc::new(RefCell::new(false));
+    let started = Instant::now();
+    let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        wait_for(&never, Duration::from_secs(20));
+    }));
+    let waited = started.elapsed();
+    window.set_visible(false);
+    assert!(
+        outcome.is_err(),
+        "the wait must fail once the process is gone"
+    );
+    assert!(
+        waited < Duration::from_secs(5),
+        "the wait ran {waited:?} towards its deadline instead of failing at once"
     );
 }

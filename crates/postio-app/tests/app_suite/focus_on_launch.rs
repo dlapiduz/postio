@@ -95,95 +95,98 @@ fn focused(window: &Window) -> String {
 }
 
 pub fn the_window_opens_with_the_keyboard_on_the_first_message() {
-    let state_dir = tempfile::tempdir().expect("a state directory");
-    // SAFETY: first statement of a single-threaded test.
-    unsafe { std::env::set_var("XDG_STATE_HOME", state_dir.path()) };
+    crate::gtk_case(async {
+        let state_dir = tempfile::tempdir().expect("a state directory");
+        // SAFETY: first statement of a single-threaded test.
+        unsafe { std::env::set_var("XDG_STATE_HOME", state_dir.path()) };
 
-    if adw::init().is_err() || gdk::Display::default().is_none() {
-        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
-        return;
-    }
-    let display = gdk::Display::default().unwrap();
-    fonts::install().expect("the embedded fonts should install");
-    style::install(&display);
-    app::install_icons(&display);
+        if adw::init().is_err() || gdk::Display::default().is_none() {
+            eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
+            return;
+        }
+        let display = gdk::Display::default().unwrap();
+        fonts::install().expect("the embedded fonts should install");
+        style::install(&display);
+        app::install_icons(&display);
 
-    let database = test_support::memory();
-    seed_small(&database, 11);
-    let directory = tempfile::tempdir().expect("a blob directory");
-    let blobs = BlobStore::open(
-        directory.path().to_path_buf(),
-        &postio_storage::test_support::blob_keys(),
-    )
-    .expect("a blob store");
+        let database = test_support::memory().await;
+        seed_small(&database, 11).await;
+        let directory = tempfile::tempdir().expect("a blob directory");
+        let blobs = BlobStore::open(
+            directory.path().to_path_buf(),
+            &postio_storage::test_support::blob_keys(),
+        )
+        .expect("a blob store");
 
-    let state = SharedState::default();
-    let bus = actions::wire(
-        postio_core::dispatch::DispatcherBuilder::new(),
-        actions::Actions::new(database.clone(), state.clone()),
-    )
-    .build();
-    let (bridge, _replies) = Bridge::new(bus).expect("a runtime");
-    let (sink, _events) = event_channel();
-    let wiring = Wiring::new(
-        database.clone(),
-        blobs,
-        bridge.handle(),
-        sink,
-        bridge.commands(),
-    );
+        let state = SharedState::default();
+        let bus = actions::wire(
+            postio_core::dispatch::DispatcherBuilder::new(),
+            actions::Actions::new(database.clone(), state.clone()),
+        )
+        .build();
+        let (bridge, _replies) = Bridge::new(bus).expect("a runtime");
+        let (sink, _events) = event_channel();
+        let wiring = Wiring::new(
+            database.clone(),
+            blobs,
+            bridge.handle(),
+            sink,
+            bridge.commands(),
+        );
 
-    // The order `app.rs` uses: the window is presented before there is any
-    // mail to put in it.
-    let window = Window::default();
-    // The two things `app.rs` does between building the window and
-    // presenting it. Both add focusable widgets to the tree, and the bug
-    // report is about which one GTK settles on.
-    postio_gtk::config::install(&window);
-    window.composer();
-    window.present();
-    while glib::MainContext::default().iteration(false) {}
+        // The order `app.rs` uses: the window is presented before there is any
+        // mail to put in it.
+        let window = Window::default();
+        // The two things `app.rs` does between building the window and
+        // presenting it. Both add focusable widgets to the tree, and the bug
+        // report is about which one GTK settles on.
+        postio_gtk::config::install(&window);
+        window.composer();
+        window.present();
+        while glib::MainContext::default().iteration(false) {}
 
-    let _feeds = feed_the_window(&window, &wiring)
-        .expect("the seeded store has an account")
-        .feeds;
+        let _feeds = feed_the_window(&window, &wiring)
+            .await
+            .expect("the seeded store has an account")
+            .feeds;
 
-    let list = window.list();
-    assert!(
-        settle_until(|| list.model().n_items() > 0),
-        "no rows arrived, so this test cannot say where the keyboard should be"
-    );
-
-    // The control. Put the keyboard where the report says it lands, and
-    // check the predicate below can tell: without this, a green run only
-    // says the assertion is satisfiable, not that it is selective.
-    let on_the_list = |window: &Window| {
         let list = window.list();
-        list.has_focus() || list.focus_child().is_some()
-    };
-    search_field(&window).grab_focus();
-    while glib::MainContext::default().iteration(false) {}
-    assert!(
-        !on_the_list(&window),
-        "with the keyboard in the search field this test still reports the \
-         list, so it cannot tell the reported state from the wanted one and \
-         a green run means nothing (focus: {})",
-        focused(&window)
-    );
+        assert!(
+            settle_until(async || list.model().n_items() > 0).await,
+            "no rows arrived, so this test cannot say where the keyboard should be"
+        );
 
-    // Back to how the window came up, and then the real question.
-    window.list().grab_focus();
-    while glib::MainContext::default().iteration(false) {}
+        // The control. Put the keyboard where the report says it lands, and
+        // check the predicate below can tell: without this, a green run only
+        // says the assertion is satisfiable, not that it is selective.
+        let on_the_list = |window: &Window| {
+            let list = window.list();
+            list.has_focus() || list.focus_child().is_some()
+        };
+        search_field(&window).grab_focus();
+        while glib::MainContext::default().iteration(false) {}
+        assert!(
+            !on_the_list(&window),
+            "with the keyboard in the search field this test still reports the \
+             list, so it cannot tell the reported state from the wanted one and \
+             a green run means nothing (focus: {})",
+            focused(&window)
+        );
 
-    // Reported before the assertion: when this fails, the *name* of what
-    // stole the keyboard is the whole finding.
-    eprintln!("focus after launch: {}", focused(&window));
+        // Back to how the window came up, and then the real question.
+        window.list().grab_focus();
+        while glib::MainContext::default().iteration(false) {}
 
-    assert!(
-        list.has_focus() || list.focus_child().is_some(),
-        "the keyboard is on {} rather than the message list, so every \
-         single-key binding types into it instead of acting on the mail \
-         (#1473)",
-        focused(&window)
-    );
+        // Reported before the assertion: when this fails, the *name* of what
+        // stole the keyboard is the whole finding.
+        eprintln!("focus after launch: {}", focused(&window));
+
+        assert!(
+            list.has_focus() || list.focus_child().is_some(),
+            "the keyboard is on {} rather than the message list, so every \
+             single-key binding types into it instead of acting on the mail \
+             (#1473)",
+            focused(&window)
+        );
+    });
 }

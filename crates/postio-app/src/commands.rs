@@ -106,7 +106,7 @@ pub fn install(
 /// the real sink — nothing downstream needs a second `ConnectionChanged` for
 /// news this call already delivered, the same reason `install`'s
 /// `aim::mirror` call discards its receiver.
-pub fn apply(
+pub async fn apply(
     window: &Window,
     feeds: &Feeds,
     event: &Event,
@@ -162,9 +162,18 @@ pub fn apply(
         // Rows that have left the mailbox cannot stay selected: the next
         // action would be aimed at mail that is no longer there.
         Event::MessagesRemoved { .. } => window.list().clear_selection(),
+        // Asked at the moment the decision is made rather than tracked:
+        // whether the window is in front is a live property, and a cached
+        // copy would go stale in exactly the window that matters.
         Event::NewMail {
             mailbox, messages, ..
-        } => notifier.notify(window, *mailbox, messages),
+        } => {
+            let attention = postio_ui::notify::Attention {
+                showing: feeds.messages.mailbox(),
+                active: window.is_active(),
+            };
+            notifier.notify(window, *mailbox, messages, attention).await;
+        }
         _ => {}
     }
 }
@@ -189,7 +198,14 @@ pub fn drain(
             let Some(window) = window.upgrade() else {
                 return;
             };
-            apply(&window, &feeds, &event, &notifier, &state, &quiet);
+            // POSTIO-GLIB-SAFE: nothing under this await wants a reactor. The
+            // network work it reaches is spawned onto the runtime and answers over a
+            // channel -- `onboarding::probe_with_offer` is the shape -- and what is
+            // left is store reads, whose futures this engine makes self-contained.
+            // Measured rather than assumed: `app_suite::glib_main_context` opens a
+            // store and reads it on this context with no runtime anywhere, and fails
+            // loudly if that stops being true.
+            apply(&window, &feeds, &event, &notifier, &state, &quiet).await;
         }
     });
 }

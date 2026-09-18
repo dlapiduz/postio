@@ -974,6 +974,9 @@ fn pump_until(ready: impl Fn() -> bool) {
         if ready() {
             return;
         }
+        if let Some(reason) = postio_gtk::web_process::take_death() {
+            panic!("a WebKit web process died ({reason}) while waiting");
+        }
         std::thread::sleep(std::time::Duration::from_millis(1));
     }
 }

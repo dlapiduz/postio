@@ -36,8 +36,14 @@ imap_host = "imap.mail.me.com"
 imap_port = 993
 imap_security = "tls"
 smtp_host = "smtp.mail.me.com"
-smtp_port = 465
-smtp_security = "tls"
+# 587 and STARTTLS, which is what Apple documents and the only port they
+# document: https://support.apple.com/en-us/102525. This row said 465 with
+# implicit TLS, and sending an actual message got
+# "connecting to smtp.mail.me.com:465 failed: no answer within 30s (gave up
+# after 8 attempts)" -- the port is not answered, so every send failed after
+# the queue exhausted its retries.
+smtp_port = 587
+smtp_security = "start-tls"
 requires_app_password = true
 password_help_url = "https://appleid.apple.com/account/manage"
 auth = ["app-password"]

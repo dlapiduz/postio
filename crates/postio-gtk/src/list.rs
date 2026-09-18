@@ -598,6 +598,25 @@ impl MessageList {
         self.deliver_for(generation, page, rows);
     }
 
+    /// Give up on a page whose fetch failed, so the view can ask again.
+    ///
+    /// The banner an error raises tells a person something went wrong; it
+    /// does not put the rows back. Without this the page stays outstanding
+    /// for the life of the window and its fifty positions draw skeletons that
+    /// nothing can clear -- which is what a live inbox did, almost in its
+    /// entirety, while the body backfill ran.
+    ///
+    /// Behind the same `reading` guard as [`deliver_for`](Self::deliver_for):
+    /// `GListModel::item()` must not be re-entered, and a failure can arrive
+    /// mid-call exactly as a delivery can.
+    pub fn abandon_page(&self, generation: u64, page: u32) {
+        if self.reading() {
+            self.hold(move |list| list.abandon_page(generation, page));
+            return;
+        }
+        self.imp().window.borrow_mut().abandon(generation, page);
+    }
+
     /// Correct the row count without touching what is cached.
     ///
     /// For a total that shrank or grew at the *end* of the list — a mailbox

@@ -132,11 +132,11 @@ fn futures_lite_block_on<F: std::future::Future>(future: F) -> F::Output {
 /// ```text
 /// cargo test -p postio-runtime --test smtp_wait_cpu -- --ignored --nocapture
 /// ```
-#[test]
+#[tokio::test]
 #[ignore = "needs a system D-Bus and a live NetworkManager"]
-fn the_networkmanager_listener_costs_no_cpu_either() {
-    assert_networkmanager_is_really_there();
-    measure_a_waiting_send(NetworkSource::NetworkManager);
+async fn the_networkmanager_listener_costs_no_cpu_either() {
+    assert_networkmanager_is_really_there().await;
+    measure_a_waiting_send(NetworkSource::NetworkManager).await;
 }
 
 /// The listener has something to listen to.
@@ -147,7 +147,7 @@ fn the_networkmanager_listener_costs_no_cpu_either() {
 /// doing nothing at all; the same reading twice would be a coincidence worth
 /// refusing to rely on. Reads the property `follow` reads, from the process
 /// that will run it.
-fn assert_networkmanager_is_really_there() {
+async fn assert_networkmanager_is_really_there() {
     let state = futures_lite_block_on(async {
         let connection = zbus::Connection::system()
             .await
@@ -168,14 +168,14 @@ fn assert_networkmanager_is_really_there() {
     eprintln!("NetworkManager reports state {state}; the listener has a bus to follow");
 }
 
-#[test]
-fn a_queued_send_to_a_silent_server_costs_no_cpu_while_it_waits() {
-    measure_a_waiting_send(NetworkSource::Ignored);
+#[tokio::test]
+async fn a_queued_send_to_a_silent_server_costs_no_cpu_while_it_waits() {
+    measure_a_waiting_send(NetworkSource::Ignored).await;
 }
 
 /// The measurement both cases share: an engine with a send it cannot deliver,
 /// and what it costs to sit there.
-fn measure_a_waiting_send(network: NetworkSource) {
+async fn measure_a_waiting_send(network: NetworkSource) {
     assert_the_clock_can_see_a_burn();
 
     // Left in, and pointed at the test writer so it is silent unless someone
@@ -186,8 +186,8 @@ fn measure_a_waiting_send(network: NetworkSource) {
         .with_max_level(tracing::Level::DEBUG)
         .with_test_writer()
         .try_init();
-    let database = test_support::memory();
-    let report = seed_small(&database, 11);
+    let database = test_support::memory().await;
+    let report = seed_small(&database, 11).await;
     let directory = tempfile::tempdir().expect("a blob directory");
     let blobs = BlobStore::open(
         directory.path().to_path_buf(),
@@ -200,9 +200,10 @@ fn measure_a_waiting_send(network: NetworkSource) {
     // mid-run races the first sync, and what is under test is the waiting,
     // not the arrival.
     {
-        let connection = database.connection().expect("checkout");
+        let connection = database.connect().await.expect("checkout");
         let mut account = postio_storage::repository::AccountRepository::new(&connection)
             .get(report.account.id)
+            .await
             .expect("read the account")
             .expect("the seeded account");
         // The seed writes no identity, and a send without one fails before
@@ -216,6 +217,7 @@ fn measure_a_waiting_send(network: NetworkSource) {
                 ));
             postio_storage::repository::AccountRepository::new(&connection)
                 .update(&mut account)
+                .await
                 .expect("give the account an identity");
         }
         let mut draft = postio_model::draft::Draft::new(account.id);
@@ -228,6 +230,7 @@ fn measure_a_waiting_send(network: NetworkSource) {
         draft.body.text = Some("Notes on the difference engine.".to_owned());
         let draft_id = DraftRepository::new(&connection)
             .save(&mut draft)
+            .await
             .expect("save the draft");
         OperationQueueRepository::new(&connection)
             .enqueue(
@@ -236,6 +239,7 @@ fn measure_a_waiting_send(network: NetworkSource) {
                 &Operation::Send { draft: draft_id },
                 chrono::Utc::now(),
             )
+            .await
             .expect("enqueue the send");
     }
 
@@ -244,9 +248,10 @@ fn measure_a_waiting_send(network: NetworkSource) {
     // scenario and measures nothing about waiting.
     let secrets = Arc::new(postio_account::secret::MemorySecretStore::default());
     {
-        let connection = database.connection().expect("checkout");
+        let connection = database.connect().await.expect("checkout");
         let account = postio_storage::repository::AccountRepository::new(&connection)
             .get(report.account.id)
+            .await
             .expect("read the account")
             .expect("the seeded account");
         let key = postio_account::secret::AccountKey::new(&account.address.address);

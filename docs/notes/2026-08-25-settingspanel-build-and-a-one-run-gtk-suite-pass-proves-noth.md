@@ -5,7 +5,8 @@ is still wiring up its own overlay siblings and shortcut controllers, and
 #873 found a real, deterministic case of that mattering: building a
 `gtk::DropDown` (`[sync]`'s structured pane) during that window corrupted
 keyboard routing for the rest of it — `gtk_finder`, `gtk_finder_focus`,
-`gtk_move_picker`, `gtk_toggle_sidebar` all failed, reliably, and reliably
+`gtk_move_picker`, `gtk_toggle_sidebar` (all four are cases under
+`crates/postio-gtk/tests/gtk_suite/` now) failed, reliably, and reliably
 stopped failing once `redraw_sync`/`redraw_ui`'s calls were removed from
 `build()`'s own trailing sequence. That bisection ran the filter multiple
 times each side and the signal held. #880's account-detail view hit the same

@@ -2,9 +2,9 @@
 //!
 //! The ranking is unit-tested in `postio-search` with no database at all.
 //! What those tests cannot see is whether the vocabulary they rank is
-//! actually there: `fts5vocab` is declared against a live index, over an
-//! external-content table, in a temp schema — and a suggestion drawn from an
-//! empty term list is a feature that silently never fires.
+//! actually there: on this engine it is rebuilt from `search_documents`,
+//! the table the triggers keep in step with `messages` — and a suggestion
+//! drawn from an empty term list is a feature that silently never fires.
 
 use chrono::{TimeZone, Utc};
 use postio_index::{SearchRequest, search};
@@ -12,15 +12,15 @@ use postio_model::AccountScope;
 use postio_model::{EmailAddress, Message};
 use postio_search::facets::Scope;
 use postio_search::parse;
+use postio_storage::Connection;
 use postio_storage::repository::MessageRepository;
 use postio_storage::test_support;
-use rusqlite::Connection;
 
 fn at(hour: u32) -> chrono::DateTime<Utc> {
     Utc.with_ymd_and_hms(2026, 8, 20, hour, 0, 0).unwrap()
 }
 
-fn from(
+async fn from(
     connection: &Connection,
     account: &postio_model::Account,
     mailbox: postio_model::MailboxId,
@@ -31,10 +31,11 @@ fn from(
     message.subject = Some("Voice lessons".to_owned());
     MessageRepository::new(connection)
         .create(&mut message)
+        .await
         .expect("create message");
 }
 
-fn results_for(
+async fn results_for(
     connection: &Connection,
     account: &postio_model::Account,
     typed: &str,
@@ -47,20 +48,22 @@ fn results_for(
         limit: 10,
         order: postio_search::ResultOrder::Relevance,
     };
-    search(connection, &request, at(12)).expect("search")
+    search(connection, &request, at(12)).await.expect("search")
 }
 
-#[test]
-fn a_misspelled_name_is_answered_with_the_one_in_the_mailbox() {
-    let database = test_support::memory();
-    let connection = database.connection().expect("checkout");
-    postio_index::index::ensure_schema(&connection).expect("schema");
-    let (account, mailbox) = test_support::account_with_inbox(&connection);
+#[tokio::test]
+async fn a_misspelled_name_is_answered_with_the_one_in_the_mailbox() {
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    postio_index::index::ensure_schema(&connection)
+        .await
+        .expect("schema");
+    let (account, mailbox) = test_support::account_with_inbox(&connection).await;
     for _ in 0..3 {
-        from(&connection, &account, mailbox, "hannah");
+        from(&connection, &account, mailbox, "hannah").await;
     }
 
-    let results = results_for(&connection, &account, "hanah");
+    let results = results_for(&connection, &account, "hanah").await;
 
     assert_eq!(results.total_hits, 0, "the match itself stays exact");
     let offered = results
@@ -73,15 +76,17 @@ fn a_misspelled_name_is_answered_with_the_one_in_the_mailbox() {
     );
 }
 
-#[test]
-fn a_query_that_found_something_is_not_second_guessed() {
-    let database = test_support::memory();
-    let connection = database.connection().expect("checkout");
-    postio_index::index::ensure_schema(&connection).expect("schema");
-    let (account, mailbox) = test_support::account_with_inbox(&connection);
-    from(&connection, &account, mailbox, "hannah");
+#[tokio::test]
+async fn a_query_that_found_something_is_not_second_guessed() {
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    postio_index::index::ensure_schema(&connection)
+        .await
+        .expect("schema");
+    let (account, mailbox) = test_support::account_with_inbox(&connection).await;
+    from(&connection, &account, mailbox, "hannah").await;
 
-    let results = results_for(&connection, &account, "hannah");
+    let results = results_for(&connection, &account, "hannah").await;
 
     assert!(results.total_hits > 0);
     assert_eq!(
@@ -90,31 +95,35 @@ fn a_query_that_found_something_is_not_second_guessed() {
     );
 }
 
-#[test]
-fn a_word_the_mailbox_does_not_resemble_gets_no_offer() {
-    let database = test_support::memory();
-    let connection = database.connection().expect("checkout");
-    postio_index::index::ensure_schema(&connection).expect("schema");
-    let (account, mailbox) = test_support::account_with_inbox(&connection);
-    from(&connection, &account, mailbox, "hannah");
+#[tokio::test]
+async fn a_word_the_mailbox_does_not_resemble_gets_no_offer() {
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    postio_index::index::ensure_schema(&connection)
+        .await
+        .expect("schema");
+    let (account, mailbox) = test_support::account_with_inbox(&connection).await;
+    from(&connection, &account, mailbox, "hannah").await;
 
-    let results = results_for(&connection, &account, "xylophone");
+    let results = results_for(&connection, &account, "xylophone").await;
 
     assert_eq!(results.total_hits, 0);
     assert_eq!(results.suggestion, None, "nothing here resembles it");
 }
 
-#[test]
-fn a_query_with_a_filter_is_left_alone() {
+#[tokio::test]
+async fn a_query_with_a_filter_is_left_alone() {
     // `from:ada hanah` found nothing, and the filter is at least as likely to
     // be why. Correcting the word would answer a question nobody asked.
-    let database = test_support::memory();
-    let connection = database.connection().expect("checkout");
-    postio_index::index::ensure_schema(&connection).expect("schema");
-    let (account, mailbox) = test_support::account_with_inbox(&connection);
-    from(&connection, &account, mailbox, "hannah");
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    postio_index::index::ensure_schema(&connection)
+        .await
+        .expect("schema");
+    let (account, mailbox) = test_support::account_with_inbox(&connection).await;
+    from(&connection, &account, mailbox, "hannah").await;
 
-    let results = results_for(&connection, &account, "from:ada hanah");
+    let results = results_for(&connection, &account, "from:ada hanah").await;
 
     assert_eq!(results.total_hits, 0);
     assert_eq!(results.suggestion, None);

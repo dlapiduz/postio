@@ -352,6 +352,30 @@ impl<T: ListRow> ListWindow<T> {
         into.push(page);
     }
 
+    /// Give up on a page whose fetch failed, so it can be asked for again.
+    ///
+    /// [`want`](Self::want) refuses to ask twice for a page already on its
+    /// way, which is what keeps scrolling a huge folder cheap. That rule
+    /// assumes every request is eventually answered one way or the other:
+    /// without this, a fetch that *errors* answers nothing, the page stays
+    /// pending for the life of the window, and its rows are placeholders
+    /// that no scroll, repaint or refresh can clear. A live inbox drew
+    /// almost entirely as skeletons that way.
+    ///
+    /// It does not retry by itself. The page simply becomes askable again,
+    /// and the next thing that needs a row in it asks -- which is the same
+    /// path a first request takes, and keeps a permanently failing store
+    /// from spinning a retry loop of its own.
+    ///
+    /// Generation-guarded exactly as [`deliver`](Self::deliver) is: a failure
+    /// from the folder we have already left says nothing about this one.
+    pub fn abandon(&mut self, generation: u64, page: u32) {
+        if generation != self.generation {
+            return;
+        }
+        self.pending.remove(&page);
+    }
+
     /// Accept a page of rows delivered for `generation`.
     ///
     /// Rows already resident for the same message are reconciled through
@@ -660,6 +684,73 @@ mod tests {
                 );
             }
             other => panic!("expected row 130 to be Missing with page 2 requested, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_page_whose_fetch_failed_is_asked_for_again() {
+        // Seen on a live account: most of a 709-message inbox drew as
+        // skeletons and stayed that way while the backfill ran. "One request
+        // per page, ever, until it is evicted" is the rule that keeps
+        // scrolling cheap, and it assumed every request is eventually
+        // answered. A fetch that *fails* answered nothing, so the page stayed
+        // pending for the rest of the session and its fifty rows were
+        // placeholders no scroll, repaint or refresh could clear.
+        //
+        // A banner is not a repair: the rows are still wrong, and the only
+        // thing that was ever going to fix them is asking again.
+        let mut window: ListWindow<Fixture> = ListWindow::new();
+        window.reset(500);
+
+        let Some(Lookup::Missing { request }) = window.row_at(130) else {
+            panic!("a page nobody has delivered must be Missing");
+        };
+        assert!(request.contains(&2), "expected page 2 to be asked for");
+
+        // Asking again while it is outstanding is correctly refused...
+        match window.row_at(130) {
+            Some(Lookup::Missing { request }) => assert!(
+                !request.contains(&2),
+                "page 2 is already on its way; asking twice is the waste this \
+                 rule prevents"
+            ),
+            other => panic!("expected Missing, got {other:?}"),
+        }
+
+        // ...until the fetch comes back empty-handed.
+        window.abandon(window.generation(), 2);
+
+        match window.row_at(130) {
+            Some(Lookup::Missing { request }) => assert!(
+                request.contains(&2),
+                "a failed page was never asked for again, so its rows are \
+                 skeletons for the rest of the session: {request:?}"
+            ),
+            other => panic!("expected Missing with page 2 re-requested, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn an_abandonment_from_a_stale_generation_is_ignored() {
+        // The same guard `deliver` has. A fetch that failed against the
+        // folder we just left must not un-pend a page of the folder we are
+        // in now -- the numbering is per generation, so page 2 there is not
+        // page 2 here.
+        let mut window: ListWindow<Fixture> = ListWindow::new();
+        window.reset(500);
+        let stale = window.generation();
+        let Some(Lookup::Missing { .. }) = window.row_at(130) else {
+            panic!("expected page 2 to be asked for");
+        };
+        window.reset(500);
+
+        window.abandon(stale, 2);
+
+        // Nothing to assert about page 2 directly -- `reset` cleared it. What
+        // must hold is that the stale call did not disturb the new window.
+        match window.row_at(130) {
+            Some(Lookup::Missing { request }) => assert!(request.contains(&2)),
+            other => panic!("expected Missing, got {other:?}"),
         }
     }
 

@@ -52,6 +52,9 @@ this feature needs; gtk4 / libadwaita (`postio-gtk`). **No new dependency.**
 state on `messages`, its partial index, and the count-trigger split. Builds on
 the `mailbox_roles` table (migration `0017`), which merged with #1496.
 
+> Engine changed after this landed: `rusqlite`/SQLite became Turso — see
+> `specs/004-turso-store`.
+
 **Testing**: `cargo test --lib` per crate for the pure logic (`postio-model`
 role kinds, `postio-ui::sidebar` rows, scope reactions); `cargo nextest run -p
 postio-storage` for the scope predicates, the counts and the `counting`
@@ -231,7 +234,7 @@ to the user either way.
 
 | Violation | Why Needed | Simpler Alternative Rejected Because |
 |---|---|---|
-| A denormalised send-state column on `messages`, duplicating `drafts.state` | Drafts and the Outbox are two predicates over one mailbox, and both must be plain indexed predicates — one of them is the generic mailbox scope every folder reads through | Computing the split above SQL breaks cursor paging: `ListQuery`'s cursor is a row value over `(received_at, id)` so SQLite can seek, and a page of 50 that then drops rows is not a page of 50 |
+| A denormalised send-state column on `messages`, duplicating `drafts.state` | Drafts and the Outbox are two predicates over one mailbox, and both must be plain indexed predicates — one of them is the generic mailbox scope every folder reads through | Computing the split above SQL breaks cursor paging: `ListQuery`'s cursor is a row value over `(received_at, id)` so SQLite can seek, and a page of 50 that then drops rows is not a page of 50 (on the current engine that row value is a filter, not a seek — `docs/notes/2026-09-12-a-row-value-cursor-is-a-filter-not-a-seek.md`) |
 | The sidebar gains a query it did not have, for two counts | The Outbox is not a mailbox and has no row to hold a trigger-maintained column; the Drafts badge must stop counting in-flight rows (FR-022) | A fifth count column on `mailboxes` would need triggers on `drafts` maintaining a column on `mailboxes`, coupling two otherwise independent tables |
 | A new `MailBackend` method, implemented four times | FR-027, and the trait has no folder creation at all; it is the seam every backend crosses | Calling `io-imap` from `postio-sync` violates Principle VII: `postio-sync` talks to the trait, never to `io-imap` types |
 

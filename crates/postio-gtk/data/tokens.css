@@ -66,6 +66,9 @@
   /* Postio's own: the Industry system has no monospace role, but the mail
      canvas sets counts, key hints and metadata in IBM Plex Mono. */
   --postio-font-mono: "IBM Plex Mono", monospace;
+  --postio-chip-height: 22px;
+  --postio-chip-pad-x: 7px;
+  --postio-chip-pad-y: 2px;
 }
 
 /* ── Roles — light ───────────────────────────────────────────────────

@@ -17,12 +17,15 @@
 //!
 //! # Why an O(n) walk that returns nothing is not free here
 //!
-//! The store is SQLCipher. Every page read is an AES-CBC decrypt and an
-//! HMAC-SHA512, so the walk is thousands of hashes to conclude there is
-//! nothing to do — every five seconds, forever. A ring-buffer profile of the
-//! running application (#1216) caught a burst 92.67% in `postio-sync` with
-//! `sha512_block_data_order_avx2` at 24.80% of samples, over
-//! `pcache1Fetch` and `sqlite3BtreeTableMoveto`.
+//! The store is encrypted. Every page read is a decrypt and an authentication
+//! tag, so the walk is thousands of them to conclude there is nothing to do —
+//! every five seconds, forever. A ring-buffer profile of the running
+//! application on the old engine (#1216) caught a burst 92.67% in
+//! `postio-sync` with `sha512_block_data_order_avx2` at 24.80% of samples,
+//! over `pcache1Fetch` and `sqlite3BtreeTableMoveto`. The engine changed and
+//! the shape of that argument did not: AES-256-GCM is cheaper per page than
+//! SQLCipher's HMAC-SHA512 was, and 20,000 pages of it to return nothing is
+//! still 20,000 pages.
 //!
 //! # Why this is a plan test and not a `counting` test
 //!
@@ -33,50 +36,58 @@
 //! The plan is the thing that changed and the plan is what is asserted, the
 //! same instrument `contact_rank_index.rs` uses for the same reason.
 //!
-//! Two things are asserted together, for the reason `draft_indexes.rs` gives:
-//! an index the planner declines to use still returns the right rows, by
-//! scanning, so neither the shape nor the results alone can fail usefully.
+//! Two things are asserted together: the plan seeks, *and* the same messages
+//! wake as woke before. An index the planner declines to use still returns
+//! the right rows, by scanning, so neither alone can fail usefully.
+//!
+//! The index used to be partial — `WHERE snoozed_until IS NOT NULL`, which on
+//! a store where three rows in twenty thousand are snoozed is most of the
+//! saving. It is whole now, because this engine's planner will not read
+//! through a partial index and would have gone back to walking the account;
+//! see `docs/notes/2026-09-12-a-partial-index-the-planner-will-not-read.md`.
 
-use rusqlite::Connection;
-
-use postio_storage::migrate;
+use postio_storage::Connection;
 
 /// Enough mail that a walk over all of it is a real cost, and enough that
 /// SQLite would not simply scan a tiny table whatever the index says.
 const MESSAGES: usize = 20_000;
 
 /// The query `MessageRepository::wake_due` runs, verbatim.
+///
+/// Note what is *not* in it: an `ORDER BY`. With one the planner declines this
+/// index and scans `idx_messages_list` instead, whose leading column is
+/// `mailbox_id` -- trading the walk this file exists to prevent for a sorter
+/// over at most a handful of ids. `wake_due` sorts in Rust for that reason,
+/// and this constant has to stay in step with it or the test is asserting
+/// about a query nothing runs.
 const DUE: &str = "SELECT DISTINCT mailbox_id FROM messages
-     WHERE account_id = 1 AND snoozed_until IS NOT NULL AND snoozed_until <= 1700000500
-     ORDER BY mailbox_id";
+     WHERE account_id = 1 AND snoozed_until IS NOT NULL AND snoozed_until <= 1700000500";
 
 /// And the update it runs when that finds something.
 const CLEAR: &str = "UPDATE messages SET snoozed_until = NULL
      WHERE account_id = 1 AND snoozed_until IS NOT NULL AND snoozed_until <= 1700000500";
 
-fn migrated() -> Connection {
-    let mut connection = Connection::open_in_memory().expect("in-memory sqlite");
-    connection
-        .pragma_update(None, "foreign_keys", false)
-        .expect("foreign keys off: this fills messages without their parents");
-    migrate(&mut connection).expect("migrate");
-    connection
+async fn migrated() -> (postio_storage::Store, postio_storage::Checkout) {
+    let store = postio_storage::test_support::memory().await;
+    let connection = store.connect().await.expect("a connection");
+    (store, connection)
 }
 
-fn plan(connection: &Connection, query: &str) -> String {
-    let mut statement = connection
-        .prepare(&format!("EXPLAIN QUERY PLAN {query}"))
-        .expect("a query plan");
-    statement
-        .query_map([], |row| row.get::<_, String>(3))
-        .expect("plan rows")
-        .collect::<Result<Vec<_>, _>>()
-        .expect("plan rows")
-        .join("\n")
+async fn plan(connection: &Connection, query: &str) -> String {
+    postio_storage::test_support::plan(connection, query).await
 }
 
 /// A mailbox the size of a real one, with three messages snoozed in it.
-fn fill(connection: &Connection) {
+///
+/// The account and its four mailboxes are created first because they have to
+/// exist: `PRAGMA foreign_keys` is ON for every connection this store hands
+/// out, so twenty thousand messages pointing at an account that was never
+/// inserted is a `FOREIGN KEY constraint failed` rather than a fixture.
+async fn fill(connection: &Connection) {
+    let account = postio_storage::test_support::account(connection).await;
+    for index in 0..4 {
+        postio_storage::test_support::mailbox(connection, &account, &format!("Box{index}")).await;
+    }
     connection
         .execute_batch(&format!(
             "INSERT INTO messages (account_id, mailbox_id, remote_id, received_at, snoozed_until)
@@ -85,18 +96,20 @@ fn fill(connection: &Connection) {
                     CASE WHEN i % 7000 = 0 THEN 1700000100 ELSE NULL END
                FROM n;"
         ))
+        .await
         .expect("fill the mailbox");
     connection
         .execute_batch("ANALYZE")
+        .await
         .expect("let the planner see what it is choosing between");
 }
 
-#[test]
-fn waking_due_snoozes_seeks_the_snoozed_rows_instead_of_walking_the_account() {
-    let connection = migrated();
-    fill(&connection);
+#[tokio::test]
+async fn waking_due_snoozes_seeks_the_snoozed_rows_instead_of_walking_the_account() {
+    let (_store, connection) = migrated().await;
+    fill(&connection).await;
 
-    let due = plan(&connection, DUE);
+    let due = plan(&connection, DUE).await;
     assert!(
         due.contains("idx_messages_snoozed_due"),
         "the due-snooze query must be served by the partial index over snoozed \
@@ -108,7 +121,7 @@ fn waking_due_snoozes_seeks_the_snoozed_rows_instead_of_walking_the_account() {
          which is what it did before #1237:\n{due}"
     );
 
-    let clear = plan(&connection, CLEAR);
+    let clear = plan(&connection, CLEAR).await;
     assert!(
         clear.contains("idx_messages_snoozed_due"),
         "the update that follows it walks the same rows and needs the same \
@@ -116,53 +129,65 @@ fn waking_due_snoozes_seeks_the_snoozed_rows_instead_of_walking_the_account() {
     );
 }
 
-#[test]
-fn the_index_holds_only_snoozed_rows() {
-    let connection = migrated();
-    let definition: String = connection
-        .query_row(
-            "SELECT sql FROM sqlite_master WHERE type = 'index' AND name = ?1",
-            ["idx_messages_snoozed_due"],
-            |row| row.get(0),
-        )
-        .expect("idx_messages_snoozed_due exists");
+#[tokio::test]
+async fn the_index_leads_with_the_column_that_selects() {
+    let (_store, connection) = migrated().await;
+    let definition: String = postio_storage::sql::one(
+        &connection,
+        "SELECT sql FROM sqlite_master WHERE type = 'index' AND name = ?1",
+        ["idx_messages_snoozed_due"],
+        |row| postio_storage::sql::RowExt::col(row, 0),
+    )
+    .await
+    .expect("idx_messages_snoozed_due exists");
 
-    // Partial, and that is the whole point: an index over every message would
-    // be as large as the table and would have to be maintained on every
-    // insert. This one holds the handful of rows that are actually snoozed.
+    // This was `contains("WHERE snoozed_until IS NOT NULL")`, and the saving
+    // it named was real: three rows in twenty thousand are snoozed, so a
+    // partial index over them is nearly free where a whole one is an entry
+    // per message. This engine will not read through a partial index, so the
+    // predicate would have cost the seek this file exists to protect. What is
+    // left to assert is the part that still decides the plan -- the account
+    // and then the snooze time, so the seek lands on the few rows that have
+    // one rather than on everything the account has.
     assert!(
-        definition.contains("WHERE snoozed_until IS NOT NULL"),
-        "the index must be partial, or it costs as much to keep as it saves: {definition}"
+        !definition.to_ascii_uppercase().contains(" WHERE "),
+        "the index is partial again, and this engine's planner will not read \
+         through one -- so the poll tick is back to walking every message the \
+         account has. See \
+         docs/notes/2026-09-12-a-partial-index-the-planner-will-not-read.md:\n  {definition}"
+    );
+    assert!(
+        definition.contains("(account_id, snoozed_until"),
+        "the seek needs the account first and the snooze time second: {definition}"
     );
 }
 
-#[test]
-fn the_index_does_not_change_which_messages_wake() {
-    let connection = migrated();
-    fill(&connection);
+#[tokio::test]
+async fn the_index_does_not_change_which_messages_wake() {
+    let (_store, connection) = migrated().await;
+    fill(&connection).await;
 
     // Three of the 20,000 are snoozed and due (i = 7000, 14000, 21000 -- the
     // last is past the end), across whichever mailboxes the modulus put them
     // in. An index the planner declines to use would still return these, by
     // scanning, which is why the plan is asserted above as well.
-    let mut statement = connection.prepare(DUE).expect("prepare");
-    let woken: Vec<i64> = statement
-        .query_map([], |row| row.get(0))
-        .expect("rows")
-        .collect::<Result<_, _>>()
-        .expect("rows");
+    let mut statement = connection.prepare(DUE).await.expect("prepare");
+    let woken: Vec<i64> = postio_storage::sql::mapped(&mut statement, (), |row| {
+        postio_storage::sql::RowExt::col(row, 0)
+    })
+    .await
+    .expect("rows");
 
-    let expected: Vec<i64> = connection
-        .prepare(
-            "SELECT DISTINCT mailbox_id FROM messages
-              WHERE snoozed_until IS NOT NULL AND snoozed_until <= 1700000500
-              ORDER BY mailbox_id",
-        )
-        .expect("prepare")
-        .query_map([], |row| row.get(0))
-        .expect("rows")
-        .collect::<Result<_, _>>()
-        .expect("rows");
+    let expected: Vec<i64> = postio_storage::sql::all(
+        &connection,
+        "SELECT DISTINCT mailbox_id FROM messages
+          WHERE snoozed_until IS NOT NULL AND snoozed_until <= 1700000500
+          ORDER BY mailbox_id",
+        (),
+        |row| postio_storage::sql::RowExt::col(row, 0),
+    )
+    .await
+    .expect("rows");
 
     assert_eq!(
         woken, expected,

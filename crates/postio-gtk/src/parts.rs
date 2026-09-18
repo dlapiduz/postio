@@ -840,8 +840,7 @@ impl PartsPanel {
         self.set_visible(false);
         self.set_accessible_role(gtk::AccessibleRole::Group);
 
-        let kicker = gtk::Label::new(Some("Parts"));
-        kicker.add_css_class("postio-kicker");
+        let kicker = crate::widgets::kicker("Parts");
         kicker.set_accessible_role(gtk::AccessibleRole::Presentation);
 
         imp.summary.add_css_class("postio-parts-summary");
@@ -849,6 +848,7 @@ impl PartsPanel {
         imp.summary.set_hexpand(true);
 
         imp.blocked.set_text("remote blocked");
+        imp.blocked.add_css_class("postio-chip-base");
         imp.blocked.add_css_class("postio-parts-blocked");
         imp.blocked.set_visible(false);
 

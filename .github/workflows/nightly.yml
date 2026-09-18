@@ -59,7 +59,8 @@ jobs:
 
       # None of scripts/coverage-floors.json's crates need GTK -- postio-model,
       # postio-search and postio-config are pure leaves, and postio-storage /
-      # postio-sync need SQLite and the keyring, not a display. Still ubuntu-26.04
+      # postio-sync need the keyring, not a display (the store engine is pure
+      # Rust and brings no system library). Still ubuntu-26.04
       # rather than ubuntu-latest, so the pinned toolchain's cache key and the
       # rest of this workflow's runner-version assumptions stay one thing.
       - name: Install system dependencies
@@ -68,7 +69,6 @@ jobs:
           sudo apt-get install --no-install-recommends -y \
             build-essential \
             pkg-config \
-            libsqlite3-dev \
             libsecret-1-dev \
             libglib2.0-dev
 
@@ -89,6 +89,20 @@ jobs:
       # its own, not adding a component to the one rust-toolchain.toml pins).
       - name: Install llvm-tools
         run: rustup component add llvm-tools-preview
+
+      # `scripts/coverage.sh` measures through nextest so the measurement
+      # tier stays off this job the way it is off every other (#1456): plain
+      # `cargo test` knows nothing about nextest's default-filter and ran
+      # the tests that write half-gigabyte stores on a runner that has
+      # already run out of disk once.
+      - name: Cache cargo-nextest
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ~/.cargo/bin/cargo-nextest
+          key: ${{ runner.os }}-cargo-nextest-${{ hashFiles('scripts/install-nextest.sh') }}
+
+      - name: Install cargo-nextest
+        run: scripts/install-nextest.sh
 
       - name: Identify the compiler
         id: rust

@@ -15,15 +15,17 @@ use postio_storage::repository::{MessageRepository, StoredBody};
 use postio_storage::test_support;
 
 /// A store with three messages whose bodies are indexed, and its inbox.
-fn searchable() -> (std::sync::Arc<Session>, ScopeFfi) {
-    let database = test_support::memory();
+async fn searchable() -> (std::sync::Arc<Session>, ScopeFfi) {
+    let database = test_support::memory().await;
     let mailbox = {
-        let connection = database.connection().expect("a connection");
-        let (account, inbox) = test_support::account_with_inbox(&connection);
+        let connection = database.connect().await.expect("a connection");
+        let (account, inbox) = test_support::account_with_inbox(&connection).await;
         // The FTS tables are the index's, created on demand rather than by a
         // store migration -- the body index stores no content (#407) and lives
         // beside the store rather than in it.
-        postio_index::index::ensure_schema(&connection).expect("the index schema");
+        postio_index::index::ensure_schema(&connection)
+            .await
+            .expect("the index schema");
         let repository = MessageRepository::new(&connection);
         for (subject, body) in [
             ("Quarterly figures", "the quarterly numbers we discussed"),
@@ -33,7 +35,7 @@ fn searchable() -> (std::sync::Arc<Session>, ScopeFfi) {
             let mut message = Message::new(account.id, inbox, Utc::now());
             message.subject = Some(subject.to_string());
             message.sync.body_state = BodyState::Full;
-            repository.create(&mut message).expect("a message");
+            repository.create(&mut message).await.expect("a message");
             repository
                 .set_body(
                     message.id,
@@ -46,8 +48,10 @@ fn searchable() -> (std::sync::Arc<Session>, ScopeFfi) {
                     },
                     BodyState::Full,
                 )
+                .await
                 .expect("a body");
             postio_index::index::index_body(&connection, message.id.get(), Some(body))
+                .await
                 .expect("an indexed body");
         }
         inbox
@@ -71,10 +75,10 @@ fn resident(session: &Session) -> Vec<i64> {
         .collect()
 }
 
-#[test]
-fn a_query_returns_hits_and_the_list_windows_over_them() {
-    let (session, _) = searchable();
-    session.search("quarterly");
+#[tokio::test(flavor = "multi_thread")]
+async fn a_query_returns_hits_and_the_list_windows_over_them() {
+    let (session, _) = searchable().await;
+    session.search("quarterly").await;
 
     assert_eq!(session.row_count(), 2, "two messages say quarterly");
     assert_eq!(
@@ -86,10 +90,10 @@ fn a_query_returns_hits_and_the_list_windows_over_them() {
     session.shutdown();
 }
 
-#[test]
-fn the_rows_come_back_in_rank_order_rather_than_by_date() {
-    let (session, _) = searchable();
-    session.search("quarterly");
+#[tokio::test(flavor = "multi_thread")]
+async fn the_rows_come_back_in_rank_order_rather_than_by_date() {
+    let (session, _) = searchable().await;
+    session.search("quarterly").await;
     // The whole reason `message_rows` is used rather than a paged scope: a
     // ranked list re-sorted by date puts the best match wherever its date
     // happens to fall, which is the one thing a ranking must not do. The
@@ -105,10 +109,10 @@ fn the_rows_come_back_in_rank_order_rather_than_by_date() {
     session.shutdown();
 }
 
-#[test]
-fn a_query_matching_nothing_is_an_empty_list_rather_than_the_folder() {
-    let (session, _) = searchable();
-    session.search("zzzqqq");
+#[tokio::test(flavor = "multi_thread")]
+async fn a_query_matching_nothing_is_an_empty_list_rather_than_the_folder() {
+    let (session, _) = searchable().await;
+    session.search("zzzqqq").await;
     assert_eq!(session.row_count(), 0);
     assert!(
         session.is_searching(),
@@ -118,14 +122,14 @@ fn a_query_matching_nothing_is_an_empty_list_rather_than_the_folder() {
     session.shutdown();
 }
 
-#[test]
-fn operators_parse_the_way_the_shared_language_says() {
-    let (session, _) = searchable();
+#[tokio::test(flavor = "multi_thread")]
+async fn operators_parse_the_way_the_shared_language_says() {
+    let (session, _) = searchable().await;
     // Not a second parser. `postio-search` reads this on both platforms, and
     // the assertion that matters is that an *operator* reaches it rather than
     // being taken as a literal word -- `subject:quarterly` finding one row
     // and not two is what proves it was understood.
-    session.search("subject:quarterly");
+    session.search("subject:quarterly").await;
     assert_eq!(
         session.row_count(),
         1,
@@ -134,11 +138,11 @@ fn operators_parse_the_way_the_shared_language_says() {
     session.shutdown();
 }
 
-#[test]
-fn clearing_restores_the_scope_that_was_open() {
-    let (session, _) = searchable();
+#[tokio::test(flavor = "multi_thread")]
+async fn clearing_restores_the_scope_that_was_open() {
+    let (session, _) = searchable().await;
     let before = session.row_count();
-    session.search("quarterly");
+    session.search("quarterly").await;
     assert_ne!(session.row_count(), before, "the search changed nothing");
 
     session.clear_search();
@@ -151,23 +155,23 @@ fn clearing_restores_the_scope_that_was_open() {
     session.shutdown();
 }
 
-#[test]
-fn a_second_query_still_comes_back_to_the_folder() {
-    let (session, _) = searchable();
+#[tokio::test(flavor = "multi_thread")]
+async fn a_second_query_still_comes_back_to_the_folder() {
+    let (session, _) = searchable().await;
     let before = session.row_count();
-    session.search("quarterly");
+    session.search("quarterly").await;
     // Typing again inside a search must not make the *first search* the thing
     // to return to, or `Escape` would walk backwards through every query.
-    session.search("lunch");
+    session.search("lunch").await;
     session.clear_search();
     assert_eq!(session.row_count(), before);
     session.shutdown();
 }
 
-#[test]
-fn opening_a_folder_leaves_the_search_behind() {
-    let (session, scope) = searchable();
-    session.search("quarterly");
+#[tokio::test(flavor = "multi_thread")]
+async fn opening_a_folder_leaves_the_search_behind() {
+    let (session, scope) = searchable().await;
+    session.search("quarterly").await;
     session.open_scope(scope);
     assert!(!session.is_searching());
     // ...and clearing afterwards is a no-op rather than a jump back into a
@@ -178,10 +182,10 @@ fn opening_a_folder_leaves_the_search_behind() {
     session.shutdown();
 }
 
-#[test]
-fn each_hit_carries_an_excerpt_with_the_match_located() {
-    let (session, _) = searchable();
-    session.search("quarterly");
+#[tokio::test(flavor = "multi_thread")]
+async fn each_hit_carries_an_excerpt_with_the_match_located() {
+    let (session, _) = searchable().await;
+    session.search("quarterly").await;
     let first = resident(&session).first().copied().expect("a hit");
 
     let snippet = session.snippet_for(first).expect("a hit has an excerpt");
@@ -207,29 +211,29 @@ fn each_hit_carries_an_excerpt_with_the_match_located() {
     session.shutdown();
 }
 
-#[test]
-fn a_row_that_is_not_a_hit_has_no_excerpt() {
-    let (session, _) = searchable();
+#[tokio::test(flavor = "multi_thread")]
+async fn a_row_that_is_not_a_hit_has_no_excerpt() {
+    let (session, _) = searchable().await;
     assert_eq!(
         session.snippet_for(1),
         None,
         "an excerpt outside a search is a claim about a query nobody ran"
     );
-    session.search("quarterly");
+    session.search("quarterly").await;
     assert_eq!(session.snippet_for(999_999), None);
     session.shutdown();
 }
 
-#[test]
-fn searching_drops_what_was_marked() {
-    let (session, _) = searchable();
+#[tokio::test(flavor = "multi_thread")]
+async fn searching_drops_what_was_marked() {
+    let (session, _) = searchable().await;
     session.invoke("next_message");
     let _ = session.row_at(0);
     session.settle_for_test();
     session.invoke("toggle_selection");
     assert!(!session.selected_messages().unwrap_or_default().is_empty());
 
-    session.search("quarterly");
+    session.search("quarterly").await;
     assert_eq!(
         session.selected_messages(),
         Some(Vec::new()),
@@ -274,19 +278,19 @@ fn a_negated_operator_says_so() {
     assert!(chips[0].negated);
 }
 
-#[test]
-fn a_search_reports_what_it_turned_out_to_be() {
+#[tokio::test(flavor = "multi_thread")]
+async fn a_search_reports_what_it_turned_out_to_be() {
     // Canvas 2b puts "14 hits · 11 ms" at the right-hand end of the field —
     // the 100ms budget made visible, which is a claim the application should
     // be willing to make on screen.
-    let (session, _) = searchable();
+    let (session, _) = searchable().await;
     assert_eq!(
         session.search_outcome(),
         None,
         "there is no outcome before a search has run"
     );
 
-    session.search("quarterly");
+    session.search("quarterly").await;
     let outcome = session.search_outcome().expect("a search just ran");
     assert_eq!(outcome.hits, 2, "two messages say quarterly");
     assert!(

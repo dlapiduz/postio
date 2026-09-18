@@ -38,250 +38,267 @@ use postio_storage::{BlobStore, test_support};
 const SUBJECT: &str = "Tide gate interlock";
 
 pub fn return_on_a_queued_draft_row_cancels_the_send_and_reopens_it_for_editing() {
-    let state_dir = tempfile::tempdir().expect("a state directory");
-    // SAFETY: first statement of a single-threaded test.
-    unsafe { std::env::set_var("XDG_STATE_HOME", state_dir.path()) };
+    crate::gtk_case(async {
+        let state_dir = tempfile::tempdir().expect("a state directory");
+        // SAFETY: first statement of a single-threaded test.
+        unsafe { std::env::set_var("XDG_STATE_HOME", state_dir.path()) };
 
-    if adw::init().is_err() || gdk::Display::default().is_none() {
-        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
-        return;
-    }
-    let display = gdk::Display::default().unwrap();
-    fonts::install().expect("the embedded fonts should install");
-    style::install(&display);
-    app::install_icons(&display);
-
-    let database = test_support::memory();
-    let report = seed_small(&database, 9);
-    let account = report.account.id;
-    // The fixture still has to have a Drafts folder -- `list_row` writes the
-    // draft's row into it, and without one the draft is durable but unlisted
-    // (#166). It is just not the folder this test opens any more.
-    assert!(
-        report.mailbox(MailboxRole::Drafts).is_some(),
-        "the queued draft needs a Drafts folder to have a row in"
-    );
-    let directory = tempfile::tempdir().expect("a blob directory");
-    let blobs = BlobStore::open(
-        directory.path().to_path_buf(),
-        &postio_storage::test_support::blob_keys(),
-    )
-    .expect("a blob store");
-
-    // A draft handed to the operation queue for sending -- exactly what
-    // `Composer::send` leaves behind, and never drained, so it is still
-    // sitting in Drafts when the test activates its row.
-    let (draft_id, queued_id) = {
-        let connection = database.connection().expect("a connection");
-        let mut draft = Draft::new(account);
-        draft.subject = SUBJECT.to_owned();
-        draft.to = vec![EmailAddress::new(None::<String>, "quinn@example.net")];
-        draft.body.text = Some("Ready to go.".to_owned());
-        let drafts = DraftRepository::new(&connection);
-        drafts.save(&mut draft).expect("save the draft");
-        let queued = drafts
-            .queue_send(&mut draft, chrono::Utc::now())
-            .expect("queue the send");
-        assert_eq!(draft.state, DraftState::Queued);
-        (draft.id, queued.id)
-    };
-
-    let state = SharedState::default();
-    let bus = actions::wire(
-        postio_core::dispatch::DispatcherBuilder::new(),
-        actions::Actions::new(database.clone(), state.clone()),
-    )
-    .build();
-    let wired: Vec<CommandId> = bus.wired().collect();
-    let (bridge, _replies) = Bridge::new(bus).expect("a runtime");
-    let (sink, _events) = event_channel();
-    let wiring = Wiring::new(
-        database.clone(),
-        blobs.clone(),
-        bridge.handle(),
-        sink,
-        bridge.commands(),
-    );
-
-    let window = Window::default();
-    window.present();
-    while glib::MainContext::default().iteration(false) {}
-
-    let feeds = feed_the_window(&window, &wiring)
-        .expect("the seeded store has an account")
-        .feeds;
-    commands::install(&window, &feeds, state, wiring.commands.clone(), wired);
-    compose::install(
-        &window,
-        account,
-        database.clone(),
-        blobs,
-        bridge.handle(),
-        postio_app::reading::Showing::default(),
-        {
-            // The real seam: pressing Send has to reach the list and the
-            // sidebar, which is what moves the row into the Outbox on screen.
-            let feeds = feeds.clone();
-            std::rc::Rc::new(move |event: &postio_core::Event| feeds.apply(event))
-        },
-    );
-    window.composer().close();
-    while glib::MainContext::default().iteration(false) {}
-    assert!(
-        !window.composer().is_open(),
-        "the composer has to start closed or this test cannot mean anything"
-    );
-
-    // ── open the Outbox ─────────────────────────────────────────────────
-    //
-    // Not Drafts. #433 made a queued draft stay listed in Drafts so its send
-    // could still be cancelled, and spec 003 keeps that ability while moving
-    // where it is exercised from: a message on its way is in the Outbox, and
-    // Drafts holds what you are writing (FR-001, FR-020). What this test is
-    // about -- Return on a queued draft cancels the send and reopens it for
-    // editing -- is unchanged; only the folder it is done from has moved.
-    click_folder(&window, "Outbox");
-    let list = window.list();
-    let expected = {
-        let connection = database.connection().expect("a connection");
-        postio_storage::repository::MessageRepository::new(&connection)
-            .count(&postio_storage::repository::ListQuery::outbox(account))
-            .expect("a count")
-    };
-    assert!(
-        expected > 0,
-        "the queued draft never got a row to be listed by"
-    );
-    assert!(
-        settle_until(|| list.model().n_items() == expected),
-        "the Drafts folder drew {} rows and the store holds {expected}",
-        list.model().n_items()
-    );
-
-    // ── put the cursor on the queued draft and press Return ─────────────
-    let is_the_draft = || {
-        let Some(id) = list.cursor_id() else {
-            return false;
-        };
-        let connection = database.connection().expect("a connection");
-        DraftRepository::new(&connection)
-            .by_message(id)
-            .ok()
-            .flatten()
-            .is_some_and(|draft| draft.id == draft_id)
-    };
-    for key in ["g", "g"] {
-        window.handle_key(
-            gdk::Key::from_name(key).unwrap(),
-            gdk::ModifierType::empty(),
-        );
-    }
-    while glib::MainContext::default().iteration(false) {}
-    let mut found = is_the_draft();
-    for _ in 0..list.model().n_items() {
-        if found {
-            break;
+        if adw::init().is_err() || gdk::Display::default().is_none() {
+            eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
+            return;
         }
-        window.handle_key(
-            gdk::Key::from_name("j").unwrap(),
-            gdk::ModifierType::empty(),
+        let display = gdk::Display::default().unwrap();
+        fonts::install().expect("the embedded fonts should install");
+        style::install(&display);
+        app::install_icons(&display);
+
+        let database = test_support::memory().await;
+        let report = seed_small(&database, 9).await;
+        let account = report.account.id;
+        // The fixture still has to have a Drafts folder -- `list_row` writes the
+        // draft's row into it, and without one the draft is durable but unlisted
+        // (#166). It is just not the folder this test opens any more.
+        assert!(
+            report.mailbox(MailboxRole::Drafts).is_some(),
+            "the queued draft needs a Drafts folder to have a row in"
         );
+        let directory = tempfile::tempdir().expect("a blob directory");
+        let blobs = BlobStore::open(
+            directory.path().to_path_buf(),
+            &postio_storage::test_support::blob_keys(),
+        )
+        .expect("a blob store");
+
+        // A draft handed to the operation queue for sending -- exactly what
+        // `Composer::send` leaves behind, and never drained, so it is still
+        // sitting in Drafts when the test activates its row.
+        let (draft_id, queued_id) = {
+            let connection = database.connect().await.expect("a connection");
+            let mut draft = Draft::new(account);
+            draft.subject = SUBJECT.to_owned();
+            draft.to = vec![EmailAddress::new(None::<String>, "quinn@example.net")];
+            draft.body.text = Some("Ready to go.".to_owned());
+            let drafts = DraftRepository::new(&connection);
+            drafts.save(&mut draft).await.expect("save the draft");
+            let queued = drafts
+                .queue_send(&mut draft, chrono::Utc::now())
+                .await
+                .expect("queue the send");
+            assert_eq!(draft.state, DraftState::Queued);
+            (draft.id, queued.id)
+        };
+
+        let state = SharedState::default();
+        let bus = actions::wire(
+            postio_core::dispatch::DispatcherBuilder::new(),
+            actions::Actions::new(database.clone(), state.clone()),
+        )
+        .build();
+        let wired: Vec<CommandId> = bus.wired().collect();
+        let (bridge, _replies) = Bridge::new(bus).expect("a runtime");
+        let (sink, _events) = event_channel();
+        let wiring = Wiring::new(
+            database.clone(),
+            blobs.clone(),
+            bridge.handle(),
+            sink,
+            bridge.commands(),
+        );
+
+        let window = Window::default();
+        window.present();
         while glib::MainContext::default().iteration(false) {}
-        found = is_the_draft();
-    }
-    assert!(
-        found,
-        "never found the queued draft's row in the Drafts folder"
-    );
 
-    list.test_activate_cursor();
-    let opened = settle_until(|| window.composer().is_open());
+        let feeds = feed_the_window(&window, &wiring)
+            .await
+            .expect("the seeded store has an account")
+            .feeds;
+        commands::install(&window, &feeds, state, wiring.commands.clone(), wired);
+        compose::install(
+            &window,
+            account,
+            database.clone(),
+            blobs,
+            bridge.handle(),
+            postio_app::reading::Showing::default(),
+            {
+                // The real seam: pressing Send has to reach the list and the
+                // sidebar, which is what moves the row into the Outbox on screen.
+                let feeds = feeds.clone();
+                std::rc::Rc::new(move |event: &postio_core::Event| feeds.apply(event))
+            },
+        )
+        .await;
+        window.composer().close();
+        while glib::MainContext::default().iteration(false) {}
+        assert!(
+            !window.composer().is_open(),
+            "the composer has to start closed or this test cannot mean anything"
+        );
 
-    assert!(
-        opened,
-        "Return on the queued draft's row left the composer closed -- a \
-         queued draft must still be reachable for editing, just not while \
-         its send is still in the queue unresolved"
-    );
-    assert_eq!(window.composer().test_subject(), SUBJECT);
+        // ── open the Outbox ─────────────────────────────────────────────────
+        //
+        // Not Drafts. #433 made a queued draft stay listed in Drafts so its send
+        // could still be cancelled, and spec 003 keeps that ability while moving
+        // where it is exercised from: a message on its way is in the Outbox, and
+        // Drafts holds what you are writing (FR-001, FR-020). What this test is
+        // about -- Return on a queued draft cancels the send and reopens it for
+        // editing -- is unchanged; only the folder it is done from has moved.
+        click_folder(&window, "Outbox");
+        let list = window.list();
+        let expected = {
+            let connection = database.connect().await.expect("a connection");
+            postio_storage::repository::MessageRepository::new(&connection)
+                .count(&postio_storage::repository::ListQuery::outbox(account))
+                .await
+                .expect("a count")
+        };
+        assert!(
+            expected > 0,
+            "the queued draft never got a row to be listed by"
+        );
+        assert!(
+            settle_until(async || list.model().n_items() == expected).await,
+            "the Drafts folder drew {} rows and the store holds {expected}",
+            list.model().n_items()
+        );
 
-    let connection = database.connection().expect("a connection");
-    assert_eq!(
-        DraftRepository::new(&connection)
-            .get(draft_id)
-            .expect("get")
-            .expect("still here")
-            .state,
-        DraftState::Editing,
-        "opening a queued draft must cancel its pending send and return it \
-         to Editing -- otherwise the drainer could still build outgoing \
-         bytes from the row while the user is mid-edit"
-    );
-    assert!(
-        OperationQueueRepository::new(&connection)
-            .get(queued_id)
-            .expect("get")
-            .is_none(),
-        "the Send operation this draft was queued under must be gone, or a \
-         second, different message could still go out behind the one the \
-         user is now editing"
-    );
-    assert!(
-        !OperationQueueRepository::new(&connection)
-            .has_pending(OperationTarget::Draft(draft_id))
-            .expect("has_pending"),
-        "nothing should still be queued against this draft"
-    );
+        // ── put the cursor on the queued draft and press Return ─────────────
+        let is_the_draft = async || {
+            let Some(id) = list.cursor_id() else {
+                return false;
+            };
+            let connection = database.connect().await.expect("a connection");
+            DraftRepository::new(&connection)
+                .by_message(id)
+                .await
+                .ok()
+                .flatten()
+                .is_some_and(|draft| draft.id == draft_id)
+        };
+        for key in ["g", "g"] {
+            window.handle_key(
+                gdk::Key::from_name(key).unwrap(),
+                gdk::ModifierType::empty(),
+            );
+        }
+        while glib::MainContext::default().iteration(false) {}
+        let mut found = is_the_draft().await;
+        for _ in 0..list.model().n_items() {
+            if found {
+                break;
+            }
+            window.handle_key(
+                gdk::Key::from_name("j").unwrap(),
+                gdk::ModifierType::empty(),
+            );
+            while glib::MainContext::default().iteration(false) {}
+            found = is_the_draft().await;
+        }
+        assert!(
+            found,
+            "never found the queued draft's row in the Drafts folder"
+        );
 
-    // ── #1487: a failed send says why, where the person comes back to it ─
-    //
-    // FR-066's third clause. The reason was computed by the drainer, written
-    // to the queue row, and carried all the way up the engine's report --
-    // whose own doc says "the reason the user should see" -- and then read by
-    // nothing. What the person got was a message that did not go and no
-    // explanation, when "mailbox unavailable" and "message too large" ask
-    // completely different things of them.
-    //
-    // Driven from the far end, like the rest of this file: the reason has to
-    // survive the trip from a queue row to a composer somebody reopened, and
-    // the joints in between are what this suite exists to check.
-    window.composer().close();
-    while glib::MainContext::default().iteration(false) {}
+        list.test_activate_cursor();
+        let opened = settle_until(async || window.composer().is_open()).await;
 
-    {
-        let drafts = DraftRepository::new(&connection);
-        let queue = OperationQueueRepository::new(&connection);
-        let mut draft = drafts.get(draft_id).expect("get").expect("still here");
-        let queued = queue
-            .enqueue(
-                account,
-                OperationTarget::Draft(draft_id),
-                &postio_model::Operation::Send { draft: draft_id },
-                chrono::Utc::now(),
-            )
-            .expect("queue a second send");
-        queue
-            .mark_failed(queued.id, chrono::Utc::now(), "550 mailbox unavailable")
-            .expect("the send gives up");
-        drafts
-            .set_state(draft.id, DraftState::Failed)
-            .expect("the draft learns of it");
-        draft.state = DraftState::Failed;
-    }
+        assert!(
+            opened,
+            "Return on the queued draft's row left the composer closed -- a \
+             queued draft must still be reachable for editing, just not while \
+             its send is still in the queue unresolved"
+        );
+        assert_eq!(window.composer().test_subject(), SUBJECT);
 
-    list.test_activate_cursor();
-    let reopened = settle_until(|| window.composer().is_open());
-    assert!(reopened, "the failed draft did not reopen for editing");
+        let connection = database.connect().await.expect("a connection");
+        assert_eq!(
+            DraftRepository::new(&connection)
+                .get(draft_id)
+                .await
+                .expect("get")
+                .expect("still here")
+                .state,
+            DraftState::Editing,
+            "opening a queued draft must cancel its pending send and return it \
+             to Editing -- otherwise the drainer could still build outgoing \
+             bytes from the row while the user is mid-edit"
+        );
+        assert!(
+            OperationQueueRepository::new(&connection)
+                .get(queued_id)
+                .await
+                .expect("get")
+                .is_none(),
+            "the Send operation this draft was queued under must be gone, or a \
+             second, different message could still go out behind the one the \
+             user is now editing"
+        );
+        assert!(
+            !OperationQueueRepository::new(&connection)
+                .has_pending(OperationTarget::Draft(draft_id))
+                .await
+                .expect("has_pending"),
+            "nothing should still be queued against this draft"
+        );
 
-    let said = window.composer().status();
-    assert!(
-        said.contains("550 mailbox unavailable"),
-        "reopening a failed draft says nothing about why the send failed, so \
-         the reason is durable, reachable, and still never reaches the one \
-         person who needs it: {said:?}"
-    );
+        // ── #1487: a failed send says why, where the person comes back to it ─
+        //
+        // FR-066's third clause. The reason was computed by the drainer, written
+        // to the queue row, and carried all the way up the engine's report --
+        // whose own doc says "the reason the user should see" -- and then read by
+        // nothing. What the person got was a message that did not go and no
+        // explanation, when "mailbox unavailable" and "message too large" ask
+        // completely different things of them.
+        //
+        // Driven from the far end, like the rest of this file: the reason has to
+        // survive the trip from a queue row to a composer somebody reopened, and
+        // the joints in between are what this suite exists to check.
+        window.composer().close();
+        while glib::MainContext::default().iteration(false) {}
 
-    bridge.shutdown();
+        {
+            let drafts = DraftRepository::new(&connection);
+            let queue = OperationQueueRepository::new(&connection);
+            let mut draft = drafts
+                .get(draft_id)
+                .await
+                .expect("get")
+                .expect("still here");
+            let queued = queue
+                .enqueue(
+                    account,
+                    OperationTarget::Draft(draft_id),
+                    &postio_model::Operation::Send { draft: draft_id },
+                    chrono::Utc::now(),
+                )
+                .await
+                .expect("queue a second send");
+            queue
+                .mark_failed(queued.id, chrono::Utc::now(), "550 mailbox unavailable")
+                .await
+                .expect("the send gives up");
+            drafts
+                .set_state(draft.id, DraftState::Failed)
+                .await
+                .expect("the draft learns of it");
+            draft.state = DraftState::Failed;
+        }
+
+        list.test_activate_cursor();
+        let reopened = settle_until(async || window.composer().is_open()).await;
+        assert!(reopened, "the failed draft did not reopen for editing");
+
+        let said = window.composer().status();
+        assert!(
+            said.contains("550 mailbox unavailable"),
+            "reopening a failed draft says nothing about why the send failed, so \
+             the reason is durable, reachable, and still never reaches the one \
+             person who needs it: {said:?}"
+        );
+
+        bridge.shutdown();
+    });
 }
 
 /// Select a folder the way a pointer does, so the sidebar reports it.

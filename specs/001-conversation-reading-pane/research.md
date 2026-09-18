@@ -219,8 +219,10 @@ created, and bytes handed to the renderer per document.
 **Rationale**: FR-065 requires the cost of moving be asserted as counts, and
 Principle V requires budgets be gated as counts rather than timings because a
 shared runner cannot defend a millisecond. The storage half of this exists
-(`counted()` reads statements, rows and trigger firings off SQLite's trace
-hook); the rendering half does not. Without it, FR-057 to FR-064 are prose.
+(`counted()` read statements, rows and trigger firings off SQLite's trace
+hook; the engine swap moved this — see `specs/004-turso-store` — and it is
+statements and rows at the sql seam, plus `counting::scans`, now); the
+rendering half does not. Without it, FR-057 to FR-064 are prose.
 
 The counter belongs on the seam a frontend calls, not inside `postio-gtk`, so
 that both frontends are held to it and the assertions run without a display.

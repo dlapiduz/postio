@@ -46,22 +46,24 @@
 //! than [`GarbageCollection::min_age`].
 //!
 //! ```no_run
-//! # fn main() -> Result<(), postio_storage::Error> {
+//! # async fn demo() -> Result<(), postio_storage::Error> {
 //! use postio_storage::blob::{BlobStore, GarbageCollection};
 //! use postio_storage::key::{BlobKeys, Purpose, StoreKey};
 //!
 //! # let store_key = StoreKey::generate();
-//! let store = BlobStore::open(
+//! let blobs = BlobStore::open(
 //!     "~/.local/share/postio/blobs",
 //!     &BlobKeys::derive(&store_key),
 //! )?;
-//! let id = store.put(b"raw message bytes")?;
-//! assert_eq!(store.get(&id)?, b"raw message bytes");
+//! let id = blobs.put(b"raw message bytes")?;
+//! assert_eq!(blobs.get(&id)?, b"raw message bytes");
 //!
 //! # let key = store_key.derive(Purpose::Database);
-//! let database = postio_storage::Database::open("postio.db", &key)?;
-//! let connection = database.connection()?;
-//! let report = store.collect_garbage(&connection, GarbageCollection::default())?;
+//! let store = postio_storage::Store::open("postio.db", &key).await?;
+//! let connection = store.connect().await?;
+//! let report = blobs
+//!     .collect_garbage(&connection, GarbageCollection::default())
+//!     .await?;
 //! eprintln!("reclaimed {} bytes", report.bytes_reclaimed);
 //! # Ok(())
 //! # }
@@ -77,8 +79,9 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
+use crate::sql::{self, RowExt as _};
+use crate::store::Connection;
 use postio_model::BlobId;
-use rusqlite::Connection;
 
 use crate::error::{Error, Result};
 use crate::key::BlobKeys;
@@ -125,7 +128,7 @@ impl BlobStore {
     ///
     /// `root` is created (or repaired) `0700`, same as `temporary` below it —
     /// this holds raw messages and attachments, so it gets the same
-    /// treatment `Database::open` gives the SQLite file beside it. See
+    /// treatment `Store::open` gives the database file beside it. See
     /// [`crate::perm`].
     ///
     /// # Errors
@@ -409,7 +412,11 @@ impl BlobStore {
     /// has still freed whatever it freed; nothing is left inconsistent,
     /// because each blob's row is cleared in the same statement batch that
     /// deletes it.
-    pub fn evict_to_fit(&self, connection: &Connection, budget: u64) -> Result<EvictionReport> {
+    pub async fn evict_to_fit(
+        &self,
+        connection: &Connection,
+        budget: u64,
+    ) -> Result<EvictionReport> {
         let mut report = EvictionReport::default();
         let mut occupied: u64 = self
             .stored_blobs()?
@@ -421,7 +428,7 @@ impl BlobStore {
             return Ok(report);
         }
 
-        for candidate in evictable(connection)? {
+        for candidate in evictable(connection).await? {
             if occupied <= budget {
                 break;
             }
@@ -437,7 +444,7 @@ impl BlobStore {
                 Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
                 Err(source) => return Err(Error::Io { path, source }),
             }
-            candidate.forget(connection)?;
+            candidate.forget(connection).await?;
             occupied = occupied.saturating_sub(size);
             report.removed += 1;
             report.bytes_reclaimed += size;
@@ -463,12 +470,12 @@ impl BlobStore {
     /// Distinct from [`evict_to_fit`](Self::evict_to_fit): this removes blobs
     /// nothing points at any more, and is always safe. Eviction removes blobs
     /// something *does* point at, on purpose, and pays for it with a refetch.
-    pub fn collect_garbage(
+    pub async fn collect_garbage(
         &self,
         connection: &Connection,
         options: GarbageCollection,
     ) -> Result<GarbageReport> {
-        let referenced = referenced_blobs(connection)?;
+        let referenced = referenced_blobs(connection).await?;
         let mut report = GarbageReport::default();
 
         for (id, path) in self.stored_blobs()? {
@@ -614,33 +621,39 @@ enum Reference {
 
 impl Evictable {
     /// Stops the database claiming bytes that are no longer on disk.
-    fn forget(&self, connection: &Connection) -> Result<()> {
+    async fn forget(&self, connection: &Connection) -> Result<()> {
         match self.reference {
             Reference::RawSource(message) => {
                 // No `body_state` change: raw source was never what `full`
                 // meant. The text and every payload are still local, so the
                 // message is exactly as complete as it was.
-                connection.execute(
-                    "UPDATE messages SET raw_blob_id = NULL WHERE id = ?1",
-                    [message],
-                )?;
+                connection
+                    .execute(
+                        "UPDATE messages SET raw_blob_id = NULL WHERE id = ?1",
+                        [message],
+                    )
+                    .await?;
             }
             Reference::Payload {
                 attachment,
                 message,
             } => {
-                connection.execute(
-                    "UPDATE attachments SET blob_id = NULL WHERE id = ?1",
-                    [attachment],
-                )?;
+                connection
+                    .execute(
+                        "UPDATE attachments SET blob_id = NULL WHERE id = ?1",
+                        [attachment],
+                    )
+                    .await?;
                 // `full` means every part is local and one no longer is, so
                 // the honest state is `partial` -- which is also what makes
                 // the attachment chip offer "download" again (ADR 0017).
-                connection.execute(
-                    "UPDATE messages SET body_state = 'partial'
+                connection
+                    .execute(
+                        "UPDATE messages SET body_state = 'partial'
                       WHERE id = ?1 AND body_state = 'full'",
-                    [message],
-                )?;
+                        [message],
+                    )
+                    .await?;
             }
         }
         Ok(())
@@ -651,42 +664,42 @@ impl Evictable {
 ///
 /// Raw source before payloads, and within each, oldest mail first. See
 /// [`BlobStore::evict_to_fit`] for why that is the ordering.
-fn evictable(connection: &Connection) -> Result<Vec<Evictable>> {
-    let mut out = Vec::new();
-
-    let mut statement = connection.prepare(
+async fn evictable(connection: &Connection) -> Result<Vec<Evictable>> {
+    let mut out = sql::all(
+        connection,
         "SELECT id, raw_blob_id FROM messages
           WHERE raw_blob_id IS NOT NULL
           ORDER BY received_at ASC, id ASC",
-    )?;
-    let rows = statement.query_map([], |row| {
-        Ok(Evictable {
-            reference: Reference::RawSource(row.get(0)?),
-            blob: BlobId::new(row.get::<_, String>(1)?),
-        })
-    })?;
-    for row in rows {
-        out.push(row?);
-    }
+        (),
+        |row| {
+            Ok(Evictable {
+                reference: Reference::RawSource(row.col(0)?),
+                blob: BlobId::new(row.col::<String>(1)?),
+            })
+        },
+    )
+    .await?;
 
-    let mut statement = connection.prepare(
-        "SELECT a.id, a.blob_id, m.id FROM attachments a
-           JOIN messages m ON m.id = a.message_id
-          WHERE a.blob_id IS NOT NULL
-          ORDER BY m.received_at ASC, a.id ASC",
-    )?;
-    let rows = statement.query_map([], |row| {
-        Ok(Evictable {
-            reference: Reference::Payload {
-                attachment: row.get(0)?,
-                message: row.get(2)?,
+    out.extend(
+        sql::all(
+            connection,
+            "SELECT a.id, a.blob_id, m.id FROM attachments a
+               JOIN messages m ON m.id = a.message_id
+              WHERE a.blob_id IS NOT NULL
+              ORDER BY m.received_at ASC, a.id ASC",
+            (),
+            |row| {
+                Ok(Evictable {
+                    reference: Reference::Payload {
+                        attachment: row.col(0)?,
+                        message: row.col(2)?,
+                    },
+                    blob: BlobId::new(row.col::<String>(1)?),
+                })
             },
-            blob: BlobId::new(row.get::<_, String>(1)?),
-        })
-    })?;
-    for row in rows {
-        out.push(row?);
-    }
+        )
+        .await?,
+    );
 
     Ok(out)
 }
@@ -707,24 +720,30 @@ pub struct EvictionReport {
     pub bytes_remaining: u64,
 }
 
-fn referenced_blobs(connection: &Connection) -> Result<HashSet<String>> {
-    // Built from `encrypt::BLOB_REFERENCES` rather than written out, because
-    // a column added to one list and not the other is either mail the sweep
-    // deletes while a row still points at it or mail the migration leaves
-    // behind. One list, two readers.
-    let clauses: Vec<String> = crate::encrypt::BLOB_REFERENCES
+/// Every column that holds a blob key, and the table it is on.
+///
+/// It lived in `encrypt.rs` while a plaintext-to-encrypted migration had to
+/// rewrite these columns. That migration went with the engine and this is the
+/// surviving half. Named once, because a fourth reference added to the schema
+/// and not to this list is mail the sweep deletes while a row still points at
+/// it.
+pub(crate) const BLOB_REFERENCES: [(&str, &str); 3] = [
+    ("messages", "raw_blob_id"),
+    ("attachments", "blob_id"),
+    ("cross_account_moves", "raw_blob_id"),
+];
+
+async fn referenced_blobs(connection: &Connection) -> Result<HashSet<String>> {
+    let clauses: Vec<String> = BLOB_REFERENCES
         .iter()
         .map(|(table, column)| format!("SELECT {column} FROM {table} WHERE {column} IS NOT NULL"))
         .collect();
     let sql = clauses.join("\nUNION\n");
 
-    let mut statement = connection.prepare(&sql)?;
-    let rows = statement.query_map([], |row| row.get::<_, String>(0))?;
-    let mut referenced = HashSet::new();
-    for row in rows {
-        referenced.insert(row?);
-    }
-    Ok(referenced)
+    Ok(sql::all(connection, &sql, (), |row| row.col::<String>(0))
+        .await?
+        .into_iter()
+        .collect())
 }
 
 /// A blob being written: a temporary file that deletes itself unless published.

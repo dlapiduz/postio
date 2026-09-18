@@ -299,11 +299,6 @@ impl Watcher {
         self.can_idle
     }
 
-    /// Whether the watcher is parked.
-    pub fn is_suspended(&self) -> bool {
-        self.suspended
-    }
-
     /// Registers a mailbox, or changes how an already-registered one is
     /// watched.
     ///

@@ -11,16 +11,16 @@ use postio_storage::repository::{ListQuery, ListScope, MessageRepository};
 use postio_storage::seed::{seed_large, seed_small};
 use postio_storage::test_support;
 
-use postio_storage::test_support::counting::{counted, install};
+use postio_storage::test_support::counting::{counted_async, install};
 
-#[test]
-fn listing_a_page_costs_the_same_statements_however_many_rows_it_returns() {
-    let database = test_support::memory();
-    let report = seed_small(&database, 11);
+#[tokio::test]
+async fn listing_a_page_costs_the_same_statements_however_many_rows_it_returns() {
+    let database = test_support::memory().await;
+    let report = seed_small(&database, 11).await;
     let inbox = report
         .mailbox(MailboxRole::Inbox)
         .expect("the seed makes an inbox");
-    let connection = database.connection().expect("a connection");
+    let connection = database.connect().await.expect("a connection");
     install(&connection);
 
     let page = |limit: u32| ListQuery {
@@ -32,13 +32,18 @@ fn listing_a_page_costs_the_same_statements_however_many_rows_it_returns() {
 
     // Warm first. The first `prepare` of a statement can pull schema pages in,
     // and this is about the query's shape, not about a cold cache.
-    let _ = messages.page(&page(1)).expect("a first read");
+    let _ = messages.page(&page(1)).await.expect("a first read");
 
     let mut one_row = 0;
-    let one = counted(|| one_row = messages.page(&page(1)).expect("one row").len());
+    let one =
+        counted_async(|| async { one_row = messages.page(&page(1)).await.expect("one row").len() })
+            .await;
 
     let mut many_rows = 0;
-    let many = counted(|| many_rows = messages.page(&page(25)).expect("a page").len());
+    let many = counted_async(|| async {
+        many_rows = messages.page(&page(25)).await.expect("a page").len()
+    })
+    .await;
 
     assert_eq!(one_row, 1, "a page of one should return one row");
     assert!(
@@ -66,18 +71,18 @@ fn listing_a_page_costs_the_same_statements_however_many_rows_it_returns() {
 /// fast enough that people actually run it.
 const LARGE: usize = 10_000;
 
-#[test]
-fn a_large_mailbox_never_materialises_more_rows_than_the_page_shows() {
+#[tokio::test]
+async fn a_large_mailbox_never_materialises_more_rows_than_the_page_shows() {
     // §18's most-cited constraint: "Never load a whole mailbox into memory —
     // the list is windowed over paged SQLite." A page of fifty returns fifty
     // rows whether the window is real or whether the folder was read whole
     // and sliced in Rust, so `page.len()` cannot tell those apart. The number
     // of rows SQLite *produced* can, and it is the same number everywhere.
-    let database = test_support::temp();
-    let report = seed_large(&database, 7, LARGE);
+    let database = test_support::temp().await;
+    let report = seed_large(&database, 7, LARGE).await;
     let inbox = report.mailbox(MailboxRole::Inbox).expect("an inbox").id;
 
-    let connection = database.connection().expect("a connection");
+    let connection = database.connect().await.expect("a connection");
     install(&connection);
     let messages = MessageRepository::new(&connection);
     let limit = 50;
@@ -88,7 +93,8 @@ fn a_large_mailbox_never_materialises_more_rows_than_the_page_shows() {
     };
 
     let mut rows = Vec::new();
-    let first = counted(|| rows = messages.page(&query).expect("a first page"));
+    let first =
+        counted_async(|| async { rows = messages.page(&query).await.expect("a first page") }).await;
     assert_eq!(
         rows.len(),
         limit as usize,
@@ -108,15 +114,17 @@ fn a_large_mailbox_never_materialises_more_rows_than_the_page_shows() {
     // deliberately broken" — this demonstrates that without ever breaking the
     // code under test, and it keeps demonstrating it. Raise `ceiling` above
     // what a full read costs and this is what stops passing.
-    let whole = counted(|| {
+    let whole = counted_async(|| async {
         let _ = messages
             .page(&ListQuery {
                 scope: ListScope::Mailbox(inbox),
                 limit: LARGE as u32,
                 after: None,
             })
+            .await
             .expect("the folder read whole");
-    });
+    })
+    .await;
     assert!(
         whole.rows > ceiling,
         "reading the whole folder produced {} rows, which is inside the \
@@ -139,15 +147,17 @@ fn a_large_mailbox_never_materialises_more_rows_than_the_page_shows() {
     let mut cursor = rows.last().expect("a last row").cursor();
     let mut deep = first;
     for _ in 0..10 {
-        deep = counted(|| {
+        deep = counted_async(|| async {
             rows = messages
                 .page(&ListQuery {
                     scope: ListScope::Mailbox(inbox),
                     limit,
                     after: Some(cursor),
                 })
+                .await
                 .expect("a deep page");
-        });
+        })
+        .await;
         assert_eq!(rows.len(), limit as usize);
         cursor = rows.last().expect("a last row").cursor();
     }
@@ -177,14 +187,14 @@ fn a_large_mailbox_never_materialises_more_rows_than_the_page_shows() {
 /// These are those numbers. If a later change moves them, that is the
 /// conversation this test exists to force — not a silent regression on the
 /// hottest read path there is.
-#[test]
-fn an_ordinary_listing_is_one_statement_and_no_more_rows_than_it_returns() {
-    let database = test_support::memory();
-    let report = seed_small(&database, 40);
+#[tokio::test]
+async fn an_ordinary_listing_is_one_statement_and_no_more_rows_than_it_returns() {
+    let database = test_support::memory().await;
+    let report = seed_small(&database, 40).await;
     let inbox = report
         .mailbox(MailboxRole::Inbox)
         .expect("the seed makes an inbox");
-    let connection = database.connection().expect("a connection");
+    let connection = database.connect().await.expect("a connection");
     install(&connection);
 
     let query = ListQuery {
@@ -193,10 +203,12 @@ fn an_ordinary_listing_is_one_statement_and_no_more_rows_than_it_returns() {
         after: None,
     };
     let messages = MessageRepository::new(&connection);
-    let _ = messages.page(&query).expect("a first read");
+    let _ = messages.page(&query).await.expect("a first read");
 
     let mut returned = 0;
-    let counts = counted(|| returned = messages.page(&query).expect("a page").len());
+    let counts =
+        counted_async(|| async { returned = messages.page(&query).await.expect("a page").len() })
+            .await;
 
     assert_eq!(returned, 20, "the seed should fill the page");
     assert_eq!(
@@ -210,8 +222,15 @@ fn an_ordinary_listing_is_one_statement_and_no_more_rows_than_it_returns() {
          after the fact would read more than a page to fill one, which is how \
          a windowed list quietly stops being windowed"
     );
-    assert_eq!(
-        counts.nested, 0,
-        "no trigger or virtual-table work on a read"
+    // What `counts.nested == 0` used to say -- no trigger or virtual-table
+    // work on a read -- asked of the planner instead, because there is no
+    // trace hook to count trigger firings any more. A scan on a windowed list
+    // is the same failure said structurally: it is how a page of 20 comes to
+    // read a mailbox.
+    assert!(
+        postio_storage::test_support::counting::scans(&connection, &messages.explain(&query),)
+            .await
+            .is_empty(),
+        "a page of a mailbox must be a seek, not a scan"
     );
 }

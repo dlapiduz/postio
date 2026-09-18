@@ -9,23 +9,23 @@ publish.workspace = true
 repository.workspace = true
 
 [dependencies]
-async-channel = "2.5.0"
+async-channel = { workspace = true }
 postio-config.workspace = true
 postio-model.workspace = true
-serde = { version = "1.0.229", features = ["derive"] }
+serde = { workspace = true }
 # `net` is what compiles tokio's IO driver in, and without it
 # `Builder::enable_io` does not even exist. Relying on another crate in
 # the graph to unify it in would make whether this runtime can open a
 # socket depend on who else is being built.
-tokio = { version = "1.53.1", features = ["rt", "rt-multi-thread", "sync", "time", "net"] }
-tracing = "0.1"
+tokio = { workspace = true, features = ["net", "rt", "rt-multi-thread", "sync", "time"] }
+tracing = { workspace = true }
 
 [dev-dependencies]
 postio-test-support = { workspace = true }
-serde_json = "1.0.151"
-tempfile = "3.27.0"
-tokio = { version = "1.53.1", features = ["rt-multi-thread", "macros", "time"] }
-tracing-subscriber = { version = "0.3.23", default-features = false, features = ["fmt"] }
+serde_json = { workspace = true }
+tempfile = { workspace = true }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "time"] }
+tracing-subscriber = { workspace = true }
 
 [lints]
 workspace = true
