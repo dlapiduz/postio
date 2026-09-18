@@ -761,11 +761,12 @@ async fn a_fetched_body_becomes_searchable_text() {
 /// contract between the fetch and the indexer, not the indexer itself --
 /// that has its own suite in `postio-session`.
 async fn index_pending(connection: &postio_storage::Checkout) {
-    let pending = postio_index::index::messages_missing_body_text(connection, 1_000)
+    let pending = postio_index::index::messages_missing_body_text(connection, 1_000, None)
         .await
         .expect("the indexer's queue");
     let messages = postio_storage::repository::MessageRepository::new(connection);
-    for id in pending {
+    for candidate in pending {
+        let id = candidate.id;
         let stored = messages
             .body(MessageId::new(id))
             .await

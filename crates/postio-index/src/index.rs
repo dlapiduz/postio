@@ -371,21 +371,116 @@ pub fn indexable_text(body: &MessageBody) -> Option<String> {
 /// indexed its bodies before this table existed has them in the old column,
 /// and asking the old column would answer "nothing to do" for every one of
 /// them while the new index stayed empty for ever.
-pub async fn messages_missing_body_text(connection: &Connection, limit: u32) -> Result<Vec<i64>> {
-    sql::all(
-        connection,
-        "SELECT m.id
-           FROM messages m
-          WHERE m.body_state IN ('full', 'partial')
-            AND NOT EXISTS (SELECT 1 FROM message_search_bodies b
-                             WHERE b.message_id = m.id)
-          ORDER BY m.received_at DESC
-          LIMIT ?1",
-        [limit],
-        |row| row.col::<i64>(0),
-    )
-    .await
-    .map_err(Into::into)
+/// # Why it takes a cursor (#1549)
+///
+/// The answer is ordered by `received_at DESC`, which is the order
+/// `idx_messages_recency` is in — and it is also the order a sweep *fills*
+/// the index in. So without a cursor, batch _k_ starts at the newest message
+/// and walks past everything batches 1…_k_−1 already indexed before it
+/// reaches a candidate, and a sweep is quadratic in the size of the archive.
+///
+/// That is not theoretical and it is not small. Measured on a real store of
+/// ~61,000 messages, a caught-up pass cost **640ms of scanning per message
+/// actually indexed**, because the only way to discover there is nothing to
+/// do is to look at every message. `body_index_cost` shows the synthetic
+/// curve: at 40,000 messages the per-batch cost rose 76× across one sweep.
+///
+/// [`Candidate`] carries the `received_at` back so the caller can hand it in
+/// again. Two things make each skipped row dearer than a bare index walk, and
+/// both argue for skipping fewer of them: `body_state` is not in
+/// `idx_messages_recency`, so every row the walk passes is fetched from
+/// `messages` to test it, and `messages` holds `body_text`/`body_html`
+/// inline — most of the table by bytes.
+pub async fn messages_missing_body_text(
+    connection: &Connection,
+    limit: u32,
+    after: Option<Candidate>,
+) -> Result<Vec<Candidate>> {
+    // Two statements rather than one with a nullable bound cursor: the
+    // planner sees a literal range on the leading index column in the second,
+    // which is the whole point of passing one.
+    match after {
+        None => sql::all(
+            connection,
+            "SELECT m.id, m.received_at
+               FROM messages m
+              WHERE m.body_state IN ('full', 'partial')
+                AND NOT EXISTS (SELECT 1 FROM message_search_bodies b
+                                 WHERE b.message_id = m.id)
+              ORDER BY m.received_at DESC, m.id DESC
+              LIMIT ?1",
+            [limit],
+            |row| {
+                Ok(Candidate {
+                    id: row.col::<i64>(0)?,
+                    received_at: row.col::<i64>(1)?,
+                })
+            },
+        )
+        .await
+        .map_err(Into::into),
+        // **Resumed at the cursor's timestamp, not strictly after it**, and on
+        // one column rather than two. Both halves of that are forced by what
+        // the engine will seek on:
+        //
+        // ```text
+        // received_at < ?2 OR (received_at = ?2 AND id < ?3)
+        //   -> MULTI-INDEX OR m (idx_messages_recency, idx_messages_recency)
+        //      USE SORTER FOR ORDER BY          (sorts the whole set; LIMIT
+        //                                        cannot stop it early)
+        // (received_at, id) < (?2, ?3)
+        //   -> SCAN messages AS m USING INDEX idx_messages_recency
+        //                                     (filters from the top; the
+        //                                      quadratic is unchanged)
+        // received_at <= ?2
+        //   -> SEARCH m USING INDEX idx_messages_recency (received_at>=?)
+        // ```
+        //
+        // Only the third is a seek. Measured on 40,000 messages, the first two
+        // sweep no faster than having no cursor at all.
+        //
+        // Dropping the `id` tiebreaker is safe **because indexing a message
+        // removes it from this answer**. A row sharing the boundary timestamp
+        // is either already indexed, and the `NOT EXISTS` excludes it, or it
+        // is not, and it still needs doing — so `<=` repeats nothing and skips
+        // nothing. What it cannot do on its own is guarantee forward progress
+        // if indexing silently fails for a whole batch at one timestamp; the
+        // caller's "this batch is the last batch" guard is what catches that,
+        // and it predates this (#500).
+        Some(cursor) => sql::all(
+            connection,
+            "SELECT m.id, m.received_at
+               FROM messages m
+              WHERE m.body_state IN ('full', 'partial')
+                AND m.received_at <= ?2
+                AND NOT EXISTS (SELECT 1 FROM message_search_bodies b
+                                 WHERE b.message_id = m.id)
+              ORDER BY m.received_at DESC, m.id DESC
+              LIMIT ?1",
+            bind![limit, cursor.received_at],
+            |row| {
+                Ok(Candidate {
+                    id: row.col::<i64>(0)?,
+                    received_at: row.col::<i64>(1)?,
+                })
+            },
+        )
+        .await
+        .map_err(Into::into),
+    }
+}
+
+/// A message a sweep has still to index, and where it sits in the order.
+///
+/// The position travels with the answer so a sweep can resume rather than
+/// restart; see [`messages_missing_body_text`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Candidate {
+    /// The message to index.
+    pub id: i64,
+    /// Its `received_at`, which with [`id`](Self::id) is its place in
+    /// `idx_messages_recency`.
+    pub received_at: i64,
 }
 
 /// As [`messages_missing_body_text`], scoped to one account (#981).
@@ -1182,6 +1277,131 @@ mod tests {
                 .expect("candidates")
                 .is_empty(),
             "the other account's index was never touched"
+        );
+    }
+
+    /// #1549: one sweep walks the recency index once, not once per batch.
+    ///
+    /// Without a cursor every batch starts at the newest message and walks
+    /// past everything the previous batches indexed, so a sweep is quadratic
+    /// in the size of the archive — on a real 61,000-message store that was
+    /// 640ms of scanning per message actually indexed.
+    ///
+    /// This is the sweep as the pass actually performs it: take a batch,
+    /// index it, resume from its last row. What it pins is that the three
+    /// batches together visit all six messages, once each, in recency order —
+    /// nothing repeated, nothing skipped, and nothing left behind.
+    #[tokio::test]
+    async fn a_sweep_resumes_after_its_cursor_rather_than_restarting() {
+        let database = test_support::memory().await;
+        let connection = database.connect().await.expect("checkout");
+        ensure_schema(&connection).await.expect("schema");
+        let (account, inbox) = test_support::account_with_inbox(&connection).await;
+
+        let messages = MessageRepository::new(&connection);
+        let mut created = Vec::new();
+        for minute in 0..6 {
+            let mut message = Message::new(
+                account.id,
+                inbox,
+                Utc::now() - chrono::Duration::minutes(minute),
+            );
+            message.sync.body_state = postio_model::BodyState::Full;
+            messages.create(&mut message).await.expect("create");
+            created.push(message.id.get());
+        }
+
+        let mut swept = Vec::new();
+        let mut cursor = None;
+        loop {
+            let batch = messages_missing_body_text(&connection, 2, cursor)
+                .await
+                .expect("a batch");
+            if batch.is_empty() {
+                break;
+            }
+            assert!(batch.len() <= 2, "the limit is honoured");
+            cursor = batch.last().copied();
+            for candidate in &batch {
+                swept.push(candidate.id);
+                index_body_of(
+                    &connection,
+                    candidate.id,
+                    &MessageBody {
+                        text: Some("body".to_owned()),
+                        html: None,
+                    },
+                )
+                .await
+                .expect("index");
+            }
+        }
+
+        assert_eq!(
+            swept, created,
+            "every message exactly once, newest first, across three resumed batches"
+        );
+    }
+
+    /// The cursor is a position and nothing more: resuming does not drag in a
+    /// message that has been indexed since.
+    #[tokio::test]
+    async fn an_indexed_message_is_not_a_candidate_after_a_cursor_either() {
+        let database = test_support::memory().await;
+        let connection = database.connect().await.expect("checkout");
+        ensure_schema(&connection).await.expect("schema");
+        let (account, inbox) = test_support::account_with_inbox(&connection).await;
+
+        let messages = MessageRepository::new(&connection);
+        let mut created = Vec::new();
+        for minute in 0..3 {
+            let mut message = Message::new(
+                account.id,
+                inbox,
+                Utc::now() - chrono::Duration::minutes(minute),
+            );
+            message.sync.body_state = postio_model::BodyState::Full;
+            messages.create(&mut message).await.expect("create");
+            created.push(message.id.get());
+        }
+
+        index_body_of(
+            &connection,
+            created[1],
+            &MessageBody {
+                text: Some("already done".to_owned()),
+                html: None,
+            },
+        )
+        .await
+        .expect("index the middle");
+
+        let first = messages_missing_body_text(&connection, 1, None)
+            .await
+            .expect("first batch");
+        assert_eq!(first[0].id, created[0], "the newest, and it is not indexed");
+
+        // The pass indexes what it took before it resumes, which is what
+        // makes `<=` exact: the cursor row is excluded on the next batch
+        // because it is now indexed, not because the predicate excluded it.
+        index_body_of(
+            &connection,
+            first[0].id,
+            &MessageBody {
+                text: Some("just done".to_owned()),
+                html: None,
+            },
+        )
+        .await
+        .expect("index the first");
+
+        let rest = messages_missing_body_text(&connection, 10, first.last().copied())
+            .await
+            .expect("the rest");
+        assert_eq!(
+            rest.iter().map(|row| row.id).collect::<Vec<_>>(),
+            vec![created[2]],
+            "neither the one just indexed nor the one already indexed comes back"
         );
     }
 
