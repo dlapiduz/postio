@@ -192,6 +192,66 @@ async fn seeding_the_backfill_finds_bodies_worth_having() {
     );
 }
 
+/// #1551: the backfill keeps more than one body on the wire at a time.
+///
+/// A body fetch is almost all round trip, so a serial backfill over a large
+/// archive is one wait per message with nothing overlapping — 61,000 of them
+/// on a real first sync, which no amount of bandwidth shortens. The engine
+/// used to take exactly one claim and wait for it.
+///
+/// `set_latency` is what makes the overlap observable without a stopwatch:
+/// with each fetch held at the server, a serial loop can never have two in
+/// front of it, and `peak_in_flight` says whether it did.
+#[tokio::test(flavor = "multi_thread")]
+async fn the_body_backfill_keeps_more_than_one_fetch_in_flight() {
+    use std::time::Duration;
+
+    let (engine, database, report, _events, backend, _directory) =
+        engine_with(|mock| mock.set_latency(Duration::from_millis(10))).await;
+    let inbox = report.mailbox(MailboxRole::Inbox).expect("an inbox");
+
+    let candidates = give_the_inbox_uids(&database, inbox.id).await;
+    assert!(
+        candidates > 0,
+        "the fixture found no messages to give uids to"
+    );
+    engine
+        .seed_backfill(inbox.id, 10)
+        .await
+        .expect("seeding reads the store");
+
+    // Enough bodies to have had the chance to overlap -- not a full settle,
+    // which with a latency on every backend call is the whole engine's
+    // startup as well as the backfill's.
+    let fetched = tokio::time::timeout(Duration::from_secs(30), async {
+        loop {
+            let progress = engine
+                .backfill_progress()
+                .await
+                .expect("the engine answers");
+            if progress.stored >= 3 {
+                return progress;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await;
+    assert!(
+        fetched.is_ok(),
+        "fewer than three bodies were fetched, so this proves nothing about \
+         how many were in flight"
+    );
+
+    assert!(
+        backend.peak_in_flight() > 1,
+        "the backfill never had two bodies in front of the server, so it is \
+         still fetching one at a time and a first sync pays one round trip \
+         per message: peak {}",
+        backend.peak_in_flight()
+    );
+    drop(engine);
+}
+
 #[tokio::test]
 async fn a_seeded_body_is_actually_fetched() {
     // postio-26c's real gap. `seed` queued bodies and nothing ever claimed

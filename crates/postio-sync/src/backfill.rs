@@ -645,6 +645,24 @@ impl Backfill {
         Some(self.claim(request, Priority::Background))
     }
 
+    /// A claim for a message **the user is waiting on**, or `None`.
+    ///
+    /// [`next_body`](Self::next_body) already prefers the interactive lane,
+    /// so this exists for one caller and one reason: the engine keeps a small
+    /// window of background fetches on the wire (#1551), and a window that
+    /// only refills when it has fully drained would make an opened message
+    /// wait for every fetch in it. Topping up with this instead means an
+    /// interactive request starts at the next free slot — one body's wait,
+    /// which is the bound the serial loop used to give — without the window
+    /// pulling more background work into a call that is supposed to return.
+    pub fn next_interactive_body(&mut self) -> Option<Claim> {
+        if self.cancelled {
+            return None;
+        }
+        let request = self.take_interactive()?;
+        Some(self.claim(request, Priority::Interactive))
+    }
+
     /// Records what became of a claim.
     pub fn finished(&mut self, message: MessageId, outcome: Outcome) {
         if self.lanes.remove(&message) != Some(Lane::InFlight) {
@@ -1915,6 +1933,58 @@ mod tests {
         let claim = backfill.next_body().expect("a claim");
         assert_eq!(claim.priority, Priority::Interactive);
         assert_eq!(claim.request.message, older.id);
+    }
+
+    /// #1551: the engine's window tops up with interactive work only.
+    ///
+    /// `next_interactive_body` is what lets a window of background fetches
+    /// pick up a message the user just opened at the next free slot. It must
+    /// take an interactive claim when there is one and **nothing** when there
+    /// is not — a background claim here would make the engine's call
+    /// unbounded, since it tops up after every settled fetch.
+    #[tokio::test]
+    async fn an_interactive_top_up_takes_interactive_work_and_nothing_else() {
+        let database = postio_storage::test_support::memory().await;
+        let connection = database.connect().await.expect("checkout");
+        let (account, inbox) = postio_storage::test_support::account_with_inbox(&connection).await;
+        let messages = MessageRepository::new(&connection);
+
+        let mut created = Vec::new();
+        for (seconds, uid) in [(1, 1), (2, 2), (3, 3)] {
+            let mut message = headers_only(account.id, inbox, seconds, uid);
+            messages.create(&mut message).await.expect("create");
+            created.push(message.id);
+        }
+
+        let mut backfill = Backfill::new(BackfillPolicy::default());
+        seed(&connection, &mut backfill, inbox, 10)
+            .await
+            .expect("seed");
+
+        // A queue full of background work, and nobody waiting: the top-up
+        // must decline it rather than pulling the archive in.
+        assert!(
+            backfill.next_interactive_body().is_none(),
+            "a background queue is not interactive work"
+        );
+
+        // Now the user opens the oldest one.
+        assert!(
+            request_body(&connection, &mut backfill, created[0])
+                .await
+                .expect("lookup")
+        );
+        let claim = backfill
+            .next_interactive_body()
+            .expect("the opened message is interactive work");
+        assert_eq!(claim.priority, Priority::Interactive);
+        assert_eq!(claim.request.message, created[0], "the one the user opened");
+
+        // And once it has been handed out, there is nothing interactive left.
+        assert!(
+            backfill.next_interactive_body().is_none(),
+            "the same interactive claim must not be handed out twice"
+        );
     }
 
     #[tokio::test]
