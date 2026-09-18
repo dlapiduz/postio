@@ -724,6 +724,14 @@ pub fn body_html_in(
     let text = body.text.as_deref().filter(|text| !text.trim().is_empty());
 
     if rendering == Rendering::Reader {
+        // The plain part is preferred because reader view assumes it is the
+        // clean alternative the sender already reduced. When it is instead
+        // their markup flattened, that assumption is wrong in the most
+        // visible way possible -- the converter's markdown ends up on screen
+        // as syntax -- and the HTML beside it is the better source, which is
+        // what `reduce` below is for. See `reads_as_flattened_markup`.
+        let text =
+            text.filter(|text| html.is_none() || !reader_view::reads_as_flattened_markup(text));
         if let Some(text) = text {
             // The facts first, then what is left of the prose. `lift` takes
             // the rows out of the copy, so the block is a summary rather than
@@ -1817,5 +1825,83 @@ mod tests {
     fn nothing_held_back_says_nothing() {
         // A notice with nothing to report should not be on screen at all.
         assert_eq!(HeldBack::default().summary(), "");
+    }
+}
+
+#[cfg(test)]
+mod reader_view_prefers_markup_over_its_own_flattening {
+    use super::*;
+    use postio_model::message::MessageBody;
+
+    /// A bulk message whose plain part is markdown renders as markup.
+    ///
+    /// The end of the chain rather than the predicate alone: what reached a
+    /// real reading pane was `Assignment.[Bridges Practice #1](https://...)`,
+    /// link syntax and all, because reader view took the plain part on the
+    /// assumption that it was prose the sender had already reduced. It was
+    /// their HTML run through a converter.
+    #[test]
+    fn markdown_in_the_plain_part_does_not_reach_the_document() {
+        let body = MessageBody {
+            text: Some(
+                "Assignment.[Bridges Practice #1](https://app.example.test/a/849) 3:59 pm"
+                    .to_owned(),
+            ),
+            html: Some(
+                "<html><body><table><tr><td><h1>Daily summary</h1>\
+                 <p>Assignment: <a href=\"https://app.example.test/a/849\">\
+                 Bridges Practice #1</a> 3:59 pm</p></td></tr></table></body></html>"
+                    .to_owned(),
+            ),
+        };
+
+        let rendered = body_html_in(&body, RemoteImages::Blocked, Rendering::Reader, None);
+
+        assert!(
+            !rendered.html.contains("](https://"),
+            "the converter's link syntax must not reach the reader: {}",
+            rendered.html
+        );
+        assert!(
+            rendered.html.contains("Bridges Practice #1"),
+            "and the text it named is still there: {}",
+            rendered.html
+        );
+        assert!(
+            rendered
+                .html
+                .contains("href=\"https://app.example.test/a/849\""),
+            "as a link, which is what the markup had all along: {}",
+            rendered.html
+        );
+    }
+
+    /// Prose still takes the plain part.
+    ///
+    /// The half that keeps the facts block alive: `lift` only runs on the
+    /// plain path, so a message whose plain part is genuine prose has to keep
+    /// taking it. `gtk_reader`'s shipping-notice assertion (#1030) is the
+    /// end-to-end form of this; here the two parts are made to differ so the
+    /// choice itself is what is measured.
+    #[test]
+    fn prose_still_takes_the_plain_part() {
+        let body = MessageBody {
+            text: Some("Follow the parcel. Only the plain part says this.".to_owned()),
+            html: Some("<html><body><p>Only the markup says this.</p></body></html>".to_owned()),
+        };
+
+        let rendered = body_html_in(&body, RemoteImages::Blocked, Rendering::Reader, None);
+
+        assert!(
+            rendered.html.contains("Only the plain part says this."),
+            "prose keeps the plain part, which is the only path `lift` runs \
+             on and so the only one with a facts block: {}",
+            rendered.html
+        );
+        assert!(
+            !rendered.html.contains("Only the markup says this."),
+            "and does not also draw the markup: {}",
+            rendered.html
+        );
     }
 }

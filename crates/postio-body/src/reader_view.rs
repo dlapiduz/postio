@@ -235,6 +235,34 @@ fn escape_into(text: &str, out: &mut String) {
     }
 }
 
+/// Whether a `text/plain` part is the sender's markup flattened, rather than
+/// prose they wrote.
+///
+/// Reader view prefers the plain part because it is meant to be the clean
+/// alternative the sender already reduced: prose, with the template gone.
+/// For a great many senders it is nothing of the kind -- it is the HTML run
+/// through a converter, and markdown is what those converters emit. Rendering
+/// it verbatim puts the syntax on screen:
+///
+/// ```text
+/// Assignment.[Bridges Practice #1](https://app.example.test/a/849) 3:59 pm
+/// ```
+///
+/// Seen against a real account, a whole message of it. The HTML beside it had
+/// real headings and real links, and `reduce` exists precisely to keep those
+/// and drop the layout -- so where the plain part is flattened markup, the
+/// markup itself is the better source and reader view should use it.
+///
+/// Matched on the link form alone, and deliberately nothing else. `*` and `-`
+/// start ordinary sentences and `#` starts a comment in half the mail a
+/// developer receives; `](` followed by a scheme does not occur in prose that
+/// was typed. Narrow on purpose: a false positive here costs the facts block
+/// on a message that had one, so this must only fire on text that is
+/// unambiguously generated.
+pub fn reads_as_flattened_markup(plain: &str) -> bool {
+    plain.contains("](http://") || plain.contains("](https://")
+}
+
 /// Whether a body reads like bulk mail, and so should open in reader view.
 ///
 /// A heuristic, and the honest word for it. Three signals, all of which are
@@ -1000,5 +1028,47 @@ mod css_is_not_a_fact {
             "an ordinary facts block stopped lifting: {:?}",
             lifted.rows
         );
+    }
+}
+
+#[cfg(test)]
+mod a_plain_part_that_is_really_markup {
+    use super::reads_as_flattened_markup;
+
+    /// The shape measured against a real account.
+    ///
+    /// A school's daily summary, whose `text/plain` part is its HTML run
+    /// through a markdown converter. Reader view rendered it verbatim and the
+    /// syntax went on screen, link brackets and all, for the whole message.
+    #[test]
+    fn a_converters_markdown_is_not_prose() {
+        let flattened = "Assignment.[Bridges Practice #1](https://app.example.test/a/849) 3:59 pm\n\
+                         Event.[Even Day](https://app.example.test/p/420) Henderson Middle School";
+        assert!(reads_as_flattened_markup(flattened));
+        assert!(reads_as_flattened_markup(
+            "see [the notice](http://example.test/n)"
+        ));
+    }
+
+    /// The control, and the half that keeps the facts block alive.
+    ///
+    /// Reader view falls back to the HTML when this fires, and the HTML path
+    /// has no facts block -- so a false positive costs a transactional
+    /// message the summary `lift` would have given it. Prose people type, and
+    /// the markdown that is *not* a link, must not trip it.
+    #[test]
+    fn prose_is_not_mistaken_for_markup() {
+        for prose in [
+            "Your parcel EXTEST0042199317 is on its way.\nTracking: EXTEST0042199317",
+            "* milk\n* eggs\n- and a note\n# not a heading, a comment",
+            "The meeting (see https://example.test/agenda) is at three.",
+            "I wrote [sic] in the margin (twice).",
+            "",
+        ] {
+            assert!(
+                !reads_as_flattened_markup(prose),
+                "prose must keep the plain part and its facts block: {prose:?}"
+            );
+        }
     }
 }
