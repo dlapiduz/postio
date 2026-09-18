@@ -870,8 +870,21 @@ fn run(parts: EngineParts, store: Store, inbox: async_channel::Receiver<Job>, bu
                         && nothing_asked(&inbox)
                         && state.supervisor.link().is_online()
                         && !has_queued_work(&parts, &store).await
-                        && pump_body(&parts, &store, &mut state, &inbox).await
                     {
+                        // Refill before pumping, exactly as the loop below
+                        // does. Pumping alone drains whatever the last sync
+                        // seeded and then stops for good: `top_up_backfill`
+                        // is what finds the *next* batch, and leaving it out
+                        // here bought one body per run. Measured -- one, in
+                        // four minutes, while 22 MB of headers went past.
+                        if state.backfill.is_idle()
+                            && top_up_backfill(&parts, &store, &mut state).await == 0
+                        {
+                            break;
+                        }
+                        if !pump_body(&parts, &store, &mut state, &inbox).await {
+                            break;
+                        }
                         fetched += 1;
                     }
                 }
