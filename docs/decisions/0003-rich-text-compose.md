@@ -1,7 +1,13 @@
 # ADR 0003 — Rich-text (HTML) compose
 
 - **Status:** Accepted — **GO** (2026-08-24); amended 2026-09-14, see the
-  notes below — everything it decided is built, one crate name changed
+  notes below — everything it decided is built, one crate name changed.
+  **Q2 superseded 2026-09-18 by [ADR 0039](0039-the-composer-is-a-native-surface-over-the-document.md):**
+  the editing surface stops being a `contenteditable` WebView and becomes a
+  native text view over `Document`. Everything else here — the restricted
+  subset (Q1), the hardening requirements, quoting (Q3), inline images (Q4),
+  and the rejection of Markdown-authored compose — stands, and is what made
+  replacing the surface cheap.
 - **Date:** 2026-08-24
 - **Issue:** [#3 Rich-text (HTML) compose](https://github.com/dlapiduz/postio/issues/3), under [#17 Epic: Compose](https://github.com/dlapiduz/postio/issues/17)
 - **Related:** bead `postio-3o8f`; issues [#12](https://github.com/dlapiduz/postio/issues/12) (rich signatures), [#13](https://github.com/dlapiduz/postio/issues/13) (`$EDITOR`)
@@ -94,6 +100,19 @@ so Postio's CSS always wins; emitting it on the way out would be inconsistent
 with that.
 
 ## Q2 — What is the editor?
+
+> **Superseded 2026-09-18 by [ADR 0039](0039-the-composer-is-a-native-surface-over-the-document.md).**
+> The section below is kept as written, because the reasoning it records is
+> what 0039 had to answer. What changed is not the argument but its premises:
+> three of the six things this section counts `contenteditable` as giving free
+> — native undo, spell-check, and the input dialect — are provably not being
+> collected in the built composer. Undo was rejected outright by
+> [ADR 0004](0004-composer-document-model.md) Q5, spell-check was never
+> switched on, and the markdown dialect was re-implemented in Rust and
+> *generated into* the bundled script. And "many months of work" was an
+> estimate for building an editor over a flat `GtkTextBuffer` **as the
+> record**; ADR 0004 Q3 then made `Document` the record, which is a different
+> and much smaller problem.
 
 Three candidates were assessed. Two are real.
 

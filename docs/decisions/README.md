@@ -47,6 +47,7 @@ decision stands as of 0.4.0 (2026-09-14).
 | [0036](0036-a-sidebar-row-is-a-folder-or-a-view.md) | A sidebar row is a folder or a view | Built |
 | [0037](0037-a-misspelling-is-answered-with-a-suggestion.md) | A misspelling is answered with a suggestion | Built |
 | [0038](0038-the-store-is-turso-not-sqlcipher.md) | The store is Turso, and ADR 0014 keeps its threat model | Built |
+| [0039](0039-the-composer-is-a-native-surface-over-the-document.md) | The composer is a native surface over the document | Decided; supersedes 0003 Q2, nothing built yet |
 
 ## Writing one
 
