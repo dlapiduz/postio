@@ -298,6 +298,19 @@ pub struct ThreadMessage {
     pub preview: String,
     /// Whether it starts open.
     pub expanded: bool,
+    /// Whether the body has not been backfilled yet.
+    ///
+    /// A conversation is one document (ADR 0032), so a message with no body
+    /// used to contribute an empty section and say nothing -- the reader saw
+    /// a message that would not open and no reason why. `Absent::Partial`'s
+    /// plate is the answer the single-message path has always given, and this
+    /// is what carries the question into the thread.
+    ///
+    /// Only the message that is *open* shows the plate. Everything unfetched
+    /// stays the one line it already was, because
+    /// `expanded_in_document` opens every message in the thread and a plate
+    /// on each would be thirty explanations of one fact.
+    pub absent: bool,
     /// Whether this is the newest message in the thread — canvas 17's badge.
     pub latest: bool,
     /// Whether this is a draft: written here and never sent.
@@ -1723,6 +1736,31 @@ fn compose_thread_document(
             } else {
                 RemoteImages::Blocked
             };
+            if message.absent && message.expanded {
+                // The same words the single-message pane has always used, not
+                // a second way of saying it -- `absent_html` carries the
+                // `role="status"` live region with it, so a screen reader is
+                // told when the body is still coming and told it once.
+                //
+                // `Partial` rather than a state read per message: the thread
+                // knows only that no body is here yet, which is what `Partial`
+                // means. Offline is said by the connection banner, which is
+                // about the account and not about one message.
+                //
+                // Only when it is open. A collapsed message contributes its
+                // section to the document either way, so emitting the plate
+                // for all of them puts thirty copies of one sentence into a
+                // thirty-message thread -- invisible, but each carrying an
+                // `aria-live` region, which is not invisible to a screen
+                // reader. A collapsed message is its one preview line, and
+                // that line is built from headers, which are here.
+                return postio_ui::reader::document::Rendered {
+                    html: postio_ui::reader::document::absent_html(
+                        postio_ui::reader::document::Absent::Partial,
+                    ),
+                    ..postio_ui::reader::document::Rendered::default()
+                };
+            }
             postio_ui::reader::document::body_html_in(
                 &message.body,
                 remote,

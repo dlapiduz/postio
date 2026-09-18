@@ -77,6 +77,7 @@ fn messages(count: usize) -> Vec<ThreadMessage> {
                 cc: String::new(),
                 preview: format!("Message {index}"),
                 expanded: true,
+                absent: false,
                 latest: index + 1 == count,
                 draft: false,
                 mine: false,
