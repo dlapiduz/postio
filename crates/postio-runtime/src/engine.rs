@@ -1760,88 +1760,170 @@ impl Committed<'_> {
     }
 }
 
-/// Fetch one queued body, if there is one and it is worth doing now.
+/// Fetch queued bodies, up to [`BODY_WINDOW`] of them at once.
 ///
 /// Returns whether it did anything, so the caller can keep going until the
-/// queue is empty. One body per call on purpose: `Backfill::next_body` hands
-/// out one at a time and holds it until `finished` reports it, which is what
-/// bounds how long anything else can be stuck behind the backfill.
+/// queue is empty.
+///
+/// # Why more than one (#1551)
+///
+/// This fetched exactly one body per call, and waited for it, on the grounds
+/// that holding one claim "bounds how long anything else can be stuck behind
+/// the backfill". The bound was real and the mechanism was the wrong one: a
+/// body fetch is almost all round trip, so a serial backfill over a large
+/// archive is one round trip per message with nothing overlapping. On a
+/// 61,000-message first sync that is 61,000 waits end to end, and no amount
+/// of bandwidth shortens it.
+///
+/// What actually protects the interactive case is a layer down.
+/// `postio_account::imap::pool` serves [`Priority::Interactive`][p] before
+/// [`Priority::Background`][p], and `Backfill::next_body` hands interactive
+/// claims out first — so a message the user just opened is ahead of the
+/// backfill in both queues whether one background body is in flight or two.
+///
+/// The window is what keeps that true, in two ways. A priority decides who
+/// takes the *next free* connection, not who takes one away, so the general
+/// lane must never be full of background fetches: with the default budget of
+/// four connections and one dedicated to watching, three are general, and a
+/// window of two leaves one for whatever the reader asks for. And the window
+/// tops up with [`Backfill::next_interactive_body`][nib] as each fetch settles, so
+/// a message opened while this call is in flight starts at the next free slot
+/// rather than behind the whole window — one body's wait, which is exactly
+/// the bound the serial loop gave.
+///
+/// [p]: postio_sync::backfill::Priority
+/// [nib]: postio_sync::backfill::Backfill::next_interactive_body
 async fn pump_body(
     parts: &EngineParts,
     store: &Store,
     state: &mut State,
     inbox: &async_channel::Receiver<Job>,
 ) -> bool {
-    let Some(claim) = state.backfill.next_body() else {
+    let mut claims = Vec::new();
+    while claims.len() < BODY_WINDOW {
+        let Some(claim) = state.backfill.next_body() else {
+            break;
+        };
+        claims.push(claim);
+    }
+    let Some(first) = claims.first() else {
         return false;
     };
-    let message = claim.request.message;
-    state
-        .busy
-        .set(format!("the body backfill (message {message})"));
+    // Every claim carries a clone of the backfill's one token, so this
+    // cancels all of them — which is what shutdown wants, and why the claims
+    // do not need tokens of their own.
+    let cancel = first.cancel.clone();
+    state.busy.set(match claims.as_slice() {
+        [only] => format!("the body backfill (message {})", only.request.message),
+        many => format!("the body backfill ({} messages)", many.len()),
+    });
 
+    // Read before the fetches start, so nothing below borrows `state` while
+    // they are in flight. ADR 0017's inline rule, from the same policy the
+    // queue is scheduled under (#751).
+    let inline_cap = state.backfill.policy().max_inline_bytes;
+
+    let mut running = FuturesUnordered::new();
+    for claim in claims {
+        running.push(fetch_one_body(parts, store, inline_cap, claim));
+    }
+
+    // Shutdown must not wait for the wire: when the channel closes mid-fetch,
+    // fire the token so every fetch unwinds cooperatively instead of running
+    // to the command timeout, which is twelve times the shutdown grace
+    // (#759). Nothing is lost -- what a cancelled fetch leaves unfetched
+    // stays `body_state <> 'full'`, and the next seed derives the queue from
+    // that -- but the ones already in flight are still drained, so no claim
+    // is left outstanding for ever.
+    let mut cancelled = false;
+    loop {
+        let settled = if cancelled {
+            running.next().await
+        } else {
+            tokio::select! {
+                biased;
+                next = running.next() => next,
+                () = wait_for_close(inbox) => {
+                    cancel.cancel();
+                    cancelled = true;
+                    continue;
+                }
+            }
+        };
+        let Some((message, result)) = settled else {
+            break;
+        };
+        // A slot just freed. If the user has opened something since this call
+        // began, start it now rather than making it wait for the rest of the
+        // window -- that would be a longer wait than the serial loop gave,
+        // which is the one thing this change must not cost. Only interactive
+        // work: topping up with background would make the call unbounded, and
+        // the outer loop's own checks are what let a queued job interleave.
+        if !cancelled && let Some(next) = state.backfill.next_interactive_body() {
+            running.push(fetch_one_body(parts, store, inline_cap, next));
+        }
+        let outcome = result.unwrap_or_else(|error| {
+            if let SyncError::Backend(backend) = &error {
+                let moved = state.supervisor.observe(backend, Utc::now());
+                announce_link(parts, state, moved);
+            }
+            Outcome::Failed {
+                reason: error.to_string(),
+            }
+        });
+
+        // The reading pane is waiting on exactly this for whatever the user
+        // just opened, so it is worth saying the moment the bytes are local.
+        if matches!(outcome, Outcome::Stored { .. }) {
+            parts.events.emit(Event::BodyLoaded {
+                account: parts.account,
+                message,
+            });
+        }
+        state.backfill.finished(message, outcome);
+        announce_backfill(parts, state, std::time::Instant::now()).await;
+    }
+    true
+}
+
+/// How many bodies may be on the wire at once. See [`pump_body`].
+const BODY_WINDOW: usize = 2;
+
+/// One body, start to finish, borrowing nothing the caller needs mutably.
+///
+/// Split out so several can run on one `FuturesUnordered`: everything that
+/// touches `State` -- the supervisor, the progress, the event -- happens in
+/// the drain loop, where there is exactly one of it.
+async fn fetch_one_body(
+    parts: &EngineParts,
+    store: &Store,
+    inline_cap: Option<u64>,
+    claim: postio_sync::backfill::Claim,
+) -> (MessageId, Result<Outcome, SyncError>) {
+    let message = claim.request.message;
     let connection = match store.connect().await {
         Ok(connection) => connection,
+        // Reported settled rather than left in flight for ever: a claim
+        // nobody finishes is a queue that never drains.
         Err(error) => {
-            // Report it settled rather than leaving it in flight for ever:
-            // a claim nobody finishes is a queue that never drains.
-            state.backfill.finished(
+            return (
                 message,
-                Outcome::Failed {
+                Ok(Outcome::Failed {
                     reason: error.to_string(),
-                },
+                }),
             );
-            return false;
         }
     };
-
-    let fetch = backfill::fetch_body(
+    let result = backfill::fetch_body(
         &connection,
         &parts.blobs,
         parts.backend.as_ref(),
         &claim.request,
-        // ADR 0017's inline rule, from the same policy the queue is scheduled
-        // under, so `[sync] max_inline_bytes` reaches the fetch that honours
-        // it rather than stopping at a struct field nobody reads (#751).
-        state.backfill.policy().max_inline_bytes,
+        inline_cap,
         &claim.cancel,
-    );
-    tokio::pin!(fetch);
-    // Shutdown must not wait for the wire: when the channel closes mid-fetch,
-    // fire the claim's token — the one [`Backfill::cancel`] would fire — so
-    // the fetch unwinds cooperatively instead of running to the command
-    // timeout, which is twelve times the shutdown grace (#759). Nothing is
-    // lost: what a cancelled fetch leaves unfetched stays `body_state <>
-    // 'full'`, and the next seed derives the queue from that.
-    let result = tokio::select! {
-        biased;
-        result = &mut fetch => result,
-        () = wait_for_close(inbox) => {
-            claim.cancel.cancel();
-            fetch.await
-        }
-    };
-    let outcome = result.unwrap_or_else(|error| {
-        if let SyncError::Backend(backend) = &error {
-            let moved = state.supervisor.observe(backend, Utc::now());
-            announce_link(parts, state, moved);
-        }
-        Outcome::Failed {
-            reason: error.to_string(),
-        }
-    });
-
-    // The reading pane is waiting on exactly this for whatever the user just
-    // opened, so it is worth saying the moment the bytes are local.
-    if matches!(outcome, Outcome::Stored { .. }) {
-        parts.events.emit(Event::BodyLoaded {
-            account: parts.account,
-            message,
-        });
-    }
-    state.backfill.finished(message, outcome);
-    announce_backfill(parts, state, std::time::Instant::now()).await;
-    true
+    )
+    .await;
+    (message, result)
 }
 
 /// Say how far the body queue has got.
