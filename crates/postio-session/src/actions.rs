@@ -3103,6 +3103,62 @@ mod tests {
         );
     }
 
+    /// The button's own path: "Send again" names no draft.
+    ///
+    /// `a_failed_send_can_be_put_back_on_the_queue` passes `Some(id)`, which
+    /// is the composer's path. The reader header's verb goes through
+    /// `CommandId::RetrySend`, and `CommandId -> Command` fills in
+    /// `draft: None` -- so the draft is resolved from the row in view, and
+    /// that resolution was never exercised by a test. Reported from a real
+    /// session as the button doing nothing.
+    #[tokio::test]
+    async fn send_again_works_on_the_row_in_view_without_naming_a_draft() {
+        let world = world().await;
+        let (id, ()) = {
+            let connection = world.database.connect().await.expect("a connection");
+            let drafts = postio_storage::repository::DraftRepository::new(&connection);
+            let mut draft = postio_model::Draft::new(world.account.id);
+            draft.to = vec![postio_model::EmailAddress::new(
+                None::<String>,
+                "quinn@example.net",
+            )];
+            let id = drafts.save(&mut draft).await.expect("save");
+            drafts
+                .set_state(id, DraftState::Failed)
+                .await
+                .expect("a send that stopped");
+            (id, ())
+        };
+
+        // The row the draft is listed as, linked the way a synced draft is.
+        let message = world.message(world.inbox, &[]).await;
+        {
+            let connection = world.database.connect().await.expect("a connection");
+            postio_storage::repository::DraftRepository::new(&connection)
+                .set_synced_message(id, message)
+                .await
+                .expect("link the draft to the row that lists it");
+        }
+
+        // What the reader is looking at when the verb is offered.
+        world
+            .looking_at(world.inbox, &[message], Some(message))
+            .await;
+
+        world
+            .run(Command::RetrySend { draft: None })
+            .await
+            .expect("the button names no draft and must still retry the send");
+
+        let connection = world.database.connect().await.expect("a connection");
+        let drafts = postio_storage::repository::DraftRepository::new(&connection);
+        assert_eq!(
+            drafts.get(id).await.expect("read").expect("there").state,
+            DraftState::Queued,
+            "the send is back on the queue"
+        );
+    }
+
     #[tokio::test]
     async fn a_failed_send_can_be_put_back_on_the_queue() {
         // Spec 003 FR-024's other half. The count of what needs a person only

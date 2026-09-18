@@ -874,6 +874,21 @@ impl Reader {
         self.set_send_state(self.send_state.get());
     }
 
+    /// Press a verb wherever it is currently drawn. Test-facing.
+    ///
+    /// Across all three bars on purpose: which one holds a verb depends on
+    /// the send state, and a test that reached into one of them by name
+    /// could not have caught two bars going unconnected.
+    #[doc(hidden)]
+    pub fn test_press(&self, command: postio_core::CommandId) {
+        for bar in [&self.actions, &self.queued_actions, &self.stopped_actions] {
+            if bar.button(command).is_some() {
+                bar.press(command);
+                return;
+            }
+        }
+    }
+
     /// The action bar's widget, so a test can ask where it is mounted.
     #[doc(hidden)]
     pub fn actions_widget(&self) -> gtk::Widget {
@@ -1335,7 +1350,12 @@ impl Reader {
     ///
     /// [`Window::apply_keymap`]: crate::window::Window::apply_keymap
     pub fn set_keymap(&self, keymap: &postio_core::Keymap) {
+        // All three, for the reason `connect_command` gives: a bar nobody
+        // hands a keymap to draws a verb with no key on it, and these two are
+        // the ones a person meets when a send has gone wrong.
         self.actions.set_keymap(keymap);
+        self.queued_actions.set_keymap(keymap);
+        self.stopped_actions.set_keymap(keymap);
         // The notice's own cap, from the same keymap. Written down here it
         // would go on saying `C-o` after a rebind moved the key, which is the
         // drift `KeycapButton` exists to end (#1002).
@@ -1350,7 +1370,22 @@ impl Reader {
     /// whoever mounts the reader hands this straight to the same
     /// `Window::act` the list's row actions do.
     pub fn connect_command(&self, handler: impl Fn(postio_core::Command) + 'static) {
-        self.actions.connect_command(handler);
+        // **Every bar, not just the first.** There are three -- one per verb
+        // set `ReaderAction::for_send_state` can return -- and only the
+        // received-mail one was ever connected. So "Send again" on a failed
+        // send and "Cancel send" on a queued one were drawn, were clickable,
+        // and did nothing at all: no toast, no rejection, nothing, because
+        // the command was never raised for anything to reject.
+        //
+        // Reported as the button not working, and it looked like a dispatch
+        // or resolution bug all the way down -- the session resolves
+        // `RetrySend { draft: None }` from the row in view perfectly well.
+        // Nothing was ever asking it to.
+        let handler = std::rc::Rc::new(handler);
+        for bar in [&self.actions, &self.queued_actions, &self.stopped_actions] {
+            let handler = handler.clone();
+            bar.connect_command(move |command| handler(command));
+        }
     }
 
     /// Paint `terms` wherever they appear in the body.

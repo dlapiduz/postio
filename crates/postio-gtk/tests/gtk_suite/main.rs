@@ -199,6 +199,10 @@ const CASES: &[(&str, fn())] = &[
         gtk_conversation::a_row_knows_whether_the_message_is_the_users_own as fn(),
     ),
     (
+        "gtk_reader_actions::every_send_state_verb_reaches_the_bus",
+        gtk_reader_actions::every_send_state_verb_reaches_the_bus as fn(),
+    ),
+    (
         "gtk_reader_styles::a_body_that_has_not_arrived_says_so_in_the_thread",
         gtk_reader_styles::a_body_that_has_not_arrived_says_so_in_the_thread as fn(),
     ),

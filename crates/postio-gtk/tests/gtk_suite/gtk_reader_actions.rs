@@ -172,3 +172,49 @@ pub fn the_action_bar_follows_the_pane_carries_the_keymap_and_runs_registry_comm
     }
     assert_eq!(seen.borrow().len(), 4);
 }
+
+/// Every verb the reader draws has to reach the bus, not just the common ones.
+///
+/// The reader keeps one action bar per verb set `for_send_state` can return,
+/// and `connect_command` wired only the first. So a failed send drew "Send
+/// again", and a queued one drew "Cancel send", and both did nothing at all
+/// when clicked -- no toast, no rejection, because no command was ever
+/// raised. Reported from a real session after a send failed.
+///
+/// Driven through `test_press`, which finds the verb in whichever bar holds
+/// it: naming a bar would reproduce the original mistake in the test.
+pub fn every_send_state_verb_reaches_the_bus() {
+    if adw::init().is_err() || gtk::gdk::Display::default().is_none() {
+        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
+        return;
+    }
+
+    let reader = postio_gtk::reader::Reader::new(std::rc::Rc::new(|_id: &str| None));
+    let raised = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+    reader.connect_command({
+        let raised = raised.clone();
+        move |command| raised.borrow_mut().push(command.id())
+    });
+
+    for (state, verb) in [
+        (
+            postio_model::DraftState::Failed,
+            postio_core::CommandId::RetrySend,
+        ),
+        (
+            postio_model::DraftState::Queued,
+            postio_core::CommandId::CancelSend,
+        ),
+    ] {
+        raised.borrow_mut().clear();
+        reader.set_send_state(Some(state));
+        reader.test_press(verb);
+        crate::settle();
+        assert_eq!(
+            raised.borrow().as_slice(),
+            &[verb],
+            "the verb offered for {state:?} was drawn and clicked and raised \
+             nothing; its bar is not connected"
+        );
+    }
+}
