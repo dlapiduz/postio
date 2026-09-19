@@ -29,6 +29,21 @@
 //! query matching one message, for one matching 2,500, and for a page four
 //! times wider.
 //!
+//! # It costs ~55s and stays on the merge path anyway
+//!
+//! Worth saying, because it is the slowest thing in this crate's suite and
+//! the obvious reaction is to move it to the nightly tier beside
+//! `total_hits_cap` (2026-09-19, when the landing gate gained a four-minute
+//! budget and this was 53% of a 103s run).
+//!
+//! Do not. `total_hits_cap` is expensive for its *fixture* and asserts
+//! something a nightly can catch a day later. This is the gate `CLAUDE.md`
+//! asks for by name on a read path — the cause of a budget, counted — and the
+//! change it exists to catch is one that returns byte-identical results and
+//! passes everything else. A day is a long time to be shipping a search that
+//! got slower with the size of the mailbox, and the cost is the 2,500
+//! messages it needs to prove the count is flat, which is the test.
+//!
 //! `header:` is measured separately and against itself, because it is the one
 //! operator that is not an FTS `MATCH`: ADR 0025 Q2 compiles it to a
 //! correlated `EXISTS` over `message_headers`, which is a different *plan*

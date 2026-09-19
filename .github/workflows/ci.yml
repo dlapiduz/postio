@@ -36,6 +36,9 @@ on:
 # repository default grants, which may be read/write. #145.
 permissions:
   contents: read
+  # The `nightly` job below reads the last scheduled run's conclusion. Read
+  # only, and the narrowest grant that can answer the question.
+  actions: read
 
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
@@ -311,6 +314,97 @@ jobs:
           fi
           echo "ok: no workflow opts into the live-server tests."
 
+  nightly:
+    name: Nightly is green
+    runs-on: ubuntu-latest
+    steps:
+      # **A red nightly blocks every merge until it is fixed.**
+      #
+      # The pull-request gate is the sanity tier now, and the integration
+      # suites moved to `nightly.yml` and the release. That trade is only
+      # honest if a failing nightly is something the project has to *act* on,
+      # rather than a mail nobody reads: without this, the first anyone would
+      # hear of a broken join is the next release, and by then a week of
+      # branches have landed on top of it.
+      #
+      # So this asks GitHub what the last completed Nightly run concluded and
+      # fails if it was a failure. Every pull request then carries a red check
+      # naming the run, and the ruleset does the rest.
+      #
+      # **The way out is to fix it and re-run the nightly**, not to merge
+      # around it -- `gh workflow run Nightly` once the fix is on main, or the
+      # "Re-run all jobs" button on the run itself. There is deliberately no
+      # override input on this job: an input is the thing that gets used at
+      # 6pm on a Friday and then lives for a month.
+      #
+      # # The deadlock, and the one door left open for it
+      #
+      # Read that sequence again: the fix has to be *on main* before a nightly
+      # can go green, and this check blocks merging while it is red. Once this
+      # job is a required check, the pull request that fixes a broken nightly
+      # is therefore blocked by the thing it fixes.
+      #
+      # That is a deadlock and it needs a door, so the door is at the ruleset
+      # rather than here: a repository admin bypassing "main branch rules" for
+      # that one merge. It is deliberately the least convenient option that
+      # works -- it cannot be done by a workflow input, it cannot be done by
+      # re-running anything, and GitHub records who did it. An escape nobody
+      # can reach is how a gate gets deleted six weeks later; an escape in a
+      # YAML input is how it gets used every week.
+      #
+      # If the ruleset has no bypass actor at all (it had none when this was
+      # written), add one before making this check required, or the first red
+      # nightly stops the project.
+      #
+      # Three states are *not* failures, and each for its own reason:
+      #   * never run -- a fresh fork, or the workflow was just added;
+      #   * in progress -- judging a run before it finishes is a coin toss;
+      #   * cancelled or skipped -- a runner outage is not a broken join.
+      - name: Ask what the last Nightly concluded
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          last=$(gh api \
+            "repos/${GITHUB_REPOSITORY}/actions/workflows/nightly.yml/runs?status=completed&per_page=1" \
+            --jq '.workflow_runs[0] | "\(.conclusion)\t\(.html_url)\t\(.created_at)"' 2>/dev/null || true)
+
+          if [ -z "$last" ] || [ "$last" = "null" ]; then
+            echo "No completed Nightly run to judge — nothing to block on."
+            exit 0
+          fi
+
+          conclusion=$(printf '%s' "$last" | cut -f1)
+          url=$(printf '%s' "$last" | cut -f2)
+          when=$(printf '%s' "$last" | cut -f3)
+          echo "Last Nightly: $conclusion ($when)"
+          echo "  $url"
+
+          case "$conclusion" in
+            success)
+              exit 0
+              ;;
+            cancelled|skipped)
+              echo "Not a failure — a run that did not finish says nothing about the tree."
+              exit 0
+              ;;
+            *)
+              echo
+              echo "::error::The last Nightly run failed, so merging is blocked until it is fixed."
+              echo "The pull-request gate is the sanity tier; the integration suites that"
+              echo "catch layers which each pass and were never joined up run in that"
+              echo "nightly. A red one means nothing is checking them."
+              echo
+              echo "  $url"
+              echo
+              echo "Fix it, land the fix, then re-run the nightly:"
+              echo "  gh workflow run Nightly"
+              echo
+              echo "Do not merge around this. There is no override, deliberately."
+              exit 1
+              ;;
+          esac
+
   docs:
     name: Docs site build
     runs-on: ubuntu-latest
@@ -583,12 +677,35 @@ jobs:
       # so together they were ~13 of this job's ~15 minutes. Apart, a WebKit
       # flake re-runs one job rather than the whole workspace, and the engine
       # crates report in a few minutes.
-      - name: cargo nextest run
+      # **The sanity tier, not the whole workspace** (2026-09-19).
+      #
+      # A pull request now runs the same gate a landing does: the workspace's
+      # unit tests, plus the integration suites of the crates whose *tests
+      # enumerate a vocabulary* -- the golden binding tables, `[keys]`,
+      # `docs/keybindings.md`, `docs/config.md`. Those are the ones neither
+      # `--lib` nor `cargo check --all-targets` can fail for, which is the
+      # whole argument in `scripts/full-suite-crates.sh`.
+      #
+      # The rest of the integration suites run on the nightly timer and again
+      # as the release gate. That is a deliberate trade and it is not free:
+      # this project's characteristic bug is layers that each pass and were
+      # never joined up, and those are exactly what a unit tier cannot see.
+      # What keeps the window to a day rather than a release is `nightly.yml`,
+      # and what stops a red nightly being ignored is the `nightly` job below,
+      # which refuses to go green while the last run was a failure.
+      - name: cargo nextest run (sanity tier)
         env:
           POSTIO_TEST_PATIENCE: "3"
         run: >-
-          dbus-run-session -- cargo nextest run --workspace --profile ci
+          dbus-run-session -- cargo nextest run --workspace --profile ci --lib
           -E 'not (package(postio-gtk) + package(postio-app))'
+
+      - name: cargo nextest run (the suites a vocabulary change breaks)
+        env:
+          POSTIO_TEST_PATIENCE: "3"
+        run: >-
+          dbus-run-session -- cargo nextest run --profile ci
+          -p postio-core -p postio-config
 
       # **nextest does not run doctests**, and does not say so. They are
       # compiled and run by rustdoc, not by a test binary it can list, so this

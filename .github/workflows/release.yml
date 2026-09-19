@@ -19,8 +19,65 @@ env:
   MANIFEST: flatpak/dev.postio.Postio.json
 
 jobs:
+  # **The full suite, and nothing ships without it** (2026-09-19).
+  #
+  # This workflow used to build and publish without running a test at all --
+  # CLAUDE.md said so in as many words, and the answer was "a release needs a
+  # local full-suite run first", which is a rule that lives in a person's
+  # memory and fails the day they are in a hurry.
+  #
+  # It matters more now than it did. The pull-request gate is the sanity tier,
+  # so the integration suites that catch layers which each pass and were never
+  # joined up run on the nightly timer and here. A tag is the last point at
+  # which finding one is cheaper than shipping it.
+  #
+  # `--profile nightly` for the same reason that profile exists: its
+  # `default-filter` is `all()`, so the measurement tier runs too. A release
+  # is the one job with no one waiting on it and therefore the least excuse
+  # for running less than everything.
+  suite:
+    name: Full suite
+    runs-on: ubuntu-26.04
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: ./.github/actions/rust-workspace
+
+      - name: Give the GTK suites a runtime directory
+        run: |
+          runtime="${RUNNER_TEMP:-/tmp}/xdg"
+          mkdir -p "$runtime" && chmod 700 "$runtime"
+          echo "XDG_RUNTIME_DIR=$runtime" >> "$GITHUB_ENV"
+
+      # Keyed on the script rather than a version repeated here, as `ci.yml`
+      # and `nightly.yml` both do it: the key changes when the pin does and
+      # cannot go stale against it.
+      - name: Cache cargo-nextest
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ~/.cargo/bin/cargo-nextest
+          key: ${{ runner.os }}-cargo-nextest-${{ hashFiles('scripts/install-nextest.sh') }}
+
+      - name: Install cargo-nextest
+        run: scripts/install-nextest.sh
+
+      - name: cargo nextest run --profile nightly
+        env:
+          POSTIO_TEST_PATIENCE: "3"
+        run: dbus-run-session -- cargo nextest run --workspace --profile nightly
+
+      # nextest does not run doctests and does not say so. Asked for by name
+      # here for the same reason `nightly.yml` asks for them.
+      - name: cargo test --doc
+        env:
+          POSTIO_TEST_PATIENCE: "3"
+        run: dbus-run-session -- cargo test --workspace --doc
+
   flatpak:
     name: Flatpak bundle
+    # Nothing is built, signed, attested or published until the suite above
+    # is green. The bundle is the artifact people install; it is the wrong
+    # thing to produce optimistically.
+    needs: suite
     runs-on: ubuntu-26.04
     steps:
       # Full history, not the default single commit: bumping the version

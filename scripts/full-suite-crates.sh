@@ -54,6 +54,29 @@ set -euo pipefail
 # Crates whose integration suites are minutes rather than seconds. See above
 # for the measurements and for why this list -- and not its inverse -- is the
 # one that is maintained.
+# Measured warm on the development workstation, 2026-09-19, after the landing
+# gate gained a four-minute budget:
+#
+#   postio-index    57s   kept -- 55s of it is `search_statement_budget`, the
+#                         counting gate CLAUDE.md asks for on a read path; its
+#                         own doc says why it is not moved
+#   postio-core     48s   kept -- the golden binding tables are the reason this
+#                         list exists at all
+#   postio-sync     32s   kept
+#   postio-config   22s   kept -- `[keys]`, `docs/config.md`
+#   postio-session  14s   kept
+#   postio-ffi       7s   kept (an earlier 143s reading was compile, not tests)
+#
+# Nothing new joined the list from that pass. What was actually wrong was one
+# test: `postio-index`'s `total_hits_cap` bulk-loaded `TOTAL_HITS_CAP + 50`
+# messages one at a time and cost 208s, which is a slow *test*, not a slow
+# crate, and belongs in `.config/nextest.toml`'s tier rather than here.
+#
+# **Reach for that tier first.** A crate on this list loses its integration
+# coverage on the merge path entirely; a test in the measurement tier loses
+# only itself. `issue-land.sh` prints the chain's total against the budget on
+# every landing, and names the worst phases when it is over — that is what
+# this list should be updated from, rather than from an impression.
 SLOW="postio-app postio-gtk postio-runtime postio-storage"
 
 if [ "${1:-}" = "--slow" ]; then
