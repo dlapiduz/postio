@@ -63,6 +63,50 @@ pub struct Logging {
     pinned: bool,
 }
 
+/// Send panics through `tracing` as well as to stderr.
+///
+/// Everything else Postio says goes through `tracing`, which means stderr
+/// *and* journald when the socket is there. A panic did not: the default hook
+/// writes to stderr and nothing else, and a windowed application's stderr
+/// generally goes nowhere anybody will look afterwards.
+///
+/// That gap is most of what #1541 cost. A panic raised inside a GTK signal
+/// handler cannot unwind out of the `extern "C"` trampoline, so it is
+/// converted to `panic_cannot_unwind` and the process aborts — and an abort
+/// with no message attached is indistinguishable, from outside, from memory
+/// corruption. The one live crash this project has recorded was read as a
+/// heap bug near the store writer for six days on exactly that evidence,
+/// while the panic's own message and location, which would have named it in
+/// one line, had already been thrown away.
+///
+/// Chained rather than replacing: the previous hook still runs, so stderr
+/// keeps the standard message and `RUST_BACKTRACE` keeps working. Nothing
+/// here is newly exposed — the default hook already printed the payload; the
+/// difference is only that it now lands somewhere durable.
+///
+/// Idempotent, because chaining a hook onto itself once per caller would
+/// leave a process logging the same panic as many times as it had started
+/// logging.
+pub fn report_panics() {
+    static INSTALLED: std::sync::Once = std::sync::Once::new();
+    INSTALLED.call_once(|| {
+        let previous = std::panic::take_hook();
+        std::panic::set_hook(Box::new(move |info| {
+            let at = info.location().map_or_else(
+                || "an unknown location".to_owned(),
+                |location| location.to_string(),
+            );
+            // A non-string payload is possible (`panic_any`) and says nothing
+            // useful, but the location still does, so it is still reported.
+            let said = info
+                .payload_as_str()
+                .unwrap_or("a panic payload that is not a string");
+            tracing::error!(at = %at, "panicked: {said}");
+            previous(info);
+        }));
+    });
+}
+
 /// Start logging, and return the handle that can turn it up later.
 ///
 /// Best effort: a subscriber that will not install costs the log and nothing
@@ -102,6 +146,10 @@ pub fn init(config: &LoggingConfig) -> Logging {
     let bridged = bridge_log_records();
     let installed = Registry::default().with(filter).with(stderr).with(journald);
     let _ = tracing::subscriber::set_global_default(installed);
+
+    // After the subscriber, so a panic between the two is not reported into a
+    // void. See [`report_panics`] for what a panic with nowhere to go cost.
+    report_panics();
 
     // Said after the subscriber exists, or nobody would hear it.
     if !bridged {
@@ -586,6 +634,41 @@ mod tests {
         assert!(
             out.contains("something actually broke"),
             "quieted is not silenced — the codec can still report a real error: {out}"
+        );
+    }
+
+    #[test]
+    fn a_panic_is_reported_where_the_rest_of_the_diagnostics_go() {
+        // #1541. A panic inside a GTK signal handler cannot unwind out of the
+        // `extern "C"` trampoline, so it becomes `panic_cannot_unwind` and the
+        // process aborts. The only recorded live crash this project has is
+        // exactly that, and it cost six days as a suspected heap corruption
+        // because the one thing that would have named it — the panic message —
+        // went to a windowed application's stderr and was gone. Everything
+        // else the app says goes through `tracing`, and so reaches journald;
+        // the panic was the one diagnostic that did not.
+        let captured = Captured::default();
+        let subscriber = tracing_subscriber::fmt()
+            .with_env_filter(EnvFilter::new("error"))
+            .with_writer(captured.clone())
+            .finish();
+
+        tracing::subscriber::with_default(subscriber, || {
+            report_panics();
+            // Caught, so this test does not take the binary down with it. The
+            // hook runs either way — that is what is being asserted.
+            let outcome = std::panic::catch_unwind(|| panic!("the onboarding button gave way"));
+            assert!(outcome.is_err(), "the panic still propagates to the caller");
+        });
+
+        let out = captured.text();
+        assert!(
+            out.contains("the onboarding button gave way"),
+            "the panic's own message is the whole point of logging it: {out}"
+        );
+        assert!(
+            out.contains("logging.rs"),
+            "without the location a logged panic says no more than the abort did: {out}"
         );
     }
 
