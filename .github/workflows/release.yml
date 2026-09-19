@@ -67,10 +67,17 @@ jobs:
       - name: Install cargo-nextest
         run: scripts/install-nextest.sh
 
-      - name: cargo nextest run --profile ci-full
+      # Through the flake-retry script, not a bare nextest run. A release
+      # does not ship on a test that only failed because this runner was
+      # busy, and it does not *fail to ship* on one either: a target that
+      # fails once is retried alone before it is allowed to block anything,
+      # and one that fails twice still blocks. Cutting v0.2.0 by hand hit
+      # exactly that twice, and this repository's GTK editor cases still
+      # flake on a shared runner often enough to matter.
+      - name: Run the release gate
         env:
           POSTIO_TEST_PATIENCE: "3"
-        run: dbus-run-session -- cargo nextest run --workspace --profile ci-full
+        run: dbus-run-session -- scripts/test-with-flake-retry.sh ci-full
 
       # nextest does not run doctests and does not say so. Asked for by name
       # here for the same reason `nightly.yml` asks for them.
@@ -159,27 +166,26 @@ jobs:
         if: github.ref_type == 'tag'
         run: cargo check --workspace --all-targets
 
-      # Same reasoning and the same mechanism as ci.yml's `test` job: no
-      # display means the GTK suites skip themselves and report a false
-      # green, so the release gate gets the real compositor, not a weaker
-      # substitute. See that job's comments for the "why" in full.
-      - name: Give the GTK suites a runtime directory
+      # No GTK suite runs in this job any more -- the gate moved to `suite`,
+      # which sets this up for itself. Kept because `flatpak --user` below
+      # wants a runtime directory too, and a release is the wrong place to
+      # find out which of the two needed it.
+      - name: Give flatpak a runtime directory
         if: github.ref_type == 'tag'
         run: |
           runtime="${RUNNER_TEMP:-/tmp}/xdg"
           mkdir -p "$runtime" && chmod 700 "$runtime"
           echo "XDG_RUNTIME_DIR=$runtime" >> "$GITHUB_ENV"
 
-      # A release does not ship on a test that only failed because this
-      # runner was busy. See scripts/test-with-flake-retry.sh -- a target
-      # that fails once is retried alone before it is allowed to block
-      # anything; one that fails twice still blocks the release.
-      - name: Run the release gate
-        if: github.ref_type == 'tag'
-        env:
-          POSTIO_TEST_PATIENCE: "3"
-        run: dbus-run-session -- scripts/test-with-flake-retry.sh
-
+      # The release gate used to run here as well as in `suite` above, which
+      # meant the whole workspace twice per release -- about forty minutes,
+      # for one answer. `suite` is the one that runs now: it gates the same
+      # way (`flatpak` `needs` it, so nothing is built, signed, attested or
+      # published until it is green), it covers strictly more (the
+      # measurement tier), and since it goes through the same flake-retry
+      # script it is no more likely to stop a release on noise. What is left
+      # here is the half that genuinely belongs after the bump: proving the
+      # bumped tree still compiles and still satisfies the invariants.
       - name: Run repository invariant checks
         if: github.ref_type == 'tag'
         run: bash scripts/check.sh
