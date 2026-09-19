@@ -223,6 +223,21 @@ fail-fast = false
 #
 # The rule, since this keeps happening: a timeout sized from a local run
 # needs a CI measurement before it is trusted, not a multiplier.
+#
+# 1200s was wrong too -- the nightly of 2026-09-19 terminated it at 1200.042s,
+# the fourth timeout in a row sized this way. There is no fifth number here,
+# because the fault was never the number. `cache_pressure` asserts that a
+# larger page cache is *measurably faster*, and CLAUDE.md is explicit that
+# this project does not ask a shared runner to defend a stopwatch -- it is the
+# reason `bench.yml` compiles the bench targets and times nothing. So
+# `nightly.yml` no longer runs this binary, and the comment there says why at
+# length. The timeout below is now what a *workstation* run gets, which is the
+# only place the test's numbers mean anything:
+#
+#     cargo nextest run --profile nightly -E 'binary(cache_pressure)'
+#
+# It stays generous because this box is often compiling four branches at once
+# while it runs.
 [[profile.nightly.overrides]]
 filter = 'binary(cache_pressure)'
 slow-timeout = { period = "120s", terminate-after = 10 }
