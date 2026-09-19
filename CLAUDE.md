@@ -511,8 +511,9 @@ rather than the only proof. If either is ever red: pull `ready` from open
 issues, fix on a branch, land it, restore the labels. A release runs the
 full suite itself now: `release.yml`'s `flatpak` job `needs: suite`, so
 nothing is built, signed, attested or published until the whole workspace
-passes under `--profile nightly`. It used to ship without running a test at
-all, on a rule that lived in somebody's memory.
+passes under `--profile ci-full` — everything the nightly runs, through
+`scripts/test-with-flake-retry.sh`, so a busy runner cannot block a release
+on noise and a target that fails twice still can.
 
 ## Skills and design authorities
 

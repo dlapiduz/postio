@@ -328,7 +328,7 @@ jobs:
       # would sit in a mail while a week of branches landed on top of it.
       # If that job is ever removed, this trade has to be reversed with it.
       #
-      # `--profile nightly` is what makes it more than a second reading. Its
+      # `--profile ci-full` is what makes it more than a second reading. Its
       # `default-filter` is `all()`, so it runs the eight measurement files
       # that `profile.default` holds off the merge path (#1450) -- six of which
       # were `#[ignore]`d for a tier that did not exist and had therefore never

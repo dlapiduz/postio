@@ -26,15 +26,25 @@
 #
 # A test that fails in isolation too is not a flake, and fails the run.
 #
-# Usage: scripts/test-with-flake-retry.sh
+# Usage: scripts/test-with-flake-retry.sh [profile]
+#
+# The profile defaults to `ci`, which is what a merge-path run wants. The
+# release gate asks for `ci-full`: the same tests plus the measurement tier,
+# minus the one measurement a shared runner cannot defend
+# (`.config/nextest.toml` says which, and why). An isolated retry uses
+# whatever profile the run used -- otherwise "it passed alone" would be
+# evidence about a different question than the one that failed.
+#
 # Exit status: 0 if the suite passed, or every failure was confirmed a
 # flake by an isolated rerun. 1 if any test failed twice.
 set -uo pipefail
 
+PROFILE="${1:-ci}"
+
 LOG="$(mktemp)"
 trap 'rm -f "$LOG"' EXIT
 
-cargo nextest run --workspace --profile ci --no-fail-fast 2>&1 | tee "$LOG"
+cargo nextest run --workspace --profile "$PROFILE" --no-fail-fast 2>&1 | tee "$LOG"
 STATUS="${PIPESTATUS[0]}"
 
 if [ "$STATUS" -eq 0 ]; then
@@ -75,7 +85,7 @@ for spec in "${FAILURES[@]}"; do
     binary_id="${spec%% *}"
     test_name="${spec#* }"
     echo "release gate: retrying isolated: $spec" >&2
-    if cargo nextest run --profile ci -E "binary_id($binary_id) & test(=$test_name)"; then
+    if cargo nextest run --profile "$PROFILE" -E "binary_id($binary_id) & test(=$test_name)"; then
         echo "release gate: confirmed a flake: $spec" >&2
     else
         echo "release gate: failed again in isolation, not a flake: $spec" >&2
