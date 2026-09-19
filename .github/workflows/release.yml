@@ -120,10 +120,11 @@ jobs:
       # already checked out, unbumped.
       #
       # This has to be the same job the Flatpak build runs in, not a job of
-      # its own: the bump below lands as a commit to `main`, and the build
-      # further down needs to see that commit's Cargo.toml without a second
-      # checkout, which is the only way the bundle it produces and the
-      # version it claims to be never disagree.
+      # its own: the bump below edits the working tree, and the build further
+      # down is what reads those files. Splitting them would need the edits
+      # carried across a job boundary, and the bundle agreeing with the
+      # version it claims to be rests on there being exactly one copy of
+      # them.
       - uses: ./.github/actions/rust-workspace
         if: github.ref_type == 'tag'
 
@@ -190,32 +191,31 @@ jobs:
         if: github.ref_type == 'tag'
         run: bash scripts/check.sh
 
-      # `main` moves while this job runs -- it did, three times, cutting
-      # v0.2.0 by hand. A push rejected as non-fast-forward means exactly
-      # that; the fix is to rebase the one bump commit onto wherever `main`
-      # ended up and try again, not to fail a release over an ordinary
-      # landing that happened at the wrong moment.
-      - name: Commit and push the version bump
-        if: github.ref_type == 'tag'
-        run: |
-          VERSION="${GITHUB_REF_NAME#v}"
-          git config user.name "postio-release-bot"
-          git config user.email "release-bot@users.noreply.github.com"
-          git add Cargo.toml Cargo.lock crates/*/Cargo.toml \
-            crates/postio-gtk/data/dev.postio.Postio.metainfo.xml
-          git commit -m "chore(release): bump workspace to ${VERSION}"
-
-          for attempt in 1 2 3 4 5; do
-            if git push origin HEAD:main; then
-              exit 0
-            fi
-            echo "push rejected -- main moved, rebasing and retrying ($attempt/5)" >&2
-            git fetch origin main
-            git rebase origin/main
-          done
-          echo "::error::could not push the version bump after 5 attempts" >&2
-          exit 1
-
+      # The bump is not committed and not pushed. It used to be pushed
+      # straight to `main`, and that could never have worked: the ruleset
+      # requires seven status checks on `main`, a direct push has no pull
+      # request and therefore no checks, and there is no bypass actor. v0.4.0
+      # is where this was finally found, because it is the first tag whose
+      # release gate went green -- v0.2.0 and v0.3.0 both died earlier and
+      # never reached the push. GitHub refused it with
+      #
+      #     GH013: ... 7 of 7 required status checks are expected
+      #
+      # five times, because the retry loop read every rejection as "main
+      # moved" and rebased against an error that rebasing cannot fix.
+      #
+      # Nothing needed the commit. `flatpak/dev.postio.Postio.json` builds the
+      # `postio` module from a `"type": "dir"` source pointing at the checkout,
+      # so the bundle is built from the working tree that `release-bump.py`
+      # has already edited -- the bundle and the version it claims agree
+      # because they come from the same files, not because a commit exists.
+      #
+      # So `main`'s Cargo.toml keeps saying whatever it said. That is the
+      # status quo made deliberate rather than a regression: it is already
+      # true after v0.3.0, and the tag is the real record of what was
+      # released. The alternative was letting an automated job push past the
+      # branch's own rules, which is a bigger thing to give up than a version
+      # string that nothing reads (maintainer, 2026-09-19).
       - name: Install flatpak
         run: |
           sudo apt-get update
