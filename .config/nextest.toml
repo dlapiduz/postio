@@ -128,19 +128,19 @@ test-group = 'webkit'
 filter = 'package(postio-app)'
 retries = 2
 
-# `total_hits_stops_counting_at_the_cap` builds TOTAL_HITS_CAP + 50 = 10,050
-# messages through the real repository, and on this engine every insert pays
-# the fts index per document (the arithmetic is in
-# `docs/notes/2026-09-13-what-the-engine-swap-could-not-keep.md`): 139s and
-# 288s on two idle runs of this workstation -- honest work with tantivy-merge
-# variance, not a wedge -- and the 60s x 4 backstop above terminated it at
-# 240s the first time the gate chain ran it beside other suites. 480s is the
-# nightly profile's ratio (~1.7x the worst measured run) applied here.
-# Making the bulk fixture cheap on this engine is noted as follow-up in
+# `total_hits_stops_counting_at_the_cap` used to need a longer clock here,
+# and does not any more: it moved to `total_hits_cap::` and into the
+# measurement tier above, so `profile.default` never selects it and an
+# override in this profile could not fire if it wanted to. The clock it needs
+# is `profile.nightly`'s, which is already longer than the 480s this granted.
+#
+# The override is deleted rather than repointed, because a filter naming a
+# test that cannot run under the profile it is written for is worse than no
+# filter: it reads as protection and is not. The cost it was sized against is
+# still real -- 139s and 288s on two idle runs of this workstation, 10,050
+# messages inserted one at a time -- and making that fixture cheap is still
+# the follow-up noted in
 # `2026-09-13-what-the-frontend-audit-found-and-what-remains.md`.
-[[profile.default.overrides]]
-filter = 'package(postio-index) & test(=executor::total_hits_stops_counting_at_the_cap)'
-slow-timeout = { period = "120s", terminate-after = 4 }
 
 # CI wants the same thresholds but a machine-readable trail of what flaked.
 [profile.ci]
@@ -203,3 +203,26 @@ slow-timeout = { period = "60s", terminate-after = 8 }
 slow-timeout = { period = "120s", terminate-after = 6 }
 default-filter = 'all()'
 fail-fast = false
+
+# `cache_pressure` outgrew even that, on the runner rather than here.
+#
+# The 720s above was sized as "~1.8x the measured cost" of a 393s run on this
+# workstation, idle, and explicitly "leaves room for a CI runner being slower
+# than this box". It does not: the nightly of 2026-09-19 terminated it at
+# 720.035s, which is the third time a timeout on this project was sized
+# against this machine and found wanting on a shared one. (The other two the
+# same week: `profile.ci`'s backstop killing a GTK case whose own harness was
+# still waiting, and the 240s that killed this very test on 2026-09-12.)
+#
+# 1200s is ~3x the local measurement rather than 1.8x. The test seeds 400,000
+# messages and then reads against a cache deliberately too small for them, so
+# it is I/O-bound in exactly the way a shared runner is worst at, and the
+# ratio that holds on an idle workstation is the wrong one to extrapolate
+# from. A genuine wedge still ends: GitHub's own job timeout is the ceiling
+# behind this one.
+#
+# The rule, since this keeps happening: a timeout sized from a local run
+# needs a CI measurement before it is trusted, not a multiplier.
+[[profile.nightly.overrides]]
+filter = 'binary(cache_pressure)'
+slow-timeout = { period = "120s", terminate-after = 10 }
