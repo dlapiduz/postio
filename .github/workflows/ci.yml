@@ -314,53 +314,47 @@ jobs:
           fi
           echo "ok: no workflow opts into the live-server tests."
 
-  nightly:
-    name: Nightly is green
+  # Three jobs, because the question has two halves and one answer.
+  #
+  # `nightly-status` asks what the last completed run concluded and never
+  # fails. `nightly-rerun` runs the nightly *here*, on this pull request, but
+  # only when that answer was red. `nightly` is the check the ruleset requires
+  # and is green if either half says so.
+  #
+  # # Why a pull request re-runs it at all
+  #
+  # The first version of this just failed while the last nightly was red, and
+  # that is a deadlock rather than a gate: the fix has to be on `main` before
+  # a nightly can go green, and the check blocks it getting there. The escape
+  # was going to be a repository admin bypassing the ruleset, which is a
+  # judgement call made by whoever is around at the time.
+  #
+  # Proving it instead is better on every count. It needs no bypass actor, so
+  # branch protection is never weakened for a routine event. It tests *this
+  # change* rather than yesterday's `main`, which is the stronger claim. And
+  # it is earned rather than granted -- any pull request that fixes the
+  # nightly clears the block, not only one somebody designated.
+  #
+  # The cost is real and is the point: while the nightly is red every pull
+  # request pays for the full suite and the coverage floors, so the run goes
+  # from about four minutes to about twenty-five. A broken nightly is supposed
+  # to be uncomfortable until somebody fixes it.
+  nightly-status:
+    name: Last nightly
     runs-on: ubuntu-latest
+    outputs:
+      green: ${{ steps.ask.outputs.green }}
     steps:
-      # **A red nightly blocks every merge until it is fixed.**
+      # Never fails. Its job is to answer, and `nightly` below is what turns
+      # the answer into a verdict -- a step that exited non-zero here would
+      # take `nightly-rerun` with it and there would be nothing to prove.
       #
-      # The pull-request gate is the sanity tier now, and the integration
-      # suites moved to `nightly.yml` and the release. That trade is only
-      # honest if a failing nightly is something the project has to *act* on,
-      # rather than a mail nobody reads: without this, the first anyone would
-      # hear of a broken join is the next release, and by then a week of
-      # branches have landed on top of it.
-      #
-      # So this asks GitHub what the last completed Nightly run concluded and
-      # fails if it was a failure. Every pull request then carries a red check
-      # naming the run, and the ruleset does the rest.
-      #
-      # **The way out is to fix it and re-run the nightly**, not to merge
-      # around it -- `gh workflow run Nightly` once the fix is on main, or the
-      # "Re-run all jobs" button on the run itself. There is deliberately no
-      # override input on this job: an input is the thing that gets used at
-      # 6pm on a Friday and then lives for a month.
-      #
-      # # The deadlock, and the one door left open for it
-      #
-      # Read that sequence again: the fix has to be *on main* before a nightly
-      # can go green, and this check blocks merging while it is red. Once this
-      # job is a required check, the pull request that fixes a broken nightly
-      # is therefore blocked by the thing it fixes.
-      #
-      # That is a deadlock and it needs a door, so the door is at the ruleset
-      # rather than here: a repository admin bypassing "main branch rules" for
-      # that one merge. It is deliberately the least convenient option that
-      # works -- it cannot be done by a workflow input, it cannot be done by
-      # re-running anything, and GitHub records who did it. An escape nobody
-      # can reach is how a gate gets deleted six weeks later; an escape in a
-      # YAML input is how it gets used every week.
-      #
-      # If the ruleset has no bypass actor at all (it had none when this was
-      # written), add one before making this check required, or the first red
-      # nightly stops the project.
-      #
-      # Three states are *not* failures, and each for its own reason:
-      #   * never run -- a fresh fork, or the workflow was just added;
-      #   * in progress -- judging a run before it finishes is a coin toss;
-      #   * cancelled or skipped -- a runner outage is not a broken join.
+      # Three states count as green, each for its own reason: never run (a
+      # fresh fork, or the workflow was just added), in progress (judging a
+      # run before it finishes is a coin toss), and cancelled or skipped (a
+      # runner outage says nothing about the tree).
       - name: Ask what the last Nightly concluded
+        id: ask
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -370,40 +364,83 @@ jobs:
             --jq '.workflow_runs[0] | "\(.conclusion)\t\(.html_url)\t\(.created_at)"' 2>/dev/null || true)
 
           if [ -z "$last" ] || [ "$last" = "null" ]; then
-            echo "No completed Nightly run to judge — nothing to block on."
+            echo "No completed Nightly to judge."
+            echo "green=true" >> "$GITHUB_OUTPUT"
             exit 0
           fi
 
           conclusion=$(printf '%s' "$last" | cut -f1)
           url=$(printf '%s' "$last" | cut -f2)
           when=$(printf '%s' "$last" | cut -f3)
+          # Any completed run counts, scheduled or dispatched -- `gh workflow
+          # run Nightly` after landing a fix is a documented way to clear this,
+          # and filtering to `event=schedule` would silently ignore it. A
+          # `workflow_call` from the job below does not appear here at all:
+          # a reused workflow's jobs belong to the caller's run.
           echo "Last Nightly: $conclusion ($when)"
           echo "  $url"
+          echo "url=$url" >> "$GITHUB_OUTPUT"
 
           case "$conclusion" in
-            success)
-              exit 0
-              ;;
-            cancelled|skipped)
-              echo "Not a failure — a run that did not finish says nothing about the tree."
-              exit 0
+            success|cancelled|skipped)
+              echo "green=true" >> "$GITHUB_OUTPUT"
               ;;
             *)
-              echo
-              echo "::error::The last Nightly run failed, so merging is blocked until it is fixed."
-              echo "The pull-request gate is the sanity tier; the integration suites that"
-              echo "catch layers which each pass and were never joined up run in that"
-              echo "nightly. A red one means nothing is checking them."
-              echo
-              echo "  $url"
-              echo
-              echo "Fix it, land the fix, then re-run the nightly:"
-              echo "  gh workflow run Nightly"
-              echo
-              echo "Do not merge around this. There is no override, deliberately."
-              exit 1
+              echo "green=false" >> "$GITHUB_OUTPUT"
+              echo "::warning::The last Nightly failed ($url) — running it on this pull request to see whether this change fixes it."
               ;;
           esac
+
+  # The nightly itself, on this pull request's merge commit. Skipped entirely
+  # while the last one is green, which is almost always.
+  nightly-rerun:
+    name: Nightly (re-run on this PR)
+    needs: nightly-status
+    if: needs.nightly-status.outputs.green != 'true'
+    uses: ./.github/workflows/nightly.yml
+
+  nightly:
+    name: Nightly is green
+    needs: [nightly-status, nightly-rerun]
+    # `always()`, because `nightly-rerun` is skipped on the ordinary path and a
+    # skipped dependency would otherwise skip this too -- and a skipped
+    # required check is a check that proved nothing while looking like it did.
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Decide
+        env:
+          SCHEDULED_GREEN: ${{ needs.nightly-status.outputs.green }}
+          RERUN: ${{ needs.nightly-rerun.result }}
+          URL: ${{ needs.nightly-status.outputs.url }}
+        run: |
+          set -euo pipefail
+          echo "last nightly green: ${SCHEDULED_GREEN}"
+          echo "re-run on this PR:            ${RERUN}"
+
+          if [ "${SCHEDULED_GREEN}" = "true" ]; then
+            echo "The nightly is green."
+            exit 0
+          fi
+          if [ "${RERUN}" = "success" ]; then
+            echo "The nightly is red, but it passes on this branch —"
+            echo "this change fixes it, so it is not blocked."
+            exit 0
+          fi
+
+          echo "::error::The nightly is red and still red on this branch."
+          echo
+          echo "The last run failed:"
+          echo "  ${URL}"
+          echo
+          echo "The pull-request gate is the sanity tier; the integration suites"
+          echo "that catch layers which each pass and were never joined up run in"
+          echo "that nightly. A red one means nothing is checking them."
+          echo
+          echo "This is not a deadlock: fix it on this branch and the re-run above"
+          echo "goes green, which is what clears this check. There is no override,"
+          echo "because there does not need to be one."
+          exit 1
 
   docs:
     name: Docs site build

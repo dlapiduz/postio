@@ -39,6 +39,14 @@ on:
     # jobs are not queuing for a runner at the same minute.
     - cron: "0 7 * * *"
   workflow_dispatch:
+  # Called by `ci.yml` when the last scheduled run was red, so a pull request
+  # can *prove* it fixed the nightly rather than waiting for tomorrow's.
+  #
+  # Reused rather than copied. A second definition of "what the nightly runs"
+  # living in `ci.yml` would drift from this one, and the day it did, a pull
+  # request would clear a gate by passing something narrower than the thing
+  # that was failing.
+  workflow_call:
 
 permissions:
   contents: read
