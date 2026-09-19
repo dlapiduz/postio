@@ -721,6 +721,26 @@ impl Engine {
 /// on the wire — the same bound the backfill below this loop already accepts.
 const BODIES_BETWEEN_WAVES: usize = 8;
 
+/// How long the body backfill may hold the loop before it goes back to look
+/// for new mail.
+///
+/// **Without this, a long download makes the app deaf.** The loop drains the
+/// body queue and only then reaches the branch that watches for arrivals, and
+/// on a first sync of a large archive "only then" is hours: mail delivered
+/// meanwhile is not noticed until the backfill finishes, which reads as the
+/// app being broken in the exact way a mail client cannot afford. Every guard
+/// the pump loops already carry is about work the engine has *been given* —
+/// a job, a queued operation, going offline — and none of them fires for
+/// "time has passed and nobody has looked at the inbox".
+///
+/// [`POLL_INTERVAL`], because that is already this engine's answer to "how
+/// often is it worth looking", and the slice costs almost nothing: expiring
+/// it only means *asking the watcher* whether anything is due. The watcher's
+/// own schedule decides whether a `STATUS` actually goes out, and when it has
+/// nothing to say the loop takes it straight back. So this is the latency a
+/// delivery waits, not a round-trip rate.
+const BACKFILL_SLICE: Duration = POLL_INTERVAL;
+
 const POLL_INTERVAL: Duration = Duration::from_secs(5);
 
 /// The engine's thread: a runtime and a connection of its own.
@@ -827,6 +847,10 @@ fn run(parts: EngineParts, store: Store, inbox: async_channel::Receiver<Job>, bu
                 // do.
                 handle_link_transition(&parts, &store, &mut state).await;
 
+                // When the backfill has to give the loop back so it can look
+                // for new mail. See [`BACKFILL_SLICE`].
+                let slice_ends = Instant::now() + BACKFILL_SLICE;
+
                 // A few mailboxes at a time, highest priority first, and the
                 // inbox checked between waves: a folder with forty thousand
                 // messages must not hold the engine away from a body the user
@@ -867,6 +891,7 @@ fn run(parts: EngineParts, store: Store, inbox: async_channel::Receiver<Job>, bu
                     // offline all outrank a body nobody asked for.
                     let mut fetched = 0;
                     while fetched < BODIES_BETWEEN_WAVES
+                        && Instant::now() < slice_ends
                         && nothing_asked(&inbox)
                         && state.supervisor.link().is_online()
                         && !has_queued_work(&parts, &store).await
@@ -911,7 +936,8 @@ fn run(parts: EngineParts, store: Store, inbox: async_channel::Receiver<Job>, bu
                 // want next, and a queued operation is something they have already
                 // done. Speculation must not outrank it — a first sync of a large
                 // mailbox is thousands of bodies long.
-                while nothing_asked(&inbox)
+                while Instant::now() < slice_ends
+                    && nothing_asked(&inbox)
                     && state.supervisor.link().is_online()
                     && !has_queued_work(&parts, &store).await
                     && pump_body(&parts, &store, &mut state, &inbox).await
@@ -928,13 +954,15 @@ fn run(parts: EngineParts, store: Store, inbox: async_channel::Receiver<Job>, bu
                 // or the user is doing something), and topping up then would
                 // pull an entire archive into memory that policy has just said
                 // not to fetch.
-                while nothing_asked(&inbox)
+                while Instant::now() < slice_ends
+                    && nothing_asked(&inbox)
                     && state.supervisor.link().is_online()
                     && !has_queued_work(&parts, &store).await
                     && state.backfill.is_idle()
                     && top_up_backfill(&parts, &store, &mut state).await > 0
                 {
-                    while nothing_asked(&inbox)
+                    while Instant::now() < slice_ends
+                        && nothing_asked(&inbox)
                         && state.supervisor.link().is_online()
                         && !has_queued_work(&parts, &store).await
                         && pump_body(&parts, &store, &mut state, &inbox).await
@@ -956,8 +984,16 @@ fn run(parts: EngineParts, store: Store, inbox: async_channel::Receiver<Job>, bu
                 // until reconnect. #755 is where that surfaced; the wedge
                 // itself predates the conversation pane.
                 if inbox.is_empty() && state.to_sync.is_empty() {
-                    state.busy.set("idle");
-                    keep_watch(&parts, &store, &mut state, &inbox).await;
+                    // Whether the backfill used its whole slice, which is
+                    // exactly "there is a download in progress and it wants
+                    // the loop back". A held `IDLE` would keep it waiting for
+                    // minutes, so in that case the watch takes the cheap step
+                    // instead — see `keep_watch`.
+                    let downloading = Instant::now() >= slice_ends;
+                    if !downloading {
+                        state.busy.set("idle");
+                    }
+                    keep_watch(&parts, &store, &mut state, &inbox, downloading).await;
                     // Defence in depth: `keep_watch` now runs its step to
                     // completion and always reports it, but a step that ever
                     // again vanishes unreported must not leave its mailbox
@@ -1259,6 +1295,7 @@ async fn keep_watch(
     store: &Store,
     state: &mut State,
     inbox: &async_channel::Receiver<Job>,
+    downloading: bool,
 ) {
     if !state.supervisor.link().is_online() {
         // Nothing to watch over. Wait rather than spin.
@@ -1293,9 +1330,41 @@ async fn keep_watch(
     let now = Utc::now();
     // Push first: the inbox is the one mailbox worth a connection of its
     // own, and if it has nothing due the shared connection can do a round.
+    //
+    // **Unless a download is in progress**, in which case push is the wrong
+    // shape: an `IDLE` is held for minutes and the backfill is not something
+    // `interruption` wakes for — it is not a job and not a queued operation —
+    // so pushing here would trade a long download for a longer one. A
+    // `STATUS` is one round trip and answers the only question that matters
+    // while the loop is borrowed: has anything arrived. And if nothing is
+    // even due, say so at once and give the loop straight back, rather than
+    // sleeping on a watcher that has nothing to tell us.
     let step = match watcher.next_push(now) {
         Watch::Wait { .. } => watcher.next_poll(now),
         step => step,
+    };
+    // **A download is in progress: check the same mailbox, cheaply.**
+    //
+    // The first version of this skipped `next_push` while downloading and
+    // asked `next_poll` instead, which looks equivalent and is not:
+    // `next_poll` deliberately never offers the pushed mailbox, because that
+    // one belongs to `next_push`. The inbox *is* the pushed mailbox, so the
+    // effect was that a download stopped the inbox being watched at all —
+    // worse than the problem being fixed, and exactly what
+    // `mail_that_arrives_during_a_long_download_is_still_noticed` caught.
+    //
+    // So the step is taken normally and only the *shape* of it changes. A
+    // `STATUS` is one round trip and answers the only question that matters
+    // here — has anything arrived — where an `IDLE` would hold the loop for
+    // minutes and is not something `interruption` wakes for, the backfill
+    // being neither a job nor a queued operation. `observed` is the report
+    // for a poll and already knows about the pushed mailbox: it puts it
+    // straight back to idling rather than waiting out an interval.
+    let step = match (downloading, step) {
+        (true, Watch::Idle { mailbox, path, .. }) => Watch::Poll { mailbox, path },
+        // Nothing due, and a download wants the loop back rather than a sleep.
+        (true, Watch::Wait { .. }) => return,
+        (_, step) => step,
     };
 
     // Kept before the step is consumed: matching on it moves the path out.
