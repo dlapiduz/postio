@@ -146,6 +146,36 @@ slow-timeout = { period = "120s", terminate-after = 4 }
 [profile.ci]
 fail-fast = false
 
+# **The outer watchdog has to outlast the inner one.**
+#
+# `profile.default`'s backstop is 60s x 4 = 240s, sized against this
+# workstation. CI sets `POSTIO_TEST_PATIENCE: "3"`, which triples every
+# deadline the tests set for *themselves* -- `gtk_suite`'s is
+# `scaled(120s)`, so 360s there. Those two numbers were inconsistent in the
+# one direction that does damage: nextest killed at 240s a case whose own
+# harness was still waiting until 360s, on the machine where the extra
+# patience exists precisely because it is slow.
+#
+# Seen on 2026-09-19:
+#
+#     TIMEOUT [ 241.016s] (410/653) postio-gtk::gtk_suite
+#       gtk_editor_markdown::typed_markdown_becomes_the_formatting_its_command_produces
+#
+# 652 passed, that one killed, and the report says TIMEOUT rather than
+# whatever the test would have said for itself -- which is the worse half. A
+# case killed by the outer clock tells you nothing about why it was slow.
+#
+# 60s x 8 = 480s: comfortably past the 360s a patience of 3 gives the
+# harness, and still far short of a wedge running for ever. It stays a
+# backstop for the case `profile.default`'s comment describes -- a WebKit
+# process that never answers, a compositor that went away -- because those do
+# not finish at 480s either.
+#
+# If `POSTIO_TEST_PATIENCE` is ever raised above 3 in `ci.yml`, this has to
+# move with it. The rule is the ordering, not the numbers: the harness must
+# always be allowed to fail on its own terms first.
+slow-timeout = { period = "60s", terminate-after = 8 }
+
 # Everything, measurements included. `nightly.yml`'s full-suite job runs this,
 # and it is also how you run one measurement by hand: `all()` is a filter an
 # `-E` on the command line narrows rather than fights.
