@@ -508,6 +508,30 @@ impl fmt::Debug for Job {
     }
 }
 
+/// How much stack the engine's thread and its runtime's workers get.
+///
+/// A `std::thread` spawned without this gets Rust's 2 MiB default, which is
+/// **not** the 8 MiB the kernel gives the main thread from `RLIMIT_STACK` —
+/// and the engine is the one place that difference bites, because
+/// `Engine::spawn` `block_on`s the whole sync loop on its thread rather than
+/// handing it to a runtime someone else sized. Every frame of `sync_wave` →
+/// `sync_pass` → `resync_mailbox` → the backend's `select` future stacks up
+/// there at once.
+///
+/// Measured before this existed, by sweeping `RUST_MIN_STACK` until a pass
+/// stopped fitting: the *smallest sync this project can express* — one
+/// mailbox, one message, loopback IMAP — peaked between 1024 and 1088 KiB,
+/// so it was already spending half the ceiling before a real account's
+/// mailbox tree, overlapping passes and deeper responses were anywhere near
+/// it. Three aborts in two minutes on 2026-09-17 are what ran out (#1541).
+///
+/// 8 MiB rather than "a bit more than we measured", because it costs nothing
+/// to be wrong in this direction: thread stacks are reserved address space
+/// and only the pages actually touched are ever resident. It matches the main
+/// thread, which is the least surprising answer to "how much stack does a
+/// thread have here".
+const ENGINE_STACK: usize = 8 * 1024 * 1024;
+
 impl Engine {
     /// Start the engine on a thread of its own.
     ///
@@ -523,6 +547,7 @@ impl Engine {
         // coredump that came of dropping it.
         let handle = std::thread::Builder::new()
             .name("postio-sync".to_string())
+            .stack_size(ENGINE_STACK)
             .spawn({
                 let busy = busy.clone();
                 move || run(parts, store, inbox, busy)
@@ -752,6 +777,10 @@ const POLL_INTERVAL: Duration = Duration::from_secs(5);
 fn run(parts: EngineParts, store: Store, inbox: async_channel::Receiver<Job>, busy: Busy) {
     let runtime = match tokio::runtime::Builder::new_multi_thread()
         .worker_threads(1)
+        // Same reasoning as [`ENGINE_STACK`], and needed for the same
+        // reason: a pass that `spawn`s lands on this worker rather than on
+        // the thread above, and a worker gets the 2 MiB default too.
+        .thread_stack_size(ENGINE_STACK)
         .enable_all()
         .build()
     {
