@@ -2635,3 +2635,134 @@ async fn a_body_the_batch_missed_is_fetched_and_stored_the_old_way() {
         "the body stored through a missed batch has no words in it"
     );
 }
+
+/// A prefetched batch hands each message its own sections and no others.
+///
+/// `Prefetched` holds a whole window's worth of bytes keyed by
+/// `(remote id, section)`, and `split_for` is what lifts one message's share
+/// out before its fetch runs — taken *before* the await, because the window's
+/// fetches share the cache and run concurrently, so a borrow held across one
+/// would be the second borrower's panic.
+///
+/// The consequence of getting this wrong is not a slow sync, it is one
+/// person's mail stored on another's row. Worth a test on those grounds
+/// alone; that it is also the only exercise this gets inside its own crate —
+/// the engine in `postio-runtime` is the sole caller — is the second reason.
+#[tokio::test]
+async fn a_split_takes_one_messages_sections_and_leaves_the_rest() {
+    // A real batch first, so there is something to split. Same shape as
+    // `the_text_axis_asks_for_a_set_of_messages_in_one_command`: every
+    // message's words at section `1`.
+    let mut inbox = MockMailbox::new(INBOX).uid_validity(UidValidity::new(VALIDITY));
+    for uid in 1..=3u32 {
+        inbox = inbox.message(
+            MockMessage::new(note(uid))
+                .with_internal_date(at(uid as i64))
+                .with_structure(postio_account::backend::BodyStructure::from_parts(
+                    "text/plain",
+                    [
+                        postio_account::backend::PartNode::new("1", "text/plain", 26)
+                            .with_charset("utf-8"),
+                    ],
+                ))
+                .with_part("1", format!("The body of note {uid}.\r\n").into_bytes()),
+        );
+    }
+    let backend = MockBackend::builder().mailbox(inbox).build();
+    backend.connect().await.expect("connect");
+    let local = local().await;
+    let rows = headers(&local, &backend).await;
+    let requests: Vec<_> = rows
+        .iter()
+        .map(|(id, uid)| request(&local.inbox, *id, *uid, 1_024))
+        .collect();
+
+    let mut prefetched =
+        prefetch_text_sections(&local.connection, &backend, &requests, &CancelToken::new()).await;
+    assert_eq!(
+        prefetched.len(),
+        rows.len(),
+        "the batch should hold a section for each message"
+    );
+
+    let mine = prefetched.split_for(&requests[0].remote_id);
+    assert_eq!(mine.len(), 1, "exactly this message's own section");
+    assert_eq!(
+        prefetched.len(),
+        rows.len() - 1,
+        "and it is *moved*, not copied — a second fetch must not find it \
+         still there and store it twice"
+    );
+
+    // The bytes that came out are this message's, which is the half that
+    // matters: keyed wrong, a split hands one person's mail to another's row.
+    let again = prefetched.split_for(&requests[0].remote_id);
+    assert!(
+        again.is_empty(),
+        "splitting the same message twice found something the first call left"
+    );
+    let other = prefetched.split_for(&requests[1].remote_id);
+    assert_eq!(other.len(), 1, "the other messages are untouched by either");
+}
+
+/// One message is not a batch.
+///
+/// Asking for a set of one costs a round trip to save none, so the prefetch
+/// declines rather than paying it — which also means the window's last, lone
+/// claim is never worse off for the batching existing.
+#[tokio::test]
+async fn a_single_request_is_not_worth_a_batch() {
+    let backend = server(3).await;
+    let local = local().await;
+    let rows = headers(&local, &backend).await;
+    let requests: Vec<_> = rows
+        .iter()
+        .map(|(id, uid)| request(&local.inbox, *id, *uid, 1_024))
+        .collect();
+
+    let alone = prefetch_text_sections(
+        &local.connection,
+        &backend,
+        &requests[..1],
+        &CancelToken::new(),
+    )
+    .await;
+    assert!(alone.is_empty(), "a set of one is not a set");
+    assert!(
+        backend.section_batches().is_empty(),
+        "and nothing should have gone to the server"
+    );
+}
+
+/// A message too large for the batch's budget is left on the streaming path.
+///
+/// A batch does not stream — every answer is held at once — so
+/// `PREFETCH_BUDGET` is what stops a window of large messages being pulled
+/// into memory together. A message over it is simply absent from the cache,
+/// and `fetch_body` fetches it the way it always did.
+#[tokio::test]
+async fn a_message_too_large_for_the_budget_is_not_batched() {
+    let backend = server(3).await;
+    let local = local().await;
+    let rows = headers(&local, &backend).await;
+
+    // `size` is `RFC822.SIZE` as the header sync recorded it, and the budget
+    // is measured against it before a byte is asked for. A gigabyte each is
+    // past any budget this will ever have.
+    let huge: Vec<_> = rows
+        .iter()
+        .map(|(id, uid)| request(&local.inbox, *id, *uid, 1_024 * 1_024 * 1_024))
+        .collect();
+
+    let prefetched =
+        prefetch_text_sections(&local.connection, &backend, &huge, &CancelToken::new()).await;
+
+    assert!(
+        prefetched.is_empty(),
+        "a window of gigabyte messages was batched into memory together"
+    );
+    assert!(
+        backend.section_batches().is_empty(),
+        "nothing should have been asked for at all"
+    );
+}
