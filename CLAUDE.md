@@ -490,16 +490,17 @@ obliges it to build, and the compile jobs skip themselves for docs and
 tooling (a skipped job counts as passed). Do not merge around a red check:
 a check that fails on your PR is your work to fix, on the same branch,
 however green the crates you touched were locally. **That includes the
-`Nightly is green` check**, which fails while the last nightly run did: the
-way out is to fix it, land the fix and re-run the nightly (`gh workflow run
-Nightly`). There is deliberately no override input — but note the deadlock
-that follows from it, because it is real: the fix has to be on `main` before
-a nightly can go green, so once this check is *required* the pull request
-that fixes a broken nightly is blocked by the thing it fixes. The door for
-that one case is a repository admin bypassing the ruleset for that merge,
-which GitHub records. **The ruleset has no bypass actor today**, so one has
-to be added before the check is made required, or the first red nightly stops
-the project. The gate chain proves
+`Nightly is green` check.** While the last nightly was red, every pull
+request runs the nightly itself — the same workflow, reused rather than
+copied — and the check passes if *that* goes green. So the way to clear it is
+to fix the nightly on your branch, which is the ordinary way to fix anything,
+and a pull request that does is never blocked by the thing it fixes.
+
+There is no override and no bypass actor, because neither is needed. What
+there is instead is a cost: while the nightly is red a pull request runs the
+full suite and the coverage floors, so it takes about twenty-five minutes
+rather than four. That is deliberate — a broken nightly should be
+uncomfortable until somebody fixes it — and it ends the moment one does. The gate chain proves
 the crates a branch changed; CI is the only thing that proves the
 *combination*, which is the failure two branches that are each green alone
 can produce together.
