@@ -635,6 +635,125 @@ async fn a_finished_sync_queues_the_bodies_it_just_learned_about() {
     );
 }
 
+/// #1551 again, from the other side: a long download must not make the app
+/// deaf to new mail.
+///
+/// The engine's loop drains the body queue and only *then* reaches the branch
+/// that watches for arrivals. On a first sync of a large archive "only then"
+/// is hours, so a message delivered meanwhile went unnoticed until the
+/// backfill finished — which for a mail client is the whole job not being
+/// done. Every guard the pump loops carried was about work the engine had
+/// been *given*; none of them fired for "time has passed and nobody has
+/// looked at the inbox".
+///
+/// So: a backfill with enough latency to hold the loop well past its slice,
+/// and a delivery while it runs. The message has to turn up without waiting
+/// for the download.
+#[tokio::test(flavor = "multi_thread")]
+async fn mail_that_arrives_during_a_long_download_is_still_noticed() {
+    use std::time::Duration;
+
+    let database = test_support::memory().await;
+    let account =
+        postio_storage::test_support::account(&database.connect().await.expect("a connection"))
+            .await;
+    let mailbox = {
+        let connection = database.connect().await.expect("a connection");
+        let mut mailbox = postio_model::Mailbox::new(account.id, "INBOX", Some('/'));
+        postio_storage::repository::MailboxRepository::new(&connection)
+            .create(&mut mailbox)
+            .await
+            .expect("the folder is created");
+        mailbox
+    };
+    let backend = Arc::new(server());
+    let (engine, _events, _directory) = engine_over_arc(&database, account.id, backend.clone());
+
+    engine.sync(mailbox.id).await.expect("a first sync");
+    let synced = settle(&database, mailbox.id).await;
+    assert!(synced > 0);
+
+    // A queue long enough to outlast the slice, and a slow server, so the
+    // loop is genuinely busy downloading rather than idling between checks.
+    // Without the slice this is the state the engine never leaves.
+    //
+    // The rows name uids the mock does not have, and that is deliberate: the
+    // mock charges its latency on entry, before it looks anything up, so each
+    // one costs a round trip and fails. What this test is about is the loop
+    // being *occupied*, not what it comes back with — and three real messages
+    // could never occupy it long enough to ask the question.
+    {
+        let connection = database.connect().await.expect("a connection");
+        let mut message = postio_model::Message::new(account.id, mailbox.id, chrono::Utc::now());
+        for uid in 500u32..800 {
+            message.id = postio_model::ids::MessageId::new(0);
+            message.subject = Some(format!("queued {uid}"));
+            message.server.uid = Some(postio_model::Uid::new(uid));
+            message.server.remote_id = Some(postio_model::RemoteId::new(format!("1:{uid}")));
+            message.sync.body_state = postio_model::BodyState::HeadersOnly;
+            postio_storage::repository::MessageRepository::new(&connection)
+                .create(&mut message)
+                .await
+                .expect("queue a body");
+        }
+    }
+    // Slow enough that draining the queue takes about a minute — five times
+    // the window this test allows. Without the slice, the delivery below
+    // waits out the whole thing.
+    backend.set_latency(Duration::from_millis(200));
+    engine
+        .seed_backfill(mailbox.id, 400)
+        .await
+        .expect("seeding reads the store");
+
+    // **After the fixture rows exist**, or the baseline is one this test
+    // walks straight past on its own: `stored_in` counts every row in the
+    // mailbox, and three hundred of them are ours.
+    let before = stored_in(&database, mailbox.id).await;
+
+    // Let the backfill actually get going, so what follows lands in the
+    // middle of a download rather than racing its start.
+    tokio::time::sleep(postio_test_support::scaled(Duration::from_secs(1))).await;
+    let running = engine.backfill_progress().await.expect("progress");
+    assert!(
+        running.pending > 100,
+        "the backfill drained before the test could ask its question, so a \
+         pass here would mean nothing: {running:?}"
+    );
+
+    backend
+        .append(
+            "INBOX",
+            &postio_account::backend::AppendMessage::new(arriving_message()),
+        )
+        .await
+        .expect("the server takes delivery");
+
+    let after = tokio::time::timeout(
+        postio_test_support::scaled(Duration::from_secs(15)),
+        async {
+            loop {
+                let count = stored_in(&database, mailbox.id).await;
+                if count > before {
+                    return count;
+                }
+                tokio::time::sleep(Duration::from_millis(50)).await;
+            }
+        },
+    )
+    .await
+    .expect(
+        "the delivery went unnoticed while the backfill ran — the loop never \
+         gave itself back to the watcher",
+    );
+
+    assert!(
+        after > before,
+        "the message that arrived mid-download never landed"
+    );
+    drop(engine);
+}
+
 #[tokio::test]
 async fn mail_that_arrives_while_the_app_is_open_turns_up() {
     // postio-e4n. The engine synced when the link came up and never again, so
