@@ -360,12 +360,14 @@ jobs:
       # workstation -- and stops deciding whether the tree is mergeable.
       # Nothing else is held out: the other measurement files assert on counts
       # and run here.
-      - name: cargo nextest run --profile nightly
+      #
+      # The exclusion is `profile.ci-full` rather than an `-E` here, because
+      # `release.yml`'s gate is the same run and has to hold out the same
+      # thing. Written twice it had already drifted once.
+      - name: cargo nextest run --profile ci-full
         env:
           POSTIO_TEST_PATIENCE: "3"
-        run: >-
-          dbus-run-session -- cargo nextest run --workspace --profile nightly
-          -E 'not binary(cache_pressure)'
+        run: dbus-run-session -- cargo nextest run --workspace --profile ci-full
 
       # nextest does not run doctests and does not say so, so switching this
       # job to it would have silently dropped them -- `cargo test --workspace`
