@@ -230,9 +230,9 @@ fail-fast = false
 # larger page cache is *measurably faster*, and CLAUDE.md is explicit that
 # this project does not ask a shared runner to defend a stopwatch -- it is the
 # reason `bench.yml` compiles the bench targets and times nothing. So
-# `nightly.yml` no longer runs this binary, and the comment there says why at
-# length. The timeout below is now what a *workstation* run gets, which is the
-# only place the test's numbers mean anything:
+# no shared runner runs this binary any more (see `ci-full` below), and the
+# timeout here is now what a *workstation* run gets, which is the only place
+# the test's numbers mean anything:
 #
 #     cargo nextest run --profile nightly -E 'binary(cache_pressure)'
 #
@@ -241,3 +241,27 @@ fail-fast = false
 [[profile.nightly.overrides]]
 filter = 'binary(cache_pressure)'
 slow-timeout = { period = "120s", terminate-after = 10 }
+
+# What a *shared runner* runs: the nightly profile's reach, minus the one
+# measurement that asserts on a stopwatch.
+#
+# This exists because the exclusion has two callers -- `nightly.yml`'s
+# full-suite job and `release.yml`'s release gate, which are the same run for
+# different reasons -- and the first attempt put it in one of them as an `-E`
+# on the command line. That is a rule living in two places, and it had already
+# drifted before it ever ran: the nightly stopped killing itself on
+# `cache_pressure` and the release gate, which nobody had looked at, would
+# still have spent twenty minutes dying on it and published nothing. A named
+# profile is one definition both can ask for by name, and a workflow that
+# forgets it now fails loudly rather than quietly doing the old thing.
+#
+# `profile.nightly` keeps `all()` deliberately: on a workstation "run
+# everything" should mean everything, and `-E` narrows it there.
+[profile.ci-full]
+# Same clock as `profile.nightly` -- these are the same tests.
+slow-timeout = { period = "120s", terminate-after = 6 }
+default-filter = 'not binary(cache_pressure)'
+# One red crate hiding a thousand passing tests is the wrong shape for a
+# report nobody is watching live, and for a release gate it is worse: it would
+# name one failure when the next line might be the reason.
+fail-fast = false

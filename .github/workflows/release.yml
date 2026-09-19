@@ -31,10 +31,17 @@ jobs:
   # joined up run on the nightly timer and here. A tag is the last point at
   # which finding one is cheaper than shipping it.
   #
-  # `--profile nightly` for the same reason that profile exists: its
-  # `default-filter` is `all()`, so the measurement tier runs too. A release
-  # is the one job with no one waiting on it and therefore the least excuse
-  # for running less than everything.
+  # `--profile ci-full`: the measurement tier runs here too -- a release is the
+  # job with no one waiting on it and therefore the least excuse for running
+  # less than everything -- minus the one measurement that asserts on a
+  # stopwatch, which a shared runner cannot defend and which has never once
+  # finished on one. `.config/nextest.toml` says which and why.
+  #
+  # This asked for `--profile nightly` until 2026-09-19, and would have taken
+  # the release down with it: `cache_pressure` has been terminated on a runner
+  # at 240s, 720s and 1200s, so this gate could not have gone green and
+  # `flatpak` below `needs` it. Nothing would have been published, twenty
+  # minutes after the tag, for a reason nowhere near the tag.
   suite:
     name: Full suite
     runs-on: ubuntu-26.04
@@ -60,10 +67,10 @@ jobs:
       - name: Install cargo-nextest
         run: scripts/install-nextest.sh
 
-      - name: cargo nextest run --profile nightly
+      - name: cargo nextest run --profile ci-full
         env:
           POSTIO_TEST_PATIENCE: "3"
-        run: dbus-run-session -- cargo nextest run --workspace --profile nightly
+        run: dbus-run-session -- cargo nextest run --workspace --profile ci-full
 
       # nextest does not run doctests and does not say so. Asked for by name
       # here for the same reason `nightly.yml` asks for them.
