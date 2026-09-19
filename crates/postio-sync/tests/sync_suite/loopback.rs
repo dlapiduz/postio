@@ -668,6 +668,7 @@ async fn a_backfilled_body_arrives_byte_for_byte() {
         &backend,
         &body_request(&local.inbox, id, Uid::new(2)),
         BackfillPolicy::default().max_inline_bytes,
+        None,
         &CancelToken::new(),
     )
     .await
@@ -741,6 +742,7 @@ async fn a_body_torn_off_the_socket_stores_nothing() {
         &backend,
         &body_request(&local.inbox, id, Uid::new(1)),
         BackfillPolicy::default().max_inline_bytes,
+        None,
         &CancelToken::new(),
     )
     .await

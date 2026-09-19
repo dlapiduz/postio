@@ -74,7 +74,7 @@ use crate::backend::{BackendError, BackendResult, Capabilities};
 use crate::secret::Password;
 
 pub use self::backend::ImapBackend;
-pub use self::body::{PARTIAL_FETCH_WINDOW, fetch_part};
+pub use self::body::{PARTIAL_FETCH_WINDOW, fetch_part, fetch_sections};
 pub use self::dispatch::{
     Dispatch, ExpungeStrategy, ListingStrategy, MoveStrategy, ResyncStrategy, WatchStrategy,
 };

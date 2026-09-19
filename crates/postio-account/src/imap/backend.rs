@@ -38,8 +38,8 @@ use crate::secret::{AccountKey, SecretStore};
 
 use super::{
     ConnectionPool, ConnectionSettings, ImapConnector, PoolConfig, Priority, append, copy_messages,
-    create_mailbox, expunge, fetch_headers, fetch_part, idle, list_mailboxes, move_messages,
-    select, status, store_flags,
+    create_mailbox, expunge, fetch_headers, fetch_part, fetch_sections, idle, list_mailboxes,
+    move_messages, select, status, store_flags,
 };
 
 /// An IMAP server, behind the trait the rest of Postio speaks.
@@ -169,6 +169,16 @@ impl MailBackend for ImapBackend {
         cancel: &CancelToken,
     ) -> BackendResult<FetchedBody> {
         fetch_part(&self.pool, mailbox, id, part, sink, self.priority, cancel).await
+    }
+
+    async fn fetch_sections(
+        &self,
+        mailbox: &str,
+        ids: &[postio_model::RemoteId],
+        part: &BodyPart,
+        cancel: &CancelToken,
+    ) -> BackendResult<Vec<(postio_model::RemoteId, Vec<u8>)>> {
+        fetch_sections(&self.pool, mailbox, ids, part, self.priority, cancel).await
     }
 
     async fn store_flags(

@@ -12,8 +12,9 @@ use postio_storage::BlobStore;
 use postio_storage::repository::{MailboxRepository, MessageRepository};
 use postio_storage::test_support::{self, TempStore};
 use postio_sync::backfill::{
-    AttachmentPolicy, Backfill, BackfillPolicy, BodyRequest, Outcome, Priority, Want, fetch_body,
-    request_body, request_payloads, seed, seed_header_blocks, seed_payloads,
+    AttachmentPolicy, Backfill, BackfillPolicy, BodyRequest, Outcome, Prefetched, Priority, Want,
+    fetch_body, prefetch_text_sections, request_body, request_payloads, seed, seed_header_blocks,
+    seed_payloads,
 };
 use postio_sync::sync_mailbox;
 
@@ -503,6 +504,7 @@ async fn opening_a_message_in_an_excluded_folder_still_fetches_its_body() {
         &backend,
         &request(&local.inbox, id, uid, 1_024),
         BackfillPolicy::default().max_inline_bytes,
+        None,
         &CancelToken::new(),
     )
     .await
@@ -540,6 +542,7 @@ async fn fetching_a_body_stores_the_raw_message_and_its_decoded_text() {
         &backend,
         &request(&local.inbox, id, uid, 1_024),
         BackfillPolicy::default().max_inline_bytes,
+        None,
         &CancelToken::new(),
     )
     .await
@@ -580,6 +583,7 @@ async fn a_message_deleted_before_its_body_arrived_is_gone_rather_than_failed() 
         &backend,
         &request(&local.inbox, id, uid, 1_024),
         BackfillPolicy::default().max_inline_bytes,
+        None,
         &CancelToken::new(),
     )
     .await
@@ -605,6 +609,7 @@ async fn a_dropped_connection_mid_body_stores_nothing() {
         &backend,
         &request(&local.inbox, id, uid, 1_024),
         BackfillPolicy::default().max_inline_bytes,
+        None,
         &CancelToken::new(),
     )
     .await
@@ -640,6 +645,7 @@ async fn a_cancelled_fetch_stores_nothing() {
         &backend,
         &request(&local.inbox, id, uid, 1_024),
         BackfillPolicy::default().max_inline_bytes,
+        None,
         &cancel,
     )
     .await
@@ -735,6 +741,7 @@ async fn a_fetched_body_becomes_searchable_text() {
         &backend,
         &request(&local.inbox, id, uid, 1_024),
         BackfillPolicy::default().max_inline_bytes,
+        None,
         &CancelToken::new(),
     )
     .await
@@ -819,6 +826,7 @@ async fn an_html_only_body_is_indexed_as_text_and_not_as_markup() {
         &backend,
         &request(&local.inbox, id, uid, 4_096),
         BackfillPolicy::default().max_inline_bytes,
+        None,
         &CancelToken::new(),
     )
     .await
@@ -909,6 +917,7 @@ async fn backfilling_a_message_fetches_its_text_and_leaves_the_attachment_alone(
         &backend,
         &request(&local.inbox, id, uid, HUGE),
         BackfillPolicy::default().max_inline_bytes,
+        None,
         &CancelToken::new(),
     )
     .await
@@ -970,6 +979,7 @@ async fn a_message_with_no_attachments_is_full_once_its_text_is_local() {
         &backend,
         &request(&local.inbox, id, uid, 1_024),
         BackfillPolicy::default().max_inline_bytes,
+        None,
         &CancelToken::new(),
     )
     .await
@@ -1013,6 +1023,7 @@ async fn a_row_synced_before_the_text_sections_existed_still_gets_its_body() {
         &backend,
         &request(&local.inbox, id, uid, 1_024),
         BackfillPolicy::default().max_inline_bytes,
+        None,
         &CancelToken::new(),
     )
     .await
@@ -1056,6 +1067,7 @@ async fn a_payload_with_nothing_to_explain_its_bytes_asks_for_every_byte() {
         &backend,
         &request,
         BackfillPolicy::default().max_inline_bytes,
+        None,
         &CancelToken::new(),
     )
     .await
@@ -1098,6 +1110,7 @@ async fn text_fetched_by_section_reaches_the_search_index() {
         &backend,
         &request(&local.inbox, id, uid, HUGE),
         BackfillPolicy::default().max_inline_bytes,
+        None,
         &CancelToken::new(),
     )
     .await
@@ -1159,6 +1172,7 @@ async fn a_fetched_body_reaches_the_header_index() {
         &backend,
         &request(&local.inbox, id, uid, 1024),
         BackfillPolicy::default().max_inline_bytes,
+        None,
         &CancelToken::new(),
     )
     .await
@@ -1196,6 +1210,7 @@ async fn text_fetched_by_section_reaches_the_header_index() {
         &backend,
         &request(&local.inbox, id, uid, HUGE),
         BackfillPolicy::default().max_inline_bytes,
+        None,
         &CancelToken::new(),
     )
     .await
@@ -1253,6 +1268,7 @@ async fn text_that_is_not_part_one_is_still_found() {
         &backend,
         &request(&local.inbox, id, uid, HUGE),
         BackfillPolicy::default().max_inline_bytes,
+        None,
         &CancelToken::new(),
     )
     .await
@@ -1393,6 +1409,7 @@ async fn a_partial_message(local: &Local, backend: &MockBackend) -> (MessageId, 
         backend,
         &request(&local.inbox, id, uid, 4_096),
         BackfillPolicy::default().max_inline_bytes,
+        None,
         &CancelToken::new(),
     )
     .await
@@ -1455,6 +1472,7 @@ async fn opening_an_attachment_fetches_the_part_and_records_where_it_landed() {
         &backend,
         &claim.request,
         BackfillPolicy::default().max_inline_bytes,
+        None,
         &claim.cancel,
     )
     .await
@@ -1503,6 +1521,7 @@ async fn a_payload_already_on_this_machine_is_never_fetched_twice() {
         &backend,
         &claim.request,
         BackfillPolicy::default().max_inline_bytes,
+        None,
         &claim.cancel,
     )
     .await
@@ -1554,6 +1573,7 @@ async fn an_evicted_payload_can_be_fetched_again() {
         &backend,
         &claim.request,
         BackfillPolicy::default().max_inline_bytes,
+        None,
         &claim.cancel,
     )
     .await
@@ -1609,6 +1629,7 @@ async fn an_evicted_payload_can_be_fetched_again() {
         &backend,
         &claim.request,
         BackfillPolicy::default().max_inline_bytes,
+        None,
         &claim.cancel,
     )
     .await
@@ -1656,6 +1677,7 @@ async fn two_messages_carrying_the_same_file_share_one_blob() {
             &backend,
             &request(&local.inbox, id, uid, 4_096),
             BackfillPolicy::default().max_inline_bytes,
+            None,
             &CancelToken::new(),
         )
         .await
@@ -1672,6 +1694,7 @@ async fn two_messages_carrying_the_same_file_share_one_blob() {
             &backend,
             &claim.request,
             BackfillPolicy::default().max_inline_bytes,
+            None,
             &claim.cancel,
         )
         .await
@@ -1745,6 +1768,7 @@ async fn eager_queues_the_payloads_the_text_lane_left_behind() {
         &backend,
         &claim.request,
         BackfillPolicy::default().max_inline_bytes,
+        None,
         &claim.cancel,
     )
     .await
@@ -1806,6 +1830,7 @@ async fn a_message_is_full_only_once_its_last_payload_is_local() {
             &backend,
             &claim.request,
             BackfillPolicy::default().max_inline_bytes,
+            None,
             &claim.cancel,
         )
         .await
@@ -1992,6 +2017,7 @@ async fn the_text_axis_carries_the_inline_images_the_body_references() {
         &backend,
         &request(&local.inbox, id, uid, HUGE),
         policy().max_inline_bytes,
+        None,
         &CancelToken::new(),
     )
     .await
@@ -2073,6 +2099,7 @@ async fn a_message_whose_inline_parts_all_fit_is_full_once_its_text_lands() {
         &backend,
         &request(&local.inbox, id, uid, 4_096),
         policy().max_inline_bytes,
+        None,
         &CancelToken::new(),
     )
     .await
@@ -2124,6 +2151,7 @@ async fn a_named_attachment_is_never_dragged_down_the_text_axis() {
         &backend,
         &request(&local.inbox, id, uid, 4_096),
         policy().max_inline_bytes,
+        None,
         &CancelToken::new(),
     )
     .await
@@ -2162,6 +2190,7 @@ async fn a_fetched_body_stores_the_header_block_it_arrived_with() {
         &backend,
         &request(&local.inbox, id, uid, HUGE),
         policy().max_inline_bytes,
+        None,
         &CancelToken::new(),
     )
     .await
@@ -2216,6 +2245,7 @@ async fn the_text_axis_stores_a_block_even_though_it_stores_no_raw_blob() {
         &backend,
         &claim.request,
         BackfillPolicy::default().max_inline_bytes,
+        None,
         &claim.cancel,
     )
     .await
@@ -2304,6 +2334,7 @@ async fn a_legacy_row_with_no_block_and_no_blob_is_queued_and_filled() {
         &backend,
         &claim.request,
         BackfillPolicy::default().max_inline_bytes,
+        None,
         &claim.cancel,
     )
     .await
@@ -2386,6 +2417,7 @@ async fn a_backfilled_body_waits_for_the_write_a_person_is_doing() {
             &backend,
             &request(&local.inbox, id, uid, 1_024),
             BackfillPolicy::default().max_inline_bytes,
+            None,
             &CancelToken::new(),
         ),
     )
@@ -2405,6 +2437,7 @@ async fn a_backfilled_body_waits_for_the_write_a_person_is_doing() {
         &backend,
         &request(&local.inbox, id, uid, 1_024),
         BackfillPolicy::default().max_inline_bytes,
+        None,
         &CancelToken::new(),
     )
     .await
@@ -2442,6 +2475,7 @@ async fn seeding_payloads_walks_past_a_window_that_is_already_queued() {
             &backend,
             &request(&local.inbox, *id, *uid, 4_096),
             BackfillPolicy::default().max_inline_bytes,
+            None,
             &CancelToken::new(),
         )
         .await
@@ -2482,4 +2516,122 @@ async fn seeding_payloads_walks_past_a_window_that_is_already_queued() {
         .map(|claim| claim.request.message)
         .collect();
     assert_eq!(queued.len(), 2, "each message queued once: {queued:?}");
+}
+
+// ---------------------------------------------------------------------------
+// Asking for a set, not a list (#1551)
+// ---------------------------------------------------------------------------
+
+/// The text axis asks for the same section over and over, so it can be one
+/// command.
+///
+/// A body fetch is almost all round trip. Fetching one message per command
+/// makes a first sync one wait per message — tens of thousands of them, end
+/// to end, which no bandwidth shortens. `prefetch_text_sections` groups the
+/// requests by the section path they want and asks for each group at once.
+///
+/// What this pins is the *shape of the question*: one batched call naming
+/// every message that wants section `1`, rather than one call each. The mock
+/// has no set primitive to be faster with — it is a `Vec` — so it records
+/// what it was asked and answers it the slow way, which is exactly what makes
+/// the assertion about the caller rather than the server.
+#[tokio::test]
+async fn the_text_axis_asks_for_a_set_of_messages_in_one_command() {
+    // Every message's words at section `1`, which is what most mail looks
+    // like and what makes a set worth asking for.
+    let mut inbox = MockMailbox::new(INBOX).uid_validity(UidValidity::new(VALIDITY));
+    for uid in 1..=5u32 {
+        inbox = inbox.message(
+            MockMessage::new(note(uid))
+                .with_internal_date(at(uid as i64))
+                .with_structure(postio_account::backend::BodyStructure::from_parts(
+                    "text/plain",
+                    [
+                        postio_account::backend::PartNode::new("1", "text/plain", 26)
+                            .with_charset("utf-8"),
+                    ],
+                ))
+                .with_part("1", format!("The body of note {uid}.\r\n").into_bytes()),
+        );
+    }
+    let backend = MockBackend::builder().mailbox(inbox).build();
+    backend.connect().await.expect("connect");
+    let local = local().await;
+    let rows = headers(&local, &backend).await;
+    assert!(
+        rows.len() >= 3,
+        "the fixture needs several messages to batch"
+    );
+
+    let requests: Vec<_> = rows
+        .iter()
+        .map(|(id, uid)| request(&local.inbox, *id, *uid, 1_024))
+        .collect();
+
+    let prefetched =
+        prefetch_text_sections(&local.connection, &backend, &requests, &CancelToken::new()).await;
+
+    let batches = backend.section_batches();
+    assert!(
+        !batches.is_empty(),
+        "nothing was batched at all, so the backfill is still asking one \
+         message at a time"
+    );
+    assert_eq!(
+        batches.len(),
+        1,
+        "every message wants section 1, so that is one command: {batches:?}"
+    );
+    assert_eq!(
+        batches[0],
+        ("1".to_owned(), rows.len()),
+        "the one command should name every message"
+    );
+    assert_eq!(
+        prefetched.len(),
+        rows.len(),
+        "the cache should hold a section for each"
+    );
+}
+
+/// A batch is an optimisation, so a miss must cost nothing but a round trip.
+///
+/// `fetch_body` takes the cache by option and consults it per section; a
+/// message that was never batched — too large, a section nobody else wanted,
+/// a batch that failed — has to store exactly what it always did. Without
+/// this, the batch would be a second code path that can be wrong on its own.
+#[tokio::test]
+async fn a_body_the_batch_missed_is_fetched_and_stored_the_old_way() {
+    let backend = server(1).await;
+    let local = local().await;
+    let rows = headers(&local, &backend).await;
+    let (id, uid) = rows[0];
+
+    // An empty cache is the miss, stated directly.
+    let mut empty = Prefetched::default();
+    let outcome = fetch_body(
+        &local.connection,
+        &local.blobs,
+        &backend,
+        &request(&local.inbox, id, uid, 1_024),
+        BackfillPolicy::default().max_inline_bytes,
+        Some(&mut empty),
+        &CancelToken::new(),
+    )
+    .await
+    .expect("fetch");
+
+    assert!(
+        matches!(outcome, Outcome::Stored { .. }),
+        "a cache miss must fall through to the wire: {outcome:?}"
+    );
+    let stored = MessageRepository::new(&local.connection)
+        .body(id)
+        .await
+        .expect("read the body")
+        .expect("a stored body");
+    assert!(
+        stored.text.is_some() || stored.html.is_some(),
+        "the body stored through a missed batch has no words in it"
+    );
 }
