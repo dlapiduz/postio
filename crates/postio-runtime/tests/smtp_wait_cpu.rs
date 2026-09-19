@@ -101,18 +101,6 @@ impl SmtpConnector for Silent {
     }
 }
 
-/// Drive one future to completion on a runtime of its own.
-///
-/// The test itself is synchronous — it sleeps and reads `/proc` — and the two
-/// setup calls that are async do not need a runtime shared with anything.
-fn futures_lite_block_on<F: std::future::Future>(future: F) -> F::Output {
-    tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .expect("a runtime")
-        .block_on(future)
-}
-
 /// The same measurement with the NetworkManager listener running (#1216).
 ///
 /// `#[ignore]`: it needs a system D-Bus and a live NetworkManager, which CI
@@ -148,23 +136,24 @@ async fn the_networkmanager_listener_costs_no_cpu_either() {
 /// refusing to rely on. Reads the property `follow` reads, from the process
 /// that will run it.
 async fn assert_networkmanager_is_really_there() {
-    let state = futures_lite_block_on(async {
-        let connection = zbus::Connection::system()
-            .await
-            .expect("a system bus (this case is #[ignore]d because CI has none)");
-        let proxy = zbus::Proxy::new(
-            &connection,
-            "org.freedesktop.NetworkManager",
-            "/org/freedesktop/NetworkManager",
-            "org.freedesktop.NetworkManager",
-        )
+    // Awaited for the same reason the password store above is: this is an
+    // `async fn`, and wrapping it in a runtime of its own would panic the
+    // moment anything drove it from one.
+    let connection = zbus::Connection::system()
         .await
-        .expect("NetworkManager on the bus");
-        proxy
-            .get_property::<u32>("State")
-            .await
-            .expect("NetworkManager's State property")
-    });
+        .expect("a system bus (this case is #[ignore]d because CI has none)");
+    let proxy = zbus::Proxy::new(
+        &connection,
+        "org.freedesktop.NetworkManager",
+        "/org/freedesktop/NetworkManager",
+        "org.freedesktop.NetworkManager",
+    )
+    .await
+    .expect("NetworkManager on the bus");
+    let state = proxy
+        .get_property::<u32>("State")
+        .await
+        .expect("NetworkManager's State property");
     eprintln!("NetworkManager reports state {state}; the listener has a bus to follow");
 }
 
@@ -255,7 +244,19 @@ async fn measure_a_waiting_send(network: NetworkSource) {
             .expect("read the account")
             .expect("the seeded account");
         let key = postio_account::secret::AccountKey::new(&account.address.address);
-        futures_lite_block_on(secrets.store(&key, &postio_account::secret::Password::new("pw")))
+        // Awaited, not `block_on`ed. `measure_a_waiting_send` is `async` and
+        // driven by `#[tokio::test]`, so blocking here is starting a runtime
+        // inside a runtime -- which tokio refuses:
+        //
+        //     Cannot start a runtime from within a runtime.
+        //
+        // It panicked every night from the nightly's own log and nothing on
+        // the merge path could see it: this file is measurement tier, so it
+        // runs nowhere else. The helper is a leftover from when this test was
+        // synchronous.
+        secrets
+            .store(&key, &postio_account::secret::Password::new("pw"))
+            .await
             .expect("store the password");
     }
 
