@@ -1823,9 +1823,43 @@ async fn pump_body(
     // queue is scheduled under (#751).
     let inline_cap = state.backfill.policy().max_inline_bytes;
 
+    // One command for as many of these as share a section path (#1551). The
+    // window is small, so this is at most a couple of round trips saved per
+    // call -- but the same batch runs on every call for the length of a
+    // backfill, which is where tens of thousands of waits go.
+    //
+    // Best-effort by construction: whatever it does not bring back,
+    // `fetch_body` fetches the way it always did.
+    let requests: Vec<_> = claims.iter().map(|claim| claim.request.clone()).collect();
+    let prefetched = match store.connect().await {
+        Ok(connection) => {
+            let cache = backfill::prefetch_text_sections(
+                &connection,
+                parts.backend.as_ref(),
+                &requests,
+                &cancel,
+            )
+            .await;
+            if !cache.is_empty() {
+                tracing::debug!(sections = cache.len(), "fetched a batch of text sections");
+            }
+            Some(Rc::new(RefCell::new(cache)))
+        }
+        Err(error) => {
+            tracing::debug!(%error, "no connection to prefetch with");
+            None
+        }
+    };
+
     let mut running = FuturesUnordered::new();
     for claim in claims {
-        running.push(fetch_one_body(parts, store, inline_cap, claim));
+        running.push(fetch_one_body(
+            parts,
+            store,
+            inline_cap,
+            prefetched.clone(),
+            claim,
+        ));
     }
 
     // Shutdown must not wait for the wire: when the channel closes mid-fetch,
@@ -1860,7 +1894,9 @@ async fn pump_body(
         // work: topping up with background would make the call unbounded, and
         // the outer loop's own checks are what let a queued job interleave.
         if !cancelled && let Some(next) = state.backfill.next_interactive_body() {
-            running.push(fetch_one_body(parts, store, inline_cap, next));
+            // No prefetch for a top-up: it arrived after the batch and is one
+            // message, which is not a batch.
+            running.push(fetch_one_body(parts, store, inline_cap, None, next));
         }
         let outcome = result.unwrap_or_else(|error| {
             if let SyncError::Backend(backend) = &error {
@@ -1898,6 +1934,7 @@ async fn fetch_one_body(
     parts: &EngineParts,
     store: &Store,
     inline_cap: Option<u64>,
+    prefetched: Option<Rc<RefCell<postio_sync::backfill::Prefetched>>>,
     claim: postio_sync::backfill::Claim,
 ) -> (MessageId, Result<Outcome, SyncError>) {
     let message = claim.request.message;
@@ -1914,12 +1951,18 @@ async fn fetch_one_body(
             );
         }
     };
+    // Lifted out **before** the fetch, and the borrow dropped with the
+    // statement. The window's fetches share one cache and run concurrently,
+    // so a borrow held across the await below would be the second borrower's
+    // panic — the kind that compiles and then only fails under load.
+    let mut mine = prefetched.map(|cache| cache.borrow_mut().split_for(&claim.request.remote_id));
     let result = backfill::fetch_body(
         &connection,
         &parts.blobs,
         parts.backend.as_ref(),
         &claim.request,
         inline_cap,
+        mine.as_mut(),
         &claim.cancel,
     )
     .await;

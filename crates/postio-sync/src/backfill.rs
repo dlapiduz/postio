@@ -208,6 +208,152 @@ pub enum Priority {
     Background,
 }
 
+/// Section bytes fetched ahead of the messages that want them (#1551).
+///
+/// A body fetch is almost all round trip, so fetching one message per command
+/// makes a first sync one wait per message — tens of thousands of them, end
+/// to end, however fast the link. IMAP will answer a whole set in one command
+/// *if every message in it wants the same section*, and the text axis obliges:
+/// most mail's words are at `1` or `1.1`.
+///
+/// So this is a cache, filled by [`prefetch_text_sections`] and consulted by
+/// [`fetch_body`]. A miss is not an error — the per-message path fetches it
+/// the old way — which is what keeps the batch an optimisation rather than a
+/// second code path that can be wrong on its own.
+#[derive(Debug, Default)]
+pub struct Prefetched {
+    sections: HashMap<(postio_model::RemoteId, String), Vec<u8>>,
+}
+
+impl Prefetched {
+    /// The bytes of `section` for `id`, if the batch fetched them.
+    fn take(&mut self, id: &postio_model::RemoteId, section: &str) -> Option<Vec<u8>> {
+        self.sections.remove(&(id.clone(), section.to_owned()))
+    }
+
+    /// Everything fetched for `id`, moved out into a cache of its own.
+    ///
+    /// **Taken before the fetch, not during it.** The window's fetches run
+    /// concurrently over one shared cache, so a borrow held across an await
+    /// would be a second borrow waiting to panic. Each message lifts out what
+    /// is its own and carries it, which needs no sharing at all once taken.
+    pub fn split_for(&mut self, id: &postio_model::RemoteId) -> Prefetched {
+        let mine: Vec<_> = self
+            .sections
+            .keys()
+            .filter(|(owner, _)| owner == id)
+            .cloned()
+            .collect();
+        let mut split = Prefetched::default();
+        for key in mine {
+            if let Some(bytes) = self.sections.remove(&key) {
+                split.sections.insert(key, bytes);
+            }
+        }
+        split
+    }
+
+    /// How many sections it holds. Test support and logging.
+    pub fn len(&self) -> usize {
+        self.sections.len()
+    }
+
+    /// Whether it holds nothing.
+    pub fn is_empty(&self) -> bool {
+        self.sections.is_empty()
+    }
+}
+
+/// How many bytes of fetched-ahead sections may be held at once.
+///
+/// A batch does not stream: every answer is in memory together, which is the
+/// trade it makes for the round trips. Bounded against `RFC822.SIZE`, which
+/// the header sync already recorded, and conservatively — the whole message's
+/// size stands in for the text section's, which is always smaller.
+const PREFETCH_BUDGET: u64 = 8 * 1024 * 1024;
+
+/// How many messages may be named in one `UID FETCH`, whatever their size.
+///
+/// A set is a command line, and a command line has a length; grouping fifty
+/// uids is already most of the win, and ten thousand would be a request no
+/// server thanks you for.
+const PREFETCH_BATCH: usize = 50;
+
+/// Fetch the text sections of `requests` in as few commands as their section
+/// paths allow.
+///
+/// Grouped by `(path, section)`, because that is what IMAP can answer at
+/// once: `UID FETCH 1,5,9 BODY.PEEK[1]` is one round trip for as many
+/// messages as share section `1`.
+///
+/// Bounded twice — by [`PREFETCH_BUDGET`] and [`PREFETCH_BATCH`] — and
+/// best-effort throughout: a message whose row cannot be read, whose sections
+/// are unknown, or whose fetch fails is simply not in the answer, and
+/// [`fetch_body`] fetches it the old way. That is the whole safety argument
+/// for this being an optimisation: every miss degrades to the path that
+/// already worked.
+pub async fn prefetch_text_sections(
+    connection: &Checkout,
+    backend: &dyn MailBackend,
+    requests: &[BodyRequest],
+    cancel: &CancelToken,
+) -> Prefetched {
+    let mut prefetched = Prefetched::default();
+    if requests.len() < 2 {
+        // One message is not a batch, and asking for a set of one costs a
+        // round trip to save none.
+        return prefetched;
+    }
+
+    let messages = MessageRepository::new(connection);
+    // (path, section) -> the ids wanting it, and what they will cost.
+    let mut groups: HashMap<(String, String), Vec<postio_model::RemoteId>> = HashMap::new();
+    let mut budget = PREFETCH_BUDGET;
+    for request in requests {
+        if !matches!(request.want, Want::Text) {
+            continue;
+        }
+        if request.size > budget {
+            continue;
+        }
+        let Ok(Some(message)) = messages.get(request.message).await else {
+            continue;
+        };
+        let sections = [message.text_part_id.clone(), message.html_part_id.clone()];
+        let mut wanted = false;
+        for section in sections.into_iter().flatten() {
+            let group = groups.entry((request.path.clone(), section)).or_default();
+            if group.len() < PREFETCH_BATCH {
+                group.push(request.remote_id.clone());
+                wanted = true;
+            }
+        }
+        if wanted {
+            budget = budget.saturating_sub(request.size);
+        }
+    }
+
+    for ((path, section), ids) in groups {
+        if cancel.is_cancelled() || ids.len() < 2 {
+            continue;
+        }
+        let part = BodyPart::Section(section.clone());
+        match backend.fetch_sections(&path, &ids, &part, cancel).await {
+            Ok(answered) => {
+                for (id, bytes) in answered {
+                    prefetched.sections.insert((id, section.clone()), bytes);
+                }
+            }
+            // Best-effort: the per-message path is still there, and a batch
+            // that failed must not fail the bodies it was trying to help.
+            Err(error) => {
+                tracing::debug!(%path, %section, %error, "a batched section fetch failed");
+            }
+        }
+    }
+    prefetched
+}
+
 /// One body worth fetching.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BodyRequest {
@@ -1103,6 +1249,7 @@ pub async fn fetch_body(
     backend: &dyn MailBackend,
     request: &BodyRequest,
     inline_cap: Option<u64>,
+    prefetched: Option<&mut Prefetched>,
     cancel: &CancelToken,
 ) -> Result<Outcome> {
     let messages = MessageRepository::new(connection);
@@ -1128,7 +1275,7 @@ pub async fn fetch_body(
         // exists to avoid.
         Want::Text if message.content_type.is_some() => {
             return fetch_text_parts(
-                connection, blobs, backend, request, message, inline_cap, cancel,
+                connection, blobs, backend, request, message, inline_cap, prefetched, cancel,
             )
             .await;
         }
@@ -1333,6 +1480,11 @@ async fn index_the_header_block(
 /// forward-as-`message/rfc822` refetch on demand. And since ADR 0020 the
 /// decoded text is a column rather than a file, so this path touches the blob
 /// store nowhere: it is text in, row out.
+// One over the limit, and the eighth is the prefetch cache (#1551). The seven
+// before it are each a distinct thing this needs and none of them travel
+// together anywhere else, so bundling them would invent a struct whose only
+// purpose is to satisfy a count.
+#[allow(clippy::too_many_arguments)]
 async fn fetch_text_parts(
     connection: &Checkout,
     blobs: &BlobStore,
@@ -1340,6 +1492,7 @@ async fn fetch_text_parts(
     request: &BodyRequest,
     mut message: postio_model::Message,
     inline_cap: Option<u64>,
+    mut prefetched: Option<&mut Prefetched>,
     cancel: &CancelToken,
 ) -> Result<Outcome> {
     let messages = MessageRepository::new(connection);
@@ -1364,23 +1517,35 @@ async fn fetch_text_parts(
 
     for (section, headers) in wanted {
         let Some(section) = section else { continue };
-        let mut sink = VecSink::new();
-        backend
-            .fetch_part(
-                &request.path,
-                &request.remote_id,
-                &BodyPart::Section(section),
-                &mut sink,
-                cancel,
-            )
-            .await?;
-        if !sink.is_finished() {
-            // The sink contract, same as the whole-message path: without
-            // `finish` the bytes are a fragment, and a fragment stored as a
-            // body is worse than no body.
-            return Err(SyncError::Backend(BackendError::Cancelled));
-        }
-        let raw = sink.into_inner();
+        // Fetched ahead with the rest of its batch, if it was (#1551). A miss
+        // is ordinary -- an unbatchable message, a batch that failed, a
+        // section nobody else wanted -- and costs only the round trip this
+        // always paid.
+        let batched = prefetched
+            .as_mut()
+            .and_then(|cache| cache.take(&request.remote_id, &section));
+        let raw = match batched {
+            Some(bytes) => bytes,
+            None => {
+                let mut sink = VecSink::new();
+                backend
+                    .fetch_part(
+                        &request.path,
+                        &request.remote_id,
+                        &BodyPart::Section(section),
+                        &mut sink,
+                        cancel,
+                    )
+                    .await?;
+                if !sink.is_finished() {
+                    // The sink contract, same as the whole-message path:
+                    // without `finish` the bytes are a fragment, and a
+                    // fragment stored as a body is worse than no body.
+                    return Err(SyncError::Backend(BackendError::Cancelled));
+                }
+                sink.into_inner()
+            }
+        };
         bytes += raw.len() as u64;
 
         let mut entity = headers.unwrap_or_default().into_bytes();

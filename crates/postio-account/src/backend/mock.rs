@@ -426,6 +426,10 @@ struct State {
     /// [`State::header_fetches`]'s counterpart for `FETCH BODY` (part/text)
     /// calls. See [`MockBackend::body_fetches`].
     body_fetches: Vec<(u64, String)>,
+    /// One entry per *batched* section fetch: the section asked for, and how
+    /// many messages were named in the one call. See
+    /// [`MockBackend::section_batches`].
+    section_batches: Vec<(String, usize)>,
     /// Whether `existing_uids` refuses. See
     /// [`MockBackend::refuse_uid_listing`].
     refuse_uid_listing: bool,
@@ -714,6 +718,15 @@ impl MockBackend {
             .collect()
     }
 
+    /// Every batched section `FETCH`, as `(section, messages named)`.
+    ///
+    /// What says whether the backfill is asking for a *set* or walking a list
+    /// (#1551): a batch of twenty messages sharing section `1` should appear
+    /// here once with twenty, not twenty times with one.
+    pub fn section_batches(&self) -> Vec<(String, usize)> {
+        self.state().section_batches.clone()
+    }
+
     /// Every served header and body/part `FETCH`, merged into the one
     /// chronological order the server actually saw them in.
     ///
@@ -963,6 +976,7 @@ impl MockBackendBuilder {
                 peak_in_flight: 0,
                 header_fetches: Vec::new(),
                 body_fetches: Vec::new(),
+                section_batches: Vec::new(),
                 chunk_size: self.chunk_size,
             })),
             notify: Arc::new(Notify::new()),
@@ -1110,6 +1124,36 @@ impl MailBackend for MockBackend {
                 structure: message.structure.clone(),
             })
             .collect())
+    }
+
+    async fn fetch_sections(
+        &self,
+        mailbox: &str,
+        ids: &[RemoteId],
+        part: &BodyPart,
+        cancel: &CancelToken,
+    ) -> BackendResult<Vec<(RemoteId, Vec<u8>)>> {
+        // Recorded before anything can fail, because the question this answers
+        // is "did the caller ask for a set", and it asked whatever came back.
+        if let BodyPart::Section(section) = part {
+            self.state()
+                .section_batches
+                .push((section.clone(), ids.len()));
+        }
+        // Answered the way the trait's default does — the mock is a `Vec` and
+        // has no set primitive to be faster with. What it can report is the
+        // shape of the question.
+        let mut answered = Vec::with_capacity(ids.len());
+        for id in ids {
+            let mut sink = crate::backend::sink::VecSink::new();
+            match self.fetch_part(mailbox, id, part, &mut sink, cancel).await {
+                Ok(_) if sink.is_finished() => answered.push((id.clone(), sink.into_inner())),
+                Ok(_) => continue,
+                Err(BackendError::NoSuchMessage { .. }) => continue,
+                Err(error) => return Err(error),
+            }
+        }
+        Ok(answered)
     }
 
     async fn fetch_part(

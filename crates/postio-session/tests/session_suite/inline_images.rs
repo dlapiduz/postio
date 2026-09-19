@@ -137,6 +137,7 @@ async fn an_inline_image_synced_from_a_server_resolves_to_its_bytes() {
             want: Want::Text,
         },
         policy.max_inline_bytes,
+        None,
         &CancelToken::new(),
     )
     .await
