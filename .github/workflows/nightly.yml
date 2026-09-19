@@ -42,6 +42,8 @@ on:
 
 permissions:
   contents: read
+  # The `changed` job below reads the previous run's head SHA and conclusion.
+  actions: read
 
 env:
   CARGO_TERM_COLOR: always
@@ -51,8 +53,99 @@ env:
   CARGO_BUILD_JOBS: 4
 
 jobs:
+  # Is there anything new to test?
+  #
+  # A nightly over a tree nobody touched re-proves last night's answer at
+  # full price -- the suite, the coverage floors and the docs, on a schedule
+  # that does not care whether anyone committed. So a scheduled run compares
+  # `main`'s head against the head the last run tested and skips when they
+  # match.
+  #
+  # # Two things it must not do, and they are the whole of this job
+  #
+  # **It must not skip a red nightly into green.** `ci.yml`'s `Nightly is
+  # green` reads the last *completed* run's conclusion, and a run whose jobs
+  # all skip concludes as either `skipped` or `success` depending on how
+  # GitHub reports it -- both of which that check treats as green. So if a
+  # failing nightly skipped the next night for want of a commit, merges would
+  # silently unblock with the tree still broken. Hence the conclusion test: a
+  # failure is always re-run, even over an unchanged tree. That looks wasteful
+  # and is not -- it is the one state where the answer must keep being said
+  # out loud, and it ends when somebody fixes it.
+  #
+  # The test below is written as "not a failure" rather than "is a success"
+  # for the same reason: it does not depend on which of those two an
+  # all-skipped run reports, and it keeps working if that ever changes.
+  #
+  # **It must only skip a *schedule*.** `workflow_dispatch` is somebody asking
+  # for the number now, and `workflow_call` is a pull request proving it fixed
+  # the nightly -- in both cases the tree is either new or the asking is the
+  # point. Skipping either would answer a question nobody asked.
+  #
+  # A skipped run still appears in the run list with its own head SHA, which
+  # is what lets the next night compare against it and skip again. The chain
+  # only breaks when a commit lands.
+  changed:
+    name: Anything to test
+    runs-on: ubuntu-latest
+    outputs:
+      run: ${{ steps.decide.outputs.run }}
+    steps:
+      - name: Compare against the last run
+        id: decide
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT: ${{ github.event_name }}
+          HEAD: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+
+          if [ "$EVENT" != "schedule" ]; then
+            echo "Triggered by ${EVENT}, not the timer — running."
+            echo "run=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          # The run before this one. `status=completed` so a run still going
+          # is not mistaken for an answer, and `per_page=2` because *this*
+          # run is not completed and so is not in the list -- the first entry
+          # is genuinely the previous one.
+          last=$(gh api \
+            "repos/${GITHUB_REPOSITORY}/actions/workflows/nightly.yml/runs?status=completed&per_page=1" \
+            --jq '.workflow_runs[0] | "\(.conclusion)\t\(.head_sha)"' 2>/dev/null || true)
+
+          if [ -z "$last" ] || [ "$last" = "null" ]; then
+            echo "No completed run to compare against — running."
+            echo "run=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          conclusion=$(printf '%s' "$last" | cut -f1)
+          sha=$(printf '%s' "$last" | cut -f2)
+          echo "previous run: ${conclusion} at ${sha}"
+          echo "this run:     ${HEAD}"
+
+          case "$conclusion" in
+            success|skipped|cancelled) ;;
+            *)
+              echo "The last run was ${conclusion} — running, so the answer keeps being said."
+              echo "run=true" >> "$GITHUB_OUTPUT"
+              exit 0
+              ;;
+          esac
+
+          if [ "$sha" = "$HEAD" ]; then
+            echo "Nothing has landed since — skipping."
+            echo "run=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "New commits since the last run — running."
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          fi
+
   coverage:
     name: Coverage floors
+    needs: changed
+    if: needs.changed.outputs.run == 'true'
     runs-on: ubuntu-26.04
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
@@ -152,6 +245,8 @@ jobs:
 
   doc:
     name: Docs
+    needs: changed
+    if: needs.changed.outputs.run == 'true'
     runs-on: ubuntu-26.04
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
@@ -178,6 +273,8 @@ jobs:
 
   full-suite:
     name: Full suite
+    needs: changed
+    if: needs.changed.outputs.run == 'true'
     runs-on: ubuntu-26.04
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
