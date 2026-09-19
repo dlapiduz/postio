@@ -210,10 +210,18 @@ jobs:
       # something you queued for. Locally the gate is now the workspace's unit
       # tests -- 1,313 of them in ~5s.
       #
-      # That trade is only safe while something still proves the *combination*
-      # before merge, which the pull-request run does. This job is the second
-      # reader, not the first: it catches what a branch-shaped view misses,
-      # like two branches that are each green alone.
+      # **This job is the first reader now, not the second** (2026-09-19).
+      #
+      # It used to say the opposite, and the sentence has to move with the
+      # gate: the pull-request run proved the combination, and this caught
+      # what a branch-shaped view missed. The pull-request run is the sanity
+      # tier as of today, so nothing else runs these suites before a merge.
+      #
+      # That is why `ci.yml` has a `nightly` job whose whole purpose is to go
+      # red on every pull request while this one is failing. A first reader
+      # nobody is obliged to act on is not a reader at all -- the failure
+      # would sit in a mail while a week of branches landed on top of it.
+      # If that job is ever removed, this trade has to be reversed with it.
       #
       # `--profile nightly` is what makes it more than a second reading. Its
       # `default-filter` is `all()`, so it runs the eight measurement files

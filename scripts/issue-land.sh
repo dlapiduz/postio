@@ -227,6 +227,19 @@ REEXEC_LIMIT="${POSTIO_LAND_REEXEC_LIMIT:-2}"
 # this run was asked for; the loop underneath shifts them away.
 ORIGINAL_ARGS=("$@")
 
+# What the gate chain is allowed to cost, in seconds.
+#
+# Four minutes, set deliberately rather than observed: a landing is something
+# a person waits for, and the chain had grown to nine on a wide change --
+# 348s of it integration suites, 208s of that a single `postio-index` test
+# that bulk-loaded `TOTAL_HITS_CAP + 50` messages one at a time.
+#
+# Over budget is a **warning, not a refusal**: see where it is reported for
+# why. What keeps it true is that the number is printed on every landing, so
+# a suite creeping onto the merge path is visible the first time rather than
+# the twentieth.
+GATE_BUDGET_SECONDS=240
+
 MSG=""; WIP=0; GATES_ONLY=0; MERGE=1; FULL=0; WAIT=0; REFS_ONLY=0
 while [ $# -gt 0 ]; do
     case "$1" in
@@ -442,6 +455,7 @@ echo "--- rustfmt ---"
 PHASE_START=$(date +%s)
 cargo fmt --all
 echo "[timing] rustfmt: $(( $(date +%s) - PHASE_START ))s"
+GATES_START=$PHASE_START
 
 # Stage now, before the invariants below rather than after them: this tree
 # is private, so staging is safe this early too. check-no-personal-data.py
@@ -718,6 +732,34 @@ echo "--- repository invariants ---"
 PHASE_START=$(date +%s)
 "$TREE/scripts/check.sh"
 echo "[timing] invariants: $(( $(date +%s) - PHASE_START ))s"
+
+# What the whole chain cost, against what it is allowed to cost.
+#
+# **The budget is the point, and it is reported rather than enforced.** A gate
+# that refused to land a slow branch would be refusing the landing for being
+# slow, which helps nobody at the moment they least want it -- and the fix is
+# never in the branch, it is in the chain. So this says the number and names
+# the worst phase, which is what a person needs to decide whether a suite has
+# crept onto the merge path that should be on the nightly timer.
+#
+# The line moves when a crate's suite grows. `scripts/full-suite-crates.sh`
+# holds the deny list and the measurements behind it; `.config/nextest.toml`
+# holds the tier for a test that is slow rather than a crate that is.
+GATES_TOTAL=$(( $(date +%s) - GATES_START ))
+echo "[timing] TOTAL: ${GATES_TOTAL}s (budget ${GATE_BUDGET_SECONDS}s)"
+if [ "$GATES_TOTAL" -gt "$GATE_BUDGET_SECONDS" ]; then
+    echo
+    echo "warning: the gate chain took ${GATES_TOTAL}s against a ${GATE_BUDGET_SECONDS}s budget."
+    echo "The worst phases in this run:"
+    grep -E '^\[timing\]' "${LAND_LOG:-/dev/null}" 2>/dev/null \
+        | sed -E 's/^\[timing\] (.*): ([0-9]+)s$/\2 \1/' \
+        | sort -rn | head -5 | awk '{printf "  %5ss  %s\n", $1, substr($0, index($0,$2))}'
+    echo
+    echo "A suite that has grown past the merge path belongs on the nightly"
+    echo "timer: add the crate to SLOW in scripts/full-suite-crates.sh, or the"
+    echo "single test to .config/nextest.toml's default-filter with a"
+    echo "POSTIO-MEASUREMENT marker. Both are documented where they live."
+fi
 
 # Recorded only now, after every gate above has passed -- a failure exits
 # via set -e before this line, so a red run can never mark the tree green.

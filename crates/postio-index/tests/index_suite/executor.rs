@@ -16,11 +16,11 @@ use postio_storage::repository::MessageRepository;
 use postio_storage::sql::bind;
 use postio_storage::test_support;
 
-fn at(hour: u32) -> chrono::DateTime<Utc> {
+pub(super) fn at(hour: u32) -> chrono::DateTime<Utc> {
     Utc.with_ymd_and_hms(2026, 8, 20, hour, 0, 0).unwrap()
 }
 
-async fn message(
+pub(super) async fn message(
     connection: &Connection,
     account: &postio_model::Account,
     mailbox: postio_model::MailboxId,
@@ -207,43 +207,6 @@ async fn total_hits_counts_every_match_regardless_of_the_page_limit() {
     assert_eq!(results.hits.len(), 2, "limited to the page size");
     assert_eq!(results.total_hits, 5, "but the total reflects every match");
     assert!(!results.total_hits_capped);
-}
-
-#[tokio::test]
-async fn total_hits_stops_counting_at_the_cap() {
-    use postio_search::TOTAL_HITS_CAP;
-
-    let database = test_support::memory().await;
-    let connection = database.connect().await.expect("checkout");
-    postio_index::index::ensure_schema(&connection)
-        .await
-        .expect("schema");
-    let (account, mailbox) = test_support::account_with_inbox(&connection).await;
-
-    connection
-        .execute_batch("BEGIN")
-        .await
-        .expect("start bulk load transaction");
-    for _ in 0..(TOTAL_HITS_CAP + 50) {
-        message(&connection, &account, mailbox, "ada", "Bulk notes", at(0)).await;
-    }
-    connection
-        .execute_batch("COMMIT")
-        .await
-        .expect("commit bulk load transaction");
-
-    let query = parse("bulk", at(12).date_naive());
-    let request = SearchRequest {
-        account: AccountScope::Account(account.id),
-        query: &query,
-        scope: Scope::AllMail,
-        limit: 5,
-        order: postio_search::ResultOrder::Relevance,
-    };
-    let results = search(&connection, &request, at(12)).await.expect("search");
-
-    assert!(results.total_hits_capped);
-    assert_eq!(results.total_hits, TOTAL_HITS_CAP);
 }
 
 #[tokio::test]

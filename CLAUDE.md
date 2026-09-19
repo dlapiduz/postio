@@ -165,12 +165,26 @@ in `docs/engineering-notes.md`. Three of #901's four gate failures were
 pre-existing and two of them became issues. Re-running without looking turns
 somebody else's bug into your twenty-five minutes, repeatedly.
 
-**It is safe only because CI still runs the whole workspace on every pull
-request**, and the nightly job runs it again. Unit tests are precisely the
-tier that cannot see this project's characteristic bug — layers that each
-pass and are not joined up, like the Reader that was built, tested and never
-mounted. Do not read the fast default as permission to skip integration
-tests: write them, and let CI be the thing that runs them.
+**The landing gate has a four-minute budget** (2026-09-19), and every landing
+prints what it actually cost against it. Over budget is a warning, not a
+refusal — the fix is never in your branch, it is in the chain: a crate whose
+suite has grown goes on `SLOW` in `scripts/full-suite-crates.sh`, and a single
+slow test goes in `.config/nextest.toml`'s `default-filter` with a
+`POSTIO-MEASUREMENT:` marker beside it. One `postio-index` test that bulk-loaded
+`TOTAL_HITS_CAP + 50` messages was 208s of a 531s chain and is how the budget
+came to exist.
+
+**What runs the integration suites has changed, and it matters.** A pull
+request runs the sanity tier plus the suites a vocabulary change breaks
+(`postio-core`, `postio-config`); the rest run on the nightly timer and again
+as the release gate. Unit tests are precisely the tier that cannot see this
+project's characteristic bug — layers that each pass and are not joined up,
+like the Reader that was built, tested and never mounted — so **the nightly is
+the first reader of that class now, not the second**. `ci.yml`'s `nightly` job
+is what makes that safe: it goes red on every pull request while the last
+nightly was a failure, so a broken join blocks merging rather than sitting in
+a mail. Do not read the fast default as permission to skip integration tests:
+write them, and let the nightly be the thing that runs them.
 
 **Iterate at the cheapest layer that can fail.** `postio-body`'s 49 unit
 tests run in 0.00s and `postio-gtk`'s 330 in 0.42s, while `app_suite` takes
@@ -475,7 +489,17 @@ Every pull request runs `ci.yml`; its `changes` job decides what the diff
 obliges it to build, and the compile jobs skip themselves for docs and
 tooling (a skipped job counts as passed). Do not merge around a red check:
 a check that fails on your PR is your work to fix, on the same branch,
-however green the crates you touched were locally. The gate chain proves
+however green the crates you touched were locally. **That includes the
+`Nightly is green` check**, which fails while the last nightly run did: the
+way out is to fix it, land the fix and re-run the nightly (`gh workflow run
+Nightly`). There is deliberately no override input — but note the deadlock
+that follows from it, because it is real: the fix has to be on `main` before
+a nightly can go green, so once this check is *required* the pull request
+that fixes a broken nightly is blocked by the thing it fixes. The door for
+that one case is a repository admin bypassing the ruleset for that merge,
+which GitHub records. **The ruleset has no bypass actor today**, so one has
+to be added before the check is made required, or the first red nightly stops
+the project. The gate chain proves
 the crates a branch changed; CI is the only thing that proves the
 *combination*, which is the failure two branches that are each green alone
 can produce together.
@@ -483,8 +507,11 @@ can produce together.
 The steward loop's periodic `cargo check --workspace --all-targets` and
 `cargo test --workspace --no-fail-fast` against `main` are now a backstop
 rather than the only proof. If either is ever red: pull `ready` from open
-issues, fix on a branch, land it, restore the labels. A release still needs a
-local full-suite run first — `release.yml` ships without testing.
+issues, fix on a branch, land it, restore the labels. A release runs the
+full suite itself now: `release.yml`'s `flatpak` job `needs: suite`, so
+nothing is built, signed, attested or published until the whole workspace
+passes under `--profile nightly`. It used to ship without running a test at
+all, on a rule that lived in somebody's memory.
 
 ## Skills and design authorities
 
