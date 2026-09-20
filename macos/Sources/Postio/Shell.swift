@@ -18,7 +18,12 @@ struct Shell: View {
     /// Only a view can open a window, so the shell is where a `settings`
     /// command becomes one (#1261).
     @Environment(\.openWindow) private var openWindow
-    @State private var selectedFolder: Int64?
+    /// Which sidebar row is picked.
+    ///
+    /// A `SidebarRowId` rather than a mailbox id: three of the rows are
+    /// queries with no id of their own, so an `Int64?` made Flagged, Snoozed
+    /// and the Outbox all the same row. See `SidebarRowId`.
+    @State private var selectedFolder: SidebarRowId?
     @State private var showing: Int64?
     /// The folder that was open. Application state rather than window state —
     /// it is about the account, not the window — but stored with the scene
@@ -46,7 +51,7 @@ struct Shell: View {
                     // boundary gave them — Inbox at the top, one row per
                     // role. Nothing is sorted here; see `Engine.specialFolders`.
                     Section("Favorites") {
-                        ForEach(engine.specialFolders, id: \.id) { folder in
+                        ForEach(engine.specialFolders, id: \.rowId) { folder in
                             FolderRow(folder: folder, children: [])
                         }
                     }
@@ -79,10 +84,16 @@ struct Shell: View {
             .navigationSplitViewColumnWidth(min: 180, ideal: 220, max: 320)
             .accessibilityLabel(Pane.sidebar.label)
             .onTapGesture { engine.focus(.sidebar) }
-            .onChange(of: selectedFolder) { _, folder in
-                guard let folder else { return }
-                engine.open(mailbox: folder)
-                openFolder = Int(folder)
+            .onChange(of: selectedFolder) { _, picked in
+                guard let picked,
+                      let row = engine.mailboxes.first(where: { $0.rowId == picked })
+                else { return }
+                engine.open(row)
+                // Only a real folder is worth remembering across launches. A
+                // view is a question about mail that may not be there next
+                // time, and reopening onto an empty Outbox reads as a broken
+                // restore.
+                if !row.isView { openFolder = Int(row.id) }
             }
             // The folder list arrives after the session opens, so the folder
             // to reopen can only be chosen once there is something to choose
@@ -213,7 +224,11 @@ struct Shell: View {
         }
         .onChange(of: engine.requestedToken) { _, _ in
             guard let requested = engine.requested else { return }
-            selectedFolder = requested.mailbox
+            // A notification names a real folder, so the folder row is the
+            // one to pick — never a view, which holds no mail of its own.
+            selectedFolder = engine.mailboxes
+                .first { $0.id == requested.mailbox && !$0.isView }?
+                .rowId
             // A burst names no message -- "3 new messages" does not pick one --
             // so it opens the folder and leaves the cursor where the folder's
             // own selection puts it.
@@ -268,10 +283,13 @@ struct Shell: View {
     /// Reopen the folder that was open, or the inbox if it is gone.
     private func restoreFolder() {
         guard selectedFolder == nil, !engine.mailboxes.isEmpty else { return }
-        selectedFolder = WindowState.folderToOpen(
+        let folder = WindowState.folderToOpen(
             remembered: openFolder.map(Int64.init),
             among: engine.mailboxes
         )
+        selectedFolder = folder
+            .flatMap { id in engine.mailboxes.first { $0.id == id && !$0.isView } }
+            .map(\.rowId)
     }
 
     @ViewBuilder

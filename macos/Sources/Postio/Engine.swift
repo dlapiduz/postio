@@ -333,12 +333,21 @@ final class Engine {
     /// "these twelve" means something else the moment the list does, and an
     /// action carrying a selection across would land on mail the user cannot
     /// see.
-    func open(mailbox: Int64) {
+    func open(_ row: MailboxFfi) {
         guard let session, case let .open(controller) = state else { return }
-        showingMailbox = mailbox
-        session.openScope(.mailbox(mailbox: mailbox))
+        // A view row is a query, not a folder — `showingMailbox` is what
+        // decides whether new mail is already on screen, and "Flagged" is
+        // not an answer to "which folder did this arrive in".
+        showingMailbox = row.isView ? nil : row.id
+        session.openScope(SidebarScope.of(row))
         listVersion += 1
         controller.tableView?.reloadData()
+    }
+
+    /// Show a folder by id, for a caller that has one and not a row.
+    func open(mailbox: Int64) {
+        guard let row = mailboxes.first(where: { $0.id == mailbox && !$0.isView }) else { return }
+        open(row)
     }
 
     /// Bumped whenever the open list's contents change.
@@ -388,6 +397,15 @@ final class Engine {
     /// rather than failing to compile or crashing on it.
     private func handle(_ event: UiEvent) {
         guard case let .open(controller) = state else { return }
+        // Before the switch, because it is true of several arms and was
+        // previously true of exactly one: the sidebar's counts move with read
+        // state and with mail arriving or leaving, not only when the folder
+        // set changes. `SidebarCounts` is the rule, and it has a test;
+        // putting it in an arm below would put it back where nothing can
+        // reach it.
+        if SidebarCounts.movedBy(event) {
+            mailboxes = session?.mailboxes ?? []
+        }
         switch event {
         case .newMail:
             // Counted as a list change as well as a notification: mail
@@ -441,7 +459,8 @@ final class Engine {
             // the last progress event said.
             if isOffline { syncing = false }
         case .mailboxesChanged:
-            mailboxes = session?.mailboxes ?? []
+            // The read is above, with the rest of the count-moving events.
+            break
         default:
             // Everything else is something this build has no opinion about.
             break

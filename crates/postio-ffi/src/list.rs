@@ -40,6 +40,16 @@ pub enum ScopeFfi {
         /// The account.
         account: i64,
     },
+    /// The sidebar's "Outbox" view: drafts whose send is under way.
+    ///
+    /// Here because this enum is the ABI mirror of `ListScope` and a variant
+    /// missing from it is a view the second frontend cannot select at all —
+    /// which was true of this one, so a macOS user had no way to see mail
+    /// that was on its way or had failed to leave.
+    Outbox {
+        /// The account.
+        account: i64,
+    },
     /// One conversation, wherever its messages are filed.
     ///
     /// Not a narrowing of a mailbox: a thread routinely spans folders, and a
@@ -59,6 +69,7 @@ impl From<ScopeFfi> for ListScope {
             ScopeFfi::Unified => ListScope::Unified,
             ScopeFfi::Flagged { account } => ListScope::Flagged(account.into()),
             ScopeFfi::Snoozed { account } => ListScope::Snoozed(account.into()),
+            ScopeFfi::Outbox { account } => ListScope::Outbox(account.into()),
             ScopeFfi::Thread { thread } => ListScope::Thread(thread.into()),
         }
     }
