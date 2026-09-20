@@ -928,6 +928,7 @@ fn body_request(mailbox: &Mailbox, message: MessageId, uid: Uid) -> BodyRequest 
         remote_id: postio_model::RemoteId::new(format!("{VALIDITY}:{uid}")),
         uid,
         size: 0,
+        rank: postio_sync::order::sync_priority(mailbox.role),
         received_at: at(9),
         want: postio_sync::backfill::Want::Text,
     }

@@ -133,6 +133,7 @@ async fn an_inline_image_synced_from_a_server_resolves_to_its_bytes() {
             uid: Uid::new(uid.get()),
             remote_id: postio_model::RemoteId::new(format!("{VALIDITY}:{}", uid.get())),
             size: stored.size,
+            rank: postio_sync::order::sync_priority(inbox.role),
             received_at: stored.received_at,
             want: Want::Text,
         },
