@@ -215,17 +215,35 @@ final class Engine {
     /// starts.
     private(set) var pane: Pane = .list
 
-    /// Which surface the resolver should answer for.
+    /// Which surface the resolver should answer for **inside the main
+    /// window**.
     ///
     /// Follows the focused pane, except while an overlay is up — a key
     /// pressed in the palette must not resolve as the list, or typing a
     /// command's name would archive mail.
-    var context: UiContext = .list
+    var paneContext: UiContext = .list
+
+    /// Which window has the keyboard.
+    ///
+    /// The key monitor is a *local* monitor: it sees every key press in the
+    /// application, compose windows included. Until this existed it asked
+    /// only for the pane, so `UiContext.composer` was never the answer —
+    /// every composer binding resolved to nothing and the list's own verbs
+    /// kept resolving while a message was being written.
+    let keyWindow = KeyWindowTracker()
+
+    /// Which surface the resolver should answer for.
+    ///
+    /// The window decides first; the pane only gets a say when the keyboard
+    /// is in the window that has panes. See `KeyboardContext`.
+    var context: UiContext {
+        KeyboardContext.resolving(keyWindow: keyWindow.current, mainWindow: paneContext)
+    }
 
     /// Move the keyboard to `pane`.
     func focus(_ pane: Pane) {
         self.pane = pane
-        context = pane.context
+        paneContext = pane.context
     }
 
     /// The message the cursor is on, for the reading pane.
@@ -524,12 +542,12 @@ final class Engine {
             showingCheatSheet = true
         case Intercepted.search:
             showingSearch = true
-            context = .search
+            paneContext = .search
         case Intercepted.back where showingSearch:
             // Escape in search closes it; `SearchField` restores the scope on
             // its way out, so this only has to put the keyboard back.
             showingSearch = false
-            context = pane.context
+            paneContext = pane.context
         case Intercepted.cyclePane:
             // The visual order — sidebar, list, reader — and it wraps. A
             // focus order that disagrees with the layout is how a
@@ -622,7 +640,7 @@ final class Engine {
         showingPalette = false
         showingCheatSheet = false
         showingSearch = false
-        context = pane.context
+        paneContext = pane.context
     }
 
     /// Redraw the list against whatever scope the boundary is now on.

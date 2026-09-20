@@ -67,6 +67,7 @@ struct PostioApp: App {
                 session: engine.session
             )
                 .preferredColorScheme(engine.colorScheme)
+                .background(WindowConfigurator(role: .settings))
         }
         .defaultSize(width: 900, height: 560)
         .windowResizability(.contentSize)
@@ -84,6 +85,7 @@ struct PostioApp: App {
                 )
                 .preferredColorScheme(engine.colorScheme)
                 .navigationTitle(model.title)
+                .background(WindowConfigurator(role: .compose))
             }
         }
         .defaultSize(width: 640, height: 520)

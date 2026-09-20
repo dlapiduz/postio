@@ -2,7 +2,8 @@ import AppKit
 import PostioKit
 import SwiftUI
 
-/// Reaches the `NSWindow` behind a SwiftUI scene, once, to set up autosave.
+/// Reaches the `NSWindow` behind a SwiftUI scene, once, to set up autosave
+/// and to say which window it is.
 ///
 /// SwiftUI has no modifier for frame autosave and none for "put this back on a
 /// screen that still exists", so this is the standard escape hatch: a
@@ -13,12 +14,26 @@ struct WindowConfigurator: NSViewRepresentable {
     /// the frame rather than cascade a new one.
     static let autosaveName = "PostioMainWindow"
 
+    /// Which window this is, for `KeyWindowTracker`.
+    ///
+    /// The key monitor sees every key press in the application, so what a key
+    /// means depends on which window it was typed into — and SwiftUI does not
+    /// say. Tagging is how the tracker can tell, and it happens here because
+    /// this is already the one place that reaches the `NSWindow`.
+    var role: KeyWindow = .main
+
     func makeNSView(context _: Context) -> NSView {
         let view = NSView(frame: .zero)
         // `window` is nil until the view joins a hierarchy, which is after
         // this returns. One hop, not a poll.
+        let role = role
         DispatchQueue.main.async {
             guard let window = view.window else { return }
+            KeyWindowTracker.tag(window, as: role)
+            // Only the main window's frame is worth restoring, and only it
+            // wants an empty title bar: a compose window says who it is
+            // writing to, and the settings window says "Settings".
+            guard role == .main else { return }
             window.setFrameAutosaveName(Self.autosaveName)
             hideTitle(of: window)
             recover(window)

@@ -157,7 +157,7 @@ struct Shell: View {
                     run: { engine.run($0) },
                     dismiss: { engine.dismissOverlays() }
                 )
-                .onAppear { engine.context = .palette }
+                .onAppear { engine.paneContext = .palette }
             }
         }
         .sheet(isPresented: $engine.showingCheatSheet) {
