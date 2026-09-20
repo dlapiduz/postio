@@ -44,6 +44,8 @@ mod snoozed_due_index;
 mod store_key;
 mod sync_state;
 mod threading;
+mod threading_lookup_cost;
+mod threading_statement_count;
 mod threads;
 mod unified_threads;
 mod wal_ceiling;
