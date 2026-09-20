@@ -31,8 +31,11 @@
   <url type="vcs-browser">https://github.com/dlapiduz/postio</url>
   <content_rating type="oars-1.1"/>
   <!-- The same renders the landing page shows, served from it. They are
-       fixture mail on reserved domains, drawn by `cargo run -p postio-app
-       --example shot` over a seeded store; regenerate them with the app. -->
+       fixture mail on reserved domains, drawn by the `shot` example in
+       postio-app over a seeded store; regenerate them with the app.
+       (Spelled without the flag on purpose: XML forbids a double hyphen
+       inside a comment, and writing the command out in full here is what
+       made this file unparseable for three releases.) -->
   <screenshots>
     <screenshot type="default">
       <image>https://dlapiduz.github.io/postio/assets/img/conversation.png</image>
