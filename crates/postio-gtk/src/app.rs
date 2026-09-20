@@ -103,6 +103,22 @@ pub fn build_with(timeline: Timeline) -> adw::Application {
 pub fn build_with_id(timeline: Timeline, application_id: &str) -> adw::Application {
     resources::register();
 
+    // Tell the compositor which application this is.
+    //
+    // GNOME matches a window to its desktop entry by the Wayland `app_id`,
+    // and GDK takes that from `g_get_prgname()` — which defaults to the
+    // *binary* name, `postio`. So a session looked for `postio.desktop`,
+    // found nothing, and drew the fallback icon under a generic name, with a
+    // perfectly correct `dev.postio.Postio.desktop` sitting beside it. The
+    // application ID, the desktop entry, the icon and `StartupWMClass` all
+    // agreed with each other; the one value that had to agree with *them*
+    // was never set at all.
+    //
+    // Reported against the 0.4.2 Flatpak, where it cost the switcher's Quit
+    // entry too: a window the shell cannot place in an application is one it
+    // will not offer application actions for.
+    glib::set_prgname(Some(application_id));
+
     let app = adw::Application::builder()
         .application_id(application_id)
         .resource_base_path(resources::PREFIX)
