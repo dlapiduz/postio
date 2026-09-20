@@ -20,7 +20,11 @@
         "append-path": "/usr/lib/sdk/rust-stable/bin",
         "env": {
             "CARGO_HOME": "/run/build/postio/cargo",
-            "CARGO_NET_OFFLINE": "true"
+            "CARGO_NET_OFFLINE": "true",
+            "CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER": "cc",
+            "CC": "cc",
+            "RUSTC_WRAPPER": "",
+            "CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUSTFLAGS": "-C linker-flavor=gcc"
         }
     },
     "modules": [

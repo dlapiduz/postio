@@ -3049,6 +3049,7 @@ its own file under `docs/notes/`, named by date and title; a new entry is a
 new file plus one line here. `scripts/checks/check-notes-index.py` refuses a
 note that is not listed, and a listing that names no file.
 
+- [The Flatpak build is not this workstation](notes/2026-09-19-the-flatpak-build-is-not-this-workstation.md) — `"type": "dir"` copies `.cargo/config.toml` into the sandbox, where `postio-linker`, `postio-cc`, the sccache wrapper and `-Wl,--threads` all name things that are not there; neutralised in the manifest's `build-options.env`, and `gh workflow run Release --ref main` exercises the bundle without cutting a tag (2026-09-19).
 - [io-imap discards all but the last untagged SEARCH line](notes/2026-09-17-io-imap-drops-search-results.md) — `ids = search_ids` where it means `extend`, so a SEARCH result split across lines keeps only its last one and a trailing empty line keeps nothing; iCloud listed 0 UIDs for a 60,934-message Archive, which then recorded itself as fully synced (2026-09-17).
 - [What the engine swap could not keep](notes/2026-09-13-what-the-engine-swap-could-not-keep.md) — what Turso could not carry over from SQLCipher and FTS5: eight things, each with the test that pins it, and five smaller ones found reconciling the docs (2026-09-13).
 - [A slow sync pass stops every folder behind it](notes/2026-09-13-a-slow-pass-stops-every-folder-behind-it.md) — fifteen folders queued, two started, one finished; the time was inside tantivy, and the obvious wave fix breaks the job guarantee.
