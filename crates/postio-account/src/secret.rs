@@ -440,10 +440,59 @@ impl KeyringSecretStore {
         Self::default()
     }
 
+    /// The Secret Service over D-Bus, sandbox or no sandbox.
+    ///
+    /// Exactly what `oo7::Keyring::new()` does for an *unsandboxed* process,
+    /// lifted out so a sandboxed one can ask for it too. [`Self::keyring`]
+    /// says why it has to.
+    /// Boxed because `oo7::dbus::Error` is large and this one is only logged.
+    async fn secret_service() -> Result<oo7::Keyring, Box<oo7::dbus::Error>> {
+        let service = oo7::dbus::Service::new().await.map_err(Box::new)?;
+        let collection = service.default_collection().await.map_err(Box::new)?;
+        Ok(oo7::Keyring::DBus(collection))
+    }
+
+    /// A keyring to work against, preferring the Secret Service.
+    ///
+    /// `oo7::Keyring::new()` takes the *file* backend whenever
+    /// `ashpd::is_sandboxed()`, unlocking it with a secret fetched through
+    /// `org.freedesktop.portal.Secret`. Under Flatpak that hangs: the portal
+    /// answers `version = 1`, so oo7's own fallback — which fires only on
+    /// `PortalNotFound` — never runs, and the `RetrieveSecret` request never
+    /// gets a `Response` signal at all:
+    ///
+    /// ```text
+    /// Object does not exist at path
+    ///   "/org/freedesktop/portal/desktop/request/1_162907/ashpd_8WTKorW3xf"
+    /// ```
+    ///
+    /// Every credential read then spends [`KEYRING_TIMEOUT`] and fails, which
+    /// is what the first run of the 0.4.2 Flatpak did: onboarding could not
+    /// save a password at all.
+    ///
+    /// Asking the Secret Service directly costs no new permission. The
+    /// manifest has carried `--talk-name=org.freedesktop.secrets` since the
+    /// Flatpak existed and nothing ever used it — oo7 does not consult that
+    /// name when it believes it is sandboxed, however much the sandbox
+    /// allows. It also puts the Flatpak's credentials where every other build
+    /// of Postio already keeps them, instead of in a second, app-private
+    /// store the same user's other install cannot read.
+    ///
+    /// The portal path stays as the fallback, for a session that genuinely
+    /// has no Secret Service on the bus.
     async fn keyring(&self, key: &AccountKey) -> Result<oo7::Keyring, SecretError> {
-        let keyring = oo7::Keyring::new()
-            .await
-            .map_err(|err| map_oo7_error(key, err))?;
+        let keyring = match Self::secret_service().await {
+            Ok(keyring) => keyring,
+            Err(absent) => {
+                tracing::debug!(
+                    %absent,
+                    "no Secret Service on the bus; falling back to oo7's own choice of backend"
+                );
+                oo7::Keyring::new()
+                    .await
+                    .map_err(|err| map_oo7_error(key, err))?
+            }
+        };
 
         // Best effort: a locked keyring prompts here rather than failing
         // deeper in with a less obvious message.
@@ -853,6 +902,41 @@ mod tests {
                 "`{kind}` was accepted as a secret source"
             );
         }
+    }
+
+    /// A real round trip through the Secret Service, which is the only thing
+    /// that can tell [`KeyringSecretStore::keyring`]'s two backends apart.
+    ///
+    /// `#[ignore]` in its documented sense: this needs a Secret Service
+    /// session on the bus, which CI has not got. It is also the wrong shape
+    /// to prove the bug it belongs to — what broke was the *sandboxed*
+    /// choice, and a test binary is never sandboxed, so this passes either
+    /// way here. What it does defend is the fallback staying usable: if
+    /// `secret_service()` stops producing a working keyring on an ordinary
+    /// desktop, this fails.
+    ///
+    /// The sandboxed half is proven by running the Flatpak, and there is no
+    /// substitute for that in this suite.
+    ///
+    /// ```text
+    /// cargo test -p postio-account --lib -- --ignored a_password_survives
+    /// ```
+    #[tokio::test]
+    #[ignore = "needs a Secret Service session on the bus"]
+    async fn a_password_survives_a_round_trip_through_the_secret_service() {
+        let key = AccountKey::new("ada@example.com");
+        let store = KeyringSecretStore::new();
+        let password = Password::new("hunter2");
+
+        store.store(&key, &password).await.expect("a store");
+        let read = store.retrieve(&key).await.expect("a retrieve");
+        assert_eq!(read.expose(), password.expose());
+
+        store.delete(&key).await.expect("a delete");
+        assert!(
+            matches!(store.retrieve(&key).await, Err(SecretError::NotFound { .. })),
+            "the deleted password is still readable"
+        );
     }
 
     #[tokio::test(start_paused = true)]
