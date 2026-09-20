@@ -525,6 +525,10 @@ const CASES: &[(&str, fn())] = &[
         onboarding_probe::the_probe_call_site_drives_the_screen_from_a_transport_it_was_given as fn(),
     ),
     (
+        "onboarding_probe::the_setup_wizard_keeps_the_window_controls",
+        onboarding_probe::the_setup_wizard_keeps_the_window_controls as fn(),
+    ),
+    (
         "search_live::a_real_account_answers_a_real_query",
         search_live::a_real_account_answers_a_real_query as fn(),
     ),

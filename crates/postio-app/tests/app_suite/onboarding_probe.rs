@@ -244,6 +244,64 @@ async fn onboard(
     (window, screen, bridge, directory)
 }
 
+/// Every widget in the tree, depth first.
+fn every_widget(widget: &gtk::Widget) -> Vec<gtk::Widget> {
+    let mut found = vec![widget.clone()];
+    let mut child = widget.first_child();
+    while let Some(current) = child {
+        found.extend(every_widget(&current));
+        child = current.next_sibling();
+    }
+    found
+}
+
+/// The setup wizard can be closed.
+///
+/// `install` replaces the whole window content, and the content is where this
+/// window keeps its header bar — so onboarding left the window with no
+/// controls at all. Nothing else rescued it: there is no `quit` command in
+/// the registry and no `Ctrl+Q`, so a first run could be left with no way to
+/// close the application short of killing it.
+///
+/// Reported against the 0.4.2 Flatpak, which is where most people meet
+/// onboarding — a dev build is launched from a terminal, where the absence is
+/// easy to miss.
+///
+/// It lives in this file for the harness: `onboard` is the only thing that
+/// mounts the real screen over a real window.
+pub fn the_setup_wizard_keeps_the_window_controls() {
+    crate::gtk_case(async {
+        let state_dir = tempfile::tempdir().expect("a state directory");
+        // SAFETY: first statement of a single-threaded test.
+        unsafe { std::env::set_var("XDG_STATE_HOME", state_dir.path()) };
+
+        if adw::init().is_err() || gdk::Display::default().is_none() {
+            eprintln!("skipping: no display (run under `scripts/test-headless.sh`)");
+            return;
+        }
+        let display = gdk::Display::default().unwrap();
+        fonts::install().expect("the embedded fonts should install");
+        style::install(&display);
+        app::install_icons(&display);
+
+        let transport = Arc::new(MockTransport::publishing(&autoconfig_xml()));
+        let (window, _screen, bridge, _directory) = onboard(transport).await;
+
+        let controls = every_widget(&window.content().expect("the wizard's content"))
+            .into_iter()
+            .filter(|widget| widget.is::<gtk::WindowControls>())
+            .count();
+        assert!(
+            controls > 0,
+            "the setup wizard has no window controls: onboarding replaced the \
+             window content with a bare screen, so there is no close button — \
+             and with no quit command either, there is no way out of a first run"
+        );
+
+        bridge.shutdown();
+    });
+}
+
 pub fn the_probe_call_site_drives_the_screen_from_a_transport_it_was_given() {
     crate::gtk_case(async {
         let state_dir = tempfile::tempdir().expect("a state directory");

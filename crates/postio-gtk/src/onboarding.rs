@@ -1542,7 +1542,31 @@ impl Onboarding {
         scroller.set_focusable(false);
         scroller.set_child(Some(&body));
 
+        // The window's controls, carried by the screen itself.
+        //
+        // This screen is installed with `set_content`, which replaces the
+        // whole window content — and the content is where the window keeps
+        // its header bar. So without a header here the wizard has no close
+        // button, and since there is no `quit` command in the registry and no
+        // `Ctrl+Q`, a first run had no way out of the application but killing
+        // it. Found in the 0.4.2 Flatpak, which is where onboarding is
+        // usually met; a dev build is started from a terminal, where the
+        // absence does not bite.
+        //
+        // It belongs to the screen rather than to the caller because
+        // `window.content()` *is* this widget to the nine places that reach
+        // for it — wrapping it outside would move the chrome and break all of
+        // them to fix one thing.
+        //
+        // Flat and title-less on purpose: `header` below is the wizard's own
+        // heading, and a second title above it would be two answers to
+        // "where am I".
+        let chrome = adw::HeaderBar::new();
+        chrome.set_show_title(false);
+        chrome.add_css_class("flat");
+
         let column = gtk::Box::new(gtk::Orientation::Vertical, 0);
+        column.append(&chrome);
         column.append(&header);
         column.append(&scroller);
         self.set_child(Some(&column));
