@@ -160,3 +160,58 @@ fn the_window_says_which_application_it_is() {
         app::APP_ID
     );
 }
+
+/// The Flatpak installs every app icon this repository ships.
+///
+/// `the_icon_the_entry_names_ships_in_the_bundle` above checks the *gresource*
+/// bundle, which is the icon theme the application carries for its own
+/// widgets. The session's copy is a different thing entirely: it comes from
+/// whatever the Flatpak manifest installs into
+/// `/app/share/icons/hicolor`, and nothing checked that.
+///
+/// It was short. The repository ships a scalable SVG and a symbolic one; the
+/// manifest installed three PNGs and neither SVG, so a session asking for 48
+/// or 64 pixels — which GNOME does, in the switcher and the dash — had a
+/// 128-pixel raster to scale and no vector at all. A blank icon in the app
+/// switcher is what that looks like from the outside, with `Icon=` correct,
+/// the entry exported and the caches listing it.
+///
+/// Read as text rather than parsed: the assertion is "this path appears in a
+/// build command", and a JSON shape is a heavier way to ask that.
+#[test]
+fn the_flatpak_installs_every_app_icon_the_repository_ships() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .and_then(|crates| crates.parent())
+        .expect("the repository root");
+    let manifest = std::fs::read_to_string(root.join("flatpak/dev.postio.Postio.json"))
+        .expect("the Flatpak manifest should be readable");
+
+    let icons = root.join("crates/postio-gtk/data/icons");
+    let mut missing = Vec::new();
+    for size in std::fs::read_dir(&icons).expect("the icon directory") {
+        let apps = size.expect("an entry").path().join("apps");
+        if !apps.is_dir() {
+            continue;
+        }
+        for icon in std::fs::read_dir(&apps).expect("an apps directory") {
+            let icon = icon.expect("an icon").path();
+            let relative = icon
+                .strip_prefix(root)
+                .expect("inside the repository")
+                .to_string_lossy()
+                .into_owned();
+            if !manifest.contains(&relative) {
+                missing.push(relative);
+            }
+        }
+    }
+    missing.sort();
+
+    assert!(
+        missing.is_empty(),
+        "the Flatpak manifest installs no rule for {missing:#?} — so the \
+         session never sees them, however correct `Icon=` and the exported \
+         entry are"
+    );
+}
