@@ -934,7 +934,10 @@ mod tests {
 
         store.delete(&key).await.expect("a delete");
         assert!(
-            matches!(store.retrieve(&key).await, Err(SecretError::NotFound { .. })),
+            matches!(
+                store.retrieve(&key).await,
+                Err(SecretError::NotFound { .. })
+            ),
             "the deleted password is still readable"
         );
     }
