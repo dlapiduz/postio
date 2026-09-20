@@ -12,7 +12,7 @@
 //! *identical* to the server path rather than similar to it.
 //!
 //! What a maildir does not have is the numbers that seam is written in terms
-//! of. [`uidlist`] invents them and writes them down.
+//! of. [`uidlist`](crate::maildir::uidlist) invents them and writes them down.
 
 pub mod backend;
 pub mod store;

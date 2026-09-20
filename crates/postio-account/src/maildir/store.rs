@@ -1,7 +1,7 @@
 //! Reading a maildir: its folders, its messages, and their numbers.
 //!
 //! Everything the filesystem knows, turned into the shapes the rest of Postio
-//! speaks — with [`UidList`](super::UidList) supplying the identity a maildir
+//! speaks — with [`UidList`] supplying the identity a maildir
 //! does not have. Nothing here decides policy: which messages to fetch, when,
 //! and what to do with them stays the sync machinery's, unchanged.
 
@@ -27,7 +27,7 @@ pub struct Folder {
 /// One message in a folder.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Entry {
-    /// Its number, stable across runs — see [`UidList`](super::UidList).
+    /// Its number, stable across runs — see [`UidList`].
     pub uid: u32,
     /// The file, so reading a body does not mean listing the folder again.
     pub file: PathBuf,

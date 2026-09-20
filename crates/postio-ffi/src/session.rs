@@ -3771,7 +3771,7 @@ impl Session {
     /// The verbs the reading pane offers, in canvas order.
     ///
     /// No key travels with them: this boundary's other frontend draws `⌘R`
-    /// rather than `e`, and the chord is [`Session::accelerator`]'s answer.
+    /// rather than `e`, and the chord is [`Session::binding_for`]'s answer.
     /// What is shared is *which* verbs, which is a product decision — a
     /// reader offering three on one platform and four on the other is two
     /// applications.

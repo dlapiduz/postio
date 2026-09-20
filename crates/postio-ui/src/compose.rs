@@ -46,7 +46,7 @@ mod tests {
 ///
 /// Both frontends put a `contenteditable` document inside a web view and
 /// both need the same three things from it: the paragraph separator and
-/// `styleWithCSS` settings that pin the dialect [`postio_body::parse`] reads
+/// `styleWithCSS` settings that pin the dialect [`postio_body::parse()`] reads
 /// back, an edit channel carrying `innerHTML`, and a reflection channel
 /// saying what formatting is in force at the caret.
 ///

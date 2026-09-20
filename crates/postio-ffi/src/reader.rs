@@ -106,7 +106,7 @@ pub struct RecipientsFfi {
 /// `postio_ui::reader::header::ReaderAction`'s call, so the two frontends
 /// cannot end up offering different bars. **No key travels with it**: this
 /// platform draws `⌘R`, not `e`, and the chord is
-/// `Session::accelerator` — the verb list is shared, the way it is
+/// `Session::binding_for` — the verb list is shared, the way it is
 /// spelled on a keyboard is not.
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct ReaderActionFfi {

@@ -1,6 +1,6 @@
 //! What was lost when pasted markup was narrowed to the [`Document`].
 //!
-//! [`crate::parse`] is total and silent: anything outside the subset is
+//! [`fn@crate::parse`] is total and silent: anything outside the subset is
 //! unwrapped to its text or dropped, and the caller gets a clean document
 //! with no record of the difference. That is the right contract for the
 //! quoting path, where the input is a message somebody else wrote and there
@@ -18,7 +18,7 @@
 //! The obvious implementation is a second table of "supported elements",
 //! and it would be wrong within a release: the dialect would grow a tag and
 //! this would go on reporting it as lost. So every question here is put to
-//! [`crate::parse`]'s own [`block_for`] and [`inline_for`]. An element the
+//! [`fn@crate::parse`]'s own [`block_for`] and [`inline_for`]. An element the
 //! parser can build something from is kept, by definition, and the two
 //! cannot disagree about which those are.
 //!
@@ -37,7 +37,7 @@ use crate::parse::{DROPPED, block_for, inline_for, name_of};
 /// A narrowed document, and what narrowing it cost.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Narrowed {
-    /// The document, exactly as [`crate::parse`] would have produced it.
+    /// The document, exactly as [`fn@crate::parse`] would have produced it.
     pub document: Document,
     /// What the dialect could not hold.
     pub lost: Lost,
@@ -116,7 +116,7 @@ fn join(parts: &[String]) -> String {
 
 /// Narrow `html`, and say what that cost.
 ///
-/// The document is [`crate::parse`]'s, unchanged — this adds a report, it
+/// The document is [`fn@crate::parse`]'s, unchanged — this adds a report, it
 /// does not add a second parser.
 pub fn narrow(html: &str) -> Narrowed {
     Narrowed {
