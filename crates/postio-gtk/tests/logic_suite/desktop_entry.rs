@@ -132,3 +132,31 @@ fn which(program: &str) -> Result<std::path::PathBuf, ()> {
         .find(|p| p.is_file())
         .ok_or(())
 }
+
+/// What the window tells the compositor it belongs to.
+///
+/// Every other assertion in this file is about the desktop entry, and an
+/// entry nothing consults is worth nothing. GNOME matches a window to its
+/// entry by the Wayland `app_id`, which GDK takes from `g_get_prgname()` —
+/// and that defaults to the *binary* name, `postio`. So the session looked
+/// for `postio.desktop`, found nothing, and drew the fallback icon under a
+/// generic name, with `dev.postio.Postio.desktop` sitting correctly beside
+/// it the whole time. Reported against the 0.4.2 Flatpak, where every case
+/// above passed.
+///
+/// `build()` rather than a helper, because what regresses is the *call*
+/// going missing, not the setting being wrong.
+#[test]
+fn the_window_says_which_application_it_is() {
+    let _app = app::build();
+
+    let reported = glib::prgname();
+    assert_eq!(
+        reported.as_ref().map(|name| name.as_str()),
+        Some(app::APP_ID),
+        "the window will tell the compositor it is {reported:?}, so a session \
+         looks for that desktop entry rather than {}.desktop — which is how a \
+         correct entry still produces a default icon and a generic name",
+        app::APP_ID
+    );
+}
