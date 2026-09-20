@@ -284,6 +284,30 @@ final class Engine {
     /// waits is a keyboard that feels like it stopped responding.
     private(set) var pendingChord: String?
 
+    /// What Postio last said back about something you asked it to do.
+    ///
+    /// `nil` when there is nothing to say. The four outcome events — an
+    /// action ran, an undo was applied, a verb was refused, something failed
+    /// — all arrived here as `Other` and were dropped, so the application did
+    /// the work and never answered.
+    private(set) var notice: Notice?
+
+    /// Bumped whenever `notice` is set, so a second identical sentence is a
+    /// second notice.
+    ///
+    /// *Archived* twice in a row is two things happening, and a view watching
+    /// the value alone would see nothing the second time — the same lesson
+    /// `WindowRequest` records about `onChange`.
+    private(set) var noticeToken = 0
+
+    /// Take the notice down.
+    ///
+    /// Called by whatever is drawing it once its time is up, and by the Undo
+    /// button on its way out.
+    func dismissNotice() {
+        notice = nil
+    }
+
     /// The special-use folders, in the order the boundary put them in.
     ///
     /// Inbox first, then the canvas' order — and one row per role, however
@@ -405,6 +429,13 @@ final class Engine {
         // reach it.
         if SidebarCounts.movedBy(event) {
             mailboxes = session?.mailboxes ?? []
+        }
+        // Before the switch for the same reason: what the application says
+        // back is not one arm's business, and an arm here is a decision
+        // nothing can test.
+        if let arriving = Notice(event) {
+            notice = Notice.winner(showing: notice, arriving: arriving)
+            noticeToken += 1
         }
         switch event {
         case .newMail:

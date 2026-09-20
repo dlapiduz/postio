@@ -37,5 +37,9 @@ import Testing
         #expect(!SidebarCounts.movedBy(.reindexProgress(account: 1, done: 1, total: 2)))
         #expect(!SidebarCounts.movedBy(.syncProgress(account: 1, done: 1, total: 2)))
         #expect(!SidebarCounts.movedBy(.other(kind: "BackfillProgress")))
+        #expect(
+            !SidebarCounts.movedBy(.notice(kind: .completed, message: "Archived", undoable: true)),
+            "a notice is a sentence about something that already emitted its own event"
+        )
     }
 }

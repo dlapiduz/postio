@@ -47,7 +47,9 @@ public enum SidebarCounts {
             // change, not only their numbers.
             return true
         case .conversationReady, .pageReady, .cursorMoved, .connectionChanged,
-             .reindexProgress, .syncProgress, .other:
+             .reindexProgress, .syncProgress, .notice, .other:
+            // A notice is a sentence about something that already happened.
+            // Whatever moved the counts emitted its own event for it.
             return false
         }
     }

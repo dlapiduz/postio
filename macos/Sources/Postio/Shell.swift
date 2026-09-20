@@ -190,6 +190,11 @@ struct Shell: View {
         // would keep animating for somebody who had just asked it to stop.
         .animation(.easeOut(duration: Motion.current), value: engine.pendingChord)
         .animation(.easeOut(duration: Motion.current), value: engine.showingPalette)
+        .animation(.easeOut(duration: Motion.current), value: engine.noticeToken)
+        // What Postio said back. Bottom-*leading*, so it never lands under
+        // the pending-chord hint at the other corner: both are transient and
+        // both can be up at once — a `g` half-typed while a send fails.
+        .overlay(alignment: .bottomLeading) { noticeBanner }
         .overlay(alignment: .bottomTrailing) {
             if let pending = engine.pendingChord {
                 Text(pending)
@@ -233,6 +238,57 @@ struct Shell: View {
             // so it opens the folder and leaves the cursor where the folder's
             // own selection puts it.
             if let message = requested.message { showing = message }
+        }
+    }
+
+    /// What Postio last said back about something you asked it to do.
+    ///
+    /// Not a dialog and not a log line: a sentence where the eye already is,
+    /// that goes on its own, with an Undo beside it when there is something
+    /// to take back. `Notice` decides how long it stays and whether it offers
+    /// that button; this only draws it, which is the split that keeps the
+    /// decision testable at all — nothing can test a view here.
+    @ViewBuilder
+    private var noticeBanner: some View {
+        if let notice = engine.notice {
+            HStack(spacing: PostioTokens.space2) {
+                Image(
+                    systemName: notice.isAlarming
+                        ? "exclamationmark.triangle.fill" : "checkmark.circle"
+                )
+                .foregroundStyle(notice.isAlarming ? Color.red : Color.secondary)
+                Text(notice.message)
+                    .lineLimit(2)
+                if notice.offersUndo {
+                    // The registry's `undo`, so this button and `u` are one
+                    // command. A button with an undo of its own would be a
+                    // second undo stack.
+                    Button("Undo") {
+                        engine.run(Notice.undoCommand)
+                        engine.dismissNotice()
+                    }
+                    .buttonStyle(.link)
+                }
+            }
+            .padding(.horizontal, PostioTokens.space3)
+            .padding(.vertical, PostioTokens.space2)
+            .background(.regularMaterial, in: .rect(cornerRadius: 8))
+            .padding(12)
+            .transition(.opacity)
+            .accessibilityElement(children: .combine)
+            .accessibilityLabel(notice.message)
+            // A sentence that appears in a corner is one a screen-reader user
+            // never hears otherwise.
+            .accessibilityAddTraits(.updatesFrequently)
+            // Its own lifetime, keyed on the *token* rather than the notice:
+            // *Archived* twice in a row is two notices, and the second has to
+            // restart the clock rather than inherit what was left of the
+            // first one's.
+            .task(id: engine.noticeToken) {
+                try? await Task.sleep(nanoseconds: UInt64(notice.seconds * 1_000_000_000))
+                guard !Task.isCancelled else { return }
+                engine.dismissNotice()
+            }
         }
     }
 
