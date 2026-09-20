@@ -22,6 +22,7 @@
 
 use std::sync::Arc;
 
+use crate::Wiring;
 use postio_account::auth::{StoredPasswordSource, TokenSource};
 use postio_account::backend::MailBackend;
 use postio_account::imap::{
@@ -30,49 +31,36 @@ use postio_account::imap::{
 use postio_account::secret::{AccountKey, SecretStore};
 use postio_model::{Account, AccountId};
 use postio_runtime::engine::{Engine, EngineParts, NetworkSource, SystemClock};
-use postio_storage::{BlobStore, Database};
 
-use postio_core::bridge::EventSink;
-
-/// Start the engine for `account`.
+/// Start the engine for `account`, from this installation's [`Wiring`].
 ///
 /// `None` when the transports cannot be built at all — a system with no
 /// usable TLS stack, say. That costs the account its sync and nothing else:
 /// the local store still opens and everything already synced still reads.
 ///
-/// `secrets` is handed in rather than built here for the reason the module
-/// docs give: it is the composition root's choice, and it is the same store
-/// onboarding writes the password into and startup reads it back from.
-// Nine parts because the composition root chooses all nine — the module
-// docs' whole argument. `start_joining` below already carries the allow for
-// the same reason.
-#[allow(clippy::too_many_arguments)]
-pub fn start(
-    account: &Account,
-    database: &Database,
-    blobs: BlobStore,
-    events: EventSink,
-    secrets: Arc<dyn SecretStore>,
-    mailbox_roles: postio_model::RoleOverrides,
-    backfill: postio_runtime::BackfillPolicy,
-    watch: postio_sync::WatchPolicy,
-    egress: Arc<dyn postio_model::egress::EgressSink>,
-) -> Option<Engine> {
+/// The wiring is handed in whole rather than as parts for the reason the
+/// module docs give: every choice an engine is built from — the store, the
+/// keyring, the backfill and watch policies, the egress log — is the
+/// composition root's, made once for the installation and the same for
+/// every account. Three callers used to unpack the same eight fields in the
+/// same order, and a ninth field would have been nine edits.
+pub fn start(account: &Account, wiring: &Wiring) -> Option<Engine> {
     let key = AccountKey::new(account.address.address.clone());
 
     // Both transports report to the egress log (#151): every connection
     // this engine opens is a row the user can audit.
+    let egress = wiring.egress.for_account(account.id);
     let connector = match RustlsConnector::new() {
         Ok(connector) => Arc::new(connector.with_egress(egress.clone())),
         Err(error) => {
-            tracing::error!(%error, "no IMAP transport, so no sync");
+            tracing::error!(%error, "no IMAP transport, so no sync: {error}");
             return None;
         }
     };
     let smtp = match postio_smtp::transport::RustlsConnector::new() {
         Ok(connector) => Arc::new(connector.with_egress(egress)),
         Err(error) => {
-            tracing::error!(%error, "no SMTP transport, so nothing can be sent");
+            tracing::error!(%error, "no SMTP transport, so nothing can be sent: {error}");
             return None;
         }
     };
@@ -86,29 +74,29 @@ pub fn start(
     // A password account is a `TokenSource` too. That is the point of the
     // seam — the composition root chooses which kind of credential this
     // account has, and nothing downstream asks again.
-    let tokens = token_source(account, &secrets);
+    let tokens = token_source(account, &wiring.secrets);
 
     let backend = backend_for(account, key, tokens.clone(), connector);
 
     match Engine::spawn(EngineParts {
         account: account.id,
-        database: database.clone(),
-        blobs,
+        database: wiring.database.clone(),
+        blobs: wiring.blobs.clone(),
         backend,
         smtp,
         tokens,
-        events,
+        events: wiring.events.clone(),
         retry: Default::default(),
-        backfill,
+        backfill: wiring.backfill,
         reconnect: Default::default(),
-        watch,
+        watch: wiring.watch,
         network: NetworkSource::NetworkManager,
-        mailbox_roles,
+        mailbox_roles: wiring.mailbox_roles.clone(),
         clock: Arc::new(SystemClock),
     }) {
         Ok(engine) => Some(engine),
         Err(error) => {
-            tracing::error!(%error, "the sync engine did not start");
+            tracing::error!(%error, "the sync engine did not start: {error}");
             None
         }
     }
@@ -136,7 +124,7 @@ fn backend_for(
                 tracing::error!(
                     account = account.id.get(),
                     %error,
-                    "the stored JMAP session URL does not parse; falling back to IMAP"
+                    "the stored JMAP session URL does not parse; falling back to IMAP: {error}"
                 );
             }
         },
@@ -208,7 +196,7 @@ pub(crate) fn token_source(
                 tracing::error!(
                     %error,
                     "the account's stored OAuth token endpoint is not a URL; \
-                     falling back to the stored credential"
+                     falling back to the stored credential: {error}"
                 );
             }
         }
@@ -292,20 +280,12 @@ pub fn engine_budget(max_connections: usize) -> usize {
 /// Refuses rather than truncating when there are more accounts than the pool
 /// can serve. Starting nine of ten engines would leave the tenth account
 /// looking permanently offline with nothing in the interface explaining why.
-#[allow(clippy::too_many_arguments)]
-pub fn start_all(
+pub async fn start_all(
     accounts: &[Account],
-    database: &Database,
-    blobs: BlobStore,
-    events: EventSink,
-    secrets: Arc<dyn SecretStore>,
-    mailbox_roles: postio_model::RoleOverrides,
-    backfill: postio_runtime::BackfillPolicy,
-    watch: postio_sync::WatchPolicy,
-    egress: &Arc<crate::egress::EgressRecorder>,
+    wiring: &Wiring,
 ) -> Result<Vec<(AccountId, Engine)>, StartupRefusal> {
     let enabled: Vec<&Account> = accounts.iter().filter(|account| account.enabled).collect();
-    let budget = engine_budget(database.pool().max_connections());
+    let budget = engine_budget(postio_storage::MAX_CONCURRENT_PASSES);
 
     if enabled.len() > budget {
         return Err(StartupRefusal::TooManyAccounts {
@@ -318,17 +298,7 @@ pub fn start_all(
     for account in enabled {
         // A transport that cannot be built costs *that* account its sync and
         // nothing else — `start` already logs why. The others still run.
-        if let Some(engine) = start(
-            account,
-            database,
-            blobs.clone(),
-            events.clone(),
-            Arc::clone(&secrets),
-            mailbox_roles.clone(),
-            backfill,
-            watch,
-            egress.for_account(account.id),
-        ) {
+        if let Some(engine) = start(account, wiring) {
             engines.push((account.id, engine));
         }
     }
@@ -352,34 +322,16 @@ pub fn start_all(
 ///
 /// `Ok(None)` is the same "no usable transport" answer [`start`] gives, and
 /// costs that account its sync and nothing else.
-#[allow(clippy::too_many_arguments)]
-pub fn start_joining(
+pub async fn start_joining(
     account: &Account,
     accounts: usize,
-    database: &Database,
-    blobs: BlobStore,
-    events: EventSink,
-    secrets: Arc<dyn SecretStore>,
-    mailbox_roles: postio_model::RoleOverrides,
-    backfill: postio_runtime::BackfillPolicy,
-    watch: postio_sync::WatchPolicy,
-    egress: &Arc<crate::egress::EgressRecorder>,
+    wiring: &Wiring,
 ) -> Result<Option<Engine>, StartupRefusal> {
-    let budget = engine_budget(database.pool().max_connections());
+    let budget = engine_budget(postio_storage::MAX_CONCURRENT_PASSES);
     if accounts > budget {
         return Err(StartupRefusal::TooManyAccounts { accounts, budget });
     }
-    Ok(start(
-        account,
-        database,
-        blobs,
-        events,
-        secrets,
-        mailbox_roles,
-        backfill,
-        watch,
-        egress.for_account(account.id),
-    ))
+    Ok(start(account, wiring))
 }
 
 #[cfg(test)]

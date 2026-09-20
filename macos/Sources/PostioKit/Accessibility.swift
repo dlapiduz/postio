@@ -62,14 +62,27 @@ public enum Pane: CaseIterable, Sendable {
 
     /// The pane after this one, wrapping.
     ///
-    /// Wrapping rather than stopping: `cycle_pane` is a cycle, and a user who
+    /// The engine's table (`postio_ui::focus::next_pane`, through the
+    /// boundary's `nextPane`), the same one the GTK window walks, so Tab
+    /// means one thing on both. Wrapping rather than stopping: a user who
     /// has tabbed to the reader expects one more press to come back rather
     /// than to do nothing.
     public func next(_ forward: Bool = true) -> Pane {
-        let all = Pane.allCases
-        let at = all.firstIndex(of: self) ?? 0
-        let moved = forward ? at + 1 : at - 1 + all.count
-        return all[moved % all.count]
+        // A pane's context is always a pane, so the boundary always answers;
+        // `self` is only the type checker's fallback, never a path taken.
+        nextPane(context: context, forward: forward).flatMap(Pane.init(context:)) ?? self
+    }
+
+    /// The pane a context names, or `nil` for a context that is not one of
+    /// the three — the conversation is inside the reading pane, and the
+    /// composer, palette and settings lists are not panes Tab walks.
+    public init?(context: UiContext) {
+        switch context {
+        case .sidebar: self = .sidebar
+        case .list: self = .list
+        case .reader: self = .reader
+        default: return nil
+        }
     }
 
     /// The surface this pane resolves keys as.

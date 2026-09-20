@@ -110,7 +110,9 @@ import Testing
             total: total,
             selectable: true,
             lastSyncedAt: nil,
-            special: true
+            special: true,
+            flagged: 0,
+            snoozed: 0
         )
     }
 }

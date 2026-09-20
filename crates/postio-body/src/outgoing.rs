@@ -36,7 +36,20 @@ use std::collections::HashSet;
 use crate::document::Document;
 
 /// The tags [`Document::to_html`] can emit. Nothing else is reachable.
-const EMITTED_TAGS: [&str; 16] = [
+///
+/// The table family is here because of ADR 0033: a reply's quote is the
+/// original as the reader rendered it, so `Block::Quoted` can emit anything
+/// [`crate::sanitize`] admits, and this list is defined as the closure of what
+/// `to_html` can produce. Leaving them out did not make the outgoing mail
+/// safer — it made this pass silently undo the fidelity the quote exists for,
+/// which is the shape of bug where one layer quietly cancels another.
+///
+/// Nothing dangerous is admitted by widening it. `<script>`, `<iframe>` and
+/// every `on*` handler are refused by `ammonia`'s defaults whatever is in
+/// here, and the quote's own content was already through the reader's
+/// sanitiser with remote images blocked. The user's own prose still comes from
+/// the authoring subset, which emits only the first sixteen.
+const EMITTED_TAGS: [&str; 25] = [
     "p",
     "h1",
     "h2",
@@ -53,6 +66,16 @@ const EMITTED_TAGS: [&str; 16] = [
     "a",
     "img",
     "br",
+    // ADR 0033: reachable through `Block::Quoted`.
+    "table",
+    "thead",
+    "tbody",
+    "tfoot",
+    "tr",
+    "td",
+    "th",
+    "colgroup",
+    "col",
 ];
 
 /// The last pass before the bytes leave. See the module docs: this exists to
@@ -63,12 +86,25 @@ const EMITTED_TAGS: [&str; 16] = [
 /// pixel Postio sent on the user's behalf. Defence in depth is cheap here;
 /// what is not acceptable is pretending it is the *primary* control.
 pub fn harden(html: &str) -> String {
-    Builder::default()
+    let mut builder = Builder::default();
+    builder
         .tags(HashSet::from(EMITTED_TAGS))
         .link_rel(None)
         .url_schemes(HashSet::from(["http", "https", "mailto", "cid"]))
-        .clean(html)
-        .to_string()
+        // The sender's own declarations, which is what carries a quote's
+        // styling once `class` is gone -- the sanitiser admits `style` and
+        // not `class`, so this is the only inline carrier there is.
+        .add_generic_attributes(["style"])
+        // The marker that tells `parse` this blockquote is a reply quote and
+        // not one the user made. It has to survive for the round trip through
+        // the editor to hold (FR-046); it carries no content.
+        .add_tag_attributes("blockquote", [crate::document::QUOTED_MARKER]);
+    for tag in [
+        "table", "thead", "tbody", "tfoot", "tr", "td", "th", "colgroup", "col",
+    ] {
+        builder.add_tag_attributes(tag, crate::sanitize::TABLE_LAYOUT.iter().copied());
+    }
+    builder.clean(html).to_string()
 }
 
 /// What a [`Document`] becomes on the wire: both alternatives.

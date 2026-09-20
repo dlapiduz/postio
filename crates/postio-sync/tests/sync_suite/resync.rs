@@ -8,15 +8,16 @@
 use postio_account::backend::{Fault, MailBackend, MockBackend, MockMailbox, MockMessage};
 use postio_account::cancel::CancelToken;
 use postio_model::{AccountId, Flag, FlagSet, Mailbox, Uid, UidValidity};
-use postio_storage::PooledConnection;
+use postio_storage::Checkout;
+use postio_storage::Connection;
 use postio_storage::repository::{ContactRepository, MessageRepository, SyncStateRepository};
 use postio_storage::test_support;
 use postio_sync::{Outcome, resync_mailbox, sync_mailbox, sync_mailbox_with_batch_size};
-use rusqlite::Connection;
 
-fn times_ada_was_seen(connection: &Connection, account_id: AccountId) -> u32 {
+async fn times_ada_was_seen(connection: &Connection, account_id: AccountId) -> u32 {
     ContactRepository::new(connection)
         .list(Some(account_id))
+        .await
         .expect("list contacts")
         .into_iter()
         .find(|contact| contact.address.normalized() == "ada@example.com")
@@ -50,23 +51,24 @@ async fn server_with_messages(count: u32) -> MockBackend {
     backend
 }
 
-fn local(connection: &Connection) -> (AccountId, Mailbox) {
-    let account = test_support::account(connection);
-    let inbox = test_support::mailbox(connection, &account, INBOX);
+async fn local(connection: &Connection) -> (AccountId, Mailbox) {
+    let account = test_support::account(connection).await;
+    let inbox = test_support::mailbox(connection, &account, INBOX).await;
     (account.id, inbox)
 }
 
 /// Runs the initial sync so the local store matches `backend`, as a fixture
 /// step for tests that are about what happens *after* that.
-async fn bootstrap(connection: &PooledConnection, backend: &MockBackend, mailbox: &Mailbox) {
+async fn bootstrap(connection: &Checkout, backend: &MockBackend, mailbox: &Mailbox) {
     sync_mailbox(connection, backend, mailbox, &CancelToken::new(), |_| {})
         .await
         .expect("bootstrap sync");
 }
 
-fn known_uids(connection: &Connection, mailbox: &Mailbox) -> Vec<u32> {
+async fn known_uids(connection: &Connection, mailbox: &Mailbox) -> Vec<u32> {
     MessageRepository::new(connection)
         .uids_in(mailbox.id, postio_model::Generation::new(VALIDITY))
+        .await
         .expect("uids_in")
         .into_iter()
         .map(Uid::get)
@@ -76,9 +78,9 @@ fn known_uids(connection: &Connection, mailbox: &Mailbox) -> Vec<u32> {
 #[tokio::test]
 async fn a_reconnect_with_no_server_changes_fetches_essentially_nothing() {
     let backend = server_with_messages(3).await;
-    let database = test_support::memory();
-    let connection = database.connection().expect("checkout");
-    let (_account, inbox) = local(&connection);
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    let (_account, inbox) = local(&connection).await;
     bootstrap(&connection, &backend, &inbox).await;
 
     let calls_before = backend.calls();
@@ -90,15 +92,15 @@ async fn a_reconnect_with_no_server_changes_fetches_essentially_nothing() {
     // Only the one SELECT this pass had to make to find out nothing changed —
     // no FETCH at all.
     assert_eq!(backend.calls() - calls_before, 1);
-    assert_eq!(known_uids(&connection, &inbox), vec![1, 2, 3]);
+    assert_eq!(known_uids(&connection, &inbox).await, vec![1, 2, 3]);
 }
 
 #[tokio::test]
 async fn a_server_side_flag_change_and_deletion_both_reflect_locally() {
     let backend = server_with_messages(3).await;
-    let database = test_support::memory();
-    let connection = database.connection().expect("checkout");
-    let (_account, inbox) = local(&connection);
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    let (_account, inbox) = local(&connection).await;
     bootstrap(&connection, &backend, &inbox).await;
 
     // Another client flags message 2 as seen...
@@ -151,6 +153,7 @@ async fn a_server_side_flag_change_and_deletion_both_reflect_locally() {
             postio_model::Generation::new(VALIDITY),
             Uid::new(2),
         )
+        .await
         .expect("look up message 2")
         .expect("message 2 still stored");
     assert!(
@@ -159,7 +162,7 @@ async fn a_server_side_flag_change_and_deletion_both_reflect_locally() {
     );
 
     assert_eq!(
-        known_uids(&connection, &inbox),
+        known_uids(&connection, &inbox).await,
         vec![1, 2],
         "the expunged message must be gone locally too"
     );
@@ -172,12 +175,12 @@ async fn a_server_side_flag_change_and_deletion_both_reflect_locally() {
 #[tokio::test]
 async fn a_flag_only_change_does_not_double_count_the_correspondent() {
     let backend = server_with_messages(3).await;
-    let database = test_support::memory();
-    let connection = database.connection().expect("checkout");
-    let (account_id, inbox) = local(&connection);
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    let (account_id, inbox) = local(&connection).await;
     bootstrap(&connection, &backend, &inbox).await;
     assert_eq!(
-        times_ada_was_seen(&connection, account_id),
+        times_ada_was_seen(&connection, account_id).await,
         3,
         "bootstrap already saw ada on all three messages"
     );
@@ -197,7 +200,7 @@ async fn a_flag_only_change_does_not_double_count_the_correspondent() {
     assert!(matches!(outcome, Outcome::Incremental { changed: 1, .. }));
 
     assert_eq!(
-        times_ada_was_seen(&connection, account_id),
+        times_ada_was_seen(&connection, account_id).await,
         3,
         "a flag change on a message already seen must not count as a new sighting"
     );
@@ -206,9 +209,9 @@ async fn a_flag_only_change_does_not_double_count_the_correspondent() {
 #[tokio::test]
 async fn a_message_the_change_feed_never_mentions_still_arrives() {
     let backend = server_with_messages(2).await;
-    let database = test_support::memory();
-    let connection = database.connection().expect("checkout");
-    let (_account, inbox) = local(&connection);
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    let (_account, inbox) = local(&connection).await;
     bootstrap(&connection, &backend, &inbox).await;
 
     // A delivery whose `MODSEQ` does not exceed the `HIGHESTMODSEQ` we hold,
@@ -241,7 +244,7 @@ async fn a_message_the_change_feed_never_mentions_still_arrives() {
         other => panic!("expected an incremental resync, got {other:?}"),
     }
     assert_eq!(
-        known_uids(&connection, &inbox),
+        known_uids(&connection, &inbox).await,
         vec![1, 2, 3],
         "UIDNEXT is the second witness for an arrival, and it cannot be wrong \
          without the server being incoherent"
@@ -251,11 +254,11 @@ async fn a_message_the_change_feed_never_mentions_still_arrives() {
 #[tokio::test]
 async fn an_arrival_during_resync_is_recorded_as_a_correspondent() {
     let backend = server_with_messages(2).await;
-    let database = test_support::memory();
-    let connection = database.connection().expect("checkout");
-    let (account_id, inbox) = local(&connection);
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    let (account_id, inbox) = local(&connection).await;
     bootstrap(&connection, &backend, &inbox).await;
-    assert_eq!(times_ada_was_seen(&connection, account_id), 2);
+    assert_eq!(times_ada_was_seen(&connection, account_id).await, 2);
 
     backend
         .append(INBOX, &postio_account::backend::AppendMessage::new(note(3)))
@@ -267,7 +270,7 @@ async fn an_arrival_during_resync_is_recorded_as_a_correspondent() {
         .expect("resync");
 
     assert_eq!(
-        times_ada_was_seen(&connection, account_id),
+        times_ada_was_seen(&connection, account_id).await,
         3,
         "the incremental pull found a new message, so it must add a sighting"
     );
@@ -276,9 +279,9 @@ async fn an_arrival_during_resync_is_recorded_as_a_correspondent() {
 #[tokio::test]
 async fn a_conforming_server_costs_no_extra_round_trip_for_arrivals() {
     let backend = server_with_messages(2).await;
-    let database = test_support::memory();
-    let connection = database.connection().expect("checkout");
-    let (_account, inbox) = local(&connection);
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    let (_account, inbox) = local(&connection).await;
     bootstrap(&connection, &backend, &inbox).await;
 
     // A flag change *is* reported by the change feed, and moves no UIDs.
@@ -307,9 +310,9 @@ async fn a_conforming_server_costs_no_extra_round_trip_for_arrivals() {
 #[tokio::test]
 async fn a_uid_validity_change_wipes_and_rebuilds_the_mailbox() {
     let backend = server_with_messages(2).await;
-    let database = test_support::memory();
-    let connection = database.connection().expect("checkout");
-    let (_account, inbox) = local(&connection);
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    let (_account, inbox) = local(&connection).await;
     bootstrap(&connection, &backend, &inbox).await;
 
     let new_validity = UidValidity::new(1_900_000_000);
@@ -341,6 +344,7 @@ async fn a_uid_validity_change_wipes_and_rebuilds_the_mailbox() {
                 postio_model::Generation::new(VALIDITY),
                 Uid::new(1)
             )
+            .await
             .expect("look up under the old generation")
             .is_none(),
         "rows under the stale UIDVALIDITY must be gone"
@@ -351,12 +355,14 @@ async fn a_uid_validity_change_wipes_and_rebuilds_the_mailbox() {
             postio_model::Generation::new(new_validity.get()),
             Uid::new(1),
         )
+        .await
         .expect("look up under the new generation")
         .expect("rebuilt under the new generation");
     assert_eq!(rebuilt.server.uid_validity, Some(new_validity));
 
     let state = SyncStateRepository::new(&connection)
         .require(inbox.id)
+        .await
         .expect("sync state");
     assert_eq!(
         state.generation,
@@ -368,9 +374,9 @@ async fn a_uid_validity_change_wipes_and_rebuilds_the_mailbox() {
 #[tokio::test]
 async fn a_transient_backend_failure_during_resync_is_not_treated_as_a_resync_result() {
     let backend = server_with_messages(1).await;
-    let database = test_support::memory();
-    let connection = database.connection().expect("checkout");
-    let (_account, inbox) = local(&connection);
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    let (_account, inbox) = local(&connection).await;
     bootstrap(&connection, &backend, &inbox).await;
 
     backend.inject(Fault::Disconnect);
@@ -382,7 +388,7 @@ async fn a_transient_backend_failure_during_resync_is_not_treated_as_a_resync_re
 
 /// The dwell's two halves, in the order it does them: the local write, then
 /// the operation that will carry it to the server.
-fn read_locally_and_enqueue(
+async fn read_locally_and_enqueue(
     connection: &Connection,
     account: AccountId,
     message: postio_model::MessageId,
@@ -392,6 +398,7 @@ fn read_locally_and_enqueue(
     flags.insert(Flag::Seen);
     MessageRepository::new(connection)
         .set_flags(message, &flags, FlagSource::Local)
+        .await
         .expect("the local write");
     OperationQueueRepository::new(connection)
         .enqueue(
@@ -400,6 +407,7 @@ fn read_locally_and_enqueue(
             &postio_model::Operation::SetFlags { flags },
             chrono::Utc::now(),
         )
+        .await
         .expect("enqueue");
 }
 
@@ -416,9 +424,9 @@ async fn a_read_that_has_not_drained_survives_the_resync_that_has_not_heard_it()
     // somebody flags it elsewhere: that bumps `MODSEQ`, the message comes back
     // in the `CHANGEDSINCE` batch carrying its whole flag set, and that set
     // does not contain the `\Seen` the server has not been told about.
-    let database = test_support::memory();
-    let connection = database.connection().expect("checkout");
-    let (account, inbox) = local(&connection);
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    let (account, inbox) = local(&connection).await;
     let backend = server_with_messages(3).await;
     bootstrap(&connection, &backend, &inbox).await;
 
@@ -428,6 +436,7 @@ async fn a_read_that_has_not_drained_survives_the_resync_that_has_not_heard_it()
             postio_model::Generation::new(VALIDITY),
             Uid::new(1),
         )
+        .await
         .expect("read")
         .expect("the first message");
     assert!(
@@ -436,7 +445,7 @@ async fn a_read_that_has_not_drained_survives_the_resync_that_has_not_heard_it()
     );
 
     // The cursor rests on it: read locally, queued for the server.
-    read_locally_and_enqueue(&connection, account, message.id);
+    read_locally_and_enqueue(&connection, account, message.id).await;
 
     // Meanwhile, on another client, it gets flagged.
     let mut flagged = FlagSet::new();
@@ -456,6 +465,7 @@ async fn a_read_that_has_not_drained_survives_the_resync_that_has_not_heard_it()
 
     let after = MessageRepository::new(&connection)
         .get(message.id)
+        .await
         .expect("read")
         .expect("the message");
     assert!(
@@ -490,26 +500,30 @@ async fn a_modseq_less_backend_resyncs_in_place_without_discarding_rows() {
         .build();
     backend.connect().await.expect("connect");
 
-    let database = test_support::memory();
-    let connection = database.connection().expect("checkout");
-    let (_account, inbox) = local(&connection);
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    let (_account, inbox) = local(&connection).await;
     bootstrap(&connection, &backend, &inbox).await;
 
     let before: Vec<i64> = {
         let messages = MessageRepository::new(&connection);
-        messages
+        let uids = messages
             .uids_in(inbox.id, postio_model::Generation::new(VALIDITY))
-            .expect("uids")
-            .iter()
-            .map(|uid| {
+            .await
+            .expect("uids");
+        let mut ids = Vec::with_capacity(uids.len());
+        for uid in uids {
+            ids.push(
                 messages
-                    .by_uid(inbox.id, postio_model::Generation::new(VALIDITY), *uid)
+                    .by_uid(inbox.id, postio_model::Generation::new(VALIDITY), uid)
+                    .await
                     .expect("read")
                     .expect("the row")
                     .id
-                    .get()
-            })
-            .collect()
+                    .get(),
+            );
+        }
+        ids
     };
     assert_eq!(before.len(), 3, "the fixture synced");
 
@@ -529,19 +543,23 @@ async fn a_modseq_less_backend_resyncs_in_place_without_discarding_rows() {
 
     let after: Vec<i64> = {
         let messages = MessageRepository::new(&connection);
-        messages
+        let uids = messages
             .uids_in(inbox.id, postio_model::Generation::new(VALIDITY))
-            .expect("uids")
-            .iter()
-            .map(|uid| {
+            .await
+            .expect("uids");
+        let mut ids = Vec::with_capacity(uids.len());
+        for uid in uids {
+            ids.push(
                 messages
-                    .by_uid(inbox.id, postio_model::Generation::new(VALIDITY), *uid)
+                    .by_uid(inbox.id, postio_model::Generation::new(VALIDITY), uid)
+                    .await
                     .expect("read")
                     .expect("the row")
                     .id
-                    .get()
-            })
-            .collect()
+                    .get(),
+            );
+        }
+        ids
     };
     assert_eq!(
         after, before,
@@ -572,9 +590,9 @@ async fn a_modseq_less_backend_resyncs_in_place_without_discarding_rows() {
 #[tokio::test]
 async fn a_pass_that_fetches_nothing_does_not_throw_away_what_the_last_one_stored() {
     let backend = server_with_messages(6).await;
-    let database = test_support::memory();
-    let connection = database.connection().expect("checkout");
-    let (_account, inbox) = local(&connection);
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    let (_account, inbox) = local(&connection).await;
 
     // A first pass, cut short after its first committed batch.
     let cancel = CancelToken::new();
@@ -582,7 +600,7 @@ async fn a_pass_that_fetches_nothing_does_not_throw_away_what_the_last_one_store
         cancel.cancel();
     })
     .await;
-    let carried = known_uids(&connection, &inbox);
+    let carried = known_uids(&connection, &inbox).await;
     assert!(
         !carried.is_empty() && carried.len() < 6,
         "this case needs a pass that got part of the way: it stored {carried:?}"
@@ -590,6 +608,7 @@ async fn a_pass_that_fetches_nothing_does_not_throw_away_what_the_last_one_store
     assert!(
         SyncStateRepository::new(&connection)
             .get(inbox.id)
+            .await
             .expect("sync state")
             .is_none_or(|state| !state.has_synced()),
         "an interrupted pass must not have recorded a completed full sync"
@@ -601,10 +620,160 @@ async fn a_pass_that_fetches_nothing_does_not_throw_away_what_the_last_one_store
     let _ = resync_mailbox(&connection, &backend, &inbox, &cancel, |_| {}).await;
 
     assert_eq!(
-        known_uids(&connection, &inbox),
+        known_uids(&connection, &inbox).await,
         carried,
         "the next pass wiped what the interrupted one had already stored, so \
          nothing accumulates and a mailbox too big to finish in one pass \
          never finishes"
     );
+}
+
+/// A mailbox stamped as synced but holding almost nothing re-enumerates.
+///
+/// The state a short UID listing used to leave behind, and the reason the
+/// `EXISTS` check in `initial` is not enough on its own: that one stops a
+/// *fresh* sync from getting into this state, and does nothing for a store
+/// already in it. `last_full_sync_at` is set, so `SyncState::plan` looks at
+/// the protocol state, correctly says `Incremental`, and asks what changed
+/// since a sync that never enumerated anything. The backlog is not slow, it
+/// is unreachable, and it stays unreachable across every restart — a real
+/// INBOX sat at one message of thousands until its store was deleted.
+///
+/// `EXISTS` is what breaks the deadlock: the server says how many the mailbox
+/// holds on every `SELECT`, and a local count below it that nothing local
+/// explains means mail is missing. `Coverage::Missing` then fetches only what
+/// is absent, so the repair costs the mail it was short of and nothing else.
+#[tokio::test]
+async fn a_mailbox_holding_less_than_exists_re_enumerates() {
+    let backend = server_with_messages(5).await;
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    let (_account, inbox) = local(&connection).await;
+
+    bootstrap(&connection, &backend, &inbox).await;
+    // Poison it the way a short listing did: the mailbox is stamped as fully
+    // synced, and holds one of the five messages the server reports.
+    let thinned = ids_for(&connection, &inbox, &[1, 2, 3, 4]).await;
+    MessageRepository::new(&connection)
+        .delete(&thinned)
+        .await
+        .expect("thin the mailbox out");
+    assert_eq!(
+        known_uids(&connection, &inbox).await,
+        vec![5],
+        "the fixture is the poisoned state: stamped synced, holding one of five"
+    );
+
+    let outcome = resync_mailbox(&connection, &backend, &inbox, &CancelToken::new(), |_| {})
+        .await
+        .expect("resync");
+
+    assert!(
+        matches!(
+            outcome,
+            Outcome::Full {
+                reason: postio_model::FullResyncReason::ShortOfExists,
+                ..
+            }
+        ),
+        "a mailbox short of EXISTS must re-enumerate rather than ask what \
+         changed since a sync that never happened, got: {outcome:?}"
+    );
+    assert_eq!(
+        known_uids(&connection, &inbox).await,
+        vec![1, 2, 3, 4, 5],
+        "the mail it was short of is fetched"
+    );
+}
+
+/// ...but not while the queue still owes the server an explanation.
+///
+/// The dangerous half. A mailbox is also short of `EXISTS` immediately after
+/// the user archives something: the row has left this mailbox locally and the
+/// server, not yet told, goes on counting it. Re-enumerating then refetches
+/// the very message they archived and puts it back — the mail client undoing
+/// the user's gesture in front of them.
+///
+/// A `failed` row is the sharp case and the one seen in the wild: iCloud
+/// answered an archive's `COPY` without a tagged response, the row ended
+/// `failed`, and the local move stands with the server never told. That gap
+/// is permanent until the user clears it, so a check that only looked at
+/// `pending` would resurrect that message on every single pass.
+#[tokio::test]
+async fn a_gap_the_queue_explains_is_left_alone() {
+    let backend = server_with_messages(5).await;
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    let (account, inbox) = local(&connection).await;
+
+    bootstrap(&connection, &backend, &inbox).await;
+    let archived = MessageRepository::new(&connection)
+        .by_uid(
+            inbox.id,
+            postio_model::Generation::new(VALIDITY),
+            Uid::new(3),
+        )
+        .await
+        .expect("by_uid")
+        .expect("the message is there")
+        .id;
+    // Archived locally: gone from this mailbox, server not yet told.
+    MessageRepository::new(&connection)
+        .delete(&[archived])
+        .await
+        .expect("archive locally");
+    postio_storage::repository::OperationQueueRepository::new(&connection)
+        .enqueue(
+            account,
+            postio_model::OperationTarget::Message(archived),
+            &postio_model::Operation::Move {
+                from: inbox.id,
+                to: postio_model::MailboxId::new(inbox.id.get() + 1),
+            },
+            chrono::Utc::now(),
+        )
+        .await
+        .expect("enqueue the archive");
+
+    let outcome = resync_mailbox(&connection, &backend, &inbox, &CancelToken::new(), |_| {})
+        .await
+        .expect("resync");
+
+    assert!(
+        !matches!(
+            outcome,
+            Outcome::Full {
+                reason: postio_model::FullResyncReason::ShortOfExists,
+                ..
+            }
+        ),
+        "the queue explains the gap; re-enumerating would undo the archive"
+    );
+    assert!(
+        !known_uids(&connection, &inbox).await.contains(&3),
+        "the archived message must not come back"
+    );
+}
+
+/// The local ids behind a set of UIDs, for tests that thin a mailbox out.
+async fn ids_for(
+    connection: &Connection,
+    mailbox: &Mailbox,
+    uids: &[u32],
+) -> Vec<postio_model::MessageId> {
+    let repository = MessageRepository::new(connection);
+    let mut ids = Vec::new();
+    for uid in uids {
+        let message = repository
+            .by_uid(
+                mailbox.id,
+                postio_model::Generation::new(VALIDITY),
+                Uid::new(*uid),
+            )
+            .await
+            .expect("by_uid")
+            .expect("the message is there");
+        ids.push(message.id);
+    }
+    ids
 }

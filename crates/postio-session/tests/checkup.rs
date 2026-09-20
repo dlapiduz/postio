@@ -23,11 +23,11 @@ const ADDRESS: &str = "test@example.com";
 /// A store holding one account, with a password and an OAuth refresh token
 /// in the keyring — the two shapes a removal has to clean up after.
 async fn an_account() -> (
-    postio_storage::test_support::TempDatabase,
+    postio_storage::test_support::TempStore,
     MemorySecretStore,
     postio_model::ids::AccountId,
 ) {
-    let database = test_support::temp();
+    let database = test_support::temp().await;
     let keyring = MemorySecretStore::new();
     for key in [
         AccountKey::new(ADDRESS.to_owned()),
@@ -39,8 +39,8 @@ async fn an_account() -> (
             .expect("the keyring takes it");
     }
     let id = {
-        let connection = database.connection().expect("a connection");
-        let (account, _) = test_support::account_with_inbox(&connection);
+        let connection = database.connect().await.expect("a connection");
+        let (account, _) = test_support::account_with_inbox(&connection).await;
         account.id
     };
     (database, keyring, id)
@@ -56,10 +56,11 @@ async fn removing_an_account_takes_its_credentials_with_it() {
         .await
         .expect("the account is removed");
 
-    let connection = database.connection().expect("a connection");
+    let connection = database.connect().await.expect("a connection");
     assert!(
         AccountRepository::new(&connection)
             .get(id)
+            .await
             .expect("a read")
             .is_none(),
         "the row is gone"
@@ -138,13 +139,14 @@ async fn an_account_with_nothing_in_the_keyring_is_partial_rather_than_wrong() {
     // in with. It calls for a different offer — put a password in — than a
     // server that said no, and a pane that could not tell them apart would
     // make the wrong one.
-    let database = test_support::temp();
+    let database = test_support::temp().await;
     let empty = MemorySecretStore::new();
     let account = {
-        let connection = database.connection().expect("a connection");
-        let (account, _) = test_support::account_with_inbox(&connection);
+        let connection = database.connect().await.expect("a connection");
+        let (account, _) = test_support::account_with_inbox(&connection).await;
         AccountRepository::new(&connection)
             .get(account.id)
+            .await
             .expect("a read")
             .expect("the account")
     };
@@ -159,21 +161,23 @@ async fn an_account_with_nothing_in_the_keyring_is_partial_rather_than_wrong() {
     );
 }
 
-#[test]
-fn renaming_an_account_changes_what_it_calls_itself_and_nothing_else() {
-    let database = test_support::temp();
+#[tokio::test]
+async fn renaming_an_account_changes_what_it_calls_itself_and_nothing_else() {
+    let database = test_support::temp().await;
     let (id, address) = {
-        let connection = database.connection().expect("a connection");
-        let (account, _) = test_support::account_with_inbox(&connection);
+        let connection = database.connect().await.expect("a connection");
+        let (account, _) = test_support::account_with_inbox(&connection).await;
         (account.id, account.address.address.clone())
     };
 
     postio_session::checkup::set_display_name(&database, id, "  Ada at work  ")
+        .await
         .expect("the rename lands");
 
-    let connection = database.connection().expect("a connection");
+    let connection = database.connect().await.expect("a connection");
     let stored = AccountRepository::new(&connection)
         .get(id)
+        .await
         .expect("a read")
         .expect("the account");
     assert_eq!(stored.display_name, "Ada at work", "trimmed");
@@ -183,14 +187,15 @@ fn renaming_an_account_changes_what_it_calls_itself_and_nothing_else() {
     );
 }
 
-#[test]
-fn renaming_an_account_that_is_gone_says_so() {
-    let database = test_support::temp();
+#[tokio::test]
+async fn renaming_an_account_that_is_gone_says_so() {
+    let database = test_support::temp().await;
     let error = postio_session::checkup::set_display_name(
         &database,
         postio_model::ids::AccountId::new(404),
         "Nobody",
     )
+    .await
     .expect_err("there is no such account");
     assert!(error.contains("not in the store"), "{error}");
 }

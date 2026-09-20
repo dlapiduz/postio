@@ -26,7 +26,7 @@ use postio_account::imap::{ImapSession, RustlsConnector};
 use postio_account::secret::{AccountKey, SecretStore};
 use postio_model::Account;
 use postio_model::ids::AccountId;
-use postio_storage::Database;
+use postio_storage::Store;
 use postio_storage::repository::AccountRepository;
 
 /// What a connection test found.
@@ -114,17 +114,19 @@ pub async fn test_connection(account: &Account, secrets: Arc<dyn SecretStore>) -
 /// client that forgets an account and keeps its password is the one thing
 /// worse than not forgetting it.
 pub async fn remove_account(
-    database: &Database,
+    database: &Store,
     secrets: Arc<dyn SecretStore>,
     account: AccountId,
 ) -> Result<(), String> {
     let address = {
         let connection = database
-            .connection()
+            .connect()
+            .await
             .map_err(|error| format!("Postio could not open its local store: {error}"))?;
         let repository = AccountRepository::new(&connection);
         let Some(found) = repository
             .get(account)
+            .await
             .map_err(|error| format!("Postio could not read its local store: {error}"))?
         else {
             // Already gone. Not an error: pressing Remove twice means what it
@@ -134,6 +136,7 @@ pub async fn remove_account(
         let address = found.address.address.clone();
         repository
             .delete(account)
+            .await
             .map_err(|error| format!("The account could not be removed: {error}"))?;
         address
     };
@@ -159,13 +162,19 @@ pub async fn remove_account(
 /// the servers, the auth method — came from the preset table or from a
 /// sign-in, and editing those is changing *which account this is*, which is
 /// adding one.
-pub fn set_display_name(database: &Database, account: AccountId, name: &str) -> Result<(), String> {
+pub async fn set_display_name(
+    database: &Store,
+    account: AccountId,
+    name: &str,
+) -> Result<(), String> {
     let connection = database
-        .connection()
+        .connect()
+        .await
         .map_err(|error| format!("Postio could not open its local store: {error}"))?;
     let repository = AccountRepository::new(&connection);
     let Some(mut found) = repository
         .get(account)
+        .await
         .map_err(|error| format!("Postio could not read its local store: {error}"))?
     else {
         return Err("That account is not in the store.".to_owned());
@@ -173,6 +182,7 @@ pub fn set_display_name(database: &Database, account: AccountId, name: &str) -> 
     found.display_name = name.trim().to_owned();
     repository
         .update(&mut found)
+        .await
         .map_err(|error| format!("The account could not be updated: {error}"))
 }
 

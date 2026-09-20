@@ -4,6 +4,7 @@
 //! shrug." [`derive()`] decides which state applies, and is a pure function
 //! tested with no display, the same split [`crate::cheatsheet`] uses.
 //! [`ListStateView`] is the widget around it.
+//! The machine itself now lives in [`postio_ui::list_state`].
 //!
 //! # Where it lives, and how much of it it covers
 //!
@@ -29,7 +30,7 @@
 //!
 //! Same shape as [`crate::sidebar`]'s own gap: [`ListStateView::set_status`]
 //! is the whole input surface, and nothing calls it with live data yet.
-//! [`ConnectionState::Failing`] carries a typed category, not prose —
+//! [`postio_core::ConnectionState::Failing`] carries a typed category, not prose —
 //! see its doc comment — so the reason has to arrive through
 //! [`SyncStatus::detail`], the same field the sidebar's status line already
 //! reads. The store and queue counts are plain `u64`s a caller supplies,
@@ -43,241 +44,17 @@ use adw::prelude::*;
 use adw::subclass::prelude::*;
 use gtk::glib;
 
-use postio_core::ConnectionState;
-
 use crate::sidebar::{SyncStatus, age};
 
-/// What the list pane shows in place of rows.
-///
-/// `None` from [`derive()`] means there are rows to show and the widget should
-/// stay out of the way.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum State {
-    /// Nothing left to triage in the mailbox in view.
-    InboxZero {
-        /// When the last sync completed; `None` before the first one.
-        last_sync: Option<Instant>,
-        /// Messages still in the local store, elsewhere, and searchable.
-        stored: u64,
-    },
-    /// No connection right now; local mail is still fully usable.
-    Offline {
-        /// Local writes waiting to reach the server.
-        queued: u64,
-    },
-    /// The sync engine cannot reach the server.
-    Failing {
-        /// The actual error, phrased for the user. Never a shrug.
-        reason: String,
-    },
-    /// A search matched nothing.
-    ///
-    /// Separate from [`InboxZero`](State::InboxZero) because the mailbox is
-    /// not empty — the query is. Telling someone who searched for an invoice
-    /// that they have nothing left to triage is a different statement, and a
-    /// false one.
-    NoMatches {
-        /// What was searched for, shown back so what to widen is visible.
-        query: String,
-        /// Accounts that could not be reached, and so could not be fully
-        /// searched. Empty is the ordinary single-account answer.
-        ///
-        /// ADR 0005 Q10 calls an empty result set the single most important
-        /// instance of the omission rule: someone searches for an invoice,
-        /// finds nothing, and concludes it does not exist. "Nothing matched"
-        /// is a claim about the whole corpus, and a corpus short an account
-        /// cannot support it.
-        incomplete: Vec<String>,
-    },
-    /// An aggregate view is showing what it has, and it is not everything.
-    ///
-    /// ADR 0005 Q10: *a view that cannot include an account says so, names
-    /// the account, and stays usable.* Rows from the accounts that did answer
-    /// are real mail and stay readable underneath — this is a
-    /// [`Placement::Banner`] whenever there is anything to put it over.
-    ///
-    /// **The rows of a named account are not missing, they are unrefreshed.**
-    /// Postio is local-first, so an offline account's synced mail is still in
-    /// this list; what cannot be vouched for is that it is current. The
-    /// wording says exactly that, because "showing 1 of 2 accounts" would be
-    /// its own lie whenever the absent account has mail on disk — which is
-    /// almost always.
-    Partial {
-        /// The accounts that did not answer, in the order the sidebar draws
-        /// them — which is the order their hues are keyed to.
-        accounts: Vec<String>,
-    },
-}
-
-/// How much of the pane a [`State`] takes.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Placement {
-    /// Opaque, filling the pane. Correct only when there is nothing under it
-    /// — an empty mailbox, whatever the reason it is empty.
-    Full,
-    /// A strip over the top of the rows, which stay visible and scrollable
-    /// underneath.
-    Banner,
-}
-
-impl State {
-    /// Whether this state may share the pane with rows, or has to fill it.
-    ///
-    /// `item_count` is the same count [`derive()`] was given: `InboxZero` never
-    /// needs it, since being empty is what put it here in the first place,
-    /// but `Offline` and `Failing` can arrive with a full mailbox loaded
-    /// underneath, and that is exactly the mail the banner treatment exists
-    /// to keep visible.
-    pub fn placement(&self, item_count: u64) -> Placement {
-        match self {
-            State::InboxZero { .. } | State::NoMatches { .. } => Placement::Full,
-            State::Offline { .. } | State::Failing { .. } | State::Partial { .. } => {
-                if item_count == 0 {
-                    Placement::Full
-                } else {
-                    Placement::Banner
-                }
-            }
-        }
-    }
-}
-
-/// Which state the list pane shows, from what it knows right now.
-///
-/// `item_count` is what the loaded page of the windowed model reports for
-/// the mailbox in view; `stored` and `queued` come from the local store and
-/// do not depend on the server being reachable at all — that is the whole
-/// point of "everything already synced still opens."
-///
-/// `searching` is the query the list is showing results for, or `None` when
-/// it is showing a mailbox. It is passed in rather than inferred from the
-/// query box, because a box with text in it is not the same thing as a list
-/// showing that text's results — the box stays up after `Esc` puts the
-/// folder back.
-///
-/// [`ConnectionState::Connecting`] folds into [`State::Offline`]: from the
-/// user's chair both mean "not connected right now, local mail still
-/// works," and a fourth named state for a transition that resolves itself
-/// would be a state nobody could tell apart from the one before it.
-pub fn derive(
-    status: &SyncStatus,
-    item_count: u64,
-    stored: u64,
-    queued: u64,
-    searching: Option<&str>,
-) -> Option<State> {
-    // A search answers for itself, ahead of the connection. The index is
-    // local and it answered completely, so "Offline — reading local mail"
-    // over an empty result set would be true and useless: the local mail is
-    // exactly what was just searched. A search that *did* match still gets
-    // the connection's banner over its rows, because that is a fact about
-    // the rows rather than about the query.
-    if let Some(query) = searching.filter(|_| item_count == 0) {
-        return Some(State::NoMatches {
-            query: query.to_string(),
-            // One account, and it is the one that just answered: there is no
-            // other account whose absence could have hidden a match.
-            incomplete: Vec::new(),
-        });
-    }
-    match status.state {
-        ConnectionState::Failing { .. } => Some(State::Failing {
-            reason: status
-                .detail
-                .clone()
-                .unwrap_or_else(|| "the server did not say why".to_string()),
-        }),
-        ConnectionState::Offline | ConnectionState::Connecting => Some(State::Offline { queued }),
-        ConnectionState::Online if item_count == 0 => Some(State::InboxZero {
-            last_sync: status.last_sync,
-            stored,
-        }),
-        ConnectionState::Online => None,
-    }
-}
-
-/// Whether an account's contribution to an aggregate can be vouched for.
-///
-/// Public because it is also what a whole-view selection is scoped by: the
-/// accounts the banner does *not* name are exactly the accounts `Ctrl+A` here
-/// is about, and two spellings of "reachable" would let the banner and the
-/// selection disagree about which account is which (#811).
-///
-/// [`ConnectionState::Connecting`] is deliberately *not* a reason to name an
-/// account. The single-account states fold it into
-/// [`State::Offline`](State::Offline) because from the user's chair both mean
-/// "local mail still works", and that is right for a whole-pane statement
-/// about the one account they are looking at. A banner is a different act: it
-/// names an account, and one that appears for the two seconds an account
-/// takes to connect — on every launch, for every account — is how people
-/// learn to stop reading banners.
-pub fn is_current(status: &SyncStatus) -> bool {
-    match status.state {
-        ConnectionState::Online | ConnectionState::Connecting => true,
-        ConnectionState::Offline | ConnectionState::Failing { .. } => false,
-    }
-}
-
-/// Which state an *aggregate* view shows — the unified list, across accounts.
-///
-/// ADR 0005 Q10's rule: **a view that cannot include an account says so,
-/// names the account, and stays usable.** [`derive`] answers for one account
-/// and cannot express this; the difference is not the number of statuses but
-/// that a whole-pane "Offline" would be a claim about every account when only
-/// one of them is away.
-///
-/// `accounts` carries one entry per **enabled** account, in the sidebar's own
-/// order. That an account disabled by the user simply is not in the list is
-/// the whole of Q10's disabled-account rule: it drops out silently and
-/// correctly, because the user asked for that, and there is nothing to
-/// disclose about a view that is showing what it was told to show.
-///
-/// The order of the checks is the argument:
-///
-/// 1. **A search that matched nothing** answers first, and carries the
-///    accounts it could not reach — the instance Q10 calls the most
-///    important, because "nothing matched" reads as proof.
-/// 2. **An account that did not answer** outranks everything else, including
-///    inbox zero: "nothing left to triage" is a claim about every account.
-/// 3. Otherwise the aggregate behaves as one healthy view does.
-pub fn derive_aggregate(
-    accounts: &[(String, SyncStatus)],
-    item_count: u64,
-    stored: u64,
-    searching: Option<&str>,
-) -> Option<State> {
-    let absent: Vec<String> = accounts
-        .iter()
-        .filter(|(_, status)| !is_current(status))
-        .map(|(name, _)| name.clone())
-        .collect();
-
-    if let Some(query) = searching.filter(|_| item_count == 0) {
-        return Some(State::NoMatches {
-            query: query.to_string(),
-            incomplete: absent,
-        });
-    }
-    if !absent.is_empty() {
-        return Some(State::Partial { accounts: absent });
-    }
-
-    // Every account answered, so the aggregate can speak with one voice --
-    // and the only thing left worth saying is that there is nothing in it.
-    // The oldest last sync across the accounts, because the freshest would
-    // overstate how current the view is.
-    if item_count == 0 && !accounts.is_empty() {
-        return Some(State::InboxZero {
-            last_sync: accounts
-                .iter()
-                .map(|(_, status)| status.last_sync)
-                .min()
-                .flatten(),
-            stored,
-        });
-    }
-    None
-}
+/// The list pane's state machine, derived rather than stored.
+// Moved to `postio-ui` so the macOS list pane derives the same six states,
+// with the same precedence between them, rather than deciding either for
+// itself. The names are re-exported so nothing in this crate had to change,
+// and so every comment that names `derive` still reads.
+pub use postio_ui::list_state::{
+    OPENING_THRESHOLD, Placement, State, Waiting, derive, derive_aggregate, derive_opening,
+    describe_wait, is_current,
+};
 
 /// One key hint: what it does, and the key that does it.
 ///
@@ -290,7 +67,7 @@ type Hint = (&'static str, &'static str);
 struct Content {
     icon: &'static str,
     icon_class: &'static str,
-    title: &'static str,
+    title: String,
     detail: String,
     hints: Vec<Hint>,
 }
@@ -305,7 +82,11 @@ fn plural(count: u64, noun: &str) -> String {
 
 fn describe(state: &State, now: Instant) -> Content {
     match state {
-        State::InboxZero { last_sync, stored } => {
+        State::InboxZero {
+            last_sync,
+            stored,
+            mailbox,
+        } => {
             let synced = match last_sync {
                 Some(at) => format!(
                     "Last synced {} ago.",
@@ -313,12 +94,19 @@ fn describe(state: &State, now: Instant) -> Content {
                 ),
                 None => "Never synced yet.".to_string(),
             };
+            // The inbox's emptiness is an achievement; any other folder's is
+            // a fact about that folder, named so it cannot be mistaken for
+            // the inbox (#1535).
+            let (title, lead) = match mailbox {
+                None => ("Inbox is empty".to_string(), "Nothing left to triage. "),
+                Some(name) => (format!("{name} is empty"), ""),
+            };
             Content {
                 icon: "emblem-ok-symbolic",
                 icon_class: "inbox-zero",
-                title: "Inbox is empty",
+                title,
                 detail: format!(
-                    "Nothing left to triage. {} still in the local store and searchable. {synced}",
+                    "{lead}{} still in the local store and searchable. {synced}",
                     plural(*stored, "message")
                 ),
                 hints: vec![("Search all mail", "/"), ("Compose", "c")],
@@ -327,7 +115,7 @@ fn describe(state: &State, now: Instant) -> Content {
         State::Offline { queued } => Content {
             icon: "network-offline-symbolic",
             icon_class: "offline",
-            title: "Offline — reading local mail",
+            title: "Offline — reading local mail".to_string(),
             detail: if *queued == 0 {
                 "Everything already synced still opens.".to_string()
             } else {
@@ -341,7 +129,7 @@ fn describe(state: &State, now: Instant) -> Content {
         State::Failing { reason } => Content {
             icon: "dialog-error-symbolic",
             icon_class: "failing",
-            title: "Sync failed",
+            title: "Sync failed".to_string(),
             detail: format!("{reason} Local mail is untouched."),
             hints: vec![("Retry now", "R")],
         },
@@ -359,7 +147,7 @@ fn describe(state: &State, now: Instant) -> Content {
         State::NoMatches { query, incomplete } => Content {
             icon: "system-search-symbolic",
             icon_class: "no-matches",
-            title: "No matches",
+            title: "No matches".to_string(),
             // The caveat goes *after* the query, not instead of it: what was
             // searched for is still the thing to change. But "nothing
             // matches" reads as proof the mail does not exist, so an
@@ -377,13 +165,26 @@ fn describe(state: &State, now: Instant) -> Content {
             },
             hints: vec![("Back to the folder", "Esc")],
         },
+        // The one plate in the family that offers no verb, and that is
+        // correct rather than an omission: the work is in flight, so `R`
+        // would either do nothing or restart a read that is already running.
+        State::Opening { waiting } => {
+            let (title, detail) = describe_wait(*waiting);
+            Content {
+                icon: "content-loading-symbolic",
+                icon_class: "opening",
+                title: title.to_string(),
+                detail: detail.to_string(),
+                hints: Vec::new(),
+            }
+        }
         State::Partial { accounts } => Content {
             icon: "network-offline-symbolic",
             icon_class: "offline",
             // Named in the title, because the account is the fact. A title
             // that said "Some accounts are offline" would make the reader
             // open something else to find out which.
-            title: "Showing local mail",
+            title: "Showing local mail".to_string(),
             detail: format!(
                 "{} not reachable, so {} mail is what was already synced. \
                  Everything here still opens.",
@@ -419,6 +220,11 @@ mod imp {
         pub detail: gtk::Label,
         pub hints: gtk::Box,
         pub inputs: RefCell<(SyncStatus, u64, u64, u64, Option<String>)>,
+        /// The folder in view, by the name the sidebar shows, when it is
+        /// not the inbox -- what an empty plate is titled with (#1535). Its
+        /// own cell for the reason `accounts` has one: it arrives from the
+        /// sidebar's pick, not from the status feed.
+        pub place: RefCell<Option<String>>,
         /// The accounts an aggregate view is drawing, when it is one.
         ///
         /// `None` is an ordinary single-account view, which is what every
@@ -427,7 +233,20 @@ mod imp {
         /// arrives from the sidebar's account list on a completely different
         /// occasion from the sync feed's status.
         pub accounts: RefCell<Option<Vec<(String, SyncStatus)>>>,
+        /// What the store is still doing, and since when (#1114).
+        ///
+        /// `None` once there is a store — and on every window nothing has
+        /// told otherwise, which is what keeps this out of the way of every
+        /// pane built for a test of one widget.
+        pub opening: RefCell<Option<(Waiting, Instant)>>,
         pub tick: RefCell<Option<glib::SourceId>>,
+        /// The one-shot that brings the opening plate up at the threshold.
+        ///
+        /// Its own timer rather than a second job for `tick`: that one is
+        /// re-armed by every render from the sync status's own cadence, and
+        /// this one has to fire exactly once, a fixed interval after the
+        /// wait began.
+        pub opening_tick: RefCell<Option<glib::SourceId>>,
     }
 
     impl Default for ListStateView {
@@ -438,8 +257,11 @@ mod imp {
                 detail: gtk::Label::new(None),
                 hints: gtk::Box::new(gtk::Orientation::Horizontal, 16),
                 inputs: RefCell::new((SyncStatus::default(), 0, 0, 0, None)),
+                place: RefCell::new(None),
                 accounts: RefCell::new(None),
+                opening: RefCell::new(None),
                 tick: RefCell::new(None),
+                opening_tick: RefCell::new(None),
             }
         }
     }
@@ -459,6 +281,9 @@ mod imp {
 
         fn dispose(&self) {
             if let Some(tick) = self.tick.borrow_mut().take() {
+                tick.remove();
+            }
+            if let Some(tick) = self.opening_tick.borrow_mut().take() {
                 tick.remove();
             }
         }
@@ -564,6 +389,100 @@ impl ListStateView {
         self.render();
     }
 
+    /// Which folder the empty plate is about: `None` for the inbox, the
+    /// sidebar's name for any other folder. Call it when the folder in view
+    /// changes; the plate re-titles itself.
+    pub fn set_place(&self, mailbox: Option<String>) {
+        if *self.imp().place.borrow() == mailbox {
+            return;
+        }
+        *self.imp().place.borrow_mut() = mailbox;
+        self.render();
+    }
+
+    /// Say that there is no store behind this window yet, and what it is
+    /// waiting on — or that there is one now (#1114).
+    ///
+    /// Its own setter for [`set_searching`](Self::set_searching)'s reason,
+    /// and a stronger version of it: this does not arrive from the sync feed
+    /// at all, because there is no sync feed until the thing it is waiting
+    /// for has finished.
+    ///
+    /// Nothing appears when this is set. The plate comes up one
+    /// [`OPENING_THRESHOLD`] later, on the timer armed here, and only if the
+    /// wait is still going — which is what makes an ordinary start draw
+    /// nothing that is then removed.
+    pub fn set_opening(&self, waiting: Option<Waiting>) {
+        let imp = self.imp();
+        if let Some(tick) = imp.opening_tick.borrow_mut().take() {
+            tick.remove();
+        }
+        let previous = imp.opening.borrow().map(|(waiting, _)| waiting);
+        if previous == waiting {
+            // The same wait, still going: re-arming would push the plate
+            // back by a threshold every time a caller repeated itself, which
+            // is how a plate that should appear never does.
+            if waiting.is_some() {
+                self.arm_opening_tick();
+            }
+            return;
+        }
+        // A *different* wait restarts the clock, and deliberately: reaching
+        // the migrations means the store opened, so the reader has not been
+        // looking at an unexplained window for a second yet. What it must
+        // not do is leave the old sentence up while the new wait runs.
+        *imp.opening.borrow_mut() = waiting.map(|waiting| (waiting, Instant::now()));
+        if waiting.is_some() {
+            self.arm_opening_tick();
+        }
+        self.render();
+    }
+
+    fn arm_opening_tick(&self) {
+        let source = glib::timeout_add_local_once(
+            OPENING_THRESHOLD,
+            glib::clone!(
+                #[weak(rename_to = view)]
+                self,
+                move || {
+                    view.imp().opening_tick.borrow_mut().take();
+                    view.render();
+                }
+            ),
+        );
+        *self.imp().opening_tick.borrow_mut() = Some(source);
+    }
+
+    /// What this pane is waiting for, if it is waiting for anything.
+    ///
+    /// Answers even below the threshold, when nothing is drawn: the wait is a
+    /// fact about the window, and [`state`](Self::state) is only what the
+    /// pane is currently *saying* about it. The keyboard's refusal reads this
+    /// one, so that a key pressed at 200 ms and a plate shown at 1 s give the
+    /// same sentence.
+    pub fn waiting(&self) -> Option<Waiting> {
+        self.imp().opening.borrow().map(|(waiting, _)| waiting)
+    }
+
+    /// Pretend the current wait started `by` earlier.
+    ///
+    /// The test seam for [`OPENING_THRESHOLD`], and the reason there is one:
+    /// a case that waits out a real second either costs a second or races a
+    /// loaded runner, and the alternative — making the threshold a tunable —
+    /// would put a number that is a product decision behind an environment
+    /// variable. Nothing in the application calls this.
+    pub fn wind_back(&self, by: std::time::Duration) {
+        {
+            let imp = self.imp();
+            let mut opening = imp.opening.borrow_mut();
+            let Some((_, since)) = opening.as_mut() else {
+                return;
+            };
+            *since = since.checked_sub(by).unwrap_or(*since);
+        }
+        self.render();
+    }
+
     /// The state currently on screen, if any.
     pub fn state(&self) -> Option<State> {
         self.derived()
@@ -581,11 +500,33 @@ impl ListStateView {
     /// widget that can be wrong in exactly the way nothing catches.
     fn derived(&self) -> Option<State> {
         let imp = self.imp();
+        // Before everything, and answering `None` below the threshold rather
+        // than falling through: with no store there is no connection worth
+        // describing, no mailbox to be empty and no query to have matched
+        // nothing. A window that said "Offline — reading local mail" here
+        // would be describing mail it has not opened.
+        if let Some((waiting, since)) = *imp.opening.borrow() {
+            return derive_opening(waiting, since.elapsed());
+        }
         let (status, item_count, stored, queued, searching) = imp.inputs.borrow().clone();
         let aggregate = imp.accounts.borrow().clone();
+        let place = imp.place.borrow().clone();
         match &aggregate {
-            Some(accounts) => derive_aggregate(accounts, item_count, stored, searching.as_deref()),
-            None => derive(&status, item_count, stored, queued, searching.as_deref()),
+            Some(accounts) => derive_aggregate(
+                accounts,
+                item_count,
+                stored,
+                searching.as_deref(),
+                place.as_deref(),
+            ),
+            None => derive(
+                &status,
+                item_count,
+                stored,
+                queued,
+                searching.as_deref(),
+                place.as_deref(),
+            ),
         }
     }
 
@@ -603,12 +544,12 @@ impl ListStateView {
             let content = describe(state, now);
 
             imp.icon.set_icon_name(Some(content.icon));
-            for class in ["inbox-zero", "offline", "failing", "no-matches"] {
+            for class in ["inbox-zero", "offline", "failing", "no-matches", "opening"] {
                 imp.icon.remove_css_class(class);
             }
             imp.icon.add_css_class(content.icon_class);
 
-            imp.title.set_text(content.title);
+            imp.title.set_text(&content.title);
             imp.detail.set_text(&content.detail);
 
             let spoken = content
@@ -767,96 +708,23 @@ mod tests {
 
     use super::*;
 
-    fn status(state: ConnectionState) -> SyncStatus {
-        SyncStatus {
-            state,
-            ..SyncStatus::default()
-        }
-    }
-
     #[test]
-    fn an_empty_online_mailbox_is_inbox_zero() {
-        let derived = derive(&status(ConnectionState::Online), 0, 4291, 0, None);
-        assert_eq!(
-            derived,
-            Some(State::InboxZero {
-                last_sync: None,
-                stored: 4291,
-            })
-        );
-    }
-
-    #[test]
-    fn a_search_that_matched_nothing_does_not_claim_the_inbox_is_clear() {
-        // The same inputs that make an empty mailbox `InboxZero`. What
-        // changes the answer is that the emptiness belongs to the query.
-        let derived = derive(
-            &status(ConnectionState::Online),
-            0,
-            4291,
-            0,
-            Some("from:ada invoice"),
-        );
-        assert_eq!(
-            derived,
-            Some(State::NoMatches {
-                query: "from:ada invoice".to_string(),
-                incomplete: Vec::new(),
-            })
-        );
-        // Nothing underneath it to keep visible.
-        assert_eq!(derived.unwrap().placement(0), Placement::Full);
-    }
-
-    #[test]
-    fn a_search_answers_for_itself_whatever_the_connection_is_doing() {
-        // The index is local and it answered completely, so a connection
-        // state over an empty result set would be true and useless -- the
-        // local mail is exactly what was just searched.
-        for state in [
-            ConnectionState::Offline,
-            ConnectionState::Connecting,
-            ConnectionState::Failing {
-                reason: postio_core::FailureReason::Auth,
+    fn the_opening_plate_offers_no_verb() {
+        // The one plate in the family with no key hint and no retry, and
+        // that is correct rather than an omission: the work is in flight, so
+        // `R` would either do nothing or restart a read that is already
+        // running.
+        let content = describe(
+            &State::Opening {
+                waiting: Waiting::Keyring,
             },
-        ] {
-            assert!(
-                matches!(
-                    derive(&status(state), 0, 4291, 2, Some("invoice")),
-                    Some(State::NoMatches { .. })
-                ),
-                "{state:?} spoke over the search"
-            );
-        }
-    }
-
-    #[test]
-    fn a_search_that_found_something_still_hears_about_the_connection() {
-        // The banner is a fact about the rows, not about the query, so
-        // finding hits does not silence it.
-        assert_eq!(
-            derive(
-                &status(ConnectionState::Online),
-                14,
-                4291,
-                0,
-                Some("invoice")
-            ),
-            None,
-            "a search with hits invented a state of its own"
+            Instant::now(),
         );
-        let derived = derive(
-            &status(ConnectionState::Offline),
-            14,
-            4291,
-            2,
-            Some("invoice"),
-        );
-        assert_eq!(derived, Some(State::Offline { queued: 2 }));
-        assert_eq!(
-            derived.unwrap().placement(14),
-            Placement::Banner,
-            "the hits were hidden behind the connection"
+        assert!(
+            content.hints.is_empty(),
+            "offering a verb here promises something to press, and there is \
+             nothing: {:?}",
+            content.hints
         );
     }
 
@@ -879,100 +747,13 @@ mod tests {
     }
 
     #[test]
-    fn a_populated_online_mailbox_has_no_named_state() {
-        assert_eq!(
-            derive(&status(ConnectionState::Online), 12, 4291, 0, None),
-            None
-        );
-    }
-
-    #[test]
-    fn offline_is_the_state_regardless_of_how_many_rows_are_loaded() {
-        // "Everything already synced still opens" is true whether the
-        // mailbox in view is empty or not; the point is the connection, not
-        // the count. Whether that turns into a full plate or a banner is
-        // `State::placement`'s decision, not `derive`'s — see the
-        // `placement` tests below, which is where `postio-ma4` actually
-        // lived: this state was always right, only how much of the pane it
-        // took was wrong.
-        assert_eq!(
-            derive(&status(ConnectionState::Offline), 12, 0, 2, None),
-            Some(State::Offline { queued: 2 })
-        );
-    }
-
-    #[test]
-    fn only_an_empty_mailbox_gets_the_full_opaque_plate() {
-        let offline = State::Offline { queued: 2 };
-        let failing = State::Failing {
-            reason: "IMAP rejected the credentials.".to_string(),
-        };
-
-        // `postio-ma4`: offline or failing with rows already loaded must not
-        // hide mail that is synced and readable — canvas 3d's "nothing is a
-        // dead end" and CLAUDE.md's "everything already synced still opens"
-        // are both broken by an opaque plate over rows that are right there.
-        assert_eq!(offline.placement(12), Placement::Banner);
-        assert_eq!(failing.placement(12), Placement::Banner);
-
-        // Nothing underneath to hide: the full plate is the right answer,
-        // not a banner floating over an empty pane.
-        assert_eq!(offline.placement(0), Placement::Full);
-        assert_eq!(failing.placement(0), Placement::Full);
-    }
-
-    #[test]
-    fn inbox_zero_is_always_the_full_plate() {
-        // True by construction -- `derive` only ever produces `InboxZero`
-        // when `item_count` is already 0 -- but the state's own rule should
-        // not silently depend on that invariant holding elsewhere.
-        let empty = State::InboxZero {
-            last_sync: None,
-            stored: 0,
-        };
-        assert_eq!(empty.placement(0), Placement::Full);
-    }
-
-    #[test]
-    fn connecting_reads_the_same_as_offline() {
-        assert_eq!(
-            derive(&status(ConnectionState::Connecting), 0, 0, 0, None),
-            Some(State::Offline { queued: 0 })
-        );
-    }
-
-    #[test]
-    fn a_failing_connection_never_shrugs() {
-        let with_reason = SyncStatus {
-            state: ConnectionState::Failing {
-                reason: postio_core::FailureReason::Auth,
-            },
-            detail: Some("AUTHENTICATIONFAILED".to_string()),
-            ..SyncStatus::default()
-        };
-        assert_eq!(
-            derive(&with_reason, 0, 0, 0, None),
-            Some(State::Failing {
-                reason: "AUTHENTICATIONFAILED".to_string(),
-            })
-        );
-
-        let without_reason = status(ConnectionState::Failing {
-            reason: postio_core::FailureReason::Auth,
-        });
-        let State::Failing { reason } = derive(&without_reason, 0, 0, 0, None).unwrap() else {
-            panic!("failing status did not produce a failing state");
-        };
-        assert!(!reason.is_empty(), "a failing state never shows nothing");
-    }
-
-    #[test]
     fn every_state_offers_a_working_key() {
         let now = Instant::now();
         for state in [
             State::InboxZero {
                 last_sync: Some(now - Duration::from_secs(12)),
                 stored: 4291,
+                mailbox: None,
             },
             State::Offline { queued: 2 },
             State::Failing {
@@ -999,6 +780,7 @@ mod tests {
             State::InboxZero {
                 last_sync: None,
                 stored: 0,
+                mailbox: None,
             },
             State::Offline { queued: 0 },
             State::Failing {
@@ -1023,6 +805,7 @@ mod tests {
             &State::InboxZero {
                 last_sync: None,
                 stored: 4291,
+                mailbox: None,
             },
             now,
         );
@@ -1032,11 +815,41 @@ mod tests {
             &State::InboxZero {
                 last_sync: Some(now - Duration::from_secs(12)),
                 stored: 4291,
+                mailbox: None,
             },
             now,
         );
         assert!(recently.detail.contains("Last synced"));
         assert!(recently.detail.contains("12s"));
+    }
+
+    #[test]
+    fn an_empty_folder_is_named_and_not_called_the_inbox() {
+        let now = Instant::now();
+        let archive = describe(
+            &State::InboxZero {
+                last_sync: None,
+                stored: 4291,
+                mailbox: Some("Archive".to_string()),
+            },
+            now,
+        );
+        assert_eq!(archive.title, "Archive is empty");
+        assert!(
+            !archive.detail.contains("triage"),
+            "an empty archive is not an inbox cleared: {}",
+            archive.detail
+        );
+        let inbox = describe(
+            &State::InboxZero {
+                last_sync: None,
+                stored: 4291,
+                mailbox: None,
+            },
+            now,
+        );
+        assert_eq!(inbox.title, "Inbox is empty");
+        assert!(inbox.detail.contains("Nothing left to triage"));
     }
 
     #[test]
@@ -1047,192 +860,5 @@ mod tests {
 
         let queued = describe(&State::Offline { queued: 3 }, now);
         assert!(queued.detail.contains("3 changes"));
-    }
-}
-
-#[cfg(test)]
-mod aggregate_tests {
-    use super::*;
-
-    fn status(state: ConnectionState) -> SyncStatus {
-        SyncStatus {
-            state,
-            ..SyncStatus::default()
-        }
-    }
-
-    fn named(entries: &[(&str, ConnectionState)]) -> Vec<(String, SyncStatus)> {
-        entries
-            .iter()
-            .map(|(name, state)| ((*name).to_owned(), status(*state)))
-            .collect()
-    }
-
-    #[test]
-    fn every_account_online_says_nothing_at_all() {
-        let accounts = named(&[
-            ("Work", ConnectionState::Online),
-            ("Personal", ConnectionState::Online),
-        ]);
-        assert_eq!(
-            derive_aggregate(&accounts, 40, 4291, None),
-            None,
-            "a complete view has nothing to disclose, and a banner that is \
-             always up is a banner nobody reads"
-        );
-    }
-
-    #[test]
-    fn an_unreachable_account_is_named_over_the_rows_it_could_not_refresh() {
-        let accounts = named(&[
-            ("Work", ConnectionState::Online),
-            ("Personal", ConnectionState::Offline),
-        ]);
-        let derived = derive_aggregate(&accounts, 40, 4291, None);
-        assert_eq!(
-            derived,
-            Some(State::Partial {
-                accounts: vec!["Personal".to_owned()],
-            }),
-            "ADR 0005 Q10: the view names the account it cannot vouch for"
-        );
-        assert_eq!(
-            derived.unwrap().placement(40),
-            Placement::Banner,
-            "the rows are real mail and stay readable -- covering them to say \
-             the view is incomplete keeps the promise in words and breaks it \
-             on screen"
-        );
-    }
-
-    #[test]
-    fn a_failing_account_counts_as_one_it_cannot_vouch_for_too() {
-        let accounts = named(&[
-            ("Work", ConnectionState::Online),
-            (
-                "Personal",
-                ConnectionState::Failing {
-                    reason: postio_core::FailureReason::Auth,
-                },
-            ),
-        ]);
-        assert_eq!(
-            derive_aggregate(&accounts, 40, 4291, None),
-            Some(State::Partial {
-                accounts: vec!["Personal".to_owned()],
-            })
-        );
-    }
-
-    #[test]
-    fn connecting_is_not_worth_naming_because_it_resolves_itself() {
-        // The single-account states fold `Connecting` into `Offline`, because
-        // from the user's chair both mean "local mail still works". A banner
-        // is different: it names an account, and one that appears for the two
-        // seconds an account takes to connect -- on every launch, for every
-        // account -- teaches people to stop reading banners.
-        let accounts = named(&[
-            ("Work", ConnectionState::Online),
-            ("Personal", ConnectionState::Connecting),
-        ]);
-        assert_eq!(derive_aggregate(&accounts, 40, 4291, None), None);
-    }
-
-    #[test]
-    fn every_unreachable_account_is_named_in_the_order_given() {
-        let accounts = named(&[
-            ("Work", ConnectionState::Offline),
-            ("Personal", ConnectionState::Online),
-            ("Archive", ConnectionState::Offline),
-        ]);
-        assert_eq!(
-            derive_aggregate(&accounts, 40, 4291, None),
-            Some(State::Partial {
-                accounts: vec!["Work".to_owned(), "Archive".to_owned()],
-            }),
-            "naming one of two absent accounts is its own lie by omission, \
-             and the order is the sidebar's so the colours line up"
-        );
-    }
-
-    #[test]
-    fn a_search_that_found_nothing_while_an_account_is_away_says_so() {
-        // ADR 0005 Q10 calls this the single most important instance of the
-        // rule: someone searches for an invoice, finds nothing, and concludes
-        // it does not exist. `NoMatches` on its own is a claim about the
-        // whole corpus, and here the corpus is short an account.
-        let accounts = named(&[
-            ("Work", ConnectionState::Online),
-            ("Personal", ConnectionState::Offline),
-        ]);
-        let derived = derive_aggregate(&accounts, 0, 4291, Some("invoice"));
-        assert_eq!(
-            derived,
-            Some(State::NoMatches {
-                query: "invoice".to_owned(),
-                incomplete: vec!["Personal".to_owned()],
-            }),
-            "an empty result set has to carry the accounts it could not \
-             search fully, or it reads as proof the mail is not there"
-        );
-    }
-
-    #[test]
-    fn a_search_that_found_nothing_with_everything_online_is_a_plain_no_match() {
-        let accounts = named(&[
-            ("Work", ConnectionState::Online),
-            ("Personal", ConnectionState::Online),
-        ]);
-        assert_eq!(
-            derive_aggregate(&accounts, 0, 4291, Some("invoice")),
-            Some(State::NoMatches {
-                query: "invoice".to_owned(),
-                incomplete: Vec::new(),
-            }),
-            "nothing to disclose, so the answer is the same one a single \
-             account gives"
-        );
-    }
-
-    #[test]
-    fn an_empty_aggregate_with_everything_online_is_still_inbox_zero() {
-        let accounts = named(&[
-            ("Work", ConnectionState::Online),
-            ("Personal", ConnectionState::Online),
-        ]);
-        assert_eq!(
-            derive_aggregate(&accounts, 0, 4291, None),
-            Some(State::InboxZero {
-                last_sync: None,
-                stored: 4291,
-            })
-        );
-    }
-
-    #[test]
-    fn an_unreachable_account_outranks_inbox_zero_when_there_are_no_rows() {
-        // "Nothing left to triage" is a claim about every account, and one of
-        // them did not answer. With nothing underneath, it takes the plate.
-        let accounts = named(&[
-            ("Work", ConnectionState::Online),
-            ("Personal", ConnectionState::Offline),
-        ]);
-        let derived = derive_aggregate(&accounts, 0, 4291, None);
-        assert_eq!(
-            derived,
-            Some(State::Partial {
-                accounts: vec!["Personal".to_owned()],
-            })
-        );
-        assert_eq!(derived.unwrap().placement(0), Placement::Full);
-    }
-
-    #[test]
-    fn a_disabled_account_never_reaches_here_so_it_is_never_named() {
-        // ADR 0005 Q10: `enabled = 0` drops out of Unified silently and
-        // correctly, because the user asked for that. It is expressed as the
-        // caller passing only enabled accounts -- an empty list is a view
-        // with nothing to disclose rather than one that is degraded.
-        assert_eq!(derive_aggregate(&[], 0, 0, None), None);
     }
 }

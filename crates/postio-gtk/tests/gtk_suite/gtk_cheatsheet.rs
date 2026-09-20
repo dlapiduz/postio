@@ -40,6 +40,11 @@ pub fn the_cheat_sheet_opens_and_reprints_on_a_rebind() {
     app::install_icons(&display);
 
     let window = Window::default();
+    // A window with mail behind it, which is what this case is about: the
+    // sheet over a *store-less* window lists the chrome and nothing else
+    // (#1114), and `Archive` below is exactly one of the rows that is
+    // correctly absent there.
+    window.set_store_open(true);
     window.apply_keymap(defaults());
     window.present();
     settle();
@@ -71,7 +76,7 @@ pub fn the_cheat_sheet_opens_and_reprints_on_a_rebind() {
     // the scope the window holds — rather than the whole registry (#182).
     assert_eq!(
         listed.len(),
-        postio_core::registry::reachable_in(Context::List, window.scope()).count(),
+        postio_core::registry::reachable_in(Context::List, window.availability()).count(),
         "every reachable command, once each"
     );
 

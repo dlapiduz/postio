@@ -13,10 +13,12 @@ consuming crate said otherwise, and `issue-land.sh` runs its gates over the
 crates **you changed** — which for that branch was `postio-core`.
 
 The trade was deliberate and mostly right: proving your own crates is fast,
-and CI proves the workspace. With CI paused, the reconcile pass is the only
-backstop, and it runs days apart on a repository where several sessions land
-concurrently. So the cost lands on whoever touches the broken crate next, who
-has every reason to think they broke it.
+and CI proves the workspace. CI was paused at the time, so the reconcile pass
+was the only backstop, and it ran days apart on a repository where several
+sessions land concurrently. So the cost landed on whoever touched the broken
+crate next, who had every reason to think they broke it. (CI runs on every
+push and pull request now; the gate below still stands, because it finds the
+breakage before the push rather than after it.)
 
 **The fix is one line of gate, and it is a `check`.** `cargo check --workspace
 --all-targets` after the per-crate gates: no codegen, no linking, nothing

@@ -312,7 +312,7 @@ type NodeHandler = Box<dyn Fn(&Node)>;
 /// A part, and where the user chose to put it.
 /// What the panel needs a destination for.
 ///
-/// The argument to an [`Parts::connect_ask`] handler, which stands in for the
+/// The argument to a [`PartsPanel::connect_ask`] handler, which stands in for the
 /// `GtkFileDialog` the panel would otherwise open.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Ask {
@@ -840,8 +840,7 @@ impl PartsPanel {
         self.set_visible(false);
         self.set_accessible_role(gtk::AccessibleRole::Group);
 
-        let kicker = gtk::Label::new(Some("Parts"));
-        kicker.add_css_class("postio-kicker");
+        let kicker = crate::widgets::kicker("Parts");
         kicker.set_accessible_role(gtk::AccessibleRole::Presentation);
 
         imp.summary.add_css_class("postio-parts-summary");
@@ -849,6 +848,7 @@ impl PartsPanel {
         imp.summary.set_hexpand(true);
 
         imp.blocked.set_text("remote blocked");
+        imp.blocked.add_css_class("postio-chip-base");
         imp.blocked.add_css_class("postio-parts-blocked");
         imp.blocked.set_visible(false);
 

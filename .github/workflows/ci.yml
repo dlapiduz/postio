@@ -36,6 +36,9 @@ on:
 # repository default grants, which may be read/write. #145.
 permissions:
   contents: read
+  # The `nightly` job below reads the last scheduled run's conclusion. Read
+  # only, and the narrowest grant that can answer the question.
+  actions: read
 
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
@@ -188,6 +191,34 @@ jobs:
       # enable that rule. Output is redacted by default -- these logs are
       # public. Run the script locally with --reveal to see the offending
       # values.
+      # `check-unused-deps.py` skips, saying so, without cargo-machete -- so
+      # this job installs it, and the gate is real here whatever a
+      # workstation has. Cached on the install script's hash, the way
+      # nextest is: the key changes exactly when the pin does.
+      - name: Cache cargo-machete
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ~/.cargo/bin/cargo-machete
+          key: ${{ runner.os }}-cargo-machete-${{ hashFiles('scripts/install-machete.sh') }}
+
+      - name: Install cargo-machete
+        run: scripts/install-machete.sh
+
+      # `test-check-dependency-policy.py`'s two real cases skipped here for
+      # want of cargo-deny -- the supply-chain job has it, inside its own
+      # action's container, and this job never did -- so the check script
+      # nothing else exercises was green untested on every run (#1290).
+      # Under CI a missing prerequisite now fails the self-test rather than
+      # skipping it (`scripts/lib/prereq.py`), so the tool has to be here.
+      - name: Cache cargo-deny
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ~/.cargo/bin/cargo-deny
+          key: ${{ runner.os }}-cargo-deny-${{ hashFiles('scripts/install-cargo-deny.sh') }}
+
+      - name: Install cargo-deny
+        run: scripts/install-cargo-deny.sh
+
       - name: Run every repository invariant
         env:
           POSTIO_DENY_NAMES: ${{ secrets.POSTIO_DENY_NAMES }}
@@ -237,17 +268,20 @@ jobs:
           echo "tooling self-tests: $answer"
           printf '%s\n' "$files" | sed 's/^/  changed: /'
 
-      # `test-check-dependency-policy.py`'s two real cases run `cargo-deny`,
-      # and until #1290 they skipped here on every run since they were
-      # written: the tool exists only inside the `supply-chain` job's musl
-      # container, so the job that runs the self-tests had never had it. A
-      # prebuilt binary rather than `cargo install`, which would compile it
-      # from source on a job that compiles none of the workspace.
-      - name: Install cargo-deny, which two self-tests exercise
-        if: steps.tooling.outputs.run == 'yes'
-        uses: taiki-e/install-action@84f5ac3124727fb3d284d4d22ee9ab3654fd09a6 # v2.87.7
+      # `test-issue-land-no-tests.py` asserts that the landing gate gives the
+      # same answer under both test runners, so it needs the one that is not
+      # already here. `prereq.py` turns a missing prerequisite into a failure
+      # under CI rather than a skip, so this is what stops that self-test
+      # standing down on a runner where it is supposed to run. Cached and
+      # keyed on the script, as the Tests job does it.
+      - name: Cache cargo-nextest
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
-          tool: cargo-deny
+          path: ~/.cargo/bin/cargo-nextest
+          key: ${{ runner.os }}-cargo-nextest-${{ hashFiles('scripts/install-nextest.sh') }}
+
+      - name: Install cargo-nextest
+        run: scripts/install-nextest.sh
 
       - name: Prove the tooling still holds itself up
         if: steps.tooling.outputs.run == 'yes'
@@ -279,6 +313,134 @@ jobs:
             exit 1
           fi
           echo "ok: no workflow opts into the live-server tests."
+
+  # Three jobs, because the question has two halves and one answer.
+  #
+  # `nightly-status` asks what the last completed run concluded and never
+  # fails. `nightly-rerun` runs the nightly *here*, on this pull request, but
+  # only when that answer was red. `nightly` is the check the ruleset requires
+  # and is green if either half says so.
+  #
+  # # Why a pull request re-runs it at all
+  #
+  # The first version of this just failed while the last nightly was red, and
+  # that is a deadlock rather than a gate: the fix has to be on `main` before
+  # a nightly can go green, and the check blocks it getting there. The escape
+  # was going to be a repository admin bypassing the ruleset, which is a
+  # judgement call made by whoever is around at the time.
+  #
+  # Proving it instead is better on every count. It needs no bypass actor, so
+  # branch protection is never weakened for a routine event. It tests *this
+  # change* rather than yesterday's `main`, which is the stronger claim. And
+  # it is earned rather than granted -- any pull request that fixes the
+  # nightly clears the block, not only one somebody designated.
+  #
+  # The cost is real and is the point: while the nightly is red every pull
+  # request pays for the full suite and the coverage floors, so the run goes
+  # from about four minutes to about twenty-five. A broken nightly is supposed
+  # to be uncomfortable until somebody fixes it.
+  nightly-status:
+    name: Last nightly
+    runs-on: ubuntu-latest
+    outputs:
+      green: ${{ steps.ask.outputs.green }}
+    steps:
+      # Never fails. Its job is to answer, and `nightly` below is what turns
+      # the answer into a verdict -- a step that exited non-zero here would
+      # take `nightly-rerun` with it and there would be nothing to prove.
+      #
+      # Three states count as green, each for its own reason: never run (a
+      # fresh fork, or the workflow was just added), in progress (judging a
+      # run before it finishes is a coin toss), and cancelled or skipped (a
+      # runner outage says nothing about the tree).
+      - name: Ask what the last Nightly concluded
+        id: ask
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          last=$(gh api \
+            "repos/${GITHUB_REPOSITORY}/actions/workflows/nightly.yml/runs?status=completed&per_page=1" \
+            --jq '.workflow_runs[0] | "\(.conclusion)\t\(.html_url)\t\(.created_at)"' 2>/dev/null || true)
+
+          if [ -z "$last" ] || [ "$last" = "null" ]; then
+            echo "No completed Nightly to judge."
+            echo "green=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          conclusion=$(printf '%s' "$last" | cut -f1)
+          url=$(printf '%s' "$last" | cut -f2)
+          when=$(printf '%s' "$last" | cut -f3)
+          # Any completed run counts, scheduled or dispatched -- `gh workflow
+          # run Nightly` after landing a fix is a documented way to clear this,
+          # and filtering to `event=schedule` would silently ignore it. A
+          # `workflow_call` from the job below does not appear here at all:
+          # a reused workflow's jobs belong to the caller's run.
+          echo "Last Nightly: $conclusion ($when)"
+          echo "  $url"
+          echo "url=$url" >> "$GITHUB_OUTPUT"
+
+          case "$conclusion" in
+            success|cancelled|skipped)
+              echo "green=true" >> "$GITHUB_OUTPUT"
+              ;;
+            *)
+              echo "green=false" >> "$GITHUB_OUTPUT"
+              echo "::warning::The last Nightly failed ($url) — running it on this pull request to see whether this change fixes it."
+              ;;
+          esac
+
+  # The nightly itself, on this pull request's merge commit. Skipped entirely
+  # while the last one is green, which is almost always.
+  nightly-rerun:
+    name: Nightly (re-run on this PR)
+    needs: nightly-status
+    if: needs.nightly-status.outputs.green != 'true'
+    uses: ./.github/workflows/nightly.yml
+
+  nightly:
+    name: Nightly is green
+    needs: [nightly-status, nightly-rerun]
+    # `always()`, because `nightly-rerun` is skipped on the ordinary path and a
+    # skipped dependency would otherwise skip this too -- and a skipped
+    # required check is a check that proved nothing while looking like it did.
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Decide
+        env:
+          SCHEDULED_GREEN: ${{ needs.nightly-status.outputs.green }}
+          RERUN: ${{ needs.nightly-rerun.result }}
+          URL: ${{ needs.nightly-status.outputs.url }}
+        run: |
+          set -euo pipefail
+          echo "last nightly green: ${SCHEDULED_GREEN}"
+          echo "re-run on this PR:            ${RERUN}"
+
+          if [ "${SCHEDULED_GREEN}" = "true" ]; then
+            echo "The nightly is green."
+            exit 0
+          fi
+          if [ "${RERUN}" = "success" ]; then
+            echo "The nightly is red, but it passes on this branch —"
+            echo "this change fixes it, so it is not blocked."
+            exit 0
+          fi
+
+          echo "::error::The nightly is red and still red on this branch."
+          echo
+          echo "The last run failed:"
+          echo "  ${URL}"
+          echo
+          echo "The pull-request gate is the sanity tier; the integration suites"
+          echo "that catch layers which each pass and were never joined up run in"
+          echo "that nightly. A red one means nothing is checking them."
+          echo
+          echo "This is not a deadlock: fix it on this branch and the re-run above"
+          echo "goes green, which is what clears this check. There is no override,"
+          echo "because there does not need to be one."
+          exit 1
 
   docs:
     name: Docs site build
@@ -544,10 +706,43 @@ jobs:
       # Still inside `dbus-run-session`, for the same reason as before: mutter
       # wants a session bus and a runner has none. `--profile ci` is where
       # fail-fast is turned off, alongside the retry override for #957.
-      - name: cargo nextest run
+      #
+      # Everything but the two WebKit-heavy crates. `postio-gtk` and
+      # `postio-app` run in the two jobs below: their suites are the ones a
+      # dying web process on this runner's software-GL stack can take down,
+      # and they are the ones nextest has to serialise (the `webkit` group),
+      # so together they were ~13 of this job's ~15 minutes. Apart, a WebKit
+      # flake re-runs one job rather than the whole workspace, and the engine
+      # crates report in a few minutes.
+      # **The sanity tier, not the whole workspace** (2026-09-19).
+      #
+      # A pull request now runs the same gate a landing does: the workspace's
+      # unit tests, plus the integration suites of the crates whose *tests
+      # enumerate a vocabulary* -- the golden binding tables, `[keys]`,
+      # `docs/keybindings.md`, `docs/config.md`. Those are the ones neither
+      # `--lib` nor `cargo check --all-targets` can fail for, which is the
+      # whole argument in `scripts/full-suite-crates.sh`.
+      #
+      # The rest of the integration suites run on the nightly timer and again
+      # as the release gate. That is a deliberate trade and it is not free:
+      # this project's characteristic bug is layers that each pass and were
+      # never joined up, and those are exactly what a unit tier cannot see.
+      # What keeps the window to a day rather than a release is `nightly.yml`,
+      # and what stops a red nightly being ignored is the `nightly` job below,
+      # which refuses to go green while the last run was a failure.
+      - name: cargo nextest run (sanity tier)
         env:
           POSTIO_TEST_PATIENCE: "3"
-        run: dbus-run-session -- cargo nextest run --workspace --profile ci
+        run: >-
+          dbus-run-session -- cargo nextest run --workspace --profile ci --lib
+          -E 'not (package(postio-gtk) + package(postio-app))'
+
+      - name: cargo nextest run (the suites a vocabulary change breaks)
+        env:
+          POSTIO_TEST_PATIENCE: "3"
+        run: >-
+          dbus-run-session -- cargo nextest run --profile ci
+          -p postio-core -p postio-config
 
       # **nextest does not run doctests**, and does not say so. They are
       # compiled and run by rustdoc, not by a test binary it can list, so this
@@ -570,6 +765,76 @@ jobs:
       # the property this depends on (`actions/cache` preserving mtimes
       # through extraction) and what silently breaks if that ever stops
       # being true.
+
+  # The two WebKit-heavy crates, one job each -- see the `test` job's
+  # nextest step for why they are apart from the workspace and from each
+  # other. Same runner, same compositor, same patience; their own build
+  # caches, because the artifacts `cargo test -p postio-gtk` produces are not
+  # the ones the workspace job keeps, and two jobs saving one cache key race.
+  #
+  # `postio_gtk::web_process` is the other half of the split: a web process
+  # that dies now fails the case in one turn of the loop rather than at
+  # nextest's cap, so a flake here costs seconds and a retry, not four
+  # minutes and a red run.
+  test-gtk:
+    name: Tests (GTK widgets)
+    runs-on: ubuntu-26.04
+    needs: changes
+    if: needs.changes.outputs.rust == 'yes'
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: ./.github/actions/rust-workspace
+        with:
+          save-cache: "true"
+          cache-name: "build-gtk"
+      - name: Restore mtimes from commit history
+        run: scripts/restore-mtimes.py
+      - name: Give the GTK suites a runtime directory
+        run: |
+          runtime="${RUNNER_TEMP:-/tmp}/xdg"
+          mkdir -p "$runtime" && chmod 700 "$runtime"
+          echo "XDG_RUNTIME_DIR=$runtime" >> "$GITHUB_ENV"
+      - name: Cache cargo-nextest
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ~/.cargo/bin/cargo-nextest
+          key: ${{ runner.os }}-cargo-nextest-${{ hashFiles('scripts/install-nextest.sh') }}
+      - name: Install cargo-nextest
+        run: scripts/install-nextest.sh
+      - name: cargo nextest run -p postio-gtk
+        env:
+          POSTIO_TEST_PATIENCE: "3"
+        run: dbus-run-session -- cargo nextest run -p postio-gtk --profile ci
+
+  test-app:
+    name: Tests (application)
+    runs-on: ubuntu-26.04
+    needs: changes
+    if: needs.changes.outputs.rust == 'yes'
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: ./.github/actions/rust-workspace
+        with:
+          save-cache: "true"
+          cache-name: "build-app"
+      - name: Restore mtimes from commit history
+        run: scripts/restore-mtimes.py
+      - name: Give the GTK suites a runtime directory
+        run: |
+          runtime="${RUNNER_TEMP:-/tmp}/xdg"
+          mkdir -p "$runtime" && chmod 700 "$runtime"
+          echo "XDG_RUNTIME_DIR=$runtime" >> "$GITHUB_ENV"
+      - name: Cache cargo-nextest
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ~/.cargo/bin/cargo-nextest
+          key: ${{ runner.os }}-cargo-nextest-${{ hashFiles('scripts/install-nextest.sh') }}
+      - name: Install cargo-nextest
+        run: scripts/install-nextest.sh
+      - name: cargo nextest run -p postio-app
+        env:
+          POSTIO_TEST_PATIENCE: "3"
+        run: dbus-run-session -- cargo nextest run -p postio-app --profile ci
 
   # The macOS half, and the link.
   #
@@ -708,13 +973,46 @@ jobs:
           key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: ${{ runner.os }}-cargo-registry-
 
-      # The same prerequisite the Linux job installs, for the same two
-      # cases (#1290). It has to be on *both* runners or the rule below
-      # turns whichever lacks it red.
-      - name: Install cargo-deny, which two self-tests exercise
-        uses: taiki-e/install-action@84f5ac3124727fb3d284d4d22ee9ab3654fd09a6 # v2.87.7
+      # `test-issue-land-no-tests.py` asserts that the landing gate gives the
+      # same answer under both test runners, so it needs the one that is not
+      # already here. `prereq.py` turns a missing prerequisite into a failure
+      # under CI rather than a skip, so this is what stops that self-test
+      # standing down on a runner where it is supposed to run. Cached and
+      # keyed on the script, as the Tests job does it.
+      - name: Cache cargo-nextest
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
-          tool: cargo-deny
+          path: ~/.cargo/bin/cargo-nextest
+          key: ${{ runner.os }}-cargo-nextest-${{ hashFiles('scripts/install-nextest.sh') }}
+
+      - name: Install cargo-nextest
+        run: scripts/install-nextest.sh
+
+      # The same two dependency-policy cases run here (#1290); see the
+      # boundaries job for why the tool has to be on PATH.
+      - name: Cache cargo-deny
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ~/.cargo/bin/cargo-deny
+          key: ${{ runner.os }}-cargo-deny-${{ hashFiles('scripts/install-cargo-deny.sh') }}
+
+      - name: Install cargo-deny
+        run: scripts/install-cargo-deny.sh
+
+      # `test-ffi-bindgen.py` builds `postio-ffi` -- most of the workspace --
+      # inside a 900 s patience window, and this job cached only the
+      # registry, so every run was a cold build on a macOS runner:
+      # 2026-09-14 saw it cross the cap twice, on the two pushes that changed
+      # Cargo.lock. The build artifacts are cached now, and the patience dial
+      # is doubled for the cold run that follows a lock change -- the base
+      # stays the number that is right on a warm runner.
+      - name: Cache the build
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: target
+          key: ${{ runner.os }}-tooling-target-${{ hashFiles('rust-toolchain.toml') }}-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-tooling-target-${{ hashFiles('rust-toolchain.toml') }}-
 
       # `CI` is what `scripts/lib/prereq.py` reads to decide that a missing
       # prerequisite is a broken runner rather than somebody's laptop. Set
@@ -724,4 +1022,5 @@ jobs:
       - name: Prove the tooling still holds itself up on macOS
         env:
           CI: "true"
+          POSTIO_TEST_PATIENCE: "2"
         run: scripts/run-self-tests.sh --logs "$RUNNER_TEMP/self-test-logs"

@@ -15,43 +15,75 @@
 use gtk::glib;
 use gtk::prelude::*;
 use postio_gtk::window::Window;
-use postio_storage::Database;
+use postio_storage::Store;
 use postio_storage::repository::{AccountRepository, MessageRepository, UnsubscribeRepository};
 
 use crate::Wiring;
 
 /// Wire the privacy pane's unsubscribe-activation list and read-receipt
 /// count to the store.
-pub fn install(window: &Window, wiring: &Wiring) {
-    refresh(window, &wiring.database);
+pub async fn install(window: &Window, wiring: &Wiring) {
+    // A no-op at startup, where the panel is not on screen -- see
+    // [`refresh`]. Kept anyway, because `install` is also how a window that
+    // *is* showing the panel gets its first read, and a call that costs a
+    // visibility check is not worth reasoning about a second time.
+    refresh(window, &wiring.database).await;
     // Weak: the window owns the settings panel that owns this handler, so a
     // strong clone is a cycle and the window never frees (#1072).
     let weak = glib::object::ObjectExt::downgrade(window);
     window.settings().connect_map({
         let database = wiring.database.clone();
         move |_| {
-            if let Some(window) = weak.upgrade() {
-                refresh(&window, &database);
-            }
+            postio_session::blocking::now(async {
+                if let Some(window) = weak.upgrade() {
+                    refresh(&window, &database).await;
+                }
+            })
         }
     });
 }
 
-fn refresh(window: &Window, database: &Database) {
-    let Ok(connection) = database.connection() else {
+async fn refresh(window: &Window, database: &Store) {
+    // **Only when the pane is on screen.** Everything below this line is a
+    // store read for a figure drawn in the privacy pane, and [`install`] runs
+    // inside `feed_the_window` -- so every launch spent it before the first
+    // frame, for a panel that may never be opened at all.
+    //
+    // `read_receipt_requested_count` is the one that made that matter. It is
+    // `count(*)` over every message the account holds, with no index to
+    // narrow it, on the thread that has to draw: #1479 measured a real store
+    // at 1249.7 ms to a first frame against a 500 ms budget, with 1044.1 ms
+    // of it after the window existed and none of it waiting on the network.
+    // A scan of 81,000 rows was inside that. Counted over a seeded store at
+    // two sizes it is 8,144 SQLite steps against 71,144 -- and identical
+    // statement and row counts, because an aggregate returns one row however
+    // many it reads, which is how it sat there with two counted budgets
+    // already in the workspace and neither able to see it.
+    //
+    // Nothing is lost by waiting: [`install`] connects this to the panel's
+    // own `map`, so the pane reads fresh the moment somebody looks at it --
+    // the same trade `settings_accounts::refresh` makes for what an account's
+    // mail weighs (#871), and `Window::open_settings` for the allow list.
+    if !gtk::prelude::WidgetExt::is_visible(&window.settings()) {
+        return;
+    }
+    let Ok(connection) = database.connect().await else {
         return;
     };
     let accounts = AccountRepository::new(&connection)
         .list()
+        .await
         .unwrap_or_default();
 
     let log = UnsubscribeRepository::new(&connection);
     let mut activations: Vec<_> = accounts
         .iter()
         .flat_map(|account| {
-            log.for_account(account.id).unwrap_or_else(|error| {
-                tracing::warn!(%error, "could not read the unsubscribe-activation log");
-                Vec::new()
+            postio_session::blocking::now(async {
+                log.for_account(account.id).await.unwrap_or_else(|error| {
+                    tracing::warn!(%error, "could not read the unsubscribe-activation log");
+                    Vec::new()
+                })
             })
         })
         .collect();
@@ -64,12 +96,15 @@ fn refresh(window: &Window, database: &Database) {
     let read_receipt_count: u64 = accounts
         .iter()
         .map(|account| {
-            messages
-                .read_receipt_requested_count(account.id)
-                .unwrap_or_else(|error| {
-                    tracing::warn!(%error, "could not count read-receipt requests");
-                    0
-                })
+            postio_session::blocking::now(async {
+                messages
+                    .read_receipt_requested_count(account.id)
+                    .await
+                    .unwrap_or_else(|error| {
+                        tracing::warn!(%error, "could not count read-receipt requests");
+                        0
+                    })
+            })
         })
         .sum();
     window.settings().set_read_receipt_count(read_receipt_count);

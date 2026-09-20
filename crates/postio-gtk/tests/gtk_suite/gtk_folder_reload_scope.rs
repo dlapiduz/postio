@@ -85,6 +85,7 @@ impl MailboxSource for Store {
                 unread: 0,
                 flagged: FLAGGED_TOTAL,
                 snoozed: SNOOZED_TOTAL,
+                attention: 0,
             };
             mailbox
         };
@@ -105,6 +106,7 @@ impl MessageSource for Store {
             ListScope::Mailbox(_)
             | ListScope::Account(_)
             | ListScope::Unified
+            | ListScope::Outbox(_)
             | ListScope::Thread(_) => 0,
         };
         Box::pin(async move {
@@ -122,7 +124,8 @@ impl MessageSource for Store {
                     seen: false,
                     flagged: true,
                     answered: false,
-                    draft: false,
+                    send_state: None,
+                    send_at: None,
                     has_attachments: false,
                     thread_count: 1,
                     participants: Vec::new(),

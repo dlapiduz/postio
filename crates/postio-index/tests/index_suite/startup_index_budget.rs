@@ -29,16 +29,16 @@ use postio_index::index::ensure_schema;
 use postio_model::{EmailAddress, Message};
 use postio_storage::repository::MessageRepository;
 use postio_storage::test_support;
-use postio_storage::test_support::counting::{counted, install};
+use postio_storage::test_support::counting::{counted_async, install};
 
 /// Enough mail that a full re-index is unmistakable next to a no-op.
 const MESSAGES: usize = 2_000;
 
-#[test]
-fn an_ordinary_start_does_not_reindex_the_mailbox() {
-    let database = test_support::memory();
-    let connection = database.connection().expect("checkout");
-    let (account, mailbox) = test_support::account_with_inbox(&connection);
+#[tokio::test]
+async fn an_ordinary_start_does_not_reindex_the_mailbox() {
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    let (account, mailbox) = test_support::account_with_inbox(&connection).await;
 
     let messages = MessageRepository::new(&connection);
     for nth in 0..MESSAGES {
@@ -47,42 +47,58 @@ fn an_ordinary_start_does_not_reindex_the_mailbox() {
         let mut message = Message::new(account.id, mailbox, received);
         message.from = vec![EmailAddress::new(Some("ada"), "ada@example.com")];
         message.subject = Some(format!("quarterly report {nth}"));
-        messages.create(&mut message).expect("create message");
+        messages.create(&mut message).await.expect("create message");
     }
 
     install(&connection);
 
     // The start that builds the index. This one is allowed to be expensive:
     // it is the upgrade, and it happens once.
-    let building = counted(|| ensure_schema(&connection).expect("the first start"));
+    let building =
+        counted_async(async || ensure_schema(&connection).await.expect("the first start")).await;
 
     // Every start after it.
-    let ordinary = counted(|| ensure_schema(&connection).expect("an ordinary start"));
+    let ordinary =
+        counted_async(async || ensure_schema(&connection).await.expect("an ordinary start")).await;
 
     // The control, and the reason the ceiling below is known to have teeth:
-    // the counter demonstrably sees a full pass over the store, because it
+    // the counter demonstrably sees a start that builds the index, because it
     // just measured one. #100 asks that each counted budget fail when the
     // invariant it guards is deliberately broken; this is that failure,
     // measured rather than asserted.
+    //
+    // It used to be spelled in trigger firings, which the old engine's trace
+    // hook could see. There are no FTS triggers now -- the engine maintains
+    // the index the way it maintains any index -- and no trace hook either.
+    // What the counter sees is the schema batch, because `ensure_schema` runs
+    // it through the `sql` seam for exactly this reason: a `CREATE ... IF NOT
+    // EXISTS` is real work, and a startup budget that cannot see DDL is a
+    // budget that passes while startup gets slower (#1113).
     assert!(
-        building.nested > MESSAGES,
-        "building the index over {MESSAGES} messages fired only {} nested \
-         statements, so it did not do per-row work and the comparison below \
-         means nothing",
-        building.nested
+        building.statements > CEILING,
+        "the start that builds the index ran only {} statements, at or under \
+         the ceiling the ordinary start is held to -- so the two are \
+         indistinguishable and the assertion below means nothing",
+        building.statements
     );
 
     assert!(
-        ordinary.nested < MESSAGES,
-        "an ordinary start fired {} nested statements over a {MESSAGES}-message \
-         store, against {} for the start that built the index. Startup work \
-         that scales with the mailbox is what §18's 500ms budget cannot \
-         survive, and it is invisible in behaviour — search returns the same \
-         results either way.",
-        ordinary.nested,
-        building.nested
+        ordinary.statements <= CEILING,
+        "an ordinary start ran {} statements over a {MESSAGES}-message store, \
+         against {} for the start that built the index. Startup work that \
+         scales with the mailbox is what §18's 500ms budget cannot survive, \
+         and it is invisible in behaviour -- search returns the same results \
+         either way.",
+        ordinary.statements,
+        building.statements
     );
 }
+
+/// The three half-version reads, the `search_schema` table, and nothing else.
+///
+/// Set just above what the version check costs rather than just below what the
+/// batch costs, so a batch that shrinks does not quietly slip under it.
+const CEILING: usize = 8;
 
 /// The schema batch itself, which the re-index counter above cannot see.
 ///
@@ -97,21 +113,17 @@ fn an_ordinary_start_does_not_reindex_the_mailbox() {
 /// So count statements, not trigger firings. A start that finds all three
 /// half versions current has nothing to do and should say so in SQL it did
 /// not run.
-#[test]
-fn an_ordinary_start_does_not_re_execute_the_schema() {
-    let database = test_support::memory();
-    let connection = database.connection().expect("checkout");
+#[tokio::test]
+async fn an_ordinary_start_does_not_re_execute_the_schema() {
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
 
-    ensure_schema(&connection).expect("the first start");
+    ensure_schema(&connection).await.expect("the first start");
 
     install(&connection);
-    let ordinary = counted(|| ensure_schema(&connection).expect("an ordinary start"));
+    let ordinary =
+        counted_async(async || ensure_schema(&connection).await.expect("an ordinary start")).await;
 
-    // The three half-version reads and the `search_schema` table itself. The
-    // point of the ceiling is that the ~30 DDL statements below them are
-    // gone, so it is set just above what the version check costs rather than
-    // just below what the batch costs.
-    const CEILING: usize = 8;
     assert!(
         ordinary.statements <= CEILING,
         "a start with every schema half already current ran {} statements,          over a ceiling of {CEILING}. The `SCHEMA` batch is being re-executed          when there is nothing to create; on a populated store one of its          no-op `CREATE TRIGGER IF NOT EXISTS` statements costs more than          everything else in opening the store put together (#1113).",

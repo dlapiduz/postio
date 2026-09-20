@@ -438,14 +438,34 @@ impl ConnectionPool {
     ) -> BackendResult<T> {
         let mut connection = self.acquire(priority).await?;
         let result = operation(&mut connection).await;
-        if result
-            .as_ref()
-            .err()
-            .is_some_and(BackendError::is_transient)
+        if let Err(error) = result.as_ref()
+            && error.is_transient()
         {
+            Self::discarding(error);
             connection.discard();
         }
         result
+    }
+
+    /// Says which connection is being thrown away, and why.
+    ///
+    /// The pool has always discarded a connection after a transient failure
+    /// and never said so, which is fine while "transient" means the socket
+    /// died -- the error itself is the story. It stopped being fine when a
+    /// *parse* became a reason to discard: a `SELECT` whose `UIDVALIDITY`
+    /// line was lost, a `UID SEARCH` that listed fewer UIDs than the mailbox
+    /// holds. Those are answers the connection gave and cannot be trusted to
+    /// give again, they are recoverable by retrying elsewhere, and so the
+    /// only trace of them is this line. Without it the successful retry looks
+    /// like nothing ever went wrong, which is exactly the silence these
+    /// guards were added to end.
+    ///
+    /// `warn`, not `debug`: it is rare, it means a server or a protocol
+    /// library misbehaved, and it is the first thing worth seeing in a report
+    /// of mail arriving slowly. No mailbox path and no message content -- the
+    /// error's own context carries what is safe to say.
+    fn discarding(error: &BackendError) {
+        tracing::warn!(%error, "discarding the connection that produced this");
     }
 
     /// Runs one operation on the connection reserved for watching.
@@ -460,11 +480,10 @@ impl ConnectionPool {
             .acquire_lane(LaneKind::Watch, Priority::Interactive)
             .await?;
         let result = operation(&mut connection).await;
-        if result
-            .as_ref()
-            .err()
-            .is_some_and(BackendError::is_transient)
+        if let Err(error) = result.as_ref()
+            && error.is_transient()
         {
+            Self::discarding(error);
             connection.discard();
         }
         result

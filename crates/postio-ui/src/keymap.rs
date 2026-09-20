@@ -642,14 +642,6 @@ impl Keymap {
         Ok(())
     }
 
-    /// Removes a binding, returning whether there was one.
-    pub fn unbind(&mut self, context: KeyContext, binding: &Binding) -> bool {
-        let before = self.entries.len();
-        self.entries
-            .retain(|(existing, bound, _)| !(*existing == context && bound == binding));
-        self.entries.len() != before
-    }
-
     /// The binding a command has in a context, if any.
     pub fn binding_for(&self, context: KeyContext, command: &str) -> Option<&Binding> {
         self.entries
@@ -1483,21 +1475,6 @@ mod tests {
             Some("A".to_owned())
         );
         assert_eq!(keymap.binding_for(KeyContext::List, "teleport"), None);
-    }
-
-    #[test]
-    fn unbinding_removes_the_entry() {
-        let mut keymap = canvas_keymap();
-        let binding: Binding = "a".parse().unwrap();
-
-        assert!(keymap.unbind(KeyContext::List, &binding));
-        assert!(!keymap.unbind(KeyContext::List, &binding), "already gone");
-
-        let mut resolver = Resolver::new(keymap);
-        assert_eq!(
-            press(&mut resolver, "a", KeyContext::List),
-            Outcome::Unhandled
-        );
     }
 
     #[test]

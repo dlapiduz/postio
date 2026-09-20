@@ -25,8 +25,8 @@ use postio_storage::{BlobStore, test_support};
 
 /// File a message carrying one inline part with `content_id`, and hand back
 /// the message's id.
-fn message_with_part(
-    connection: &postio_storage::PooledConnection,
+async fn message_with_part(
+    connection: &postio_storage::Checkout,
     blobs: &BlobStore,
     account: postio_model::ids::AccountId,
     mailbox: postio_model::ids::MailboxId,
@@ -46,20 +46,21 @@ fn message_with_part(
 
     MessageRepository::new(connection)
         .create(&mut message)
+        .await
         .expect("file the message");
     message.id
 }
 
-#[test]
-fn a_content_id_from_another_message_does_not_resolve() {
-    let database = test_support::temp();
+#[tokio::test(flavor = "multi_thread")]
+async fn a_content_id_from_another_message_does_not_resolve() {
+    let database = test_support::temp().await;
     let blobs = BlobStore::open(
         database.directory().join("blobs"),
         &postio_storage::test_support::blob_keys(),
     )
     .expect("a blob store");
-    let connection = database.connection().expect("checkout");
-    let (account, inbox) = test_support::account_with_inbox(&connection);
+    let connection = database.connect().await.expect("checkout");
+    let (account, inbox) = test_support::account_with_inbox(&connection).await;
 
     let mine = message_with_part(
         &connection,
@@ -69,7 +70,8 @@ fn a_content_id_from_another_message_does_not_resolve() {
         "The message on screen",
         "logo@example.com",
         b"MINE",
-    );
+    )
+    .await;
     let theirs = message_with_part(
         &connection,
         &blobs,
@@ -78,7 +80,8 @@ fn a_content_id_from_another_message_does_not_resolve() {
         "Somebody else's",
         "secret@example.invalid",
         b"THEIRS",
-    );
+    )
+    .await;
     assert_ne!(mine, theirs, "the fixture needs two distinct messages");
     drop(connection);
 

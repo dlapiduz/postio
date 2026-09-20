@@ -12,8 +12,7 @@
 //! had already fixed on the other platform. Nothing here touches a toolkit:
 //! `Vec<Mailbox>` in, `Vec<Mailbox>` out.
 
-use postio_core::event::ConnectionState;
-use postio_model::{Mailbox, MailboxRole};
+use postio_model::{AccountId, Mailbox, MailboxCounts, MailboxRole};
 
 /// Where a role sits in the sidebar, or `None` for an ordinary folder.
 ///
@@ -21,16 +20,23 @@ use postio_model::{Mailbox, MailboxRole};
 /// folders it does not happen to draw after them. Snoozed joins right after
 /// Flagged: the same client-only, no-`SPECIAL-USE` shape, and the same kind
 /// of "things you will come back to soon" list.
+///
+/// The Outbox sits between Drafts and Sent, which is the order the column
+/// reads in: what you are still writing, what is on its way, what has gone.
+/// Its place is fixed rather than earned, because the row is hidden when the
+/// Outbox is empty and a position that moved would reorder its neighbours
+/// every time a message was sent.
 pub fn role_order(role: MailboxRole) -> Option<u8> {
     match role {
         MailboxRole::Inbox => Some(0),
         MailboxRole::Flagged => Some(1),
         MailboxRole::Snoozed => Some(2),
         MailboxRole::Drafts => Some(3),
-        MailboxRole::Sent => Some(4),
-        MailboxRole::Archive => Some(5),
-        MailboxRole::Junk => Some(6),
-        MailboxRole::Trash => Some(7),
+        MailboxRole::Outbox => Some(4),
+        MailboxRole::Sent => Some(5),
+        MailboxRole::Archive => Some(6),
+        MailboxRole::Junk => Some(7),
+        MailboxRole::Trash => Some(8),
         MailboxRole::Regular => None,
     }
 }
@@ -59,6 +65,129 @@ pub fn primary_within(mailbox: &Mailbox, among: &[Mailbox]) -> bool {
     })
 }
 
+/// How many messages each of the sidebar's views holds.
+///
+/// Gathered by the caller because the three come from different places:
+/// `flagged` and `snoozed` are sums over the account's folders, which the
+/// store's cached counts already have, and `outbox` is a question about draft
+/// state that only a query can answer.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct ViewCounts {
+    /// Everything flagged in the account, wherever it is filed.
+    pub flagged: u32,
+    /// Everything currently snoozed.
+    pub snoozed: u32,
+    /// Drafts whose send is under way.
+    pub outbox: u32,
+    /// What the Drafts row should show: everything not in flight. Not
+    /// `mailboxes.total_count`, which counts every message row filed there.
+    pub drafts: u32,
+    /// How many of those have stopped and need a person (FR-022).
+    pub attention: u32,
+}
+
+/// How many of `mailbox`'s messages have stopped and need a person.
+///
+/// `None` for every folder but Drafts, and `None` for a Drafts folder where
+/// nothing needs anybody — a marker that is always drawn is a marker nobody
+/// reads (FR-023).
+///
+/// Separate from [`count_for`] rather than replacing it: the two answer
+/// different questions, and the row draws both. "Drafts 5" says how much is
+/// there; it does not say that one of them failed to send an hour ago.
+pub fn attention_for(mailbox: &Mailbox) -> Option<u32> {
+    if mailbox.role != MailboxRole::Drafts {
+        return None;
+    }
+    (mailbox.counts.attention > 0).then_some(mailbox.counts.attention)
+}
+
+/// Whether `mailbox` is a view over messages filed elsewhere rather than a
+/// folder on the server.
+///
+/// A view is unpersisted by construction — it has no row, because there is
+/// nothing to store — so an unassigned id is what says so. Every mailbox the
+/// sidebar is handed otherwise comes from the store and has one.
+///
+/// This replaces the negative-id sentinels the GTK feed used to invent
+/// (`MailboxId::new(-1)` and `-2`). A sentinel is a value that means something
+/// only to whoever remembers it, and the frontend that did not remember —
+/// macOS — simply never had these rows.
+pub fn is_view(mailbox: &Mailbox) -> bool {
+    !mailbox.id.is_assigned()
+}
+
+/// The view rows this account's sidebar draws, in no particular order —
+/// [`sections`] places them.
+///
+/// # Why this is here and not in a widget
+///
+/// Every frontend needs the same answer, and the one that had to invent it
+/// locally did not: `Flagged` and `Snoozed` were built inside
+/// `postio-gtk::feed`, so the macOS sidebar has never had either row. Building
+/// them in the toolkit-free layer both frontends already consume is what makes
+/// "the same account draws the same rows" true rather than aspirational.
+///
+/// # What is invented, and what is not
+///
+/// `Snoozed` and `Outbox` are always Postio's own: no `SPECIAL-USE` attribute
+/// names either, so no server can advertise one and `MailboxRole::kind`
+/// answers `View` for both.
+///
+/// `Flagged` is the awkward one and the reason this takes the account's
+/// folders. RFC 6154 *does* define `\Flagged`, so a server can have a real
+/// one — Gmail's "Starred" — and inventing a second row beside it would draw
+/// the word twice. Worse, a view's empty path sorts before any real path, so
+/// the invented row would win [`primary_within`] and the user's actual folder
+/// would be demoted to an ordinary row underneath it.
+///
+/// The `Outbox` row is absent when it holds nothing, which is its ordinary
+/// state (spec 003 FR-012).
+pub fn view_rows(account: AccountId, folders: &[Mailbox], counts: ViewCounts) -> Vec<Mailbox> {
+    let mut rows = Vec::new();
+
+    let server_has_flagged = folders
+        .iter()
+        .any(|folder| folder.account_id == account && folder.role == MailboxRole::Flagged);
+    if !server_has_flagged {
+        rows.push(view(account, MailboxRole::Flagged, counts.flagged));
+    }
+    rows.push(view(account, MailboxRole::Snoozed, counts.snoozed));
+    if counts.outbox > 0 {
+        rows.push(view(account, MailboxRole::Outbox, counts.outbox));
+    }
+    rows
+}
+
+/// One view row: a query wearing a folder's clothes.
+///
+/// `path` is empty because there is nothing to `SELECT`, the id is left
+/// unassigned because there is no row, and `last_synced_at` stays `None`
+/// because a question is never out of date.
+fn view(account: AccountId, role: MailboxRole, count: u32) -> Mailbox {
+    let mut row = Mailbox::new(account, "", None);
+    row.role = role;
+    row.selectable = true;
+    row.counts = MailboxCounts {
+        total: count,
+        unread: 0,
+        flagged: if role == MailboxRole::Flagged {
+            count
+        } else {
+            0
+        },
+        snoozed: if role == MailboxRole::Snoozed {
+            count
+        } else {
+            0
+        },
+        // A view holds no drafts of its own: the Outbox lists what is on its
+        // way, which is the opposite of stopped and waiting for somebody.
+        attention: 0,
+    };
+    row
+}
+
 /// Split the mailboxes into the two sections the canvas draws, each in order.
 ///
 /// Unselectable folders — `\Noselect` containers that exist only to hold a
@@ -85,8 +214,334 @@ pub fn sections(mailboxes: &[Mailbox]) -> (Vec<Mailbox>, Vec<Mailbox>) {
     (special, ordinary)
 }
 
+// ── What a row is called, and the number beside it ──────────────────────────
+//
+// Both moved out of `postio-gtk::sidebar` by spec 003, for the reason
+// `role_order` and `sections` moved in #1155: they are product decisions, not
+// widget details, and the frontend that had to re-derive them did not. The
+// FFI sent `mailbox.name` raw, which is empty for a view row — so even once
+// Flagged and Snoozed crossed the boundary, macOS had two rows with no label.
+
+///
+/// Straight off the canvas: Inbox 12 unread, Flagged 3 flagged, Drafts 2 in
+/// total, and nothing at all beside Sent or Archive. A count of zero is not
+/// drawn — an empty column is quieter than a row of noughts.
+pub fn count_for(mailbox: &Mailbox) -> Option<u32> {
+    let counts = &mailbox.counts;
+    let count = match mailbox.role {
+        // A draft you have not finished is not "unread".
+        MailboxRole::Drafts => counts.total,
+        MailboxRole::Flagged => counts.flagged,
+        MailboxRole::Snoozed => counts.snoozed,
+        // How many are on their way. The row is hidden entirely when this is
+        // zero, which is its ordinary state -- see spec 003 FR-012.
+        MailboxRole::Outbox => counts.total,
+        // Nothing arrives in these unread, so a count would only ever be
+        // "how much have you kept", which is not a thing to nag about.
+        MailboxRole::Sent | MailboxRole::Archive | MailboxRole::Trash | MailboxRole::Junk => 0,
+        MailboxRole::Inbox | MailboxRole::Regular => counts.unread,
+    };
+    (count > 0).then_some(count)
+}
+
+/// What a folder is called in the sidebar.
+///
+/// The special-use folders get the name Postio uses for the role, not the one
+/// the server happens to have picked: an iCloud account calls its archive
+/// "Archive" but its junk folder "Junk E-mail", and the sidebar is not the
+/// place to learn that.
+///
+/// Public because the list pane's header names the same folder, and two
+/// places calling one mailbox by two names is exactly the vocabulary drift
+/// this function exists to prevent.
+pub fn display_name(mailbox: &Mailbox, among: &[Mailbox]) -> String {
+    if !primary_within(mailbox, among) {
+        // The role's *twin* (#501): a second folder the server reports with
+        // the same role. It renders as an ordinary folder, and an ordinary
+        // folder is called what the server calls it — the role name belongs
+        // to exactly one row, or the sidebar reads `Sent, Sent`.
+        return mailbox.name.clone();
+    }
+    match mailbox.role {
+        MailboxRole::Inbox => "Inbox".to_string(),
+        MailboxRole::Flagged => "Flagged".to_string(),
+        MailboxRole::Snoozed => "Snoozed".to_string(),
+        MailboxRole::Drafts => "Drafts".to_string(),
+        MailboxRole::Outbox => "Outbox".to_string(),
+        MailboxRole::Sent => "Sent".to_string(),
+        MailboxRole::Archive => "Archive".to_string(),
+        MailboxRole::Junk => "Junk".to_string(),
+        MailboxRole::Trash => "Trash".to_string(),
+        MailboxRole::Regular => mailbox.name.clone(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn the_drafts_row_says_how_many_need_a_person() {
+        // FR-022. A Drafts badge of 5 says nothing about whether one of them
+        // failed to send an hour ago. Two numbers: what is there, and what has
+        // stopped and is waiting for you.
+        let account = AccountId::new(1);
+        let mut drafts = folder(3, "Drafts", MailboxRole::Drafts);
+        drafts.counts = MailboxCounts {
+            total: 4,
+            attention: 2,
+            ..MailboxCounts::default()
+        };
+
+        assert_eq!(
+            count_for(&drafts),
+            Some(4),
+            "the total is what Drafts holds"
+        );
+        assert_eq!(
+            attention_for(&drafts),
+            Some(2),
+            "and separately, how many of them need you"
+        );
+        let _ = account;
+    }
+
+    #[test]
+    fn nothing_needing_a_person_draws_no_attention_mark() {
+        // FR-023. A marker that is always there is a marker nobody reads.
+        let mut drafts = folder(3, "Drafts", MailboxRole::Drafts);
+        drafts.counts = MailboxCounts {
+            total: 2,
+            attention: 0,
+            ..MailboxCounts::default()
+        };
+        assert_eq!(attention_for(&drafts), None);
+    }
+
+    #[test]
+    fn only_drafts_has_an_attention_count() {
+        // Every other folder's mail arrived; none of it is waiting on the
+        // user to finish or retry something.
+        for role in [
+            MailboxRole::Inbox,
+            MailboxRole::Sent,
+            MailboxRole::Archive,
+            MailboxRole::Junk,
+            MailboxRole::Trash,
+            MailboxRole::Regular,
+        ] {
+            let mut mailbox = folder(9, "Somewhere", role);
+            mailbox.counts = MailboxCounts {
+                total: 3,
+                attention: 3,
+                ..MailboxCounts::default()
+            };
+            assert_eq!(
+                attention_for(&mailbox),
+                None,
+                "{role:?} should not draw an attention count"
+            );
+        }
+    }
+
+    // ── The view rows (spec 003, US4) ────────────────────────────────────
+
+    #[test]
+    fn a_view_row_is_built_here_rather_than_by_a_frontend() {
+        let account = AccountId::new(1);
+        let folders = vec![folder(1, "INBOX", MailboxRole::Inbox)];
+
+        let views = view_rows(
+            account,
+            &folders,
+            ViewCounts {
+                flagged: 3,
+                snoozed: 2,
+                outbox: 0,
+                drafts: 0,
+                attention: 0,
+            },
+        );
+
+        let roles: Vec<MailboxRole> = views.iter().map(|row| row.role).collect();
+        assert_eq!(
+            roles,
+            vec![MailboxRole::Flagged, MailboxRole::Snoozed],
+            "no Outbox: it is hidden when empty (FR-012)"
+        );
+        for row in &views {
+            assert!(
+                is_view(row),
+                "{:?} has an id, so something will try to SELECT it",
+                row.role
+            );
+            assert!(row.path.is_empty(), "a view has nothing to SELECT");
+            assert!(row.selectable, "a view row is one a person can open");
+        }
+        assert_eq!(views[0].counts.flagged, 3);
+        assert_eq!(views[1].counts.snoozed, 2);
+    }
+
+    #[test]
+    fn the_outbox_row_appears_only_when_it_holds_something() {
+        let account = AccountId::new(1);
+        let folders = vec![folder(1, "INBOX", MailboxRole::Inbox)];
+        let with = |outbox| {
+            view_rows(
+                account,
+                &folders,
+                ViewCounts {
+                    flagged: 0,
+                    snoozed: 0,
+                    outbox,
+                    drafts: 0,
+                    attention: 0,
+                },
+            )
+            .into_iter()
+            .map(|row| row.role)
+            .collect::<Vec<_>>()
+        };
+
+        assert!(
+            !with(0).contains(&MailboxRole::Outbox),
+            "an empty Outbox is not drawn (FR-012)"
+        );
+        assert!(with(1).contains(&MailboxRole::Outbox));
+    }
+
+    #[test]
+    fn no_flagged_view_is_invented_when_the_server_really_has_that_folder() {
+        // RFC 6154 defines `\Flagged`, so a server can have a real one --
+        // Gmail's "Starred". Synthesising a second row beside it would draw
+        // "Flagged, Flagged", and because a view's empty path sorts first the
+        // *synthetic* one would win `primary_within` and the real folder would
+        // be demoted to an ordinary row. The account's own mail would then be
+        // one click further away than on an account whose server has nothing.
+        let account = AccountId::new(1);
+        let folders = vec![
+            folder(1, "INBOX", MailboxRole::Inbox),
+            folder(2, "Starred", MailboxRole::Flagged),
+        ];
+
+        let roles: Vec<MailboxRole> = view_rows(
+            account,
+            &folders,
+            ViewCounts {
+                flagged: 3,
+                snoozed: 0,
+                outbox: 0,
+                drafts: 0,
+                attention: 0,
+            },
+        )
+        .into_iter()
+        .map(|row| row.role)
+        .collect();
+
+        assert_eq!(
+            roles,
+            vec![MailboxRole::Snoozed],
+            "the real Starred folder is the Flagged row; nothing is invented"
+        );
+    }
+
+    #[test]
+    fn snoozed_is_always_invented_because_no_server_can_have_one() {
+        let account = AccountId::new(1);
+        // Even handed a folder a careless server called "Snoozed": a role is
+        // resolved from `SPECIAL-USE`, and there is no attribute for this.
+        let folders = vec![folder(3, "Snoozed", MailboxRole::Regular)];
+
+        let roles: Vec<MailboxRole> = view_rows(
+            account,
+            &folders,
+            ViewCounts {
+                flagged: 0,
+                snoozed: 0,
+                outbox: 0,
+                drafts: 0,
+                attention: 0,
+            },
+        )
+        .into_iter()
+        .map(|row| row.role)
+        .collect();
+
+        assert_eq!(roles, vec![MailboxRole::Flagged, MailboxRole::Snoozed]);
+    }
+
+    #[test]
+    fn the_view_rows_take_their_place_in_the_shared_order() {
+        // Built here *and* ordered here: a frontend appending them to the end
+        // of the list is how the two frontends came to disagree.
+        let account = AccountId::new(1);
+        let mut all = vec![
+            folder(1, "INBOX", MailboxRole::Inbox),
+            folder(4, "Sent", MailboxRole::Sent),
+            folder(5, "Projects", MailboxRole::Regular),
+        ];
+        all.extend(view_rows(
+            account,
+            &all.clone(),
+            ViewCounts {
+                flagged: 1,
+                snoozed: 1,
+                outbox: 1,
+                drafts: 0,
+                attention: 0,
+            },
+        ));
+
+        let (special, ordinary) = sections(&all);
+        assert_eq!(
+            special.iter().map(|m| m.role).collect::<Vec<_>>(),
+            vec![
+                MailboxRole::Inbox,
+                MailboxRole::Flagged,
+                MailboxRole::Snoozed,
+                MailboxRole::Outbox,
+                MailboxRole::Sent,
+            ]
+        );
+        assert_eq!(ordinary.len(), 1, "Projects is the only ordinary folder");
+    }
+
+    #[test]
+    fn the_outbox_sits_between_drafts_and_sent() {
+        // Where a message on its way belongs in the reading of the column:
+        // after what you are still writing, before what has gone. Its
+        // position is fixed so that appearing and disappearing -- it is
+        // hidden when empty -- never reorders the rows around it.
+        assert_eq!(
+            role_order(MailboxRole::Outbox),
+            Some(4),
+            "the Outbox reads after Drafts and before Sent"
+        );
+        assert!(role_order(MailboxRole::Drafts) < role_order(MailboxRole::Outbox));
+        assert!(role_order(MailboxRole::Outbox) < role_order(MailboxRole::Sent));
+    }
+
+    #[test]
+    fn every_role_that_gets_a_row_has_a_distinct_place_in_the_order() {
+        let mut seen: Vec<u8> = [
+            MailboxRole::Inbox,
+            MailboxRole::Flagged,
+            MailboxRole::Snoozed,
+            MailboxRole::Drafts,
+            MailboxRole::Outbox,
+            MailboxRole::Sent,
+            MailboxRole::Archive,
+            MailboxRole::Junk,
+            MailboxRole::Trash,
+        ]
+        .into_iter()
+        .map(|role| role_order(role).expect("a special row has a place"))
+        .collect();
+        let before = seen.len();
+        seen.sort_unstable();
+        seen.dedup();
+        assert_eq!(seen.len(), before, "two roles share a position: {seen:?}");
+        assert_eq!(role_order(MailboxRole::Regular), None);
+    }
     use super::*;
     use postio_model::ids::{AccountId, MailboxId};
 
@@ -216,82 +671,21 @@ pub enum Activity {
 /// all: "synced 40s ago" during a sync is a report on the previous pass being
 /// read as a report on this one, which is the shape of the bug that made the
 /// GTK footer say "0% synced" and "never synced" at once.
-/// The word the footer leads with, from everything that could be happening.
 ///
-/// One rule, because two footers saying different things about the same store
-/// is the drift ADR 0019 Q6 is about — and this one was visible: one frontend
-/// said `idle · imap` while the other said `idle · synced 40s` (#1266).
+/// This is the one-line form, and it is the one that crosses the FFI: the
+/// frontend already holds both facts and hands them over as an [`Activity`]
+/// and a count of seconds, which is what a boundary can carry.
+/// [`crate::status::SyncStatus`] — the two-line footer GTK draws, with the
+/// byte clause the column has no room for — holds an `Instant` and a whole
+/// `ConnectionState`, and neither of those crosses.
 ///
-/// The order is deliberate and each step earns its place:
-///
-/// * a connection problem outranks everything, because nothing else on the
-///   line is true while there is no session;
-/// * a **pass in flight** is `syncing` — the list itself is arriving;
-/// * a **backfill** is `downloading`, and it has its own word for the reason
-///   #74 was filed: the list is complete and the mail is not, and `idle`
-///   there was the lie. It matches what the reading pane says about a
-///   message whose body has not arrived, which is the same fact from the
-///   other end.
-pub fn state_word(
-    state: ConnectionState,
-    progress: Option<(u32, u32)>,
-    backfill: Option<(u32, u32)>,
-) -> &'static str {
-    match state {
-        ConnectionState::Offline => "offline",
-        ConnectionState::Connecting => "connecting",
-        ConnectionState::Failing { .. } => "error",
-        ConnectionState::Online if pass_progress(progress).is_some() => "syncing",
-        ConnectionState::Online if backfill_running(backfill).is_some() => "downloading",
-        ConnectionState::Online => "idle",
-    }
-}
-
-/// How far the pass in flight has got, if one is running.
-///
-/// `Some` exactly while a pass is in flight, which is what makes it the
-/// answer to "is anything happening". A pass with nothing to reach never
-/// started, and one that has reached its total has finished — neither is
-/// running, and reporting either would leave the footer stuck at a number
-/// that has stopped moving.
-pub fn pass_progress(progress: Option<(u32, u32)>) -> Option<u32> {
-    match progress {
-        Some((_, 0)) => None,
-        Some((done, total)) if done < total => Some(done),
-        _ => None,
-    }
-}
-
-/// How much mail the backfill has settled, if a backfill is running.
-///
-/// The same rule as [`pass_progress`] and for the same reason: a finished
-/// backfill falls back to the idle line rather than sticking at
-/// `2000 of 2000`.
-///
-/// Named `_running` rather than `_progress` on purpose: `postio-runtime`
-/// already has a `backfill_progress`, and `check-uncalled-pub-fn` matches on
-/// the bare name — a second one would have marked that one "called" and
-/// quietly retired a real entry from the debt list.
-pub fn backfill_running(backfill: Option<(u32, u32)>) -> Option<(u32, u32)> {
-    match backfill {
-        Some((_, 0)) => None,
-        Some((done, total)) if done < total => Some((done, total)),
-        _ => None,
-    }
-}
-
-/// The sidebar's footer line: `idle · synced 40s` (canvas screen 25).
-///
-/// `since` is how many seconds ago the last pass *completed*, or `None` for a
-/// store that has never finished one — or, today, for one whose passes were
-/// never recorded. `has_mail` is what tells those two apart.
-///
-/// Two facts, and the order matters. The state comes first because it is what
-/// a glance is for — is anything wrong — and the time second because it is
-/// what answers the follow-up. While a pass is running there is no time at
-/// all: "synced 40s ago" during a sync is a report on the previous pass being
-/// read as a report on this one, which is the shape of the bug that made the
-/// GTK footer say "0% synced" and "never synced" at once.
+/// So there are two renderings of the same two facts in this crate, and that
+/// is the half of #1266 still open: the words each one chooses agree because
+/// they are both here, but nothing makes them agree. The footer that says
+/// `idle · synced 40s` and the one that says `idle · imap` are still two
+/// answers to "what is this account doing", which is the drift ADR 0019 Q6 is
+/// about. Collapsing them is design work — the shapes do not line up — and
+/// wants an issue rather than a merge.
 pub fn status(activity: Activity, since: Option<u64>, has_mail: bool) -> String {
     match activity {
         // Nothing can be happening, so nothing else on the line is worth
@@ -391,72 +785,5 @@ mod status_tests {
     #[test]
     fn a_sync_that_has_only_just_happened_still_reads_as_seconds() {
         assert_eq!(status(Activity::Idle, Some(0), true), "idle · synced 0s");
-    }
-}
-
-#[cfg(test)]
-mod footer_word_tests {
-    use super::*;
-    use postio_core::event::FailureReason;
-
-    #[test]
-    fn a_connection_problem_outranks_whatever_else_is_running() {
-        // Nothing else on the line is true while there is no session, so a
-        // pass "in flight" against a dead connection must not read as work
-        // getting done.
-        for state in [
-            ConnectionState::Offline,
-            ConnectionState::Connecting,
-            ConnectionState::Failing {
-                reason: FailureReason::Auth,
-            },
-        ] {
-            let word = state_word(state, Some((3, 100)), Some((1, 50)));
-            assert_ne!(word, "syncing", "{state:?} reported as syncing");
-            assert_ne!(word, "downloading", "{state:?} reported as downloading");
-        }
-    }
-
-    #[test]
-    fn a_pass_in_flight_is_syncing_and_a_backfill_is_downloading() {
-        // Two different facts and they get two different words: the list is
-        // arriving, against the list being complete and the mail not.
-        assert_eq!(
-            state_word(ConnectionState::Online, Some((3, 100)), None),
-            "syncing"
-        );
-        assert_eq!(
-            state_word(ConnectionState::Online, None, Some((10, 200))),
-            "downloading"
-        );
-        assert_eq!(state_word(ConnectionState::Online, None, None), "idle");
-    }
-
-    #[test]
-    fn a_finished_pass_stops_claiming_to_be_running() {
-        // The trap this rule exists for: a footer stuck at `2000 of 2000`
-        // says work is happening when it has stopped.
-        assert_eq!(pass_progress(Some((100, 100))), None);
-        assert_eq!(backfill_running(Some((2000, 2000))), None);
-        assert_eq!(
-            state_word(
-                ConnectionState::Online,
-                Some((100, 100)),
-                Some((2000, 2000))
-            ),
-            "idle"
-        );
-    }
-
-    #[test]
-    fn a_pass_with_nothing_to_reach_never_started() {
-        assert_eq!(pass_progress(Some((0, 0))), None);
-        assert_eq!(backfill_running(Some((0, 0))), None);
-    }
-
-    #[test]
-    fn a_pass_still_short_of_its_total_is_running() {
-        assert_eq!(pass_progress(Some((3, 100))), Some(3));
-        assert_eq!(backfill_running(Some((10, 200))), Some((10, 200)));
     }
 }

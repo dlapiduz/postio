@@ -1,13 +1,15 @@
 # An event with no consumer is a feature that does not exist (2026-08-28, #396)
 
 `postio_runtime::engine` had emitted `Event::BodyLoaded` since it was written.
-It was documented, it was covered by `postio-core/tests/events.rs`, and the
+It was documented, it was covered by `crates/postio-core/tests/core_suite/events.rs`, and the
 only match arm on it anywhere was `SyncTracker::apply` returning `false` on
 purpose. So a person who opened a message whose body was not local watched the
 "Downloading this message" plate stay up after the bytes had landed, until
 some unrelated redraw happened to correct it. Every layer passed.
 
-This is `postio-bl2`'s shape one layer up, and worth naming separately because
+This is `postio-bl2`'s shape (a bead id from the retired pre-GitHub tracker;
+the reader-never-mounted bug CLAUDE.md still cites by that name) one layer up,
+and worth naming separately because
 the usual check does not catch it. "Can a person reach it?" asks whether a
 *gesture* has a handler. This is the opposite direction: an *announcement* with
 no listener. The same question works, asked backwards — for every event the

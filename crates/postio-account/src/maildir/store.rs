@@ -144,6 +144,73 @@ impl LocalStore {
             })
     }
 
+    /// Makes the folder `path` names, and answers with it.
+    ///
+    /// **Idempotent, because the trait says the caller wants the folder to
+    /// exist rather than to have made it.** `create_dir_all` is already that,
+    /// which is the whole implementation: two discovery passes over the same
+    /// tree must not turn the second into an error, and a folder that is
+    /// already there keeps the mail in it.
+    ///
+    /// A maildir folder *is* `cur`, `new` and `tmp`. A bare directory would
+    /// list as nothing and read, later, as a folder that lost its mail — so
+    /// the three are what get made, and the folder is not considered created
+    /// until they are all there.
+    pub fn create(&self, path: &str) -> Result<Folder, BackendError> {
+        let directory = self.directory_for(path)?;
+        for subdir in ["cur", "new", "tmp"] {
+            std::fs::create_dir_all(directory.join(subdir)).map_err(|error| BackendError::Io {
+                context: format!("making the maildir folder {}", directory.display()),
+                reason: error.to_string(),
+            })?;
+        }
+        Ok(Folder {
+            path: path.to_owned(),
+            directory,
+        })
+    }
+
+    /// Where a folder named `path` would live — the inverse of
+    /// [`name_of`](Self::name_of), and the only place the layout decides
+    /// anything about a folder that does not exist yet.
+    ///
+    /// Maildir++ spells nesting with dots inside one flat, dot-prefixed name
+    /// beside the root's own `cur/new/tmp`; the fs layout nests ordinary
+    /// directories. Getting this the wrong way round makes a folder the next
+    /// `LIST` cannot see, which looks exactly like a create that silently did
+    /// nothing.
+    ///
+    /// A component that is `.`, `..` or empty is **refused rather than
+    /// normalised**. `path` arrives from a mailbox role, so a traversal here
+    /// is a bug rather than an attack — but the failure mode is making
+    /// directories outside the tree the user pointed at, and "the role
+    /// resolved to a name Postio will not make" is a better answer than that.
+    fn directory_for(&self, path: &str) -> Result<PathBuf, BackendError> {
+        let parts: Vec<&str> = path.split('/').filter(|part| !part.is_empty()).collect();
+        let refuse = |reason: &str| BackendError::Rejected {
+            command: "CREATE".to_owned(),
+            reason: reason.to_owned(),
+        };
+        if parts.is_empty() {
+            return Err(refuse("a folder with no name cannot be made"));
+        }
+        if parts
+            .iter()
+            .any(|part| *part == "." || *part == ".." || part.contains(std::path::MAIN_SEPARATOR))
+        {
+            return Err(refuse(
+                "a folder name that walks out of the maildir will not be made",
+            ));
+        }
+        if self.maildirpp {
+            Ok(self.root.join(format!(".{}", parts.join("."))))
+        } else {
+            Ok(parts
+                .iter()
+                .fold(self.root.clone(), |directory, part| directory.join(part)))
+        }
+    }
+
     /// Everything in `folder`, numbered.
     ///
     /// Reads the folder's UID list, numbers anything new, forgets the names

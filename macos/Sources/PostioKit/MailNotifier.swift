@@ -1,4 +1,5 @@
 import Foundation
+import PostioFFI
 
 /// New mail that arrived, as `UiEvent.newMail` reports it.
 ///
@@ -52,10 +53,13 @@ public struct MailNotification: Equatable, Sendable {
 
 /// Deciding whether new mail is worth interrupting somebody for.
 ///
-/// The decision is pure so it can be asserted; delivery is not and is a thin
-/// wrapper over it. `postio-app` does the same split for the same reason —
-/// `gio::Notification` has no getters, `UNUserNotificationCenter` needs an
-/// authorised bundle, and neither is something a test should need.
+/// The decision is the engine's — `postio_ui::notify`, reached through the
+/// boundary's `decideNotification` — so this and `postio-app` cannot drift on
+/// when to suppress, what id coalesces, or where a click lands. This is a
+/// shim that speaks the boundary's records in this module's vocabulary;
+/// delivery is `MailNotifications`, a thin wrapper over it, because
+/// `UNUserNotificationCenter` needs an authorised bundle and a test should
+/// not.
 public enum MailNotifier {
     /// Whether `arrival` becomes a notification, and what it says.
     ///
@@ -71,26 +75,28 @@ public enum MailNotifier {
         isActive: Bool,
         mailboxName: String?
     ) -> NotificationDecision {
-        guard !arrival.messages.isEmpty else { return .suppress(.nothingArrived) }
-        if isActive, showing == arrival.mailbox { return .suppress(.alreadyOnScreen) }
-
-        let count = arrival.messages.count
-        // A single arrival names its message so the click lands on that row. A
-        // burst has no one message to point at — "3 new messages" does not
-        // pick one — so it opens the folder instead, exactly as choosing it in
-        // the sidebar would.
-        let message = count == 1 ? arrival.messages.first : nil
-        let title = mailboxName.map { "New mail in \($0)" } ?? "New mail"
-        let body = count == 1 ? "1 new message" : "\(count) new messages"
-
-        return .deliver(
-            MailNotification(
-                identifier: "new-mail-\(arrival.mailbox)",
-                title: title,
-                body: body,
-                mailbox: arrival.mailbox,
-                message: message
-            )
+        let decision = decideNotification(
+            arrival: MailArrivalFfi(mailbox: arrival.mailbox, messages: arrival.messages),
+            showing: showing,
+            active: isActive,
+            mailboxName: mailboxName
         )
+        switch decision {
+        case let .suppress(reason):
+            switch reason {
+            case .nothingArrived: return .suppress(.nothingArrived)
+            case .alreadyOnScreen: return .suppress(.alreadyOnScreen)
+            }
+        case let .deliver(notification):
+            return .deliver(
+                MailNotification(
+                    identifier: notification.identifier,
+                    title: notification.title,
+                    body: notification.body,
+                    mailbox: notification.mailbox,
+                    message: notification.message
+                )
+            )
+        }
     }
 }

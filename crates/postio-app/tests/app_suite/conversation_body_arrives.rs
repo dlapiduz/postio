@@ -1,265 +1,174 @@
-//! Issue #739: a conversation entry does not repaint when its body arrives.
+//! A body arriving fills in the open conversation, not just the single pane.
 //!
-//! `body_arrives.rs` proved `Event::BodyLoaded` reaches the single reading
-//! pane (#396). The conversation pane (ADR 0015 Q4, #308) is a second,
-//! independent pane that can be showing the same message and was not wired
-//! to the same event at all: an expanded entry whose body was still
-//! downloading kept its "Downloading this message" plate after the bytes
-//! landed, exactly as the single pane did before #396.
+//! This is the inbox bug a real store surfaced (`feature/turso-store`): a
+//! folder threads, so its messages open in the one-document conversation pane
+//! (ADR 0032), and on a store whose backfill is far behind — which a first
+//! sync of tens of thousands of messages is — the messages open
+//! `headers_only` with no body. `fill_thread` requests each missing body, but
+//! nothing drew it when it landed: `body_arrived` repainted only the single
+//! reader, and the conversation half had been removed as "coalesced through
+//! `set_thread_body`" without anything calling `set_thread_body` on an
+//! arrival. So a conversation whose bodies were not yet local stayed a stack
+//! of empty headers until it was closed and reopened.
 //!
-//! Driven from the real composition root (`feed_the_window`) with a real
-//! store and `Feeds::apply` handed the event a real engine would emit, for
-//! the same reason `body_arrives.rs` is: the bug was in the wiring between
-//! layers, not in `ConversationView` or `Fill` in isolation.
+//! The seam is `body_arrives.rs`': write the body, hand `Feeds::apply` the
+//! `BodyLoaded` a real engine would emit, and assert on the document that
+//! reached WebKit.
 
 #![allow(unsafe_code)]
 // Rust 2024 made `std::env::set_var` unsafe: it races any other thread reading
-// the environment. This test sets it before the app under test starts, which
-// is the one moment it is sound. The crate's library code forbids `unsafe`.
+// the environment. This sets it before the app under test starts.
 
-use crate::settle;
-use crate::settle_until;
-use crate::settle_while;
+use crate::{settle, settle_until};
 use gtk::gdk;
 use gtk::prelude::*;
-use postio_app::{Wiring, feed_the_window};
+use postio_app::feed_the_window;
 use postio_core::Event;
 use postio_core::bridge::{Bridge, event_channel, handler_fn};
 use postio_gtk::window::Window;
 use postio_gtk::{app, fonts, style};
-use postio_model::ids::{AccountId, MailboxId, MessageId, ThreadId};
-use postio_model::{BodyState, Flag, Message};
+use postio_session::Wiring;
 use postio_storage::repository::{MessageRepository, StoredBody, ThreadRepository};
-use postio_storage::{Database, test_support};
+use postio_storage::{BlobStore, test_support};
 
-/// One message, headers-only, joined to `thread`.
-fn threaded_message(
-    database: &Database,
-    account: AccountId,
-    mailbox: MailboxId,
-    thread: ThreadId,
-    minute: i64,
-    subject: &str,
-    seen: bool,
-) -> MessageId {
-    let connection = database.connection().expect("a connection");
-    let mut message = Message::new(
-        account,
-        mailbox,
-        chrono::Utc::now() + chrono::Duration::minutes(minute),
-    );
-    message.subject = Some(subject.to_owned());
-    message.sync.body_state = BodyState::HeadersOnly;
-    if seen {
-        message.flags.insert(Flag::Seen);
-    }
-    let id = MessageRepository::new(&connection)
-        .create(&mut message)
-        .expect("create the threaded message");
-    ThreadRepository::new(&connection)
-        .add_message(thread, id)
-        .expect("join the message to the thread");
-    id
-}
+const BODY: &str = "the figures you asked for are attached";
 
-/// Write `text` as `message`'s body, as a completed fetch leaves it.
-fn store_body(database: &Database, message: MessageId, text: &str) {
-    let connection = database.connection().expect("a connection");
-    MessageRepository::new(&connection)
-        .set_body(
-            message,
-            &StoredBody {
-                text: Some(text.to_owned()),
-                html: None,
-                headers: None,
-                headers_truncated: false,
-                encoding_problems: false,
-            },
-            BodyState::Full,
+pub fn a_body_arriving_fills_in_the_open_conversation() {
+    crate::gtk_case(async {
+        let state_dir = tempfile::tempdir().expect("a state directory");
+        // SAFETY: first statement of a single-threaded test, before the app runs.
+        unsafe { std::env::set_var("XDG_STATE_HOME", state_dir.path()) };
+
+        if adw::init().is_err() || gdk::Display::default().is_none() {
+            eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
+            return;
+        }
+        let display = gdk::Display::default().unwrap();
+        fonts::install().expect("the embedded fonts should install");
+        style::install(&display);
+        app::install_icons(&display);
+
+        let database = test_support::memory().await;
+        let directory = tempfile::tempdir().expect("a blob directory");
+        let blobs = BlobStore::open(
+            directory.path().to_path_buf(),
+            &postio_storage::test_support::blob_keys(),
         )
-        .expect("the body is stored");
-}
+        .expect("a blob store");
 
-pub fn a_body_that_lands_repaints_the_conversation_entry_waiting_for_it_and_no_other() {
-    let state_dir = tempfile::tempdir().expect("a state directory");
-    // SAFETY: first statement of a single-threaded test.
-    unsafe { std::env::set_var("XDG_STATE_HOME", state_dir.path()) };
+        let (account, inbox) = {
+            let connection = database.connect().await.expect("a connection");
+            test_support::account_with_inbox(&connection).await
+        };
 
-    if adw::init().is_err() || gdk::Display::default().is_none() {
-        eprintln!("skipping: no display (run under scripts/test-headless.sh)");
-        return;
-    }
-    let display = gdk::Display::default().unwrap();
-    fonts::install().expect("the embedded fonts should install");
-    style::install(&display);
-    app::install_icons(&display);
+        // One message, in a thread, with headers only — its body is not local,
+        // exactly as a first sync leaves it before the backfill arrives.
+        let (_thread, message) = {
+            let connection = database.connect().await.expect("a connection");
+            let mut thread = postio_model::Thread::new(account.id);
+            let thread = ThreadRepository::new(&connection)
+                .create(&mut thread)
+                .await
+                .expect("create the thread");
+            let mut msg = postio_model::Message::new(account.id, inbox, chrono::Utc::now());
+            msg.subject = Some("Quarterly figures".to_owned());
+            msg.from = vec![postio_model::EmailAddress::new(
+                Some("Ada Lovelace"),
+                "ada@example.com",
+            )];
+            msg.sync.body_state = postio_model::BodyState::HeadersOnly;
+            let id = MessageRepository::new(&connection)
+                .create(&mut msg)
+                .await
+                .expect("create the message");
+            ThreadRepository::new(&connection)
+                .add_message(thread, id)
+                .await
+                .expect("join the message to the thread");
+            (thread, id)
+        };
 
-    let database = test_support::memory();
-    let directory = tempfile::tempdir().expect("a blob directory");
-    let blobs = postio_storage::BlobStore::open(
-        directory.path().to_path_buf(),
-        &postio_storage::test_support::blob_keys(),
-    )
-    .expect("a blob store");
+        let (bridge, _replies) = Bridge::new(handler_fn(|_, _| async {})).expect("a runtime");
+        let (sink, _events) = event_channel();
+        let wiring = Wiring::new(
+            database.clone(),
+            blobs,
+            bridge.handle(),
+            sink,
+            bridge.commands(),
+        );
 
-    let (account, inbox) = {
-        let connection = database.connection().expect("a connection");
-        test_support::account_with_inbox(&connection)
-    };
-    let thread = {
-        let connection = database.connection().expect("a connection");
-        let mut thread = postio_model::Thread::new(account.id);
-        ThreadRepository::new(&connection)
-            .create(&mut thread)
-            .expect("create the thread")
-    };
+        let window = Window::default();
+        window.present();
+        settle();
+        let wired = feed_the_window(&window, &wiring)
+            .await
+            .expect("the store has an account");
 
-    // Two read (collapsed on open), then two unread (expanded, well under
-    // the cap) -- `target` is the one this test repaints, `sibling` is the
-    // other expanded entry, kept absent throughout to prove an arrival for
-    // `target` does not leak onto it.
-    let collapsed = threaded_message(&database, account.id, inbox, thread, 0, "first", true);
-    threaded_message(&database, account.id, inbox, thread, 1, "second", true);
-    let target = threaded_message(&database, account.id, inbox, thread, 2, "third", false);
-    let sibling = threaded_message(&database, account.id, inbox, thread, 3, "fourth", false);
+        let list = window.list();
+        assert!(
+            settle_until(async || list.model().n_items() > 0).await,
+            "the seeded thread never reached the list"
+        );
+        list.first_row();
+        let cursor = list.cursor_row().expect("a row to land on");
+        window.open_conversation(&cursor);
+        assert!(
+            settle_until(async || window.conversation().len() == 1).await,
+            "opening the thread never filled the pane"
+        );
 
-    // A message outside this conversation entirely -- its own thread, never
-    // opened here.
-    let other_thread = {
-        let connection = database.connection().expect("a connection");
-        let mut thread = postio_model::Thread::new(account.id);
-        ThreadRepository::new(&connection)
-            .create(&mut thread)
-            .expect("create the other thread")
-    };
-    // Older than every message of the conversation under test, so it is
-    // never the newest row and `list.first_row()` still lands on that
-    // conversation.
-    let foreign = threaded_message(
-        &database,
-        account.id,
-        inbox,
-        other_thread,
-        -10,
-        "unrelated",
-        false,
-    );
+        // The control: the conversation drew the message, and its body is not
+        // in the document, because it is not local yet.
+        assert!(
+            settle_until(async || window
+                .conversation()
+                .thread_document()
+                .is_some_and(|d| d.matches("<details").count() == 1))
+            .await,
+            "the conversation never drew the message"
+        );
+        assert!(
+            !window
+                .conversation()
+                .thread_document()
+                .unwrap_or_default()
+                .contains(BODY),
+            "the body is not local yet, so it cannot be in the document"
+        );
 
-    let (bridge, _replies) = Bridge::new(handler_fn(|_, _| async {})).expect("a runtime");
-    let (sink, _events) = event_channel();
-    let wiring = Wiring::new(
-        database.clone(),
-        blobs.clone(),
-        bridge.handle(),
-        sink,
-        bridge.commands(),
-    );
-
-    let window = Window::default();
-    window.present();
-    settle();
-
-    let wired = feed_the_window(&window, &wiring).expect("the store has an account");
-    let list = window.list();
-    assert!(
-        settle_until(|| list.model().n_items() > 0),
-        "the seeded conversation never reached the list"
-    );
-
-    list.first_row();
-    let cursor = list.cursor_row().expect("a row to land on");
-    window.open_conversation(&cursor);
-    assert!(
-        settle_until(|| window.conversation().len() == 4),
-        "opening the thread never filled the conversation pane"
-    );
-    assert!(
-        settle_until(|| window.conversation().is_expanded(target)
-            && window.conversation().is_expanded(sibling)),
-        "both unread messages should have opened expanded"
-    );
-    assert!(
-        !window.conversation().is_expanded(collapsed),
-        "a read message should not have opened expanded"
-    );
-
-    let reader = |message: MessageId| {
-        window
-            .conversation()
-            .reader_for(message)
-            .expect("an expanded entry has a reader")
-    };
-    // Which wait it explains -- online vs offline (#117) -- is not this
-    // issue's concern; only that it is waiting on a body it has not got.
-    assert!(
-        settle_until(|| reader(target).absent().is_some()),
-        "the entry should be waiting on a body it has not got: got {:?}",
-        reader(target).absent()
-    );
-
-    // ── 1. an arrival for a message not showing in this entry ───────────
-    //
-    // `target`'s own body is written *first*, so an indiscriminate repaint
-    // would visibly flip its entry to a rendered body here. Only a consumer
-    // that reads the event's `message` and asks the conversation pane which
-    // entry it belongs to can leave the plate up for the wrong arrivals.
-    let waiting = reader(target).absent();
-    store_body(&database, target, "the third message landed");
-    wired.feeds.apply(&Event::BodyLoaded {
-        account: account.id,
-        message: collapsed,
-    });
-    wired.feeds.apply(&Event::BodyLoaded {
-        account: account.id,
-        message: foreign,
-    });
-    assert!(
-        settle_while(|| reader(target).absent() == waiting),
-        "a body arriving for a collapsed entry, or for a message outside the \
-         conversation, repainted an unrelated entry anyway"
-    );
-    assert_eq!(
-        reader(sibling).absent(),
-        waiting,
-        "the sibling entry, which never got a body, must stay on its wait"
-    );
-
-    // ── 2. and one for the message the entry is expanded on ─────────────
-    let before = reader(target).paints();
-    wired.feeds.apply(&Event::BodyLoaded {
-        account: account.id,
-        message: target,
-    });
-    assert!(
-        settle_until(|| reader(target).absent().is_none()),
-        "the body for the expanded entry landed and it went on showing the \
-         wait -- check that anything at all consumes `BodyLoaded` for the \
-         conversation pane"
-    );
-    assert_eq!(
-        reader(target).paints() - before,
-        1,
-        "one arrival should be one repaint"
-    );
-
-    // ── 3. and it did so once, not once per event in a burst ────────────
-    let once = reader(target).paints();
-    for _ in 0..20 {
+        // The body lands — write it, then hand the pane the event a real
+        // engine emits on commit.
+        MessageRepository::new(&database.connect().await.expect("a connection"))
+            .set_body(
+                message,
+                &StoredBody {
+                    text: Some(BODY.to_owned()),
+                    html: None,
+                    headers: None,
+                    headers_truncated: false,
+                    encoding_problems: false,
+                },
+                postio_model::BodyState::Full,
+            )
+            .await
+            .expect("store the body");
         wired.feeds.apply(&Event::BodyLoaded {
             account: account.id,
-            message: target,
+            message,
         });
-    }
-    assert!(
-        settle_until(|| reader(target).paints() > once),
-        "the coalesced repaint for the burst never happened"
-    );
-    assert_eq!(
-        reader(target).paints() - once,
-        1,
-        "twenty arrivals in one burst should be one repaint, not {}",
-        reader(target).paints() - once
-    );
 
-    bridge.shutdown();
+        assert!(
+            settle_until(async || window
+                .conversation()
+                .thread_document()
+                .is_some_and(|d| d.contains(BODY)))
+            .await,
+            "the body landed for the message the conversation is showing and the \
+             pane went on showing an empty header. `Event::BodyLoaded` has to \
+             reach the one-document pane, not only the single reader"
+        );
+
+        window.destroy();
+    });
 }

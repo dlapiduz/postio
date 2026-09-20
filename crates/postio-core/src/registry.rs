@@ -43,7 +43,31 @@ pub enum Recovery {
     None,
     /// Reversible from the undo stack, and worth an "— Undo" toast
     /// (docs/PRODUCT.md §16: *Archived 12 messages — Undo*).
+    ///
+    /// `u` works, and that is the load-bearing half: a command claiming this
+    /// must be something [`crate::undo::UndoStack`] can actually hold,
+    /// which means a `UndoKind` exists for it.
     Undo,
+    /// Reversible for a limited time, through its own affordance rather than
+    /// the undo stack (#1481).
+    ///
+    /// A send is the case this exists for. It *is* reversible — the draft
+    /// sits in the queue and opening it cancels the send — and it is not
+    /// reversible from the undo stack, which takes message operations with a
+    /// ten-minute expiry.
+    ///
+    /// Those two numbers are why this is a separate answer rather than
+    /// `Undo`. A send's window is however long the drainer takes, which is
+    /// seconds; the stack's is ten minutes. An entry recorded there would
+    /// outlive what it can act on, sit at the top of the stack shadowing the
+    /// archive beneath it, and answer `u` with "too late" — leaving the
+    /// person unsure whether the archive they meant to undo had been
+    /// consumed. `Recovery::Undo` for a send was not merely unimplemented; it
+    /// was the wrong promise.
+    ///
+    /// The affordance is the toast's own "Undo", live only while the window
+    /// is, which is what every client that offers undo-send does.
+    Window,
     /// Irreversible enough to ask first.
     Confirm,
 }
@@ -56,7 +80,7 @@ pub enum Recovery {
 /// 0005's consequences asked for that to be settled once rather than
 /// special-cased at every surface, so it is data on the row — the same shape
 /// the rest of this table already uses — and every surface evaluates it
-/// through [`available`].
+/// through [`reachable_in`], which asks [`Requirement::met_by`] per row.
 ///
 /// **The shape for the next one:** add a variant here, give it a line in
 /// [`Availability`], and answer it in [`Requirement::met_by`]. Nothing at a
@@ -69,6 +93,81 @@ pub enum Requirement {
     /// The view has to be one account's, because the command needs somewhere
     /// in *that* account to put something.
     SingleAccount,
+    /// The local store has to be open, because the command reads or writes
+    /// mail.
+    ///
+    /// Postio's window is on screen before the store is (#1114): the keyring
+    /// read, the schema migrations and the search-index rebuild all happen
+    /// behind a window that already exists, and on a real install that has
+    /// been twelve seconds. **A window with no store must not offer verbs
+    /// that cannot run** — the palette and the cheat sheet simply do not list
+    /// them, which is how they already treat anything unavailable, and a key
+    /// bound to one refuses out loud rather than being swallowed.
+    StoreOpen,
+}
+
+impl Requirement {
+    /// Every requirement, in declaration order. What [`RequirementSet`] is
+    /// built over.
+    pub const ALL: [Requirement; 2] = [Requirement::SingleAccount, Requirement::StoreOpen];
+
+    const fn bit(self) -> u8 {
+        1 << (self as u8)
+    }
+}
+
+/// The requirements one command carries — a set, because they compose.
+///
+/// `Move` is why this is not an `Option`: a destination has to be one folder
+/// in one account, *and* there has to be a store holding it. One slot per row
+/// could express either and not both, and the row that needed both was the
+/// only row that had a requirement at all.
+///
+/// A set rather than a closure for [`ContextSet`]'s reason: a predicate you
+/// can only call answers "is this available here?" and not "what is available
+/// here?", and the palette needs the second question answered.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct RequirementSet(u8);
+
+impl RequirementSet {
+    /// Nothing required beyond having the right surface focused.
+    pub const NONE: RequirementSet = RequirementSet(0);
+
+    /// A set built from a slice, usable in a `const` table.
+    pub const fn from_slice(requirements: &[Requirement]) -> RequirementSet {
+        let mut bits = 0u8;
+        let mut index = 0;
+        while index < requirements.len() {
+            bits |= requirements[index].bit();
+            index += 1;
+        }
+        RequirementSet(bits)
+    }
+
+    /// Whether `requirement` is in the set.
+    pub const fn contains(self, requirement: Requirement) -> bool {
+        self.0 & requirement.bit() != 0
+    }
+
+    /// Whether the set is empty — the ordinary answer for most commands.
+    pub const fn is_empty(self) -> bool {
+        self.0 == 0
+    }
+
+    /// Whether `state` satisfies every requirement in the set.
+    pub fn met_by(self, state: Availability) -> bool {
+        Requirement::ALL
+            .iter()
+            .all(|need| !self.contains(*need) || need.met_by(state))
+    }
+
+    /// The requirements in the set, for a failure message that has to name
+    /// which one was not met.
+    pub fn iter(self) -> impl Iterator<Item = Requirement> {
+        Requirement::ALL
+            .into_iter()
+            .filter(move |need| self.contains(*need))
+    }
 }
 
 /// The state [`Requirement`]s are evaluated against.
@@ -79,6 +178,26 @@ pub enum Requirement {
 pub struct Availability {
     /// What the mail on screen belongs to.
     pub scope: Scope,
+    /// Whether the local store is open behind this window.
+    ///
+    /// `false` only between the first frame and the store landing — a window
+    /// Postio presents before it has opened anything, so that a slow keyring
+    /// read or a long migration is a window that says what it is waiting for
+    /// rather than no window at all (#1114).
+    pub store_open: bool,
+}
+
+impl Availability {
+    /// The ordinary state: this scope, with the mail open behind it.
+    ///
+    /// What every surface that has been fed is in, and what a test asserting
+    /// about scope alone means.
+    pub fn open(scope: Scope) -> Availability {
+        Availability {
+            scope,
+            store_open: true,
+        }
+    }
 }
 
 impl Requirement {
@@ -86,6 +205,7 @@ impl Requirement {
     pub fn met_by(self, state: Availability) -> bool {
         match self {
             Requirement::SingleAccount => state.scope.is_single_account(),
+            Requirement::StoreOpen => state.store_open,
         }
     }
 }
@@ -110,8 +230,14 @@ pub struct CommandSpec {
     /// How the user gets back. Never [`Recovery::None`] when `destructive`.
     pub recovery: Recovery,
     /// What the *state* must be for this command to mean anything, beyond
-    /// having the right surface focused. `None` for almost everything.
-    pub requires: Option<Requirement>,
+    /// having the right surface focused.
+    ///
+    /// Almost everything carries [`Requirement::StoreOpen`], because almost
+    /// everything reads or writes mail; [`RequirementSet::NONE`] is the
+    /// chrome — the palette, the cheat sheet, `Esc`, and where the keyboard
+    /// is — which means the same thing with an empty window as with a full
+    /// one.
+    pub requires: RequirementSet,
 }
 
 impl CommandSpec {
@@ -131,6 +257,18 @@ impl CommandSpec {
 const fn ctx(contexts: &'static [Context]) -> ContextSet {
     ContextSet::from_slice(contexts)
 }
+
+/// What a row needs beyond its context. Spelled short because almost every
+/// row carries one.
+const fn needs(requirements: &'static [Requirement]) -> RequirementSet {
+    RequirementSet::from_slice(requirements)
+}
+
+/// Reads or writes mail, which is very nearly everything.
+const MAIL: RequirementSet = needs(&[Requirement::StoreOpen]);
+
+/// Chrome: it means the same thing with an empty window as with a full one.
+const CHROME: RequirementSet = RequirementSet::NONE;
 
 /// Reading the message list, a thread and a single message: the surfaces where
 /// a message action means something.
@@ -177,6 +315,22 @@ const LIST_SURFACES: &[Context] = &[
     Context::Search,
 ];
 
+/// [`LIST_SURFACES`] plus the folder list: everywhere a person could want to
+/// be somewhere else.
+///
+/// The destinations use this rather than `LIST_SURFACES`, because standing in
+/// the folder list is the *most* likely moment to want another folder, and a
+/// `g i` that works in the message list and not beside it is a key that
+/// appears broken depending on where the keyboard happens to be. Not
+/// `ContextSet::ANY`: `g` is a letter in the composer.
+const GO_SURFACES: &[Context] = &[
+    Context::List,
+    Context::Conversation,
+    Context::Reader,
+    Context::Search,
+    Context::Sidebar,
+];
+
 /// The registry itself. Ordered like [`CommandId::ALL`]; the cheat sheet reads
 /// it top to bottom.
 static SPECS: &[CommandSpec] = &[
@@ -189,7 +343,7 @@ static SPECS: &[CommandSpec] = &[
         contexts: ctx(LIST_SURFACES),
         destructive: false,
         recovery: Recovery::None,
-        requires: None,
+        requires: MAIL,
     },
     CommandSpec {
         id: CommandId::PrevMessage,
@@ -199,7 +353,7 @@ static SPECS: &[CommandSpec] = &[
         contexts: ctx(LIST_SURFACES),
         destructive: false,
         recovery: Recovery::None,
-        requires: None,
+        requires: MAIL,
     },
     CommandSpec {
         id: CommandId::FirstMessage,
@@ -213,7 +367,7 @@ static SPECS: &[CommandSpec] = &[
         contexts: ctx(LIST_SURFACES),
         destructive: false,
         recovery: Recovery::None,
-        requires: None,
+        requires: MAIL,
     },
     CommandSpec {
         id: CommandId::LastMessage,
@@ -223,7 +377,7 @@ static SPECS: &[CommandSpec] = &[
         contexts: ctx(LIST_SURFACES),
         destructive: false,
         recovery: Recovery::None,
-        requires: None,
+        requires: MAIL,
     },
     CommandSpec {
         id: CommandId::OpenMessage,
@@ -235,7 +389,7 @@ static SPECS: &[CommandSpec] = &[
         contexts: ctx(&[Context::List, Context::Conversation, Context::Search]),
         destructive: false,
         recovery: Recovery::None,
-        requires: None,
+        requires: MAIL,
     },
     CommandSpec {
         id: CommandId::ToggleSelection,
@@ -249,7 +403,7 @@ static SPECS: &[CommandSpec] = &[
         // Changing what an action *would* hit changes no durable state, so
         // there is nothing to undo and nothing to confirm.
         recovery: Recovery::None,
-        requires: None,
+        requires: MAIL,
     },
     CommandSpec {
         id: CommandId::ExtendSelectionDown,
@@ -263,7 +417,7 @@ static SPECS: &[CommandSpec] = &[
         contexts: ctx(SELECTION_SURFACES),
         destructive: false,
         recovery: Recovery::None,
-        requires: None,
+        requires: MAIL,
     },
     CommandSpec {
         id: CommandId::ExtendSelectionUp,
@@ -274,7 +428,7 @@ static SPECS: &[CommandSpec] = &[
         contexts: ctx(SELECTION_SURFACES),
         destructive: false,
         recovery: Recovery::None,
-        requires: None,
+        requires: MAIL,
     },
     CommandSpec {
         id: CommandId::SelectAll,
@@ -284,7 +438,7 @@ static SPECS: &[CommandSpec] = &[
         contexts: ctx(LIST_SURFACES),
         destructive: false,
         recovery: Recovery::None,
-        requires: None,
+        requires: MAIL,
     },
     CommandSpec {
         id: CommandId::PrevView,
@@ -294,7 +448,7 @@ static SPECS: &[CommandSpec] = &[
         contexts: ctx(MESSAGE_SURFACES),
         destructive: false,
         recovery: Recovery::None,
-        requires: None,
+        requires: MAIL,
     },
     CommandSpec {
         id: CommandId::Back,
@@ -305,7 +459,7 @@ static SPECS: &[CommandSpec] = &[
         contexts: ContextSet::ANY,
         destructive: false,
         recovery: Recovery::None,
-        requires: None,
+        requires: CHROME,
     },
     CommandSpec {
         id: CommandId::ToggleResultOrder,
@@ -318,7 +472,7 @@ static SPECS: &[CommandSpec] = &[
         contexts: ctx(&[Context::Search]),
         destructive: false,
         recovery: Recovery::None,
-        requires: None,
+        requires: MAIL,
     },
     // -- Message actions -------------------------------------------------
     CommandSpec {
@@ -333,7 +487,7 @@ static SPECS: &[CommandSpec] = &[
         contexts: ctx(&[Context::Conversation]),
         destructive: false,
         recovery: Recovery::None,
-        requires: None,
+        requires: MAIL,
     },
     CommandSpec {
         id: CommandId::PrevInConversation,
@@ -343,19 +497,28 @@ static SPECS: &[CommandSpec] = &[
         contexts: ctx(&[Context::Conversation]),
         destructive: false,
         recovery: Recovery::None,
-        requires: None,
+        requires: MAIL,
     },
     CommandSpec {
         id: CommandId::ToggleFold,
+        // `z`, not the `space` canvas turn 8a gave it. That trade was made
+        // for a **stack**, where folding is the gesture the surface is for;
+        // FR-013 (#1389) leaves the one-document pane nothing to fold, so
+        // `space` there bought nothing and cost the key every reading surface
+        // turns pages with. The maintainer settled it the other way (#1402).
+        //
+        // Folding keeps a key rather than losing one: the stacked pane still
+        // folds. `z` is free across the table and is where a vim user already
+        // looks -- `za` toggles a fold, and the whole family lives under `z`.
         title: "Fold or unfold this message",
-        default_binding: "space",
+        default_binding: "z",
         alternate_bindings: &[],
         contexts: ctx(&[Context::Conversation]),
         destructive: false,
         // How much of a conversation is open is view state, not durable
         // data -- nothing here for undo to reach.
         recovery: Recovery::None,
-        requires: None,
+        requires: MAIL,
     },
     CommandSpec {
         id: CommandId::ViewOriginal,
@@ -377,7 +540,7 @@ static SPECS: &[CommandSpec] = &[
         contexts: ctx(MESSAGE_SURFACES),
         destructive: false,
         recovery: Recovery::None,
-        requires: None,
+        requires: MAIL,
     },
     CommandSpec {
         id: CommandId::ExpandAll,
@@ -393,7 +556,31 @@ static SPECS: &[CommandSpec] = &[
         contexts: ctx(&[Context::Conversation]),
         destructive: false,
         recovery: Recovery::None,
-        requires: None,
+        requires: MAIL,
+    },
+    CommandSpec {
+        id: CommandId::ToggleRail,
+        title: "Hide or show the conversation rail",
+        // **Not the `\u{21e7}R` screen 28 draws.** `R` is `Refresh`'s alternate on
+        // every message surface, `MESSAGE_SURFACES` includes the conversation,
+        // and taking the retry key away inside a thread to gain a rail toggle
+        // is a bad trade -- so the drawing loses this one string and the
+        // registry keeps its key (#1375, maintainer's call).
+        //
+        // `I` for index, which is what the rail is: a column saying where you
+        // are in the thread. Shifted like `O` beside it, because it acts on
+        // the whole conversation rather than on the focused message, and free
+        // everywhere else in the table.
+        default_binding: "I",
+        alternate_bindings: &[],
+        // Only where there is a rail. On the list it would be a key that does
+        // nothing, and the choice it toggles is the window's rather than the
+        // conversation's (FR-047) only in the sense that it outlives any one
+        // thread -- there is still no rail to speak about outside one.
+        contexts: ctx(&[Context::Conversation]),
+        destructive: false,
+        recovery: Recovery::None,
+        requires: MAIL,
     },
     CommandSpec {
         id: CommandId::Reply,
@@ -403,7 +590,7 @@ static SPECS: &[CommandSpec] = &[
         contexts: ctx(REPLY_SURFACES),
         destructive: false,
         recovery: Recovery::None,
-        requires: None,
+        requires: MAIL,
     },
     CommandSpec {
         id: CommandId::ReplyAll,
@@ -413,7 +600,7 @@ static SPECS: &[CommandSpec] = &[
         contexts: ctx(REPLY_SURFACES),
         destructive: false,
         recovery: Recovery::None,
-        requires: None,
+        requires: MAIL,
     },
     CommandSpec {
         id: CommandId::Forward,
@@ -423,7 +610,7 @@ static SPECS: &[CommandSpec] = &[
         contexts: ctx(REPLY_SURFACES),
         destructive: false,
         recovery: Recovery::None,
-        requires: None,
+        requires: MAIL,
     },
     CommandSpec {
         id: CommandId::Archive,
@@ -435,7 +622,7 @@ static SPECS: &[CommandSpec] = &[
         // wants a toast for.
         destructive: true,
         recovery: Recovery::Undo,
-        requires: None,
+        requires: MAIL,
     },
     CommandSpec {
         id: CommandId::ArchiveThread,
@@ -445,7 +632,7 @@ static SPECS: &[CommandSpec] = &[
         contexts: ctx(MESSAGE_SURFACES),
         destructive: true,
         recovery: Recovery::Undo,
-        requires: None,
+        requires: MAIL,
     },
     CommandSpec {
         id: CommandId::Delete,
@@ -455,7 +642,7 @@ static SPECS: &[CommandSpec] = &[
         contexts: ctx(MESSAGE_SURFACES),
         destructive: true,
         recovery: Recovery::Undo,
-        requires: None,
+        requires: MAIL,
     },
     CommandSpec {
         id: CommandId::Move,
@@ -469,7 +656,7 @@ static SPECS: &[CommandSpec] = &[
         // spans every enabled account — so there is nowhere for this to mean.
         // Unavailable rather than a no-op: offering it would promise a folder
         // the user was never given the chance to pick (#182, ADR 0005 Q4).
-        requires: Some(Requirement::SingleAccount),
+        requires: needs(&[Requirement::SingleAccount, Requirement::StoreOpen]),
     },
     CommandSpec {
         id: CommandId::Flag,
@@ -479,7 +666,7 @@ static SPECS: &[CommandSpec] = &[
         contexts: ctx(MESSAGE_SURFACES),
         destructive: false,
         recovery: Recovery::Undo,
-        requires: None,
+        requires: MAIL,
     },
     CommandSpec {
         id: CommandId::MarkUnread,
@@ -492,7 +679,7 @@ static SPECS: &[CommandSpec] = &[
         contexts: ctx(MESSAGE_SURFACES),
         destructive: false,
         recovery: Recovery::Undo,
-        requires: None,
+        requires: MAIL,
     },
     CommandSpec {
         id: CommandId::Snooze,
@@ -504,7 +691,7 @@ static SPECS: &[CommandSpec] = &[
         contexts: ctx(MESSAGE_SURFACES),
         destructive: false,
         recovery: Recovery::Undo,
-        requires: None,
+        requires: MAIL,
     },
     CommandSpec {
         id: CommandId::Unsnooze,
@@ -514,7 +701,7 @@ static SPECS: &[CommandSpec] = &[
         contexts: ctx(MESSAGE_SURFACES),
         destructive: false,
         recovery: Recovery::Undo,
-        requires: None,
+        requires: MAIL,
     },
     CommandSpec {
         id: CommandId::AddLabel,
@@ -524,7 +711,7 @@ static SPECS: &[CommandSpec] = &[
         contexts: ctx(MESSAGE_SURFACES),
         destructive: false,
         recovery: Recovery::Undo,
-        requires: None,
+        requires: MAIL,
     },
     // -- Search ----------------------------------------------------------
     CommandSpec {
@@ -532,10 +719,13 @@ static SPECS: &[CommandSpec] = &[
         title: "Search",
         default_binding: "/",
         alternate_bindings: &["alt+mod+f"],
-        contexts: ctx(MESSAGE_SURFACES),
+        // The go-to surfaces, for the go-to reason: the folder list is one
+        // pane over, and nobody checks which pane has the keyboard before
+        // reaching for search.
+        contexts: ctx(GO_SURFACES),
         destructive: false,
         recovery: Recovery::None,
-        requires: None,
+        requires: MAIL,
     },
     CommandSpec {
         id: CommandId::SaveSearch,
@@ -550,7 +740,7 @@ static SPECS: &[CommandSpec] = &[
         contexts: Context::Search.as_set(),
         destructive: false,
         recovery: Recovery::None,
-        requires: None,
+        requires: MAIL,
     },
     // -- Compose ---------------------------------------------------------
     CommandSpec {
@@ -561,7 +751,7 @@ static SPECS: &[CommandSpec] = &[
         contexts: ctx(MESSAGE_SURFACES),
         destructive: false,
         recovery: Recovery::None,
-        requires: None,
+        requires: MAIL,
     },
     CommandSpec {
         id: CommandId::Send,
@@ -572,8 +762,8 @@ static SPECS: &[CommandSpec] = &[
         // Not destructive — but it is externally visible and irreversible once
         // the queue drains, so it earns an undo-send window rather than a modal.
         destructive: false,
-        recovery: Recovery::Undo,
-        requires: None,
+        recovery: Recovery::Window,
+        requires: MAIL,
     },
     CommandSpec {
         id: CommandId::ScheduleSend,
@@ -591,7 +781,7 @@ static SPECS: &[CommandSpec] = &[
         // Opening the picker commits nothing; `Recovery::Undo` belongs to
         // whichever time the user picks, exactly as it does for `Send`.
         recovery: Recovery::None,
-        requires: None,
+        requires: MAIL,
     },
     CommandSpec {
         id: CommandId::SaveDraft,
@@ -601,7 +791,7 @@ static SPECS: &[CommandSpec] = &[
         contexts: Context::Composer.as_set(),
         destructive: false,
         recovery: Recovery::None,
-        requires: None,
+        requires: MAIL,
     },
     CommandSpec {
         id: CommandId::DiscardDraft,
@@ -612,7 +802,7 @@ static SPECS: &[CommandSpec] = &[
         // Typed prose has no other copy anywhere, so this one asks first.
         destructive: true,
         recovery: Recovery::Confirm,
-        requires: None,
+        requires: MAIL,
     },
     CommandSpec {
         id: CommandId::MarkSent,
@@ -641,7 +831,59 @@ static SPECS: &[CommandSpec] = &[
         // changing it, so the correction for a wrong answer is to send the
         // message again, which is a real act. See `Actions::mark_sent`.
         recovery: Recovery::None,
-        requires: None,
+        requires: MAIL,
+    },
+    CommandSpec {
+        id: CommandId::RetrySend,
+        title: "Retry send",
+        // `mod+shift+y`, beside `mod+shift+m` for the same family: a message
+        // that left the composer and did not arrive.
+        //
+        // **It was `mod+shift+r`, and that was free when it was chosen.** It
+        // stopped being free the moment the macOS frontend gave every
+        // menu-shaped verb a chord to show: Reply to all takes `mod+shift+r`
+        // there because that is the accelerator every Mac mail client uses
+        // for it, and `⇧⌘R` doing something else in Postio would be Postio
+        // being wrong about the platform rather than opinionated. On
+        // Freedesktop the same string resolves to `ctrl+shift+r`, which is
+        // Thunderbird's Reply All, so the convention holds on both.
+        //
+        // Retrying a send is Postio's own verb with no convention to honour
+        // and no client to agree with, and it is reached from a banner on the
+        // failed message far more often than from the keyboard -- so when two
+        // verbs want one chord, this is the one that moves. `y` is free
+        // across the whole table.
+        default_binding: "mod+shift+y",
+        alternate_bindings: &[],
+        // List, because the Outbox and Drafts are lists and that is where a
+        // stopped send is looked at. Composer, because the same draft can be
+        // open there with its failure showing (#1487).
+        contexts: ctx(&[Context::List, Context::Composer]),
+        // It puts a message back on its way rather than destroying one, and
+        // the thing it acts on is already not arriving.
+        destructive: false,
+        // The inverse is `CancelSend`, which is a real command a person can
+        // reach rather than an invented one -- so unlike `MarkSent` this does
+        // have a way back, and it is the command below.
+        recovery: Recovery::None,
+        requires: MAIL,
+    },
+    CommandSpec {
+        id: CommandId::CancelSend,
+        title: "Cancel send",
+        default_binding: "mod+shift+x",
+        alternate_bindings: &[],
+        contexts: ctx(&[Context::List, Context::Composer]),
+        // It stops something from happening rather than losing anything: the
+        // draft is left editable, which is the state it came from. Opening a
+        // queued draft has done exactly this since #433, silently; this is
+        // the same act with a name.
+        destructive: false,
+        // Asking again is `RetrySend`, and the draft is still there either
+        // way. Refused outright once the submission is in flight, which is a
+        // rejection rather than something to undo (ADR 0021).
+        recovery: Recovery::None,
+        requires: MAIL,
     },
     CommandSpec {
         id: CommandId::AttachFile,
@@ -651,7 +893,7 @@ static SPECS: &[CommandSpec] = &[
         contexts: Context::Composer.as_set(),
         destructive: false,
         recovery: Recovery::None,
-        requires: None,
+        requires: MAIL,
     },
     CommandSpec {
         id: CommandId::DetachComposer,
@@ -668,7 +910,42 @@ static SPECS: &[CommandSpec] = &[
         contexts: Context::Composer.as_set(),
         destructive: false,
         recovery: Recovery::None,
-        requires: None,
+        requires: MAIL,
+    },
+    CommandSpec {
+        id: CommandId::CopyFields,
+        // Named for the pair rather than for `+ Cc`, because the button is
+        // only the way in and this verb is also the way out. "Cc and Bcc" is
+        // what someone hunting the palette for a Bcc field will type.
+        title: "Cc and Bcc",
+        // The `mod+shift+<letter>` shelf every secondary composer verb sits
+        // on, and `c` for the field it names -- which is also what other mail
+        // clients bind. `mod+c` is copy and stays copy.
+        default_binding: "mod+shift+c",
+        alternate_bindings: &[],
+        contexts: Context::Composer.as_set(),
+        destructive: false,
+        // Nothing durable changes: this raises and lowers two rows, and it
+        // refuses to lower them while they hold anything. There is nothing to
+        // take back.
+        recovery: Recovery::None,
+        requires: MAIL,
+    },
+    CommandSpec {
+        id: CommandId::InsertImage,
+        // "Insert image…" rather than "Attach image": the ellipsis says a
+        // chooser opens, and the verb is what keeps it distinct from
+        // `attach_file` in a palette where both are one search away (FR-049).
+        title: "Insert image…",
+        // Beside `insert_link` on the `mod+shift+<letter>` shelf, because
+        // they are the two verbs that put something *into* the text.
+        default_binding: "mod+shift+g",
+        alternate_bindings: &[],
+        contexts: Context::Composer.as_set(),
+        destructive: false,
+        // The editor's own undo takes it back out, like any other edit.
+        recovery: Recovery::None,
+        requires: MAIL,
     },
     CommandSpec {
         id: CommandId::Bold,
@@ -680,7 +957,7 @@ static SPECS: &[CommandSpec] = &[
         contexts: Context::Composer.as_set(),
         destructive: false,
         recovery: Recovery::None,
-        requires: None,
+        requires: MAIL,
     },
     CommandSpec {
         id: CommandId::Italic,
@@ -690,7 +967,7 @@ static SPECS: &[CommandSpec] = &[
         contexts: Context::Composer.as_set(),
         destructive: false,
         recovery: Recovery::None,
-        requires: None,
+        requires: MAIL,
     },
     CommandSpec {
         id: CommandId::BulletList,
@@ -702,7 +979,7 @@ static SPECS: &[CommandSpec] = &[
         contexts: Context::Composer.as_set(),
         destructive: false,
         recovery: Recovery::None,
-        requires: None,
+        requires: MAIL,
     },
     CommandSpec {
         id: CommandId::NumberedList,
@@ -712,7 +989,7 @@ static SPECS: &[CommandSpec] = &[
         contexts: Context::Composer.as_set(),
         destructive: false,
         recovery: Recovery::None,
-        requires: None,
+        requires: MAIL,
     },
     CommandSpec {
         id: CommandId::InsertLink,
@@ -724,7 +1001,7 @@ static SPECS: &[CommandSpec] = &[
         contexts: Context::Composer.as_set(),
         destructive: false,
         recovery: Recovery::None,
-        requires: None,
+        requires: MAIL,
     },
     CommandSpec {
         id: CommandId::QuoteBlock,
@@ -734,7 +1011,7 @@ static SPECS: &[CommandSpec] = &[
         contexts: Context::Composer.as_set(),
         destructive: false,
         recovery: Recovery::None,
-        requires: None,
+        requires: MAIL,
     },
     // -- View and application --------------------------------------------
     CommandSpec {
@@ -753,7 +1030,7 @@ static SPECS: &[CommandSpec] = &[
         contexts: ctx(MESSAGE_SURFACES).with(Context::Accounts),
         destructive: false,
         recovery: Recovery::None,
-        requires: None,
+        requires: MAIL,
     },
     CommandSpec {
         id: CommandId::CommandPalette,
@@ -764,7 +1041,7 @@ static SPECS: &[CommandSpec] = &[
         contexts: ContextSet::ANY,
         destructive: false,
         recovery: Recovery::None,
-        requires: None,
+        requires: CHROME,
     },
     CommandSpec {
         id: CommandId::CheatSheet,
@@ -775,7 +1052,7 @@ static SPECS: &[CommandSpec] = &[
         contexts: ctx(MESSAGE_SURFACES),
         destructive: false,
         recovery: Recovery::None,
-        requires: None,
+        requires: CHROME,
     },
     CommandSpec {
         id: CommandId::Settings,
@@ -786,7 +1063,7 @@ static SPECS: &[CommandSpec] = &[
         contexts: ContextSet::ANY,
         destructive: false,
         recovery: Recovery::None,
-        requires: None,
+        requires: MAIL,
     },
     CommandSpec {
         id: CommandId::AddAccount,
@@ -804,7 +1081,7 @@ static SPECS: &[CommandSpec] = &[
         contexts: ContextSet::ANY,
         destructive: false,
         recovery: Recovery::None,
-        requires: None,
+        requires: MAIL,
     },
     CommandSpec {
         id: CommandId::EditConfig,
@@ -814,7 +1091,7 @@ static SPECS: &[CommandSpec] = &[
         contexts: ctx(MESSAGE_SURFACES),
         destructive: false,
         recovery: Recovery::None,
-        requires: None,
+        requires: CHROME,
     },
     CommandSpec {
         id: CommandId::ToggleSidebar,
@@ -824,7 +1101,7 @@ static SPECS: &[CommandSpec] = &[
         contexts: ctx(MESSAGE_SURFACES),
         destructive: false,
         recovery: Recovery::None,
-        requires: None,
+        requires: CHROME,
     },
     CommandSpec {
         id: CommandId::FocusSidebar,
@@ -836,7 +1113,95 @@ static SPECS: &[CommandSpec] = &[
         contexts: ctx(LIST_SURFACES),
         destructive: false,
         recovery: Recovery::None,
-        requires: None,
+        requires: MAIL,
+    },
+    CommandSpec {
+        id: CommandId::GoToInbox,
+        title: "Go to inbox",
+        // `g` is already this app's "go to" prefix -- `g g` is the first
+        // message, `g f` the folder list -- so a destination reads as the
+        // same idiom rather than a second one. `i` for inbox, which is what every mail client on the web binds it to.
+        //
+        // Targets the *role*, not a name: an inbox a provider calls something
+        // else, or names in another language, is still where `g i` goes.
+        default_binding: "g i",
+        alternate_bindings: &[],
+        // The surfaces a person is standing on when they want to be somewhere
+        // else -- the folder list included. Not the composer, where `g` is a
+        // letter being typed.
+        contexts: ctx(GO_SURFACES),
+        destructive: false,
+        // Going somewhere destroys nothing, so there is nothing to get back.
+        recovery: Recovery::None,
+        // The store, like every other way of moving between folders: there
+        // are no folders to go to without one.
+        requires: MAIL,
+    },
+    CommandSpec {
+        id: CommandId::GoToDrafts,
+        title: "Go to drafts",
+        // `g` is already this app's "go to" prefix -- `g g` is the first
+        // message, `g f` the folder list -- so a destination reads as the
+        // same idiom rather than a second one. `d` for drafts, the same.
+        //
+        // Targets the *role*, not a name: an inbox a provider calls something
+        // else, or names in another language, is still where `g i` goes.
+        default_binding: "g d",
+        alternate_bindings: &[],
+        // The surfaces a person is standing on when they want to be somewhere
+        // else -- the folder list included. Not the composer, where `g` is a
+        // letter being typed.
+        contexts: ctx(GO_SURFACES),
+        destructive: false,
+        // Going somewhere destroys nothing, so there is nothing to get back.
+        recovery: Recovery::None,
+        // The store, like every other way of moving between folders: there
+        // are no folders to go to without one.
+        requires: MAIL,
+    },
+    CommandSpec {
+        id: CommandId::GoToSent,
+        title: "Go to sent",
+        // `g` is already this app's "go to" prefix -- `g g` is the first
+        // message, `g f` the folder list -- so a destination reads as the
+        // same idiom rather than a second one. `t`, not `s`: the convention being copied spells sent mail that way, and `s` is taken below by the flagged folder for the same reason.
+        //
+        // Targets the *role*, not a name: an inbox a provider calls something
+        // else, or names in another language, is still where `g i` goes.
+        default_binding: "g t",
+        alternate_bindings: &[],
+        // The surfaces a person is standing on when they want to be somewhere
+        // else -- the folder list included. Not the composer, where `g` is a
+        // letter being typed.
+        contexts: ctx(GO_SURFACES),
+        destructive: false,
+        // Going somewhere destroys nothing, so there is nothing to get back.
+        recovery: Recovery::None,
+        // The store, like every other way of moving between folders: there
+        // are no folders to go to without one.
+        requires: MAIL,
+    },
+    CommandSpec {
+        id: CommandId::GoToFlagged,
+        title: "Go to flagged",
+        // `g` is already this app's "go to" prefix -- `g g` is the first
+        // message, `g f` the folder list -- so a destination reads as the
+        // same idiom rather than a second one. `s` is what the convention binds to starred mail, and the sidebar says Flagged (docs/PRODUCT.md).
+        //
+        // Targets the *role*, not a name: an inbox a provider calls something
+        // else, or names in another language, is still where `g i` goes.
+        default_binding: "g s",
+        alternate_bindings: &[],
+        // The surfaces a person is standing on when they want to be somewhere
+        // else -- the folder list included. Not the composer, where `g` is a
+        // letter being typed.
+        contexts: ctx(GO_SURFACES),
+        destructive: false,
+        // Going somewhere destroys nothing, so there is nothing to get back.
+        recovery: Recovery::None,
+        // The store, like every other way of moving between folders: there
+        // are no folders to go to without one.
+        requires: MAIL,
     },
     CommandSpec {
         id: CommandId::CyclePane,
@@ -854,7 +1219,7 @@ static SPECS: &[CommandSpec] = &[
         contexts: ctx(PANE_SURFACES),
         destructive: false,
         recovery: Recovery::None,
-        requires: None,
+        requires: CHROME,
     },
     CommandSpec {
         id: CommandId::CyclePaneBack,
@@ -864,7 +1229,7 @@ static SPECS: &[CommandSpec] = &[
         contexts: ctx(PANE_SURFACES),
         destructive: false,
         recovery: Recovery::None,
-        requires: None,
+        requires: CHROME,
     },
     CommandSpec {
         id: CommandId::NextFolder,
@@ -878,7 +1243,7 @@ static SPECS: &[CommandSpec] = &[
         contexts: ctx(&[Context::Sidebar]),
         destructive: false,
         recovery: Recovery::None,
-        requires: None,
+        requires: MAIL,
     },
     CommandSpec {
         id: CommandId::PrevFolder,
@@ -888,7 +1253,7 @@ static SPECS: &[CommandSpec] = &[
         contexts: ctx(&[Context::Sidebar]),
         destructive: false,
         recovery: Recovery::None,
-        requires: None,
+        requires: MAIL,
     },
     CommandSpec {
         id: CommandId::ToggleFolder,
@@ -904,7 +1269,7 @@ static SPECS: &[CommandSpec] = &[
         // Which folders are open is view state, not durable data — nothing
         // here for undo to reach.
         recovery: Recovery::None,
-        requires: None,
+        requires: MAIL,
     },
     CommandSpec {
         id: CommandId::RenameSavedSearch,
@@ -920,7 +1285,7 @@ static SPECS: &[CommandSpec] = &[
         contexts: ctx(&[Context::Sidebar]),
         destructive: false,
         recovery: Recovery::None,
-        requires: None,
+        requires: MAIL,
     },
     CommandSpec {
         id: CommandId::MoveSavedSearchUp,
@@ -935,7 +1300,7 @@ static SPECS: &[CommandSpec] = &[
         // A reorder destroys nothing; moving it back is the same action
         // once more, same as the mouse menu's version of this verb.
         recovery: Recovery::None,
-        requires: None,
+        requires: MAIL,
     },
     CommandSpec {
         id: CommandId::MoveSavedSearchDown,
@@ -945,7 +1310,7 @@ static SPECS: &[CommandSpec] = &[
         contexts: ctx(&[Context::Sidebar]),
         destructive: false,
         recovery: Recovery::None,
-        requires: None,
+        requires: MAIL,
     },
     CommandSpec {
         id: CommandId::DeleteSavedSearch,
@@ -958,7 +1323,7 @@ static SPECS: &[CommandSpec] = &[
         // so like `DiscardDraft` this asks first rather than offering undo.
         destructive: true,
         recovery: Recovery::Confirm,
-        requires: None,
+        requires: MAIL,
     },
     CommandSpec {
         id: CommandId::ToggleAccountEnabled,
@@ -970,7 +1335,7 @@ static SPECS: &[CommandSpec] = &[
         // Pressing it again is the reversal, so there is nothing for the undo
         // stack to hold (ADR 0005 Q6c).
         recovery: Recovery::None,
-        requires: None,
+        requires: MAIL,
     },
     CommandSpec {
         id: CommandId::RemoveAccount,
@@ -985,7 +1350,7 @@ static SPECS: &[CommandSpec] = &[
         // is something to undo for as long as the toast is up, and declaring
         // it here is what the registry enforces a keyboard path for.
         recovery: Recovery::Undo,
-        requires: None,
+        requires: MAIL,
     },
     CommandSpec {
         id: CommandId::UpdateCredential,
@@ -1003,7 +1368,7 @@ static SPECS: &[CommandSpec] = &[
         contexts: ctx(&[Context::Accounts]),
         destructive: false,
         recovery: Recovery::None,
-        requires: None,
+        requires: MAIL,
     },
     CommandSpec {
         id: CommandId::RebuildAccountIndex,
@@ -1018,7 +1383,7 @@ static SPECS: &[CommandSpec] = &[
         // Rewriting a derived table -- postio_session::reindex_account's own
         // doc explains why there is nothing here for undo to reach.
         recovery: Recovery::None,
-        requires: None,
+        requires: MAIL,
     },
     CommandSpec {
         id: CommandId::SetDefaultAccount,
@@ -1040,7 +1405,25 @@ static SPECS: &[CommandSpec] = &[
         // hold. Nothing is lost either -- the previous holder is still there,
         // unmarked.
         recovery: Recovery::None,
-        requires: None,
+        requires: MAIL,
+    },
+    CommandSpec {
+        id: CommandId::MapMailboxRole,
+        title: "Map mailbox role",
+        // `M` for map. This branch was cut when `m` was free and #960 took it
+        // for `SetDefaultAccount` in the meantime; shift is how this app
+        // spells the neighbour of a letter already spoken for (`a`/`A`,
+        // `j`/`J`), so the mnemonic survives the collision. `Move`'s own `m`
+        // is scoped to the message surfaces and this context layers over
+        // Global alone, so nothing is shadowed either way.
+        default_binding: "M",
+        alternate_bindings: &[],
+        contexts: ctx(&[Context::Accounts]),
+        destructive: false,
+        // The previous mapping is the inverse, and a wrong pick costs one
+        // keystroke rather than a dialog (ADR 0035).
+        recovery: Recovery::Undo,
+        requires: MAIL,
     },
     CommandSpec {
         id: CommandId::NextScope,
@@ -1059,7 +1442,7 @@ static SPECS: &[CommandSpec] = &[
         recovery: Recovery::None,
         // Deliberately not `SingleAccount`: this is the command that *leaves*
         // a single-account scope, so requiring one would switch itself off.
-        requires: None,
+        requires: MAIL,
     },
     CommandSpec {
         id: CommandId::Refresh,
@@ -1072,7 +1455,7 @@ static SPECS: &[CommandSpec] = &[
         contexts: ctx(MESSAGE_SURFACES),
         destructive: false,
         recovery: Recovery::None,
-        requires: None,
+        requires: MAIL,
     },
     // -- Parts panel -------------------------------------------------------
     CommandSpec {
@@ -1083,7 +1466,7 @@ static SPECS: &[CommandSpec] = &[
         contexts: ctx(&[Context::Reader]),
         destructive: false,
         recovery: Recovery::None,
-        requires: None,
+        requires: MAIL,
     },
     CommandSpec {
         id: CommandId::NextPart,
@@ -1096,7 +1479,7 @@ static SPECS: &[CommandSpec] = &[
         contexts: ctx(&[Context::Parts]),
         destructive: false,
         recovery: Recovery::None,
-        requires: None,
+        requires: MAIL,
     },
     CommandSpec {
         id: CommandId::PrevPart,
@@ -1106,7 +1489,7 @@ static SPECS: &[CommandSpec] = &[
         contexts: ctx(&[Context::Parts]),
         destructive: false,
         recovery: Recovery::None,
-        requires: None,
+        requires: MAIL,
     },
     CommandSpec {
         id: CommandId::OpenPart,
@@ -1116,7 +1499,7 @@ static SPECS: &[CommandSpec] = &[
         contexts: ctx(&[Context::Parts]),
         destructive: false,
         recovery: Recovery::None,
-        requires: None,
+        requires: MAIL,
     },
     CommandSpec {
         id: CommandId::SavePart,
@@ -1126,7 +1509,7 @@ static SPECS: &[CommandSpec] = &[
         contexts: ctx(&[Context::Parts]),
         destructive: false,
         recovery: Recovery::None,
-        requires: None,
+        requires: MAIL,
     },
     CommandSpec {
         id: CommandId::SaveAllParts,
@@ -1136,7 +1519,7 @@ static SPECS: &[CommandSpec] = &[
         contexts: ctx(&[Context::Parts]),
         destructive: false,
         recovery: Recovery::None,
-        requires: None,
+        requires: MAIL,
     },
     CommandSpec {
         id: CommandId::OpenPartExternally,
@@ -1146,7 +1529,7 @@ static SPECS: &[CommandSpec] = &[
         contexts: ctx(&[Context::Parts]),
         destructive: false,
         recovery: Recovery::None,
-        requires: None,
+        requires: MAIL,
     },
     CommandSpec {
         id: CommandId::RenderPartOnce,
@@ -1156,7 +1539,7 @@ static SPECS: &[CommandSpec] = &[
         contexts: ctx(&[Context::Parts]),
         destructive: false,
         recovery: Recovery::None,
-        requires: None,
+        requires: MAIL,
     },
     // -- Reader --------------------------------------------------------
     CommandSpec {
@@ -1174,12 +1557,18 @@ static SPECS: &[CommandSpec] = &[
         // and keeps `Page_Down`. The canvas is explicit, and folding is the
         // gesture a stack is *for* -- scrolling is what the scrollbar and
         // the wheel already do.
-        contexts: ctx(&[Context::List, Context::Reader]),
+        //
+        // The conversation is here now, and `space` with it (#1402).
+        // `ScrollReaderUp` always served `MESSAGE_SURFACES` while this row
+        // did not, so `Page_Up` resolved in a thread and `Page_Down` did
+        // not -- an asymmetry nothing ever argued for. The two directions
+        // serve the same surfaces.
+        contexts: ctx(&[Context::List, Context::Reader, Context::Conversation]),
         destructive: false,
         // What the pane is scrolled to is view state, not durable data —
         // nothing here for undo to reach.
         recovery: Recovery::None,
-        requires: None,
+        requires: MAIL,
     },
     CommandSpec {
         id: CommandId::ScrollReaderUp,
@@ -1189,7 +1578,7 @@ static SPECS: &[CommandSpec] = &[
         contexts: ctx(MESSAGE_SURFACES),
         destructive: false,
         recovery: Recovery::None,
-        requires: None,
+        requires: MAIL,
     },
 ];
 
@@ -1459,7 +1848,7 @@ pub struct ActionSpec {
     pub recovery: Recovery,
     /// What the state must be, beyond the focused surface. See
     /// [`Requirement`].
-    pub requires: Option<Requirement>,
+    pub requires: RequirementSet,
 }
 
 impl ActionSpec {
@@ -1501,9 +1890,14 @@ impl From<ExtSpec> for ActionSpec {
             contexts: spec.contexts,
             destructive: spec.destructive,
             recovery: spec.recovery,
-            // An extension has no way to name one yet; when it does, it
-            // arrives here rather than at a surface.
-            requires: None,
+            // Every extension command needs the store, and none of them can
+            // say otherwise yet. That is the safe default rather than a gap:
+            // an MCP tool or an AI action is a thing done *to mail*, so
+            // offering one before there is any would be the same broken
+            // promise a built-in would make. A registration that wants to
+            // name its own requirements adds a field here rather than a check
+            // at a surface.
+            requires: MAIL,
         }
     }
 }
@@ -1528,24 +1922,14 @@ pub fn reachable(context: Context) -> impl Iterator<Item = ActionSpec> {
     for_context(context).map(ActionSpec::from).chain(extensions)
 }
 
-/// Whether `spec` is reachable in `context` *and* satisfied by `state`.
-///
-/// The one place a surface asks "can the user do this right now". Splitting
-/// it from [`ActionSpec::available_in`] keeps the context question — which is
-/// most of them — free of state nobody else needs.
-pub fn available(spec: &ActionSpec, context: Context, state: Availability) -> bool {
-    spec.available_in(context) && spec.requires.is_none_or(|need| need.met_by(state))
-}
-
-/// Every command reachable in `context` for a view scoped to `scope`.
+/// Every command reachable in `context` for a window in `state`.
 ///
 /// What the palette, the cheat sheet and the key hints iterate. [`reachable`]
-/// stays the scope-blind form, because `docs/keybindings.md` documents the
+/// stays the state-blind form, because `docs/keybindings.md` documents the
 /// whole vocabulary rather than one session's state — somebody looking up `m`
 /// has to find it whatever is on screen.
-pub fn reachable_in(context: Context, scope: Scope) -> impl Iterator<Item = ActionSpec> {
-    let state = Availability { scope };
-    reachable(context).filter(move |spec| spec.requires.is_none_or(|need| need.met_by(state)))
+pub fn reachable_in(context: Context, state: Availability) -> impl Iterator<Item = ActionSpec> {
+    reachable(context).filter(move |spec| spec.requires.met_by(state))
 }
 
 /// Every command in the merged vocabulary, in the same order as [`reachable`].
@@ -1582,6 +1966,47 @@ mod tests {
         assert_eq!(SPECS.len(), CommandId::ALL.len());
         for (spec, id) in SPECS.iter().zip(CommandId::ALL) {
             assert_eq!(spec.id, *id, "registry row out of order at `{id}`");
+        }
+    }
+
+    /// `space` turns the page in a conversation, and `z` folds (#1402).
+    ///
+    /// Canvas turn 8a gave `space` to folding, and that trade was made for a
+    /// **stack**, where folding is the gesture the surface is for. FR-013
+    /// (#1389) leaves the one-document pane nothing to fold, so `space` there
+    /// bought nothing and cost the key every reading surface turns pages
+    /// with. Maintainer settled it the other way on #1402: `space` pages, and
+    /// folding moves to `z` -- free across the table, and where a vim user
+    /// already looks for it.
+    ///
+    /// Asserted from the row that has to respect it, because
+    /// `bindings_do_not_collide_within_a_context` can only say the two do not
+    /// collide -- not which of them won.
+    #[test]
+    fn space_pages_in_a_conversation_and_z_folds() {
+        let keymap = crate::config::Keymap::defaults();
+        assert_eq!(
+            keymap.command_for(Context::Conversation, "space"),
+            Some(CommandId::ScrollReaderDown.into()),
+            "`space` must turn the page in a conversation -- the one-document \
+             pane has nothing to fold, and this is the key a reading surface \
+             is expected to page with"
+        );
+        assert_eq!(
+            keymap.command_for(Context::Conversation, "z"),
+            Some(CommandId::ToggleFold.into()),
+            "folding must keep a key: the stacked pane still folds, and \
+             taking `space` away without giving it somewhere else would lose \
+             a working gesture"
+        );
+        // `Page_Down` was the asymmetry that started #1402: `ScrollReaderUp`
+        // served the conversation and `ScrollReaderDown` did not.
+        for key in ["Page_Down", "Page_Up"] {
+            assert!(
+                keymap.command_for(Context::Conversation, key).is_some(),
+                "`{key}` must resolve in a conversation; the two directions \
+                 serving different surfaces is what this issue found"
+            );
         }
     }
 

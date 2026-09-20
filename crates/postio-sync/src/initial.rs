@@ -64,8 +64,7 @@ use postio_model::{Account, Mailbox, MailboxId, MailboxStatus, Message, Uid};
 use postio_storage::repository::{
     AccountRepository, MessageRepository, SyncStateRepository, ThreadingRepository,
 };
-use postio_storage::{PooledConnection, WritePriority};
-use rusqlite::{Connection, Transaction, TransactionBehavior};
+use postio_storage::{Checkout, WritePriority};
 
 use crate::drain::SyncError;
 use postio_account::cancel::CancelToken;
@@ -110,7 +109,7 @@ pub const DEFAULT_BATCH_SIZE: usize = 200;
 /// This does not change how much a pass fetches, how it batches its `FETCH`es,
 /// or where an interrupted pass resumes — `uids_in` counts what committed, so
 /// a finer unit resumes at a finer grain.
-const WRITE_UNIT: usize = 25;
+pub(crate) const WRITE_UNIT: usize = 25;
 
 /// What one committed batch reports, so the caller can drive a progress bar.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -157,7 +156,7 @@ pub struct Report {
 /// if its `UIDVALIDITY` just changed, after the caller has wiped its stale
 /// rows. This function does not check either.
 pub async fn sync_mailbox(
-    connection: &PooledConnection,
+    connection: &Checkout,
     backend: &dyn MailBackend,
     mailbox: &Mailbox,
     cancel: &CancelToken,
@@ -180,7 +179,7 @@ pub async fn sync_mailbox(
 /// messages rather than needing hundreds of fixtures to see more than one.
 /// `batch_size` is clamped to at least one.
 pub async fn sync_mailbox_with_batch_size(
-    connection: &PooledConnection,
+    connection: &Checkout,
     backend: &dyn MailBackend,
     mailbox: &Mailbox,
     batch_size: usize,
@@ -218,7 +217,7 @@ pub(crate) enum Coverage {
 
 /// The body of an enumeration pass. See [`sync_mailbox_with_batch_size`].
 pub(crate) async fn enumerate(
-    connection: &PooledConnection,
+    connection: &Checkout,
     backend: &dyn MailBackend,
     mailbox: &Mailbox,
     batch_size: usize,
@@ -236,7 +235,9 @@ pub(crate) async fn enumerate(
     }
 
     let now = Utc::now();
-    SyncStateRepository::new(connection).observe(mailbox.id, &server_status, now)?;
+    SyncStateRepository::new(connection)
+        .observe(mailbox.id, &server_status, now)
+        .await?;
 
     // The UID ceiling: the highest UID this pass could reach, and the range
     // it enumerates. Not what progress is reported against — see
@@ -245,12 +246,15 @@ pub(crate) async fn enumerate(
     let mut report = Report::default();
 
     if highest_uid < 1 {
-        SyncStateRepository::new(connection).complete_full_sync(mailbox.id, now)?;
+        SyncStateRepository::new(connection)
+            .complete_full_sync(mailbox.id, now)
+            .await?;
         return Ok(report);
     }
 
     let known: BTreeSet<u32> = MessageRepository::new(connection)
-        .uids_in(mailbox.id, selected.generation)?
+        .uids_in(mailbox.id, selected.generation)
+        .await?
         .into_iter()
         .map(Uid::get)
         .collect();
@@ -259,7 +263,9 @@ pub(crate) async fn enumerate(
     // recorded against never changes mid-pass. `None` (an orphaned mailbox
     // row) just means no sightings are recorded, rather than failing sync
     // over a nicety.
-    let account = AccountRepository::new(connection).get(mailbox.account_id)?;
+    let account = AccountRepository::new(connection)
+        .get(mailbox.account_id)
+        .await?;
 
     // What the server actually holds, when it will say — otherwise every UID
     // below the ceiling, which is what this did for every backend before
@@ -275,6 +281,40 @@ pub(crate) async fn enumerate(
     // records the same sparseness from the other side (an inbox of ninety-two
     // messages whose UID ceiling was 63,022).
     let present = existing_uids(backend, mailbox, cancel).await?;
+
+    // A listing shorter than `EXISTS` is not believed.
+    //
+    // `UID SEARCH ALL` is the optimisation above; `EXISTS` is what the
+    // `SELECT` that opened this mailbox already reported, so the cross-check
+    // is free. A server that names fewer UIDs than it just said it holds has
+    // under-reported, and believing it is the expensive mistake: the pass
+    // enumerates the few it was told about, *completes*, and
+    // `complete_full_sync` stamps `last_full_sync_at` — after which
+    // `SyncState::plan` sees `has_synced()` and every later pass is
+    // incremental against a mailbox that was never enumerated. The backlog is
+    // then not slow, it is unreachable, and no restart recovers it.
+    //
+    // Discarding the listing costs a slower pass and nothing else: `None` is
+    // the path a refused `SEARCH` already takes, walking the UID space as
+    // every backend did before #727.
+    //
+    // Only the short direction. A listing *longer* than `EXISTS` is the
+    // ordinary race — mail delivered between the `SELECT` and the `SEARCH` —
+    // and the ceiling filter below already handles it.
+    let present = match present {
+        Some(uids) if (uids.len() as u32) < selected.exists => {
+            tracing::warn!(
+                mailbox = mailbox.id.get(),
+                listed = uids.len(),
+                exists = selected.exists,
+                "the server listed fewer UIDs than it says the mailbox holds; \
+                 walking the UID space instead"
+            );
+            None
+        }
+        other => other,
+    };
+
     let mut missing: Vec<u32> = match present {
         Some(uids) => uids
             .into_iter()
@@ -351,10 +391,24 @@ pub(crate) async fn enumerate(
         }
 
         let wrote_from = std::time::Instant::now();
-        let batch = commit_batch(connection, mailbox, account.as_ref(), &known, &mut messages)?;
+        let batch =
+            commit_batch(connection, mailbox, account.as_ref(), &known, &mut messages).await?;
         report.inserted += batch.inserted;
         report.updated += batch.updated;
         report.threaded += batch.threaded;
+
+        // One real yield per batch, and it is load-bearing. The read-ahead
+        // above primes the next fetch *before* the commit, so by the time the
+        // commit finishes the fetch's timer may already have elapsed — its
+        // await then never returns `Pending`, and a pass whose commits run
+        // longer than its fetches walks every batch of the folder inside a
+        // single poll. The engine's whole interruption story assumes a pass
+        // yields: `sync_wave`'s cancel arm and refill both wait their turn at
+        // a `select!`, and a pass that never yields deafens the wave to the
+        // user for the length of the folder — which is what
+        // `docs/notes/2026-09-13-a-slow-pass-stops-every-folder-behind-it.md`
+        // measured live, with the engine's fts merges as the slow commits.
+        yield_once().await;
 
         // Where a first sync's wall clock actually goes, per batch: waiting on
         // the server, or writing to SQLite. `postio-0d9.7` asks for several
@@ -377,7 +431,9 @@ pub(crate) async fn enumerate(
         });
     }
 
-    SyncStateRepository::new(connection).complete_full_sync(mailbox.id, now)?;
+    SyncStateRepository::new(connection)
+        .complete_full_sync(mailbox.id, now)
+        .await?;
     Ok(report)
 }
 
@@ -473,8 +529,8 @@ async fn existing_uids(
 /// COMMIT) but the UI thread, which writes local-first on every flag, archive
 /// and draft autosave through this same pool. Taking the write lock up front
 /// is what puts this back inside the five-second timeout.
-pub fn commit_batch(
-    connection: &PooledConnection,
+pub async fn commit_batch(
+    connection: &Checkout,
     mailbox: &Mailbox,
     account: Option<&Account>,
     known: &BTreeSet<u32>,
@@ -488,48 +544,109 @@ pub fn commit_batch(
         // SQLite's lock would be standing aside too late. Re-taken per unit
         // rather than held across the batch, so a person waits for one unit at
         // most (#425).
-        let permit = connection.write_gate().acquire(WritePriority::Background);
+        let permit = connection
+            .write_gate()
+            .acquire(WritePriority::Background)
+            .await;
 
-        let unit = Transaction::new_unchecked(connection, TransactionBehavior::Immediate)
-            .map_err(postio_storage::Error::from)?;
-        let connection: &Connection = &unit;
+        // `BEGIN IMMEDIATE`, which is what `transaction` opens at the
+        // outermost level, and for the reason #79 records: the first
+        // statement inside is a read, and a deferred transaction that then
+        // has to promote its read lock to a write lock is refused outright
+        // rather than waiting.
+        let source: Vec<Message> = slice.to_vec();
+        let account_id = mailbox.account_id;
+        let known_uids = &known;
+        let (upsert, written) =
+            postio_storage::transaction(connection, move |connection| async move {
+                let mut written = source;
+                let upsert = MessageRepository::new(&connection)
+                    .upsert_batch(&mut written)
+                    .await?;
 
-        let mut written: Vec<Message> = slice.to_vec();
-        let upsert = MessageRepository::new(connection).upsert_batch(&mut written)?;
+                let threading = ThreadingRepository::new(&connection, account_id);
+                for message in &written {
+                    threading.thread(message).await?;
+                }
+
+                // Only messages that were not already known before this pass:
+                // a `Coverage::Everything` re-enumeration re-fetches messages
+                // already stored (that is its whole point, refreshing what an
+                // untrustworthy incremental pull may have missed), and
+                // recording those again would count the same correspondent
+                // twice for one message.
+                if let Some(account) = account {
+                    for message in &written {
+                        let is_new = message
+                            .server
+                            .uid
+                            .is_some_and(|uid| !known_uids.contains(&uid.get()));
+                        if is_new {
+                            crate::contacts::record(&connection, account, message).await?;
+                        }
+                    }
+                }
+
+                Ok::<_, SyncError>((upsert, written))
+            })
+            .await?;
+
         report.inserted += upsert.inserted;
         report.updated += upsert.updated;
-
-        let threading = ThreadingRepository::new(connection, mailbox.account_id);
-        for message in &written {
-            threading.thread(message)?;
-            report.threaded += 1;
-        }
-
-        // Only messages that were not already known before this pass: a
-        // `Coverage::Everything` re-enumeration re-fetches messages already
-        // stored (that is its whole point, refreshing what an untrustworthy
-        // incremental pull may have missed), and recording those again would
-        // count the same correspondent twice for one message.
-        if let Some(account) = account {
-            for message in &written {
-                let is_new = message
-                    .server
-                    .uid
-                    .is_some_and(|uid| !known.contains(&uid.get()));
-                if is_new {
-                    crate::contacts::record(connection, account, message)?;
-                }
-            }
-        }
-
-        unit.commit().map_err(postio_storage::Error::from)?;
+        report.threaded += written.len();
         // The ids `upsert_batch` assigned belong to the caller's messages, not
         // to this unit's copy of them.
-        slice.clone_from_slice(&written);
+        copy_back(slice, &written);
         drop(permit);
     }
 
     Ok(report)
+}
+
+/// Carry the ids `upsert_batch` assigned back onto the caller's messages.
+///
+/// # Why not `clone_from_slice`
+///
+/// It was, and it panicked against a real account:
+///
+/// ```text
+/// destination and source slices have different lengths
+///   postio_sync::initial::commit_batch
+///   postio_sync::resync::enumerate_the_shortfall
+/// ```
+///
+/// `upsert_batch` does not always return what it was given. It `retain`s
+/// away two kinds of row on purpose --- the server's copy of a draft Postio
+/// itself wrote, and a message the user has already moved out of this mailbox
+/// while the server has not been told --- so `written` is shorter whenever
+/// either applies. Drafts is where it showed up, re-enumerating 27 local rows
+/// against the 28 the server reported.
+///
+/// That has always been true; nothing reached it until a mailbox short of
+/// `EXISTS` started re-enumerating itself. A positional copy was wrong the
+/// whole time and merely unreachable, which is the worse kind of wrong.
+///
+/// # The shape that makes this cheap
+///
+/// `retain` preserves order, so `written` is a *subsequence* of `slice`: same
+/// messages, same order, some missing. One walk down both, matching on the
+/// remote id --- the same key both `retain`s decide on, and `None` is never
+/// dropped by either, so those align by position within the run.
+///
+/// A message that was dropped keeps whatever it arrived with, which is right:
+/// nothing was stored for it, so there is no id to carry back.
+fn copy_back(slice: &mut [Message], written: &[Message]) {
+    let mut stored = written.iter();
+    let mut next = stored.next();
+    for slot in slice.iter_mut() {
+        let Some(candidate) = next else {
+            return;
+        };
+        if candidate.server.remote_id == slot.server.remote_id {
+            *slot = candidate.clone();
+            next = stored.next();
+        }
+    }
 }
 
 /// A batch asked for ahead of time. See the read-ahead in [`enumerate`].
@@ -549,6 +666,26 @@ enum ReadAhead<'a> {
 /// unsent when the write finished. Polling with the caller's own waker —
 /// rather than a throwaway one — means the later `await` picks it up exactly
 /// as if it had been awaited all along.
+/// Return `Pending` exactly once, waking immediately.
+///
+/// What `tokio::task::yield_now` is, without naming an executor — this crate
+/// runs under whichever runtime the caller picked. The single `Pending` is
+/// the entire point: it hands the enclosing `select!` one poll, which is the
+/// turn the engine's cancel arm and lane refill take theirs on.
+pub(crate) async fn yield_once() {
+    let mut yielded = false;
+    std::future::poll_fn(move |context| {
+        if yielded {
+            Poll::Ready(())
+        } else {
+            yielded = true;
+            context.waker().wake_by_ref();
+            Poll::Pending
+        }
+    })
+    .await
+}
+
 async fn read_ahead<'a>(
     backend: &'a dyn MailBackend,
     mailbox: &'a str,
@@ -560,5 +697,77 @@ async fn read_ahead<'a>(
     match primed {
         Poll::Ready(answer) => ReadAhead::Answered(answer),
         Poll::Pending => ReadAhead::OnTheWire(fetching),
+    }
+}
+
+#[cfg(test)]
+mod carrying_ids_back_onto_a_shortened_batch {
+    use super::copy_back;
+    use postio_model::{AccountId, MailboxId, Message, MessageId, RemoteId};
+
+    fn message(remote: Option<&str>, id: i64) -> Message {
+        let mut message = Message::new(AccountId::new(1), MailboxId::new(1), chrono::Utc::now());
+        message.server.remote_id = remote.map(|remote| RemoteId::new(remote.to_owned()));
+        message.id = MessageId::new(id);
+        message
+    }
+
+    /// The crash, as a batch.
+    ///
+    /// `upsert_batch` drops the server's copy of a draft Postio wrote, so what
+    /// comes back is shorter than what went in and `clone_from_slice` panicked
+    /// with "destination and source slices have different lengths". Drafts is
+    /// where it happened: 27 rows held against the 28 the server reported, a
+    /// re-enumeration fetched the 28th, and it was the user's own draft.
+    #[test]
+    fn a_dropped_row_does_not_panic_and_does_not_shift_the_others() {
+        let mut slice = [
+            message(Some("1:10"), 0),
+            message(Some("1:11"), 0),
+            message(Some("1:12"), 0),
+        ];
+        // The middle one was retained away; the others came back with ids.
+        let written = [message(Some("1:10"), 101), message(Some("1:12"), 103)];
+
+        copy_back(&mut slice, &written);
+
+        assert_eq!(slice[0].id, MessageId::new(101), "the first got its id");
+        assert_eq!(
+            slice[1].id,
+            MessageId::new(0),
+            "the dropped one keeps what it arrived with -- nothing was stored \
+             for it, so there is no id to carry back"
+        );
+        assert_eq!(
+            slice[2].id,
+            MessageId::new(103),
+            "and the one after the gap got its own id, not the gap's neighbour's"
+        );
+    }
+
+    /// The ordinary case still copies straight across.
+    #[test]
+    fn nothing_dropped_is_a_plain_copy() {
+        let mut slice = [message(Some("1:10"), 0), message(Some("1:11"), 0)];
+        let written = [message(Some("1:10"), 101), message(Some("1:11"), 102)];
+
+        copy_back(&mut slice, &written);
+
+        assert_eq!(slice[0].id, MessageId::new(101));
+        assert_eq!(slice[1].id, MessageId::new(102));
+    }
+
+    /// A message with no remote id is never dropped by either `retain`, so
+    /// runs of them align by position.
+    #[test]
+    fn rows_without_a_remote_id_still_line_up() {
+        let mut slice = [message(None, 0), message(Some("1:11"), 0), message(None, 0)];
+        let written = [message(None, 201), message(None, 203)];
+
+        copy_back(&mut slice, &written);
+
+        assert_eq!(slice[0].id, MessageId::new(201));
+        assert_eq!(slice[1].id, MessageId::new(0), "the dropped one is left");
+        assert_eq!(slice[2].id, MessageId::new(203));
     }
 }

@@ -27,6 +27,7 @@
 //! part-way through its own item bookkeeping at the time.
 
 use std::cell::{Cell, RefCell};
+use std::collections::HashMap;
 use std::rc::Rc;
 
 use adw::prelude::*;
@@ -169,7 +170,7 @@ mod imp {
         /// the wait has to be droppable rather than merely self-cancelling.
         /// Holding the handler here also means a second seek replaces the
         /// first instead of stacking another listener on the model.
-        pub(super) pending_seek: RefCell<Option<glib::SignalHandlerId>>,
+        pub(super) pending_seek: RefCell<Vec<glib::SignalHandlerId>>,
         /// Subscribers to "the cursor rested here long enough to have been
         /// read". See [`DWELL_TO_READ`].
         pub(super) dwelled: RefCell<Vec<DwellHandler>>,
@@ -229,7 +230,7 @@ mod imp {
                 reported_at: Cell::new(0),
                 landed: Cell::new(false),
                 pending_select: Cell::new(false),
-                pending_seek: RefCell::new(None),
+                pending_seek: RefCell::new(Vec::new()),
                 dwelled: RefCell::new(Vec::new()),
                 dwell: RefCell::new(None),
                 dwell_delay: Cell::new(DWELL_TO_READ),
@@ -395,6 +396,13 @@ impl MessageListView {
     /// and an action carrying a selection across that boundary would land on
     /// mail the user cannot see. `postio-core`'s `AppState::open_mailbox`
     /// makes the same decision on its side.
+    /// How many unread the header is currently claiming — for the test that
+    /// the count follows a reload, not only a folder change.
+    #[doc(hidden)]
+    pub fn header_unread(&self) -> u32 {
+        self.imp().unread.get()
+    }
+
     pub fn set_mailbox(&self, name: &str, unread: u32) {
         let imp = self.imp();
         if imp.mailbox.replace(name.to_owned()) != name {
@@ -429,12 +437,26 @@ impl MessageListView {
         imp.sort.set_text(&format!("{label} ▾"));
     }
 
+    /// Whether the rows on screen are a result set rather than a folder.
+    ///
+    /// The same `Option` [`set_result_order`](Self::set_result_order) keeps,
+    /// asked as a question. `Window` needs it for `Escape`: the search box
+    /// closes as soon as the keyboard moves onto the list, and until #1474
+    /// nothing downstream of the finder knew a result set was still up, so
+    /// `Escape` had no arm to match and did nothing at all.
+    ///
+    /// `postio-gtk` may hold no SQL, so this says what is *displayed* and
+    /// nothing about `Feed`. Acting on it is `postio-app`'s, through the
+    /// finder's `on_dismissed`.
+    pub fn showing_results(&self) -> bool {
+        self.imp().result_order.get().is_some()
+    }
+
     /// Where the list is scrolled to, in pixels.
     ///
-    /// Exposed for the thread drill-in, which has to put it back: re-focusing
-    /// the list on the way out scrolls the cursor row into view, and "into
-    /// view" is not the same pixel offset the user left. See
-    /// [`crate::window::Window::close_thread`].
+    /// Exposed for the conversation drill-in, which has to put it back:
+    /// re-focusing the list on the way out scrolls the cursor row into view,
+    /// and "into view" is not the same pixel offset the user left.
     pub fn scroll_offset(&self) -> f64 {
         self.scroller()
             .map(|scroller| scroller.vadjustment().value())
@@ -877,10 +899,14 @@ impl MessageListView {
         }
         self.imp().pending_select.set(true);
         let _ = self.model().item(0);
-        let id = self.imp().model.connect_items_changed(glib::clone!(
+        // Connected to both, because the page this is waiting for arrives as
+        // `filled` -- rows that already existed now have contents -- while the
+        // count arriving, or the order moving, is still `items_changed`
+        // (#1216).
+        let landed = glib::clone!(
             #[weak(rename_to = pane)]
             self,
-            move |model, _, _, _| {
+            move |model: &MessageList| {
                 if let Some(position) = model.position_of(message) {
                     // Given up first: `place_cursor` reports, and this
                     // landing is the one that was being waited for.
@@ -898,8 +924,17 @@ impl MessageListView {
                     pane.report_cursor();
                 }
             }
-        ));
-        *self.imp().pending_seek.borrow_mut() = Some(id);
+        );
+        let on_change = landed.clone();
+        let ids = vec![
+            self.imp()
+                .model
+                .connect_items_changed(move |model, _, _, _| {
+                    on_change(model);
+                }),
+            self.imp().model.connect_filled(landed),
+        ];
+        *self.imp().pending_seek.borrow_mut() = ids;
     }
 
     /// Stop waiting for a seek's page, and stop suppressing the reading pane.
@@ -910,7 +945,7 @@ impl MessageListView {
     /// a second call from disconnecting a handler that is already gone.
     fn abandon_seek(&self) {
         let imp = self.imp();
-        if let Some(id) = imp.pending_seek.borrow_mut().take() {
+        for id in imp.pending_seek.borrow_mut().drain(..) {
             imp.model.disconnect(id);
         }
         imp.pending_select.set(false);
@@ -1167,6 +1202,12 @@ impl MessageListView {
         let offers = imp.show_actions.clone();
         let hints = imp.show_hints.clone();
         let keymap = imp.keymap.clone();
+        // The `changed` connection each binding holds, keyed by the
+        // `GtkListItem` that holds it. Shared between bind and unbind because
+        // that is the pair that owns it; a `GtkListItem` outlives any one row.
+        let watched: Rc<RefCell<HashMap<usize, (MessageRow, glib::SignalHandlerId)>>> =
+            Rc::new(RefCell::new(HashMap::new()));
+        let unwatched = watched.clone();
         factory.connect_bind(move |_, item| {
             let Some(item) = item.downcast_ref::<gtk::ListItem>() else {
                 return;
@@ -1189,6 +1230,32 @@ impl MessageListView {
             let selected = view.row().is_some_and(|row| chosen.contains(row.id));
             view.set_selected(selected);
             announce(item, &view, selected);
+
+            // A row whose contents are replaced in place -- a flag, read
+            // state, a label -- says so for itself, because saying it through
+            // the model means telling `GtkListView` that a page of positions
+            // answers with different rows now, and it rebuilds every widget in
+            // range for one flag (#1216). The connection belongs to this
+            // binding and is dropped on unbind: a `GtkListItem` is recycled
+            // across many messages.
+            if let Some(row) = item.item().and_downcast::<MessageRow>() {
+                let chosen = chosen.clone();
+                let handler = row.connect_changed(glib::clone!(
+                    #[weak]
+                    view,
+                    #[weak]
+                    item,
+                    move |row| {
+                        view.set_row(row.row());
+                        let selected = view.row().is_some_and(|row| chosen.contains(row.id));
+                        view.set_selected(selected);
+                        announce(&item, &view, selected);
+                    }
+                ));
+                watched
+                    .borrow_mut()
+                    .insert(item.as_ptr() as usize, (row, handler));
+            }
         });
         factory.connect_unbind(move |_, item| {
             if let Some(view) = item
@@ -1199,6 +1266,11 @@ impl MessageListView {
                 view.set_row(None);
                 if let Some(item) = item.downcast_ref::<gtk::ListItem>() {
                     item.set_accessible_label("");
+                    if let Some((row, handler)) =
+                        unwatched.borrow_mut().remove(&(item.as_ptr() as usize))
+                    {
+                        row.disconnect(handler);
+                    }
                 }
             }
         });
@@ -1355,6 +1427,18 @@ impl MessageListView {
                 {
                     pane.restore_cursor(reading);
                 }
+                pane.report_cursor()
+            }
+        ));
+        // The other half of the same job. A page landing under a cursor that
+        // has not moved gives the row it is on a message for the first time,
+        // and the reading pane has to be told -- #70's Cause B, which used to
+        // ride on the `items_changed` a delivery no longer emits (#1216).
+        imp.model.connect_filled(glib::clone!(
+            #[weak(rename_to = pane)]
+            self,
+            move |_| {
+                pane.adopt_cursor_focus();
                 pane.report_cursor()
             }
         ));
@@ -1637,6 +1721,55 @@ impl MessageListView {
             self.report_cursor();
         }
         false
+    }
+
+    /// Hand the keyboard to the cursor's row when this pane holds it and no
+    /// row does.
+    ///
+    /// #1473. `Window::present` grabs focus on this pane, but at that moment
+    /// the model is empty -- the store answers afterwards -- so the grab
+    /// lands on the `GtkListView` itself and stops there. The autoselect then
+    /// puts the *cursor* on row 0 as soon as rows arrive, and fills the
+    /// reading pane from it, but a `SingleSelection` changing has never moved
+    /// GTK's focus: that only happens through `scroll_to(.., FOCUS)`, which
+    /// every deliberate cursor move calls and the autoselect does not. The
+    /// window therefore opened showing the first message with the keyboard
+    /// parked one level above it, so the first key pressed had no row to act
+    /// on.
+    ///
+    /// Gated on this pane already being the focus widget, which is the whole
+    /// of the fix's licence: mail arriving while somebody is typing in the
+    /// header, reading, or anywhere else must not pull the keyboard back
+    /// here. `is_focus` rather than `has_focus` for the reason
+    /// `gtk_focus_visible.rs` records -- `has-focus` is gated on the toplevel
+    /// being active, which a headless window never is.
+    fn adopt_cursor_focus(&self) {
+        if !self.imp().view.is_focus() {
+            return;
+        }
+        self.focus_cursor();
+    }
+
+    /// Put the keyboard on the cursor's row, wherever it is now.
+    ///
+    /// The deliberate half of [`adopt_cursor_focus`](Self::adopt_cursor_focus),
+    /// for a caller handing the list the keyboard back rather than one
+    /// tidying up a grab that already landed -- `Window::close_finder`
+    /// returning from the search box being the case that needs it. That path
+    /// used to end in `grab_focus` on the pane container, which moved nothing
+    /// at all: focus stayed in the search entry, so the box closed and every
+    /// key after it was still typed rather than acted on.
+    ///
+    /// Does nothing when there is no cursor, which is a list with no rows.
+    pub fn focus_cursor(&self) {
+        let imp = self.imp();
+        let position = imp.cursor.selected();
+        if position == gtk::INVALID_LIST_POSITION {
+            return;
+        }
+        imp.view.grab_focus();
+        imp.view
+            .scroll_to(position, gtk::ListScrollFlags::FOCUS, None);
     }
 
     /// Move the keyboard to `position`, and the focus with it.

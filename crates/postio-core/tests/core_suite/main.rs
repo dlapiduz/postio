@@ -31,7 +31,6 @@ mod config;
 mod dispatch;
 mod event_hub;
 mod events;
-mod keybindings_doc;
 mod perf_budget;
 mod platform_bindings;
 mod selection;

@@ -310,6 +310,16 @@ impl MailBackend for MaildirBackend {
             .collect())
     }
 
+    async fn create_mailbox(&self, path: &str) -> BackendResult<()> {
+        self.require_session("CREATE")?;
+        // No server to ask and nothing to race with a remote: a maildir
+        // folder is three directories, and making one that is already there
+        // is the same call. So the "ask whether it exists after a refusal"
+        // dance IMAP needs has no counterpart here.
+        self.store.create(path)?;
+        Ok(())
+    }
+
     async fn select(&self, path: &str, mode: SelectMode) -> BackendResult<MailboxStatus> {
         self.require_session("SELECT")?;
         self.status_of(path, matches!(mode, SelectMode::ReadOnly))

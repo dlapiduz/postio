@@ -79,7 +79,8 @@ fn row(position: u32) -> Row {
         seen: false,
         flagged: false,
         answered: false,
-        draft: false,
+        send_state: None,
+        send_at: None,
         has_attachments: false,
         thread_count: 1,
         participants: Vec::new(),
@@ -99,7 +100,7 @@ fn wait(time: Duration) {
     let context = gtk::glib::MainContext::default();
     while std::time::Instant::now() < deadline {
         while context.iteration(false) {}
-        std::thread::sleep(Duration::from_millis(2));
+        std::thread::sleep(std::time::Duration::from_millis(2));
     }
     pump();
 }

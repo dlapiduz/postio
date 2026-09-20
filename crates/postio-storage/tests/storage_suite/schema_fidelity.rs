@@ -12,28 +12,25 @@
 //! is the only thing that may write those columns.
 
 use chrono::{TimeZone, Utc};
-use rusqlite::{Connection, params};
+use postio_storage::Connection;
+use postio_storage::sql::bind;
 
 use postio_model::{
     Account, Attachment, AuthMethod, BodyState, Contact, Disposition, Draft, DraftKind, DraftState,
     EmailAddress, Flag, FlagSet, Label, Mailbox, MailboxRole, Message, RfcMessageId, Thread,
 };
-use postio_storage::migrate;
 
-fn migrated() -> Connection {
-    let mut connection = Connection::open_in_memory().expect("in-memory sqlite");
-    connection
-        .pragma_update(None, "foreign_keys", true)
-        .expect("foreign keys");
-    migrate(&mut connection).expect("migrate");
-    connection
+async fn migrated() -> (postio_storage::Store, postio_storage::Checkout) {
+    let store = postio_storage::test_support::memory().await;
+    let connection = store.connect().await.expect("a connection");
+    (store, connection)
 }
 
 fn millis(datetime: chrono::DateTime<Utc>) -> i64 {
     datetime.timestamp_millis()
 }
 
-fn store_account(connection: &Connection, account: &Account) -> i64 {
+async fn store_account(connection: &Connection, account: &Account) -> i64 {
     connection
         .execute(
             "INSERT INTO accounts (
@@ -42,7 +39,7 @@ fn store_account(connection: &Connection, account: &Account) -> i64 {
                  outgoing_host, outgoing_port, outgoing_security, outgoing_username,
                  auth_method, enabled, created_at)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
-            params![
+            bind![
                 account.display_name,
                 account.address.address,
                 account.address.name,
@@ -64,18 +61,19 @@ fn store_account(connection: &Connection, account: &Account) -> i64 {
                 millis(account.created_at),
             ],
         )
+        .await
         .expect("insert account");
     connection.last_insert_rowid()
 }
 
-fn store_mailbox(connection: &Connection, account_id: i64, mailbox: &Mailbox) -> i64 {
+async fn store_mailbox(connection: &Connection, account_id: i64, mailbox: &Mailbox) -> i64 {
     connection
         .execute(
             "INSERT INTO mailboxes (
                  account_id, parent_id, name, path, delimiter, role, selectable, subscribed,
                  total_count, unread_count, flagged_count)
              VALUES (?1, NULL, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
-            params![
+            bind![
                 account_id,
                 mailbox.name,
                 mailbox.path,
@@ -88,6 +86,7 @@ fn store_mailbox(connection: &Connection, account_id: i64, mailbox: &Mailbox) ->
                 mailbox.counts.flagged,
             ],
         )
+        .await
         .expect("insert mailbox");
     connection.last_insert_rowid()
 }
@@ -137,7 +136,7 @@ fn a_full_message(account_id: i64, mailbox_id: i64) -> Message {
     message
 }
 
-fn insert_message(connection: &Connection, message: &Message) -> i64 {
+async fn insert_message(connection: &Connection, message: &Message) -> i64 {
     let flags = message
         .flags
         .persistable()
@@ -170,7 +169,7 @@ fn insert_message(connection: &Connection, message: &Message) -> i64 {
                  ?19, ?20, ?21, ?22,
                  ?23, ?24, ?25, ?26, ?27,
                  ?28)",
-            params![
+            bind![
                 message.account_id.get(),
                 message.mailbox_id.get(),
                 message.rfc_message_id.as_ref().map(RfcMessageId::as_str),
@@ -210,11 +209,12 @@ fn insert_message(connection: &Connection, message: &Message) -> i64 {
                 message.raw_blob_id.as_ref().map(|id| id.as_str()),
             ],
         )
+        .await
         .expect("insert message");
     connection.last_insert_rowid()
 }
 
-fn insert_recipients(connection: &Connection, message_id: i64, message: &Message) {
+async fn insert_recipients(connection: &Connection, message_id: i64, message: &Message) {
     let mut groups: Vec<(&str, Vec<&EmailAddress>)> = vec![
         ("from", message.from.iter().collect()),
         ("sender", message.sender.iter().collect()),
@@ -230,14 +230,15 @@ fn insert_recipients(connection: &Connection, message_id: i64, message: &Message
                     "INSERT INTO recipients
                          (message_id, kind, position, name, address_id)
                      VALUES (?1, ?2, ?3, ?4, ?5)",
-                    params![
+                    bind![
                         message_id,
                         kind,
                         position as i64,
                         address.name,
-                        address_id(connection, address),
+                        address_id(connection, address).await,
                     ],
                 )
+                .await
                 .expect("insert recipient");
         }
     }
@@ -247,40 +248,41 @@ fn insert_recipients(connection: &Connection, message_id: i64, message: &Message
 ///
 /// Migration 0011 shares one row per correspondent, so a hand-written
 /// recipient has to name one rather than carry the string itself.
-fn address_id(connection: &Connection, address: &EmailAddress) -> i64 {
+async fn address_id(connection: &Connection, address: &EmailAddress) -> i64 {
     connection
         .execute(
             "INSERT INTO addresses (address, address_normalized) VALUES (?1, ?2)
              ON CONFLICT (address_normalized) DO NOTHING",
-            params![address.address, address.normalized()],
+            bind![address.address, address.normalized()],
         )
+        .await
         .expect("insert address");
-    connection
-        .query_row(
-            "SELECT id FROM addresses WHERE address_normalized = ?1",
-            [address.normalized()],
-            |row| row.get(0),
-        )
-        .expect("the address row")
+    postio_storage::sql::one(
+        connection,
+        "SELECT id FROM addresses WHERE address_normalized = ?1",
+        bind![address.normalized()],
+        |row| postio_storage::sql::RowExt::col(row, 0),
+    )
+    .await
+    .expect("the address row")
 }
 
-fn read_addresses(connection: &Connection, message_id: i64, kind: &str) -> Vec<EmailAddress> {
-    connection
-        .prepare(
-            "SELECT r.name, a.address FROM recipients r
-               JOIN addresses a ON a.id = r.address_id
-             WHERE message_id = ?1 AND kind = ?2 ORDER BY position",
-        )
-        .expect("prepare")
-        .query_map(params![message_id, kind], |row| {
+async fn read_addresses(connection: &Connection, message_id: i64, kind: &str) -> Vec<EmailAddress> {
+    postio_storage::sql::all(
+        connection,
+        "SELECT r.name, a.address FROM recipients r
+           JOIN addresses a ON a.id = r.address_id
+         WHERE message_id = ?1 AND kind = ?2 ORDER BY position",
+        bind![message_id, kind],
+        |row| {
             Ok(EmailAddress {
-                name: row.get(0)?,
-                address: row.get(1)?,
+                name: postio_storage::sql::RowExt::col(row, 0)?,
+                address: postio_storage::sql::RowExt::col(row, 1)?,
             })
-        })
-        .expect("query")
-        .collect::<Result<_, _>>()
-        .expect("collect")
+        },
+    )
+    .await
+    .expect("query")
 }
 
 /// The columns of a `messages` row this test reads back, so the round trip is
@@ -297,39 +299,40 @@ struct StoredMessage {
     raw_blob_id: Option<String>,
 }
 
-#[test]
-fn a_fully_populated_message_round_trips_through_the_schema() {
-    let connection = migrated();
+#[tokio::test]
+async fn a_fully_populated_message_round_trips_through_the_schema() {
+    let (_store, connection) = migrated().await;
     let account = Account::new("Mail", EmailAddress::new(None::<String>, "ada@example.com"));
-    let account_id = store_account(&connection, &account);
+    let account_id = store_account(&connection, &account).await;
     let mailbox = Mailbox::new(account.id, "INBOX", Some('/'));
-    let mailbox_id = store_mailbox(&connection, account_id, &mailbox);
+    let mailbox_id = store_mailbox(&connection, account_id, &mailbox).await;
 
     let message = a_full_message(account_id, mailbox_id);
-    let message_id = insert_message(&connection, &message);
-    insert_recipients(&connection, message_id, &message);
+    let message_id = insert_message(&connection, &message).await;
+    insert_recipients(&connection, message_id, &message).await;
 
-    let stored = connection
-        .query_row(
-            "SELECT subject, date, received_at, size, preview, flags, body_state,
+    let stored = postio_storage::sql::one(
+        &connection,
+        "SELECT subject, date, received_at, size, preview, flags, body_state,
                     remote_id, raw_blob_id
              FROM messages WHERE id = ?1",
-            [message_id],
-            |row| {
-                Ok(StoredMessage {
-                    subject: row.get(0)?,
-                    date: row.get(1)?,
-                    received_at: row.get(2)?,
-                    size: row.get(3)?,
-                    preview: row.get(4)?,
-                    flags: row.get(5)?,
-                    body_state: row.get(6)?,
-                    remote_id: row.get(7)?,
-                    raw_blob_id: row.get(8)?,
-                })
-            },
-        )
-        .expect("read message back");
+        bind![message_id],
+        |row| {
+            Ok(StoredMessage {
+                subject: postio_storage::sql::RowExt::col(row, 0)?,
+                date: postio_storage::sql::RowExt::col(row, 1)?,
+                received_at: postio_storage::sql::RowExt::col(row, 2)?,
+                size: postio_storage::sql::RowExt::col(row, 3)?,
+                preview: postio_storage::sql::RowExt::col(row, 4)?,
+                flags: postio_storage::sql::RowExt::col(row, 5)?,
+                body_state: postio_storage::sql::RowExt::col(row, 6)?,
+                remote_id: postio_storage::sql::RowExt::col(row, 7)?,
+                raw_blob_id: postio_storage::sql::RowExt::col(row, 8)?,
+            })
+        },
+    )
+    .await
+    .expect("read message back");
 
     assert_eq!(stored.subject, message.subject);
     assert_eq!(stored.date, message.date.map(millis));
@@ -349,29 +352,39 @@ fn a_fully_populated_message_round_trips_through_the_schema() {
 
     // Every address header keeps its order and its display names.
     assert_eq!(
-        read_addresses(&connection, message_id, "from"),
+        read_addresses(&connection, message_id, "from").await,
         message.from
     );
     assert_eq!(
-        read_addresses(&connection, message_id, "sender"),
+        read_addresses(&connection, message_id, "sender").await,
         message.sender.iter().cloned().collect::<Vec<_>>()
     );
     assert_eq!(
-        read_addresses(&connection, message_id, "reply_to"),
+        read_addresses(&connection, message_id, "reply_to").await,
         message.reply_to
     );
-    assert_eq!(read_addresses(&connection, message_id, "to"), message.to);
-    assert_eq!(read_addresses(&connection, message_id, "cc"), message.cc);
-    assert_eq!(read_addresses(&connection, message_id, "bcc"), message.bcc);
+    assert_eq!(
+        read_addresses(&connection, message_id, "to").await,
+        message.to
+    );
+    assert_eq!(
+        read_addresses(&connection, message_id, "cc").await,
+        message.cc
+    );
+    assert_eq!(
+        read_addresses(&connection, message_id, "bcc").await,
+        message.bcc
+    );
 
     // The reference chain that JWZ threading walks survives verbatim, in order.
-    let references: String = connection
-        .query_row(
-            "SELECT reference_ids FROM messages WHERE id = ?1",
-            [message_id],
-            |row| row.get(0),
-        )
-        .expect("references");
+    let references: String = postio_storage::sql::one(
+        &connection,
+        "SELECT reference_ids FROM messages WHERE id = ?1",
+        [message_id],
+        |row| postio_storage::sql::RowExt::col(row, 0),
+    )
+    .await
+    .expect("references");
     let restored: Vec<RfcMessageId> = references
         .split_whitespace()
         .map(RfcMessageId::new)
@@ -379,11 +392,11 @@ fn a_fully_populated_message_round_trips_through_the_schema() {
     assert_eq!(restored, message.references);
 }
 
-#[test]
-fn every_mailbox_role_is_storable() {
-    let connection = migrated();
+#[tokio::test]
+async fn every_mailbox_role_is_storable() {
+    let (_store, connection) = migrated().await;
     let account = Account::new("roles", EmailAddress::new(None::<String>, "r@example.com"));
-    let account_id = store_account(&connection, &account);
+    let account_id = store_account(&connection, &account).await;
 
     for role in [
         MailboxRole::Inbox,
@@ -398,47 +411,50 @@ fn every_mailbox_role_is_storable() {
         connection
             .execute(
                 "INSERT INTO mailboxes (account_id, name, path, role) VALUES (?1, ?2, ?2, ?3)",
-                params![account_id, role.as_str(), role.as_str()],
+                bind![account_id, role.as_str(), role.as_str()],
             )
+            .await
             .unwrap_or_else(|error| panic!("role {} must be storable: {error}", role.as_str()));
     }
 }
 
-#[test]
-fn every_body_state_is_storable_and_nothing_else_is() {
-    let connection = migrated();
+#[tokio::test]
+async fn every_body_state_is_storable_and_nothing_else_is() {
+    let (_store, connection) = migrated().await;
     let account = Account::new("body", EmailAddress::new(None::<String>, "b@example.com"));
-    let account_id = store_account(&connection, &account);
+    let account_id = store_account(&connection, &account).await;
     let mailbox = Mailbox::new(account.id, "INBOX", None);
-    let mailbox_id = store_mailbox(&connection, account_id, &mailbox);
+    let mailbox_id = store_mailbox(&connection, account_id, &mailbox).await;
 
     for state in ["not_fetched", "headers_only", "partial", "full"] {
         connection
             .execute(
                 "INSERT INTO messages (account_id, mailbox_id, received_at, body_state)
                  VALUES (?1, ?2, 0, ?3)",
-                params![account_id, mailbox_id, state],
+                bind![account_id, mailbox_id, state],
             )
+            .await
             .unwrap_or_else(|error| panic!("body_state {state} must be storable: {error}"));
     }
     connection
         .execute(
             "INSERT INTO messages (account_id, mailbox_id, received_at, body_state)
              VALUES (?1, ?2, 0, 'nonsense')",
-            params![account_id, mailbox_id],
+            bind![account_id, mailbox_id],
         )
+        .await
         .expect_err("body_state is a closed set");
 }
 
-#[test]
-fn attachment_metadata_round_trips_without_the_bytes() {
-    let connection = migrated();
+#[tokio::test]
+async fn attachment_metadata_round_trips_without_the_bytes() {
+    let (_store, connection) = migrated().await;
     let account = Account::new("att", EmailAddress::new(None::<String>, "a@example.com"));
-    let account_id = store_account(&connection, &account);
+    let account_id = store_account(&connection, &account).await;
     let mailbox = Mailbox::new(account.id, "INBOX", None);
-    let mailbox_id = store_mailbox(&connection, account_id, &mailbox);
+    let mailbox_id = store_mailbox(&connection, account_id, &mailbox).await;
     let message = a_full_message(account_id, mailbox_id);
-    let message_id = insert_message(&connection, &message);
+    let message_id = insert_message(&connection, &message).await;
 
     let mut attachment = Attachment::new(message.id, "application/pdf", 12_345);
     attachment.filename = Some("invoice.pdf".to_owned());
@@ -453,7 +469,7 @@ fn attachment_metadata_round_trips_without_the_bytes() {
                  message_id, position, filename, mime_type, size, content_id,
                  disposition, disposition_raw, part_id, blob_id)
              VALUES (?1, 0, ?2, ?3, ?4, ?5, 'inline', NULL, ?6, ?7)",
-            params![
+            bind![
                 message_id,
                 attachment.filename,
                 attachment.mime_type,
@@ -463,6 +479,7 @@ fn attachment_metadata_round_trips_without_the_bytes() {
                 attachment.blob_id.as_ref().map(|id| id.as_str()),
             ],
         )
+        .await
         .expect("insert attachment");
 
     let (filename, mime_type, size, part_id, blob_id): (
@@ -471,21 +488,22 @@ fn attachment_metadata_round_trips_without_the_bytes() {
         i64,
         Option<String>,
         Option<String>,
-    ) = connection
-        .query_row(
-            "SELECT filename, mime_type, size, part_id, blob_id FROM attachments",
-            [],
-            |row| {
-                Ok((
-                    row.get(0)?,
-                    row.get(1)?,
-                    row.get(2)?,
-                    row.get(3)?,
-                    row.get(4)?,
-                ))
-            },
-        )
-        .expect("read attachment");
+    ) = postio_storage::sql::one(
+        &connection,
+        "SELECT filename, mime_type, size, part_id, blob_id FROM attachments",
+        (),
+        |row| {
+            Ok((
+                postio_storage::sql::RowExt::col(row, 0)?,
+                postio_storage::sql::RowExt::col(row, 1)?,
+                postio_storage::sql::RowExt::col(row, 2)?,
+                postio_storage::sql::RowExt::col(row, 3)?,
+                postio_storage::sql::RowExt::col(row, 4)?,
+            ))
+        },
+    )
+    .await
+    .expect("read attachment");
 
     assert_eq!(filename, attachment.filename);
     assert_eq!(mime_type, attachment.mime_type);
@@ -494,14 +512,15 @@ fn attachment_metadata_round_trips_without_the_bytes() {
     assert_eq!(blob_id.as_deref(), Some("blake3:cafe"));
 }
 
-#[test]
-fn an_attachment_belongs_to_a_message_or_a_draft_but_never_both() {
-    let connection = migrated();
+#[tokio::test]
+async fn an_attachment_belongs_to_a_message_or_a_draft_but_never_both() {
+    let (_store, connection) = migrated().await;
     let error = connection
         .execute(
             "INSERT INTO attachments (mime_type, size) VALUES ('text/plain', 1)",
-            [],
+            (),
         )
+        .await
         .expect_err("an attachment must have an owner");
     assert!(
         error
@@ -511,11 +530,11 @@ fn an_attachment_belongs_to_a_message_or_a_draft_but_never_both() {
     );
 }
 
-#[test]
-fn a_draft_and_its_recipients_are_storable() {
-    let connection = migrated();
+#[tokio::test]
+async fn a_draft_and_its_recipients_are_storable() {
+    let (_store, connection) = migrated().await;
     let account = Account::new("drafts", EmailAddress::new(None::<String>, "d@example.com"));
-    let account_id = store_account(&connection, &account);
+    let account_id = store_account(&connection, &account).await;
 
     let mut draft = Draft::new(account.id);
     draft.kind = DraftKind::ReplyAll;
@@ -531,13 +550,14 @@ fn a_draft_and_its_recipients_are_storable() {
                  account_id, identity_id, kind, in_reply_to_message_id, thread_id,
                  subject, body_text, body_html, state, created_at, updated_at)
              VALUES (?1, NULL, 'reply_all', NULL, NULL, ?2, ?3, NULL, 'queued', ?4, ?4)",
-            params![
+            bind![
                 account_id,
                 draft.subject,
                 draft.body.text,
                 millis(draft.created_at)
             ],
         )
+        .await
         .expect("insert draft");
     let draft_id = connection.last_insert_rowid();
 
@@ -547,35 +567,38 @@ fn a_draft_and_its_recipients_are_storable() {
             .execute(
                 "INSERT INTO recipients (draft_id, kind, position, name, address_id)
                  VALUES (?1, ?2, 0, ?3, ?4)",
-                params![
+                bind![
                     draft_id,
                     kind,
                     address.name,
-                    address_id(&connection, address)
+                    address_id(&connection, address).await
                 ],
             )
+            .await
             .expect("insert draft recipient");
     }
 
-    let count: i64 = connection
-        .query_row(
-            "SELECT count(*) FROM recipients WHERE draft_id = ?1",
-            [draft_id],
-            |row| row.get(0),
-        )
-        .expect("count");
+    let count: i64 = postio_storage::sql::one(
+        &connection,
+        "SELECT count(*) FROM recipients WHERE draft_id = ?1",
+        [draft_id],
+        |row| postio_storage::sql::RowExt::col(row, 0),
+    )
+    .await
+    .expect("count");
     assert_eq!(count, 2);
 }
 
-#[test]
-fn a_recipient_belongs_to_a_message_or_a_draft_but_never_both() {
-    let connection = migrated();
+#[tokio::test]
+async fn a_recipient_belongs_to_a_message_or_a_draft_but_never_both() {
+    let (_store, connection) = migrated().await;
     let error = connection
         .execute(
             "INSERT INTO recipients (kind, position, address_id)
              VALUES ('to', 0, 1)",
-            [],
+            (),
         )
+        .await
         .expect_err("a recipient must have an owner");
     assert!(
         error
@@ -585,16 +608,16 @@ fn a_recipient_belongs_to_a_message_or_a_draft_but_never_both() {
     );
 }
 
-#[test]
-fn a_thread_and_its_membership_are_storable() {
-    let connection = migrated();
+#[tokio::test]
+async fn a_thread_and_its_membership_are_storable() {
+    let (_store, connection) = migrated().await;
     let account = Account::new(
         "threads",
         EmailAddress::new(None::<String>, "t@example.com"),
     );
-    let account_id = store_account(&connection, &account);
+    let account_id = store_account(&connection, &account).await;
     let mailbox = Mailbox::new(account.id, "INBOX", None);
-    let mailbox_id = store_mailbox(&connection, account_id, &mailbox);
+    let mailbox_id = store_mailbox(&connection, account_id, &mailbox).await;
 
     let mut thread = Thread::new(account.id);
     thread.subject = Some("Invoice 42".to_owned());
@@ -611,7 +634,7 @@ fn a_thread_and_its_membership_are_storable() {
                  account_id, subject, message_count, unread_count, has_attachments,
                  is_flagged, first_at, last_at)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
-            params![
+            bind![
                 account_id,
                 thread.subject,
                 thread.message_count,
@@ -622,6 +645,7 @@ fn a_thread_and_its_membership_are_storable() {
                 millis(thread.last_at),
             ],
         )
+        .await
         .expect("insert thread");
     let thread_id = connection.last_insert_rowid();
 
@@ -631,69 +655,81 @@ fn a_thread_and_its_membership_are_storable() {
             .execute(
                 "INSERT INTO messages (account_id, mailbox_id, thread_id, received_at)
                  VALUES (?1, ?2, ?3, 0)",
-                params![account_id, mailbox_id, thread_id],
+                bind![account_id, mailbox_id, thread_id],
             )
+            .await
             .expect("insert thread member");
     }
-    let members: i64 = connection
-        .query_row(
-            "SELECT count(*) FROM messages WHERE thread_id = ?1",
-            [thread_id],
-            |row| row.get(0),
-        )
-        .expect("count members");
+    let members: i64 = postio_storage::sql::one(
+        &connection,
+        "SELECT count(*) FROM messages WHERE thread_id = ?1",
+        [thread_id],
+        |row| postio_storage::sql::RowExt::col(row, 0),
+    )
+    .await
+    .expect("count members");
     assert_eq!(members, 2);
 }
 
-#[test]
-fn labels_apply_to_many_messages_and_cascade() {
-    let connection = migrated();
+#[tokio::test]
+async fn labels_apply_to_many_messages_and_cascade() {
+    let (_store, connection) = migrated().await;
     let account = Account::new("labels", EmailAddress::new(None::<String>, "l@example.com"));
-    let account_id = store_account(&connection, &account);
+    let account_id = store_account(&connection, &account).await;
     let mailbox = Mailbox::new(account.id, "INBOX", None);
-    let mailbox_id = store_mailbox(&connection, account_id, &mailbox);
+    let mailbox_id = store_mailbox(&connection, account_id, &mailbox).await;
 
     let label = Label::new(account.id, "Work");
     connection
         .execute(
             "INSERT INTO labels (account_id, name, color) VALUES (?1, ?2, ?3)",
-            params![account_id, label.name, label.color],
+            bind![account_id, label.name, label.color],
         )
+        .await
         .expect("insert label");
     let label_id = connection.last_insert_rowid();
 
     connection
         .execute(
             "INSERT INTO messages (account_id, mailbox_id, received_at) VALUES (?1, ?2, 0)",
-            params![account_id, mailbox_id],
+            bind![account_id, mailbox_id],
         )
+        .await
         .expect("insert message");
     let message_id = connection.last_insert_rowid();
     connection
         .execute(
             "INSERT INTO message_labels (message_id, label_id) VALUES (?1, ?2)",
-            params![message_id, label_id],
+            bind![message_id, label_id],
         )
+        .await
         .expect("apply label");
     connection
         .execute(
             "INSERT INTO message_labels (message_id, label_id) VALUES (?1, ?2)",
-            params![message_id, label_id],
+            bind![message_id, label_id],
         )
+        .await
         .expect_err("a label applies to a message at most once");
 
     connection
         .execute("DELETE FROM labels WHERE id = ?1", [label_id])
+        .await
         .expect("delete label");
-    let remaining: i64 = connection
-        .query_row("SELECT count(*) FROM message_labels", [], |row| row.get(0))
-        .expect("count");
+    let remaining: i64 = postio_storage::sql::one(
+        &connection,
+        "SELECT count(*) FROM message_labels",
+        (),
+        |row| postio_storage::sql::RowExt::col(row, 0),
+    )
+    .await
+    .expect("count");
     assert_eq!(remaining, 0, "deleting a label unapplies it");
 }
 
-#[test]
-fn a_contact_accumulates_sightings() {
-    let connection = migrated();
+#[tokio::test]
+async fn a_contact_accumulates_sightings() {
+    let (_store, connection) = migrated().await;
     let mut contact = Contact::new(EmailAddress::new(Some("Alice"), "Alice@Example.com"));
     contact.record_seen(Utc.with_ymd_and_hms(2026, 2, 3, 0, 0, 0).unwrap());
 
@@ -702,7 +738,7 @@ fn a_contact_accumulates_sightings() {
             "INSERT INTO contacts (account_id, name, address, address_name,
                                    address_normalized, times_seen, last_seen_at)
              VALUES (NULL, ?1, ?2, ?3, ?4, ?5, ?6)",
-            params![
+            bind![
                 contact.name,
                 contact.address.address,
                 contact.address.name,
@@ -711,15 +747,22 @@ fn a_contact_accumulates_sightings() {
                 contact.last_seen_at.map(millis),
             ],
         )
+        .await
         .expect("insert contact");
 
-    let (normalized, times_seen): (String, i64) = connection
-        .query_row(
-            "SELECT address_normalized, times_seen FROM contacts",
-            [],
-            |row| Ok((row.get(0)?, row.get(1)?)),
-        )
-        .expect("read contact");
+    let (normalized, times_seen): (String, i64) = postio_storage::sql::one(
+        &connection,
+        "SELECT address_normalized, times_seen FROM contacts",
+        (),
+        |row| {
+            Ok((
+                postio_storage::sql::RowExt::col(row, 0)?,
+                postio_storage::sql::RowExt::col(row, 1)?,
+            ))
+        },
+    )
+    .await
+    .expect("read contact");
     assert_eq!(normalized, "alice@example.com");
     assert_eq!(times_seen, 1);
 }

@@ -369,11 +369,6 @@ impl Dispatcher {
         self.handlers.contains_key(&command)
     }
 
-    /// Whether this registered command has a handler.
-    pub fn handles_ext(&self, command: ExtId) -> bool {
-        self.ext.contains_key(&command)
-    }
-
     /// Every command that has one, in registry order.
     ///
     /// The application asserts on this: a registry entry with no handler is a

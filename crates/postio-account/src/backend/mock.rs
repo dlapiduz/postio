@@ -407,6 +407,12 @@ struct State {
     persistent_fault: Option<Fault>,
     latency: Duration,
     calls: u64,
+    /// The reason `create_mailbox` refuses with, when it is set to refuse.
+    /// See [`MockBackend::refuse_creates`].
+    refuse_creates: Option<String>,
+    /// Every path `create_mailbox` was asked for, in order, including ones
+    /// that already existed. See [`MockBackend::created`].
+    created: Vec<String>,
     /// Calls currently waiting out [`State::latency`].
     in_flight: usize,
     /// The largest [`State::in_flight`] ever reached.
@@ -420,9 +426,20 @@ struct State {
     /// [`State::header_fetches`]'s counterpart for `FETCH BODY` (part/text)
     /// calls. See [`MockBackend::body_fetches`].
     body_fetches: Vec<(u64, String)>,
+    /// One entry per *batched* section fetch: the section asked for, and how
+    /// many messages were named in the one call. See
+    /// [`MockBackend::section_batches`].
+    section_batches: Vec<(String, usize)>,
     /// Whether `existing_uids` refuses. See
     /// [`MockBackend::refuse_uid_listing`].
     refuse_uid_listing: bool,
+    /// How many UIDs `existing_uids` answers with, when the listing is short
+    /// of what the mailbox holds. See [`MockBackend::truncate_uid_listing`].
+    truncate_uid_listing: Option<usize>,
+    /// Whether `COPY`/`MOVE` answer without a `COPYUID`, as a UIDPLUS
+    /// server may (RFC 4315 §3: UIDNOTSTICKY, or no `SELECT` right on the
+    /// destination). See [`MockBackend::omit_uid_mappings`].
+    omit_uid_mappings: bool,
 }
 
 /// One served fetch, in [`MockBackend::fetch_order`].
@@ -605,6 +622,44 @@ impl MockBackend {
         self.state().refuse_uid_listing = true;
     }
 
+    /// Makes [`MailBackend::existing_uids`] answer with only the newest
+    /// `keep` UIDs, while `SELECT` goes on reporting the true `EXISTS`.
+    ///
+    /// Not a fault and not a refusal: the call *succeeds* and under-reports,
+    /// which is the shape that costs a mailbox its mail. A pass that believes
+    /// a short listing enumerates the few it was told about, completes, and
+    /// stamps `last_full_sync_at` — after which every later pass is
+    /// incremental against a mailbox that was never enumerated, and the
+    /// backlog is unreachable. Observed against a real server, where an INBOX
+    /// holding thousands listed one UID and `EXISTS` said otherwise.
+    pub fn truncate_uid_listing(&self, keep: usize) {
+        self.state().truncate_uid_listing = Some(keep);
+    }
+
+    /// Makes `COPY` and `MOVE` succeed without reporting the new UIDs, while
+    /// the server goes on advertising UIDPLUS.
+    ///
+    /// RFC 4315 §3 says a UIDPLUS server SHOULD return `COPYUID`, and names
+    /// two cases where it will not: a `UIDNOTSTICKY` destination, and a
+    /// destination the client may append to but not select. The message
+    /// moved either way; what the client does not learn is where it landed.
+    /// Reading that silence as "the message was gone" is #903.
+    pub fn omit_uid_mappings(&self) {
+        self.state().omit_uid_mappings = true;
+    }
+
+    /// Makes [`MailBackend::create_mailbox`] refuse with `reason`, as a server
+    /// that will not let this account make folders would.
+    ///
+    /// Narrower than a [`Fault`] for the same reason as
+    /// [`refuse_uid_listing`](Self::refuse_uid_listing): a fault fails *every*
+    /// call, and the case worth testing is the one where creation is refused
+    /// and listing, selecting and fetching all work perfectly. Discovery has
+    /// to finish that pass, leave the role unmapped, and not ask again.
+    pub fn refuse_creates(&self, reason: impl Into<String>) {
+        self.state().refuse_creates = Some(reason.into());
+    }
+
     /// Clears [`fail_all`](Self::fail_all)'s fault and any scheduled ones —
     /// "the user fixed it", whatever it was.
     pub fn clear_faults(&self) {
@@ -621,6 +676,15 @@ impl MockBackend {
     /// How many calls the backend has served.
     pub fn calls(&self) -> u64 {
         self.state().calls
+    }
+
+    /// Every path `create_mailbox` was asked for, oldest first.
+    ///
+    /// Includes paths that already existed — the call is idempotent, and a
+    /// test asserting "created once" has to be able to see a second attempt
+    /// that a silently-successful implementation would hide.
+    pub fn created(&self) -> Vec<String> {
+        self.state().created.clone()
     }
 
     /// Which mailbox each served header `FETCH` was for, oldest first.
@@ -652,6 +716,15 @@ impl MockBackend {
             .iter()
             .map(|(_, mailbox)| mailbox.clone())
             .collect()
+    }
+
+    /// Every batched section `FETCH`, as `(section, messages named)`.
+    ///
+    /// What says whether the backfill is asking for a *set* or walking a list
+    /// (#1551): a batch of twenty messages sharing section `1` should appear
+    /// here once with twenty, not twenty times with one.
+    pub fn section_batches(&self) -> Vec<(String, usize)> {
+        self.state().section_batches.clone()
     }
 
     /// Every served header and body/part `FETCH`, merged into the one
@@ -893,12 +966,17 @@ impl MockBackendBuilder {
                 faults: Vec::new(),
                 persistent_fault: None,
                 refuse_uid_listing: false,
+                truncate_uid_listing: None,
+                omit_uid_mappings: false,
                 latency: Duration::ZERO,
                 calls: 0,
+                refuse_creates: None,
+                created: Vec::new(),
                 in_flight: 0,
                 peak_in_flight: 0,
                 header_fetches: Vec::new(),
                 body_fetches: Vec::new(),
+                section_batches: Vec::new(),
                 chunk_size: self.chunk_size,
             })),
             notify: Arc::new(Notify::new()),
@@ -967,6 +1045,28 @@ impl MailBackend for MockBackend {
         Ok(listed)
     }
 
+    async fn create_mailbox(&self, path: &str) -> BackendResult<()> {
+        self.enter("CREATE").await?;
+        let mut state = self.state();
+        state.require_connected("CREATE")?;
+        state.created.push(path.to_owned());
+        if let Some(reason) = state.refuse_creates.clone() {
+            return Err(BackendError::Rejected {
+                command: "CREATE".to_owned(),
+                reason,
+            });
+        }
+        // Already there is success, not failure: the caller wants the folder
+        // to exist, not to have been the one that made it.
+        if state.index_of(path).is_ok() {
+            return Ok(());
+        }
+        state
+            .mailboxes
+            .push(MailboxState::seed(MockMailbox::new(path.to_owned())));
+        Ok(())
+    }
+
     async fn select(&self, path: &str, mode: SelectMode) -> BackendResult<MailboxStatus> {
         self.enter("SELECT").await?;
         let state = self.state();
@@ -1024,6 +1124,36 @@ impl MailBackend for MockBackend {
                 structure: message.structure.clone(),
             })
             .collect())
+    }
+
+    async fn fetch_sections(
+        &self,
+        mailbox: &str,
+        ids: &[RemoteId],
+        part: &BodyPart,
+        cancel: &CancelToken,
+    ) -> BackendResult<Vec<(RemoteId, Vec<u8>)>> {
+        // Recorded before anything can fail, because the question this answers
+        // is "did the caller ask for a set", and it asked whatever came back.
+        if let BodyPart::Section(section) = part {
+            self.state()
+                .section_batches
+                .push((section.clone(), ids.len()));
+        }
+        // Answered the way the trait's default does — the mock is a `Vec` and
+        // has no set primitive to be faster with. What it can report is the
+        // shape of the question.
+        let mut answered = Vec::with_capacity(ids.len());
+        for id in ids {
+            let mut sink = crate::backend::sink::VecSink::new();
+            match self.fetch_part(mailbox, id, part, &mut sink, cancel).await {
+                Ok(_) if sink.is_finished() => answered.push((id.clone(), sink.into_inner())),
+                Ok(_) => continue,
+                Err(BackendError::NoSuchMessage { .. }) => continue,
+                Err(error) => return Err(error),
+            }
+        }
+        Ok(answered)
     }
 
     async fn fetch_part(
@@ -1234,13 +1364,19 @@ impl MailBackend for MockBackend {
             });
         }
         let index = self.locate(&state, mailbox, "SEARCH")?;
-        Ok(Some(
-            state.mailboxes[index]
-                .messages
-                .iter()
-                .map(|message| Uid::new(message.uid))
-                .collect(),
-        ))
+        let mut uids: Vec<Uid> = state.mailboxes[index]
+            .messages
+            .iter()
+            .map(|message| Uid::new(message.uid))
+            .collect();
+        // The newest are kept, because that is what a listing cut short
+        // plausibly holds and it keeps the truncation from looking like an
+        // empty mailbox.
+        if let Some(keep) = state.truncate_uid_listing {
+            uids.sort_unstable_by_key(|uid| std::cmp::Reverse(uid.get()));
+            uids.truncate(keep);
+        }
+        Ok(Some(uids))
     }
 
     async fn append(
@@ -1383,7 +1519,11 @@ impl MockBackend {
             }
         }
 
-        Ok(if uid_plus { mapping } else { Vec::new() })
+        Ok(if uid_plus && !state.omit_uid_mappings {
+            mapping
+        } else {
+            Vec::new()
+        })
     }
 }
 

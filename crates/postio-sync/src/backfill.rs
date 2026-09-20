@@ -52,7 +52,7 @@ use postio_storage::BlobStore;
 use postio_storage::repository::{
     BackfillCandidate, MailboxRepository, MessageRepository, StoredBody,
 };
-use rusqlite::Connection;
+use postio_storage::{Checkout, Connection, WritePriority};
 
 use crate::blob_sink::BlobSink;
 use crate::drain::SyncError;
@@ -206,6 +206,152 @@ pub enum Priority {
     /// Nobody has asked; it is being fetched so that they can read it offline
     /// later.
     Background,
+}
+
+/// Section bytes fetched ahead of the messages that want them (#1551).
+///
+/// A body fetch is almost all round trip, so fetching one message per command
+/// makes a first sync one wait per message — tens of thousands of them, end
+/// to end, however fast the link. IMAP will answer a whole set in one command
+/// *if every message in it wants the same section*, and the text axis obliges:
+/// most mail's words are at `1` or `1.1`.
+///
+/// So this is a cache, filled by [`prefetch_text_sections`] and consulted by
+/// [`fetch_body`]. A miss is not an error — the per-message path fetches it
+/// the old way — which is what keeps the batch an optimisation rather than a
+/// second code path that can be wrong on its own.
+#[derive(Debug, Default)]
+pub struct Prefetched {
+    sections: HashMap<(postio_model::RemoteId, String), Vec<u8>>,
+}
+
+impl Prefetched {
+    /// The bytes of `section` for `id`, if the batch fetched them.
+    fn take(&mut self, id: &postio_model::RemoteId, section: &str) -> Option<Vec<u8>> {
+        self.sections.remove(&(id.clone(), section.to_owned()))
+    }
+
+    /// Everything fetched for `id`, moved out into a cache of its own.
+    ///
+    /// **Taken before the fetch, not during it.** The window's fetches run
+    /// concurrently over one shared cache, so a borrow held across an await
+    /// would be a second borrow waiting to panic. Each message lifts out what
+    /// is its own and carries it, which needs no sharing at all once taken.
+    pub fn split_for(&mut self, id: &postio_model::RemoteId) -> Prefetched {
+        let mine: Vec<_> = self
+            .sections
+            .keys()
+            .filter(|(owner, _)| owner == id)
+            .cloned()
+            .collect();
+        let mut split = Prefetched::default();
+        for key in mine {
+            if let Some(bytes) = self.sections.remove(&key) {
+                split.sections.insert(key, bytes);
+            }
+        }
+        split
+    }
+
+    /// How many sections it holds. Test support and logging.
+    pub fn len(&self) -> usize {
+        self.sections.len()
+    }
+
+    /// Whether it holds nothing.
+    pub fn is_empty(&self) -> bool {
+        self.sections.is_empty()
+    }
+}
+
+/// How many bytes of fetched-ahead sections may be held at once.
+///
+/// A batch does not stream: every answer is in memory together, which is the
+/// trade it makes for the round trips. Bounded against `RFC822.SIZE`, which
+/// the header sync already recorded, and conservatively — the whole message's
+/// size stands in for the text section's, which is always smaller.
+const PREFETCH_BUDGET: u64 = 8 * 1024 * 1024;
+
+/// How many messages may be named in one `UID FETCH`, whatever their size.
+///
+/// A set is a command line, and a command line has a length; grouping fifty
+/// uids is already most of the win, and ten thousand would be a request no
+/// server thanks you for.
+const PREFETCH_BATCH: usize = 50;
+
+/// Fetch the text sections of `requests` in as few commands as their section
+/// paths allow.
+///
+/// Grouped by `(path, section)`, because that is what IMAP can answer at
+/// once: `UID FETCH 1,5,9 BODY.PEEK[1]` is one round trip for as many
+/// messages as share section `1`.
+///
+/// Bounded twice — by [`PREFETCH_BUDGET`] and [`PREFETCH_BATCH`] — and
+/// best-effort throughout: a message whose row cannot be read, whose sections
+/// are unknown, or whose fetch fails is simply not in the answer, and
+/// [`fetch_body`] fetches it the old way. That is the whole safety argument
+/// for this being an optimisation: every miss degrades to the path that
+/// already worked.
+pub async fn prefetch_text_sections(
+    connection: &Checkout,
+    backend: &dyn MailBackend,
+    requests: &[BodyRequest],
+    cancel: &CancelToken,
+) -> Prefetched {
+    let mut prefetched = Prefetched::default();
+    if requests.len() < 2 {
+        // One message is not a batch, and asking for a set of one costs a
+        // round trip to save none.
+        return prefetched;
+    }
+
+    let messages = MessageRepository::new(connection);
+    // (path, section) -> the ids wanting it, and what they will cost.
+    let mut groups: HashMap<(String, String), Vec<postio_model::RemoteId>> = HashMap::new();
+    let mut budget = PREFETCH_BUDGET;
+    for request in requests {
+        if !matches!(request.want, Want::Text) {
+            continue;
+        }
+        if request.size > budget {
+            continue;
+        }
+        let Ok(Some(message)) = messages.get(request.message).await else {
+            continue;
+        };
+        let sections = [message.text_part_id.clone(), message.html_part_id.clone()];
+        let mut wanted = false;
+        for section in sections.into_iter().flatten() {
+            let group = groups.entry((request.path.clone(), section)).or_default();
+            if group.len() < PREFETCH_BATCH {
+                group.push(request.remote_id.clone());
+                wanted = true;
+            }
+        }
+        if wanted {
+            budget = budget.saturating_sub(request.size);
+        }
+    }
+
+    for ((path, section), ids) in groups {
+        if cancel.is_cancelled() || ids.len() < 2 {
+            continue;
+        }
+        let part = BodyPart::Section(section.clone());
+        match backend.fetch_sections(&path, &ids, &part, cancel).await {
+            Ok(answered) => {
+                for (id, bytes) in answered {
+                    prefetched.sections.insert((id, section.clone()), bytes);
+                }
+            }
+            // Best-effort: the per-message path is still there, and a batch
+            // that failed must not fail the bodies it was trying to help.
+            Err(error) => {
+                tracing::debug!(%path, %section, %error, "a batched section fetch failed");
+            }
+        }
+    }
+    prefetched
 }
 
 /// One body worth fetching.
@@ -645,6 +791,24 @@ impl Backfill {
         Some(self.claim(request, Priority::Background))
     }
 
+    /// A claim for a message **the user is waiting on**, or `None`.
+    ///
+    /// [`next_body`](Self::next_body) already prefers the interactive lane,
+    /// so this exists for one caller and one reason: the engine keeps a small
+    /// window of background fetches on the wire (#1551), and a window that
+    /// only refills when it has fully drained would make an opened message
+    /// wait for every fetch in it. Topping up with this instead means an
+    /// interactive request starts at the next free slot — one body's wait,
+    /// which is the bound the serial loop used to give — without the window
+    /// pulling more background work into a call that is supposed to return.
+    pub fn next_interactive_body(&mut self) -> Option<Claim> {
+        if self.cancelled {
+            return None;
+        }
+        let request = self.take_interactive()?;
+        Some(self.claim(request, Priority::Interactive))
+    }
+
     /// Records what became of a claim.
     pub fn finished(&mut self, message: MessageId, outcome: Outcome) {
         if self.lanes.remove(&message) != Some(Lane::InFlight) {
@@ -679,17 +843,6 @@ impl Backfill {
         if let Some(held) = self.deferred.remove(&message) {
             self.request_now(held);
         }
-    }
-
-    /// Offers everything set aside one more time.
-    ///
-    /// A fetch that failed while the link was going down is not the same
-    /// message as one the server genuinely cannot produce, and there is no way
-    /// to tell them apart at the time. So a reconnection forgives them all: the
-    /// next seed offers them again, and anything that fails a second time is
-    /// set aside a second time.
-    pub fn forgive_set_aside(&mut self) {
-        self.set_aside.clear();
     }
 
     /// Stops the backfill and everything it has on the wire.
@@ -784,19 +937,24 @@ impl Backfill {
 /// [`request_whole`] answer an interactive, on-open fetch exactly as they
 /// would for any other folder; only the unattended top-up this feeds skips
 /// an excluded one.
-pub fn seed(
+pub async fn seed(
     connection: &Connection,
     backfill: &mut Backfill,
     mailbox_id: MailboxId,
     limit: u32,
 ) -> Result<usize> {
-    if MailboxRepository::new(connection).backfill_excluded(mailbox_id)? {
+    if MailboxRepository::new(connection)
+        .backfill_excluded(mailbox_id)
+        .await?
+    {
         return Ok(0);
     }
     let messages = MessageRepository::new(connection);
     let mut offset = 0;
     loop {
-        let candidates = messages.needing_backfill_from(mailbox_id, limit, offset)?;
+        let candidates = messages
+            .needing_backfill_from(mailbox_id, limit, offset)
+            .await?;
         let read = candidates.len();
         let queued = candidates
             .into_iter()
@@ -821,12 +979,15 @@ pub fn seed(
 /// Returns `false` when there is nothing to fetch — the message has no local
 /// row any more, has no `UID` yet, or already has its full body — in which
 /// case the reading pane already has everything it is going to get from this.
-pub fn request_body(
+pub async fn request_body(
     connection: &Connection,
     backfill: &mut Backfill,
     message_id: MessageId,
 ) -> Result<bool> {
-    let Some(candidate) = MessageRepository::new(connection).backfill_candidate(message_id)? else {
+    let Some(candidate) = MessageRepository::new(connection)
+        .backfill_candidate(message_id)
+        .await?
+    else {
         return Ok(false);
     };
     backfill.request_now(candidate.into());
@@ -844,12 +1005,15 @@ pub fn request_body(
 /// Under ADR 0017 the text axis stores no raw source, so those bytes are not
 /// on this machine for any message the background lane fetched, and there is
 /// nowhere to get them but the server.
-pub fn request_whole(
+pub async fn request_whole(
     connection: &Connection,
     backfill: &mut Backfill,
     message_id: MessageId,
 ) -> Result<bool> {
-    let Some(candidate) = MessageRepository::new(connection).backfill_candidate(message_id)? else {
+    let Some(candidate) = MessageRepository::new(connection)
+        .backfill_candidate(message_id)
+        .await?
+    else {
         return Ok(false);
     };
     let mut request = BodyRequest::from(candidate);
@@ -878,7 +1042,7 @@ pub fn request_whole(
 /// never recorded escalates the request to [`Want::Whole`]: `BODY[2]` comes
 /// back encoded with nothing to say how, and storing base64 as though it were
 /// a PDF is worse than the extra bandwidth.
-pub fn request_payloads(
+pub async fn request_payloads(
     connection: &Connection,
     backfill: &mut Backfill,
     message_id: MessageId,
@@ -888,10 +1052,10 @@ pub fn request_payloads(
         return Ok(false);
     }
     let messages = MessageRepository::new(connection);
-    let Some(candidate) = messages.backfill_candidate(message_id)? else {
+    let Some(candidate) = messages.backfill_candidate(message_id).await? else {
         return Ok(false);
     };
-    let Some(message) = messages.get(message_id)? else {
+    let Some(message) = messages.get(message_id).await? else {
         return Ok(false);
     };
 
@@ -941,18 +1105,24 @@ pub fn request_payloads(
 /// competed with the mail somebody is reading would be the wrong trade. It
 /// stops finding work once the blocks are stored, which is what keeps it from
 /// being a permanent tax on every sync.
-pub fn seed_header_blocks(
+pub async fn seed_header_blocks(
     connection: &Connection,
     backfill: &mut Backfill,
     mailbox_id: MailboxId,
     limit: u32,
 ) -> Result<usize> {
-    if MailboxRepository::new(connection).backfill_excluded(mailbox_id)? {
+    if MailboxRepository::new(connection)
+        .backfill_excluded(mailbox_id)
+        .await?
+    {
         return Ok(0);
     }
     let messages = MessageRepository::new(connection);
     let mut queued = 0;
-    for candidate in messages.messages_needing_a_header_fetch(mailbox_id, limit)? {
+    for candidate in messages
+        .messages_needing_a_header_fetch(mailbox_id, limit)
+        .await?
+    {
         let mut request = BodyRequest::from(candidate);
         request.want = Want::HeaderBlock;
         if backfill.enqueue(request) {
@@ -975,24 +1145,29 @@ pub fn seed_header_blocks(
 /// a message set aside after a failed fetch stays `partial` for ever, so a
 /// folder whose newest batch is all such messages would answer the same rows
 /// on every seed and never reach the mail behind them.
-pub fn seed_payloads(
+pub async fn seed_payloads(
     connection: &Connection,
     backfill: &mut Backfill,
     mailbox_id: MailboxId,
     limit: u32,
 ) -> Result<usize> {
-    if MailboxRepository::new(connection).backfill_excluded(mailbox_id)? {
+    if MailboxRepository::new(connection)
+        .backfill_excluded(mailbox_id)
+        .await?
+    {
         return Ok(0);
     }
     let messages = MessageRepository::new(connection);
     let mut offset = 0;
     loop {
-        let candidates = messages.needing_payloads_from(mailbox_id, limit, offset)?;
+        let candidates = messages
+            .needing_payloads_from(mailbox_id, limit, offset)
+            .await?;
         let read = candidates.len();
         let mut queued = 0;
         for candidate in candidates {
             let message_id = candidate.message_id;
-            let Some(message) = messages.get(message_id)? else {
+            let Some(message) = messages.get(message_id).await? else {
                 continue;
             };
             let wanted = pending_payloads(&message);
@@ -1069,15 +1244,16 @@ fn pending_payloads(message: &postio_model::Message) -> Vec<String> {
 /// hole in search, and guessing section `1` would be wrong for every multipart
 /// message.
 pub async fn fetch_body(
-    connection: &Connection,
+    connection: &Checkout,
     blobs: &BlobStore,
     backend: &dyn MailBackend,
     request: &BodyRequest,
     inline_cap: Option<u64>,
+    prefetched: Option<&mut Prefetched>,
     cancel: &CancelToken,
 ) -> Result<Outcome> {
     let messages = MessageRepository::new(connection);
-    let Some(mut message) = messages.get(request.message)? else {
+    let Some(mut message) = messages.get(request.message).await? else {
         // Deleted, or wiped by a UIDVALIDITY reset, while this sat in the
         // queue. Checked before the fetch so a stale queue costs no bandwidth.
         return Ok(Outcome::Gone);
@@ -1099,7 +1275,7 @@ pub async fn fetch_body(
         // exists to avoid.
         Want::Text if message.content_type.is_some() => {
             return fetch_text_parts(
-                connection, blobs, backend, request, message, inline_cap, cancel,
+                connection, blobs, backend, request, message, inline_cap, prefetched, cancel,
             )
             .await;
         }
@@ -1117,8 +1293,13 @@ pub async fn fetch_body(
                 });
             };
             let bytes = block.text.len() as u64;
-            messages.set_headers(request.message, Some(&block))?;
-            index_the_header_block(connection, request.message, Some(&block));
+            // The gate, now that the wire is done with. See `writing` below.
+            let _permit = connection
+                .write_gate()
+                .acquire(WritePriority::Background)
+                .await;
+            messages.set_headers(request.message, Some(&block)).await?;
+            index_the_header_block(connection, request.message, Some(&block)).await;
             return Ok(Outcome::Stored { bytes });
         }
         // Every byte: asked for, or the only answer left for a row whose
@@ -1188,7 +1369,16 @@ pub async fn fetch_body(
     if message.preview.is_none() {
         message.preview = parsed.preview;
     }
-    messages.update(&mut message)?;
+
+    // Everything below this line writes, and nothing below it touches the
+    // wire, so this is where the gate belongs: taken after the fetch and held
+    // to the end. See `writing` for why a backfill takes one at all.
+    let _permit = connection
+        .write_gate()
+        .acquire(WritePriority::Background)
+        .await;
+
+    messages.update(&mut message).await?;
 
     // Every payload arrived with the message, so record where each one landed
     // — the same content-addressed blob the payload axis would have written,
@@ -1204,42 +1394,28 @@ pub async fn fetch_body(
             continue;
         };
         let blob = blobs.put(&part.content)?;
-        messages.set_attachment_blob(request.message, part_id, &blob)?;
+        messages
+            .set_attachment_blob(request.message, part_id, &blob)
+            .await?;
     }
 
     // The commit point. `Full` unconditionally, and honestly: whatever the
     // parse could not match to a row is still in the raw blob, which is what
     // `postio_app::reading::part_bytes` falls back to.
-    messages.set_body(request.message, &stored, BodyState::Full)?;
+    messages
+        .set_body(request.message, &stored, BodyState::Full)
+        .await?;
 
-    // And into the search index, *after* the commit point.
-    //
-    // This is the one place every body arrives — background backfill and the
-    // interactive fetch of whatever the user just opened both settle through
-    // here — which is why the call belongs here and not in a scheduler that
-    // sees only some of them. `index_body` had existed and been tested since
-    // the index was written and nothing in the workspace ever called it, so
-    // the `body` column was empty on every message ever synced (#327).
-    //
-    // After rather than before: an index entry for a body that is not local
-    // yet would let search answer for a corpus it does not have, and nothing
-    // could detect it. The other order — indexed but not committed — is a row
-    // the maintenance pass simply picks up again.
-    //
-    // Never fatal. A store whose search schema was never created is a real
-    // state (a headless sync, a test that only wants mail), and trading a
-    // fetched message for an unavailable index would be the wrong way round.
-    // `postio_session::index_local_bodies` sweeps up whatever this misses.
-    if let Err(error) =
-        postio_index::index::index_body_of(connection, request.message.get(), &parsed.body)
-    {
-        tracing::debug!(
-            message = request.message.get(),
-            %error,
-            "a fetched body did not reach the search index"
-        );
-    }
-    index_the_header_block(connection, request.message, block.as_ref());
+    // Not into the search index: a stored body with no
+    // `message_search_bodies` row *is* the indexer's queue
+    // (`messages_missing_body_text`), and `postio_session::
+    // spawn_body_indexer` drains it in batches of hundreds under one write,
+    // woken by the `BodyLoaded` this fetch emits. This lane used to write the
+    // row itself, one body at a time, after the commit point -- which put a
+    // tantivy segment merge on the sync lane every few hundred bodies, for
+    // seconds, and every folder queued behind it waited (#327 is why the
+    // call was here at all; the indexer is what it lacked).
+    index_the_header_block(connection, request.message, block.as_ref()).await;
     Ok(Outcome::Stored { bytes })
 }
 
@@ -1259,8 +1435,8 @@ pub async fn fetch_body(
 /// answer for a corpus the store does not have, and a store whose search
 /// schema was never created is a real state that must not cost a fetched
 /// message.
-fn index_the_header_block(
-    connection: &Connection,
+async fn index_the_header_block(
+    connection: &Checkout,
     message: MessageId,
     block: Option<&postio_model::headers::Block>,
 ) {
@@ -1271,7 +1447,9 @@ fn index_the_header_block(
         return;
     };
     let headers = postio_model::headers::parse_block(&block.text);
-    if let Err(error) = postio_index::index::index_headers(connection, message.get(), &headers) {
+    if let Err(error) =
+        postio_index::index::index_headers(connection, message.get(), &headers).await
+    {
         tracing::debug!(
             message = message.get(),
             %error,
@@ -1302,13 +1480,19 @@ fn index_the_header_block(
 /// forward-as-`message/rfc822` refetch on demand. And since ADR 0020 the
 /// decoded text is a column rather than a file, so this path touches the blob
 /// store nowhere: it is text in, row out.
+// One over the limit, and the eighth is the prefetch cache (#1551). The seven
+// before it are each a distinct thing this needs and none of them travel
+// together anywhere else, so bundling them would invent a struct whose only
+// purpose is to satisfy a count.
+#[allow(clippy::too_many_arguments)]
 async fn fetch_text_parts(
-    connection: &Connection,
+    connection: &Checkout,
     blobs: &BlobStore,
     backend: &dyn MailBackend,
     request: &BodyRequest,
     mut message: postio_model::Message,
     inline_cap: Option<u64>,
+    mut prefetched: Option<&mut Prefetched>,
     cancel: &CancelToken,
 ) -> Result<Outcome> {
     let messages = MessageRepository::new(connection);
@@ -1333,23 +1517,35 @@ async fn fetch_text_parts(
 
     for (section, headers) in wanted {
         let Some(section) = section else { continue };
-        let mut sink = VecSink::new();
-        backend
-            .fetch_part(
-                &request.path,
-                &request.remote_id,
-                &BodyPart::Section(section),
-                &mut sink,
-                cancel,
-            )
-            .await?;
-        if !sink.is_finished() {
-            // The sink contract, same as the whole-message path: without
-            // `finish` the bytes are a fragment, and a fragment stored as a
-            // body is worse than no body.
-            return Err(SyncError::Backend(BackendError::Cancelled));
-        }
-        let raw = sink.into_inner();
+        // Fetched ahead with the rest of its batch, if it was (#1551). A miss
+        // is ordinary -- an unbatchable message, a batch that failed, a
+        // section nobody else wanted -- and costs only the round trip this
+        // always paid.
+        let batched = prefetched
+            .as_mut()
+            .and_then(|cache| cache.take(&request.remote_id, &section));
+        let raw = match batched {
+            Some(bytes) => bytes,
+            None => {
+                let mut sink = VecSink::new();
+                backend
+                    .fetch_part(
+                        &request.path,
+                        &request.remote_id,
+                        &BodyPart::Section(section),
+                        &mut sink,
+                        cancel,
+                    )
+                    .await?;
+                if !sink.is_finished() {
+                    // The sink contract, same as the whole-message path:
+                    // without `finish` the bytes are a fragment, and a
+                    // fragment stored as a body is worse than no body.
+                    return Err(SyncError::Backend(BackendError::Cancelled));
+                }
+                sink.into_inner()
+            }
+        };
         bytes += raw.len() as u64;
 
         let mut entity = headers.unwrap_or_default().into_bytes();
@@ -1400,7 +1596,9 @@ async fn fetch_text_parts(
             continue;
         };
         bytes += moved;
-        messages.set_attachment_blob(request.message, &part_id, &blob)?;
+        messages
+            .set_attachment_blob(request.message, &part_id, &blob)
+            .await?;
         // Kept in step with the row, so `state_for` below reads the truth
         // rather than the structure as the header sync left it.
         if let Some(attachment) = message
@@ -1432,7 +1630,15 @@ async fn fetch_text_parts(
     if message.preview.is_none() {
         message.preview = preview;
     }
-    messages.update(&mut message)?;
+    // The text axis's write phase. The sections are fetched above; from
+    // here down it is all store, so the gate is taken once and held to the
+    // end rather than per statement.
+    let _permit = connection
+        .write_gate()
+        .acquire(WritePriority::Background)
+        .await;
+
+    messages.update(&mut message).await?;
 
     // `partial` means text local, payloads not — the variant the schema
     // declared and nothing had ever written until ADR 0017 gave it a meaning.
@@ -1441,17 +1647,10 @@ async fn fetch_text_parts(
 
     // The commit point, after which the body is local as far as anything else
     // is concerned. See `fetch_body` for why it is last.
-    messages.set_body(request.message, &stored, state)?;
+    messages.set_body(request.message, &stored, state).await?;
 
-    if let Err(error) = postio_index::index::index_body_of(connection, request.message.get(), &body)
-    {
-        tracing::debug!(
-            message = request.message.get(),
-            %error,
-            "a fetched body did not reach the search index"
-        );
-    }
-    index_the_header_block(connection, request.message, block.as_ref());
+    // The search row is the indexer's, not this lane's -- see `fetch_body`.
+    index_the_header_block(connection, request.message, block.as_ref()).await;
     Ok(Outcome::Stored { bytes })
 }
 
@@ -1611,7 +1810,7 @@ async fn fetch_section(
 /// Nothing to keep: the message around the part was never fetched. That is the
 /// point.
 async fn fetch_payloads(
-    connection: &Connection,
+    connection: &Checkout,
     blobs: &BlobStore,
     backend: &dyn MailBackend,
     request: &BodyRequest,
@@ -1638,16 +1837,29 @@ async fn fetch_payloads(
             continue;
         };
         bytes += moved;
-        messages.set_attachment_blob(request.message, part_id, &blob)?;
+        {
+            let _permit = connection
+                .write_gate()
+                .acquire(WritePriority::Background)
+                .await;
+            messages
+                .set_attachment_blob(request.message, part_id, &blob)
+                .await?;
+        }
     }
+
+    let _permit = connection
+        .write_gate()
+        .acquire(WritePriority::Background)
+        .await;
 
     // The commit point for this axis. Re-read rather than reasoned about: the
     // rows above were written one at a time, and what matters here is whether
     // *every* part is local now — including ones this request never asked for.
-    if let Some(settled) = messages.get(request.message)? {
+    if let Some(settled) = messages.get(request.message).await? {
         let state = state_for(&settled.attachments);
         if settled.sync.body_state != state {
-            messages.set_body_state(request.message, state)?;
+            messages.set_body_state(request.message, state).await?;
         }
     }
 
@@ -1816,21 +2028,24 @@ mod tests {
         message
     }
 
-    #[test]
-    fn seed_queues_everything_a_mailbox_is_missing_newest_first() {
-        let database = postio_storage::test_support::memory();
-        let connection = database.connection().expect("checkout");
-        let (account, inbox) = postio_storage::test_support::account_with_inbox(&connection);
+    #[tokio::test]
+    async fn seed_queues_everything_a_mailbox_is_missing_newest_first() {
+        let database = postio_storage::test_support::memory().await;
+        let connection = database.connect().await.expect("checkout");
+        let (account, inbox) = postio_storage::test_support::account_with_inbox(&connection).await;
         let messages = MessageRepository::new(&connection);
 
         for (seconds, uid) in [(1, 1), (2, 2), (3, 3)] {
             messages
                 .create(&mut headers_only(account.id, inbox, seconds, uid))
+                .await
                 .expect("create");
         }
 
         let mut backfill = Backfill::new(BackfillPolicy::default());
-        let queued = seed(&connection, &mut backfill, inbox, 10).expect("seed");
+        let queued = seed(&connection, &mut backfill, inbox, 10)
+            .await
+            .expect("seed");
 
         assert_eq!(queued, 3);
         assert_eq!(backfill.progress().pending, 3);
@@ -1839,60 +2054,126 @@ mod tests {
         assert_eq!(claim.priority, Priority::Background);
     }
 
-    #[test]
-    fn seed_leaves_the_backlog_empty_when_nothing_is_missing() {
-        let database = postio_storage::test_support::memory();
-        let connection = database.connection().expect("checkout");
-        let (_account, inbox) = postio_storage::test_support::account_with_inbox(&connection);
+    #[tokio::test]
+    async fn seed_leaves_the_backlog_empty_when_nothing_is_missing() {
+        let database = postio_storage::test_support::memory().await;
+        let connection = database.connect().await.expect("checkout");
+        let (_account, inbox) = postio_storage::test_support::account_with_inbox(&connection).await;
 
         let mut backfill = Backfill::new(BackfillPolicy::default());
         assert_eq!(
-            seed(&connection, &mut backfill, inbox, 10).expect("seed"),
+            seed(&connection, &mut backfill, inbox, 10)
+                .await
+                .expect("seed"),
             0
         );
         assert!(backfill.next_body().is_none());
     }
 
-    #[test]
-    fn request_body_jumps_the_queue_for_whatever_the_reading_pane_opened() {
-        let database = postio_storage::test_support::memory();
-        let connection = database.connection().expect("checkout");
-        let (account, inbox) = postio_storage::test_support::account_with_inbox(&connection);
+    #[tokio::test]
+    async fn request_body_jumps_the_queue_for_whatever_the_reading_pane_opened() {
+        let database = postio_storage::test_support::memory().await;
+        let connection = database.connect().await.expect("checkout");
+        let (account, inbox) = postio_storage::test_support::account_with_inbox(&connection).await;
         let messages = MessageRepository::new(&connection);
 
         let mut older = headers_only(account.id, inbox, 1, 1);
-        messages.create(&mut older).expect("create");
+        messages.create(&mut older).await.expect("create");
         let mut newer = headers_only(account.id, inbox, 2, 2);
-        messages.create(&mut newer).expect("create");
+        messages.create(&mut newer).await.expect("create");
 
         let mut backfill = Backfill::new(BackfillPolicy::default());
-        seed(&connection, &mut backfill, inbox, 10).expect("seed");
+        seed(&connection, &mut backfill, inbox, 10)
+            .await
+            .expect("seed");
 
         // The user opened the OLDER message; the interactive lane must still
         // put it ahead of the newer one the background lane would fetch first.
-        assert!(request_body(&connection, &mut backfill, older.id).expect("lookup"));
+        assert!(
+            request_body(&connection, &mut backfill, older.id)
+                .await
+                .expect("lookup")
+        );
 
         let claim = backfill.next_body().expect("a claim");
         assert_eq!(claim.priority, Priority::Interactive);
         assert_eq!(claim.request.message, older.id);
     }
 
-    #[test]
-    fn request_body_for_a_message_with_nothing_to_fetch_is_a_no_op() {
-        let database = postio_storage::test_support::memory();
-        let connection = database.connection().expect("checkout");
-        let (account, inbox) = postio_storage::test_support::account_with_inbox(&connection);
+    /// #1551: the engine's window tops up with interactive work only.
+    ///
+    /// `next_interactive_body` is what lets a window of background fetches
+    /// pick up a message the user just opened at the next free slot. It must
+    /// take an interactive claim when there is one and **nothing** when there
+    /// is not — a background claim here would make the engine's call
+    /// unbounded, since it tops up after every settled fetch.
+    #[tokio::test]
+    async fn an_interactive_top_up_takes_interactive_work_and_nothing_else() {
+        let database = postio_storage::test_support::memory().await;
+        let connection = database.connect().await.expect("checkout");
+        let (account, inbox) = postio_storage::test_support::account_with_inbox(&connection).await;
+        let messages = MessageRepository::new(&connection);
+
+        let mut created = Vec::new();
+        for (seconds, uid) in [(1, 1), (2, 2), (3, 3)] {
+            let mut message = headers_only(account.id, inbox, seconds, uid);
+            messages.create(&mut message).await.expect("create");
+            created.push(message.id);
+        }
+
+        let mut backfill = Backfill::new(BackfillPolicy::default());
+        seed(&connection, &mut backfill, inbox, 10)
+            .await
+            .expect("seed");
+
+        // A queue full of background work, and nobody waiting: the top-up
+        // must decline it rather than pulling the archive in.
+        assert!(
+            backfill.next_interactive_body().is_none(),
+            "a background queue is not interactive work"
+        );
+
+        // Now the user opens the oldest one.
+        assert!(
+            request_body(&connection, &mut backfill, created[0])
+                .await
+                .expect("lookup")
+        );
+        let claim = backfill
+            .next_interactive_body()
+            .expect("the opened message is interactive work");
+        assert_eq!(claim.priority, Priority::Interactive);
+        assert_eq!(claim.request.message, created[0], "the one the user opened");
+
+        // And once it has been handed out, there is nothing interactive left.
+        assert!(
+            backfill.next_interactive_body().is_none(),
+            "the same interactive claim must not be handed out twice"
+        );
+    }
+
+    #[tokio::test]
+    async fn request_body_for_a_message_with_nothing_to_fetch_is_a_no_op() {
+        let database = postio_storage::test_support::memory().await;
+        let connection = database.connect().await.expect("checkout");
+        let (account, inbox) = postio_storage::test_support::account_with_inbox(&connection).await;
         let messages = MessageRepository::new(&connection);
 
         let mut fully_fetched = headers_only(account.id, inbox, 1, 1);
         fully_fetched.sync.body_state = BodyState::Full;
-        messages.create(&mut fully_fetched).expect("create");
+        messages.create(&mut fully_fetched).await.expect("create");
 
         let mut backfill = Backfill::new(BackfillPolicy::default());
 
-        assert!(!request_body(&connection, &mut backfill, fully_fetched.id).expect("lookup"));
         assert!(
-            !request_body(&connection, &mut backfill, MessageId::new(404)).expect("lookup"),
+            !request_body(&connection, &mut backfill, fully_fetched.id)
+                .await
+                .expect("lookup")
+        );
+        assert!(
+            !request_body(&connection, &mut backfill, MessageId::new(404))
+                .await
+                .expect("lookup"),
             "no local row at all is the same answer, not an error"
         );
         assert!(backfill.next_body().is_none());

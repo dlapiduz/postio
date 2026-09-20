@@ -35,6 +35,7 @@ use crate::keymap::{self, ChordFromGdk, KeyContext, Outcome, Resolver};
 use crate::list_state::ListStateView;
 use crate::list_view::MessageListView;
 use crate::settings::SettingsPanel;
+use postio_ui::reader::rail::{NARROW_BELOW, UNMOUNT_BELOW};
 
 /// How big the settings window opens.
 ///
@@ -55,7 +56,7 @@ type CommandHandler = Box<dyn Fn(CommandId)>;
 
 /// Switch to a mailbox, the way picking it in the sidebar does. See
 /// [`Window::open_mailbox`].
-type OpenMailbox = std::rc::Rc<dyn Fn(postio_model::ids::MailboxId)>;
+type OpenMailbox = std::rc::Rc<dyn Fn(crate::sidebar::SidebarChoice)>;
 
 /// What to call with a whole invocation — the verb *and* what it is aimed at.
 type ActionHandler = Box<dyn Fn(postio_core::Command)>;
@@ -67,6 +68,7 @@ type ExtCommandHandler = Box<dyn Fn(postio_core::ExtId)>;
 type KeymapHandler = Box<dyn Fn(&postio_core::Keymap)>;
 /// See [`Window::connect_storage_changed`].
 type StorageHandler = Box<dyn Fn(Option<u64>)>;
+type MailtoHandler = Box<dyn Fn(postio_model::mailto::Mailto)>;
 
 /// The default size, from canvas 1b: a 1120px board over a 52px header bar.
 ///
@@ -105,12 +107,23 @@ enum Showing {
 }
 
 mod imp {
-    use std::cell::OnceCell;
+    use std::cell::{OnceCell, RefCell};
 
     use super::*;
 
     #[derive(Default)]
     pub struct Window {
+        /// Where this window's startup is being recorded, when anything is
+        /// recording it (#1479).
+        ///
+        /// `postio_gtk::app::build_with` sets it on the one window the
+        /// application opens; a window built for a test of one widget has
+        /// none, and marking a phase on it is then a no-op. It lives here
+        /// rather than being threaded through `install_feeds` because the
+        /// phases worth marking are in the *composition root* -- the panes
+        /// are pointed at the store by `postio_app::feed_the_window`, which
+        /// holds a `&Window` and nothing else that could carry a timeline.
+        pub timeline: RefCell<Option<crate::startup::Timeline>>,
         pub shell: OnceCell<Shell>,
         pub sidebar: OnceCell<Sidebar>,
         pub list_state: OnceCell<ListStateView>,
@@ -140,7 +153,16 @@ mod imp {
         /// Installed lazily, on first [`Window::composer`] — nothing before
         /// that call needs it, and the composition root is the one place
         /// that both installs and wires it.
-        pub composer: OnceCell<crate::composer::Composer>,
+        /// The composer in the reading pane, when there is one.
+        ///
+        /// Replaceable rather than a `OnceCell` since ADR 0034: starting a
+        /// second draft moves this one into a window of its own and builds a
+        /// fresh one here, so "the composer" is a role rather than an object.
+        pub composer: RefCell<Option<crate::composer::Composer>>,
+        /// The ones that have been pushed out, kept alive because nothing
+        /// else owns them -- their windows hold their widgets, and a window
+        /// with no owning reference is a window that closes on its own.
+        pub detached_composers: RefCell<Vec<crate::composer::Composer>>,
         /// The hardened reader, built into the reading pane on first use.
         ///
         /// Lazy for the reason the composer is: a `WebKitWebView` is the most
@@ -213,18 +235,11 @@ mod imp {
         /// the box is ever opened, so a pick can never answer a move the user
         /// abandoned two openings ago.
         pub pending_move: std::cell::Cell<bool>,
-        /// The context that had the keyboard before it went to the folders,
-        /// so `Esc` puts it back where it was rather than guessing `List`.
-        pub before_sidebar: std::cell::Cell<Option<Context>>,
-        /// The context that had the keyboard before it went to the parts
-        /// panel, restored when the panel closes — see `before_sidebar`.
-        pub before_parts: std::cell::Cell<Option<Context>>,
-        /// The context that had the keyboard before it went to the account
-        /// list in settings — see `before_sidebar` (#471).
-        pub before_accounts: std::cell::Cell<Option<Context>>,
-        /// The context that had the keyboard before it went to the
-        /// keybinding list in settings — see `before_sidebar` (#1016).
-        pub before_keys: std::cell::Cell<Option<Context>>,
+        /// Where the keyboard was before it went into the folders, the parts
+        /// panel or a list in settings (#471, #1016), so leaving each puts
+        /// it back where it was rather than guessing `List`. The rule is
+        /// [`postio_ui::focus::Returns`]'s; this only holds it.
+        pub returns: std::cell::RefCell<postio_ui::focus::Returns>,
         /// Set once `keys_list`'s own `EventControllerFocus` has been
         /// added — never during `Window::new`'s own construction. See
         /// `Window::ensure_keys_focus_controller`'s own doc for why.
@@ -236,6 +251,14 @@ mod imp {
         /// What the mail on screen belongs to. Beside `context` because the
         /// two together are what decides whether a command is offered (#182).
         pub scope: std::cell::Cell<postio_core::Scope>,
+        /// Whether the local store behind this window is open yet (#1114).
+        ///
+        /// Starts `false`, which is the truth about every window the moment
+        /// it is built: `postio-app` presents the window and *then* opens the
+        /// store, so the interval is real rather than theoretical. A window
+        /// built for a test of one widget stays here and offers the chrome,
+        /// which is what such a window can in fact do.
+        pub store_open: std::cell::Cell<bool>,
         pub commands: std::cell::RefCell<Vec<CommandHandler>>,
         /// Handlers for whole invocations, which the mouse produces — see
         /// [`Window::connect_action`](super::Window::connect_action).
@@ -250,6 +273,11 @@ mod imp {
         /// Whoever owns the store side of `[storage] max_bytes` — see
         /// [`Window::connect_storage_changed`](super::Window::connect_storage_changed).
         pub storage_changed: std::cell::RefCell<Vec<StorageHandler>>,
+        /// Whoever can turn a `mailto:` link into a draft — see
+        /// [`Window::connect_mailto`](super::Window::connect_mailto) — and
+        /// the links that arrived before anyone could.
+        pub mailto_handler: std::cell::RefCell<Option<MailtoHandler>>,
+        pub mailto_pending: std::cell::RefCell<Vec<postio_model::mailto::Mailto>>,
         /// The keymap currently in force, once one has been applied, so a
         /// surface built later can be handed it rather than waiting for the
         /// next edit.
@@ -289,6 +317,41 @@ glib::wrapper! {
 }
 
 impl Window {
+    /// Record this window's startup into `timeline`.
+    ///
+    /// Called once, by [`crate::app::build_with`], on the window the
+    /// application actually opens. Everything else builds windows that are
+    /// not a startup and leaves this unset.
+    pub fn set_timeline(&self, timeline: crate::startup::Timeline) {
+        *self.imp().timeline.borrow_mut() = Some(timeline);
+    }
+
+    /// Close this window's startup timeline once it is showing mail.
+    ///
+    /// [`crate::startup::report_usable`] against whatever is recording this
+    /// window's startup, or nothing at all on a window nobody is measuring —
+    /// the same bargain [`mark_startup`](Self::mark_startup) makes, and for
+    /// the same reason: the caller that knows the panes have been fed is in
+    /// the composition root, and all it holds is a window.
+    pub fn report_usable(&self) {
+        let timeline = self.imp().timeline.borrow().clone();
+        if let Some(timeline) = timeline {
+            crate::startup::report_usable(self, &timeline);
+        }
+    }
+
+    /// Note that this window's startup has reached `phase`.
+    ///
+    /// A no-op on a window nothing is measuring, so a caller in the
+    /// composition root marks unconditionally rather than asking first --
+    /// which is what keeps the marks on the ordinary path rather than
+    /// behind a branch that could be wrong.
+    pub fn mark_startup(&self, phase: crate::startup::Phase) {
+        if let Some(timeline) = self.imp().timeline.borrow().as_ref() {
+            timeline.mark(phase);
+        }
+    }
+
     /// A window belonging to `application`.
     pub fn new(application: &impl IsA<gtk::Application>) -> Self {
         glib::Object::builder()
@@ -325,6 +388,102 @@ impl Window {
             self.list().grab_focus();
         }
         gtk::prelude::GtkWindowExt::present(self);
+    }
+
+    /// Say when focus leaves the workspace, and to what.
+    ///
+    /// Reported from a real session: minimising or maximising the window puts
+    /// focus in the search field and pops its hint. Three candidate paths were
+    /// tested and none reproduces it --- a breakpoint hiding the focused pane,
+    /// an unmap and remap, and a remap that bypasses `present`'s
+    /// `if focus().is_none()` guard (#614); `gtk_shell` holds all three. So
+    /// the mechanism is still unknown, and the thing that would name it is
+    /// knowing *what* claims focus at the moment it happens.
+    ///
+    /// Only when focus lands outside the three panes, which is rare and is
+    /// the whole event of interest: pressing `/` does it deliberately, a
+    /// resize doing it does not. `debug`, because this is a diagnostic and
+    /// not a fault --- there is no fault to report until this says what the
+    /// widget is.
+    ///
+    /// Not a guard. Putting focus back whenever it leaves the panes would
+    /// fight the user reaching for the search field, which is the same
+    /// gesture from the outside.
+    fn watch_focus(&self) {
+        // Whether focus has just been away from the window altogether. That
+        // transition is the whole of the signal: see `restore_focus_after`.
+        let was_away = std::rc::Rc::new(std::cell::Cell::new(false));
+        self.connect_notify_local(
+            Some("focus-widget"),
+            glib::clone!(
+                #[weak(rename_to = window)]
+                self,
+                #[strong]
+                was_away,
+                move |_: &Window, _| {
+                    let shell = window.shell();
+                    let focus = gtk::prelude::GtkWindowExt::focus(&window);
+                    let Some(focus) = focus else {
+                        tracing::debug!("focus left the window entirely");
+                        was_away.set(true);
+                        return;
+                    };
+                    if focus.is_ancestor(&shell) {
+                        was_away.set(false);
+                        return;
+                    }
+                    tracing::debug!(
+                        widget = focus.type_().name(),
+                        name = focus.widget_name().as_str(),
+                        "focus moved outside the panes"
+                    );
+                    if was_away.replace(false) {
+                        window.restore_focus_after(&focus);
+                    }
+                }
+            ),
+        );
+    }
+
+    /// Put focus back in the panes after the window took it back.
+    ///
+    /// Maximising or restoring the window moves focus out of the window
+    /// entirely and then GTK puts it back by walking the focus chain from the
+    /// start. The header is first, so it lands on the sidebar toggle and then
+    /// on the search field's `GtkText` --- measured, in that order:
+    ///
+    /// ```text
+    /// focus left the window entirely
+    /// focus moved outside the panes widget="GtkToggleButton"
+    /// focus moved outside the panes widget="GtkText"
+    /// ```
+    ///
+    /// Focus arriving in that field *opens the finder* (`Finder::attach`, and
+    /// deliberately: a click there asks the same question `/` asks). So
+    /// maximising the window opened the command box over the reader, with its
+    /// hints, on a gesture that was about the window.
+    ///
+    /// # Why the `None` in between is the whole signal
+    ///
+    /// A person clicking the search field goes pane → field. The window
+    /// taking focus back goes field-or-pane → *nothing* → chrome. Only the
+    /// second has focus leave the window on the way, so only the second is
+    /// answered here --- clicking the header still works exactly as it did,
+    /// and no timer or heuristic is involved.
+    ///
+    /// The finder is dismissed as well as focus moved: it opened the instant
+    /// focus arrived, before this runs, so moving focus away would otherwise
+    /// leave the box up with nothing in it.
+    fn restore_focus_after(&self, taken_by: &gtk::Widget) {
+        // `close_finder` rather than the finder's own `dismiss`: it also puts
+        // back the context and pane the box borrowed when it opened, which is
+        // the half a bare close would leave behind.
+        self.close_finder();
+        self.list().grab_focus();
+        tracing::debug!(
+            widget = taken_by.type_().name(),
+            "the window took focus back on a state change; returned it to the list"
+        );
     }
 
     /// The three panes, for whoever is filling them.
@@ -373,19 +532,13 @@ impl Window {
         // needed one. Without it `j` here reached the window's own resolver
         // first and moved the message selection instead of walking the
         // tree; see `postio-14b`.
-        if self.context() != Context::Parts {
-            self.imp().before_parts.set(Some(self.context()));
-            self.set_context(Context::Parts);
-        }
+        self.enter_surface(Context::Parts);
     }
 
     /// Put the parts panel away.
     pub fn close_parts(&self) {
         self.parts().set_visible(false);
-        if self.context() == Context::Parts {
-            let previous = self.imp().before_parts.take().unwrap_or(Context::List);
-            self.set_context(previous);
-        }
+        self.leave_surface(Context::Parts);
     }
 
     /// The rows the list is holding for `thread`.
@@ -476,7 +629,7 @@ impl Window {
 
     /// Put a conversation in the reading pane, and the reader aside.
     ///
-    /// The tail of [`Window::show_thread`] that is not about the column, so
+    /// The tail of [`Window::show_conversation`] that is not about the column, so
     /// [`Window::open_conversation`] can raise the pane without one. Expects
     /// `rows` oldest first — [`crate::conversation::arrange`]'s order — because
     /// Whether the conversation pane is the one on screen.
@@ -522,6 +675,12 @@ impl Window {
             && let Some(pane) = self.imp().conversation.get()
         {
             pane.cancel_dwell();
+            // And any document it was about to draw, for the same reason one
+            // sentence up: it is not what is in front of the reader any more.
+            // A redraw is coalesced behind a short timer, so one queued just
+            // before the cursor moved off would otherwise land *after* the
+            // new message and replace it (#1497).
+            pane.cancel_pending_redraw();
         }
     }
 
@@ -624,7 +783,7 @@ impl Window {
     /// test suite timing out rather than as anything obviously wrong.
     #[doc(hidden)]
     pub fn has_composer(&self) -> bool {
-        self.imp().composer.get().is_some()
+        self.imp().composer.borrow().is_some()
     }
 
     /// The composer, installing it into the reading pane the first time
@@ -634,9 +793,75 @@ impl Window {
     /// window used only for a test of, say, the sidebar has no reason to pay
     /// for a composer nobody opens. Whoever wires storage to it — the
     /// composition root — is the one place that needs this at all.
+    /// Opens `draft` for editing and answers the composer holding it.
+    ///
+    /// ADR 0034's rule, and the three cases it names. A draft that is already
+    /// open is brought forward rather than opened twice (FR-013). Otherwise
+    /// the reading pane takes it — and if the pane already holds a different
+    /// draft, that one moves into a window of its own first (FR-010, FR-011)
+    /// rather than being refused, discarded, or asked about.
+    ///
+    /// What makes the move lossless is not the widget surviving, which it no
+    /// longer does: it is that the draft is the record (ADR 0004), so moving
+    /// one surface to another is a save and a resume. `gtk_composer_resume.rs`
+    /// is what proves that path carries text, formatting, recipients and
+    /// attachments.
+    pub fn open_draft(&self, draft: postio_model::Draft) -> crate::composer::Composer {
+        if let Some(open) = self.composer_holding(draft.id) {
+            open.present_surface();
+            return open;
+        }
+
+        let pane = self.composer();
+        if pane.is_open() && pane.draft().id != draft.id {
+            pane.detach();
+            self.imp().detached_composers.borrow_mut().push(pane);
+            // A fresh one for the pane. `install` registers it as the pane's
+            // occupant and adds the compose action, both of which *replace*
+            // the outgoing composer's — which is right, since that one is in
+            // a window now and has no business being shown or hidden by the
+            // pane.
+            let fresh = crate::composer::install(self);
+            *self.imp().composer.borrow_mut() = Some(fresh.clone());
+            fresh.open(draft);
+            return fresh;
+        }
+
+        pane.open(draft);
+        pane
+    }
+
+    /// Whichever open composer is holding `draft`, if any.
+    ///
+    /// `DraftId::UNASSIGNED` matches nothing: an unsaved draft has no
+    /// identity to be the same as, and treating two of them as one would
+    /// hand somebody else's half-written message back to them.
+    fn composer_holding(&self, draft: postio_model::DraftId) -> Option<crate::composer::Composer> {
+        if !draft.is_assigned() {
+            return None;
+        }
+        let held = |composer: &crate::composer::Composer| {
+            composer.is_open() && composer.draft().id == draft
+        };
+        self.imp()
+            .composer
+            .borrow()
+            .as_ref()
+            .filter(|composer| held(composer))
+            .cloned()
+            .or_else(|| {
+                self.imp()
+                    .detached_composers
+                    .borrow()
+                    .iter()
+                    .find(|composer| held(composer))
+                    .cloned()
+            })
+    }
+
     pub fn composer(&self) -> crate::composer::Composer {
-        if let Some(composer) = self.imp().composer.get() {
-            return composer.clone();
+        if let Some(composer) = self.imp().composer.borrow().clone() {
+            return composer;
         }
         let composer = crate::composer::install(self);
         // The two share the reading pane, so each hand-over is a swap. Wired
@@ -671,7 +896,7 @@ impl Window {
         if let Some(keymap) = self.imp().keymap.borrow().as_ref() {
             composer.set_keymap(keymap);
         }
-        let _ = self.imp().composer.set(composer.clone());
+        *self.imp().composer.borrow_mut() = Some(composer.clone());
         composer
     }
 
@@ -796,11 +1021,13 @@ impl Window {
     /// Falls back to that one, which is what a folder row that is not a
     /// conversation puts on screen.
     fn reader_showing(&self) -> crate::reader::Reader {
+        // The conversation has *one* reader for the whole thread now (#1426),
+        // so there is no per-message one to ask for -- if the pane is up, its
+        // document is what is on screen.
         self.imp()
             .conversation
             .get()
-            .and_then(|pane| pane.focused())
-            .and_then(|message| self.conversation().reader_for(message))
+            .and_then(|pane| pane.document_reader())
             .unwrap_or_else(|| self.reader())
     }
 
@@ -978,7 +1205,8 @@ impl Window {
     fn composing(&self) -> bool {
         self.imp()
             .composer
-            .get()
+            .borrow()
+            .as_ref()
             .is_some_and(|composer| composer.is_open())
     }
 
@@ -1044,6 +1272,32 @@ impl Window {
         self.imp().compose_button.get().cloned()
     }
 
+    /// What the window is currently saying to the person at the keyboard.
+    ///
+    /// The text rather than the widget: a caller wanting to know whether
+    /// something was said wants to read it, and handing out the overlay would
+    /// let anything show a toast without going through the two methods that
+    /// decide how one is phrased.
+    pub fn announced(&self) -> Option<String> {
+        self.imp()
+            .toast
+            .get()
+            .and_then(|toast| toast.showing())
+            .and_then(|shown| shown.title())
+            .map(|title| title.to_string())
+    }
+
+    /// A plain statement to the person at the keyboard, with nothing to undo.
+    ///
+    /// Not [`Window::show_action_completed`] with `undoable: false`, though
+    /// that is what it delegates to: the cases here are ones where *nothing*
+    /// completed -- a key pressed for a folder this account does not have --
+    /// and a call site saying "action completed" about that reads as the
+    /// opposite of what happened.
+    pub fn announce(&self, description: &str) {
+        self.show_action_completed(description, false);
+    }
+
     /// *Archived 12 messages — Undo.* Whoever applies a
     /// [`postio_core::Command`] and gets back an undoable
     /// [`postio_core::Event::ActionCompleted`] calls this with it; `u` and
@@ -1064,6 +1318,22 @@ impl Window {
     }
 
     /// *Account removed — Undo*, with `on_undo` reachable only from this
+    /// This window's toast overlay, once `build` has made one.
+    ///
+    /// `None` on a window that has not been built yet, which is not a state
+    /// the application is ever in and is a state a widget test can be.
+    pub fn toast(&self) -> Option<&crate::toast::Toast> {
+        self.imp().toast.get()
+    }
+
+    /// Say one sentence, with nothing to press — see
+    /// [`crate::toast::Toast::show_notice`].
+    pub fn show_notice(&self, sentence: &str) {
+        if let Some(toast) = self.imp().toast.get() {
+            toast.show_notice(sentence);
+        }
+    }
+
     /// toast's own button — see [`crate::toast::Toast::show_removable`].
     pub fn show_removable_toast(&self, description: &str, on_undo: impl Fn() + 'static) {
         if let Some(toast) = self.imp().toast.get() {
@@ -1094,7 +1364,30 @@ impl Window {
         let show = self.imp().open_mailbox.borrow().clone();
         if let Some(show) = show {
             self.sidebar().select(mailbox);
-            show(mailbox);
+            // Always a real folder: this is a notification's click, and a
+            // notification is about a message that arrived somewhere.
+            show(crate::sidebar::SidebarChoice::Folder(mailbox));
+        }
+    }
+
+    /// Switch to a view — Flagged, Snoozed, the Outbox — the way picking it
+    /// in the sidebar does.
+    ///
+    /// [`open_mailbox`](Self::open_mailbox)'s other half. A view has no
+    /// [`MailboxId`](postio_model::ids::MailboxId) to pass to that one
+    /// (ADR 0036), so without this there is no way in from outside a click at
+    /// all: the shot tool wanted one, and so would a notification about a
+    /// send that stopped.
+    ///
+    /// A no-op before [`install_feeds`](Self::install_feeds), and a no-op for
+    /// a view the sidebar is not currently drawing — an empty Outbox draws no
+    /// row (spec 003 FR-012), and asking for it is a question with the
+    /// answer "there is nothing there", not an error.
+    pub fn open_view(&self, role: postio_model::mailbox::MailboxRole) {
+        let show = self.imp().open_mailbox.borrow().clone();
+        if let Some(show) = show {
+            self.sidebar().select_view(role);
+            show(crate::sidebar::SidebarChoice::View(role));
         }
     }
 
@@ -1136,26 +1429,41 @@ impl Window {
 
         // One way to show a folder, whether the user picked it or the window
         // is opening on the one they were last in.
-        let show: std::rc::Rc<dyn Fn(postio_model::ids::MailboxId)> = {
+        let show: OpenMailbox = {
             let feed = feed.clone();
             let folders = folders.clone();
             let list = list.clone();
-            std::rc::Rc::new(move |id| {
-                if let Some(mailbox) = folders.mailbox(id) {
+            let list_state = self.list_state();
+            std::rc::Rc::new(move |choice| {
+                // A view row is in `mailboxes()` like any other — it just has
+                // no id — so the header above the rows is named the same way
+                // whichever kind was picked.
+                let chosen = match choice {
+                    crate::sidebar::SidebarChoice::Folder(id) => folders.mailbox(id),
+                    crate::sidebar::SidebarChoice::View(role) => folders
+                        .mailboxes()
+                        .into_iter()
+                        .find(|m| postio_ui::sidebar::is_view(m) && m.role == role),
+                };
+                if let Some(mailbox) = chosen {
                     // The same word the sidebar uses, from the same place:
                     // the folder the user clicked must not change its name
                     // on the way to the header above the rows. Among its
                     // siblings, because a role's twin is named by the
                     // server, not by the role (#501).
-                    list.set_mailbox(
-                        &crate::sidebar::display_name(&mailbox, &folders.mailboxes()),
-                        mailbox.counts.unread,
+                    let name = crate::sidebar::display_name(&mailbox, &folders.mailboxes());
+                    list.set_mailbox(&name, mailbox.counts.unread);
+                    // And the empty plate is titled with the same word, so
+                    // an empty Archive says so rather than "Inbox is empty"
+                    // (#1535). The inbox itself keeps its own line.
+                    list_state.set_place(
+                        (mailbox.role != postio_model::mailbox::MailboxRole::Inbox).then_some(name),
                     );
                 }
                 // The sidebar deals in row ids; everything below here deals
                 // in scopes, because "Flagged" is a query and has no folder
                 // to name.
-                feed.open(folders.scope_of(id));
+                feed.open(folders.scope_of(choice));
             })
         };
         *self.imp().open_mailbox.borrow_mut() = Some(show.clone());
@@ -1217,7 +1525,9 @@ impl Window {
                     return;
                 }
                 window.sidebar().select(id);
-                show(id);
+                // A drop target is a folder by definition: a view is not a
+                // place a message can be put.
+                show(crate::sidebar::SidebarChoice::Folder(id));
             }
         ));
 
@@ -1226,6 +1536,7 @@ impl Window {
             let feed = feed.clone();
             let folders = folders.clone();
             let sidebar = self.sidebar();
+            let list = list.clone();
             // Which folder tree this handler has already opened something
             // for. `None` is "not yet": generations start at zero, so zero
             // is a real value rather than a spare one.
@@ -1235,6 +1546,23 @@ impl Window {
             // emitted `MailboxesChanged` (#813).
             let picked_for = std::cell::Cell::new(None::<u64>);
             move |loaded| {
+                // Refresh the header's "N unread" for the folder already on
+                // screen, on every load. `set_mailbox` is called elsewhere
+                // only when a folder is *opened*, so without this the count
+                // above the rows kept its open-time value while a resync
+                // moved the real one -- the sidebar's badge updated and the
+                // header did not, and the two disagreed (INBOX read "32
+                // unread" over two). The name is unchanged, so this touches
+                // the count and leaves the selection alone.
+                if let Some(id) = feed.mailbox()
+                    && let Some(mailbox) = folders.mailbox(id)
+                {
+                    list.set_mailbox(
+                        &crate::sidebar::display_name(&mailbox, &folders.mailboxes()),
+                        mailbox.counts.unread,
+                    );
+                }
+
                 let generation = folders.generation();
                 if picked_for.get() == Some(generation) {
                     return;
@@ -1267,7 +1595,9 @@ impl Window {
                     // arrive.
                     picked_for.set(Some(generation));
                     sidebar.select(id);
-                    show(id);
+                    // `default_mailbox` answers with a real folder -- it
+                    // skips anything unassigned for exactly this reason.
+                    show(crate::sidebar::SidebarChoice::Folder(id));
                 }
             }
         });
@@ -1389,6 +1719,7 @@ impl Window {
     fn build(&self) {
         self.set_title(Some("Postio"));
         self.add_css_class("postio-window");
+        self.watch_focus();
 
         // Every window carries its own scheme classes: `tokens.css` keys its
         // dark and high-contrast blocks off `:root`, which in GTK is the root
@@ -1410,22 +1741,12 @@ impl Window {
         focus.connect_enter(glib::clone!(
             #[weak(rename_to = window)]
             self,
-            move |_| {
-                if window.context() != Context::Sidebar {
-                    window.imp().before_sidebar.set(Some(window.context()));
-                    window.set_context(Context::Sidebar);
-                }
-            }
+            move |_| window.enter_surface(Context::Sidebar)
         ));
         focus.connect_leave(glib::clone!(
             #[weak(rename_to = window)]
             self,
-            move |_| {
-                if window.context() == Context::Sidebar {
-                    let previous = window.imp().before_sidebar.take();
-                    window.set_context(previous.unwrap_or(Context::List));
-                }
-            }
+            move |_| window.leave_surface(Context::Sidebar)
         ));
         sidebar.add_controller(focus);
 
@@ -1572,6 +1893,7 @@ impl Window {
         // fit.
         self.restore(&shell, &sidebar);
         shell.install_breakpoints(self);
+        self.install_rail_breakpoints();
         header.sidebar_toggle.set_active(shell.sidebar_visible());
 
         let _ = self.imp().shell.set(shell);
@@ -1591,22 +1913,12 @@ impl Window {
         accounts_focus.connect_enter(glib::clone!(
             #[weak(rename_to = window)]
             self,
-            move |_| {
-                if window.context() != Context::Accounts {
-                    window.imp().before_accounts.set(Some(window.context()));
-                    window.set_context(Context::Accounts);
-                }
-            }
+            move |_| window.enter_surface(Context::Accounts)
         ));
         accounts_focus.connect_leave(glib::clone!(
             #[weak(rename_to = window)]
             self,
-            move |_| {
-                if window.context() == Context::Accounts {
-                    let previous = window.imp().before_accounts.take();
-                    window.set_context(previous.unwrap_or(Context::List));
-                }
-            }
+            move |_| window.leave_surface(Context::Accounts)
         ));
         settings.accounts_list().add_controller(accounts_focus);
 
@@ -1729,6 +2041,42 @@ impl Window {
     /// the caller — `context`, because this window has gone back to its own,
     /// and whether the user is typing, which is a fact about the *satellite's*
     /// focus and would otherwise be read off a widget nobody is looking at.
+    /// Resolves a key for a satellite window that will act on it itself.
+    ///
+    /// [`handle_key_in`](Self::handle_key_in) resolves *and* dispatches,
+    /// which broadcasts to every `connect_command` subscriber — right while
+    /// there is one composer and wrong the moment there are several, since
+    /// `Send` would then send every open draft (ADR 0034). A surface that
+    /// knows which composition it is holding asks for the id and acts on it
+    /// alone.
+    ///
+    /// The keymap is still this window's, so `[keys]` reaches both containers
+    /// and there is only ever one binding table to keep in step.
+    pub fn command_for_key_in(
+        &self,
+        key: gtk::gdk::Key,
+        state: gtk::gdk::ModifierType,
+        source: &impl IsA<gtk::Window>,
+        context: Context,
+    ) -> Option<CommandId> {
+        let typing = gtk::prelude::GtkWindowExt::focus(source.as_ref())
+            .is_some_and(|focus| focus.is::<gtk::Text>() || focus.is::<gtk::TextView>());
+        let chord = keymap::Chord::from_key_event(key, state)?;
+        let outcome = self.imp().resolver.get()?.borrow_mut().press(
+            &chord,
+            KeyContext::from(context),
+            typing,
+            std::time::Instant::now(),
+        );
+        match outcome {
+            Outcome::Command(id) => match id.parse::<ActionId>() {
+                Ok(ActionId::Builtin(id)) => Some(id),
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+
     pub fn handle_key_in(
         &self,
         key: gtk::gdk::Key,
@@ -1827,6 +2175,40 @@ impl Window {
     /// compiler while being equal to the user, which is the whole shape of
     /// ADR 0002.
     fn run_action(&self, id: ActionId) {
+        // **Refuse out loud rather than be swallowed** (#1114). A window is
+        // on screen before its store is, and a key bound to something that
+        // reads mail cannot run there -- but a key that silently does
+        // nothing is indistinguishable from a key that is not bound, which
+        // is how "it randomly stopped working" gets reported. The precedent
+        // is reply in the composer (#426), which is *available* for exactly
+        // this reason: availability is not success, it is the chance to say
+        // so.
+        //
+        // Only this requirement, deliberately. `SingleAccount` has no
+        // sentence to offer and never had one -- `Move` in a unified view
+        // has always simply not resolved to anything -- and inventing one
+        // here would be #182's decision made by the wrong issue.
+        //
+        // **Gated on there being a wait to name, not merely on the store
+        // being shut.** The refusal *is* the sentence: without one there is
+        // nothing to say out loud, and blocking silently would be the bug
+        // this exists to fix wearing a different hat. Every state the
+        // application actually reaches has one -- whoever opens the store
+        // records what it is waiting on before the window is presented --
+        // and a window nobody has told is opening anything is a window
+        // nobody has claimed is missing a store, which is what a widget test
+        // builds.
+        if let Some(waiting) = self.list_state().waiting()
+            && !self.imp().store_open.get()
+            && postio_core::registry::spec(id)
+                .is_some_and(|spec| spec.requires.contains(postio_core::Requirement::StoreOpen))
+        {
+            // The same sentence the plate would show, from the same place,
+            // so the keyboard and the pane cannot describe one wait two
+            // ways.
+            self.show_notice(crate::list_state::describe_wait(waiting).1);
+            return;
+        }
         // ADR 0012 Q6: the first-run orientation is over the moment somebody
         // runs a command from the keyboard or the palette, whether or not it
         // ever appeared. This is the seam that can tell that apart from a
@@ -1876,6 +2258,91 @@ impl Window {
     /// Closing an overlay and moving the cursor are the window's own
     /// business: nothing outside it needs to hear about them, and there is
     /// nothing for a command bus to do with them.
+    /// Tell the conversation pane which side of the rail's two lines the
+    /// window is on.
+    ///
+    /// Breakpoints report the band; `postio_ui::reader::rail::presentation`
+    /// still decides what to draw, because the ladder is not only about width
+    /// -- a single-message thread and a rail put away with `⇧I` have no rail
+    /// at any width, and a breakpoint cannot know either. So these hand over a
+    /// width and nothing more, and the thresholds stay in one place.
+    fn install_rail_breakpoints(&self) {
+        for (line, below, at_or_above) in [
+            (NARROW_BELOW, NARROW_BELOW - 1, NARROW_BELOW),
+            (UNMOUNT_BELOW, UNMOUNT_BELOW - 1, UNMOUNT_BELOW),
+        ] {
+            let condition = adw::BreakpointCondition::new_length(
+                adw::BreakpointConditionLengthType::MaxWidth,
+                (line - 1) as f64,
+                adw::LengthUnit::Px,
+            );
+            let breakpoint = adw::Breakpoint::new(condition);
+            breakpoint.connect_apply(glib::clone!(
+                #[weak(rename_to = window)]
+                self,
+                move |_| window.tell_the_rail_the_width(below)
+            ));
+            breakpoint.connect_unapply(glib::clone!(
+                #[weak(rename_to = window)]
+                self,
+                move |_| window.tell_the_rail_the_width(at_or_above)
+            ));
+            self.add_breakpoint(breakpoint);
+        }
+    }
+
+    /// Pass a width to the conversation pane **if there is one**.
+    ///
+    /// Never through `conversation()`, which builds the pane on first call and
+    /// appends it to the reading slot. A breakpoint applies while the window
+    /// is being presented, so asking that way built a conversation pane in
+    /// every window at startup -- before any conversation was opened, and
+    /// eventually a warm `WebView` with it. `gtk_reader_pane_owner` caught it
+    /// by counting the slot's children.
+    ///
+    /// Nothing is lost by staying quiet: a pane that does not exist has no
+    /// rail to place, and `ConversationView::open` reads the window's width
+    /// itself when it has not been told one.
+    fn tell_the_rail_the_width(&self, width: i32) {
+        if let Some(pane) = self.imp().conversation.get() {
+            pane.set_window_width(width);
+        }
+    }
+
+    /// Turn the page of whichever reading surface is up, and build neither.
+    ///
+    /// Both `conversation()` and `reader()` construct their surface on first
+    /// call and append it to the reading slot, so asking either one *whether*
+    /// it wants a page key is enough to mount it. In a window that has opened
+    /// nothing, that means a page key builds a `ConversationView` and a
+    /// `Reader` -- and the `Reader` carries a `WebView`, which is a web
+    /// process. #1374 met the same trap through a breakpoint and
+    /// `gtk_reader_pane_owner` counts the slot's children because of it.
+    ///
+    /// So both are reached through `imp()`, and a window with nothing open
+    /// does nothing at all -- which is also the right answer: there is no
+    /// page to turn.
+    ///
+    /// The conversation goes first because when its pane is up it is the one
+    /// on screen; `ConversationView::page` answers `false` when it is mounted
+    /// but not the surface being read, and then the single-message reader
+    /// takes it.
+    fn page_what_is_on_screen(&self, down: bool) {
+        if let Some(pane) = self.imp().conversation.get()
+            && pane.page(down)
+        {
+            return;
+        }
+        let Some(reader) = self.imp().reader.get() else {
+            return;
+        };
+        if down {
+            reader.page_down();
+        } else {
+            reader.page_up();
+        }
+    }
+
     fn handled_here(&self, id: CommandId) -> bool {
         match id {
             CommandId::CommandPalette => self.open_finder(Mode::Command),
@@ -1898,7 +2365,14 @@ impl Window {
             // when that reader is already showing the sender's own markup
             // (#1009).
             CommandId::ViewOriginal => {
-                self.reader_showing().view_original();
+                // The one-document pane holds several messages in one view, so
+                // the key has to name which one -- the focused message, which
+                // is the one the reader is looking at. `view_original` alone
+                // reads state only the single-message path fills, so it was a
+                // silent no-op there (#1398).
+                if !self.conversation().show_focused_message_whole() {
+                    self.reader_showing().view_original();
+                }
             }
 
             // The conversation's own, so it goes to the pane rather than out
@@ -1906,6 +2380,14 @@ impl Window {
             // how much of a conversation is open (#1004).
             CommandId::ExpandAll => {
                 self.conversation().expand_all();
+            }
+            // Same reasoning as `ExpandAll`: the rail belongs to the pane, so
+            // this goes straight there rather than out on the bus. Without
+            // this arm the command resolves, the palette lists it, and
+            // pressing the key does nothing at all -- which is #756's shape
+            // and what `gtk_toggle_rail` exists to catch.
+            CommandId::ToggleRail => {
+                self.conversation().toggle_rail();
             }
             CommandId::Settings => self.toggle_settings(),
             CommandId::Search => self.open_finder(Mode::Search),
@@ -1981,6 +2463,18 @@ impl Window {
             // `close_finder` alone restores focus and the keymap context
             // without ever telling `Feed` the search is over.
             CommandId::Back if self.finder().is_open() => self.finder().press_escape(),
+            // The results outlive the box that made them (#1474). It closes
+            // when the keyboard moves onto the list to read a hit, and the
+            // arm above then cannot fire -- so `Escape` matched nothing at
+            // all and the list stayed on stale results with no box open to
+            // explain why. #1011 fixed the half where the box is still up;
+            // this is the other half.
+            //
+            // Through `press_escape` for the reason #1011 gives, and it is
+            // sound with the box shut: `dismiss` fires `on_dismissed`
+            // whether or not anything is open, and the handler that restores
+            // the folder already returns early when there are no results.
+            CommandId::Back if self.list().showing_results() => self.finder().press_escape(),
             CommandId::Back if self.settings().is_visible() => self.close_settings(),
             // Nearer than a selection made before the keyboard went to the
             // folders: `Esc` in the sidebar means "back to the messages".
@@ -2039,8 +2533,12 @@ impl Window {
             // (#438) is the reader's own business the same way the parts
             // panel's cursor is -- nothing outside this window needs to hear
             // about it.
-            CommandId::ScrollReaderDown => self.reader().page_down(),
-            CommandId::ScrollReaderUp => self.reader().page_up(),
+            // The conversation's own reader when that pane is up, the way
+            // `ViewOriginal` reaches it (#1398). `Window::reader()` is the
+            // single-message one, and paging it while a conversation is on
+            // screen scrolls a view nobody is looking at (#1402).
+            CommandId::ScrollReaderDown => self.page_what_is_on_screen(true),
+            CommandId::ScrollReaderUp => self.page_what_is_on_screen(false),
             _ => return false,
         }
         true
@@ -2064,8 +2562,7 @@ impl Window {
         if !self.sidebar().focus_folders() {
             return;
         }
-        self.imp().before_sidebar.set(Some(self.context()));
-        self.set_context(Context::Sidebar);
+        self.enter_surface(Context::Sidebar);
     }
 
     /// Move the keyboard one pane along: sidebar, list, reader, round.
@@ -2073,24 +2570,19 @@ impl Window {
     /// #494: bare Tab had no entry in the table at all, so its top-level
     /// meaning was whatever GTK's native focus chain produced -- "sometimes
     /// it changes panes, sometimes it changes items within a pane". This is
-    /// the deliberate version.
+    /// the deliberate version, and the table is
+    /// [`postio_ui::focus::next_pane`]'s — the macOS app walks the same one.
     ///
     /// Three panes, always the same three. The drill-in used to make the
     /// middle one sometimes a thread column instead of the list (#1003);
     /// the list is only ever the list now, and the conversation is what the
     /// reading pane holds rather than a pane of its own.
     fn cycle_pane(&self, forward: bool) {
-        let next = match (self.context(), forward) {
-            (Context::Sidebar, true) => Context::List,
-            (Context::List | Context::Conversation, true) => Context::Reader,
-            (Context::Reader, true) => Context::Sidebar,
-            (Context::Sidebar, false) => Context::Reader,
-            (Context::List | Context::Conversation, false) => Context::Sidebar,
-            (Context::Reader, false) => Context::List,
-            // Tab does not resolve to this command anywhere else -- see
-            // `PANE_SURFACES` -- so any other context means the keymap and
-            // the registry disagree. Do nothing rather than guess a pane.
-            _ => return,
+        // Tab does not resolve to this command outside the panes -- see
+        // `PANE_SURFACES` -- so no next pane means the keymap and the
+        // registry disagree. Do nothing rather than guess one.
+        let Some(next) = postio_ui::focus::next_pane(self.context(), forward) else {
+            return;
         };
         self.focus_pane(next);
     }
@@ -2123,9 +2615,38 @@ impl Window {
 
     /// Give the keyboard back to whatever had it before the folders.
     fn leave_sidebar(&self) {
-        let previous = self.imp().before_sidebar.take().unwrap_or(Context::List);
-        self.set_context(previous);
+        self.leave_surface(Context::Sidebar);
         self.list().grab_focus();
+    }
+
+    /// Record that the keyboard's context is going into `surface`, and go.
+    ///
+    /// Idempotent: a focus controller firing for a child widget of a
+    /// surface the keyboard is already in changes nothing — see
+    /// [`postio_ui::focus::Returns::enter`].
+    fn enter_surface(&self, surface: Context) {
+        // The borrow ends before `set_context` runs anything.
+        let next = self
+            .imp()
+            .returns
+            .borrow_mut()
+            .enter(surface, self.context());
+        if let Some(next) = next {
+            self.set_context(next);
+        }
+    }
+
+    /// Give the keyboard's context back to whatever had it before
+    /// `surface`, if the keyboard is in `surface` at all.
+    fn leave_surface(&self, surface: Context) {
+        let previous = self
+            .imp()
+            .returns
+            .borrow_mut()
+            .leave(surface, self.context());
+        if let Some(previous) = previous {
+            self.set_context(previous);
+        }
     }
 
     /// Hand one invocation to everything listening, in both shapes.
@@ -2180,7 +2701,8 @@ impl Window {
     fn composer_body_has_keyboard(&self) -> bool {
         self.imp()
             .composer
-            .get()
+            .borrow()
+            .as_ref()
             .is_some_and(|composer| composer.focused_field() == Some(crate::composer::Field::Body))
     }
 
@@ -2266,13 +2788,70 @@ impl Window {
     /// registry decides; this is only how the answer gets there.
     pub fn set_scope(&self, scope: postio_core::Scope) {
         self.imp().scope.set(scope);
-        self.finder().set_scope(scope);
-        self.cheatsheet().set_scope(scope);
+        self.publish_availability();
     }
 
     /// The scope the window is showing.
     pub fn scope(&self) -> postio_core::Scope {
         self.imp().scope.get()
+    }
+
+    /// Whether the local store behind this window is open yet (#1114).
+    ///
+    /// `false` from the moment the window is presented until the store lands,
+    /// which is a real interval on a real install: the keyring read, the
+    /// schema migrations and the search-index rebuild all happen behind a
+    /// window that already exists, and a migration launch has been twelve
+    /// seconds. What it changes is the vocabulary — the palette and the cheat
+    /// sheet list only what can actually run — not the window's appearance.
+    pub fn set_store_open(&self, open: bool) {
+        if open {
+            // One direction only, and implied rather than a second thing to
+            // remember: a window with a store behind it is not waiting for
+            // one, and a plate still saying so would be the window
+            // disagreeing with itself.
+            self.list_state().set_opening(None);
+        }
+        if self.imp().store_open.replace(open) == open {
+            return;
+        }
+        self.publish_availability();
+    }
+
+    /// What this window is waiting for before it has a store (#1114).
+    ///
+    /// Nothing appears when this is called: the list pane says nothing at
+    /// all until the wait has already passed `list_state::OPENING_THRESHOLD`,
+    /// which an ordinary start never does. Calling it again with a different
+    /// wait restarts that clock — see
+    /// [`ListStateView::set_opening`](crate::list_state::ListStateView::set_opening).
+    ///
+    /// It does *not* say the store is closed; [`set_store_open`] is what the
+    /// keyboard, the palette and the cheat sheet read. The two are set
+    /// together by whoever is opening the store, because one is what the
+    /// window can do and the other is what it says.
+    ///
+    /// [`set_store_open`]: Self::set_store_open
+    pub fn set_waiting_on(&self, waiting: crate::list_state::Waiting) {
+        self.list_state().set_opening(Some(waiting));
+    }
+
+    /// What this window can currently do, as the registry evaluates it.
+    ///
+    /// The one place the two halves are combined, so the palette, the cheat
+    /// sheet and anything asking `available` cannot disagree about what is
+    /// offered.
+    pub fn availability(&self) -> postio_core::Availability {
+        postio_core::Availability {
+            scope: self.imp().scope.get(),
+            store_open: self.imp().store_open.get(),
+        }
+    }
+
+    fn publish_availability(&self) {
+        let state = self.availability();
+        self.finder().set_availability(state);
+        self.cheatsheet().set_availability(state);
     }
 
     /// Called with every command a key press resolves to.
@@ -2324,6 +2903,37 @@ impl Window {
         }
     }
 
+    /// A `mailto:` link the desktop handed this application.
+    ///
+    /// The window cannot act on it: a new message is *from* an account, and
+    /// which one is the composition root's to say, once the store is open.
+    /// So this hands the link to whoever [`connect_mailto`](Self::connect_mailto)
+    /// connected, and holds it — in order, for as long as it takes — when
+    /// nobody has yet. A cold launch from a browser is exactly that gap: the
+    /// link is the first thing to arrive and the account is the last.
+    pub fn deliver_mailto(&self, mailto: postio_model::mailto::Mailto) {
+        // Taken out of the cell before it is called: a handler that opens the
+        // composer can reach back into this window, and a borrow held across
+        // that is the `borrow_mut` panic this crate has met before.
+        let handler = self.imp().mailto_handler.borrow();
+        match handler.as_ref() {
+            Some(handler) => handler(mailto),
+            None => self.imp().mailto_pending.borrow_mut().push(mailto),
+        }
+    }
+
+    /// Called with every `mailto:` link, including the ones that arrived
+    /// before this was connected, oldest first. One listener: connecting
+    /// again replaces the last one, which is what a composition root that is
+    /// fed a second time wants.
+    pub fn connect_mailto(&self, handler: impl Fn(postio_model::mailto::Mailto) + 'static) {
+        *self.imp().mailto_handler.borrow_mut() = Some(Box::new(handler));
+        let pending = std::mem::take(&mut *self.imp().mailto_pending.borrow_mut());
+        for mailto in pending {
+            self.deliver_mailto(mailto);
+        }
+    }
+
     /// Called with every *registered* command a key or a palette row reaches.
     ///
     /// The extension counterpart of [`connect_action`](Self::connect_action).
@@ -2357,6 +2967,31 @@ impl Window {
 
     /// Run an invocation: the window's own commands first, then the handlers.
     pub fn act(&self, command: postio_core::Command) {
+        // A destination is a role, not a name: an inbox a provider calls
+        // something else is still where `g i` goes. Resolved against the
+        // sidebar's own list so the key and the click reach the same row,
+        // and routed through `open_mailbox`, which *is* that click -- a
+        // second way to arrive would be a second set of bugs about what the
+        // sidebar highlights.
+        use postio_model::mailbox::MailboxRole;
+        let destination = match command {
+            postio_core::Command::GoToInbox => Some((MailboxRole::Inbox, "inbox")),
+            postio_core::Command::GoToDrafts => Some((MailboxRole::Drafts, "drafts folder")),
+            postio_core::Command::GoToSent => Some((MailboxRole::Sent, "sent folder")),
+            postio_core::Command::GoToFlagged => Some((MailboxRole::Flagged, "flagged folder")),
+            _ => None,
+        };
+        if let Some((role, called)) = destination {
+            match self.sidebar().mailbox_for_role(role) {
+                Some(mailbox) => self.open_mailbox(mailbox),
+                // Said, not swallowed. A key that appears to do nothing is
+                // read as a broken key, and the next thing tried is the same
+                // key again.
+                None => self.announce(&format!("This account has no {called}")),
+            }
+            return;
+        }
+
         // A move with no destination is half a request: `None` means "ask the
         // user", and this is the window asking. Matched on the whole command
         // rather than its id because the *answered* move — from a drop, or
@@ -2492,6 +3127,15 @@ impl Window {
         // `shell().grab_focus()`'s own memory happens to restore.
         if self.context() == Context::Sidebar {
             self.sidebar().focus_folders();
+        } else if matches!(self.context(), Context::List | Context::Conversation) {
+            // The row, not the pane. `shell().grab_focus()` is a grab on a
+            // container that has no focus handling of its own, and `pane`
+            // above only records which pane the narrow layout shows -- so
+            // between them nothing moved the keyboard, and it stayed in the
+            // search entry with the box shut over it. Escape means get me out
+            // of here, and coming back to the message you left is the whole
+            // of "out of here" from a search.
+            self.list().focus_cursor();
         } else {
             self.shell().grab_focus();
         }
@@ -2693,22 +3337,12 @@ impl Window {
         keys_focus.connect_enter(glib::clone!(
             #[weak(rename_to = window)]
             self,
-            move |_| {
-                if window.context() != Context::Keys {
-                    window.imp().before_keys.set(Some(window.context()));
-                    window.set_context(Context::Keys);
-                }
-            }
+            move |_| window.enter_surface(Context::Keys)
         ));
         keys_focus.connect_leave(glib::clone!(
             #[weak(rename_to = window)]
             self,
-            move |_| {
-                if window.context() == Context::Keys {
-                    let previous = window.imp().before_keys.take();
-                    window.set_context(previous.unwrap_or(Context::List));
-                }
-            }
+            move |_| window.leave_surface(Context::Keys)
         ));
         self.settings().keys_list().add_controller(keys_focus);
     }
@@ -2750,7 +3384,7 @@ impl Window {
         // WebKit editor in every window that ever applies a keymap. A
         // composer made later picks the keymap up from `imp().keymap` at
         // construction instead.
-        if let Some(composer) = self.imp().composer.get() {
+        if let Some(composer) = self.imp().composer.borrow().as_ref() {
             composer.set_keymap(&keymap);
         }
         for handler in self.imp().keymaps.borrow().iter() {

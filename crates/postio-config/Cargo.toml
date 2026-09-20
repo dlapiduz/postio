@@ -11,9 +11,9 @@ repository.workspace = true
 [dependencies]
 notify = "8.2.0"
 postio-model.workspace = true
-serde = { version = "1.0.229", features = ["derive"] }
-thiserror = "2.0.20"
-toml = "1.1.4"
+serde = { workspace = true }
+thiserror = { workspace = true }
+toml = { workspace = true }
 toml_edit = "0.25"
 
 [lints.rust]
@@ -24,3 +24,9 @@ toml_edit = "0.25"
 # than a local allow. No library code here uses `unsafe`.
 unsafe_code = "deny"
 missing_docs = "warn"
+# A crate that keeps its own `[lints.rust]` inherits none of the workspace
+# lints, so the clippy floor's most load-bearing rule is restated here:
+# `let _ = some_async_call()` drops the future unpolled, which is how a sent
+# draft went on existing. See the workspace `[lints.clippy]`.
+[lints.clippy]
+let_underscore_future = "deny"

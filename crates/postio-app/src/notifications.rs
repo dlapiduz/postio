@@ -1,10 +1,18 @@
-//! Desktop notifications for new mail.
+//! Desktop notifications for new mail: the delivery half.
 //!
 //! `Event::NewMail` existed with a doc comment naming it "the trigger for a
 //! desktop notification", was already consumed by `postio_gtk::feed` for the
 //! insert-at-top scroll behaviour, and nothing ever turned it into a
 //! notification (`postio-du6`, another `postio-bl2` instance). This module
 //! is that other half.
+//!
+//! **The decision is not made here.** Whether an arrival is worth
+//! interrupting somebody for, which id coalesces it, where a click lands and
+//! what the words are all come from [`postio_ui::notify`], the one rule the
+//! macOS app calls too. This module reads the rows the wording needs, asks,
+//! and posts the answer — the same split the macOS `MailNotifications` has,
+//! for the same reason: `gio::Notification` has no getters, so the half that
+//! can be asserted on has to be the half that has no toolkit in it.
 //!
 //! # Through `gio::Notification`, not a lower-level portal call
 //!
@@ -15,22 +23,10 @@
 //! process — that decides whether Do Not Disturb suppresses it. Nothing here
 //! re-implements either.
 //!
-//! # Coalescing
-//!
-//! Every notification for one mailbox reuses the same id
-//! (`"new-mail-<mailbox>"`), which is what `gio::Application::send_notification`
-//! treats as "replace the one already showing" rather than "queue another
-//! popup beside it" — so several `IDLE` wake-ups in a row settle into the one
-//! notification on screen actually saying, rather than a burst of them. Each
-//! replacement names its own batch's newest arrival (see [`content`]), so a
-//! detailed single-arrival popup is never overwritten by a less detailed one
-//! — #745's report of exactly that.
-//!
 //! # What a click does
 //!
 //! Presents the window, then switches to the mailbox the mail landed in and
-//! puts the cursor on the message the notification named — the newest
-//! arrival, single message or burst alike ([`content`], [`target_for`]).
+//! puts the cursor on the message the notification named.
 //! `Window::open_mailbox` and `Window::open_message` (`postio-gtk`) are what
 //! make this possible from outside a click on an already-visible row;
 //! [`build`] is where the click's target is encoded onto the notification,
@@ -47,9 +43,10 @@ use postio_config::SyncConfig;
 use postio_gtk::window::Window;
 use postio_model::ids::AccountId;
 use postio_model::{MailboxId, MailboxRole, MessageId};
-use postio_runtime::store::MailStore;
-use postio_storage::Database;
+use postio_runtime::store::{MailStore, MessageSummary};
+use postio_storage::Store;
 use postio_storage::repository::{AccountRepository, MailboxRepository};
+use postio_ui::notify::{self, Attention, Decision, Notification, Wording};
 
 /// The action a click on a notification runs. Application-scoped because a
 /// notification's default action activates whether or not any window
@@ -97,7 +94,7 @@ pub fn config_at(path: &std::path::Path) -> SyncConfig {
 /// Everything `notify` needs that does not change per call.
 #[derive(Clone)]
 pub struct Notifier {
-    database: Database,
+    database: Store,
     store: Arc<dyn MailStore>,
     runtime: tokio::runtime::Handle,
     config: SyncConfig,
@@ -107,7 +104,7 @@ impl Notifier {
     /// Builds a notifier over `wiring`'s store and `config`'s `[sync]`
     /// settings.
     pub fn new(
-        database: Database,
+        database: Store,
         store: Arc<dyn MailStore>,
         runtime: tokio::runtime::Handle,
         config: SyncConfig,
@@ -121,24 +118,33 @@ impl Notifier {
     }
 
     /// Notifies about `messages` having arrived in `mailbox`, if `[sync]`
-    /// says this mailbox's arrivals are worth one.
+    /// says this mailbox's arrivals are worth one and `attention` says the
+    /// user is not already looking at them.
     ///
     /// The mailbox lookup is one indexed row, done synchronously like
     /// `compose.rs`'s small bounded reads — not the message read, which
     /// goes through `store.message_rows` on `self.runtime` the way every
     /// other read from this crate does, because building a notification body
     /// is not on any interaction's budget and must never hold the main loop.
-    pub fn notify(&self, window: &Window, mailbox: MailboxId, messages: &[MessageId]) {
+    pub async fn notify(
+        &self,
+        window: &Window,
+        mailbox: MailboxId,
+        messages: &[MessageId],
+        attention: Attention,
+    ) {
         if messages.is_empty() {
             return;
         }
-        let Some((role, account)) = mailbox_info(&self.database, mailbox) else {
+        let Some((role, account)) = mailbox_info(&self.database, mailbox).await else {
             return;
         };
-        if !role_may_notify(&self.config, role) {
+        if !notify::watched(&self.config, role) {
             return;
         }
-        let account_name = account_label(&self.database, account);
+        // Read before the spawn, not inside it: the future borrows the
+        // store, and a `'static` task cannot carry that borrow.
+        let account_name = account_label(&self.database, account).await;
 
         let Some(application) = window.application() else {
             return;
@@ -155,38 +161,27 @@ impl Notifier {
             let Ok(Ok(rows)) = receiver.recv().await else {
                 return;
             };
-            if rows.is_empty() {
+            let Decision::Deliver(notification) =
+                decision(mailbox, &rows, attention, account_name.as_deref())
+            else {
                 return;
-            }
-            application.send_notification(
-                Some(&notification_id(mailbox)),
-                &build(mailbox, &rows, account_name.as_deref()),
-            );
+            };
+            application.send_notification(Some(&notification.identifier), &build(&notification));
         });
     }
 }
 
-/// A notification id scoped to one mailbox, so a second batch of arrivals
-/// replaces the first rather than stacking beside it. See the module docs.
-fn notification_id(mailbox: MailboxId) -> String {
-    format!("new-mail-{}", mailbox.get())
-}
-
-/// Whether `[sync]` says `role`'s arrivals are worth a notification.
-fn role_may_notify(config: &SyncConfig, role: MailboxRole) -> bool {
-    config.notify && config.notify_roles.iter().any(|name| name == role.as_str())
-}
-
-/// What one arrived mailbox's role and account are, or `None` for a store
-/// this read cannot reach — never a reason to fail the sync pass that
-/// called this.
-fn mailbox_info(database: &Database, mailbox: MailboxId) -> Option<(MailboxRole, AccountId)> {
+/// What a store this read cannot reach yields: `None`, never a reason to
+/// fail the sync pass that called this.
+async fn mailbox_info(database: &Store, mailbox: MailboxId) -> Option<(MailboxRole, AccountId)> {
     let connection = database
-        .connection()
+        .connect()
+        .await
         .map_err(|error| tracing::warn!(%error, "could not read the mailbox to notify about"))
         .ok()?;
     MailboxRepository::new(&connection)
         .get(mailbox)
+        .await
         .map_err(|error| tracing::warn!(%error, "could not read the mailbox to notify about"))
         .ok()?
         .map(|mailbox| (mailbox.role, mailbox.account_id))
@@ -195,14 +190,16 @@ fn mailbox_info(database: &Database, mailbox: MailboxId) -> Option<(MailboxRole,
 /// The name to put on a notification for `account`, or `None` when only one
 /// account is enabled — naming the only account there is would be noise, not
 /// information (ADR 0005 Q13).
-fn account_label(database: &Database, account: AccountId) -> Option<String> {
+async fn account_label(database: &Store, account: AccountId) -> Option<String> {
     let connection = database
-        .connection()
+        .connect()
+        .await
         .map_err(|error| tracing::warn!(%error, "could not read the accounts to notify about"))
         .ok()?;
     let repository = AccountRepository::new(&connection);
     let enabled = repository
         .list_enabled()
+        .await
         .map_err(|error| tracing::warn!(%error, "could not read the accounts to notify about"))
         .ok()?;
     if enabled.len() < 2 {
@@ -210,92 +207,64 @@ fn account_label(database: &Database, account: AccountId) -> Option<String> {
     }
     repository
         .get(account)
+        .await
         .map_err(|error| tracing::warn!(%error, "could not read the account to notify about"))
         .ok()?
         .map(|account| account.display_name)
 }
 
-/// The arrival to name a batch after: whichever `received_at` is latest.
+/// What [`postio_ui::notify`] says about `rows` having landed in `mailbox`,
+/// worded the way this frontend words it: the newest arrival's sender and
+/// subject ([`Wording::Newest`] — the module docs there say why the macOS
+/// app chooses differently).
 ///
-/// A position in `rows` says nothing about arrival order — `notify` hands
-/// this whatever `store.message_rows` returned for the ids `Event::NewMail`
-/// carried, and nothing along that path promises newest-last (or first).
-/// `received_at` is the one field that actually says so.
-///
-/// # Panics
-///
-/// If `rows` is empty. Both callers ([`content`], [`target_for`]) only ever
-/// see what `Notifier::notify` already checked non-empty.
-fn newest(
-    rows: &[postio_runtime::store::MessageSummary],
-) -> &postio_runtime::store::MessageSummary {
-    rows.iter()
-        .max_by_key(|row| row.received_at)
-        .expect("notify() only builds a notification for a non-empty batch")
-}
-
-/// The title and body a batch of arrivals reads as: sender and subject of
-/// the newest one, plus how many more came with it.
-///
-/// Pure on purpose — `gio::Notification` has no getters to assert against
-/// (it is a write-only description, sent rather than introspected), so this
-/// is the half of [`build`] a test can actually check.
-fn content(
-    rows: &[postio_runtime::store::MessageSummary],
+/// The newest is whichever `received_at` is latest. A position in `rows`
+/// says nothing about arrival order — `notify` hands this whatever
+/// `store.message_rows` returned for the ids `Event::NewMail` carried, and
+/// nothing along that path promises newest-last (or first).
+fn decision(
+    mailbox: MailboxId,
+    rows: &[MessageSummary],
+    attention: Attention,
     account: Option<&str>,
-) -> (String, String) {
-    let named = |title: String| match account {
-        Some(name) => format!("{title} — {name}"),
-        None => title,
+) -> Decision {
+    let arrival = notify::Arrival {
+        mailbox,
+        messages: rows.iter().map(|row| row.id).collect(),
     };
-    let newest = newest(rows);
+    let Some(newest) = rows.iter().max_by_key(|row| row.received_at) else {
+        return notify::decide(&arrival, attention, Wording::Counts { mailbox_name: None });
+    };
     let from = newest
         .from
         .as_ref()
-        .map(|address| address.display().to_owned())
-        .unwrap_or_else(|| "Someone".to_owned());
-    let subject = newest
-        .subject
-        .clone()
-        .unwrap_or_else(|| "(no subject)".to_owned());
-    if let [_only] = rows {
-        (named(from), subject)
-    } else {
-        (
-            named(from),
-            format!("\"{subject}\" and {} more", rows.len() - 1),
-        )
-    }
+        .map(|address| address.display().to_owned());
+    notify::decide(
+        &arrival,
+        attention,
+        Wording::Newest {
+            message: newest.id,
+            from: from.as_deref(),
+            subject: newest.subject.as_deref(),
+            account,
+        },
+    )
 }
 
-/// The notification itself, from [`content`], with a click target that says
-/// which mailbox and which message to focus.
-fn build(
-    mailbox: MailboxId,
-    rows: &[postio_runtime::store::MessageSummary],
-    account: Option<&str>,
-) -> gio::Notification {
-    let (title, body) = content(rows, account);
-    let notification = gio::Notification::new(&title);
-    notification.set_body(Some(&body));
-    notification.set_default_action_and_target_value(
+/// The `gio::Notification` for a decided [`Notification`], with its click
+/// target encoded onto [`RAISE_ACTION`].
+fn build(notification: &Notification) -> gio::Notification {
+    let built = gio::Notification::new(&notification.title);
+    built.set_body(Some(&notification.body));
+    built.set_default_action_and_target_value(
         &format!("app.{RAISE_ACTION}"),
-        Some(&target_for(mailbox, rows).to_variant()),
+        Some(&encode_target(notification.mailbox, notification.message).to_variant()),
     );
-    notification
+    built
 }
 
-/// What a click on this notification should focus.
-///
-/// The notification always names one message now — the newest, [`content`]'s
-/// `from`/`subject` — so the click lands on exactly that row, single arrival
-/// or burst alike, the way #56 already made a single arrival do.
-fn target_for(mailbox: MailboxId, rows: &[postio_runtime::store::MessageSummary]) -> String {
-    encode_target(mailbox, Some(newest(rows).id))
-}
-
-/// `RAISE_ACTION`'s parameter: a mailbox, and optionally the one message a
-/// single-arrival notification is about.
+/// `RAISE_ACTION`'s parameter: a mailbox, and optionally the one message the
+/// notification named.
 ///
 /// A plain string rather than a `(x, mx)` tuple variant: this crate has no
 /// other use for GVariant's maybe-type machinery, and a delimited string is
@@ -325,11 +294,10 @@ fn parse_target(value: &str) -> Option<(MailboxId, Option<MessageId>)> {
 mod tests {
     use super::*;
     use postio_model::EmailAddress;
-    use postio_runtime::store::MessageSummary;
 
-    fn summary(from: &str, subject: &str) -> MessageSummary {
+    fn summary(id: i64, from: &str, subject: &str) -> MessageSummary {
         MessageSummary {
-            id: MessageId::new(1),
+            id: MessageId::new(id),
             thread: None,
             from: Some(EmailAddress::new(Some(from), format!("{from}@example.com"))),
             subject: Some(subject.to_owned()),
@@ -338,7 +306,8 @@ mod tests {
             seen: false,
             flagged: false,
             answered: false,
-            draft: false,
+            send_state: None,
+            send_at: None,
             has_attachments: false,
             thread_count: 1,
         }
@@ -354,49 +323,11 @@ mod tests {
         }
     }
 
-    #[test]
-    fn notify_settings_gate_on_both_the_switch_and_the_role() {
-        let mut config = SyncConfig {
-            notify: true,
-            notify_roles: vec!["inbox".to_owned()],
-            ..SyncConfig::default()
-        };
-        assert!(role_may_notify(&config, MailboxRole::Inbox));
-        assert!(
-            !role_may_notify(&config, MailboxRole::Archive),
-            "archive was never asked for"
-        );
-
-        config.notify = false;
-        assert!(
-            !role_may_notify(&config, MailboxRole::Inbox),
-            "the master switch must override an explicitly listed role"
-        );
-    }
-
-    #[test]
-    fn a_role_this_build_does_not_recognise_is_just_never_matched() {
-        let config = SyncConfig {
-            notify: true,
-            notify_roles: vec!["not-a-real-role".to_owned()],
-            ..SyncConfig::default()
-        };
-        assert!(!role_may_notify(&config, MailboxRole::Inbox));
-    }
-
-    #[test]
-    fn each_mailbox_gets_one_stable_notification_id() {
-        assert_eq!(notification_id(MailboxId::new(7)), "new-mail-7");
-        assert_eq!(
-            notification_id(MailboxId::new(7)),
-            notification_id(MailboxId::new(7)),
-            "a second arrival in the same mailbox must reuse the id, or it \
-             stacks a second popup instead of replacing the first"
-        );
-        assert_ne!(
-            notification_id(MailboxId::new(7)),
-            notification_id(MailboxId::new(8))
-        );
+    fn delivered(decision: Decision) -> Notification {
+        match decision {
+            Decision::Deliver(notification) => notification,
+            Decision::Suppress(reason) => panic!("expected a notification, got {reason:?}"),
+        }
     }
 
     #[test]
@@ -408,7 +339,7 @@ mod tests {
         assert_eq!(
             parse_target(&encode_target(MailboxId::new(7), None)),
             Some((MailboxId::new(7), None)),
-            "a burst names only the mailbox, and that has to round-trip too"
+            "a folder-only target has to round-trip too"
         );
     }
 
@@ -422,167 +353,104 @@ mod tests {
     }
 
     #[test]
-    fn a_single_arrival_targets_its_own_message() {
-        let mut only = summary("Ada Lovelace", "Quarterly report");
-        only.id = MessageId::new(42);
-        assert_eq!(
-            target_for(MailboxId::new(7), &[only]),
-            encode_target(MailboxId::new(7), Some(MessageId::new(42))),
-            "the click should land on exactly the message the notification named"
-        );
-    }
-
-    #[test]
-    fn a_burst_targets_its_newest_message() {
+    fn a_burst_is_named_after_its_newest_arrival_by_received_at() {
+        // Deliberately out of arrival order: the newest is the middle one,
+        // so a fix that just reads rows[0] or rows.last() cannot pass this.
         let base = chrono::Utc::now();
-        let mut newest = summary("Carol", "Three");
-        newest.id = MessageId::new(99);
-        let rows = [
-            at(summary("Ada Lovelace", "One"), base),
-            at(newest, base + chrono::Duration::minutes(2)),
-            at(summary("Bob", "Two"), base + chrono::Duration::minutes(1)),
-        ];
+        let notification = delivered(decision(
+            MailboxId::new(7),
+            &[
+                at(summary(1, "Ada Lovelace", "One"), base),
+                at(
+                    summary(99, "Carol", "Three"),
+                    base + chrono::Duration::minutes(2),
+                ),
+                at(
+                    summary(2, "Bob", "Two"),
+                    base + chrono::Duration::minutes(1),
+                ),
+            ],
+            Attention::default(),
+            None,
+        ));
         assert_eq!(
-            target_for(MailboxId::new(7), &rows),
-            encode_target(MailboxId::new(7), Some(MessageId::new(99))),
+            notification.title, "Carol",
+            "the newest arrival's sender, not the first one that arrived"
+        );
+        assert_eq!(notification.body, "\"Three\" and 2 more");
+        assert_eq!(
+            notification.message,
+            Some(MessageId::new(99)),
             "the click should land on the message the notification actually named"
         );
     }
 
     #[test]
-    fn a_single_arrival_names_the_sender_and_the_subject() {
-        let (title, body) = content(&[summary("Ada Lovelace", "Quarterly report")], None);
-        assert_eq!(title, "Ada Lovelace");
-        assert_eq!(body, "Quarterly report");
-    }
-
-    #[test]
-    fn a_burst_is_a_count_rather_than_one_popup_per_message() {
-        // Deliberately out of arrival order: the newest is the middle one,
-        // so a fix that just reads rows[0] or rows.last() cannot pass this.
-        let base = chrono::Utc::now();
-        let (title, body) = content(
-            &[
-                at(summary("Ada Lovelace", "One"), base),
-                at(
-                    summary("Carol", "Three"),
-                    base + chrono::Duration::minutes(2),
-                ),
-                at(summary("Bob", "Two"), base + chrono::Duration::minutes(1)),
-            ],
-            None,
-        );
-        assert_eq!(
-            title, "Carol",
-            "the newest arrival's sender, not the first one that arrived"
-        );
-        assert_eq!(body, "\"Three\" and 2 more");
-    }
-
-    #[test]
-    fn a_two_message_burst_says_one_more() {
-        let base = chrono::Utc::now();
-        let (_, body) = content(
-            &[
-                at(summary("Ada Lovelace", "One"), base),
-                at(summary("Bob", "Two"), base + chrono::Duration::minutes(1)),
-            ],
-            None,
-        );
-        assert_eq!(body, "\"Two\" and 1 more");
-    }
-
-    #[test]
-    fn a_ten_message_burst_counts_the_rest() {
-        let base = chrono::Utc::now();
-        let rows: Vec<MessageSummary> = (0..10)
-            .map(|index| {
-                at(
-                    summary(&format!("Sender {index}"), &format!("Subject {index}")),
-                    base + chrono::Duration::minutes(index),
-                )
-            })
-            .collect();
-        let (_, body) = content(&rows, None);
-        assert_eq!(body, "\"Subject 9\" and 9 more");
-    }
-
-    #[test]
-    fn a_burst_whose_newest_message_has_no_subject_still_reads_as_a_sentence() {
-        let base = chrono::Utc::now();
-        let mut newest = summary("Ada Lovelace", "");
-        newest.subject = None;
-        let (_, body) = content(
-            &[
-                at(summary("Bob", "Two"), base),
-                at(newest, base + chrono::Duration::minutes(1)),
-            ],
-            None,
-        );
-        assert_eq!(body, "\"(no subject)\" and 1 more");
-    }
-
-    #[test]
-    fn a_missing_subject_still_reads_as_a_sentence() {
-        let mut only = summary("Ada Lovelace", "");
-        only.subject = None;
-        let (_, body) = content(&[only], None);
-        assert_eq!(body, "(no subject)");
-    }
-
-    // #189: notifications name the account when more than one is configured.
-
-    #[test]
-    fn a_single_arrival_names_the_account_when_one_is_given() {
-        let (title, _) = content(&[summary("Ada Lovelace", "Quarterly report")], Some("Work"));
-        assert_eq!(title, "Ada Lovelace — Work");
-    }
-
-    #[test]
-    fn a_burst_names_the_account_too() {
-        let base = chrono::Utc::now();
-        let (title, _) = content(
-            &[
-                at(summary("Ada Lovelace", "One"), base),
-                at(summary("Bob", "Two"), base + chrono::Duration::minutes(1)),
-            ],
+    fn this_frontend_draws_the_sender_and_names_the_account() {
+        let notification = delivered(decision(
+            MailboxId::new(7),
+            &[summary(42, "Ada Lovelace", "Quarterly report")],
+            Attention::default(),
             Some("Work"),
-        );
-        assert_eq!(title, "Bob — Work");
+        ));
+        assert_eq!(notification.title, "Ada Lovelace — Work");
+        assert_eq!(notification.body, "Quarterly report");
+        assert_eq!(notification.identifier, "new-mail-7");
     }
 
     #[test]
-    fn account_label_is_none_with_exactly_one_enabled_account() {
-        let database = postio_storage::test_support::memory();
-        let account = {
-            let connection = database.connection().expect("a connection");
-            postio_storage::test_support::account(&connection)
+    fn mail_landing_in_the_open_mailbox_of_the_active_window_is_not_posted() {
+        let attention = Attention {
+            showing: Some(MailboxId::new(7)),
+            active: true,
         };
         assert_eq!(
-            account_label(&database, account.id),
+            decision(
+                MailboxId::new(7),
+                &[summary(42, "Ada Lovelace", "Quarterly report")],
+                attention,
+                None
+            ),
+            Decision::Suppress(notify::Suppressed::AlreadyOnScreen)
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn account_label_is_none_with_exactly_one_enabled_account() {
+        let database = postio_storage::test_support::memory().await;
+        let account = {
+            let connection = database.connect().await.expect("a connection");
+            postio_storage::test_support::account(&connection).await
+        };
+        assert_eq!(
+            account_label(&database, account.id).await,
             None,
             "a single-account install must read exactly as it did before #189"
         );
     }
 
-    #[test]
-    fn account_label_names_the_account_once_a_second_is_enabled() {
-        let database = postio_storage::test_support::memory();
+    #[tokio::test(flavor = "multi_thread")]
+    async fn account_label_names_the_account_once_a_second_is_enabled() {
+        let database = postio_storage::test_support::memory().await;
         let (first, second) = {
-            let connection = database.connection().expect("a connection");
-            let first = postio_storage::test_support::account(&connection);
+            let connection = database.connect().await.expect("a connection");
+            let first = postio_storage::test_support::account(&connection).await;
             let mut second = postio_model::Account::new(
                 "Work",
                 EmailAddress::new(None::<String>, "grace@example.com"),
             );
             AccountRepository::new(&connection)
                 .create(&mut second)
+                .await
                 .expect("create the second account");
             (first, second)
         };
-        assert_eq!(account_label(&database, second.id), Some("Work".to_owned()));
         assert_eq!(
-            account_label(&database, first.id),
+            account_label(&database, second.id).await,
+            Some("Work".to_owned())
+        );
+        assert_eq!(
+            account_label(&database, first.id).await,
             Some(first.display_name.clone()),
             "both accounts get named once there is more than one"
         );

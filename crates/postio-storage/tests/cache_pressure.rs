@@ -13,11 +13,24 @@
 //! > because under SQLCipher every page miss costs a decrypt rather than a
 //! > `memcpy`.**
 //!
-//! This is that bench. It is `#[ignore]`d: it seeds 400,000 messages and takes
-//! about three and a half minutes, which is a bench's cost and not a gate's.
+//! This is that bench.
+//!
+//! POSTIO-MEASUREMENT: its output is numbers a person reads, so it runs on
+//! the nightly timer rather than the merge path. `.config/nextest.toml`'s
+//! `profile.default` filter is what holds it back; `--profile nightly` runs it.
+//!
+//! It seeds 400,000 messages and takes **about six and a half minutes**
+//! (393s measured on an idle workstation, 2026-09-12), which is a bench's
+//! cost and not a gate's.
+//!
+//! That number used to read "about three and a half minutes", which is where
+//! `.config/nextest.toml` got the idea that the default 240s backstop would
+//! hold it. It did not: the test was terminated at 240s on the nightly run
+//! and terminates at 240s here too. Nobody had measured it, because until
+//! acbd0943 it was `#[ignore]`d and had never run anywhere at all.
 //!
 //! ```text
-//! cargo test -p postio-storage --test cache_pressure -- --ignored --nocapture
+//! cargo nextest run --profile nightly -p postio-storage -E 'binary(cache_pressure)'
 //! ```
 //!
 //! # What it showed
@@ -75,18 +88,19 @@ fn cpu() -> Duration {
 }
 
 /// Page deep into `mailbox` and back, with the cache set to `kib`.
-fn sweep(
-    database: &postio_storage::Database,
+async fn sweep(
+    database: &postio_storage::Store,
     mailbox: postio_model::MailboxId,
     kib: i64,
 ) -> (Duration, usize) {
-    let connection = database.connection().expect("a connection");
+    let connection = database.connect().await.expect("a connection");
     connection
-        .pragma_update(None, "cache_size", -kib)
+        .execute(&format!("PRAGMA cache_size = {}", -kib), ())
+        .await
         .expect("set the cache");
     // So each size starts from the same place rather than inheriting the last
     // one's pages -- without this the sweep measures the order it ran in.
-    let _ = connection.pragma_update(None, "shrink_memory", 1i64);
+    let _ = connection.execute("PRAGMA shrink_memory", ()).await;
 
     let before = cpu();
     let mut seen = 0usize;
@@ -94,6 +108,7 @@ fn sweep(
         for offset in (0..80_000).step_by(500) {
             seen += MessageRepository::new(&connection)
                 .page_at(&ListQuery::mailbox(mailbox), offset)
+                .await
                 .expect("a page")
                 .len();
         }
@@ -101,11 +116,10 @@ fn sweep(
     (cpu().saturating_sub(before), seen)
 }
 
-#[test]
-#[ignore = "seeds 400,000 messages; a bench, not a gate"]
-fn a_cache_below_the_working_set_costs_cpu() {
-    let database = test_support::memory();
-    let report = seed_large(&database, 11, MESSAGES);
+#[tokio::test]
+async fn a_cache_below_the_working_set_costs_cpu() {
+    let database = test_support::memory().await;
+    let report = seed_large(&database, 11, MESSAGES).await;
     // The inbox: `seed_large` weights most of its messages there.
     let mailbox = report
         .mailboxes
@@ -119,7 +133,7 @@ fn a_cache_below_the_working_set_costs_cpu() {
     let started = Instant::now();
     let mut burned = Vec::new();
     for kib in SIZES {
-        let (cost, seen) = sweep(&database, mailbox, kib);
+        let (cost, seen) = sweep(&database, mailbox, kib).await;
         assert!(seen > 0, "the workload read nothing at {kib} KiB");
         eprintln!("cache {kib:>7} KiB -> {cost:?}");
         burned.push(cost);

@@ -21,7 +21,7 @@
 //! # Running
 //!
 //! ```sh
-//! cargo bench -p postio-gtk --bench list_scroll
+//! cargo bench -p postio-bench --bench list_scroll
 //! ```
 //!
 //! It needs a display, and skips without one. CI compiles benches but does
@@ -73,7 +73,8 @@ fn message(id: i64) -> Row {
         seen: id % 3 == 0,
         flagged: false,
         answered: false,
-        draft: false,
+        send_state: None,
+        send_at: None,
         has_attachments: id % 4 == 0,
         thread_count: (id % 9) as u32 + 1,
         participants: Vec::new(),

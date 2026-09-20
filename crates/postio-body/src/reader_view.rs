@@ -2,11 +2,13 @@
 //!
 //! Marketing and transactional HTML renders as a wall of blue underlined
 //! links against a dark theme, because the sender laid it out for a white
-//! page in nested tables with their own colours, fonts and widths. Postio's
-//! sanitizer already drops `<style>` and the `style` attribute
-//! ([`crate::sanitize`]) — what survives is still a *layout*: tables that
-//! were columns, spacer images that were gutters, and thirty links where a
-//! person needed one.
+//! page in nested tables with their own colours, fonts and widths. Ordinary
+//! correspondence now keeps that styling ([`crate::sanitize`], spec FR-019),
+//! which is what makes a newsletter arrive in the three columns it was
+//! written in — and which is exactly why bulk mail still needs somewhere to
+//! opt out to. What reader view answers is not "the styling is gone" but
+//! "this *layout* is not one you want": tables that were columns, spacer
+//! images that were gutters, and thirty links where a person needed one.
 //!
 //! Reader view goes further and reduces the markup to the handful of tags
 //! that carry meaning rather than arrangement. The sender's original stays
@@ -56,11 +58,16 @@ const KEPT_VOID: [&str; 1] = ["br"];
 
 /// The attributes that survive on a kept tag.
 ///
-/// `href` and nothing else. Not `style` (the sanitizer drops it already, and
-/// this is defence in depth), not `width`, not `bgcolor`, not `class` — a
-/// sender's class names mean nothing here and a sender's `class="dark"`
-/// meeting Postio's own stylesheet is exactly the collision reader view
-/// exists to end.
+/// `href` and nothing else. Not `style`, not `width`, not `bgcolor`, not
+/// `class` — a sender's class names mean nothing here and a sender's
+/// `class="dark"` meeting Postio's own stylesheet is exactly the collision
+/// reader view exists to end.
+///
+/// Dropping `style` here **is the control, not a backstop.** It used to be
+/// defence in depth, because [`crate::sanitize`] stripped every `style`
+/// attribute before this ran. It no longer does (spec FR-019), so this list
+/// is now the only thing standing between a sender's palette and reader
+/// view — which is the whole of what reader view promises.
 const KEPT_ATTRIBUTES: [&str; 1] = ["href"];
 
 /// What reduction produced.
@@ -228,6 +235,34 @@ fn escape_into(text: &str, out: &mut String) {
     }
 }
 
+/// Whether a `text/plain` part is the sender's markup flattened, rather than
+/// prose they wrote.
+///
+/// Reader view prefers the plain part because it is meant to be the clean
+/// alternative the sender already reduced: prose, with the template gone.
+/// For a great many senders it is nothing of the kind -- it is the HTML run
+/// through a converter, and markdown is what those converters emit. Rendering
+/// it verbatim puts the syntax on screen:
+///
+/// ```text
+/// Assignment.[Bridges Practice #1](https://app.example.test/a/849) 3:59 pm
+/// ```
+///
+/// Seen against a real account, a whole message of it. The HTML beside it had
+/// real headings and real links, and `reduce` exists precisely to keep those
+/// and drop the layout -- so where the plain part is flattened markup, the
+/// markup itself is the better source and reader view should use it.
+///
+/// Matched on the link form alone, and deliberately nothing else. `*` and `-`
+/// start ordinary sentences and `#` starts a comment in half the mail a
+/// developer receives; `](` followed by a scheme does not occur in prose that
+/// was typed. Narrow on purpose: a false positive here costs the facts block
+/// on a message that had one, so this must only fire on text that is
+/// unambiguously generated.
+pub fn reads_as_flattened_markup(plain: &str) -> bool {
+    plain.contains("](http://") || plain.contains("](https://")
+}
+
 /// Whether a body reads like bulk mail, and so should open in reader view.
 ///
 /// A heuristic, and the honest word for it. Three signals, all of which are
@@ -239,14 +274,19 @@ fn escape_into(text: &str, out: &mut String) {
 /// * **many links** — a reply has a few, a campaign has dozens.
 ///
 /// **Not styling**, though that was the obvious third one and this function
-/// counted it first. It cannot work: [`crate::sanitize`] removes `<style>`
-/// tag-and-contents and `style` is not in ammonia's attribute allow-list, so
-/// by the time reader view sees the markup every style signal is already
-/// zero. Counting it made the heuristic *look* careful — three signals,
-/// two required — while quietly needing both of the other two, so the
-/// corpus's own newsletter (3 tables, 13 cells, 2 links) was not recognised
-/// as bulk. A signal that is always absent is worse than no signal, because
-/// it raises the bar for everything else.
+/// counted it first. Counting it made the heuristic *look* careful — three
+/// signals, two required — while quietly needing both of the other two, so
+/// the corpus's own newsletter (3 tables, 13 cells, 2 links) was not
+/// recognised as bulk. A signal that is always absent is worse than no
+/// signal, because it raises the bar for everything else.
+///
+/// The reason it was always absent has since gone: [`crate::sanitize`] used
+/// to strip every `style` attribute, and now keeps the ones a sender may set
+/// (spec FR-019). So a styling signal *could* be counted here today. It still
+/// is not, because nothing has shown it separates bulk from correspondence
+/// better than the two above — inline styling is how ordinary mail from a
+/// rich-text composer looks too. Reviving it is a measurement, not an
+/// oversight to correct on sight.
 ///
 /// Deliberately not "does it have a `List-Unsubscribe` header" either: that
 /// is a better signal and it is not available here, since this module only
@@ -492,6 +532,23 @@ fn row(line: &str) -> Option<Fact> {
     if label.is_empty() || value.is_empty() {
         return None;
     }
+    // **A CSS declaration is not a fact.** A sender whose plain-text
+    // alternative was generated by stripping their own HTML sweeps the
+    // `<style>` block up with it, and its declarations are `name: value`
+    // lines with short, hyphenated, punctuation-free names -- which is
+    // exactly what a fact looks like to every test below. A real newsletter
+    // opened with
+    //
+    //     text-indent   -1em; } a { border: none !important; } li {
+    //
+    // drawn as the first thing in the message, in the facts block reader view
+    // reserves for what matters most (#1432).
+    //
+    // Braces are the tell and they are decisive: no fact anyone would want
+    // lifted contains one, and every rule that leaks this way does.
+    if value.contains('{') || value.contains('}') || label.contains('{') {
+        return None;
+    }
     let lowered = value.to_ascii_lowercase();
     if LINK_PREFIXES
         .iter()
@@ -556,9 +613,10 @@ mod tests {
 
     #[test]
     fn sender_styling_does_not_survive_even_one_attribute() {
-        // Defence in depth: the sanitizer drops `style` before this runs, and
-        // a sender's `bgcolor` on a kept tag would still be a sender deciding
-        // what colour Postio's reader is.
+        // Not defence in depth any more: the sanitizer keeps a sender's
+        // `style` now (spec FR-019), so this is the assertion that reader
+        // view still means what it says. A sender's `bgcolor` on a kept tag
+        // would likewise be a sender deciding what colour Postio's reader is.
         let html = r##"<p style="color:#f0f" bgcolor="#000" width="600" class="hero">text</p>"##;
         let reduced = reduce(html);
         assert!(reduced.html.contains("text"));
@@ -918,5 +976,99 @@ mod facts_tests {
             ),
             vec!["tracking", "item"],
         );
+    }
+}
+
+#[cfg(test)]
+mod css_is_not_a_fact {
+    use super::*;
+
+    /// A stylesheet in the plain-text part is not a facts block (#1432).
+    ///
+    /// Reported from a real newsletter, whose text alternative was generated
+    /// by stripping its own HTML -- `<style>` included. Reader view prefers
+    /// the sender's plain part, `lift` reads `text-indent: -1em; } a {` as a
+    /// row, and the message opened with a CSS fragment drawn where the facts
+    /// that matter are supposed to go.
+    #[test]
+    fn a_stylesheet_swept_into_the_text_part_is_not_lifted() {
+        let plain = "text-indent: -1em; } a { border: none !important; } li {\n\
+                     text-indent: -10em; }\n\
+                     ul > li {\n\
+                     \n\
+                     A few simple checks now can help protect your home.\n";
+        let lifted = lift(plain);
+        assert!(
+            lifted.rows.is_empty(),
+            "CSS was lifted into the facts block: {:?}",
+            lifted.rows
+        );
+        assert!(
+            lifted.body.contains("A few simple checks"),
+            "the prose must survive: {:?}",
+            lifted.body
+        );
+    }
+
+    /// The control: an actual facts block still lifts.
+    ///
+    /// Without this the fix could be "never lift anything" and the test above
+    /// would still pass.
+    #[test]
+    fn a_real_facts_block_still_lifts() {
+        let plain = "Order: 4417\n\
+                     Ship date: 21 August\n\
+                     Carrier: Royal Mail\n\
+                     \n\
+                     Thanks for your order.\n";
+        let lifted = lift(plain);
+        assert_eq!(
+            lifted.rows.len(),
+            3,
+            "an ordinary facts block stopped lifting: {:?}",
+            lifted.rows
+        );
+    }
+}
+
+#[cfg(test)]
+mod a_plain_part_that_is_really_markup {
+    use super::reads_as_flattened_markup;
+
+    /// The shape measured against a real account.
+    ///
+    /// A school's daily summary, whose `text/plain` part is its HTML run
+    /// through a markdown converter. Reader view rendered it verbatim and the
+    /// syntax went on screen, link brackets and all, for the whole message.
+    #[test]
+    fn a_converters_markdown_is_not_prose() {
+        let flattened = "Assignment.[Bridges Practice #1](https://app.example.test/a/849) 3:59 pm\n\
+                         Event.[Even Day](https://app.example.test/p/420) Henderson Middle School";
+        assert!(reads_as_flattened_markup(flattened));
+        assert!(reads_as_flattened_markup(
+            "see [the notice](http://example.test/n)"
+        ));
+    }
+
+    /// The control, and the half that keeps the facts block alive.
+    ///
+    /// Reader view falls back to the HTML when this fires, and the HTML path
+    /// has no facts block -- so a false positive costs a transactional
+    /// message the summary `lift` would have given it. Prose people type, and
+    /// the markdown that is *not* a link, must not trip it.
+    #[test]
+    fn prose_is_not_mistaken_for_markup() {
+        for prose in [
+            "Your parcel EXTEST0042199317 is on its way.\nTracking: EXTEST0042199317",
+            "* milk\n* eggs\n- and a note\n# not a heading, a comment",
+            "The meeting (see https://example.test/agenda) is at three.",
+            "I wrote [sic] in the margin (twice).",
+            "",
+        ] {
+            assert!(
+                !reads_as_flattened_markup(prose),
+                "prose must keep the plain part and its facts block: {prose:?}"
+            );
+        }
     }
 }

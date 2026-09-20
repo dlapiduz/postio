@@ -16,11 +16,13 @@ use postio_model::{
     AccountId, MailboxId, MessageId, Operation, OperationId, OperationRange, OperationState,
     OperationTarget, RemoteId,
 };
-use rusqlite::types::Value;
-use rusqlite::{Connection, Row, params, params_from_iter};
 
 use super::{MessageSet, from_millis, require_persisted, to_millis, unknown_enum};
+
 use crate::error::{Error, Result};
+use crate::sql::{self, RowExt as _, bind};
+use crate::store::Connection;
+use turso::Row;
 
 /// One row of the mutation queue.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -78,24 +80,29 @@ impl QueuedOperation {
 /// ```no_run
 /// # use postio_model::{AccountId, MailboxId, MessageId, Operation, OperationTarget};
 /// # use postio_storage::repository::OperationQueueRepository;
-/// # fn main() -> Result<(), postio_storage::Error> {
+/// # async fn demo() -> Result<(), postio_storage::Error> {
 /// # use postio_storage::key::{Purpose, StoreKey};
 /// # let key = StoreKey::generate().derive(Purpose::Database);
-/// # let database = postio_storage::Database::open("postio.db", &key)?;
-/// # let mut connection = database.connection()?;
+/// # let database = postio_storage::Store::open("postio.db", &key).await?;
+/// # let connection = database.connect().await?;
 /// # let (account, message) = (AccountId::new(1), MessageId::new(1));
 /// # let (inbox, archive) = (MailboxId::new(1), MailboxId::new(2));
-/// let transaction = connection.transaction()?;
-/// // Enqueue FIRST, then perform the local write: a Move or Delete nulls
-/// // the row's server coordinates, and the enqueue is what snapshots them
-/// // while they are still there (#289).
-/// OperationQueueRepository::new(&transaction).enqueue(
-///     account,
-///     OperationTarget::Message(message),
-///     &Operation::Move { from: inbox, to: archive },
-///     chrono::Utc::now(),
-/// )?;
-/// transaction.commit()?;
+/// postio_storage::transaction(&connection, |transaction| async move {
+///     // Enqueue FIRST, then perform the local write: a Move or Delete nulls
+///     // the row's server coordinates, and the enqueue is what snapshots them
+///     // while they are still there (#289).
+///     OperationQueueRepository::new(&transaction)
+///         .enqueue(
+///             account,
+///             OperationTarget::Message(message),
+///             &Operation::Move { from: inbox, to: archive },
+///             chrono::Utc::now(),
+///         )
+///         .await?;
+///     // ... perform the local write ...
+///     Ok::<_, postio_storage::Error>(())
+/// })
+/// .await?;
 /// # Ok(())
 /// # }
 /// ```
@@ -125,7 +132,7 @@ impl<'a> OperationQueueRepository<'a> {
     /// by then the mailbox the message came from may no longer be where it is,
     /// and reconstructing "where was this before" from the current state is
     /// exactly the guesswork undo must not do.
-    pub fn enqueue(
+    pub async fn enqueue(
         &self,
         account_id: AccountId,
         target: OperationTarget,
@@ -133,6 +140,7 @@ impl<'a> OperationQueueRepository<'a> {
         at: DateTime<Utc>,
     ) -> Result<QueuedOperation> {
         self.enqueue_inner(account_id, target, operation, at, None)
+            .await
     }
 
     /// Appends an operation the drainer must not touch before `not_before` —
@@ -146,7 +154,7 @@ impl<'a> OperationQueueRepository<'a> {
     /// Unlike a deferred row this one has made no attempt and failed
     /// nothing, so `attempts` stays `0` and `last_error` stays `None` — a
     /// scheduled send must not read like a retry in a bug report.
-    pub fn enqueue_not_before(
+    pub async fn enqueue_not_before(
         &self,
         account_id: AccountId,
         target: OperationTarget,
@@ -155,9 +163,10 @@ impl<'a> OperationQueueRepository<'a> {
         not_before: DateTime<Utc>,
     ) -> Result<QueuedOperation> {
         self.enqueue_inner(account_id, target, operation, at, Some(not_before))
+            .await
     }
 
-    fn enqueue_inner(
+    async fn enqueue_inner(
         &self,
         account_id: AccountId,
         target: OperationTarget,
@@ -166,68 +175,71 @@ impl<'a> OperationQueueRepository<'a> {
         next_attempt_at: Option<DateTime<Utc>>,
     ) -> Result<QueuedOperation> {
         let account_id = require_persisted(account_id.get(), "account")?;
-        let scope = super::Scope::open(self.connection)?;
+        sql::in_scope(self.connection, |scope| async move {
+            let payload = encode(operation)?;
+            let inverse = operation.inverse();
+            let encoded_inverse = inverse.as_ref().map(encode).transpose()?;
+            let mailbox_id = operation.mailbox().filter(|id| id.is_assigned());
 
-        let payload = encode(operation)?;
-        let inverse = operation.inverse();
-        let encoded_inverse = inverse.as_ref().map(encode).transpose()?;
-        let mailbox_id = operation.mailbox().filter(|id| id.is_assigned());
-
-        // The snapshot has to be read before the caller's local write nulls
-        // it — which is why enqueue comes before the move in every Move and
-        // Delete path (#289). A target that is not a message, or a row that
-        // does not exist, snapshots nothing.
-        let source_remote_id: Option<String> = match target {
-            OperationTarget::Message(id) => scope
-                .query_row(
+            // The snapshot has to be read before the caller's local write nulls
+            // it — which is why enqueue comes before the move in every Move and
+            // Delete path (#289). A target that is not a message, or a row that
+            // does not exist, snapshots nothing.
+            let source_remote_id: Option<String> = match target {
+                OperationTarget::Message(id) => sql::first(
+                    &scope,
                     "SELECT remote_id FROM messages WHERE id = ?1",
                     [id.get()],
-                    |row| row.get(0),
+                    |row| row.col(0),
                 )
+                .await
                 .unwrap_or(None),
-            _ => None,
-        };
+                _ => None,
+            };
 
-        scope.execute(
-            "INSERT INTO operation_queue (account_id, op_type, target_kind, target_id,
-                                          mailbox_id, payload, inverse, state, attempts,
-                                          next_attempt_at, created_at, updated_at,
-                                          source_remote_id)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 0, ?9, ?10, ?10, ?11)",
-            params![
-                account_id,
-                operation.op_type(),
-                target.kind(),
-                target.id(),
-                mailbox_id.map(MailboxId::get),
-                payload,
-                encoded_inverse,
-                OperationState::Pending.as_str(),
-                next_attempt_at.map(to_millis),
-                to_millis(at),
-                source_remote_id,
-            ],
-        )?;
-        let id = OperationId::new(scope.last_insert_rowid());
+            scope
+                .execute(
+                    "INSERT INTO operation_queue (account_id, op_type, target_kind, target_id,
+                                              mailbox_id, payload, inverse, state, attempts,
+                                              next_attempt_at, created_at, updated_at,
+                                              source_remote_id)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 0, ?9, ?10, ?10, ?11)",
+                    bind![
+                        account_id,
+                        operation.op_type(),
+                        target.kind(),
+                        target.id(),
+                        mailbox_id.map(MailboxId::get),
+                        payload,
+                        encoded_inverse,
+                        OperationState::Pending.as_str(),
+                        next_attempt_at.map(to_millis),
+                        to_millis(at),
+                        source_remote_id,
+                    ],
+                )
+                .await?;
+            let id = OperationId::new(scope.last_insert_rowid());
 
-        refresh_pending_flag(&scope, target)?;
-        scope.commit()?;
+            refresh_pending_flag(&scope, target).await?;
 
-        Ok(QueuedOperation {
-            id,
-            account_id: AccountId::new(account_id),
-            target,
-            operation: operation.clone(),
-            inverse,
-            mailbox_id,
-            state: OperationState::Pending,
-            attempts: 0,
-            last_error: None,
-            next_attempt_at,
-            created_at: at,
-            updated_at: at,
-            source_remote_id: source_remote_id.map(RemoteId::new),
+            Ok(QueuedOperation {
+                id,
+                account_id: AccountId::new(account_id),
+                target,
+                operation: operation.clone(),
+                inverse,
+                mailbox_id,
+                state: OperationState::Pending,
+                attempts: 0,
+                last_error: None,
+                next_attempt_at,
+                created_at: at,
+                updated_at: at,
+                source_remote_id: source_remote_id.map(RemoteId::new),
+            })
         })
+        .await
     }
 
     /// Enqueues `operation` once per message a [`MessageSet`] names, in one
@@ -251,7 +263,7 @@ impl<'a> OperationQueueRepository<'a> {
     ///
     /// Returns `None` when the set named nothing, which is not an error: a
     /// whole-mailbox action over an empty mailbox has simply nothing to do.
-    pub fn enqueue_set(
+    pub async fn enqueue_set(
         &self,
         account_id: AccountId,
         set: &MessageSet,
@@ -262,69 +274,71 @@ impl<'a> OperationQueueRepository<'a> {
         let payload = encode(operation)?;
         let encoded_inverse = operation.inverse().as_ref().map(encode).transpose()?;
         let mailbox_id = operation.mailbox().filter(|id| id.is_assigned());
-        let scope = super::Scope::open(self.connection)?;
+        sql::in_scope(self.connection, |scope| async move {
+            // Read before writing: `first` is one past whatever the queue already
+            // held, so the run this returns cannot swallow a row somebody else
+            // wrote. Taking it from `last - changes + 1` instead would assume the
+            // statement's rowids came out contiguous, which is true today and is
+            // not something the schema promises.
+            let highest = sql::scalar(
+                &scope,
+                "SELECT coalesce(max(id), 0) FROM operation_queue",
+                (),
+            )
+            .await?;
 
-        // Read before writing: `first` is one past whatever the queue already
-        // held, so the run this returns cannot swallow a row somebody else
-        // wrote. Taking it from `last - changes + 1` instead would assume the
-        // statement's rowids came out contiguous, which is true today and is
-        // not something the schema promises.
-        let highest: i64 = scope.query_row(
-            "SELECT coalesce(max(id), 0) FROM operation_queue",
-            [],
-            |row| row.get(0),
-        )?;
+            // `ORDER BY messages.id` is not decoration: without it the queue's
+            // own order is whatever order the planner happened to walk the rows
+            // in, and that is a property of the *indexes*, not of this statement.
+            // #638 widened the list indexes and the order silently reversed --
+            // the planner could suddenly answer the predicate from
+            // `idx_messages_list`, which is keyed `received_at DESC, id DESC`,
+            // where before it had scanned in rowid order. The queue drains in id
+            // order, so this decides the order operations reach the server.
+            let (predicate, arguments) = set.predicate(8);
+            let sql = format!(
+                "INSERT INTO operation_queue (account_id, op_type, target_kind, target_id,
+                                              mailbox_id, payload, inverse, state, attempts,
+                                              created_at, updated_at, source_remote_id)
+                 SELECT ?1, ?2, 'message', messages.id, ?3, ?4, ?5, ?6, 0, ?7, ?7,
+                        messages.remote_id
+                   FROM messages
+                  WHERE {predicate}
+                  ORDER BY messages.id"
+            );
+            let mut parameters = vec![
+                turso::Value::from(account_id),
+                turso::Value::from(operation.op_type().to_owned()),
+                turso::Value::from(mailbox_id.map(MailboxId::get)),
+                turso::Value::from(payload),
+                turso::Value::from(encoded_inverse),
+                turso::Value::from(OperationState::Pending.as_str().to_owned()),
+                turso::Value::from(to_millis(at)),
+            ];
+            parameters.extend(arguments.into_iter().map(turso::Value::from));
+            let written = scope.execute(&sql, parameters).await?;
+            if written == 0 {
+                return Ok(None);
+            }
+            let last = OperationId::new(scope.last_insert_rowid());
 
-        // `ORDER BY messages.id` is not decoration: without it the queue's
-        // own order is whatever order the planner happened to walk the rows
-        // in, and that is a property of the *indexes*, not of this statement.
-        // #638 widened the list indexes and the order silently reversed --
-        // the planner could suddenly answer the predicate from
-        // `idx_messages_list`, which is keyed `received_at DESC, id DESC`,
-        // where before it had scanned in rowid order. The queue drains in id
-        // order, so this decides the order operations reach the server.
-        let (predicate, mut arguments) = set.predicate(8);
-        let sql = format!(
-            "INSERT INTO operation_queue (account_id, op_type, target_kind, target_id,
-                                          mailbox_id, payload, inverse, state, attempts,
-                                          created_at, updated_at, source_remote_id)
-             SELECT ?1, ?2, 'message', messages.id, ?3, ?4, ?5, ?6, 0, ?7, ?7,
-                    messages.remote_id
-               FROM messages
-              WHERE {predicate}
-              ORDER BY messages.id"
-        );
-        let mut parameters = vec![
-            Value::from(account_id),
-            Value::from(operation.op_type().to_owned()),
-            Value::from(mailbox_id.map(MailboxId::get)),
-            Value::from(payload),
-            Value::from(encoded_inverse),
-            Value::from(OperationState::Pending.as_str().to_owned()),
-            Value::from(to_millis(at)),
-        ];
-        parameters.extend(arguments.drain(..).map(Value::from));
-        let written = scope.execute(&sql, params_from_iter(parameters))?;
-        if written == 0 {
-            scope.commit()?;
-            return Ok(None);
-        }
-        let last = OperationId::new(scope.last_insert_rowid());
+            // One statement rather than `refresh_pending_flag` per row: the flag
+            // says "this message has something queued", and every row this wrote
+            // is a message that now does.
+            let (predicate, arguments) = set.predicate(1);
+            scope
+                .execute(
+                    &format!("UPDATE messages SET has_pending_operations = 1 WHERE {predicate}"),
+                    arguments,
+                )
+                .await?;
 
-        // One statement rather than `refresh_pending_flag` per row: the flag
-        // says "this message has something queued", and every row this wrote
-        // is a message that now does.
-        let (predicate, arguments) = set.predicate(1);
-        scope.execute(
-            &format!("UPDATE messages SET has_pending_operations = 1 WHERE {predicate}"),
-            params_from_iter(arguments),
-        )?;
-        scope.commit()?;
-
-        Ok(Some(OperationRange::new(
-            OperationId::new(highest + 1),
-            last,
-        )))
+            Ok(Some(OperationRange::new(
+                OperationId::new(highest + 1),
+                last,
+            )))
+        })
+        .await
     }
 
     /// Enqueues `operation` once for each of `ids`, in one statement.
@@ -342,7 +356,7 @@ impl<'a> OperationQueueRepository<'a> {
     /// Does nothing, successfully, for an empty `ids` — a verb with an empty
     /// selection has already been rejected further up before this is ever
     /// called.
-    pub fn enqueue_many(
+    pub async fn enqueue_many(
         &self,
         account_id: AccountId,
         ids: &[MessageId],
@@ -356,41 +370,47 @@ impl<'a> OperationQueueRepository<'a> {
         let payload = encode(operation)?;
         let encoded_inverse = operation.inverse().as_ref().map(encode).transpose()?;
         let mailbox_id = operation.mailbox().filter(|id| id.is_assigned());
-        let scope = super::Scope::open(self.connection)?;
+        sql::in_scope(self.connection, |scope| async move {
+            let sql = format!(
+                "INSERT INTO operation_queue (account_id, op_type, target_kind, target_id,
+                                              mailbox_id, payload, inverse, state, attempts,
+                                              created_at, updated_at, source_remote_id)
+                 SELECT ?1, ?2, 'message', messages.id, ?3, ?4, ?5, ?6, 0, ?7, ?7,
+                        messages.remote_id
+                   FROM messages
+                  WHERE messages.id IN ({})",
+                super::messages::placeholders(ids.len(), 8)
+            );
+            let mut parameters = vec![
+                turso::Value::from(account_id),
+                turso::Value::from(operation.op_type().to_owned()),
+                turso::Value::from(mailbox_id.map(MailboxId::get)),
+                turso::Value::from(payload),
+                turso::Value::from(encoded_inverse),
+                turso::Value::from(OperationState::Pending.as_str().to_owned()),
+                turso::Value::from(to_millis(at)),
+            ];
+            parameters.extend(
+                ids.iter()
+                    .map(|id| turso::Value::from(id.get()))
+                    .collect::<Vec<_>>(),
+            );
+            scope.execute(&sql, parameters).await?;
 
-        let sql = format!(
-            "INSERT INTO operation_queue (account_id, op_type, target_kind, target_id,
-                                          mailbox_id, payload, inverse, state, attempts,
-                                          created_at, updated_at, source_remote_id)
-             SELECT ?1, ?2, 'message', messages.id, ?3, ?4, ?5, ?6, 0, ?7, ?7,
-                    messages.remote_id
-               FROM messages
-              WHERE messages.id IN ({})",
-            super::messages::placeholders(ids.len(), 8)
-        );
-        let mut parameters = vec![
-            Value::from(account_id),
-            Value::from(operation.op_type().to_owned()),
-            Value::from(mailbox_id.map(MailboxId::get)),
-            Value::from(payload),
-            Value::from(encoded_inverse),
-            Value::from(OperationState::Pending.as_str().to_owned()),
-            Value::from(to_millis(at)),
-        ];
-        parameters.extend(ids.iter().map(|id| Value::from(id.get())));
-        scope.execute(&sql, params_from_iter(parameters))?;
+            // One statement rather than `refresh_pending_flag` per row, same as
+            // `enqueue_set`: every id this wrote a row for is a message that now
+            // has something queued.
+            let flag_sql = format!(
+                "UPDATE messages SET has_pending_operations = 1 WHERE id IN ({})",
+                super::messages::placeholders(ids.len(), 1)
+            );
+            scope
+                .execute(&flag_sql, ids.iter().map(|id| id.get()).collect::<Vec<_>>())
+                .await?;
 
-        // One statement rather than `refresh_pending_flag` per row, same as
-        // `enqueue_set`: every id this wrote a row for is a message that now
-        // has something queued.
-        let flag_sql = format!(
-            "UPDATE messages SET has_pending_operations = 1 WHERE id IN ({})",
-            super::messages::placeholders(ids.len(), 1)
-        );
-        scope.execute(&flag_sql, params_from_iter(ids.iter().map(|id| id.get())))?;
-        scope.commit()?;
-
-        Ok(())
+            Ok(())
+        })
+        .await
     }
 
     /// Enqueues the inverse of a row that is already queued — this is undo.
@@ -399,7 +419,7 @@ impl<'a> OperationQueueRepository<'a> {
     /// already there. There is deliberately no separate undo path: whatever
     /// retry, backoff and conflict handling the drainer grows applies to undo
     /// for free.
-    pub fn enqueue_inverse(
+    pub async fn enqueue_inverse(
         &self,
         queued: &QueuedOperation,
         at: DateTime<Utc>,
@@ -408,15 +428,18 @@ impl<'a> OperationQueueRepository<'a> {
             op_type: queued.operation.op_type(),
         })?;
         self.enqueue(queued.account_id, queued.target, inverse, at)
+            .await
     }
 
     /// One row.
-    pub fn get(&self, id: OperationId) -> Result<Option<QueuedOperation>> {
-        let mut statement = self.connection.prepare(&format!(
-            "SELECT {COLUMNS} FROM operation_queue WHERE id = ?1"
-        ))?;
-        let mut rows = statement.query([id.get()])?;
-        rows.next()?.map(read_queued).transpose()
+    pub async fn get(&self, id: OperationId) -> Result<Option<QueuedOperation>> {
+        let mut statement = self
+            .connection
+            .prepare(&format!(
+                "SELECT {COLUMNS} FROM operation_queue WHERE id = ?1"
+            ))
+            .await?;
+        crate::sql::first_of(&mut statement, [id.get()], read_queued).await
     }
 
     /// The account's operations that are due to be drained at `now`, in order.
@@ -424,26 +447,30 @@ impl<'a> OperationQueueRepository<'a> {
     /// Ascending id, which is enqueue order, which is the order the user
     /// performed the actions in. A row whose backoff has not elapsed is
     /// skipped and keeps its place for the next pass.
-    pub fn pending(
+    pub async fn pending(
         &self,
         account_id: AccountId,
         now: DateTime<Utc>,
     ) -> Result<Vec<QueuedOperation>> {
-        let mut statement = self.connection.prepare(&format!(
-            "SELECT {COLUMNS} FROM operation_queue
+        let mut statement = self
+            .connection
+            .prepare(&format!(
+                "SELECT {COLUMNS} FROM operation_queue
               WHERE account_id = ?1 AND state = ?2
                 AND (next_attempt_at IS NULL OR next_attempt_at <= ?3)
               ORDER BY id"
-        ))?;
-        let rows = statement.query_and_then(
-            params![
+            ))
+            .await?;
+        sql::mapped(
+            &mut statement,
+            bind![
                 account_id.get(),
                 OperationState::Pending.as_str(),
                 to_millis(now)
             ],
             read_queued,
-        )?;
-        rows.collect()
+        )
+        .await
     }
 
     /// The unsettled row against `target`, if there is one.
@@ -453,25 +480,95 @@ impl<'a> OperationQueueRepository<'a> {
     /// it — so the earliest by id (there is only ever the one) is what this
     /// returns. Used by [`super::DraftRepository::cancel_send`] to find the
     /// `Send` a queued draft is waiting on.
-    pub fn pending_for(&self, target: OperationTarget) -> Result<Option<QueuedOperation>> {
-        let mut statement = self.connection.prepare(&format!(
-            "SELECT {COLUMNS} FROM operation_queue
+    pub async fn pending_for(&self, target: OperationTarget) -> Result<Option<QueuedOperation>> {
+        let mut statement = self
+            .connection
+            .prepare(&format!(
+                "SELECT {COLUMNS} FROM operation_queue
               WHERE target_kind = ?1 AND target_id = ?2 AND state IN ('pending', 'in_flight')
               ORDER BY id
               LIMIT 1"
-        ))?;
-        let mut rows = statement.query(params![target.kind(), target.id()])?;
-        rows.next()?.map(read_queued).transpose()
+            ))
+            .await?;
+        crate::sql::first_of(
+            &mut statement,
+            bind![target.kind(), target.id()],
+            read_queued,
+        )
+        .await
+    }
+
+    /// Why the last attempt against `target` gave up, if one did.
+    ///
+    /// [`pending_for`](Self::pending_for) answers for work still in progress;
+    /// this answers for work that stopped. A surface reopening a failed draft
+    /// has a `DraftId` and nothing else, and the reason lives on a queue row
+    /// keyed by target — without a query from one to the other the reason is
+    /// durable and unreachable, which is exactly what it was (#1487).
+    ///
+    /// Read rather than copied onto the draft: one source of truth, and a
+    /// second copy is one that can come to disagree with the first about why
+    /// a send failed.
+    ///
+    /// The most recent, since a target may have failed more than once and the
+    /// current reason is the one worth saying.
+    pub async fn last_failure_for(&self, target: OperationTarget) -> Result<Option<String>> {
+        let reason: Option<Option<String>> = sql::first(
+            self.connection,
+            "SELECT last_error FROM operation_queue
+                  WHERE target_kind = ?1 AND target_id = ?2 AND state = 'failed'
+                  ORDER BY id DESC
+                  LIMIT 1",
+            bind![target.kind(), target.id()],
+            |row| row.col(0),
+        )
+        .await?;
+        // Flattened: no failed row and a failed row that recorded no reason
+        // are the same answer to "what should I tell them", and a caller that
+        // had to tell them apart would have nothing to do with the
+        // difference.
+        Ok(reason.flatten())
     }
 
     /// Whether anything unsettled is queued against `target`.
-    pub fn has_pending(&self, target: OperationTarget) -> Result<bool> {
-        let count: i64 = self.connection.query_row(
+    pub async fn has_pending(&self, target: OperationTarget) -> Result<bool> {
+        let count: i64 = sql::one(
+            self.connection,
             "SELECT count(*) FROM operation_queue
               WHERE target_kind = ?1 AND target_id = ?2 AND state IN ('pending', 'in_flight')",
-            params![target.kind(), target.id()],
-            |row| row.get(0),
-        )?;
+            bind![target.kind(), target.id()],
+            |row| row.col(0),
+        )
+        .await?;
+        Ok(count > 0)
+    }
+
+    /// Whether anything queued against `mailbox` is still unreconciled.
+    ///
+    /// Wider than [`has_pending`](Self::has_pending) in two ways, and both are
+    /// deliberate. It asks by *mailbox* rather than by target, because the
+    /// question behind it is about the mailbox as a whole: does its local
+    /// contents already reflect a mutation the server has not been told about?
+    /// And it counts `failed` alongside `pending` and `in_flight`, because a
+    /// failed row is precisely that — the local move stands, the server never
+    /// heard, and only the user can clear it.
+    ///
+    /// What it is for: a mailbox holding fewer messages than the server's
+    /// `EXISTS` has either lost mail or is carrying a local move the server
+    /// has not caught up with, and the row counts alone cannot tell those
+    /// apart. This can. See `resync`'s short-of-`EXISTS` path — without it,
+    /// re-enumerating would refetch the very message the user just archived
+    /// and put it back in the mailbox they took it out of.
+    pub async fn has_unsettled_in(&self, mailbox: MailboxId) -> Result<bool> {
+        let count: i64 = sql::one(
+            self.connection,
+            "SELECT count(*) FROM operation_queue
+              WHERE mailbox_id = ?1
+                AND state IN ('pending', 'in_flight', 'failed')",
+            bind![mailbox.get()],
+            |row| row.col(0),
+        )
+        .await?;
         Ok(count > 0)
     }
 
@@ -481,11 +578,14 @@ impl<'a> OperationQueueRepository<'a> {
     /// server had nothing to do about. The row is done, but *why* it was done
     /// without a round trip is the difference between an explicable bug report
     /// and a mystery.
-    pub fn note(&self, id: OperationId, note: &str) -> Result<()> {
-        let changed = self.connection.execute(
-            "UPDATE operation_queue SET last_error = ?2 WHERE id = ?1",
-            params![id.get(), note],
-        )?;
+    pub async fn note(&self, id: OperationId, note: &str) -> Result<()> {
+        let changed = self
+            .connection
+            .execute(
+                "UPDATE operation_queue SET last_error = ?2 WHERE id = ?1",
+                bind![id.get(), note],
+            )
+            .await?;
         if changed == 0 {
             return Err(Error::NotFound {
                 entity: "operation",
@@ -496,46 +596,52 @@ impl<'a> OperationQueueRepository<'a> {
     }
 
     /// Hands a row to the drainer.
-    pub fn mark_in_flight(&self, id: OperationId, at: DateTime<Utc>) -> Result<()> {
+    pub async fn mark_in_flight(&self, id: OperationId, at: DateTime<Utc>) -> Result<()> {
         self.set_state(id, OperationState::InFlight, at, None, false)
+            .await
     }
 
     /// Records that the server applied a row.
-    pub fn mark_done(&self, id: OperationId, at: DateTime<Utc>) -> Result<()> {
+    pub async fn mark_done(&self, id: OperationId, at: DateTime<Utc>) -> Result<()> {
         self.set_state(id, OperationState::Done, at, None, false)
+            .await
     }
 
     /// Gives up on a row. Only the user clears it from here.
-    pub fn mark_failed(&self, id: OperationId, at: DateTime<Utc>, error: &str) -> Result<()> {
+    pub async fn mark_failed(&self, id: OperationId, at: DateTime<Utc>, error: &str) -> Result<()> {
         self.set_state(id, OperationState::Failed, at, Some(error), true)
+            .await
     }
 
     /// Puts a row back in the queue, not to be tried again before `retry_at`.
     ///
     /// The backoff schedule itself is the drainer's; this only records the
     /// decision.
-    pub fn defer(&self, id: OperationId, retry_at: DateTime<Utc>, error: &str) -> Result<()> {
-        let scope = super::Scope::open(self.connection)?;
-        let changed = scope.execute(
-            "UPDATE operation_queue
-                SET state = ?2, attempts = attempts + 1, last_error = ?3,
-                    next_attempt_at = ?4, updated_at = ?4
-              WHERE id = ?1",
-            params![
-                id.get(),
-                OperationState::Pending.as_str(),
-                error,
-                to_millis(retry_at),
-            ],
-        )?;
-        if changed == 0 {
-            return Err(Error::NotFound {
-                entity: "operation",
-                id: id.get(),
-            });
-        }
-        scope.commit()?;
-        Ok(())
+    pub async fn defer(&self, id: OperationId, retry_at: DateTime<Utc>, error: &str) -> Result<()> {
+        sql::in_scope(self.connection, |scope| async move {
+            let changed = scope
+                .execute(
+                    "UPDATE operation_queue
+                    SET state = ?2, attempts = attempts + 1, last_error = ?3,
+                        next_attempt_at = ?4, updated_at = ?4
+                  WHERE id = ?1",
+                    bind![
+                        id.get(),
+                        OperationState::Pending.as_str(),
+                        error,
+                        to_millis(retry_at),
+                    ],
+                )
+                .await?;
+            if changed == 0 {
+                return Err(Error::NotFound {
+                    entity: "operation",
+                    id: id.get(),
+                });
+            }
+            Ok(())
+        })
+        .await
     }
 
     /// Returns every in-flight row in an account to pending, and says how many.
@@ -544,19 +650,26 @@ impl<'a> OperationQueueRepository<'a> {
     /// failed — the server may have applied it and died before the reply — so
     /// it is retried rather than dropped, and operations are written to be
     /// idempotent precisely so that retrying is safe.
-    pub fn requeue_in_flight(&self, account_id: AccountId, at: DateTime<Utc>) -> Result<usize> {
-        let changed = self.connection.execute(
-            "UPDATE operation_queue
+    pub async fn requeue_in_flight(
+        &self,
+        account_id: AccountId,
+        at: DateTime<Utc>,
+    ) -> Result<usize> {
+        let changed = self
+            .connection
+            .execute(
+                "UPDATE operation_queue
                 SET state = ?2, next_attempt_at = NULL, updated_at = ?3
               WHERE account_id = ?1 AND state = ?4",
-            params![
-                account_id.get(),
-                OperationState::Pending.as_str(),
-                to_millis(at),
-                OperationState::InFlight.as_str(),
-            ],
-        )?;
-        Ok(changed)
+                bind![
+                    account_id.get(),
+                    OperationState::Pending.as_str(),
+                    to_millis(at),
+                    OperationState::InFlight.as_str(),
+                ],
+            )
+            .await?;
+        Ok(changed as usize)
     }
 
     /// Drops a row, returning whether there was one.
@@ -564,31 +677,41 @@ impl<'a> OperationQueueRepository<'a> {
     /// This is how a send is cancelled: an operation that has not drained yet
     /// can simply be taken off the queue, which is a better undo than any
     /// compensating operation.
-    pub fn delete(&self, id: OperationId) -> Result<bool> {
-        let scope = super::Scope::open(self.connection)?;
-        let target = self.get(id)?.map(|queued| queued.target);
-        let deleted = scope.execute("DELETE FROM operation_queue WHERE id = ?1", [id.get()])?;
-        if let Some(target) = target {
-            refresh_pending_flag(&scope, target)?;
-        }
-        scope.commit()?;
-        Ok(deleted > 0)
+    pub async fn delete(&self, id: OperationId) -> Result<bool> {
+        sql::in_scope(self.connection, |scope| async move {
+            let target = self.get(id).await?.map(|queued| queued.target);
+            let deleted = scope
+                .execute("DELETE FROM operation_queue WHERE id = ?1", [id.get()])
+                .await?;
+            if let Some(target) = target {
+                refresh_pending_flag(&scope, target).await?;
+            }
+            Ok(deleted > 0)
+        })
+        .await
     }
 
     /// Removes settled rows older than `before`, returning how many went.
     ///
     /// Done rows are kept for a while so a late undo can still find them; this
     /// is the sweep that stops the table growing without bound.
-    pub fn prune_settled(&self, account_id: AccountId, before: DateTime<Utc>) -> Result<usize> {
-        let removed = self.connection.execute(
-            "DELETE FROM operation_queue
+    pub async fn prune_settled(
+        &self,
+        account_id: AccountId,
+        before: DateTime<Utc>,
+    ) -> Result<usize> {
+        let removed = self
+            .connection
+            .execute(
+                "DELETE FROM operation_queue
               WHERE account_id = ?1 AND state IN ('done', 'failed') AND updated_at < ?2",
-            params![account_id.get(), to_millis(before)],
-        )?;
-        Ok(removed)
+                bind![account_id.get(), to_millis(before)],
+            )
+            .await?;
+        Ok(removed as usize)
     }
 
-    fn set_state(
+    async fn set_state(
         &self,
         id: OperationId,
         state: OperationState,
@@ -596,32 +719,35 @@ impl<'a> OperationQueueRepository<'a> {
         error: Option<&str>,
         count_attempt: bool,
     ) -> Result<()> {
-        let scope = super::Scope::open(self.connection)?;
-        let Some(queued) = OperationQueueRepository::new(&scope).get(id)? else {
-            return Err(Error::NotFound {
-                entity: "operation",
-                id: id.get(),
-            });
-        };
+        sql::in_scope(self.connection, |scope| async move {
+            let Some(queued) = OperationQueueRepository::new(&scope).get(id).await? else {
+                return Err(Error::NotFound {
+                    entity: "operation",
+                    id: id.get(),
+                });
+            };
 
-        scope.execute(
-            "UPDATE operation_queue
-                SET state = ?2,
-                    attempts = attempts + ?3,
-                    last_error = coalesce(?4, last_error),
-                    updated_at = ?5
-              WHERE id = ?1",
-            params![
-                id.get(),
-                state.as_str(),
-                i64::from(count_attempt),
-                error,
-                to_millis(at),
-            ],
-        )?;
-        refresh_pending_flag(&scope, queued.target)?;
-        scope.commit()?;
-        Ok(())
+            scope
+                .execute(
+                    "UPDATE operation_queue
+                    SET state = ?2,
+                        attempts = attempts + ?3,
+                        last_error = coalesce(?4, last_error),
+                        updated_at = ?5
+                  WHERE id = ?1",
+                    bind![
+                        id.get(),
+                        state.as_str(),
+                        i64::from(count_attempt),
+                        error,
+                        to_millis(at),
+                    ],
+                )
+                .await?;
+            refresh_pending_flag(&scope, queued.target).await?;
+            Ok(())
+        })
+        .await
     }
 }
 
@@ -631,7 +757,7 @@ impl<'a> OperationQueueRepository<'a> {
 /// what keeps a page of rows at a fixed number of queries and inside the 16 ms
 /// interaction budget. Only message-shaped targets have one; an operation on a
 /// mailbox or the account itself has no per-message flag to keep true.
-fn refresh_pending_flag(connection: &Connection, target: OperationTarget) -> Result<()> {
+async fn refresh_pending_flag(connection: &Connection, target: OperationTarget) -> Result<()> {
     let selector = match target {
         OperationTarget::Message(_) => "id = ?1",
         OperationTarget::Thread(_) => "thread_id = ?1",
@@ -640,17 +766,19 @@ fn refresh_pending_flag(connection: &Connection, target: OperationTarget) -> Res
         }
     };
 
-    connection.execute(
-        &format!(
-            "UPDATE messages
+    connection
+        .execute(
+            &format!(
+                "UPDATE messages
                 SET has_pending_operations = EXISTS (
                         SELECT 1 FROM operation_queue q
                          WHERE q.target_kind = ?2 AND q.target_id = ?1
                            AND q.state IN ('pending', 'in_flight'))
               WHERE {selector}"
-        ),
-        params![target.id(), target.kind()],
-    )?;
+            ),
+            bind![target.id(), target.kind()],
+        )
+        .await?;
     Ok(())
 }
 
@@ -665,33 +793,33 @@ fn decode(column: &'static str, json: &str) -> Result<Operation> {
     serde_json::from_str(json).map_err(|source| Error::CorruptPayload { column, source })
 }
 
-fn read_queued(row: &Row<'_>) -> Result<QueuedOperation> {
-    let target_kind: String = row.get(3)?;
-    let target = OperationTarget::from_parts(&target_kind, row.get(4)?)
+fn read_queued(row: &Row) -> Result<QueuedOperation> {
+    let target_kind: String = row.col(3)?;
+    let target = OperationTarget::from_parts(&target_kind, row.col(4)?)
         .ok_or_else(|| unknown_enum("operation_queue.target_kind", target_kind))?;
-    let state: String = row.get(8)?;
+    let state: String = row.col(8)?;
     let state = OperationState::from_name(&state)
         .ok_or_else(|| unknown_enum("operation_queue.state", state))?;
 
-    let payload: String = row.get(6)?;
-    let inverse: Option<String> = row.get(7)?;
+    let payload: String = row.col(6)?;
+    let inverse: Option<String> = row.col(7)?;
 
     Ok(QueuedOperation {
-        id: OperationId::new(row.get(0)?),
-        account_id: AccountId::new(row.get(1)?),
+        id: OperationId::new(row.col(0)?),
+        account_id: AccountId::new(row.col(1)?),
         target,
         operation: decode("payload", &payload)?,
         inverse: inverse
             .as_deref()
             .map(|json| decode("inverse", json))
             .transpose()?,
-        mailbox_id: row.get::<_, Option<i64>>(5)?.map(MailboxId::new),
+        mailbox_id: row.col::<Option<i64>>(5)?.map(MailboxId::new),
         state,
-        attempts: row.get::<_, i64>(9)? as u32,
-        last_error: row.get(10)?,
-        next_attempt_at: row.get::<_, Option<i64>>(11)?.map(from_millis),
-        created_at: from_millis(row.get(12)?),
-        updated_at: from_millis(row.get(13)?),
-        source_remote_id: row.get::<_, Option<String>>(14)?.map(RemoteId::new),
+        attempts: row.col::<i64>(9)? as u32,
+        last_error: row.col(10)?,
+        next_attempt_at: row.col::<Option<i64>>(11)?.map(from_millis),
+        created_at: from_millis(row.col(12)?),
+        updated_at: from_millis(row.col(13)?),
+        source_remote_id: row.col::<Option<String>>(14)?.map(RemoteId::new),
     })
 }

@@ -48,7 +48,7 @@ use postio_model::address::EmailAddress;
 use postio_model::ids::{AttachmentId, BlobId};
 use postio_model::{Attachment, Message, MessageId};
 use postio_runtime::Engine;
-use postio_storage::Database;
+use postio_storage::Store;
 use postio_storage::blob::BlobStore;
 use postio_storage::repository::MessageRepository;
 
@@ -84,12 +84,15 @@ pub type Showing = Rc<Cell<Option<MessageId>>>;
 /// Empty when the store holds one account or none — which is what makes the
 /// account line invisible for everybody who has not configured a second one
 /// (#185). Not "hidden by a flag": there is nothing to say.
-fn accounts_to_name(database: &postio_storage::Database) -> Vec<(postio_model::AccountId, String)> {
-    let Ok(connection) = database.connection() else {
+async fn accounts_to_name(
+    database: &postio_storage::Store,
+) -> Vec<(postio_model::AccountId, String)> {
+    let Ok(connection) = database.connect().await else {
         return Vec::new();
     };
     let accounts = postio_storage::repository::AccountRepository::new(&connection)
         .list()
+        .await
         .unwrap_or_default();
     if accounts.len() < 2 {
         return Vec::new();
@@ -100,11 +103,11 @@ fn accounts_to_name(database: &postio_storage::Database) -> Vec<(postio_model::A
         .collect()
 }
 
-pub fn install(window: &Window, wiring: &Wiring, feeds: &Feeds, showing: Showing) {
+pub async fn install(window: &Window, wiring: &Wiring, feeds: &Feeds, showing: Showing) {
     // See `accounts_to_name`: empty in the single-account case, which is the
     // common one, and then this costs a length check per message.
     let named_accounts: Rc<Vec<(postio_model::AccountId, String)>> =
-        Rc::new(accounts_to_name(&wiring.database));
+        Rc::new(accounts_to_name(&wiring.database).await);
     // `showing` is what the pane is showing, or is waiting to show. Set the
     // instant the cursor reaches a row rather than when the body lands, so a
     // body that arrives late can tell it is late. `compose.rs` reads the
@@ -150,25 +153,29 @@ pub fn install(window: &Window, wiring: &Wiring, feeds: &Feeds, showing: Showing
         let runtime = wiring.runtime.clone();
         let showing = showing.clone();
         move |list_identifier| {
-            let Some(message) = showing.get() else {
-                return;
-            };
-            let list_identifier = list_identifier.to_owned();
-            let _ = crate::search::ask(&database, &runtime, move |connection| {
-                let account_id = MessageRepository::new(connection)
-                    .get(message)
-                    .ok()
-                    .flatten()?
-                    .account_id;
-                let mut activation = postio_model::UnsubscribeActivation::new(
-                    account_id,
-                    list_identifier,
-                    chrono::Utc::now(),
-                );
-                postio_storage::repository::UnsubscribeRepository::new(connection)
-                    .record(&mut activation)
-                    .ok()
-            });
+            postio_session::blocking::now(async {
+                let Some(message) = showing.get() else {
+                    return;
+                };
+                let list_identifier = list_identifier.to_owned();
+                let _ = crate::search::ask(&database, &runtime, move |connection| async move {
+                    let account_id = MessageRepository::new(&connection)
+                        .get(message)
+                        .await
+                        .ok()
+                        .flatten()?
+                        .account_id;
+                    let mut activation = postio_model::UnsubscribeActivation::new(
+                        account_id,
+                        list_identifier,
+                        chrono::Utc::now(),
+                    );
+                    postio_storage::repository::UnsubscribeRepository::new(&connection)
+                        .record(&mut activation)
+                        .await
+                        .ok()
+                });
+            })
         }
     });
 
@@ -404,8 +411,8 @@ pub fn install(window: &Window, wiring: &Wiring, feeds: &Feeds, showing: Showing
         named_accounts,
         offline: Rc::new(Cell::new(is_offline(&feeds.folders.status()))),
         queued: Cell::new(false),
-        conversation_queued: RefCell::new(std::collections::HashSet::new()),
         aimed: Cell::new(None),
+        engine: wiring.engine.clone(),
     });
     window.list().connect_cursor_moved(glib::clone!(
         #[weak]
@@ -441,6 +448,35 @@ pub fn install(window: &Window, wiring: &Wiring, feeds: &Feeds, showing: Showing
     // window has the blob source and the allow-list path, and only this
     // module knows how a body is loaded. The pane decides *how many* to ask
     // for; this decides what one contains.
+    // ADR 0032, Accepted 2026-09-09 (#1316): a thread is one document in one
+    // `WebView`, not a stack of readers.
+    //
+    // This was `if std::env::var_os("POSTIO_ONE_DOCUMENT").is_some()` while
+    // the ADR was Proposed, and the variable's own comment said why: "an
+    // experiment with a decision still to be made, and `config.toml` is where
+    // settled choices live." The decision is made, so there is no variable and
+    // no second shape to fall back to -- there are no deployed installs to
+    // keep a fallback for, and a code path nothing exercises is a code path
+    // that rots.
+    //
+    // The ADR was accepted **without** its own screen-reader gate being met;
+    // that is recorded there and the pass is #1424. If Orca finds the HTML
+    // worse than the widget tree it replaced, the answer is to fix the HTML,
+    // not to reach for a stacked pane nobody has run in months.
+    {
+        window.conversation().set_one_document(true);
+        window.conversation().connect_thread_opened({
+            let fill = Rc::clone(&parts);
+            let window = glib::object::ObjectExt::downgrade(window);
+            move |rows| {
+                let Some(window) = window.upgrade() else {
+                    return;
+                };
+                fill.fill_thread(&window.conversation(), rows);
+            }
+        });
+    }
+
     window.conversation().set_reader_factory({
         // Weak, for the reason `install_run` states in `search.rs`: the
         // conversation pane is a child the window owns, and a strong clone
@@ -583,10 +619,89 @@ fn is_offline(status: &SyncStatus) -> bool {
     matches!(status.state, ConnectionState::Offline)
 }
 
+/// What fetches a body that is not here yet, for a closure that has outlived
+/// the [`Fill`] it came from — see [`Fill::fetcher`].
+#[derive(Clone)]
+struct BodyFetcher {
+    engine: postio_session::refresh::EngineSlot,
+    runtime: tokio::runtime::Handle,
+}
+
+impl BodyFetcher {
+    /// Ask the engine for `message`'s body if `loaded` says it is not here.
+    ///
+    /// [`Absent::Partial`] is "headers synced, body not fetched"; the
+    /// backfill reaches it eventually, and this is what makes opening it now
+    /// jump the queue. Nothing to do without an engine — a window over a
+    /// store nobody is syncing — or for any other absence, which no fetch
+    /// would change.
+    fn request_if_partial(&self, message: MessageId, loaded: &Loaded) {
+        if let crate::compose::Body::Absent(Absent::Partial) = &loaded.body
+            && let Some(engine) = self.engine.get().cloned()
+        {
+            self.runtime.spawn(async move {
+                let _ = engine.request_body(message).await;
+            });
+        }
+    }
+}
+
+/// What draws the single reading pane, for a closure that has outlived the
+/// [`Fill`] it came from — see [`Fill::painter`]: the cells [`paint`] reads,
+/// and the window it paints into.
+struct Painter {
+    window: Window,
+    showing: Showing,
+    opened: Rc<RefCell<Option<Opened>>>,
+    named_accounts: Rc<Vec<(postio_model::AccountId, String)>>,
+    offline: Rc<Cell<bool>>,
+}
+
+impl Painter {
+    /// Whether the pane still wants `message` by the time its read answered.
+    ///
+    /// Late is the normal case, not the edge case: the cursor moved while
+    /// the blob was read, and the pane is showing something else now. This
+    /// guard carries far more weight than it used to — it used to filter
+    /// double clicks and now it filters a held-down `j`.
+    fn still_showing(&self, message: MessageId) -> bool {
+        self.showing.get() == Some(message)
+    }
+
+    /// Draw `loaded` as `message` — see [`paint`].
+    fn paint(&self, message: MessageId, loaded: Loaded) {
+        paint(
+            &self.window,
+            &self.opened,
+            &self.named_accounts,
+            &self.offline,
+            message,
+            loaded,
+        );
+    }
+
+    /// Redraw the parts panel from what the pane just opened, when it is up.
+    ///
+    /// Its chips are drawn from the same attachment rows the reader's are,
+    /// and `Node::downloaded` genuinely changes at runtime (#377), so a chip
+    /// that said "download" has to stop saying it. Whatever `opened` holds
+    /// is the right tree: the panel owns the keyboard while it is up
+    /// (`Context::Parts`), so the cursor cannot have moved to another
+    /// message underneath it.
+    fn refresh_parts(&self) {
+        let panel = self.window.parts();
+        if panel.is_visible()
+            && let Some(opened) = self.opened.borrow().as_ref()
+        {
+            panel.update_parts(&opened.root, &opened.parts);
+        }
+    }
+}
+
 /// Everything filling the reading pane needs, so the cursor and activation
 /// can share one implementation rather than two that drift.
 struct Fill {
-    database: Database,
+    database: Store,
     runtime: tokio::runtime::Handle,
     /// What the pane is showing, or is waiting to show.
     showing: Showing,
@@ -604,15 +719,6 @@ struct Fill {
     /// Whether a repaint of the *single* pane is already queued for this
     /// turn of the main loop — see [`Fill::body_arrived`].
     queued: Cell<bool>,
-    /// Which conversation entries have a repaint already queued for this
-    /// turn of the main loop — see [`Fill::body_arrived`].
-    ///
-    /// A set rather than a flag: a backfill can land bodies for several
-    /// expanded entries in the same burst, and each is its own coalescing
-    /// question — `queued` answers it for the one message the single pane
-    /// can be showing, and this answers it for however many the conversation
-    /// pane has open at once.
-    conversation_queued: RefCell<std::collections::HashSet<MessageId>>,
     /// Which message the *single* reading pane was last aimed at, and so
     /// which one asking again would be asking for twice — see [`Fill::fill`].
     ///
@@ -623,6 +729,18 @@ struct Fill {
     /// change it still names a message this pane is no longer displaying.
     /// Either of those would make it the wrong thing to skip on.
     aimed: Cell<Option<MessageId>>,
+    /// The engine, so showing a message whose body is not here yet is what
+    /// fetches it.
+    ///
+    /// The backfill reaches every body eventually, but "eventually" is a
+    /// queue tens of thousands of messages long on a first sync — so opening
+    /// one has to jump it to the front rather than wait its turn.
+    /// [`Absent::Partial`] is precisely "headers synced, body not fetched",
+    /// and its own doc says a `request_body` is what leaves that state; this
+    /// is the caller that keeps that promise. A slot rather than an `Engine`,
+    /// because the pane is built before an account's engine is adopted
+    /// (`adopt_engine`), and reads empty until it is.
+    engine: postio_session::refresh::EngineSlot,
 }
 
 impl Fill {
@@ -681,13 +799,14 @@ impl Fill {
     fn read(&self, message: MessageId) -> async_channel::Receiver<Option<Loaded>> {
         let offline = self.offline.get();
         crate::search::ask(&self.database, &self.runtime, {
-            move |connection| {
+            move |connection| async move {
                 // One crossing for all of it. The parts are metadata the sync
                 // already stored -- `BODYSTRUCTURE`, not bytes -- so asking
                 // for them costs a row read and never a fetch.
-                let body = crate::compose::load_body_or_reason(connection, message, offline);
-                let fetched = MessageRepository::new(connection)
+                let body = crate::compose::load_body_or_reason(&connection, message, offline).await;
+                let fetched = MessageRepository::new(&connection)
                     .get(message)
+                    .await
                     .ok()
                     .flatten();
                 let (content_type, parts) = fetched
@@ -698,6 +817,10 @@ impl Fill {
                     .as_ref()
                     .and_then(|message| message.from.first().map(|from| from.address.clone()));
                 let list_identifier = fetched.as_ref().and_then(list_identifier);
+                let send_state = MessageRepository::new(&connection)
+                    .send_state(message)
+                    .await
+                    .unwrap_or_default();
                 let envelope = fetched.map(Envelope::from);
                 Some(Loaded {
                     body,
@@ -705,62 +828,152 @@ impl Fill {
                     parts,
                     envelope,
                     sender,
+                    send_state,
                     list_identifier,
                 })
             }
         })
     }
 
-    fn fill_reader(&self, reader: &postio_gtk::reader::Reader, message: MessageId) {
+    /// Read `message` and, when the answer lands back on the main loop, hand
+    /// it to `then`.
+    ///
+    /// Every fill is this shape — one crossing through [`read`](Self::read),
+    /// awaited where the widgets are — and each caller used to spell the
+    /// crossing out itself. A read that comes back empty (the message went
+    /// away underneath it) is simply not painted.
+    fn read_then(&self, message: MessageId, then: impl FnOnce(Loaded) + 'static) {
+        // Started before the spawn: `read` borrows `self`, and a `'static`
+        // task cannot carry that borrow.
         let answer = self.read(message);
-        glib::spawn_future_local({
-            let reader = reader.clone();
-            let offline_now = self.offline.clone();
-            async move {
-                let Ok(Some(loaded)) = answer.recv().await else {
-                    return;
-                };
-                // `set_message_header` is still called here, unlike before
-                // #487: the conversation entry above already carries
-                // sender/subject/date, so the reader's own copies of those
-                // stay hidden (`set_identity_visible(false)`, set once when
-                // this reader was built) — but recipients have nowhere else
-                // to go, and the header is the only place that draws To/Cc.
+        glib::spawn_future_local(async move {
+            let Ok(Some(loaded)) = answer.recv().await else {
+                return;
+            };
+            then(loaded);
+        });
+    }
+
+    /// See [`BodyFetcher`].
+    fn fetcher(&self) -> BodyFetcher {
+        BodyFetcher {
+            engine: self.engine.clone(),
+            runtime: self.runtime.clone(),
+        }
+    }
+
+    /// See [`Painter`].
+    fn painter(&self, window: &Window) -> Painter {
+        Painter {
+            window: window.clone(),
+            showing: self.showing.clone(),
+            opened: self.opened.clone(),
+            named_accounts: Rc::clone(&self.named_accounts),
+            offline: Rc::clone(&self.offline),
+        }
+    }
+
+    /// Fetch every body in a thread, for one-document mode (ADR 0032, #1316).
+    ///
+    /// The stacked pane fetches a body when a message is expanded, and
+    /// `fill_reader` is where that lands. One document has no expansions to
+    /// hang it on: the whole thread is drawn at once, so the whole thread is
+    /// asked for at once and each body is handed to the pane as it arrives.
+    ///
+    /// Still one crossing per message, and still through `read`, so a body
+    /// that is not on this machine reports the same absence it would in the
+    /// stack — a message waiting for its body draws collapsed with its
+    /// preview rather than as an empty box.
+    fn fill_thread(
+        &self,
+        pane: &postio_gtk::conversation::ConversationView,
+        rows: Vec<postio_gtk::list::Row>,
+    ) {
+        for row in rows {
+            let pane = pane.clone();
+            let fetch = self.fetcher();
+            self.read_then(row.id, move |loaded| {
+                // Not here yet. Fetch it, so a conversation the backfill
+                // has not reached fills in as it is opened rather than
+                // staying a stack of empty headers -- `body_arrived`
+                // draws it into this same pane when it lands.
+                fetch.request_if_partial(row.id, &loaded);
+                // The envelope first, and separately from the body: a
+                // message can have one without the other, and who it went
+                // to should be drawn as soon as it is known rather than
+                // waiting on a body that may still be fetching.
+                //
+                // `fill_reader` below has always used `loaded.envelope` to
+                // feed the stacked pane's per-entry header. This dropped
+                // everything but the body, which is why the one-document
+                // pane said nothing about recipients (#1427) -- not because
+                // the data was not there.
                 if let Some(envelope) = &loaded.envelope {
-                    reader.set_message_header(
-                        &envelope.from,
-                        &envelope.to,
-                        &envelope.cc,
-                        envelope.subject.as_deref(),
-                        envelope.date,
+                    pane.set_thread_recipients(
+                        row.id,
+                        postio_ui::reader::header::recipient_line(&envelope.to),
+                        postio_ui::reader::header::recipient_line(&envelope.cc),
                     );
                 }
-                match loaded.body {
-                    crate::compose::Body::Ready {
-                        body,
-                        encoding_problems,
-                    } => {
-                        let root = root_type(loaded.content_type.as_deref(), &body, &loaded.parts);
-                        reader.set_attachments(&root, &loaded.parts);
-                        reader.render(&body, loaded.sender.as_deref());
-                        // After `render`, which clears it: the caveat belongs
-                        // to this message and must not outlive it (#901).
-                        reader.set_encoding_problems(encoding_problems);
-                        // Same reason, same convention (#971).
-                        reader.set_unsubscribe(loaded.list_identifier.as_deref());
-                    }
-                    crate::compose::Body::Absent(reason) => {
-                        let root = root_type(
-                            loaded.content_type.as_deref(),
-                            &postio_model::MessageBody::default(),
-                            &loaded.parts,
-                        );
-                        reader.set_attachments(&root, &loaded.parts);
-                        reader.show_absent(Self::waiting_reason(&offline_now, reason));
-                    }
+                if let crate::compose::Body::Ready { body, .. } = loaded.body {
+                    pane.set_thread_body(row.id, body);
                 }
-                reader.widget().set_visible(true);
+            });
+        }
+    }
+
+    fn fill_reader(&self, reader: &postio_gtk::reader::Reader, message: MessageId) {
+        let reader = reader.clone();
+        let offline_now = self.offline.clone();
+        let fetch = self.fetcher();
+        self.read_then(message, move |loaded| {
+            // Not here yet? Fetch it. The conversation stack builds one
+            // of these per message, so this is what makes a thread whose
+            // bodies the backfill has not reached fill in as it is read.
+            fetch.request_if_partial(message, &loaded);
+            // `set_message_header` is still called here, unlike before
+            // #487: the conversation entry above already carries
+            // sender/subject/date, so the reader's own copies of those
+            // stay hidden (`set_identity_visible(false)`, set once when
+            // this reader was built) — but recipients have nowhere else
+            // to go, and the header is the only place that draws To/Cc.
+            if let Some(envelope) = &loaded.envelope {
+                reader.set_message_header(
+                    &envelope.from,
+                    &envelope.to,
+                    &envelope.cc,
+                    envelope.subject.as_deref(),
+                    envelope.date,
+                );
             }
+            match loaded.body {
+                crate::compose::Body::Ready {
+                    body,
+                    encoding_problems,
+                } => {
+                    let root = root_type(loaded.content_type.as_deref(), &body, &loaded.parts);
+                    reader.set_attachments(&root, &loaded.parts);
+                    reader.render(&body, loaded.sender.as_deref());
+                    // After `render`, which clears it: the caveat belongs
+                    // to this message and must not outlive it (#901).
+                    reader.set_encoding_problems(encoding_problems);
+                    // Same reason, same convention (#971).
+                    reader.set_unsubscribe(loaded.list_identifier.as_deref());
+                    // And last, because it is what decides whether that
+                    // banner is allowed to stand at all (#1525).
+                    reader.set_send_state(loaded.send_state);
+                }
+                crate::compose::Body::Absent(reason) => {
+                    let root = root_type(
+                        loaded.content_type.as_deref(),
+                        &postio_model::MessageBody::default(),
+                        &loaded.parts,
+                    );
+                    reader.set_attachments(&root, &loaded.parts);
+                    reader.show_absent(Self::waiting_reason(&offline_now, reason));
+                }
+            }
+            reader.widget().set_visible(true);
         });
     }
 
@@ -815,33 +1028,17 @@ impl Fill {
         self.aimed.set(Some(message));
         self.showing.set(Some(message));
 
-        let answer = self.read(message);
-        glib::spawn_future_local({
-            let showing = self.showing.clone();
-            let opened = self.opened.clone();
-            let self_accounts = Rc::clone(&self.named_accounts);
-            let offline_now = Rc::clone(&self.offline);
-            let window = window.clone();
-            async move {
-                let Ok(Some(loaded)) = answer.recv().await else {
-                    return;
-                };
-                // Late. The cursor moved while the blob was read, and the
-                // pane is showing something else now. This guard carries far
-                // more weight than it used to: it used to filter double
-                // clicks and now it filters a held-down `j`.
-                if showing.get() != Some(message) {
-                    return;
-                }
-                paint(
-                    &window,
-                    &opened,
-                    &self_accounts,
-                    &offline_now,
-                    message,
-                    loaded,
-                );
+        let painter = self.painter(window);
+        let fetch = self.fetcher();
+        self.read_then(message, move |loaded| {
+            if !painter.still_showing(message) {
+                return;
             }
+            // After the guard, so only the message the pane settled on
+            // has its body fetched -- a held-down `j` that swept past
+            // this one asks for nothing.
+            fetch.request_if_partial(message, &loaded);
+            painter.paint(message, loaded);
         });
     }
 
@@ -867,10 +1064,11 @@ impl Fill {
     /// coalesced onto the next turn of the main loop: twenty arrivals for the
     /// same message are one store read and one repaint, not twenty of each.
     /// `Folders::reload` coalesces a resync's `MessagesChanged` the same way
-    /// and for the same reason. The conversation side coalesces *per
-    /// message*, via `conversation_queued`, because a burst can carry
-    /// arrivals for several expanded entries at once and each is its own
-    /// pane to redraw.
+    /// and for the same reason. The conversation used to coalesce *per
+    /// message*, because a burst could carry arrivals for several expanded
+    /// entries and each was its own pane to redraw; one document has one
+    /// pane, and `ConversationView::set_thread_body` does that coalescing
+    /// now (#1426).
     ///
     /// [`Event::BodyLoaded`]: postio_core::Event::BodyLoaded
     fn body_arrived(self: &Rc<Self>, window: &Window, message: MessageId) {
@@ -886,22 +1084,21 @@ impl Fill {
             });
         }
 
-        if window.conversation().reader_for(message).is_some()
-            && self.conversation_queued.borrow_mut().insert(message)
-        {
-            let parts = Rc::clone(self);
-            let window = window.downgrade();
-            glib::idle_add_local_once(move || {
-                parts.conversation_queued.borrow_mut().remove(&message);
-                let Some(window) = window.upgrade() else {
-                    return;
-                };
-                // Asked again rather than trusted from above: the entry can
-                // have collapsed, or the conversation can have closed
-                // entirely, between the event landing and this turn of the
-                // main loop running.
-                if let Some(reader) = window.conversation().reader_for(message) {
-                    parts.fill_reader(&reader, message);
+        // And the one-document conversation pane, when the body is for a
+        // message it is showing. One `WebView` for the whole thread (ADR
+        // 0032), so this reads the body and hands it to
+        // `set_thread_body`, which coalesces arrivals into one redraw.
+        //
+        // Without this a conversation whose bodies the backfill had not
+        // reached stayed a stack of empty headers until it was closed and
+        // reopened -- `fill_thread` requested the bodies but nothing drew
+        // them when they landed. Guarded by `rows()` so a body for a thread
+        // that is not open is not inserted into the pane's map.
+        let conversation = window.conversation();
+        if conversation.rows().iter().any(|row| row.id == message) {
+            self.read_then(message, move |loaded| {
+                if let crate::compose::Body::Ready { body, .. } = loaded.body {
+                    conversation.set_thread_body(message, body);
                 }
             });
         }
@@ -915,47 +1112,16 @@ impl Fill {
         let Some(message) = self.showing.get() else {
             return;
         };
-        let answer = self.read(message);
-        glib::spawn_future_local({
-            let showing = self.showing.clone();
-            let opened = self.opened.clone();
-            let self_accounts = Rc::clone(&self.named_accounts);
-            let offline_now = Rc::clone(&self.offline);
-            let window = window.clone();
-            async move {
-                let Ok(Some(loaded)) = answer.recv().await else {
-                    return;
-                };
-                // The cursor can still have moved between queueing this and
-                // the store answering — the same race `fill` guards, reached
-                // by a different road.
-                if showing.get() != Some(message) {
-                    return;
-                }
-                paint(
-                    &window,
-                    &opened,
-                    &self_accounts,
-                    &offline_now,
-                    message,
-                    loaded,
-                );
-
-                // And the panel, when it is open. Its chips are drawn from
-                // the same attachment rows the reader's are, and
-                // `Node::downloaded` genuinely changes at runtime now (#377),
-                // so a chip that said "download" has to stop saying it.
-                //
-                // Whatever `opened` holds is the right tree: the panel owns
-                // the keyboard while it is up (`Context::Parts`), so the
-                // cursor cannot have moved to another message underneath it.
-                let panel = window.parts();
-                if panel.is_visible()
-                    && let Some(opened) = opened.borrow().as_ref()
-                {
-                    panel.update_parts(&opened.root, &opened.parts);
-                }
+        let painter = self.painter(window);
+        self.read_then(message, move |loaded| {
+            // The cursor can still have moved between queueing this and
+            // the store answering — the same race `fill` guards, reached
+            // by a different road.
+            if !painter.still_showing(message) {
+                return;
             }
+            painter.paint(message, loaded);
+            painter.refresh_parts();
         });
     }
 
@@ -1006,15 +1172,21 @@ struct Loaded {
     /// through, because a repaint has no list row — and one answer that all
     /// three callers share cannot disagree with itself.
     sender: Option<String>,
+    /// Whether this message is one being sent, and in which state (#1525).
+    ///
+    /// `None` for ordinary mail. It decides which verbs the reading pane
+    /// offers, because Reply, Forward and Archive are all answers to
+    /// somebody else's mail.
+    send_state: Option<postio_model::DraftState>,
     /// The unsubscribe banner's list, per #971: `List-Id` when the message
     /// has one, the sender's domain otherwise. `None` only when the message
     /// itself is gone, since every message has at least one of the two.
     list_identifier: Option<String>,
 }
 
-/// What [`Reader::set_unsubscribe`] shows for `message`, per #971's own
-/// doc comment: the `List-Id` header when there is one, the sender's domain
-/// otherwise.
+/// What [`postio_gtk::reader::Reader::set_unsubscribe`] shows for `message`,
+/// per #971's own doc comment: the `List-Id` header when there is one, the
+/// sender's domain otherwise.
 fn list_identifier(message: &Message) -> Option<String> {
     message.list_id.clone().or_else(|| {
         message
@@ -1109,6 +1281,9 @@ fn paint(
             window
                 .reader()
                 .set_unsubscribe(loaded.list_identifier.as_deref());
+            // Outside that guard for the same reason, and after the banner
+            // it can withdraw (#1525).
+            window.reader().set_send_state(loaded.send_state);
         }
         crate::compose::Body::Absent(reason) => {
             // The chips still go on. They are drawn from `BODYSTRUCTURE`
@@ -1305,7 +1480,7 @@ enum PartSource {
 /// Returns `Err` rather than an empty file when the bytes cannot be had. A
 /// zero-byte attachment on disk looks like a saved file and is not one.
 pub(crate) async fn part_bytes(
-    database: &Database,
+    database: &Store,
     blobs: &BlobStore,
     engine: Option<Engine>,
     message: MessageId,
@@ -1319,10 +1494,11 @@ pub(crate) async fn part_bytes(
     // it. The MIME path does: `2` is `2` in every parse of the same bytes. So
     // the id is turned into a path here, while it still means something, and
     // the path is what is used on the far side.
-    let part_id = part_path(database, message, attachment)?
+    let part_id = part_path(database, message, attachment)
+        .await?
         .ok_or("That part has no place in the message to read it from")?;
 
-    let source = match locate_part(database, message, &part_id)? {
+    let source = match locate_part(database, message, &part_id).await? {
         Some(source) => source,
         // Never downloaded. This is the one place in the reading pane allowed
         // to reach the network, and only because the user asked for these
@@ -1353,7 +1529,8 @@ pub(crate) async fn part_bytes(
                 // committed write that made the answer `false` is visible
                 // to this read, so no wait is needed -- absent here means
                 // absent, and the sentence below is then the truth.
-                locate_part(database, message, &part_id)?
+                locate_part(database, message, &part_id)
+                    .await?
                     .ok_or("There is nothing to fetch for that part")?
             }
         }
@@ -1393,7 +1570,7 @@ fn write_part(file: &gio::File, bytes: &[u8]) -> Result<(), String> {
 /// actually varies between the two -- `always_ask` -- does not have to travel
 /// beside four things that never change per call.
 struct PartOpener {
-    database: Database,
+    database: Store,
     blobs: BlobStore,
     events: EventSink,
     runtime: tokio::runtime::Handle,
@@ -1461,7 +1638,7 @@ impl PartOpener {
 /// a part not yet downloaded waits on `tokio::time::sleep`, which panics off
 /// the runtime.
 pub(crate) async fn save_all_parts(
-    database: &Database,
+    database: &Store,
     blobs: &BlobStore,
     engine: Option<Engine>,
     into: &std::path::Path,
@@ -1509,16 +1686,13 @@ fn launch(window: &Window, path: &std::path::Path, always_ask: bool) {
 ///
 /// The deadline is what turns a server that never answers into a sentence
 /// rather than a spinner that never stops.
-pub(crate) async fn wait_for_body(
-    database: &Database,
-    message: MessageId,
-) -> Result<BlobId, String> {
+pub(crate) async fn wait_for_body(database: &Store, message: MessageId) -> Result<BlobId, String> {
     let deadline = std::time::Instant::now() + BODY_WAIT;
     loop {
         // A read that fails here is usually the writer we are waiting for
         // holding the table, so contention is a reason to look again rather
         // than to give up. Only the deadline ends this.
-        match raw_blob(database, message) {
+        match raw_blob(database, message).await {
             Ok(Some(raw)) => return Ok(raw),
             Ok(None) => {}
             Err(error) if std::time::Instant::now() >= deadline => return Err(error),
@@ -1541,7 +1715,7 @@ pub(crate) async fn wait_for_body(
 /// the whole-message fallback writes for a row whose section could not be
 /// named.
 async fn wait_for_part(
-    database: &Database,
+    database: &Store,
     message: MessageId,
     part_id: &str,
 ) -> Result<PartSource, String> {
@@ -1550,7 +1724,7 @@ async fn wait_for_part(
         // A read that fails here is usually the writer we are waiting for
         // holding the table, so contention is a reason to look again rather
         // than to give up. Only the deadline ends this.
-        match locate_part(database, message, part_id) {
+        match locate_part(database, message, part_id).await {
             Ok(Some(source)) => return Ok(source),
             Ok(None) => {}
             Err(error) if std::time::Instant::now() >= deadline => return Err(error),
@@ -1567,12 +1741,13 @@ async fn wait_for_part(
 
 /// The MIME path of one attachment row, while the row id still means
 /// something.
-fn part_path(
-    database: &Database,
+async fn part_path(
+    database: &Store,
     message: MessageId,
     attachment: AttachmentId,
 ) -> Result<Option<String>, String> {
-    Ok(read_message(database, message)?
+    Ok(read_message(database, message)
+        .await?
         .attachments
         .iter()
         .find(|part| part.id == attachment)
@@ -1583,12 +1758,12 @@ fn part_path(
 ///
 /// The part's own blob first: it is the exact bytes, and reading it costs a
 /// file open where the raw message costs a parse of the whole thing.
-fn locate_part(
-    database: &Database,
+async fn locate_part(
+    database: &Store,
     message: MessageId,
     part_id: &str,
 ) -> Result<Option<PartSource>, String> {
-    let row = read_message(database, message)?;
+    let row = read_message(database, message).await?;
     if let Some(blob) = row
         .attachments
         .iter()
@@ -1601,17 +1776,24 @@ fn locate_part(
 }
 
 /// Just the raw-message blob key. What the wait watches for.
-pub(crate) fn raw_blob(database: &Database, message: MessageId) -> Result<Option<BlobId>, String> {
-    Ok(read_message(database, message)?.raw_blob_id)
+pub(crate) async fn raw_blob(
+    database: &Store,
+    message: MessageId,
+) -> Result<Option<BlobId>, String> {
+    Ok(read_message(database, message).await?.raw_blob_id)
 }
 
-pub(crate) fn read_message(
-    database: &Database,
+pub(crate) async fn read_message(
+    database: &Store,
     message: MessageId,
 ) -> Result<postio_model::Message, String> {
-    let connection = database.connection().map_err(|error| error.to_string())?;
+    let connection = database
+        .connect()
+        .await
+        .map_err(|error| error.to_string())?;
     MessageRepository::new(&connection)
         .get(message)
+        .await
         .map_err(|error| error.to_string())?
         .ok_or_else(|| "That message is no longer here".into())
 }
@@ -1638,8 +1820,8 @@ mod tests {
     use postio_runtime::engine::{EngineParts, NetworkSource, SystemClock};
     use postio_storage::repository::{ListQuery, ListScope, MessageRepository};
     use postio_storage::seed::seed_small;
-    use postio_storage::test_support::TempDatabase;
-    use postio_storage::{BlobStore, Database, test_support};
+    use postio_storage::test_support::TempStore;
+    use postio_storage::{BlobStore, Store, test_support};
 
     use super::*;
 
@@ -1693,15 +1875,9 @@ mod tests {
     /// test (`world` itself, and separately the read right after
     /// `part_bytes` returns). WAL is what production reads run under, so it
     /// is also the concurrency this test is supposed to be proving.
-    fn world() -> (
-        TempDatabase,
-        BlobStore,
-        Engine,
-        MessageId,
-        tempfile::TempDir,
-    ) {
-        let database = test_support::temp();
-        let report = seed_small(&database, 11);
+    async fn world() -> (TempStore, BlobStore, Engine, MessageId, tempfile::TempDir) {
+        let database = test_support::temp().await;
+        let report = seed_small(&database, 11).await;
         let inbox = report.mailbox(MailboxRole::Inbox).expect("an inbox");
         let directory = tempfile::tempdir().expect("a blob directory");
         let blobs = BlobStore::open(
@@ -1760,7 +1936,7 @@ mod tests {
         // run against whichever half of it had committed so far, which is
         // exactly the kind of thing a UID reassignment cannot survive being
         // wrong about.
-        let connection = database.connection().expect("a connection");
+        let connection = database.connect().await.expect("a connection");
         connection
             .execute(
                 "UPDATE messages SET uid = id + 1000, uid_validity = 1,
@@ -1768,6 +1944,7 @@ mod tests {
                   WHERE mailbox_id = ?1",
                 [inbox.id.get()],
             )
+            .await
             .expect("the fixture writes");
         let newest = MessageRepository::new(&connection)
             .page(&ListQuery {
@@ -1775,6 +1952,7 @@ mod tests {
                 limit: 1,
                 after: None,
             })
+            .await
             .expect("a page")
             .first()
             .expect("the inbox has mail")
@@ -1784,6 +1962,7 @@ mod tests {
                 "UPDATE messages SET uid = 1, uid_validity = 1, remote_id = '1:1' WHERE id = ?1",
                 [newest.get()],
             )
+            .await
             .expect("the fixture writes");
         drop(connection);
 
@@ -1818,19 +1997,24 @@ mod tests {
     /// The distinction is ADR 0017's payload axis: a row that has these takes
     /// one `BODY.PEEK[2]`, and a row that does not falls back to every byte,
     /// because a fetched section arrives encoded with nothing to say how.
-    fn a_part_fetchable_by_section(database: &Database, message: MessageId) -> AttachmentId {
-        a_part_not_here(database, message);
-        let connection = database.connection().expect("a connection");
+    async fn a_part_fetchable_by_section(database: &Store, message: MessageId) -> AttachmentId {
+        a_part_not_here(database, message).await;
+        let connection = database.connect().await.expect("a connection");
         let messages = MessageRepository::new(&connection);
-        let mut row = messages.get(message).expect("a read").expect("the message");
+        let mut row = messages
+            .get(message)
+            .await
+            .expect("a read")
+            .expect("the message");
         row.attachments[0].part_headers = Some("Content-Type: application/pdf\r\n".to_owned());
         // The row id changes under this: `update` replaces a message's
         // attachment rows rather than editing them, which is the very reason
         // `part_bytes` resolves an id to a MIME path before it fetches
         // anything. So the id is read back after the write, not before.
-        update_with_retry(&messages, &mut row);
+        update_with_retry(&messages, &mut row).await;
         messages
             .get(message)
+            .await
             .expect("a read")
             .expect("the message")
             .attachments
@@ -1844,10 +2028,14 @@ mod tests {
     /// The store's row and the server's message have to describe the same
     /// part, which the seed cannot arrange on its own: it fills a screenshot
     /// from the corpus and knows nothing about any server.
-    fn a_part_not_here(database: &Database, message: MessageId) -> AttachmentId {
-        let connection = database.connection().expect("a connection");
+    async fn a_part_not_here(database: &Store, message: MessageId) -> AttachmentId {
+        let connection = database.connect().await.expect("a connection");
         let messages = MessageRepository::new(&connection);
-        let mut row = messages.get(message).expect("a read").expect("the message");
+        let mut row = messages
+            .get(message)
+            .await
+            .expect("a read")
+            .expect("the message");
         assert!(
             row.raw_blob_id.is_none(),
             "the fixture already has this message's bytes, so this proves nothing"
@@ -1858,10 +2046,11 @@ mod tests {
         // The MIME path the mock's message puts the attachment at.
         part.part_id = Some("2".to_owned());
         row.attachments = vec![part];
-        update_with_retry(&messages, &mut row);
+        update_with_retry(&messages, &mut row).await;
 
         messages
             .get(message)
+            .await
             .expect("a read")
             .expect("the message")
             .attachments
@@ -1878,10 +2067,10 @@ mod tests {
     /// being raced holding the table, not a fault -- the same "look again"
     /// shape `wait_for_body` already uses for exactly this kind of
     /// contention. See #162.
-    fn update_with_retry(messages: &MessageRepository, row: &mut postio_model::Message) {
+    async fn update_with_retry(messages: &MessageRepository<'_>, row: &mut postio_model::Message) {
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
         loop {
-            match messages.update(row) {
+            match messages.update(row).await {
                 Ok(()) => return,
                 Err(error) if std::time::Instant::now() < deadline => {
                     let _ = error;
@@ -1892,15 +2081,15 @@ mod tests {
         }
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn a_part_nobody_has_is_fetched_before_it_is_saved() {
         // postio-v62's last criterion, arranged so it cannot pass without the
         // fetch: `part_bytes` is the only thing here that talks to the engine,
         // and the message has no raw blob until it does. A version of this
         // that called `request_body` itself first would prove only that bytes
         // already on disk can be read, which was never in doubt.
-        let (database, blobs, engine, message, _directory) = world();
-        let part = a_part_not_here(&database, message);
+        let (database, blobs, engine, message, _directory) = world().await;
+        let part = a_part_not_here(&database, message).await;
 
         let bytes = part_bytes(&database, &blobs, Some(engine), message, part)
             .await
@@ -1923,13 +2112,13 @@ mod tests {
         );
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn a_part_with_no_engine_says_so_rather_than_saving_nothing() {
         // The account is not syncing. Writing an empty file would look like a
         // successful save and would not be one.
-        let (database, blobs, _engine, message, _directory) = world();
+        let (database, blobs, _engine, message, _directory) = world().await;
 
-        let part = a_part_not_here(&database, message);
+        let part = a_part_not_here(&database, message).await;
 
         let refused = part_bytes(&database, &blobs, None, message, part)
             .await
@@ -1941,13 +2130,13 @@ mod tests {
         );
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn save_all_parts_fetches_what_it_needs_for_every_leaf() {
         // Same shape as `a_part_nobody_has_is_fetched_before_it_is_saved`, but
         // through the `S` path: nothing here is downloaded yet, so `S` must
         // fetch before it writes.
-        let (database, blobs, engine, message, _directory) = world();
-        let attachment = a_part_not_here(&database, message);
+        let (database, blobs, engine, message, _directory) = world().await;
+        let attachment = a_part_not_here(&database, message).await;
         let node = postio_gtk::parts::Node {
             part_id: "2".to_owned(),
             depth: 1,
@@ -1979,13 +2168,13 @@ mod tests {
         );
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn save_all_parts_counts_a_failure_without_abandoning_the_rest() {
         // A container has no bytes -- `export_part` refuses it -- but the
         // batch must still reach the leaf that comes after it, and the
         // caller has to be told one part did not make it.
-        let (database, blobs, engine, message, _directory) = world();
-        let attachment = a_part_not_here(&database, message);
+        let (database, blobs, engine, message, _directory) = world().await;
+        let attachment = a_part_not_here(&database, message).await;
         let container = postio_gtk::parts::Node {
             part_id: String::new(),
             depth: 0,
@@ -2029,15 +2218,15 @@ mod tests {
     // The payload axis (ADR 0017, #377)
     // -----------------------------------------------------------------------
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn opening_a_part_fetches_that_section_and_nothing_around_it() {
         // The column the receive path never wrote. The message here is
         // `multipart/mixed` with a forty-byte payload, but the shape is the
         // one that matters: on the reference account the same fetch used to
         // drag the whole message, and ~90% of a mailbox by weight is
         // attachments FTS5 cannot index.
-        let (database, blobs, engine, message, _directory) = world();
-        let part = a_part_fetchable_by_section(&database, message);
+        let (database, blobs, engine, message, _directory) = world().await;
+        let part = a_part_fetchable_by_section(&database, message).await;
 
         let bytes = part_bytes(&database, &blobs, Some(engine), message, part)
             .await
@@ -2045,9 +2234,10 @@ mod tests {
 
         assert_eq!(String::from_utf8_lossy(&bytes).trim(), ATTACHED);
 
-        let connection = database.connection().expect("a connection");
+        let connection = database.connect().await.expect("a connection");
         let row = MessageRepository::new(&connection)
             .get(message)
+            .await
             .expect("a read")
             .expect("the message");
         assert!(
@@ -2068,10 +2258,15 @@ mod tests {
     /// say — names a row that no longer exists. The MIME path is the name
     /// that survives, which is the same reason `part_bytes` converts to it
     /// first thing.
-    fn the_part_as_stored(database: &Database, message: MessageId, part_id: &str) -> AttachmentId {
-        let connection = database.connection().expect("a connection");
+    async fn the_part_as_stored(
+        database: &Store,
+        message: MessageId,
+        part_id: &str,
+    ) -> AttachmentId {
+        let connection = database.connect().await.expect("a connection");
         MessageRepository::new(&connection)
             .get(message)
+            .await
             .expect("a read")
             .expect("the message")
             .attachments
@@ -2081,13 +2276,13 @@ mod tests {
             .id
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn a_part_already_on_this_machine_is_read_without_an_engine_at_all() {
         // The second open. Passing `None` for the engine is the strongest
         // form of "no network fetch" this seam can state: any path that
         // reached for the server would refuse instead of answering.
-        let (database, blobs, engine, message, _directory) = world();
-        let part = a_part_fetchable_by_section(&database, message);
+        let (database, blobs, engine, message, _directory) = world().await;
+        let part = a_part_fetchable_by_section(&database, message).await;
 
         part_bytes(&database, &blobs, Some(engine), message, part)
             .await
@@ -2101,7 +2296,7 @@ mod tests {
         // runs failed here holding the old id (#109). The panel a person
         // clicks re-reads the row on the store's events, so resolving from
         // the store as it is *now* is what the second open actually does.
-        let part = the_part_as_stored(&database, message, "2");
+        let part = the_part_as_stored(&database, message, "2").await;
         let bytes = part_bytes(&database, &blobs, None, message, part)
             .await
             .expect("the second open must not need a server");

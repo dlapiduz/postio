@@ -345,6 +345,114 @@ fn imap_types_vec1(numbers: Vec<NonZeroU32>) -> Option<io_imap::types::core::Vec
     io_imap::types::core::Vec1::try_from(numbers).ok()
 }
 
+/// One section of many messages, in a single `UID FETCH` (#1551).
+///
+/// The text axis asks for the same section path over and over — most mail's
+/// words are at `1` or `1.1` — and IMAP will answer a whole set in one round
+/// trip. That is the difference between one wait per message and one wait per
+/// batch, which on a first sync of tens of thousands of messages is the whole
+/// cost.
+///
+/// **No `partial`, so no windowing.** Every answer is held at once, which is
+/// the trade a batch makes; `postio_sync::backfill` is what bounds the set by
+/// `RFC822.SIZE` before calling, and leaves anything large on the streaming
+/// path where the window still applies.
+///
+/// A uid the server does not return is simply absent from the answer, not an
+/// error: the queue is derived from a local table and an expunge between the
+/// two is ordinary.
+pub async fn fetch_sections(
+    pool: &ConnectionPool,
+    mailbox: &str,
+    ids: &[postio_model::RemoteId],
+    part: &BodyPart,
+    priority: Priority,
+    cancel: &CancelToken,
+) -> BackendResult<Vec<(postio_model::RemoteId, Vec<u8>)>> {
+    if cancel.is_cancelled() {
+        return Err(BackendError::Cancelled);
+    }
+    if ids.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let section = section_for(part)?;
+    let mailbox_owned = mailbox.to_owned();
+    let wanted: Vec<postio_model::RemoteId> = ids.to_vec();
+
+    pool.execute(priority, async |session| {
+        let live = session.ensure_selected(&mailbox_owned, false).await?;
+
+        // Resolved inside the selection, because `wire_uid` is what notices a
+        // renumber and it must be the *current* generation's answer.
+        let mut by_uid = std::collections::HashMap::new();
+        let mut uids = crate::backend::UidSet::new();
+        for id in &wanted {
+            let uid = crate::backend::identity::wire_uid(&mailbox_owned, live, id)?;
+            uids.insert(uid);
+            by_uid.insert(uid.get(), id.clone());
+        }
+
+        let sequence_set =
+            SequenceSet::try_from(uids.to_sequence_set().as_str()).map_err(|error| {
+                BackendError::Protocol {
+                    reason: format!("a uid set that cannot be a sequence set: {error}"),
+                }
+            })?;
+        // `Uid` alongside the body, because the answer arrives unordered and
+        // the uid in it is the only thing that says which message it is.
+        let items = MacroOrMessageDataItemNames::MessageDataItemNames(vec![
+            MessageDataItemName::Uid,
+            MessageDataItemName::BodyExt {
+                section: section.clone(),
+                partial: None,
+                peek: true,
+            },
+        ]);
+        let opts = ImapMessageFetchOptions {
+            uid: true,
+            modifiers: Vec::new(),
+        };
+
+        let raw = session
+            .fetch(sequence_set, items, opts)
+            .await
+            .map_err(|error| session.command_error("FETCH", error))?;
+
+        let mut answered = Vec::with_capacity(wanted.len());
+        for items in raw.into_values() {
+            if cancel.is_cancelled() {
+                return Err(BackendError::Cancelled);
+            }
+            let mut uid = None;
+            let mut body = None;
+            for item in items {
+                match item {
+                    MessageDataItem::Uid(value) => uid = Some(value.get()),
+                    MessageDataItem::BodyExt { data, .. } => {
+                        body = Some(
+                            data.into_option()
+                                .map(|bytes| bytes.into_owned())
+                                .unwrap_or_default(),
+                        );
+                    }
+                    _ => {}
+                }
+            }
+            // Both or neither. A body with no uid cannot be attributed, and
+            // attributing it to the wrong message would store one person's
+            // mail on another's row.
+            if let (Some(uid), Some(body)) = (uid, body)
+                && let Some(id) = by_uid.get(&uid)
+            {
+                answered.push((id.clone(), body));
+            }
+        }
+        Ok(answered)
+    })
+    .await
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

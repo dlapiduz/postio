@@ -416,6 +416,16 @@ impl Live {
 const NOTHING_MATCHED: &str = "Nothing matched, so there is nothing to narrow.";
 const NOTHING_TO_NARROW: &str = "Every match is alike — nothing left to narrow by.";
 
+/// What the offer says. A statement of what the other word would find, not a
+/// question: the app has already looked, so "did you mean" asks something it
+/// knows the answer to.
+fn offer_text(term: &str, documents: u64) -> String {
+    match documents {
+        1 => format!("{term} — 1 message"),
+        many => format!("{term} — {many} messages"),
+    }
+}
+
 /// The keys the column offers, drawn at its foot, from the live keymap.
 ///
 /// Canvas 2b's third line, `C-s save as folder`: `CommandId::SaveSearch`
@@ -452,6 +462,10 @@ mod panel_imp {
         pub(super) scopes: gtk::ListBox,
         pub(super) chips: gtk::FlowBox,
         pub(super) nothing: gtk::Label,
+        /// The word to search for instead, when nothing matched. One button,
+        /// hidden until there is something to offer.
+        pub(super) suggestion: gtk::Box,
+        pub(super) on_suggest: RefCell<Vec<RefineHandler>>,
         /// The footer's key line, kept so a rebind can rewrite it (#828).
         pub(super) keys: gtk::Label,
         /// The tokens currently drawn, in the order they are drawn.
@@ -470,6 +484,8 @@ mod panel_imp {
                 scopes: gtk::ListBox::new(),
                 chips: gtk::FlowBox::new(),
                 nothing: gtk::Label::new(None),
+                suggestion: gtk::Box::new(gtk::Orientation::Vertical, 6),
+                on_suggest: RefCell::new(Vec::new()),
                 keys: gtk::Label::new(None),
                 offered: RefCell::new(Vec::new()),
                 scope: Cell::new(Scope::default()),
@@ -585,6 +601,50 @@ impl Panel {
         }
     }
 
+    /// Offer a word to search for instead, or withdraw the offer.
+    ///
+    /// Shown only where `NOTHING_MATCHED` would otherwise stand alone. A
+    /// query that found something is not one to second-guess, and the caller
+    /// enforces that by passing `None` — see ADR 0037.
+    pub fn set_suggestion(&self, offer: Option<(&str, u64)>) {
+        let imp = self.imp();
+        while let Some(child) = imp.suggestion.first_child() {
+            imp.suggestion.remove(&child);
+        }
+        let Some((term, documents)) = offer else {
+            imp.suggestion.set_visible(false);
+            return;
+        };
+
+        // The same control the refinements use, built the same one way:
+        // `chip_button` owns the face-is-the-term-alone rule and the hug —
+        // both of which shipped broken once each, because this call site
+        // was a hand copy of `refine_chip` and the fixes landed in the copy.
+        let spoken = format!("Search for {} instead", offer_text(term, documents));
+        let button = crate::widgets::chip_button(term, &spoken);
+        let term = term.to_owned();
+        button.connect_clicked(glib::clone!(
+            #[weak(rename_to = panel)]
+            self,
+            move |_| {
+                for handler in panel.imp().on_suggest.borrow().iter() {
+                    handler(&term);
+                }
+            }
+        ));
+        imp.suggestion.append(&button);
+        imp.suggestion.set_visible(true);
+    }
+
+    /// Called when the offer is taken, with the term to search for instead.
+    ///
+    /// Deliberately not [`Panel::connect_refine`]. A refinement *appends* a
+    /// token to what is there; this *replaces* the word that found nothing,
+    /// and folding the two together would give one handler two meanings.
+    pub fn connect_suggestion(&self, handler: impl Fn(&str) + 'static) {
+        self.imp().on_suggest.borrow_mut().push(Box::new(handler));
+    }
+
     /// Called when the user picks a scope.
     pub fn connect_scope(&self, handler: impl Fn(Scope) + 'static) {
         self.imp().on_scope.borrow_mut().push(Box::new(handler));
@@ -676,15 +736,17 @@ impl Panel {
         imp.nothing.set_visible(false);
 
         let column = gtk::Box::new(gtk::Orientation::Vertical, 0);
-        column.append(&kicker("Scope"));
+        column.append(&crate::widgets::kicker("Scope"));
         column.append(&imp.scopes);
 
         let rule = gtk::Separator::new(gtk::Orientation::Horizontal);
         rule.add_css_class("postio-rule");
         column.append(&rule);
-        column.append(&kicker("Refine"));
+        column.append(&crate::widgets::kicker("Refine"));
         column.append(&imp.chips);
         column.append(&imp.nothing);
+        imp.suggestion.set_visible(false);
+        column.append(&imp.suggestion);
 
         let filler = gtk::Box::new(gtk::Orientation::Vertical, 0);
         filler.set_vexpand(true);
@@ -718,16 +780,11 @@ impl Panel {
     }
 
     fn refine_chip(&self, refinement: &Refinement) -> gtk::Button {
-        let button = gtk::Button::with_label(&refinement.token);
-        button.add_css_class("postio-refine-chip");
         // A button, not a label with a click handler: the keyboard reaches it,
         // `Enter` and `Space` activate it, and a screen reader calls it what
         // it is. The count rides in the description rather than on the face —
         // the column is 212px wide and a scannable shortlist beats a wide one.
-        button.set_tooltip_text(Some(&spoken_refinement(refinement)));
-        button.update_property(&[gtk::accessible::Property::Label(&spoken_refinement(
-            refinement,
-        ))]);
+        let button = crate::widgets::chip_button(&refinement.token, &spoken_refinement(refinement));
         let token = refinement.token.clone();
         button.connect_clicked(glib::clone!(
             #[weak(rename_to = panel)]
@@ -791,14 +848,6 @@ fn set_scope_count(row: &gtk::ListBoxRow, scope: Scope, hits: u64) {
         1 => format!("{}, 1 match", scope.label()),
         hits => format!("{}, {hits} matches", scope.label()),
     })]);
-}
-
-/// A section heading, in the sidebar's own kicker type.
-fn kicker(text: &str) -> gtk::Label {
-    let label = gtk::Label::new(Some(text));
-    label.add_css_class("postio-kicker");
-    label.set_xalign(0.0);
-    label
 }
 
 // ---------------------------------------------------------------------------
@@ -1253,6 +1302,24 @@ impl View {
             }
         });
 
+        // Taking the offer *replaces* the word that found nothing, where a
+        // refinement appends one. The result is a query the user could have
+        // typed: nothing downstream can tell an accepted suggestion from the
+        // same letters typed by hand, which is the whole of ADR 0037.
+        //
+        // The box only ever offers this for a single bare word -- the
+        // executor refuses to guess when there are two terms or a filter --
+        // so replacing the whole text is replacing exactly that word.
+        view.panel().connect_suggestion({
+            let finder = finder.clone();
+            move |term| {
+                finder.set_query(crate::finder::Query {
+                    mode: crate::finder::Mode::Search,
+                    text: term.to_owned(),
+                });
+            }
+        });
+
         // The scope is *not* written into the box — switching it must not
         // mean editing what was typed. So the same query is simply asked
         // again, against the new scope, which whoever answers reads off the
@@ -1302,7 +1369,21 @@ impl View {
                 // to the real reader, moving the focus takes it back.
                 self.inner.shell.preview_focused();
             }
-            None => self.inner.preview.clear(),
+            None => {
+                self.inner.preview.clear();
+                // And ask for the pane back, not merely empty a preview
+                // nobody is looking at. `View::set_searching` returns early
+                // when the search was already on, so opening a result and
+                // then editing the query into one that finds nothing leaves
+                // the reader holding the pane: the list says nothing matched
+                // while a message from years ago sits beside it, which is the
+                // app contradicting itself in one glance.
+                //
+                // `preview_focused` is a no-op unless a search is on, so this
+                // cannot take the pane from a reader nobody is searching
+                // over.
+                self.inner.shell.preview_focused();
+            }
         }
     }
 
@@ -1320,6 +1401,13 @@ impl View {
     /// [`Panel::set_facets`].
     pub fn set_facets(&self, facets: &Facets, total: u64) {
         self.inner.panel.set_facets(facets, total);
+    }
+
+    /// Offer a word to search for instead. See [`Panel::set_suggestion`].
+    pub fn set_suggestion(&self, offer: Option<&postio_search::suggest::Suggestion>) {
+        self.inner
+            .panel
+            .set_suggestion(offer.map(|offer| (offer.term.as_str(), offer.documents)));
     }
 
     /// Show or hide the search surface.
@@ -2093,6 +2181,8 @@ mod tests {
             total_hits_capped: false,
             elapsed: Duration::from_millis(11),
             corpus_complete: true,
+            // Fourteen hits, so there is nothing to suggest instead.
+            suggestion: None,
         };
         assert_eq!(Outcome::of(&results), outcome(14, false, 11));
 

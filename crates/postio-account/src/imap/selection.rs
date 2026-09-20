@@ -55,7 +55,7 @@ use std::time::Duration;
 
 use io_imap::client::ImapClientAsync;
 use io_imap::rfc3501::examine::ImapMailboxExamineOptions;
-use io_imap::rfc3501::select::ImapMailboxSelectOptions;
+use io_imap::rfc3501::select::{ImapMailboxSelectData, ImapMailboxSelectOptions};
 use io_imap::types::command::SelectParameter;
 use io_imap::types::flag::FlagPerm;
 use io_imap::types::status::{StatusDataItem, StatusDataItemName};
@@ -82,6 +82,13 @@ pub(super) struct SelectedMailbox {
     epoch: u64,
     /// When the server last confirmed it.
     confirmed_at: Instant,
+    /// What `EXISTS` said when the server last confirmed it.
+    ///
+    /// Kept so a command can sanity-check its own answer against the count
+    /// the same connection was given. Goes stale the moment mail arrives,
+    /// and only in the safe direction: a stale count is lower than the truth,
+    /// so a check against it under-fires rather than over-fires.
+    exists: u32,
 }
 
 /// The UID generation every session in a pool has observed, per mailbox.
@@ -114,6 +121,17 @@ impl Generations {
     /// An empty log.
     pub(super) fn new() -> Self {
         Self::default()
+    }
+
+    /// What the pool believes for `path`, recording nothing.
+    ///
+    /// `observe` is the committing form. This one exists because a disputed
+    /// generation has to be *checked* before it is written down -- see
+    /// `select_now`.
+    fn known(&self, path: &str) -> Option<UidValidity> {
+        self.lock()
+            .get(path)
+            .map(|generation| generation.uid_validity)
     }
 
     /// The current epoch for `path`, if anything has ever been observed.
@@ -192,6 +210,18 @@ impl ImapSession {
     /// new generation is adopted before the error is returned, so the caller
     /// that rebuilds and retries succeeds rather than looping — see the
     /// [module docs](self).
+    /// What `EXISTS` said for the mailbox currently selected on this
+    /// connection, if it is `path`.
+    ///
+    /// For a command that wants to check its own answer against the count the
+    /// same connection was handed — see `fetch::existing_uids`.
+    pub(super) fn selected_exists(&self, path: &str) -> Option<u32> {
+        self.selected
+            .as_ref()
+            .filter(|selected| selected.path == path)
+            .map(|selected| selected.exists)
+    }
+
     pub(crate) async fn ensure_selected(
         &mut self,
         path: &str,
@@ -213,6 +243,40 @@ impl ImapSession {
         Ok(data.uid_validity)
     }
 
+    /// Issues the `SELECT` or `EXAMINE` and nothing else.
+    ///
+    /// Split out of [`select_now`](Self::select_now) because a disputed
+    /// generation is asked for twice, and the second ask must be the same
+    /// command with the same options as the first.
+    async fn issue_select(
+        &mut self,
+        path: &str,
+        mode: SelectMode,
+        want_condstore: bool,
+    ) -> BackendResult<(ImapMailboxSelectData, u64)> {
+        let mailbox = mailbox_argument(path)?;
+        let parameters = if want_condstore {
+            vec![SelectParameter::CondStore]
+        } else {
+            Vec::new()
+        };
+
+        super::skip_counter::install();
+        if mode == SelectMode::ReadOnly {
+            let options = ImapMailboxExamineOptions { parameters };
+            let (data, skipped) =
+                super::skip_counter::measuring(self.examine(mailbox, options)).await;
+            let data = data.map_err(|error| self.command_error("EXAMINE", error))?;
+            Ok((data, skipped))
+        } else {
+            let options = ImapMailboxSelectOptions { parameters };
+            let (data, skipped) =
+                super::skip_counter::measuring(self.select(mailbox, options)).await;
+            let data = data.map_err(|error| self.command_error("SELECT", error))?;
+            Ok((data, skipped))
+        }
+    }
+
     /// Issues `SELECT` or `EXAMINE` and checks what comes back against the
     /// generation everybody believed.
     ///
@@ -229,36 +293,97 @@ impl ImapSession {
             self.capabilities().require(Capability::CondStore)?;
         }
 
-        let mailbox = mailbox_argument(path)?;
-        let parameters = if want_condstore {
-            vec![SelectParameter::CondStore]
-        } else {
-            Vec::new()
-        };
         let read_only = mode == SelectMode::ReadOnly;
 
-        let data = if read_only {
-            let options = ImapMailboxExamineOptions { parameters };
-            let data = self.examine(mailbox, options).await;
-            data.map_err(|error| self.command_error("EXAMINE", error))?
-        } else {
-            let options = ImapMailboxSelectOptions { parameters };
-            let data = self.select(mailbox, options).await;
-            data.map_err(|error| self.command_error("SELECT", error))?
+        let (mut data, mut skipped) = self.issue_select(path, mode, want_condstore).await?;
+        // An omitted `UIDVALIDITY` gets the same second chance a disputed one
+        // does, and for the same reason: the server that contradicted itself
+        // in #1538 also, in the same minute, sent three `SELECT`s without the
+        // line RFC 3501 6.3.1 requires. Giving up on the first omission loses
+        // the folder for that pass.
+        let mut uid_validity = match uid_validity_of(&data, path) {
+            Ok(uid_validity) => uid_validity,
+            Err(refusal) => {
+                let (retried, retried_skips) =
+                    self.issue_select(path, mode, want_condstore).await?;
+                data = retried;
+                skipped += retried_skips;
+                match uid_validity_of(&data, path) {
+                    Ok(uid_validity) => uid_validity,
+                    // **Twice missing, and now the two cases part.**
+                    //
+                    // A server that simply does not send `UIDVALIDITY` is
+                    // unusable for UID work and saying so permanently is
+                    // right — retrying it for ever burns a laptop's radio
+                    // against an answer that will not change.
+                    //
+                    // A line `io-imap` *dropped* is not the server saying
+                    // anything. It completes the command `Ok` having
+                    // discarded what it could not decode, so a required code
+                    // is simply absent, and the connection that lost one will
+                    // lose the next. That is transient: the pool discards it
+                    // and a fresh connection tries again, instead of a person
+                    // who marked a message read being told "Flags not changed
+                    // -- the server sent a response Postio could not read".
+                    //
+                    // Before `skip_counter::measuring` there was no way to
+                    // ask which had happened, so both got the permanent
+                    // answer. Now there is.
+                    Err(_) if skipped > 0 => {
+                        return Err(BackendError::Disconnected {
+                            context: format!("SELECT {path}"),
+                            reason: format!(
+                                "{path} SELECT carried no UIDVALIDITY and \
+                                 {skipped} untagged response(s) were dropped \
+                                 undecoded, so the line was lost rather than \
+                                 never sent"
+                            ),
+                        });
+                    }
+                    Err(_) => return Err(refusal),
+                }
+            }
         };
-
-        let uid_validity = data
-            .uid_validity
-            .map(|value| UidValidity::new(value.get()))
-            .ok_or_else(|| BackendError::Protocol {
-                reason: format!("{path} SELECT carried no UIDVALIDITY"),
-            })?;
 
         let promised = self
             .selected
             .as_ref()
             .filter(|selected| selected.path == path)
             .map(|selected| selected.uid_validity);
+
+        // A renumber has to be said twice before it is believed (#1538).
+        //
+        // `UidValidityChanged` is the most expensive sentence a server can say
+        // to a mail client: every cached UID for the folder becomes
+        // meaningless, so the mailbox is emptied and refetched whole. A live
+        // account produced a burst of them across a whole folder list, in the
+        // same minute that three other `SELECT`s came back carrying no
+        // `UIDVALIDITY` at all -- a server contradicting itself under load,
+        // not fifteen folders renumbering at once. Believing the first answer
+        // cost a full resync of every one of them.
+        //
+        // So a disputed generation is asked again, and the second answer is
+        // the one that counts. One extra round trip, only ever on the path
+        // that was about to throw a mailbox away.
+        let known = promised.or_else(|| self.generations.known(path));
+        if known.is_some_and(|known| known != uid_validity) {
+            let disputed = uid_validity;
+            // The skip count is not carried past here: this re-read either
+            // produced a `UIDVALIDITY` or propagated, so there is no absent
+            // code left for it to explain.
+            let (rechecked, _) = self.issue_select(path, mode, want_condstore).await?;
+            data = rechecked;
+            uid_validity = uid_validity_of(&data, path)?;
+            if uid_validity != disputed {
+                tracing::warn!(
+                    first = disputed.get(),
+                    second = uid_validity.get(),
+                    "the server gave two different UIDVALIDITYs in a row; \
+                     believing the second and not resynchronising"
+                );
+            }
+        }
+
         let (verdict, epoch) = self.generations.observe(path, promised, uid_validity);
 
         self.selected = Some(SelectedMailbox {
@@ -268,6 +393,7 @@ impl ImapSession {
             uid_validity,
             epoch,
             confirmed_at: Instant::now(),
+            exists: data.exists.unwrap_or_default(),
         });
 
         if let Verdict::Changed { known } = verdict {
@@ -300,6 +426,18 @@ impl ImapSession {
                 .any(|flag| matches!(flag, FlagPerm::Asterisk)),
         })
     }
+}
+
+/// The `UIDVALIDITY` a `SELECT` carried, or the refusal that it carried none.
+///
+/// A mailbox without one cannot be addressed by UID at all, so this is a
+/// protocol error rather than a missing optional.
+fn uid_validity_of(data: &ImapMailboxSelectData, path: &str) -> BackendResult<UidValidity> {
+    data.uid_validity
+        .map(|value| UidValidity::new(value.get()))
+        .ok_or_else(|| BackendError::Protocol {
+            reason: format!("{path} SELECT carried no UIDVALIDITY"),
+        })
 }
 
 /// What a `SELECT` or `EXAMINE` reported.

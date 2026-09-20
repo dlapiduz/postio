@@ -61,7 +61,8 @@ fn conversation() -> Vec<Row> {
         seen,
         flagged: false,
         answered: false,
-        draft: false,
+        send_state: None,
+        send_at: None,
         has_attachments: false,
         thread_count: 6,
         participants: Vec::new(),
@@ -180,6 +181,7 @@ fn show_folders(window: &Window) {
             unread,
             flagged: 0,
             snoozed: 0,
+            attention: 0,
         };
         mailbox
     };

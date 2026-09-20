@@ -212,6 +212,15 @@ pub enum FullResyncReason {
     /// The server reported a `MODSEQ` below the one already seen, which the
     /// protocol says cannot happen — its store was rebuilt.
     ModSeqWentBackwards,
+    /// The mailbox holds fewer messages than the server says it does, and
+    /// nothing local explains the difference.
+    ///
+    /// Not reachable from [`SyncState::plan`], which sees only the protocol
+    /// state: deciding this needs the local row count and the operation queue,
+    /// so `resync` decides it and names it here. It is how a mailbox recorded
+    /// as synchronized without ever having been enumerated leaves that state
+    /// without the store being deleted.
+    ShortOfExists,
 }
 
 #[cfg(test)]

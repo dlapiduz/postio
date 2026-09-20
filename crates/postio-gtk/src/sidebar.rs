@@ -25,7 +25,7 @@
 
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 use adw::prelude::*;
 use adw::subclass::prelude::*;
@@ -36,7 +36,26 @@ use postio_model::ids::{AccountId, MailboxId};
 use postio_model::mailbox::{Mailbox, MailboxRole};
 
 /// What to call when the user picks a folder.
-type SelectionHandler = Box<dyn Fn(MailboxId)>;
+/// Which sidebar row a person chose.
+///
+/// A folder is named by its id. A **view** — Flagged, Snoozed, Outbox — has no
+/// id, because it has no row in the store, so it is named by its role.
+///
+/// This replaces the negative-id sentinels the GTK feed used to invent. Two
+/// things went wrong with those: an id that means "not an id" travels
+/// everywhere a real one does and is only safe while every reader remembers
+/// the convention, and the frontend that did not remember (macOS) never had
+/// the rows at all. The type now says which kind of thing was picked, so a
+/// reader cannot forget to ask.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SidebarChoice {
+    /// A real folder, by the id everything downstream points at.
+    Folder(MailboxId),
+    /// A view over messages filed elsewhere, by the role that defines it.
+    View(MailboxRole),
+}
+
+type SelectionHandler = Box<dyn Fn(SidebarChoice)>;
 
 /// Called when the user picks an account, or Unified, from the strip.
 type ScopeSelectionHandler = Box<dyn Fn(AccountScope)>;
@@ -88,242 +107,29 @@ type SavedSearchActionHandler = Box<dyn Fn(String, SavedSearchAction)>;
 /// should become.
 type BackfillExclusionHandler = Box<dyn Fn(MailboxId, bool)>;
 
-/// The protocol the status line names. v1 is IMAP only (CLAUDE.md).
-const PROTOCOL: &str = "imap";
-
 /// What the status line has to say.
-///
-/// Assembled from `ConnectionChanged` and `SyncProgress` on the core event
-/// stream. `last_sync` is an [`Instant`] rather than a wall-clock time because
-/// the line shows an age, and an age must not jump when the system clock is
-/// corrected.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct SyncStatus {
-    /// Where the account stands with its server.
-    pub state: ConnectionState,
-    /// When the last sync completed.
-    pub last_sync: Option<Instant>,
-    /// Completed and expected units of a long resync.
-    pub progress: Option<(u32, u32)>,
-    /// Settled and queued mail, while a backfill is running.
-    ///
-    /// Kept apart from [`progress`](Self::progress) rather than folded into
-    /// it, because the two phases mean different things to someone looking
-    /// at the sidebar: a list still arriving cannot be read, and mail whose
-    /// text is still arriving can. See issue #74.
-    pub backfill: Option<(u32, u32)>,
-    /// Why the connection is failing, phrased for the user.
-    pub detail: Option<String>,
-    /// What this account's mail weighs, and how much is already here.
-    ///
-    /// `None` until something has measured it. Carried on the status rather
-    /// than fetched by the line, because it arrives on
-    /// [`Event::BackfillProgress`] alongside the counts it is drawn beside
-    /// (#411, ADR 0017).
-    ///
-    /// [`Event::BackfillProgress`]: postio_core::Event::BackfillProgress
-    pub footprint: Option<postio_core::event::MailFootprint>,
-}
-
-impl Default for SyncStatus {
-    /// What Postio shows before it has ever reached a server.
-    fn default() -> Self {
-        SyncStatus {
-            state: ConnectionState::Offline,
-            last_sync: None,
-            progress: None,
-            backfill: None,
-            detail: None,
-            footprint: None,
-        }
-    }
-}
-
-impl SyncStatus {
-    /// The two lines the canvas draws, as of `now`.
-    pub fn lines(&self, now: Instant) -> (String, String) {
-        (
-            format!("{} · {PROTOCOL}", self.state_word()),
-            self.detail_line(now),
-        )
-    }
-
-    /// The detail line with the byte clause the column cannot hold, for the
-    /// tooltip and the accessible description.
-    ///
-    /// The sidebar is 212px by canvas 1b and deliberately fixed, which is
-    /// about 25 monospace characters; `mail 12400 of 81744` is already 19.
-    /// So on that line it is counts or bytes, never both, and #411 settled
-    /// which: a count that climbs answers *"is anything happening"*, which
-    /// is what #74 filed this line for, and a byte figure that sits still
-    /// through a large fetch reads as stalled. Bytes are a cost signal, and
-    /// cost is asked once and deliberately.
-    ///
-    /// They still reach this surface, just not 25 columns of it. A screen
-    /// reader and a hover both get the number, and both get it from here, so
-    /// the two cannot drift.
-    pub fn detail_in_full(&self, now: Instant) -> String {
-        let detail = self.detail_line(now);
-        // Only while a backfill is running: anywhere else there is no count
-        // for the bytes to be a second clause of.
-        match self.filling().and(self.bytes_clause()) {
-            Some(bytes) => format!("{detail} · {bytes}"),
-            None => detail,
-        }
-    }
-
-    /// The word the footer leads with.
-    ///
-    /// `postio_ui::sidebar::state_word`'s, not this widget's: two footers
-    /// saying different things about the same store is the drift ADR 0019 Q6
-    /// is about, and this one was visible — one frontend said `idle · imap`
-    /// while the other said `idle · synced 40s` (#1266).
-    fn state_word(&self) -> String {
-        postio_ui::sidebar::state_word(self.state, self.progress, self.backfill).to_owned()
-    }
-
-    /// How many messages the pass that is running has fetched, if one is.
-    ///
-    /// One question, asked once, and both lines answer from it — which is the
-    /// whole of `postio-qhz.6`. The first live sync said "0% synced" and
-    /// "never synced" together because the two lines were reading different
-    /// sources: progress from `SyncProgress`, "never synced" from a
-    /// `last_synced_at` that only moves when a pass *completes*. Neither was
-    /// wrong on its own terms and the pair was useless.
-    ///
-    /// `progress` is `Some` exactly while a pass is in flight — `SyncTracker`
-    /// clears it on any connection change and when `done` reaches `total` —
-    /// so its presence is the answer to "is anything happening".
-    fn syncing(&self) -> Option<u32> {
-        postio_ui::sidebar::pass_progress(self.progress)
-    }
-
-    /// How much mail the backfill has settled, if a backfill is running.
-    ///
-    /// `None` once the queue has drained, so a finished backfill falls back
-    /// to the ordinary idle line rather than sticking at `2000 of 2000` —
-    /// the same trap `syncing` fell into and the same answer.
-    fn filling(&self) -> Option<(u32, u32)> {
-        postio_ui::sidebar::backfill_running(self.backfill)
-    }
-
-    /// `890 MB of 1.4 GB`, when there is a measured size worth claiming.
-    ///
-    /// Feeds [`detail_in_full`](Self::detail_in_full) only — the drawn line
-    /// has no room for it (#411).
-    ///
-    /// `None` in the two cases where a size would be a lie rather than a
-    /// number:
-    ///
-    /// * **nothing measured yet** — no footprint has arrived;
-    /// * **an empty account** — `0 B of 0 B` reads as a bug, not as "no mail".
-    ///   An account with nothing in it owes no size claim at all.
-    ///
-    /// While the header pass is still running every figure is a lower bound,
-    /// so the total is written `over 1.4 GB`. Only the total carries the
-    /// hedge: what is already downloaded is known exactly, and hedging it too
-    /// would say the local figure might grow for a different reason than it
-    /// will.
-    fn bytes_clause(&self) -> Option<String> {
-        let footprint = self.footprint.as_ref()?;
-        if footprint.total_bytes == 0 {
-            return None;
-        }
-        Some(format!(
-            "{} of {}",
-            postio_ui::format::human_size(footprint.local_bytes),
-            postio_ui::format::human_size_bound(footprint.total_bytes, footprint.complete),
-        ))
-    }
-
-    /// The second line: the reason it is failing, or how long ago it worked.
-    ///
-    /// The reason wins. "last sync 4h" is not what someone needs to read when
-    /// the password has expired.
-    fn detail_line(&self, now: Instant) -> String {
-        if matches!(self.state, ConnectionState::Failing { .. })
-            && let Some(detail) = &self.detail
-        {
-            return detail.clone();
-        }
-        // A pass that is running says what it has, not when it last finished
-        // and not a percentage. The denominator is `UIDNEXT - 1` — the highest
-        // UID the pass *could* reach, which expunged messages leave gaps in —
-        // so a pass routinely finishes well short of it and a percentage of it
-        // is a number that does not mean what it looks like. A count that
-        // climbs answers "is anything happening", which is the only question
-        // this line is being asked during a first sync.
-        //
-        // No thousands separator: the folder counts beside it are written
-        // `4291`, and two number formats in one column read as two kinds of
-        // number.
-        if let Some(fetched) = self.syncing() {
-            return format!("fetched {fetched}");
-        }
-        // Unlike the list pass, a backfill knows its real denominator: every
-        // message that has entered the queue is in exactly one of the counts
-        // `BackfillProgress` keeps. So this one can honestly say "of", which
-        // "fetched 1204" above deliberately cannot.
-        if let Some((done, total)) = self.filling() {
-            return format!("mail {done} of {total}");
-        }
-        match self.last_sync {
-            Some(at) => format!("last sync {}", age(now.saturating_duration_since(at))),
-            None => "never synced".to_string(),
-        }
-    }
-
-    /// How long until the age on the second line would read differently.
-    ///
-    /// `None` when nothing is ticking. The point is to not wake the process up
-    /// once a second forever: seconds only matter while the answer is in
-    /// seconds.
-    pub fn refresh_interval(&self, now: Instant) -> Option<Duration> {
-        let elapsed = now.saturating_duration_since(self.last_sync?);
-        Some(match elapsed.as_secs() {
-            ..60 => Duration::from_secs(1),
-            60..3600 => Duration::from_secs(30),
-            _ => Duration::from_secs(300),
-        })
-    }
-}
-
-/// A duration in the canvas' compact form: `12s`, `4m`, `3h`, `2d`.
-pub(crate) fn age(elapsed: Duration) -> String {
-    let seconds = elapsed.as_secs();
-    match seconds {
-        0..60 => format!("{seconds}s"),
-        60..3600 => format!("{}m", seconds / 60),
-        3600..86_400 => format!("{}h", seconds / 3600),
-        _ => format!("{}d", seconds / 86_400),
-    }
-}
+// Moved to `postio-ui`, with `age`, the compact form its second line is
+// written in, because the macOS status line needs the same words — one
+// assembly of the sync feed into sentences, not two that drift. The names
+// are re-exported so nothing in this crate had to change, and so every
+// comment that names `SyncStatus` still reads.
+//
+// The drift was not hypothetical. ADR 0019 says anything a frontend
+// interprets will drift, and this line had already done it: one frontend
+// said `idle · imap` while the other said `idle · synced 40s` (#1266). With
+// the whole struct in `postio-ui` the GTK footer has no words of its own
+// left to disagree with.
+pub use postio_ui::status::SyncStatus;
+pub(crate) use postio_ui::status::age;
 
 /// The count a folder shows, or `None` when it shows none.
-///
-/// Straight off the canvas: Inbox 12 unread, Flagged 3 flagged, Drafts 2 in
-/// total, and nothing at all beside Sent or Archive. A count of zero is not
-/// drawn — an empty column is quieter than a row of noughts.
-pub fn count_for(mailbox: &Mailbox) -> Option<u32> {
-    let counts = &mailbox.counts;
-    let count = match mailbox.role {
-        // A draft you have not finished is not "unread".
-        MailboxRole::Drafts => counts.total,
-        MailboxRole::Flagged => counts.flagged,
-        MailboxRole::Snoozed => counts.snoozed,
-        // Nothing arrives in these unread, so a count would only ever be
-        // "how much have you kept", which is not a thing to nag about.
-        MailboxRole::Sent | MailboxRole::Archive | MailboxRole::Trash | MailboxRole::Junk => 0,
-        MailboxRole::Inbox | MailboxRole::Regular => counts.unread,
-    };
-    (count > 0).then_some(count)
-}
-
 // Moved to `postio-ui` in #1155 so the macOS sidebar draws the same order and
 // the same one-row-per-role rule rather than deciding either for itself. The
 // names are re-exported so nothing in this crate had to change, and so every
 // comment that names `sections` still reads.
-pub use postio_ui::sidebar::{primary_within, role_order, sections};
+pub use postio_ui::sidebar::{
+    attention_for, count_for, display_name, primary_within, role_order, sections,
+};
 
 /// One row of the accounts strip.
 ///
@@ -615,6 +421,8 @@ impl Sidebar {
         self.add_css_class("postio-sidebar");
         self.set_hexpand(false);
 
+        // A template child, so the class is adopted rather than the label
+        // built by `widgets::kicker` — the one place that shape allows.
         imp.account.add_css_class("postio-kicker");
         imp.account.set_xalign(0.0);
         imp.account.set_ellipsize(pango::EllipsizeMode::Middle);
@@ -639,9 +447,7 @@ impl Sidebar {
         folders.append(&imp.sections);
         folders.append(&folder_list(&imp.special));
 
-        let heading = gtk::Label::new(Some("Folders"));
-        heading.add_css_class("postio-kicker");
-        heading.set_xalign(0.0);
+        let heading = crate::widgets::kicker("Folders");
 
         let rule = gtk::Separator::new(gtk::Orientation::Horizontal);
         rule.add_css_class("postio-rule");
@@ -657,9 +463,7 @@ impl Sidebar {
 
         let saved_rule = gtk::Separator::new(gtk::Orientation::Horizontal);
         saved_rule.add_css_class("postio-rule");
-        let saved_heading = gtk::Label::new(Some("Saved searches"));
-        saved_heading.add_css_class("postio-kicker");
-        saved_heading.set_xalign(0.0);
+        let saved_heading = crate::widgets::kicker("Saved searches");
 
         imp.saved_section
             .set_orientation(gtk::Orientation::Vertical);
@@ -1119,6 +923,26 @@ impl Sidebar {
         self.imp().mailboxes.borrow().clone()
     }
 
+    /// The mailbox wearing `role`, for a destination command to point at.
+    ///
+    /// Read from the list this sidebar was given, so `g i` and clicking Inbox
+    /// reach the same row by construction rather than by two lookups that
+    /// have to agree. No query and no network: the folders are already here.
+    ///
+    /// Sentinels are deliberately included, where `Folders::default_mailbox`
+    /// filters them out. Flagged and Snoozed are synthetic rows with
+    /// non-positive ids, and #813 was a window opening one of those when it
+    /// meant "the first real folder" -- but somebody asking for their flagged
+    /// mail means precisely that row. The two questions only looked alike.
+    pub fn mailbox_for_role(&self, role: MailboxRole) -> Option<MailboxId> {
+        self.imp()
+            .mailboxes
+            .borrow()
+            .iter()
+            .find(|mailbox| mailbox.role == role)
+            .map(|mailbox| mailbox.id)
+    }
+
     /// Replace the accounts strip: Unified, then `accounts` in order.
     ///
     /// # Why it disappears below two accounts
@@ -1574,6 +1398,55 @@ impl Sidebar {
         None
     }
 
+    /// What is selected, as the kind of thing it is.
+    ///
+    /// [`selected`](Self::selected) answers a [`MailboxId`], which cannot
+    /// describe a view row: all three share the unassigned id, so it reports
+    /// the same value for Flagged, Snoozed and the Outbox — and for nothing
+    /// selected at all. This answers the question a caller actually has.
+    pub fn selected_choice(&self) -> Option<SidebarChoice> {
+        for list in self.imp().folder_lists.borrow().iter() {
+            if let Some(row) = list.selected_row() {
+                return Some(row_choice(&row));
+            }
+        }
+        None
+    }
+
+    /// Select a view row by its role, without reporting it as a user action.
+    ///
+    /// The other half of [`select`](Self::select), which takes a
+    /// [`MailboxId`] and searches. A view row has no id — ADR 0036 — so a
+    /// search finds whichever view is drawn first rather than the one asked
+    /// for, which is how the keyboard walk came to stick on Snoozed. Callers
+    /// that hold the widget already use the private `select_row_directly`;
+    /// this is for the ones that only know *which view they mean*.
+    ///
+    /// Silently does nothing when the role draws no row, which is the
+    /// ordinary state of the Outbox (spec 003 FR-012) rather than an error.
+    pub fn select_view(&self, role: MailboxRole) {
+        let row = self
+            .imp()
+            .folder_lists
+            .borrow()
+            .iter()
+            .flat_map(|list| {
+                let mut rows = Vec::new();
+                let mut child = list.first_child();
+                while let Some(widget) = child {
+                    child = widget.next_sibling();
+                    if let Ok(row) = widget.downcast::<gtk::ListBoxRow>() {
+                        rows.push(row);
+                    }
+                }
+                rows
+            })
+            .find(|row| row_choice(row) == SidebarChoice::View(role));
+        if let Some(row) = row {
+            self.select_row_directly(&row);
+        }
+    }
+
     /// Select a folder without reporting it back as a user action.
     ///
     /// Opens every collapsed ancestor first (#324): a folder selected while
@@ -1620,6 +1493,26 @@ impl Sidebar {
             match find_row(list, id) {
                 Some(row) => list.select_row(Some(&row)),
                 None => list.unselect_all(),
+            }
+        }
+        imp.echoing.set(false);
+    }
+
+    /// Highlight exactly this row, without looking it up.
+    ///
+    /// [`select`](Self::select) takes a [`MailboxId`] and searches, which is
+    /// right for its caller -- the window echoing a folder it just opened --
+    /// and wrong for the keyboard walk, which is holding the row already. A
+    /// view row has no id to search by, so searching finds whichever view
+    /// comes first rather than the one the cursor is on.
+    fn select_row_directly(&self, row: &gtk::ListBoxRow) {
+        let imp = self.imp();
+        imp.echoing.set(true);
+        for list in imp.folder_lists.borrow().iter() {
+            if row.parent().as_ref() == Some(list.upcast_ref::<gtk::Widget>()) {
+                list.select_row(Some(row));
+            } else {
+                list.unselect_all();
             }
         }
         imp.echoing.set(false);
@@ -1688,13 +1581,16 @@ impl Sidebar {
                 if sidebar.imp().echoing.get() {
                     return;
                 }
+                let choice = row_choice(row);
                 let id = MailboxId::new(row_id(row));
-                if !sidebar.is_openable(id) {
+                // Only a folder can be an unopenable container; a view is
+                // always openable and has nothing to expand.
+                if matches!(choice, SidebarChoice::Folder(_)) && !sidebar.is_openable(id) {
                     sidebar.toggle(id);
                     return;
                 }
                 for callback in sidebar.imp().selected.borrow().iter() {
-                    callback(id);
+                    callback(choice);
                 }
             }
         ));
@@ -1830,18 +1726,24 @@ impl Sidebar {
             self.imp().saved.select_row(Some(row));
             return None;
         }
+        let choice = row_choice(row);
         let id = MailboxId::new(row_id(row));
-        self.select(id);
+        // This row, not `select(id)`. The walk already has the row it landed
+        // on, and `select` goes looking for one by id -- which three view rows
+        // share, because a view has no id. Asking it to find "the row with id
+        // 0" snapped the cursor back to the first view every time, so `j` past
+        // Flagged reached Snoozed and then stuck there for ever.
+        self.select_row_directly(row);
         // A `\Noselect` container has nothing to open: stepping onto it
         // moves the keyboard there — so `toggle_focused` (#324) has
         // something to act on — but must not report it as an open folder,
-        // the same gate the click handler applies.
-        if self.is_openable(id) {
+        // the same gate the click handler applies. A view is never one.
+        if matches!(choice, SidebarChoice::View(_)) || self.is_openable(id) {
             // `select` is deliberately quiet — it is what the window calls
             // to echo a folder it opened — so the keyboard has to announce
             // its own move, the same way a click does.
             for handler in self.imp().selected.borrow().iter() {
-                handler(id);
+                handler(choice);
             }
         }
         Some(id)
@@ -1884,7 +1786,7 @@ impl Sidebar {
             .push(Box::new(callback));
     }
 
-    pub fn connect_selected(&self, callback: impl Fn(MailboxId) + 'static) {
+    pub fn connect_selected(&self, callback: impl Fn(SidebarChoice) + 'static) {
         self.imp().selected.borrow_mut().push(Box::new(callback));
     }
 
@@ -2100,7 +2002,9 @@ fn update_row(row: &gtk::ListBoxRow, mailbox: &Mailbox) {
     // in this file is what lets `row_id` be safe.
     #[allow(unsafe_code)]
     unsafe {
-        row.set_data("postio-mailbox-id", mailbox.id.get())
+        row.set_data("postio-mailbox-id", mailbox.id.get());
+        // Beside the id, because a view row has no id to tell it apart by.
+        row.set_data("postio-mailbox-role", mailbox.role.as_str().to_owned())
     };
 
     let Some(line) = row.child().and_then(|c| c.downcast::<gtk::Box>().ok()) else {
@@ -2123,12 +2027,31 @@ fn update_row(row: &gtk::ListBoxRow, mailbox: &Mailbox) {
     // the special section is a primary by construction, so the role name is
     // always the right answer here.
     name.set_text(&display_name(mailbox, &[]));
-    match count_for(mailbox) {
-        Some(value) => {
-            count.set_text(&value.to_string());
+    match (count_for(mailbox), attention_for(mailbox)) {
+        // Two numbers on one row: what is there, and what has stopped and is
+        // waiting for you (FR-022). The second is drawn only when there is
+        // one -- a marker that is always present is a marker nobody reads.
+        (Some(value), Some(waiting)) => {
+            count.set_text(&format!("{value} · {waiting}"));
+            count.add_css_class("postio-sidebar-count-attention");
             count.set_visible(true);
         }
-        None => count.set_visible(false),
+        (Some(value), None) => {
+            count.set_text(&value.to_string());
+            count.remove_css_class("postio-sidebar-count-attention");
+            count.set_visible(true);
+        }
+        (None, Some(waiting)) => {
+            // Nothing being written, but something that failed. The row still
+            // has to say so, or the only mail needing a person is invisible.
+            count.set_text(&waiting.to_string());
+            count.add_css_class("postio-sidebar-count-attention");
+            count.set_visible(true);
+        }
+        (None, None) => {
+            count.remove_css_class("postio-sidebar-count-attention");
+            count.set_visible(false);
+        }
     }
 
     // The row announces both halves, and says what the number *is*. Sighted
@@ -2146,45 +2069,21 @@ fn update_row(row: &gtk::ListBoxRow, mailbox: &Mailbox) {
 /// the tree (#501).
 fn announce(name: &str, mailbox: &Mailbox) -> String {
     let name = name.to_string();
-    let Some(count) = count_for(mailbox) else {
-        return name;
+    // Said first, because it is the half a person can act on: "2 need you"
+    // is the reason to open Drafts, and "5 drafts" is not.
+    let waiting = match attention_for(mailbox) {
+        Some(waiting) => format!(", {waiting} needing you"),
+        None => String::new(),
     };
+    let Some(count) = count_for(mailbox) else {
+        return format!("{name}{waiting}");
+    };
+    let name = format!("{name}{waiting}");
     match mailbox.role {
         MailboxRole::Drafts => format!("{name}, {count} drafts"),
         MailboxRole::Flagged => format!("{name}, {count} flagged"),
         MailboxRole::Snoozed => format!("{name}, {count} snoozed"),
         _ => format!("{name}, {count} unread"),
-    }
-}
-
-/// What a folder is called in the sidebar.
-///
-/// The special-use folders get the name Postio uses for the role, not the one
-/// the server happens to have picked: an iCloud account calls its archive
-/// "Archive" but its junk folder "Junk E-mail", and the sidebar is not the
-/// place to learn that.
-///
-/// Public because the list pane's header names the same folder, and two
-/// places calling one mailbox by two names is exactly the vocabulary drift
-/// this function exists to prevent.
-pub fn display_name(mailbox: &Mailbox, among: &[Mailbox]) -> String {
-    if !primary_within(mailbox, among) {
-        // The role's *twin* (#501): a second folder the server reports with
-        // the same role. It renders as an ordinary folder, and an ordinary
-        // folder is called what the server calls it — the role name belongs
-        // to exactly one row, or the sidebar reads `Sent, Sent`.
-        return mailbox.name.clone();
-    }
-    match mailbox.role {
-        MailboxRole::Inbox => "Inbox".to_string(),
-        MailboxRole::Flagged => "Flagged".to_string(),
-        MailboxRole::Snoozed => "Snoozed".to_string(),
-        MailboxRole::Drafts => "Drafts".to_string(),
-        MailboxRole::Sent => "Sent".to_string(),
-        MailboxRole::Archive => "Archive".to_string(),
-        MailboxRole::Junk => "Junk".to_string(),
-        MailboxRole::Trash => "Trash".to_string(),
-        MailboxRole::Regular => mailbox.name.clone(),
     }
 }
 
@@ -2263,7 +2162,8 @@ fn update_tree_row(row: &gtk::ListBoxRow, data: &FolderRow, sidebar: &Sidebar) {
     // `row_id` reads it back without caring which kind of row wrote it.
     #[allow(unsafe_code)]
     unsafe {
-        row.set_data("postio-mailbox-id", data.mailbox.id.get())
+        row.set_data("postio-mailbox-id", data.mailbox.id.get());
+        row.set_data("postio-mailbox-role", data.mailbox.role.as_str().to_owned())
     };
 
     let Some(line) = row.child().and_then(|c| c.downcast::<gtk::Box>().ok()) else {
@@ -2363,6 +2263,31 @@ fn row_id(row: &gtk::ListBoxRow) -> i64 {
     }
 }
 
+/// The role [`update_row`] stored on `row`, for telling view rows apart.
+fn row_role(row: &gtk::ListBoxRow) -> MailboxRole {
+    #[allow(unsafe_code)]
+    let stored = unsafe {
+        row.data::<String>("postio-mailbox-role")
+            .map(|p| p.as_ref().clone())
+            .unwrap_or_default()
+    };
+    MailboxRole::from_name(&stored).unwrap_or_default()
+}
+
+/// What picking `row` means: a folder by id, or a view by role.
+///
+/// The id decides, not the role: a server that really has a `\Flagged`
+/// folder gives a row with both an id *and* the Flagged role, and that is a
+/// folder — the one the account's own mail is in.
+fn row_choice(row: &gtk::ListBoxRow) -> SidebarChoice {
+    let id = MailboxId::new(row_id(row));
+    if id.is_assigned() {
+        SidebarChoice::Folder(id)
+    } else {
+        SidebarChoice::View(row_role(row))
+    }
+}
+
 /// Bring `list` in line with `searches`, reusing the rows that survive --
 /// the saved-search counterpart of [`sync_rows`].
 fn sync_search_rows(list: &gtk::ListBox, searches: &[SavedSearch]) {
@@ -2447,6 +2372,8 @@ fn set_class(widget: &impl IsA<gtk::Widget>, class: &str, on: bool) {
 
 #[cfg(test)]
 mod tests {
+    use std::time::Duration;
+
     use super::*;
     use postio_model::ids::AccountId;
     use postio_model::mailbox::MailboxCounts;
@@ -2464,6 +2391,7 @@ mod tests {
             unread,
             flagged,
             snoozed: 0,
+            attention: 0,
         }
     }
 

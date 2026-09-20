@@ -51,154 +51,161 @@ const ADDRESS: &str = "ada@example.com";
 const PASSWORD: &str = "hunter2";
 
 pub fn a_second_activate_does_not_double_wire_the_window() {
-    let state_dir = tempfile::tempdir().expect("a state directory");
-    // SAFETY: first statement of a single-threaded test.
-    unsafe { std::env::set_var("XDG_STATE_HOME", state_dir.path()) };
+    crate::gtk_case(async {
+        let state_dir = tempfile::tempdir().expect("a state directory");
+        // SAFETY: first statement of a single-threaded test.
+        unsafe { std::env::set_var("XDG_STATE_HOME", state_dir.path()) };
 
-    if adw::init().is_err() || gdk::Display::default().is_none() {
-        eprintln!("skipping: no display (run under `scripts/test-headless.sh`)");
-        return;
-    }
-    let display = gdk::Display::default().unwrap();
-    fonts::install().expect("the embedded fonts should install");
-    style::install(&display);
-    app::install_icons(&display);
+        if adw::init().is_err() || gdk::Display::default().is_none() {
+            eprintln!("skipping: no display (run under `scripts/test-headless.sh`)");
+            return;
+        }
+        let display = gdk::Display::default().unwrap();
+        fonts::install().expect("the embedded fonts should install");
+        style::install(&display);
+        app::install_icons(&display);
 
-    // ── a loopback server: the only way `start_syncing` may dial anything ──
-    let server_runtime = tokio::runtime::Runtime::new().expect("a server runtime");
-    let server = server_runtime.block_on(
-        TestServer::builder()
+        // ── a loopback server: the only way `start_syncing` may dial anything ──
+        // On the case's own runtime: a `Runtime::new().block_on()` here would
+        // be a runtime started from inside one, which tokio refuses.
+        let server = TestServer::builder()
             .account(ADDRESS)
             .password(PASSWORD)
             .mailbox(TestMailbox::new("INBOX"))
-            .start(),
-    );
+            .start()
+            .await;
 
-    let database = test_support::memory();
-    let (account_id, mailbox_id, message_id) = {
-        let connection = database.connection().expect("a connection");
-        let mut account = Account::new("Ada", EmailAddress::new(None::<String>, ADDRESS));
-        account.incoming.host = server.addr().ip().to_string();
-        account.incoming.port = server.addr().port();
-        account.incoming.security = TransportSecurity::None;
-        account.incoming.username = server.account().to_owned();
-        let account_id = AccountRepository::new(&connection)
-            .create(&mut account)
-            .expect("the account row");
+        let database = test_support::memory().await;
+        let (account_id, mailbox_id, message_id) = {
+            let connection = database.connect().await.expect("a connection");
+            let mut account = Account::new("Ada", EmailAddress::new(None::<String>, ADDRESS));
+            account.incoming.host = server.addr().ip().to_string();
+            account.incoming.port = server.addr().port();
+            account.incoming.security = TransportSecurity::None;
+            account.incoming.username = server.account().to_owned();
+            let account_id = AccountRepository::new(&connection)
+                .create(&mut account)
+                .await
+                .expect("the account row");
 
-        let mailbox = test_support::mailbox(&connection, &account, "INBOX");
+            let mailbox = test_support::mailbox(&connection, &account, "INBOX").await;
 
-        // A message already local, so flagging it does not have to wait on
-        // whatever the sync engine gets around to over the wire -- this test
-        // is about the local command wiring, not about sync.
-        let mut message = Message::new(account_id, mailbox.id, chrono::Utc::now());
-        let message_id = MessageRepository::new(&connection)
-            .create(&mut message)
-            .expect("insert a message");
-        (account_id, mailbox.id, message_id)
-    };
+            // A message already local, so flagging it does not have to wait on
+            // whatever the sync engine gets around to over the wire -- this test
+            // is about the local command wiring, not about sync.
+            let mut message = Message::new(account_id, mailbox.id, chrono::Utc::now());
+            let message_id = MessageRepository::new(&connection)
+                .create(&mut message)
+                .await
+                .expect("insert a message");
+            (account_id, mailbox.id, message_id)
+        };
 
-    let secrets: Arc<dyn SecretStore> = Arc::new(MemorySecretStore::new());
-    server_runtime
-        .block_on(secrets.store(&AccountKey::new(ADDRESS), &Password::new(PASSWORD)))
-        .expect("the memory store accepts a password");
+        let secrets: Arc<dyn SecretStore> = Arc::new(MemorySecretStore::new());
+        secrets
+            .store(&AccountKey::new(ADDRESS), &Password::new(PASSWORD))
+            .await
+            .expect("the memory store accepts a password");
 
-    // The real bus, over the real store -- the same composition `run()` uses,
-    // so a doubled `connect_action` is the same bug it would be in the app.
-    let state = SharedState::default();
-    let bus = actions::wire(
-        postio_core::dispatch::DispatcherBuilder::new(),
-        actions::Actions::new(database.clone(), state.clone()),
-    )
-    .build();
-    let wired: Vec<postio_core::CommandId> = bus.wired().collect();
-    assert!(
-        wired.contains(&postio_core::CommandId::Flag),
-        "the bus does not answer flag, so this test cannot mean anything"
-    );
-
-    let directory = tempfile::tempdir().expect("a blob directory");
-    let blobs = BlobStore::open(
-        directory.path().to_path_buf(),
-        &postio_storage::test_support::blob_keys(),
-    )
-    .expect("a blob store");
-    let (bridge, _replies) = Bridge::new(bus).expect("a runtime");
-    let (sink, events) = event_channel();
-    let wiring = Wiring::new(
-        database.clone(),
-        blobs,
-        bridge.handle(),
-        sink,
-        bridge.commands(),
-    )
-    .with_secrets(secrets);
-
-    let window = Window::default();
-    window.present();
-    settle();
-
-    let notifier = notifications::Notifier::new(
-        wiring.database.clone(),
-        wiring.store.clone(),
-        wiring.runtime.clone(),
-        Default::default(),
-    );
-    let events: Rc<RefCell<Option<_>>> = Rc::new(RefCell::new(Some(events)));
-    let fed = Rc::new(Cell::new(false));
-
-    // ── the same call twice, the same `fed` cell both times ────────────────
-    // A second launch of a single-instance application delivers a second
-    // `activate` to the primary process, and `activate`'s own handler makes
-    // exactly this call every time -- see `postio_app::open_or_onboard`'s
-    // doc comment for why `fed` is what stops the second one doing anything.
-    for _ in 0..2 {
-        postio_app::open_or_onboard(
-            &window,
-            &wiring,
-            state.clone(),
-            wired.clone(),
-            Rc::clone(&events),
-            notifier.clone(),
-            Rc::clone(&fed),
+        // The real bus, over the real store -- the same composition `run()` uses,
+        // so a doubled `connect_action` is the same bug it would be in the app.
+        let state = SharedState::default();
+        let bus = actions::wire(
+            postio_core::dispatch::DispatcherBuilder::new(),
+            actions::Actions::new(database.clone(), state.clone()),
+        )
+        .build();
+        let wired: Vec<postio_core::CommandId> = bus.wired().collect();
+        assert!(
+            wired.contains(&postio_core::CommandId::Flag),
+            "the bus does not answer flag, so this test cannot mean anything"
         );
-    }
 
-    assert!(
-        settle_until(|| window.list().model().n_items() > 0),
-        "no rows arrived to press a key on"
-    );
+        let directory = tempfile::tempdir().expect("a blob directory");
+        let blobs = BlobStore::open(
+            directory.path().to_path_buf(),
+            &postio_storage::test_support::blob_keys(),
+        )
+        .expect("a blob store");
+        let (bridge, _replies) = Bridge::new(bus).expect("a runtime");
+        let (sink, events) = event_channel();
+        let wiring = Wiring::new(
+            database.clone(),
+            blobs,
+            bridge.handle(),
+            sink,
+            bridge.commands(),
+        )
+        .with_secrets(secrets);
 
-    // ── select the seeded message and flag it once ──────────────────────────
-    let list = window.list();
-    list.select_message(message_id);
-    settle_until(|| list.cursor_id() == Some(message_id));
-    settle();
+        let window = Window::default();
+        window.present();
+        settle();
 
-    window.handle_key(
-        gdk::Key::from_name("s").unwrap(),
-        gdk::ModifierType::empty(),
-    );
-    settle();
+        let notifier = notifications::Notifier::new(
+            wiring.database.clone(),
+            wiring.store.clone(),
+            wiring.runtime.clone(),
+            Default::default(),
+        );
+        let events: Rc<RefCell<Option<_>>> = Rc::new(RefCell::new(Some(events)));
+        let fed = Rc::new(Cell::new(false));
 
-    let flagged = || -> bool {
-        let connection = database.connection().expect("a connection");
-        MessageRepository::new(&connection)
-            .get(message_id)
-            .expect("a read")
-            .expect("still there")
-            .flags
-            .contains(&Flag::Flagged)
-    };
-    assert!(
-        settle_until(flagged),
-        "pressing `s` once should flag the message. If it did not, two \
-         independent `connect_action` listeners (one per `open_or_onboard` \
-         call) each toggled it -- true, then straight back to false -- which \
-         is exactly what a second, unguarded `activate` used to cause"
-    );
+        // ── the same call twice, the same `fed` cell both times ────────────────
+        // A second launch of a single-instance application delivers a second
+        // `activate` to the primary process, and `activate`'s own handler makes
+        // exactly this call every time -- see `postio_app::open_or_onboard`'s
+        // doc comment for why `fed` is what stops the second one doing anything.
+        for _ in 0..2 {
+            postio_app::open_or_onboard(
+                &window,
+                &wiring,
+                state.clone(),
+                wired.clone(),
+                Rc::clone(&events),
+                notifier.clone(),
+                Rc::clone(&fed),
+            )
+            .await;
+        }
 
-    let _ = (account_id, mailbox_id);
+        assert!(
+            settle_until(async || window.list().model().n_items() > 0).await,
+            "no rows arrived to press a key on"
+        );
 
-    bridge.shutdown();
+        // ── select the seeded message and flag it once ──────────────────────────
+        let list = window.list();
+        list.select_message(message_id);
+        settle_until(async || list.cursor_id() == Some(message_id)).await;
+        settle();
+
+        window.handle_key(
+            gdk::Key::from_name("s").unwrap(),
+            gdk::ModifierType::empty(),
+        );
+        settle();
+
+        let flagged = async || -> bool {
+            let connection = database.connect().await.expect("a connection");
+            MessageRepository::new(&connection)
+                .get(message_id)
+                .await
+                .expect("a read")
+                .expect("still there")
+                .flags
+                .contains(&Flag::Flagged)
+        };
+        assert!(
+            settle_until(flagged).await,
+            "pressing `s` once should flag the message. If it did not, two \
+             independent `connect_action` listeners (one per `open_or_onboard` \
+             call) each toggled it -- true, then straight back to false -- which \
+             is exactly what a second, unguarded `activate` used to cause"
+        );
+
+        let _ = (account_id, mailbox_id);
+
+        bridge.shutdown();
+    });
 }

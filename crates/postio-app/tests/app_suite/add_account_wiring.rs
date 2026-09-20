@@ -105,14 +105,14 @@ impl DiscoveryTransport for HangingTransport {
 
 /// A running application over a seeded store: a window with mail in it, its
 /// panes fed, and the add-account command wired.
-fn running_application() -> (
+async fn running_application() -> (
     Window,
     Wiring,
     postio_core::bridge::Bridge,
     tempfile::TempDir,
 ) {
-    let database = test_support::memory();
-    seed_small(&database, 51);
+    let database = test_support::memory().await;
+    seed_small(&database, 51).await;
 
     let directory = tempfile::tempdir().expect("a blob directory");
     let blobs = BlobStore::open(
@@ -131,7 +131,9 @@ fn running_application() -> (
     let window = Window::default();
     window.present();
     settle();
-    feed_the_window(&window, &wiring).expect("the seeded store has an account");
+    feed_the_window(&window, &wiring)
+        .await
+        .expect("the seeded store has an account");
     (window, wiring, bridge, directory)
 }
 
@@ -178,104 +180,108 @@ fn display() -> Option<tempfile::TempDir> {
 // --- the cases ----------------------------------------------------------
 
 pub fn the_add_account_key_opens_a_blank_form_over_the_running_window() {
-    let Some(_state_dir) = display() else {
-        return;
-    };
-    let (window, wiring, bridge, _directory) = running_application();
-    postio_app::add_account::install(&window, &wiring);
+    crate::gtk_case(async {
+        let Some(_state_dir) = display() else {
+            return;
+        };
+        let (window, wiring, bridge, _directory) = running_application().await;
+        postio_app::add_account::install(&window, &wiring).await;
 
-    assert!(
-        settle_until(|| window.list().model().n_items() > 0),
-        "the list should already have mail before this case asks anything of it"
-    );
-    let mail_before = window.list().model().n_items();
-    assert!(
-        find_onboarding(&window).is_none(),
-        "an add-account form appeared with nobody asking for one"
-    );
+        assert!(
+            settle_until(async || window.list().model().n_items() > 0).await,
+            "the list should already have mail before this case asks anything of it"
+        );
+        let mail_before = window.list().model().n_items();
+        assert!(
+            find_onboarding(&window).is_none(),
+            "an add-account form appeared with nobody asking for one"
+        );
 
-    // The registry's binding, through the window's own resolver: the same
-    // road a palette row takes, and the one thing a unit test of the dialog
-    // cannot prove.
-    window.handle_key(
-        gdk::Key::from_name("N").unwrap(),
-        gdk::ModifierType::CONTROL_MASK | gdk::ModifierType::SHIFT_MASK,
-    );
-    assert!(
-        settle_until(|| find_onboarding(&window).is_some()),
-        "Ctrl+Shift+N reached no handler: the add-account command resolves \
-         and then hits nothing, which is the postio-bl2 shape"
-    );
+        // The registry's binding, through the window's own resolver: the same
+        // road a palette row takes, and the one thing a unit test of the dialog
+        // cannot prove.
+        window.handle_key(
+            gdk::Key::from_name("N").unwrap(),
+            gdk::ModifierType::CONTROL_MASK | gdk::ModifierType::SHIFT_MASK,
+        );
+        assert!(
+            settle_until(async || find_onboarding(&window).is_some()).await,
+            "Ctrl+Shift+N reached no handler: the add-account command resolves \
+             and then hits nothing, which is the postio-bl2 shape"
+        );
 
-    let screen = find_onboarding(&window).expect("the dialog's onboarding screen");
-    assert_eq!(
-        screen.address(),
-        "",
-        "the add-account form arrived with an address already in it; it is a \
-         new account, not a repair of the one already there"
-    );
-    assert!(
-        matches!(screen.status(), Status::Idle),
-        "the add-account form did not arrive idle: {:?}",
-        screen.status()
-    );
+        let screen = find_onboarding(&window).expect("the dialog's onboarding screen");
+        assert_eq!(
+            screen.address(),
+            "",
+            "the add-account form arrived with an address already in it; it is a \
+             new account, not a repair of the one already there"
+        );
+        assert!(
+            matches!(screen.status(), Status::Idle),
+            "the add-account form did not arrive idle: {:?}",
+            screen.status()
+        );
 
-    // ── and none of that disturbed the application behind it ────────────
-    assert_eq!(
-        window.list().model().n_items(),
-        mail_before,
-        "opening the add-account dialog changed what the running window \
-         shows -- it must float over the shell, never replace its content \
-         the way first run's own host does"
-    );
-    assert!(
-        window.content().and_downcast::<Onboarding>().is_none(),
-        "the add-account dialog replaced the window's content instead of \
-         floating over it"
-    );
+        // ── and none of that disturbed the application behind it ────────────
+        assert_eq!(
+            window.list().model().n_items(),
+            mail_before,
+            "opening the add-account dialog changed what the running window \
+             shows -- it must float over the shell, never replace its content \
+             the way first run's own host does"
+        );
+        assert!(
+            window.content().and_downcast::<Onboarding>().is_none(),
+            "the add-account dialog replaced the window's content instead of \
+             floating over it"
+        );
 
-    bridge.shutdown();
+        bridge.shutdown();
+    });
 }
 
 pub fn closing_the_dialog_stops_the_probe_it_started() {
-    let Some(_state_dir) = display() else {
-        return;
-    };
-    let (window, wiring, bridge, _directory) = running_application();
+    crate::gtk_case(async {
+        let Some(_state_dir) = display() else {
+            return;
+        };
+        let (window, wiring, bridge, _directory) = running_application().await;
 
-    let transport = Arc::new(HangingTransport::default());
-    let dialog = postio_app::add_account::open(&window, &wiring, transport.clone());
+        let transport = Arc::new(HangingTransport::default());
+        let dialog = postio_app::add_account::open(&window, &wiring, transport.clone()).await;
 
-    let screen = find_onboarding(&window).expect("the dialog's onboarding screen");
-    screen.set_address("ada@example.com");
-    screen.probe();
-    assert!(
-        matches!(screen.status(), Status::Probing),
-        "the probe did not put the form into its waiting state: {:?}",
-        screen.status()
-    );
-    assert!(
-        settle_until(|| transport.token().is_some()),
-        "the probe never reached the transport it was given"
-    );
-    let token = transport.token().expect("the token the probe was handed");
-    assert!(
-        !token.is_cancelled(),
-        "the transport was handed a token that was already spent"
-    );
+        let screen = find_onboarding(&window).expect("the dialog's onboarding screen");
+        screen.set_address("ada@example.com");
+        screen.probe();
+        assert!(
+            matches!(screen.status(), Status::Probing),
+            "the probe did not put the form into its waiting state: {:?}",
+            screen.status()
+        );
+        assert!(
+            settle_until(async || transport.token().is_some()).await,
+            "the probe never reached the transport it was given"
+        );
+        let token = transport.token().expect("the token the probe was handed");
+        assert!(
+            !token.is_cancelled(),
+            "the transport was handed a token that was already spent"
+        );
 
-    // Walking away from the dialog is the cancellation ADR 0012 Q3 names:
-    // there is no Cancel button, because `Esc` and the close gesture are
-    // what a dialog already offers.
-    dialog.close();
-    settle();
+        // Walking away from the dialog is the cancellation ADR 0012 Q3 names:
+        // there is no Cancel button, because `Esc` and the close gesture are
+        // what a dialog already offers.
+        dialog.close();
+        settle();
 
-    assert!(
-        token.is_cancelled(),
-        "closing the add-account dialog left its discovery request running: \
-         the socket is open for an answer that now lands on a form which is \
-         no longer in the tree (#57, ADR 0012 Q3)"
-    );
+        assert!(
+            token.is_cancelled(),
+            "closing the add-account dialog left its discovery request running: \
+             the socket is open for an answer that now lands on a form which is \
+             no longer in the tree (#57, ADR 0012 Q3)"
+        );
 
-    bridge.shutdown();
+        bridge.shutdown();
+    });
 }

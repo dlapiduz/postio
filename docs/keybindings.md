@@ -1,8 +1,9 @@
 # Keyboard reference
 
-<!-- Generated from `postio-core`'s command registry by
-`crates/postio-core/tests/keybindings_doc.rs`. Do not edit by hand:
-change the registry and run `POSTIO_UPDATE_DOCS=1 cargo test -p postio-core`. -->
+<!-- Generated from `postio-core`'s command registry and the one
+box's mode table by `crates/postio-ui/tests/ui_suite/keybindings_doc.rs`.
+Do not edit by hand:
+change the registry and run `POSTIO_UPDATE_DOCS=1 cargo test -p postio-ui`. -->
 
 Every command below is also in the `Ctrl+K` palette and the `?` cheat
 sheet, because all three are generated from one table.
@@ -55,9 +56,10 @@ command from inside a text field.
 | `o` | Toggle result order | Search |  | `toggle_result_order` |
 | `J` or `alt+Down` | Next message in conversation | Conversation |  | `next_in_conversation` |
 | `K` or `alt+Up` | Previous message in conversation | Conversation |  | `prev_in_conversation` |
-| `space` | Fold or unfold this message | Conversation |  | `toggle_fold` |
+| `z` | Fold or unfold this message | Conversation |  | `toggle_fold` |
 | `ctrl+o` | View original | List, conversation, reader |  | `view_original` |
 | `O` or `ctrl+shift+e` | Expand all | Conversation |  | `expand_all` |
+| `I` | Hide or show the conversation rail | Conversation |  | `toggle_rail` |
 | `e` or `ctrl+r` | Reply | List, conversation, reader, composer |  | `reply` |
 | `E` or `ctrl+shift+r` | Reply to all | List, conversation, reader, composer |  | `reply_all` |
 | `f` or `ctrl+shift+f` | Forward | List, conversation, reader, composer |  | `forward` |
@@ -70,16 +72,20 @@ command from inside a text field.
 | `b` | Snooze | List, conversation, reader | Undoable | `snooze` |
 | `B` | Unsnooze | List, conversation, reader | Undoable | `unsnooze` |
 | `L` | Add label… | List, conversation, reader | Undoable | `add_label` |
-| `/` or `alt+ctrl+f` | Search | List, conversation, reader |  | `search` |
+| `/` or `alt+ctrl+f` | Search | List, conversation, reader, search, folder list |  | `search` |
 | `ctrl+s` | Save search as folder | Search |  | `save_search` |
 | `c` or `ctrl+n` | Compose | List, conversation, reader |  | `compose` |
-| `ctrl+shift+d` or `ctrl+Return` | Send | Composer | Undoable | `send` |
+| `ctrl+shift+d` or `ctrl+Return` | Send | Composer | Undo briefly | `send` |
 | `ctrl+shift+Return` | Schedule send… | Composer |  | `schedule_send` |
 | `ctrl+s` | Save draft | Composer |  | `save_draft` |
 | `ctrl+d` | Discard draft | Composer | Asks first | `discard_draft` |
 | `ctrl+shift+m` | Mark as sent | List, composer |  | `mark_sent` |
+| `ctrl+shift+y` | Retry send | List, composer |  | `retry_send` |
+| `ctrl+shift+x` | Cancel send | List, composer |  | `cancel_send` |
 | `ctrl+shift+a` | Attach file… | Composer |  | `attach_file` |
 | `ctrl+shift+o` | Detach composer | Composer |  | `detach_composer` |
+| `ctrl+shift+c` | Cc and Bcc | Composer |  | `copy_fields` |
+| `ctrl+shift+g` | Insert image… | Composer |  | `insert_image` |
 | `ctrl+b` | Bold | Composer |  | `bold` |
 | `ctrl+i` | Italic | Composer |  | `italic` |
 | `ctrl+shift+8` | Bulleted list | Composer |  | `bullet_list` |
@@ -94,6 +100,10 @@ command from inside a text field.
 | `ctrl+e` | Edit configuration | List, conversation, reader |  | `edit_config` |
 | `ctrl+b` | Toggle sidebar | List, conversation, reader |  | `toggle_sidebar` |
 | `g f` | Focus the folder list | List, conversation, reader, search |  | `focus_sidebar` |
+| `g i` | Go to inbox | List, conversation, reader, search, folder list |  | `go_to_inbox` |
+| `g d` | Go to drafts | List, conversation, reader, search, folder list |  | `go_to_drafts` |
+| `g t` | Go to sent | List, conversation, reader, search, folder list |  | `go_to_sent` |
+| `g s` | Go to flagged | List, conversation, reader, search, folder list |  | `go_to_flagged` |
 | `tab` | Next pane | List, conversation, reader, folder list |  | `cycle_pane` |
 | `shift+tab` | Previous pane | List, conversation, reader, folder list |  | `cycle_pane_back` |
 | `j` or `Down` | Next folder | Folder list |  | `next_folder` |
@@ -108,6 +118,7 @@ command from inside a text field.
 | `c` | Update account credential | Account list |  | `update_credential` |
 | `r` | Rebuild search index | Account list |  | `rebuild_account_index` |
 | `m` | Set as default account | Account list |  | `set_default_account` |
+| `M` | Map mailbox role | Account list | Undoable | `map_mailbox_role` |
 | `g a` | Next scope | List, folder list |  | `next_scope` |
 | `F5` or `R` | Refresh | List, conversation, reader |  | `refresh` |
 | `p` | Show message parts | Reader |  | `open_parts` |
@@ -118,5 +129,21 @@ command from inside a text field.
 | `S` | Save all parts | Parts panel |  | `save_all_parts` |
 | `x` | Open part externally | Parts panel |  | `open_part_externally` |
 | `H` | Render part once | Parts panel |  | `render_part_once` |
-| `Page_Down` or `space` | Scroll reading pane down | List, reader |  | `scroll_reader_down` |
+| `Page_Down` or `space` | Scroll reading pane down | List, conversation, reader |  | `scroll_reader_down` |
 | `Page_Up` or `shift+space` | Scroll reading pane up | List, conversation, reader |  | `scroll_reader_up` |
+
+## The one box
+
+`/` opens one box in the header, and it answers more than one
+question. Typing searches mail; a character typed into an empty box
+chooses what else to ask, and is absorbed into a marker on the field
+rather than staying in the query. Backspace at the start gives the
+mode back and keeps what was typed.
+
+| Typed | What it does |
+|---|---|
+| *(nothing)* | Search all mail |
+| `>` | Run a command |
+| `#` | Go to a folder |
+| `@` | Find a correspondent |
+| `+` | Add a label |

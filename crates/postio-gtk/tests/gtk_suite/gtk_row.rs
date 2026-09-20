@@ -30,7 +30,8 @@ fn canvas_row() -> Row {
         seen: false,
         flagged: false,
         answered: false,
-        draft: false,
+        send_state: None,
+        send_at: None,
         has_attachments: true,
         thread_count: 14,
         participants: Vec::new(),
@@ -81,7 +82,8 @@ pub fn the_row_draws_the_canvas_anatomy_at_every_density() {
     row.set_row(Some(Row {
         flagged: true,
         answered: true,
-        draft: true,
+        send_state: Some(postio_model::DraftState::Editing),
+        send_at: None,
         ..canvas_row()
     }));
     pump();
@@ -725,4 +727,76 @@ fn render(window: &gtk::Window) -> Option<Vec<u8>> {
             .save_to_png_bytes()
             .to_vec(),
     )
+}
+
+/// Building rows must not resolve a keymap.
+///
+/// GTK builds a `MessageRowView` per row it realises, and every row wants a
+/// correct key hint before anything hands it the live keymap. Resolving the
+/// registry's defaults to get one is quadratic in the number of commands, and
+/// paying it per row is what made switching folders spend about a second
+/// rebuilding the list (#1216). Counted rather than timed: the count is the
+/// same on every machine.
+pub fn building_rows_does_not_resolve_a_keymap() {
+    if adw::init().is_err() || gdk::Display::default().is_none() {
+        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
+        return;
+    }
+    let display = gdk::Display::default().unwrap();
+    fonts::install().expect("the embedded fonts should install");
+    style::install(&display);
+
+    // One up front, so a lazily-built cache is already warm and the count
+    // below is measuring rows rather than the first of anything.
+    let _ = MessageRowView::new();
+    let before = postio_core::test_support::keymap_resolutions();
+    let rows: Vec<_> = (0..200).map(|_| MessageRowView::new()).collect();
+    assert_eq!(rows.len(), 200);
+    assert_eq!(
+        postio_core::test_support::keymap_resolutions(),
+        before,
+        "building 200 rows resolved {} keymaps",
+        postio_core::test_support::keymap_resolutions() - before
+    );
+
+    // The hints still have to be right, or the cheap answer is the wrong one.
+    let view = MessageRowView::new();
+    view.set_row(Some(canvas_row()));
+    assert_eq!(
+        view.hints(),
+        postio_gtk::row::hints(postio_core::Keymap::defaults())
+    );
+}
+
+/// The four send states wear four different glyphs (spec 003, FR-021).
+///
+/// `lookup_icon` never fails: a name the theme does not hold comes back as
+/// `image-missing`, drawn without complaint. So a row whose mark is meant to
+/// say "this one stopped and needs you" can quietly draw the same box as the
+/// three beside it, and nothing anywhere reports a problem — the distinction
+/// exists in the source and not on the screen.
+///
+/// Asserting the names are distinct would be asserting on a `match` arm.
+/// This asks the theme the running application asks.
+pub fn the_send_state_marks_are_four_glyphs_the_theme_actually_has() {
+    let Some(display) = gdk::Display::default() else {
+        eprintln!("no display; skipping");
+        return;
+    };
+    let theme = gtk::IconTheme::for_display(&display);
+
+    // The names `row.rs` hands to `pipe_icon`, in the order a draft passes
+    // through them.
+    for name in [
+        "document-edit-symbolic",
+        "send-to-symbolic",
+        "dialog-warning-symbolic",
+        "dialog-question-symbolic",
+    ] {
+        assert!(
+            theme.has_icon(name),
+            "{name} is not in this theme, so the row draws image-missing and \
+             the send state it stands for is invisible"
+        );
+    }
 }

@@ -146,7 +146,8 @@ fn chord_problem(chord: &str) -> Option<String> {
     Some(format!("`{key}` is not a key name"))
 }
 
-/// The `[keys]` section: user overrides on top of [`DEFAULT_BINDINGS`].
+/// The `[keys]` section: user overrides on top of the registry's built-in
+/// defaults, which live in `postio-core` (see this module's own doc, #1227).
 ///
 /// ```toml
 /// [keys]

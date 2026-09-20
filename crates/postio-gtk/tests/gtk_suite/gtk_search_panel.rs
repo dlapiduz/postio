@@ -337,3 +337,168 @@ fn find(widget: &gtk::Widget, wanted: &dyn Fn(&gtk::Widget) -> bool) -> Option<g
     }
     None
 }
+
+/// The offer a search makes when it found nothing. #1524, ADR 0037.
+///
+/// The word chosen is ranked in `postio-search` with no display; what needs
+/// one is that the offer is a control a person can take, and that taking it
+/// puts the other word in the box rather than beside it.
+pub fn a_search_that_found_nothing_offers_the_word_that_was_meant() {
+    if adw::init().is_err() || gdk::Display::default().is_none() {
+        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
+        return;
+    }
+    let display = gdk::Display::default().unwrap();
+    fonts::install().expect("the embedded fonts should install");
+    style::install(&display);
+
+    let window = Window::default();
+    let view = View::attach(&window.shell(), &window.finder());
+    window.present();
+    pump();
+
+    let finder = window.finder();
+    window.open_finder(Mode::Search);
+    finder.set_query(Query {
+        mode: Mode::Search,
+        text: "hanah".to_owned(),
+    });
+    pump();
+
+    // Nothing matched and nothing is offered yet: the column says so, and a
+    // blank column would be the shrug the canvas forbids.
+    view.set_suggestion(None);
+    pump();
+    assert!(
+        offer_button(&view).is_none(),
+        "no offer to make, so no button to press"
+    );
+
+    view.set_suggestion(Some(&postio_search::suggest::Suggestion {
+        term: "hannah".to_owned(),
+        documents: 66,
+    }));
+    pump();
+
+    let button = offer_button(&view).expect("the column offers the other word");
+    let label = button
+        .label()
+        .expect("the offer says something")
+        .to_string();
+    assert_eq!(
+        label, "hannah",
+        "the term alone on the face: this column is 212px wide, and the count \
+         rides in the description exactly as a refine chip's hits do"
+    );
+    assert_eq!(
+        button.halign(),
+        gtk::Align::Start,
+        "the offer hugs its text like a refine chip; stretched to the column \
+         it reads as a slab beside pills"
+    );
+    let spoken = button.tooltip_text().expect("the offer explains itself");
+    assert!(
+        spoken.contains("hannah") && spoken.contains("66"),
+        "read aloud, the offer says what it would find: {spoken}"
+    );
+    assert!(
+        !spoken.contains('?'),
+        "a statement, not a question -- the app has already looked: {spoken}"
+    );
+
+    // -- taking it puts the other word in the box -------------------------
+
+    button.emit_clicked();
+    pump();
+    assert_eq!(
+        finder.query().text,
+        "hannah",
+        "taking the offer replaces the word that found nothing, so what is in \
+         the box is a query the user could have typed"
+    );
+
+    // A query that found something is never second-guessed.
+    view.set_suggestion(None);
+    pump();
+    assert!(offer_button(&view).is_none());
+}
+
+/// Reading a message, then searching for something that is not there, leaves
+/// the message on screen beside a list saying nothing matched.
+///
+/// The order is the whole test. The reader takes the pane *before* the search
+/// starts -- that is the only way it can hold it, since `preview_focused`
+/// hands the pane over for every focused hit once a search is on. A search
+/// that then finds nothing clears the preview and never asks for the pane, so
+/// the reader keeps a message that has nothing to do with the query.
+pub fn a_search_with_no_hits_does_not_leave_the_last_message_on_screen() {
+    if adw::init().is_err() || gdk::Display::default().is_none() {
+        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
+        return;
+    }
+    let display = gdk::Display::default().unwrap();
+    fonts::install().expect("the embedded fonts should install");
+    style::install(&display);
+
+    let window = Window::default();
+    let view = View::attach(&window.shell(), &window.finder());
+    window.present();
+    pump();
+
+    // Search, and open one of the results -- `claim_reading` is what `Enter`
+    // on a hit does. The reader takes the pane from the preview.
+    let finder = window.finder();
+    window.open_finder(Mode::Search);
+    finder.set_query(Query {
+        mode: Mode::Search,
+        text: "hannah".to_owned(),
+    });
+    pump();
+    window.shell().claim_reading();
+    pump();
+    assert_eq!(
+        window.shell().reader_occupant(),
+        postio_gtk::shell::ReaderOccupant::Reader,
+        "opening a result hands the pane to the reader"
+    );
+
+    // Now edit the query into one that finds nothing. The search never
+    // stopped, so `View::set_searching` sees no change and returns early --
+    // which is why nothing tells the shell the reader should stand down.
+    finder.set_query(Query {
+        mode: Mode::Search,
+        text: "hanah".to_owned(),
+    });
+    pump();
+    view.set_focused(None);
+    pump();
+
+    assert_ne!(
+        window.shell().reader_occupant(),
+        postio_gtk::shell::ReaderOccupant::Reader,
+        "nothing matched, and the pane is still showing a message that has \
+         nothing to do with the query -- the app contradicting itself in one \
+         glance"
+    );
+}
+
+/// The offer button, if the column is making one.
+fn offer_button(view: &View) -> Option<gtk::Button> {
+    fn walk(widget: &gtk::Widget, found: &mut Vec<gtk::Button>) {
+        let mut child = widget.first_child();
+        while let Some(node) = child {
+            if let Some(button) = node.downcast_ref::<gtk::Button>()
+                && button
+                    .tooltip_text()
+                    .is_some_and(|spoken| spoken.starts_with("Search for "))
+            {
+                found.push(button.clone());
+            }
+            walk(&node, found);
+            child = node.next_sibling();
+        }
+    }
+    let mut found = Vec::new();
+    walk(view.panel().upcast_ref::<gtk::Widget>(), &mut found);
+    found.into_iter().next()
+}

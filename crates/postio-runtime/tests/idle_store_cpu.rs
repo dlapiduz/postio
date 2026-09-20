@@ -49,6 +49,15 @@
 //! is separate for the same reason and says so.
 //!
 //! Nothing here touches the network: the backend is `MockBackend`.
+//!
+//! POSTIO-MEASUREMENT: its output is numbers a person reads, and it costs
+//! 44.1 s, so it runs on the nightly timer rather than the merge path
+//! (#1450). `.config/nextest.toml`'s `profile.default` filter is what holds
+//! it back; run it with
+//!
+//! ```text
+//! cargo nextest run --profile nightly -p postio-runtime -E 'binary(idle_store_cpu)'
+//! ```
 
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -87,13 +96,13 @@ const CEILING: f64 = 0.05;
 /// clock's 10 ms tick and the noise of a shared machine — not for a slope.
 const SLOPE: f64 = 4.0;
 
-#[test]
-fn an_idle_engine_costs_the_same_whatever_the_store_holds() {
+#[tokio::test]
+async fn an_idle_engine_costs_the_same_whatever_the_store_holds() {
     assert_the_clock_can_see_a_burn();
 
     let mut readings = Vec::new();
     for messages in SIZES {
-        let (burned, elapsed, woke) = idle_for(messages, WINDOW);
+        let (burned, elapsed, woke) = idle_for(messages, WINDOW).await;
         assert!(
             woke,
             "the engine did not answer a delivery after idling {elapsed:?} over \
@@ -148,9 +157,9 @@ fn an_idle_engine_costs_the_same_whatever_the_store_holds() {
 /// the engine had long since settled, the count was zero, and a healthy engine
 /// was reported as a stopped one. What proves it is alive is that it still
 /// *answers*.
-fn idle_for(messages: usize, window: Duration) -> (Duration, Duration, bool) {
-    let database = test_support::memory();
-    let report = seed_large(&database, 11, messages);
+async fn idle_for(messages: usize, window: Duration) -> (Duration, Duration, bool) {
+    let database = test_support::memory().await;
+    let report = seed_large(&database, 11, messages).await;
     let directory = tempfile::tempdir().expect("a blob directory");
     let blobs = BlobStore::open(
         directory.path().to_path_buf(),
@@ -204,7 +213,7 @@ fn idle_for(messages: usize, window: Duration) -> (Duration, Duration, bool) {
     while Instant::now() < give_up && !woke {
         woke = backend.calls() > called_before;
         if !woke {
-            std::thread::sleep(Duration::from_millis(50));
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
         }
     }
 

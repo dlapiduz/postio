@@ -43,6 +43,20 @@ use chrono::Local;
 use gtk::{gdk, glib, graphene, gsk, pango};
 use postio_config::Density;
 use postio_core::Keymap;
+use std::borrow::Cow;
+use std::sync::atomic::{AtomicU64, Ordering};
+
+/// How many row widgets this process has built.
+///
+/// A list is windowed over paged SQLite precisely so that opening a folder
+/// costs a screenful, and this is the number that says whether it did.
+/// Counted rather than timed, for the reason [`crate::list::emissions`] gives.
+pub fn rows_built() -> u64 {
+    ROWS_BUILT.load(Ordering::Relaxed)
+}
+
+static ROWS_BUILT: AtomicU64 = AtomicU64::new(0);
+
 // The people in a conversation, short and newest-biased. The rule lives in
 // `postio-ui`: the list row and the conversation header both draw this line,
 // and two surfaces shortening the same names two ways is what moving it
@@ -77,7 +91,7 @@ fn default_hints() -> Vec<(String, &'static str)> {
 // stand for a sender, and whether a time reads as `09:14`, `Thu` or `12 Aug`,
 // are answers a mail client gives once. Two frontends deriving them apart is
 // the drift these moves exist to stop.
-pub use postio_ui::row::{initials, timestamp};
+pub use postio_ui::row::{initials, send_state_word, timestamp};
 
 /// What a screen reader says for `row`.
 ///
@@ -93,8 +107,17 @@ pub fn accessible_label(row: &Row) -> String {
     if row.flagged {
         parts.push("Flagged".to_string());
     }
-    if row.draft {
-        parts.push("Draft".to_string());
+    if let Some(state) = row.send_state {
+        let word = postio_ui::row::send_state_word(state);
+        // *When*, where somebody chose one. The same timestamp vocabulary the
+        // row's own date column uses, so "Thu" means the same thing in both.
+        parts.push(match row.send_at {
+            Some(due) => format!(
+                "{word} {}",
+                postio_ui::row::timestamp(due, chrono::Local::now())
+            ),
+            None => word.to_string(),
+        });
     }
     // A thread row is a conversation, and a screen reader has to hear that
     // before it hears a name — otherwise "from Ada, 6 in thread" reads as a
@@ -219,6 +242,13 @@ struct Palette {
     flag_mark: Option<gtk::IconPaintable>,
     answered_mark: Option<gtk::IconPaintable>,
     draft_mark: Option<gtk::IconPaintable>,
+    /// The send states that are not "still writing". One glyph for all five
+    /// made a message that needs you look like one you have not finished --
+    /// which is the picture half of #1491's third open question, the
+    /// accessible label being the other.
+    sending_mark: Option<gtk::IconPaintable>,
+    failed_mark: Option<gtk::IconPaintable>,
+    unconfirmed_mark: Option<gtk::IconPaintable>,
     /// The hover actions, in [`RowAction::ALL`] order, with the flag glyph
     /// in both of its states.
     archive: Option<gtk::IconPaintable>,
@@ -277,6 +307,18 @@ impl Palette {
             flag_mark: probe.display().pipe_icon("starred-symbolic"),
             answered_mark: probe.display().pipe_icon("mail-replied-symbolic"),
             draft_mark: probe.display().pipe_icon("document-edit-symbolic"),
+            // Standard symbolic names, so a theme that has them draws them and
+            // one that does not degrades to no mark rather than to a wrong
+            // one -- `pipe_icon` answers `None` and `mark` draws nothing.
+            // `send-to-symbolic`, not `mail-send-symbolic`: the latter is a
+            // wide tray whose mass splits, so its arrow pokes above the
+            // timestamp's cap height while its base sits below the baseline
+            // and it reads as misaligned beside the star and the paperclip.
+            // Both occupy the same 12px box -- measured -- so this is the
+            // glyph's shape rather than where it is put.
+            sending_mark: probe.display().pipe_icon("send-to-symbolic"),
+            failed_mark: probe.display().pipe_icon("dialog-warning-symbolic"),
+            unconfirmed_mark: probe.display().pipe_icon("dialog-question-symbolic"),
             archive: probe.display().action_icon(icon(RowAction::Archive, false)),
             flagged: probe.display().action_icon(icon(RowAction::Flag, true)),
             unflagged: probe.display().action_icon(icon(RowAction::Flag, false)),
@@ -396,7 +438,11 @@ mod imp {
         /// as the keymap rather than the derived hints so a row change picks
         /// up the same hints a keymap change would, with no ordering
         /// dependency between `set_row` and `set_keymap` on bind.
-        pub(super) keymap: RefCell<Keymap>,
+        /// Borrowed from [`Keymap::defaults`] until a live keymap arrives, so
+        /// a row costs nothing to build. GTK builds one of these per row it
+        /// realises: resolving the defaults here was quadratic per row, and
+        /// owning a copy of them was a hundred allocations per row (#1216).
+        pub(super) keymap: RefCell<Cow<'static, Keymap>>,
         pub(super) first: Cell<bool>,
         /// Whether an action would hit this row.
         pub(super) selected: Cell<bool>,
@@ -442,10 +488,12 @@ mod imp {
 
     impl Default for MessageRowView {
         fn default() -> Self {
+            super::ROWS_BUILT.fetch_add(1, super::Ordering::Relaxed);
             MessageRowView {
                 row: RefCell::new(None),
                 density: Cell::new(Density::default()),
-                keymap: RefCell::new(Keymap::resolve(&Default::default())),
+                keymap: RefCell::new(Cow::Borrowed(Keymap::defaults())),
+
                 first: Cell::new(false),
                 selected: Cell::new(false),
                 cursor: Cell::new(false),
@@ -680,8 +728,8 @@ impl MessageRowView {
     /// palette and the cheat sheet.
     pub fn set_keymap(&self, keymap: &Keymap) {
         let imp = self.imp();
-        if *imp.keymap.borrow() != *keymap {
-            imp.keymap.replace(keymap.clone());
+        if **imp.keymap.borrow() != *keymap {
+            imp.keymap.replace(Cow::Owned(keymap.clone()));
             imp.laid.replace(None);
             self.queue_resize();
         }
@@ -964,7 +1012,7 @@ impl MessageRowView {
         if row.as_ref().is_some_and(|row| row.has_attachments) {
             taken += CLIP as f32 + RUN;
         }
-        if row.as_ref().is_some_and(|row| row.draft) {
+        if row.as_ref().is_some_and(|row| row.send_state.is_some()) {
             taken += CLIP as f32 + RUN;
         }
         if row.as_ref().is_some_and(|row| row.answered) {
@@ -1318,7 +1366,20 @@ impl MessageRowView {
             );
             snapshot.restore();
         };
-        mark(row.draft, &palette.draft_mark);
+        // Which mark, not whether: queued and sending are on their way, failed
+        // has stopped, unconfirmed is neither. See `postio_ui::row::
+        // send_state_word` for the same distinction in words.
+        mark(
+            row.send_state.is_some(),
+            match row.send_state {
+                Some(postio_model::DraftState::Queued | postio_model::DraftState::Sending) => {
+                    &palette.sending_mark
+                }
+                Some(postio_model::DraftState::Failed) => &palette.failed_mark,
+                Some(postio_model::DraftState::Unconfirmed) => &palette.unconfirmed_mark,
+                _ => &palette.draft_mark,
+            },
+        );
         mark(row.answered, &palette.answered_mark);
         mark(row.flagged, &palette.flag_mark);
 
@@ -1530,7 +1591,8 @@ mod tests {
             seen: false,
             flagged: false,
             answered: false,
-            draft: false,
+            send_state: None,
+            send_at: None,
             has_attachments: true,
             thread_count: 14,
             participants: Vec::new(),
@@ -1566,7 +1628,8 @@ mod tests {
             seen: true,
             flagged: false,
             answered: false,
-            draft: false,
+            send_state: None,
+            send_at: None,
             has_attachments: false,
             thread_count: 1,
             participants: Vec::new(),
@@ -1590,10 +1653,117 @@ mod tests {
         assert!(answered.contains("Answered"), "{answered}");
 
         let draft = accessible_label(&Row {
-            draft: true,
-            ..base
+            send_state: Some(postio_model::DraftState::Editing),
+            send_at: None,
+            ..base.clone()
         });
         assert!(draft.contains("Draft"), "{draft}");
+    }
+
+    #[test]
+    fn a_row_says_which_send_state_it_is_in_not_merely_that_it_is_a_draft() {
+        // FR-015 and FR-021. "Draft" for all five is what #1491 reports: the
+        // one you are writing, the one on its way and the one that failed all
+        // read the same, so a screen reader cannot tell a message that needs
+        // you from one you simply have not finished.
+        use postio_model::DraftState;
+        let base = Row {
+            id: MessageId::new(1),
+            thread: None,
+            from: Some(addr(Some("Lena Tomlin"), "lena@example.com")),
+            subject: Some("Re: maildir index rebuild".into()),
+            preview: None,
+            received_at: Utc.with_ymd_and_hms(2026, 8, 23, 9, 14, 0).unwrap(),
+            seen: true,
+            flagged: false,
+            answered: false,
+            send_state: None,
+            send_at: None,
+            has_attachments: false,
+            thread_count: 1,
+            participants: Vec::new(),
+        };
+        let says = |state| {
+            accessible_label(&Row {
+                send_state: Some(state),
+                send_at: None,
+                ..base.clone()
+            })
+        };
+
+        for (state, expected) in [
+            (DraftState::Editing, "Draft"),
+            (DraftState::Queued, "Waiting to send"),
+            (DraftState::Sending, "Sending"),
+            (DraftState::Failed, "Not sent"),
+            (DraftState::Unconfirmed, "Not confirmed"),
+        ] {
+            let label = says(state);
+            assert!(
+                label.contains(expected),
+                "{state:?} should read as {expected:?}: {label}"
+            );
+        }
+
+        // And they are distinguishable from one another, which is the point.
+        let all: Vec<String> = [
+            DraftState::Editing,
+            DraftState::Queued,
+            DraftState::Sending,
+            DraftState::Failed,
+            DraftState::Unconfirmed,
+        ]
+        .into_iter()
+        .map(says)
+        .collect();
+        let mut unique = all.clone();
+        unique.sort();
+        unique.dedup();
+        assert_eq!(
+            unique.len(),
+            all.len(),
+            "two send states read identically to a screen reader: {all:?}"
+        );
+    }
+
+    #[test]
+    fn a_scheduled_send_says_when_and_an_immediate_one_says_only_that_it_waits() {
+        // FR-007. `Queued` covers "as soon as you can" and "on Thursday", and
+        // a person worries about the second reading like the first: a message
+        // they deliberately held looks stuck.
+        let base = Row {
+            id: MessageId::new(1),
+            thread: None,
+            from: Some(addr(Some("Lena Tomlin"), "lena@example.com")),
+            subject: Some("Re: maildir index rebuild".into()),
+            preview: None,
+            received_at: Utc.with_ymd_and_hms(2026, 8, 23, 9, 14, 0).unwrap(),
+            seen: true,
+            flagged: false,
+            answered: false,
+            send_state: Some(postio_model::DraftState::Queued),
+            send_at: None,
+            has_attachments: false,
+            thread_count: 1,
+            participants: Vec::new(),
+        };
+
+        let immediate = accessible_label(&base);
+        assert!(immediate.contains("Waiting to send"), "{immediate}");
+
+        let scheduled = accessible_label(&Row {
+            send_at: Some(Utc.with_ymd_and_hms(2026, 8, 27, 9, 0, 0).unwrap()),
+            ..base.clone()
+        });
+        assert!(
+            scheduled.contains("Waiting to send"),
+            "it is still waiting: {scheduled}"
+        );
+        assert_ne!(
+            scheduled, immediate,
+            "a held message has to read differently from one the drainer has \
+             simply not reached"
+        );
     }
 
     #[test]
@@ -1608,7 +1778,8 @@ mod tests {
             seen: true,
             flagged: false,
             answered: false,
-            draft: false,
+            send_state: None,
+            send_at: None,
             has_attachments: false,
             thread_count: 1,
             participants: Vec::new(),

@@ -73,12 +73,69 @@ pub fn build() -> adw::Application {
 
 /// As [`build`], recording into a timeline the caller already owns.
 pub fn build_with(timeline: Timeline) -> adw::Application {
+    build_with_id(timeline, APP_ID)
+}
+
+/// As [`build_with`], under an application id of the caller's choosing.
+///
+/// # Why a test needs this
+///
+/// A `GApplication` exports itself on the session bus at a path derived from
+/// its id, and two of them cannot share one. `NON_UNIQUE` only declines the
+/// *name*; the object is exported either way. So a second test registering
+/// [`APP_ID`] in the same process gets
+///
+/// ```text
+/// An object is already exported for the interface org.gtk.Application
+///   at /dev/postio/Postio
+/// ```
+///
+/// which is a real constraint and not a quirk of the harness: the gtk suite
+/// is one binary, by design.
+///
+/// CI never saw it. A runner with no session bus registers nothing, so the
+/// export cannot collide there — it fails only on a machine with a real bus,
+/// which is to say on a developer's, which is the worst place to find it.
+///
+/// A test that is *about* the id — that the desktop entry and the icon agree
+/// with it — keeps [`build`]. A test that merely needs an application takes
+/// an id of its own.
+pub fn build_with_id(timeline: Timeline, application_id: &str) -> adw::Application {
     resources::register();
 
     let app = adw::Application::builder()
-        .application_id(APP_ID)
+        .application_id(application_id)
         .resource_base_path(resources::PREFIX)
+        // The desktop entry says `Exec=postio %U` and registers the
+        // `mailto` scheme, so a link clicked in a browser arrives here as a
+        // file to open. Without this flag GApplication has nowhere to put it
+        // and drops it: the app launched, empty, and every layer between the
+        // entry and the composer was individually correct.
+        .flags(gio::ApplicationFlags::HANDLES_OPEN)
         .build();
+
+    // `open` replaces `activate` when there is something to open, so it does
+    // the same first -- one window, raised if it is already there -- and then
+    // hands each link to the window, which holds it until the composition
+    // root has an account to compose from (`Window::deliver_mailto`).
+    app.connect_open(|app, files, _hint| {
+        app.activate();
+        let Some(window) = app.active_window().and_downcast::<Window>() else {
+            return;
+        };
+        for file in files {
+            let uri = file.uri();
+            match postio_model::mailto::Mailto::parse(&uri) {
+                Some(mailto) => window.deliver_mailto(mailto),
+                // The scheme only: a URI is an address, and an address never
+                // goes in a log.
+                None => tracing::warn!(
+                    scheme = uri.split(':').next().unwrap_or(""),
+                    "asked to open a URI whose scheme Postio does not handle; ignored"
+                ),
+            }
+        }
+    });
 
     app.connect_activate(move |app| {
         // Launching Postio a second time raises the window that is already
@@ -90,6 +147,11 @@ pub fn build_with(timeline: Timeline) -> adw::Application {
         }
 
         let window = Window::new(app);
+        // Before anything else touches it: the phases between `Window` and
+        // `FirstFrame` are marked by whoever points the panes at the store,
+        // and that caller has only the window to reach a timeline through
+        // (#1479).
+        window.set_timeline(timeline.clone());
         crate::config::install(&window);
         // Installed here, unconditionally, rather than left to whoever wires
         // storage into it: the `win.compose` action and the `c` binding must
@@ -98,7 +160,7 @@ pub fn build_with(timeline: Timeline) -> adw::Application {
         window.composer();
         install_actions(app, &window);
         timeline.mark(Phase::Window);
-        report_first_frame(&window, app, &timeline);
+        report_shell_frame(&window, &timeline);
         window.present();
     });
 
@@ -129,22 +191,14 @@ pub fn install_icons(display: &gdk::Display) {
     gtk::Window::set_default_icon_name(APP_ID);
 }
 
-/// Close the timeline once the window is actually on screen, and act on the
-/// benchmarking switches documented in [`crate::startup`].
-fn report_first_frame(window: &Window, app: &adw::Application, timeline: &Timeline) {
+/// Mark the moment the compositor first shows the window.
+///
+/// Pixels, not a usable UI: since #1114 the store opens behind a window that
+/// is already up, so this says the shell arrived and nothing about whether
+/// there is any mail in it. What closes the timeline is
+/// [`startup::report_usable`], called by whoever fed the panes — this crate
+/// builds windows and does not know when that happened.
+fn report_shell_frame(window: &Window, timeline: &Timeline) {
     let timeline = timeline.clone();
-    let app = app.clone();
-    startup::on_first_frame(window, move || {
-        timeline.mark(Phase::FirstFrame);
-        if startup::enabled(startup::TRACE_ENV) {
-            // Through tracing rather than straight to stderr, so it is
-            // filtered and formatted like everything else. `POSTIO_LOG=off`
-            // now silences it, which is the correct reading of `off`; the
-            // benchmark path is `POSTIO_STARTUP_EXIT` and does not read this.
-            tracing::info!("{}", timeline.report());
-        }
-        if startup::enabled(startup::EXIT_ENV) {
-            app.quit();
-        }
-    });
+    startup::on_first_frame(window, move || timeline.mark(Phase::Shell));
 }

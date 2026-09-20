@@ -1,6 +1,7 @@
 # ADR 0007 — The address book: one table, two provenances
 
-- **Status:** Accepted — **GO** (2026-08-24)
+- **Status:** Accepted — **GO** (2026-08-24); amended 2026-09-14, see below
+  — the schema, repository and `group:` are built, Q4 and Q7 are not
 - **Date:** 2026-08-24
 - **Issue:** [#4 Address book / contact management](https://github.com/dlapiduz/postio/issues/4)
 - **Related:** `docs/ARCHITECTURE.md` §6 (one matching language),
@@ -26,8 +27,9 @@ The MVP shortcut turns out to be most of the foundation.
 | Sightings written on genuine insert only, never on re-enumeration | Built (`sync/src/contacts.rs`) — and carefully |
 | `@` mode in the finder, ranked, wired | Built (`gtk/src/finder.rs`) |
 | Composer recipient completion | Built |
-| Creating a contact that has never sent mail | **Absent** |
-| Groups, vCard, deletion that stays deleted | **Absent** |
+| Creating a contact that has never sent mail | Built since, at the repository — `ContactRepository::create` (`crates/postio-storage/src/repository/contacts.rs`); no management surface yet (Q7) |
+| Groups, deletion that stays deleted | Built since — `contact_groups`/`contact_group_members` in `crates/postio-storage/src/schema.rs`, `group:` in `postio-search`, `suppressed` honoured in `contacts.rs` |
+| vCard import/export | **Absent** — see the Q4 amendment |
 
 `finder.rs`'s comment — *"Postio has no address book: contacts accumulate from
 the addresses that have come through the mailbox"* — describes a missing
@@ -56,6 +58,11 @@ ALTER TABLE contacts ADD COLUMN suppressed INTEGER NOT NULL DEFAULT 0;
 ALTER TABLE contacts ADD COLUMN uid TEXT;      -- vCard UID; also CardDAV's key
 ALTER TABLE contacts ADD COLUMN vcard_extra TEXT;   -- see Q4
 ```
+
+> **Amended 2026-09-14 (specs/004-turso-store):** these four columns are
+> declared on `contacts` in `crates/postio-storage/src/schema.rs` — one `HEAD`
+> schema, no `ALTER TABLE`, because there are no migrations on this engine.
+> The same goes for Q3's two tables.
 
 `source` is *how the row first appeared*, not what it is now. A `mail` row the
 user edits becomes `user`; that is the promotion, and it is one statement.
@@ -158,6 +165,10 @@ Both vCard 3.0 and 4.0 are read; 4.0 is written. Most exports in the wild are
 3.0, and refusing them would make import a feature that fails on the first real
 file anyone tries.
 
+> **Amended 2026-09-14:** not built. There is no `postio_model::vcard`, and
+> `contacts.vcard_extra` is a column nothing writes yet. The decision stands
+> as the shape it will take.
+
 ---
 
 ## Q5 — Shared or per-account?
@@ -210,10 +221,14 @@ of what it is for now.
   `postio-core`, which is what makes its commands reachable from the palette
   and printable in the cheat sheet without either learning about the widget
   (the reasoning `Context::Sidebar`'s doc comment already sets out).
-- **Editing a contact is local-first like everything else**: SQLite write,
+- **Editing a contact is local-first like everything else**: a store write,
   emit the event, repaint. There is no remote half today, which is exactly why
   the commands must still go through the same path — when CardDAV arrives it
   becomes an operation-queue row and nothing above it changes.
+
+> **Amended 2026-09-14:** the management surface is not built — there is no
+> `Context::Contacts` in `postio-core`. Finding (the `@` finder) and composer
+> completion are; the schema and repository work this ADR decided landed.
 
 ---
 
@@ -248,11 +263,12 @@ properties, which is the property the acceptance criterion actually needs.
 
 ## Consequences
 
-- One migration: four columns on `contacts`, two new tables.
+- Four columns on `contacts` and two new tables, all declared in
+  `crates/postio-storage/src/schema.rs`'s `HEAD` (there are no migrations).
 - `ContactRepository::delete` changes behaviour for `mail` rows; the test that
   proves it is one that fails today.
 - `postio-search` gains `group:`; the shortcut and config references regenerate
   (`ARCHITECTURE.md` §2).
-- `postio-model` gains `vcard` and no dependencies.
+- `postio-model` gains `vcard` and no dependencies. *(Not yet — Q4.)*
 - `postio-core` gains `Context::Contacts` and its commands, which — per §2 — is
-  what makes them exist at all.
+  what makes them exist at all. *(Not yet — Q7.)*

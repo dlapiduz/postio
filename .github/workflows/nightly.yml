@@ -39,9 +39,19 @@ on:
     # jobs are not queuing for a runner at the same minute.
     - cron: "0 7 * * *"
   workflow_dispatch:
+  # Called by `ci.yml` when the last scheduled run was red, so a pull request
+  # can *prove* it fixed the nightly rather than waiting for tomorrow's.
+  #
+  # Reused rather than copied. A second definition of "what the nightly runs"
+  # living in `ci.yml` would drift from this one, and the day it did, a pull
+  # request would clear a gate by passing something narrower than the thing
+  # that was failing.
+  workflow_call:
 
 permissions:
   contents: read
+  # The `changed` job below reads the previous run's head SHA and conclusion.
+  actions: read
 
 env:
   CARGO_TERM_COLOR: always
@@ -51,15 +61,107 @@ env:
   CARGO_BUILD_JOBS: 4
 
 jobs:
+  # Is there anything new to test?
+  #
+  # A nightly over a tree nobody touched re-proves last night's answer at
+  # full price -- the suite, the coverage floors and the docs, on a schedule
+  # that does not care whether anyone committed. So a scheduled run compares
+  # `main`'s head against the head the last run tested and skips when they
+  # match.
+  #
+  # # Two things it must not do, and they are the whole of this job
+  #
+  # **It must not skip a red nightly into green.** `ci.yml`'s `Nightly is
+  # green` reads the last *completed* run's conclusion, and a run whose jobs
+  # all skip concludes as either `skipped` or `success` depending on how
+  # GitHub reports it -- both of which that check treats as green. So if a
+  # failing nightly skipped the next night for want of a commit, merges would
+  # silently unblock with the tree still broken. Hence the conclusion test: a
+  # failure is always re-run, even over an unchanged tree. That looks wasteful
+  # and is not -- it is the one state where the answer must keep being said
+  # out loud, and it ends when somebody fixes it.
+  #
+  # The test below is written as "not a failure" rather than "is a success"
+  # for the same reason: it does not depend on which of those two an
+  # all-skipped run reports, and it keeps working if that ever changes.
+  #
+  # **It must only skip a *schedule*.** `workflow_dispatch` is somebody asking
+  # for the number now, and `workflow_call` is a pull request proving it fixed
+  # the nightly -- in both cases the tree is either new or the asking is the
+  # point. Skipping either would answer a question nobody asked.
+  #
+  # A skipped run still appears in the run list with its own head SHA, which
+  # is what lets the next night compare against it and skip again. The chain
+  # only breaks when a commit lands.
+  changed:
+    name: Anything to test
+    runs-on: ubuntu-latest
+    outputs:
+      run: ${{ steps.decide.outputs.run }}
+    steps:
+      - name: Compare against the last run
+        id: decide
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT: ${{ github.event_name }}
+          HEAD: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+
+          if [ "$EVENT" != "schedule" ]; then
+            echo "Triggered by ${EVENT}, not the timer — running."
+            echo "run=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          # The run before this one. `status=completed` so a run still going
+          # is not mistaken for an answer, and `per_page=2` because *this*
+          # run is not completed and so is not in the list -- the first entry
+          # is genuinely the previous one.
+          last=$(gh api \
+            "repos/${GITHUB_REPOSITORY}/actions/workflows/nightly.yml/runs?status=completed&per_page=1" \
+            --jq '.workflow_runs[0] | "\(.conclusion)\t\(.head_sha)"' 2>/dev/null || true)
+
+          if [ -z "$last" ] || [ "$last" = "null" ]; then
+            echo "No completed run to compare against — running."
+            echo "run=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          conclusion=$(printf '%s' "$last" | cut -f1)
+          sha=$(printf '%s' "$last" | cut -f2)
+          echo "previous run: ${conclusion} at ${sha}"
+          echo "this run:     ${HEAD}"
+
+          case "$conclusion" in
+            success|skipped|cancelled) ;;
+            *)
+              echo "The last run was ${conclusion} — running, so the answer keeps being said."
+              echo "run=true" >> "$GITHUB_OUTPUT"
+              exit 0
+              ;;
+          esac
+
+          if [ "$sha" = "$HEAD" ]; then
+            echo "Nothing has landed since — skipping."
+            echo "run=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "New commits since the last run — running."
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          fi
+
   coverage:
     name: Coverage floors
+    needs: changed
+    if: needs.changed.outputs.run == 'true'
     runs-on: ubuntu-26.04
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
       # None of scripts/coverage-floors.json's crates need GTK -- postio-model,
       # postio-search and postio-config are pure leaves, and postio-storage /
-      # postio-sync need SQLite and the keyring, not a display. Still ubuntu-26.04
+      # postio-sync need the keyring, not a display (the store engine is pure
+      # Rust and brings no system library). Still ubuntu-26.04
       # rather than ubuntu-latest, so the pinned toolchain's cache key and the
       # rest of this workflow's runner-version assumptions stay one thing.
       - name: Install system dependencies
@@ -68,7 +170,6 @@ jobs:
           sudo apt-get install --no-install-recommends -y \
             build-essential \
             pkg-config \
-            libsqlite3-dev \
             libsecret-1-dev \
             libglib2.0-dev
 
@@ -89,6 +190,20 @@ jobs:
       # its own, not adding a component to the one rust-toolchain.toml pins).
       - name: Install llvm-tools
         run: rustup component add llvm-tools-preview
+
+      # `scripts/coverage.sh` measures through nextest so the measurement
+      # tier stays off this job the way it is off every other (#1456): plain
+      # `cargo test` knows nothing about nextest's default-filter and ran
+      # the tests that write half-gigabyte stores on a runner that has
+      # already run out of disk once.
+      - name: Cache cargo-nextest
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ~/.cargo/bin/cargo-nextest
+          key: ${{ runner.os }}-cargo-nextest-${{ hashFiles('scripts/install-nextest.sh') }}
+
+      - name: Install cargo-nextest
+        run: scripts/install-nextest.sh
 
       - name: Identify the compiler
         id: rust
@@ -138,6 +253,8 @@ jobs:
 
   doc:
     name: Docs
+    needs: changed
+    if: needs.changed.outputs.run == 'true'
     runs-on: ubuntu-26.04
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
@@ -164,6 +281,8 @@ jobs:
 
   full-suite:
     name: Full suite
+    needs: changed
+    if: needs.changed.outputs.run == 'true'
     runs-on: ubuntu-26.04
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
@@ -175,8 +294,20 @@ jobs:
           mkdir -p "$runtime" && chmod 700 "$runtime"
           echo "XDG_RUNTIME_DIR=$runtime" >> "$GITHUB_ENV"
 
-      # Every test in the workspace, integration binaries included -- the same
-      # thing the pull-request path runs, on a schedule as well.
+      # Keyed on the script rather than a version repeated here, exactly as
+      # `ci.yml`'s Tests job does it: the key then changes when the pin does
+      # and cannot go stale against it.
+      - name: Cache cargo-nextest
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ~/.cargo/bin/cargo-nextest
+          key: ${{ runner.os }}-cargo-nextest-${{ hashFiles('scripts/install-nextest.sh') }}
+
+      - name: Install cargo-nextest
+        run: scripts/install-nextest.sh
+
+      # Every test in the workspace, integration binaries included -- and the
+      # measurements, which is the part only this job does.
       #
       # It is here because the *local* landing gate stopped running it (#847):
       # several sessions share one workstation, and a postio-app integration
@@ -184,16 +315,64 @@ jobs:
       # something you queued for. Locally the gate is now the workspace's unit
       # tests -- 1,313 of them in ~5s.
       #
-      # That trade is only safe while something still proves the *combination*
-      # before merge, which the pull-request run does. This job is the second
-      # reader, not the first: it catches what a branch-shaped view misses,
-      # like two branches that are each green alone.
+      # **This job is the first reader now, not the second** (2026-09-19).
       #
-      # `--no-fail-fast` on purpose: plain cargo abandons the remaining targets
-      # at the first failure, and one red crate then hides a thousand passing
-      # tests -- which is exactly the wrong shape for a report nobody is
-      # watching live.
-      - name: cargo test --workspace
+      # It used to say the opposite, and the sentence has to move with the
+      # gate: the pull-request run proved the combination, and this caught
+      # what a branch-shaped view missed. The pull-request run is the sanity
+      # tier as of today, so nothing else runs these suites before a merge.
+      #
+      # That is why `ci.yml` has a `nightly` job whose whole purpose is to go
+      # red on every pull request while this one is failing. A first reader
+      # nobody is obliged to act on is not a reader at all -- the failure
+      # would sit in a mail while a week of branches landed on top of it.
+      # If that job is ever removed, this trade has to be reversed with it.
+      #
+      # `--profile ci-full` is what makes it more than a second reading. Its
+      # `default-filter` is `all()`, so it runs the eight measurement files
+      # that `profile.default` holds off the merge path (#1450) -- six of which
+      # were `#[ignore]`d for a tier that did not exist and had therefore never
+      # run in CI at all. The profile also turns fail-fast off, for the reason
+      # the flag used to give here: one red crate hiding a thousand passing
+      # tests is the wrong shape for a report nobody is watching live.
+      #
+      # nextest rather than `cargo test` because this used to be the slow
+      # runner doing the fast runner's job: ~500s against ~200s for the same
+      # workspace, on the one job with no one waiting on it and therefore the
+      # least excuse.
+      # `cache_pressure` is held out, and it is the only one. It asserts that
+      # a larger SQLite page cache is *measurably faster* than a small one,
+      # with a third reading as the control -- a wall-clock comparison, which
+      # is the one thing CLAUDE.md says this project does not ask of a shared
+      # runner ("gated as counts, not as timings ... `bench.yml` compiles the
+      # bench targets nightly and deliberately times nothing, because a shared
+      # runner cannot defend 16 ms"). It seeds 400,000 messages and measures
+      # 393s on an idle workstation; here it has been terminated at 240s, at
+      # 720s and at 1200s, and has never once finished. Three timeouts were
+      # sized from that local number by multiplier and all three were wrong,
+      # so a fourth is not the answer.
+      #
+      # It matters that this job *can* be green, because it is the one that
+      # blocks merges: a test that has never passed on CI would block every
+      # merge forever rather than report anything. So the measurement stays
+      # exactly as it is and keeps running where its numbers mean something --
+      # `cargo nextest run --profile nightly -E 'binary(cache_pressure)'` on a
+      # workstation -- and stops deciding whether the tree is mergeable.
+      # Nothing else is held out: the other measurement files assert on counts
+      # and run here.
+      #
+      # The exclusion is `profile.ci-full` rather than an `-E` here, because
+      # `release.yml`'s gate is the same run and has to hold out the same
+      # thing. Written twice it had already drifted once.
+      - name: cargo nextest run --profile ci-full
         env:
           POSTIO_TEST_PATIENCE: "3"
-        run: dbus-run-session -- cargo test --workspace --no-fail-fast
+        run: dbus-run-session -- cargo nextest run --workspace --profile ci-full
+
+      # nextest does not run doctests and does not say so, so switching this
+      # job to it would have silently dropped them -- `cargo test --workspace`
+      # ran them before. #1440 is about their only other home being CI.
+      - name: cargo test --doc
+        env:
+          POSTIO_TEST_PATIENCE: "3"
+        run: dbus-run-session -- cargo test --workspace --doc

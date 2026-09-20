@@ -16,6 +16,8 @@
 //! cargo run -p postio-app --example shot -- /tmp/rows.png settings weights
 //! cargo run -p postio-app --example shot -- /tmp/account.png demo account
 //! cargo run -p postio-app --example shot -- /tmp/compose.png demo compose
+//! cargo run -p postio-app --example shot -- /tmp/reply.png demo reply 1600x900
+//! cargo run -p postio-app --example shot -- /tmp/rich.png demo reply row5 unfold
 //! cargo run -p postio-app --example shot -- /tmp/popout.png demo compose detached
 //! cargo run -p postio-app --example shot -- /tmp/tight.png demo compact
 //! cargo run -p postio-app --example shot -- /tmp/large.png demo text2
@@ -23,8 +25,9 @@
 //! cargo run -p postio-app --example shot -- /tmp/who.png demo contact
 //! cargo run -p postio-app --example shot -- /tmp/selected.png demo selected
 //! cargo run -p postio-app --example shot -- /tmp/first-run.png demo orientation
+//! cargo run -p postio-app --example shot -- /tmp/outbox.png demo outbox 1600x900
 //! cargo run -p postio-app --example shot -- /tmp/reader.png demo open 1600x900
-//! cargo run -p postio-app --example shot -- /tmp/thread.png demo thread 1600x900
+//! cargo run -p postio-app --example shot -- /tmp/thread.png demo conversation 1600x900
 //! cargo run -p postio-app --example shot -- /tmp/locked.png locked
 //! ```
 //!
@@ -60,6 +63,7 @@
 //! database it reads is created, seeded and thrown away in process.
 
 use std::cell::Cell;
+use std::collections::HashSet;
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 
@@ -73,6 +77,27 @@ use postio_model::ids::{AccountId, MailboxId};
 use postio_session::Wiring;
 use postio_storage::repository::MailboxRepository;
 use postio_storage::seed::SeedReport;
+
+/// The runtime the store reads in this tool are driven on.
+///
+/// `main` returns `glib::ExitCode` and hands the thread to GTK, so it cannot
+/// be `async`. What needs a runtime is the setup: seeding a store and feeding
+/// the window. `block_on` polls the future on *this* thread, where GTK lives,
+/// and `multi_thread` because `postio_session::blocking::now` -- how a
+/// synchronous GTK callback reads the store -- reaches for `block_in_place`.
+fn on_runtime<T>(future: impl std::future::Future<Output = T>) -> T {
+    use std::sync::OnceLock;
+    static RUNTIME: OnceLock<tokio::runtime::Runtime> = OnceLock::new();
+    RUNTIME
+        .get_or_init(|| {
+            tokio::runtime::Builder::new_multi_thread()
+                .worker_threads(2)
+                .enable_all()
+                .build()
+                .expect("a runtime for the shot")
+        })
+        .block_on(future)
+}
 
 /// A seeded account, fed through the wiring the application uses.
 ///
@@ -99,31 +124,33 @@ use postio_storage::seed::SeedReport;
 /// everything else here — so a caller that also wants `search` can hand
 /// `wired.search` to [`show_search_panels`] instead of it calling
 /// `search::View::attach` a second time on the same shell (#831).
-fn populate(
+async fn populate(
     window: &Window,
     two_accounts: bool,
     backfill: bool,
     first_run: bool,
+    outbox: bool,
 ) -> Option<&'static postio_app::Wired> {
-    let database = postio_storage::test_support::memory();
+    let database = postio_storage::test_support::memory().await;
     let directory = tempfile::tempdir().expect("a blob directory for the shot");
     let blobs = postio_storage::BlobStore::open(
         directory.keep(),
         &postio_storage::test_support::blob_keys(),
     )
     .expect("a blob store");
-    let report = postio_storage::seed::seed_small_with_bodies(&database, 11);
+    let report = postio_storage::seed::seed_small_with_bodies(&database, 11).await;
     let account = report.account.id;
-    stamp_as_just_synced(&database, &report);
+    stamp_as_just_synced(&database, &report).await;
     // Every shot is a first run otherwise -- the store is made here and
     // thrown away -- so the first-run orientation would sit across the top
     // of the compose shot, the settings shot and every other one. `demo
     // orientation` is how you ask to see it; the rest of the tool goes on
     // rendering the application as somebody uses it on any other day.
     if !first_run {
-        let connection = database.connection().expect("a connection");
+        let connection = database.connect().await.expect("a connection");
         postio_storage::repository::SettingsRepository::new(&connection)
             .set("orientation_seen", "shot")
+            .await
             .expect("the orientation is not what this shot is about");
     }
     // A real second account, in the store, rather than a pair of names handed
@@ -132,8 +159,38 @@ fn populate(
     // could not fail when the wiring broke (#185).
     if two_accounts {
         let second =
-            postio_storage::seed::seed_extra_account(&database, "Home", "home@example.net", 12);
-        stamp_as_just_synced(&database, &second);
+            postio_storage::seed::seed_extra_account(&database, "Home", "home@example.net", 12)
+                .await;
+        stamp_as_just_synced(&database, &second).await;
+    }
+
+    // A message on its way out, for the one row that is absent unless
+    // something is (spec 003 FR-012).
+    //
+    // Queued through `DraftRepository` rather than staged: `queue_send` is
+    // what `Composer::send` calls, it writes `send_state` and the operation
+    // together, and the sidebar's Outbox row and its badge are read back out
+    // of that column by `draft_counts`. Handing the sidebar a row here would
+    // be the #596 trap this file warns about twice already -- a picture that
+    // cannot fail when the path from the store to the pane is broken.
+    //
+    // Nothing drains it: a shot renders a window rather than running a
+    // client, so the message stays where the picture wants it.
+    if outbox {
+        let connection = database.connect().await.expect("a connection");
+        let drafts = postio_storage::repository::DraftRepository::new(&connection);
+        let mut draft = postio_model::Draft::new(account);
+        draft.subject = "Re: maildir index rebuild is O(n²)".to_owned();
+        draft.to = vec![postio_model::EmailAddress::new(
+            Some("Lena Tomlin"),
+            "lena@example.com",
+        )];
+        draft.body.text = Some("Confirmed on 0.4.1 — sending the trace now.".to_owned());
+        drafts.save(&mut draft).await.expect("the draft saves");
+        drafts
+            .queue_send(&mut draft, chrono::Utc::now())
+            .await
+            .expect("the send queues");
     }
 
     // A no-op command handler: a shot renders a window, it does not act on
@@ -146,7 +203,9 @@ fn populate(
     // a `Wiring` or a `Bridge` dropped here would stop answering before the
     // first page arrived.
     let wiring: &'static Wiring = Box::leak(Box::new(wiring));
-    let wired = feed_the_window(window, wiring).expect("the seeded store has an account");
+    let wired = feed_the_window(window, wiring)
+        .await
+        .expect("the seeded store has an account");
 
     // A connection that is up and has just finished a sync, so the status
     // line reads `idle · imap` / `last sync 12s` as the canvas draws it.
@@ -187,14 +246,17 @@ fn populate(
 /// the empty state rather than of the folder list the canvas draws. The old
 /// hand-rolled source stamped this on the way past; now that the folders come
 /// out of the store, the store is where it has to be stamped.
-fn stamp_as_just_synced(database: &postio_storage::Database, report: &SeedReport) {
-    let connection = database.connection().expect("a checked-out connection");
+async fn stamp_as_just_synced(database: &postio_storage::Store, report: &SeedReport) {
+    let connection = database.connect().await.expect("a checked-out connection");
     let repository = MailboxRepository::new(&connection);
     let synced = chrono::Utc::now() - chrono::Duration::seconds(12);
     for mailbox in &report.mailboxes {
         let mut mailbox = mailbox.clone();
         mailbox.last_synced_at = Some(synced);
-        repository.update(&mailbox).expect("stamp a seeded folder");
+        repository
+            .update(&mailbox)
+            .await
+            .expect("stamp a seeded folder");
     }
 }
 
@@ -375,6 +437,59 @@ fn show_settings(window: &Window, pane: Option<postio_gtk::settings::Section>) {
     if let Some(pane) = pane {
         window.settings().show_section(pane);
     }
+}
+
+/// The account detail view's Mailboxes group (#966), open on an account
+/// whose server has the shape that started all this: its own `Sent Messages`
+/// beside a `Sent` another client made, an Archive the user has pointed by
+/// hand, and a Junk folder the server no longer lists.
+///
+/// Hand-fed rather than seeded, for `show_account_weights`' reason: the three
+/// states a row can be in -- automatic, chosen, and pointing at a folder that
+/// has gone -- do not occur together in any one real account, and looking at
+/// them side by side is the whole point of rendering this.
+fn show_account_mailboxes(window: &Window) {
+    use postio_gtk::settings::AccountMailboxes;
+    use postio_model::MailboxRole;
+
+    let mut account = postio_model::Account::new(
+        "Ada Lovelace",
+        postio_model::EmailAddress::new(Some("Ada Lovelace"), "ada@example.com"),
+    );
+    account.id = AccountId::new(1);
+    account.enabled = true;
+
+    let panel = window.settings();
+    panel.set_accounts(vec![account]);
+    panel.set_account_mailboxes(vec![(
+        AccountId::new(1),
+        AccountMailboxes {
+            folders: vec![
+                "INBOX".to_owned(),
+                "Archive".to_owned(),
+                "Deleted Messages".to_owned(),
+                "Drafts".to_owned(),
+                "Sent".to_owned(),
+                "Sent Messages".to_owned(),
+            ],
+            chosen: vec![
+                (MailboxRole::Archive, "Archive".to_owned()),
+                (MailboxRole::Junk, "Posta indesiderata".to_owned()),
+            ],
+            resolved: vec![
+                (MailboxRole::Sent, "Sent".to_owned()),
+                (MailboxRole::Archive, "Archive".to_owned()),
+                (MailboxRole::Drafts, "Drafts".to_owned()),
+                (MailboxRole::Trash, "Deleted Messages".to_owned()),
+            ],
+            // The awkward account this shot exists to draw: a role the server
+            // will not make a folder for, so the picker has to say why rather
+            // than just "no folder" (spec 003, FR-031).
+            refused: vec![(MailboxRole::Junk, "Permission denied".to_owned())],
+        },
+    )]);
+    window.open_settings();
+    panel.open_account_detail(AccountId::new(1));
 }
 
 /// Three account rows, to look at what #411 put under the names.
@@ -642,48 +757,13 @@ fn settle(window: &impl IsA<gtk::Widget>) {
     heartbeat.remove();
 }
 
-/// Every literal mode word `flag` checks for below, so an argument matching
-/// none of them can be caught rather than silently ignored (#599).
-const KNOWN_FLAGS: &[&str] = &[
-    "dark",
-    "hc",
-    "demo",
-    "accounts",
-    "backfill",
-    "locked",
-    "comfortable",
-    "compact",
-    "command",
-    "folder",
-    "contact",
-    "search",
-    "syncing",
-    "settings",
-    "filters",
-    "composing",
-    "appearance",
-    "keyboard",
-    "storage",
-    "privacy",
-    "configfile",
-    "weights",
-    "account",
-    "tested",
-    "signature",
-    "compose",
-    "addaccount",
-    "browser",
-    "syncwindow",
-    "detached",
-    "selected",
-    "thread",
-    "orientation",
-    "open",
-    "shipping",
-];
-
-/// Every argument (after the output path) that matches none of
-/// [`KNOWN_FLAGS`], no `WxH` size and no `text` scale prefix.
+/// Every argument (after the output path) that no mode asked about, and that
+/// is not a `WxH` size or a `text` scale prefix.
+///
+/// `asked` is what `flag` was consulted about during this run, which is the
+/// whole change: this compared against a hand-kept `KNOWN_FLAGS`, a second
+/// copy of "what this tool understands" that drifted from the first in both
+/// directions at once (#1376).
 ///
 /// #599's actual cause: consecutive shots looked broken, and the working
 /// hypothesis was a compositor that had stopped delivering frame callbacks
@@ -697,22 +777,27 @@ const KNOWN_FLAGS: &[&str] = &[
 /// flag took effect -- for a first render, the pre-populate placeholder:
 /// empty sidebar, "offline · never synced". A confident, wrong picture,
 /// with nothing on screen saying why.
-fn unrecognized_arguments(args: &[String]) -> Vec<&str> {
+fn unrecognized_arguments<'a>(args: &'a [String], asked: &HashSet<String>) -> Vec<&'a str> {
     args.iter()
         .skip(1)
         .filter(|token| {
-            !KNOWN_FLAGS.contains(&token.as_str())
+            !asked.contains(token.as_str())
                 && token
                     .split_once('x')
                     .is_none_or(|(w, h)| w.parse::<i32>().is_err() || h.parse::<i32>().is_err())
                 && !token.starts_with("text")
+                // `row<n>` is read straight out of `args` rather than through
+                // `flag()`, so it never lands in `asked` and would be
+                // reported as a typo. Same escape as `text<n>` above, for the
+                // same reason.
+                && !(token.starts_with("row") && token[3..].parse::<u32>().is_ok())
         })
         .map(String::as_str)
         .collect()
 }
 
-fn warn_about_unrecognized_arguments(args: &[String]) {
-    for token in unrecognized_arguments(args) {
+fn warn_about_unrecognized_arguments(args: &[String], asked: &HashSet<String>) {
+    for token in unrecognized_arguments(args, asked) {
         eprintln!(
             "shot: '{token}' is not a mode this tool recognizes, and was silently \
              ignored -- the picture below is whatever the window looked like before \
@@ -737,21 +822,59 @@ mod unrecognized_argument_tests {
             .collect()
     }
 
+    /// What `flag` was asked about during the run.
+    fn asked(names: &[&str]) -> HashSet<String> {
+        names.iter().map(|n| (*n).to_owned()).collect()
+    }
+
     #[test]
-    fn every_known_flag_is_recognized() {
-        for name in KNOWN_FLAGS {
-            assert_eq!(
-                unrecognized_arguments(&args(&[name])),
-                Vec::<&str>::new(),
-                "{name} is in KNOWN_FLAGS but was flagged as unrecognized"
-            );
-        }
+    fn a_row_number_is_an_argument_and_not_a_typo() {
+        // It is read out of `args` rather than asked for through `flag()`, so
+        // without an escape the guard reports the one argument that chose the
+        // message as the thing it did not understand.
+        assert_eq!(
+            unrecognized_arguments(
+                &args(&["demo", "reply", "row5"]),
+                &asked(&["demo", "reply"])
+            ),
+            Vec::<&str>::new()
+        );
+        // And still catches a real typo that merely starts the same way.
+        assert_eq!(
+            unrecognized_arguments(&args(&["demo", "rowdy"]), &asked(&["demo"])),
+            vec!["rowdy"]
+        );
+    }
+
+    #[test]
+    fn a_mode_the_run_asked_about_is_recognized() {
+        assert_eq!(
+            unrecognized_arguments(&args(&["demo"]), &asked(&["demo"])),
+            Vec::<&str>::new()
+        );
+    }
+
+    /// The `thread` case exactly: passed, accepted, and inert.
+    ///
+    /// It sat in `KNOWN_FLAGS` and nothing queried it, so the usage this
+    /// example documents in its own header -- `shot out.png demo thread` --
+    /// was accepted, drew the *default* picture, and said nothing. The
+    /// opposite happened too: `conversation`, which the code did query, was
+    /// missing from the list and so was reported as "silently ignored" when it
+    /// had in fact run. Two failures that look like each other's opposite,
+    /// from one list that had to be kept in step by hand (#1376).
+    #[test]
+    fn a_mode_nothing_asked_about_is_flagged() {
+        assert_eq!(
+            unrecognized_arguments(&args(&["thread"]), &asked(&["conversation"])),
+            vec!["thread"]
+        );
     }
 
     #[test]
     fn a_size_argument_is_recognized() {
         assert_eq!(
-            unrecognized_arguments(&args(&["1400x800"])),
+            unrecognized_arguments(&args(&["1400x800"]), &asked(&[])),
             Vec::<&str>::new()
         );
     }
@@ -759,30 +882,39 @@ mod unrecognized_argument_tests {
     #[test]
     fn a_text_scale_argument_is_recognized() {
         assert_eq!(
-            unrecognized_arguments(&args(&["text150"])),
+            unrecognized_arguments(&args(&["text150"]), &asked(&[])),
             Vec::<&str>::new()
         );
     }
 
     #[test]
     fn two_words_collapsed_into_one_shell_argument_is_flagged() {
-        // #599: exactly what an unquoted `$mode` set to "demo thread"
+        // #599: exactly what an unquoted `$mode` set to "demo conversation"
         // becomes under a shell that does not word-split it.
         assert_eq!(
-            unrecognized_arguments(&args(&["demo thread"])),
-            vec!["demo thread"]
+            unrecognized_arguments(
+                &args(&["demo conversation"]),
+                &asked(&["demo", "conversation"])
+            ),
+            vec!["demo conversation"]
         );
     }
 
     #[test]
     fn a_plain_typo_is_flagged() {
-        assert_eq!(unrecognized_arguments(&args(&["dmeo"])), vec!["dmeo"]);
+        assert_eq!(
+            unrecognized_arguments(&args(&["dmeo"]), &asked(&["demo"])),
+            vec!["dmeo"]
+        );
     }
 
     #[test]
     fn a_normally_split_pair_is_not_flagged() {
         assert_eq!(
-            unrecognized_arguments(&args(&["demo", "thread", "1400x800"])),
+            unrecognized_arguments(
+                &args(&["demo", "conversation", "1400x800"]),
+                &asked(&["demo", "conversation"])
+            ),
             Vec::<&str>::new()
         );
     }
@@ -843,8 +975,14 @@ fn main() -> glib::ExitCode {
         .first()
         .cloned()
         .unwrap_or_else(|| "postio.png".to_string());
-    warn_about_unrecognized_arguments(&args);
-    let flag = |name: &str| args.iter().skip(1).any(|a| a == name);
+    // Every mode word this run asks about. `flag` is the only way a mode is
+    // consumed, so what it was asked *is* what the tool understands -- a fact
+    // about the run rather than a list somebody has to remember to update.
+    let asked: std::cell::RefCell<HashSet<String>> = std::cell::RefCell::new(HashSet::new());
+    let flag = |name: &str| {
+        asked.borrow_mut().insert(name.to_owned());
+        args.iter().skip(1).any(|a| a == name)
+    };
     // A `WxH` argument forces the window size, which is how the adaptive
     // modes get rendered without a compositor in the loop.
     let size = args.iter().skip(1).find_map(|a| {
@@ -893,12 +1031,13 @@ fn main() -> glib::ExitCode {
         // picture, it is a picture of the empty state over a store with mail
         // in it -- which used to be rendered, saved, and reported as a
         // success under a warning nobody was required to read (#809).
-        match populate(
+        match on_runtime(populate(
             &window,
             flag("accounts"),
             flag("backfill"),
             flag("orientation"),
-        ) {
+            flag("outbox"),
+        )) {
             Some(wired) => Some(wired),
             None => {
                 eprintln!("shot: NO IMAGE WAS WRITTEN to {path}");
@@ -1010,6 +1149,9 @@ fn main() -> glib::ExitCode {
             "route"
         };
         show_add_account(&window, step);
+    }
+    if flag("mailboxes") {
+        show_account_mailboxes(&window);
     }
     if flag("compose") {
         show_composer(&window);
@@ -1151,6 +1293,16 @@ fn main() -> glib::ExitCode {
     // there the way `e`/`Enter` on a real row would, through the same
     // `Window::show_message` the running application calls, so a shot can
     // show the reader as something other than an empty pane.
+    if flag("outbox") {
+        // Open it the way the sidebar's own handler does, by role. The list
+        // then pages `ListScope::Outbox` out of the store for itself, so what
+        // the picture shows is the predicate over `send_state` rather than a
+        // row handed to the pane.
+        window.open_view(postio_model::mailbox::MailboxRole::Outbox);
+        while glib::MainContext::default().iteration(false) {}
+        settle(&window);
+    }
+
     if flag("open") {
         // A click on the top row, through the same seam a pointer reaches:
         // the reader then loads the body out of the blob store by itself, the
@@ -1193,6 +1345,63 @@ fn main() -> glib::ExitCode {
         }
     }
 
+    if flag("reply") {
+        // The composer as a *reply* actually produces it, which `compose`
+        // cannot show and was never meant to: `show_composer` hands the
+        // composer a body with `> ` typed into it, so what it renders is a
+        // draft the tool wrote rather than a quote the code built. That is
+        // the #596 trap this file warns about, and the quote is exactly where
+        // it bites -- ADR 0033 changed what a reply carries, and a picture of
+        // a hand-written body could not have shown it either way.
+        //
+        // So: click a real row, let the reader load it out of the blob store,
+        // then press the key. Everything between the store and the editor's
+        // WebView is in the picture -- `quote_of`, the sanitiser, the styles,
+        // `postio-ui`'s editor document, the folded `<details>`.
+        // Which row: `row<n>` picks one, because the interesting reply is to
+        // a *rich* message and the top of the list is plain text. A quote of
+        // plain text cannot show what ADR 0033 changed.
+        let row = args
+            .iter()
+            .find_map(|arg| arg.strip_prefix("row"))
+            .and_then(|n| n.parse::<u32>().ok())
+            .unwrap_or(0);
+        window.list().click_row(row);
+        let context = glib::MainContext::default();
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while Instant::now() < deadline {
+            context.iteration(false);
+            std::thread::sleep(Duration::from_millis(10));
+        }
+
+        window.handle_key(gtk::gdk::Key::e, gtk::gdk::ModifierType::empty());
+
+        // WebKit loads the quote on its own clock, which the frame-counting
+        // `settle` does not wait on. Wall time, as `open` does for the reader.
+        let deadline = Instant::now() + Duration::from_secs(3);
+        while Instant::now() < deadline {
+            context.iteration(false);
+            std::thread::sleep(Duration::from_millis(10));
+        }
+
+        // `open` unfolds the quote, which is the half a folded shot cannot
+        // show: whether what survived the sanitiser actually *looks* like the
+        // message being answered. Through the element's own `open` property,
+        // because `<details>` is script-free by design and there is no
+        // gesture to send it from here.
+        if flag("unfold") {
+            window.composer().test_body_eval(
+                "(() => { const d = document.querySelector('details.postio-quote'); \
+                   if (d) d.open = true; return 'opened'; })()",
+            );
+            let deadline = Instant::now() + Duration::from_secs(1);
+            while Instant::now() < deadline {
+                context.iteration(false);
+                std::thread::sleep(Duration::from_millis(10));
+            }
+        }
+    }
+
     // One last pump before the picture is taken. The modes above leave work
     // outstanding -- a page request a selection triggered, a relayout, a
     // reader still loading -- and `settle` counts frames, which a window the
@@ -1225,11 +1434,11 @@ fn main() -> glib::ExitCode {
         // focused message's and not the single-message one behind it --
         // rendering into `window.reader()` paints a hidden widget, and the
         // picture comes back showing whatever the demo had already drawn.
-        let reader = window
-            .conversation()
-            .focused()
-            .and_then(|message| window.conversation().reader_for(message))
-            .unwrap_or_else(|| window.reader());
+        // The conversation has one reader for the whole thread now (#1426),
+        // and it is not reachable from here -- the pane fills it from the
+        // store. So this draws into the single-message reader, which is what
+        // the shot wants anyway: one message, rendered, for the camera.
+        let reader = window.reader();
         reader.render(&parsed.body, Some("orders@shop.example.test"));
         let deadline = Instant::now() + Duration::from_secs(2);
         let context = glib::MainContext::default();
@@ -1238,6 +1447,13 @@ fn main() -> glib::ExitCode {
             std::thread::sleep(Duration::from_millis(10));
         }
     }
+
+    // Now, not before the modes run. The question is whether anything *asked*
+    // about each word the caller passed, and that is only answerable once
+    // every `flag` call has happened -- which is the whole reason this stopped
+    // being a hand-kept list. It comes before the picture so the warning is
+    // read alongside it rather than scrolled off above.
+    warn_about_unrecognized_arguments(&args, &asked.borrow());
 
     // The picture, and the wait for it, both belong to `postio_gtk::capture`
     // -- which turns the main loop until the window is actually drawable

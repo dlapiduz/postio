@@ -277,3 +277,44 @@ pub fn the_blocked_images_notice_counts_and_elides() {
     banner.set_sender(None);
     assert!(banner.menu_labels().is_empty());
 }
+
+/// Every text chip is the same height, whichever surface built it.
+///
+/// The two chip-sizing bugs this repository has already fixed (the offer
+/// wider than its siblings, the offer stretched to the column) were both
+/// call sites spelling their own geometry. The constructors in
+/// `widgets::chip` exist so a chip's metrics have one owner — and this is
+/// the assertion that keeps them from growing a second one: a search offer
+/// and a finder filter chip, same face, measured side by side.
+pub fn every_chip_measures_the_same_height() {
+    if !ready() {
+        eprintln!("skipping: no display");
+        return;
+    }
+    let display = gtk::gdk::Display::default().expect("a display");
+    let _ = postio_gtk::fonts::install();
+    postio_gtk::style::install(&display);
+
+    let offer = postio_gtk::widgets::chip_button("hannah", "Search for hannah instead");
+    let filter = postio_gtk::widgets::filter_chip("hannah", "hannah", false, false);
+
+    let window = gtk::Window::new();
+    let holder = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+    holder.append(&offer);
+    holder.append(&filter);
+    window.set_child(Some(&holder));
+    window.present();
+    crate::pump();
+
+    let (button_height, _, _, _) = offer.measure(gtk::Orientation::Vertical, -1);
+    let (label_height, _, _, _) = filter.measure(gtk::Orientation::Vertical, -1);
+    assert!(button_height > 0, "the chip has to be on screen to measure");
+    assert_eq!(
+        button_height, label_height,
+        "a search offer ({button_height}px) and a finder chip \
+         ({label_height}px) are the same control at two call sites, and a \
+         height that differs is the drift the shared constructor exists to \
+         stop"
+    );
+    window.close();
+}

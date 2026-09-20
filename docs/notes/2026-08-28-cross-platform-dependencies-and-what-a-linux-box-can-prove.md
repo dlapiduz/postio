@@ -8,8 +8,10 @@ insert — and a TOML table runs until the next header, so everything below it
 became macOS-only. On Linux the crate lost `postio-model`, `tokio`, `serde`
 and twelve more, and produced 219 errors.
 
-Nothing caught it because nothing built it: CI is `workflow_dispatch`-only and
-the reconcile pass had not run since it landed.
+Nothing caught it because nothing built it: CI was `workflow_dispatch`-only at
+the time and the reconcile pass had not run since it landed. (CI runs on every
+push and pull request now, so this particular gap is closed; the three layers
+below are still the ones that catch it cheaply.)
 
 Postio is one workspace targeting Linux and macOS (ADR 0019), so this class
 recurs by construction. **A Linux box cannot build or test the macOS half**,

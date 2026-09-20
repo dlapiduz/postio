@@ -30,6 +30,18 @@ pub enum ListScope {
     Flagged(AccountId),
     /// Everything currently snoozed in an account, wherever it is filed.
     Snoozed(AccountId),
+    /// This account's drafts whose send is under way — queued, or being sent.
+    ///
+    /// A view, never a destination, like [`Self::Unified`]: a message cannot
+    /// be moved *into* the Outbox, because being there is a consequence of
+    /// having been sent. [`Self::mailbox`] answers `None` for it, which is
+    /// what makes that checkable rather than remembered.
+    ///
+    /// Per account, matching [`Self::Flagged`] and [`Self::Snoozed`]: the
+    /// sidebar already knows how to place and count one row per account, and
+    /// a unified Outbox would have to answer "which account is this sending
+    /// from" for every row.
+    Outbox(AccountId),
     /// One conversation, wherever its messages are filed.
     ///
     /// Not a narrowing of a mailbox: a thread routinely spans folders, and a
@@ -61,9 +73,10 @@ impl ListScope {
             |account: AccountId| mailboxes.iter().any(|folder| folder.account_id == account);
         match self {
             Self::Mailbox(id) => mailboxes.iter().any(|folder| folder.id == *id),
-            Self::Account(account) | Self::Flagged(account) | Self::Snoozed(account) => {
-                account_present(*account)
-            }
+            Self::Account(account)
+            | Self::Flagged(account)
+            | Self::Snoozed(account)
+            | Self::Outbox(account) => account_present(*account),
             Self::Unified | Self::Thread(_) => !mailboxes.is_empty(),
         }
     }
@@ -79,6 +92,9 @@ impl ListScope {
             | ListScope::Unified
             | ListScope::Flagged(_)
             | ListScope::Snoozed(_)
+            // Never a destination: being in the Outbox is a consequence of
+            // having been sent, not somewhere a message can be put.
+            | ListScope::Outbox(_)
             | ListScope::Thread(_) => None,
         }
     }
@@ -140,12 +156,18 @@ impl ListScope {
                 NewMail | MessagesRemoved | MessageListChanged => Reload,
                 MessagesChanged => Refetch,
             },
-            ListScope::Flagged(scoped) | ListScope::Snoozed(scoped) => match arrival {
-                MessagesRemoved | MessageListChanged | MessagesChanged if account == scoped => {
-                    Reload
+            // The Outbox joins these two: all three are a question about one
+            // account's mail wherever it is filed, so none of them can insert
+            // at the top -- a row's membership depends on an answer that may
+            // have changed, not on where the mail arrived.
+            ListScope::Flagged(scoped) | ListScope::Snoozed(scoped) | ListScope::Outbox(scoped) => {
+                match arrival {
+                    MessagesRemoved | MessageListChanged | MessagesChanged if account == scoped => {
+                        Reload
+                    }
+                    _ => Ignore,
                 }
-                _ => Ignore,
-            },
+            }
             ListScope::Thread(_) => Ignore,
         }
     }
@@ -187,6 +209,68 @@ pub enum Reaction {
 
 #[cfg(test)]
 mod reaction_tests {
+    // ── A view is never a destination (spec 003 FR-010, ADR 0036) ────────
+
+    #[test]
+    fn only_a_mailbox_scope_names_somewhere_a_message_could_be_put() {
+        // The rule ADR 0036 records, asserted rather than remembered. Every
+        // caller that goes on to use this answer as a destination -- a move,
+        // an append, a per-folder setting -- is relying on it, and the way it
+        // fails is silent: `MessageSet::InMailbox` with a mailbox nobody has
+        // matches no rows and reports success.
+        //
+        // Written out per variant rather than in a loop, so that adding a
+        // scope is a compile error here instead of a case nobody classified.
+        assert_eq!(
+            ListScope::Mailbox(MailboxId::new(7)).mailbox(),
+            Some(MailboxId::new(7))
+        );
+        assert_eq!(ListScope::Account(AccountId::new(1)).mailbox(), None);
+        assert_eq!(ListScope::Unified.mailbox(), None);
+        assert_eq!(ListScope::Flagged(AccountId::new(1)).mailbox(), None);
+        assert_eq!(ListScope::Snoozed(AccountId::new(1)).mailbox(), None);
+        assert_eq!(
+            ListScope::Outbox(AccountId::new(1)).mailbox(),
+            None,
+            "being in the Outbox is a consequence of having been sent, not \
+             somewhere a message can be put"
+        );
+        assert_eq!(ListScope::Thread(ThreadId::new(3)).mailbox(), None);
+    }
+
+    #[test]
+    fn the_outbox_reloads_for_its_own_account_and_ignores_another() {
+        // It joins Flagged and Snoozed: a question about one account's mail
+        // wherever it is filed, so no arrival can insert at the top -- a
+        // row's membership depends on an answer that may have changed, not on
+        // where the mail landed.
+        let mine = AccountId::new(1);
+        let theirs = AccountId::new(2);
+        let outbox = ListScope::Outbox(mine);
+
+        for arrival in [
+            Arrival::MessagesRemoved,
+            Arrival::MessageListChanged,
+            Arrival::MessagesChanged,
+        ] {
+            assert_eq!(
+                outbox.reaction(arrival, mine, None),
+                Reaction::Reload,
+                "{arrival:?} in this account has to re-ask what is on its way"
+            );
+            assert_eq!(
+                outbox.reaction(arrival, theirs, None),
+                Reaction::Ignore,
+                "{arrival:?} in another account is not this Outbox's business"
+            );
+        }
+        assert_eq!(
+            outbox.reaction(Arrival::NewMail, mine, None),
+            Reaction::Ignore,
+            "mail arriving is not a message being sent"
+        );
+    }
+
     use super::*;
 
     const HOME: AccountId = AccountId::new(1);

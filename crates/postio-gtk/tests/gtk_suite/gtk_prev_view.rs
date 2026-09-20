@@ -49,7 +49,8 @@ impl MessageSource for TinyThread {
                 seen: true,
                 flagged: false,
                 answered: false,
-                draft: false,
+                send_state: None,
+                send_at: None,
                 has_attachments: false,
                 thread_count: 2,
                 participants: Vec::new(),
@@ -73,6 +74,7 @@ impl MailboxSource for TinyThread {
             unread: 0,
             flagged: 0,
             snoozed: 0,
+            attention: 0,
         };
         Box::pin(async move { Ok(vec![inbox]) })
     }
@@ -85,7 +87,7 @@ fn settle(window: &Window, what: &str, done: impl Fn() -> bool) {
         if done() {
             return;
         }
-        std::thread::sleep(Duration::from_millis(10));
+        std::thread::sleep(std::time::Duration::from_millis(10));
     }
     assert!(done(), "timed out waiting for {what} in window {window:?}");
 }

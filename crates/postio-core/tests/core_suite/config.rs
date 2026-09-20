@@ -442,7 +442,7 @@ fn a_save_in_an_external_editor_lands_without_a_restart() {
             continue;
         }
         assert!(Instant::now() < deadline, "no reload within {PATIENCE:?}");
-        std::thread::sleep(Duration::from_millis(10));
+        std::thread::sleep(std::time::Duration::from_millis(10));
     }
 
     assert_eq!(
@@ -474,4 +474,32 @@ fn the_watcher_reports_which_sections_moved() {
         }
         other => panic!("expected a reload, got {other:?}"),
     }
+}
+
+#[test]
+fn the_registry_defaults_are_resolved_once_for_the_whole_process() {
+    // Resolution is quadratic in the number of commands: every claim asks
+    // every binding already made whether the key is taken, and each of those
+    // questions looks the command up in the registry for its contexts. A
+    // widget that only wants "whatever the defaults are" must not pay for
+    // that per instance. `MessageRowView` did, once per row GTK constructed,
+    // which is most of why switching folders spent about a second rebuilding
+    // the list (#1216).
+    assert!(std::ptr::eq(Keymap::defaults(), Keymap::defaults()));
+    assert_eq!(
+        Keymap::defaults(),
+        &Keymap::resolve(&KeyBindings::default())
+    );
+}
+
+#[test]
+fn asking_for_the_defaults_repeatedly_resolves_nothing() {
+    // The pointer check above is satisfied by any cache; this is the one that
+    // fails if `defaults` starts resolving behind it.
+    let _ = Keymap::defaults();
+    let before = postio_core::test_support::keymap_resolutions();
+    for _ in 0..200 {
+        let _ = Keymap::defaults();
+    }
+    assert_eq!(postio_core::test_support::keymap_resolutions(), before);
 }

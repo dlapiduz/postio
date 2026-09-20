@@ -2,17 +2,17 @@
 //!
 //! # Why this is here and not in the frontend
 //!
-//! `postio-gtk` must not depend on `rusqlite` — CI enforces it — so the view
-//! layer cannot read `postio-storage` itself. It also must never *wait* on a
-//! read: every widget is main-thread only, and a query that blocked the main
-//! loop would cost frames on the one interaction that happens most.
+//! `postio-gtk` must not depend on the database engine — CI enforces it — so
+//! the view layer cannot read `postio-storage` itself. It also must never
+//! *wait* on a read: every widget is main-thread only, and a query that
+//! blocked the main loop would cost frames on the one interaction that happens
+//! most.
 //!
-//! `Store` is both halves of that answer. It owns the connection pool, runs
-//! every query on a blocking thread through `tokio::task::spawn_blocking`, and
-//! hands back types built out of [`postio_model`] — which the frontend already
-//! depends on — rather than anything of `postio-storage`'s. The rows a
-//! frontend sees have no SQL in their ancestry, which is what keeps a second
-//! frontend possible.
+//! `Store` is both halves of that answer. It reads through `postio-storage`'s
+//! async engine — a plain `await`, no thread pool — and hands back types built
+//! out of [`postio_model`], which the frontend already depends on, rather than
+//! anything of `postio-storage`'s. The rows a frontend sees have no SQL in
+//! their ancestry, which is what keeps a second frontend possible.
 //!
 //! # Why the count travels with the page
 //!
@@ -23,9 +23,11 @@
 //!
 //! # What it costs
 //!
-//! One `spawn_blocking` per call, which is a pool thread and not a tokio
-//! worker, so a slow query delays no other task. `Pool` hands each of those
-//! threads its own connection rather than serialising them behind one mutex.
+//! A `connect().await` and the read, both on the caller's task. The engine is
+//! async to the bottom (specs/004-turso-store), so there is no blocking
+//! thread and no pool: a read is a future like any other, and a slow one
+//! yields rather than tying up a worker. This was a `spawn_blocking` onto a
+//! pool of connections while the store was SQLite; the swap deleted both.
 
 use std::fmt;
 use std::future::Future;
@@ -77,8 +79,15 @@ pub struct MessageSummary {
     pub flagged: bool,
     /// Whether it has been replied to.
     pub answered: bool,
-    /// Whether it is a draft.
-    pub draft: bool,
+    /// Whether it is a draft, and which state its send is in.
+    ///
+    /// Carried all the way to the row rather than flattened to a bool at this
+    /// seam: Drafts holds what you are writing, what failed and what cannot be
+    /// confirmed, the Outbox holds what is on its way, and a row that cannot
+    /// tell them apart renders all five the same (#1491).
+    pub send_state: Option<postio_model::DraftState>,
+    /// When a scheduled send is due (spec 003 FR-007). `None` otherwise.
+    pub send_at: Option<chrono::DateTime<chrono::Utc>>,
     /// Whether it has an attachment.
     pub has_attachments: bool,
     /// How many messages are in its thread; the badge appears above one.
@@ -222,48 +231,31 @@ impl StoreError {
 /// in traits is not object-safe.
 pub type Read<'a, T> = Pin<Box<dyn Future<Output = Result<T, StoreError>> + Send + 'a>>;
 
-/// Everything a frontend needs to read out of the local store.
+/// Everything a frontend needs to read out of the local store — and only
+/// that.
 ///
 /// A trait rather than a struct so the thing that owns a database and the
 /// thing that draws its rows need not be compiled together. `postio-gtk`
-/// depends on `postio-core`, so anything concrete here would put `rusqlite` in
-/// the view layer's dependency graph — which
-/// `scripts/checks/check-crate-boundaries.py` refuses, and rightly: the view layer
-/// does no SQL. The implementation lives behind the `runtime` feature, and a
-/// test can answer from a table instead.
+/// depends on `postio-core`, so anything concrete here would put the
+/// database engine in the view layer's dependency graph — which
+/// `scripts/checks/check-crate-boundaries.py` refuses, and rightly: the view
+/// layer does no SQL. The implementation lives behind the `runtime` feature,
+/// and a test can answer from a table instead.
 ///
-/// Every method returns a future rather than a value: reads happen on a
-/// blocking thread and the caller awaits, so no UI thread ever waits on
-/// SQLite.
+/// Five methods, each one something a frontend calls. Which window a scope
+/// lists itself as — threaded or flat (ADR 0015) — is the store's decision,
+/// answered inside [`list_page`](Self::list_page); the two windows underneath
+/// it are [`LocalStore`]'s own methods, for the tests and benches that mean
+/// one of them specifically, and are deliberately not part of this contract.
+///
+/// Every method returns a future rather than a value: reads happen on the
+/// runtime and the caller awaits, so no UI thread ever waits on the store.
 pub trait MailStore: Send + Sync {
-    /// One page of the message list, with the count that page was read
-    /// against.
-    fn message_page(&self, request: PageRequest) -> Read<'_, MessagePage>;
-
     /// One page of the list, however this scope lists itself.
-    ///
-    /// What the frontend calls. [`MailStore::message_page`] and
-    /// [`MailStore::thread_page`] are the two windows underneath it, and are
-    /// worth asking for directly only when the caller genuinely means one of
-    /// them.
     fn list_page(&self, request: PageRequest) -> Read<'_, ListPage>;
 
     /// How many rows the list would show, however this scope lists itself.
     fn list_count(&self, scope: ListScope) -> Read<'_, u32>;
-
-    /// One page of the *threaded* list, with the count it was read against.
-    ///
-    /// A real folder threads and a query view does not (ADR 0015), so this
-    /// answers only [`ListScope::Mailbox`] and [`ListScope::Account`];
-    /// anything else is a caller asking the wrong question and comes back as
-    /// an error rather than as message rows wearing a hat.
-    fn thread_page(&self, request: PageRequest) -> Read<'_, ThreadPage>;
-
-    /// How many conversations the threaded list would show.
-    fn thread_count(&self, scope: ListScope) -> Read<'_, u32>;
-
-    /// How many rows the list would show, without reading any of them.
-    fn message_count(&self, scope: ListScope) -> Read<'_, u32>;
 
     /// The rows for an explicit, ranked set of ids, in the order given.
     ///
@@ -280,7 +272,19 @@ pub trait MailStore: Send + Sync {
 
     /// An account's folders, with their counts as of now.
     fn mailboxes(&self, account: AccountId) -> Read<'_, Vec<Mailbox>>;
+
+    /// What the sidebar draws beside Drafts and the Outbox.
+    ///
+    /// Separate from [`mailboxes`](Self::mailboxes) because the Outbox is not
+    /// one: it has no row in `mailboxes` to carry a count, and the Drafts badge
+    /// needs a number the cached column deliberately does not hold.
+    fn draft_counts(&self, account: AccountId)
+    -> Read<'_, postio_storage::repository::DraftCounts>;
 }
 
-mod sqlite;
-pub use sqlite::SqliteStore;
+mod local;
+pub use local::LocalStore;
+/// How many threaded-folder counts this process has issued. For tests — see
+/// the counter's own documentation in `sqlite`.
+#[doc(hidden)]
+pub use local::folders_counted;

@@ -17,7 +17,9 @@ import Testing
             total: total,
             selectable: true,
             lastSyncedAt: syncedAt,
-            special: true
+            special: true,
+            flagged: 0,
+            snoozed: 0
         )
     }
 

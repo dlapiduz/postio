@@ -1,0 +1,104 @@
+/* The editing surface, drawn from the same tokens as the reader.
+   `reader-tokens.css` is loaded ahead of this file and supplies every
+   `--r-*` value, in both schemes — a colour here has one source (#296), so
+   nothing in this file states one of its own. */
+
+html {
+  /* Set by the frontend from the application's text-size setting, so the
+     whole sheet scales from one number rather than from a rule per element
+     (FR-076). */
+  font-size: var(--e-text-size, 15px);
+}
+
+body {
+  margin: 0;
+  padding: var(--e-pad, 12px) var(--e-pad-x, 14px);
+  background: var(--r-ground);
+  color: var(--r-ink);
+  font-family: "Barlow", sans-serif;
+  font-size: 1rem;
+  line-height: 1.5;
+  /* Long unbroken strings -- a pasted URL, most often -- must not push the
+     editing surface sideways at the narrow breakpoint (FR-076). */
+  overflow-wrap: break-word;
+}
+
+body:focus,
+body:focus-visible {
+  /* The surface is the whole pane; a focus ring around it would draw a box
+     round the entire composer every time the caret entered the body. Focus
+     is visible from the caret itself. */
+  outline: none;
+}
+
+p {
+  margin: 0 0 0.6em 0;
+}
+
+/* The reader's own link rule (#752): colour alone leaves the engine deciding
+   the only other cue, and says nothing about hover. */
+a {
+  color: var(--r-accent);
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 0.15em;
+}
+
+a:hover {
+  text-decoration-thickness: 2px;
+}
+
+pre {
+  font-family: "IBM Plex Mono", monospace;
+  white-space: pre-wrap;
+}
+
+img {
+  max-width: 100%;
+  height: auto;
+}
+
+/* The quote, in the reader's own vocabulary: `details.postio-quote`, closed
+   by default, opening on click with no script involved (FR-041, FR-077).
+   The rules are the reader's, restated here rather than shared, because
+   `reader.css` is loaded into a document that is not editable and carries a
+   great deal this surface must not have. What must not drift is the
+   *vocabulary* -- the class name and the shape -- and that is asserted. */
+details.postio-quote {
+  margin: 0.4em 0;
+  border-left: 2px solid var(--r-hairline);
+  padding-left: 0.8em;
+}
+
+details.postio-quote > summary {
+  cursor: pointer;
+  color: var(--r-dim);
+  font-size: 0.9em;
+  padding: 0.2em 0;
+  list-style: none;
+}
+
+details.postio-quote > summary::-webkit-details-marker {
+  display: none;
+}
+
+details.postio-quote > summary::before {
+  content: "\25B8  ";
+}
+
+details.postio-quote[open] > summary::before {
+  content: "\25BE  ";
+}
+
+details.postio-quote blockquote {
+  background: var(--r-quote-bg);
+  border-radius: 4px;
+  padding: 0.6em 0.8em;
+}
+
+blockquote {
+  margin: 0.4em 0;
+  padding-left: 0.8em;
+  border-left: 2px solid var(--r-hairline);
+  color: var(--r-ink-secondary);
+}

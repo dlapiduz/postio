@@ -31,6 +31,7 @@
 //! back to what it was.
 
 use postio_model::MailboxRole;
+use postio_storage::Connection;
 use postio_storage::repository::{ListQuery, ListScope, MessageRepository};
 use postio_storage::seed::seed_small;
 use postio_storage::test_support;
@@ -54,19 +55,26 @@ const LIST_INDEXES: &[&str] = &[
 const FILTER_COLUMNS: &[&str] = &["deleted_locally", "snoozed_until"];
 
 /// The columns `index` is keyed on, in order.
-fn columns_of(connection: &rusqlite::Connection, index: &str) -> Vec<String> {
-    connection
+async fn columns_of(connection: &Connection, index: &str) -> Vec<String> {
+    let mut statement = connection
         .prepare(&format!("PRAGMA index_info({index})"))
-        .expect("the index exists")
-        .query_map([], |row| row.get::<_, Option<String>>(2))
-        .expect("its columns")
-        .filter_map(|column| column.expect("a column row"))
-        .collect()
+        .await
+        .expect("the index exists");
+    postio_storage::sql::mapped(&mut statement, (), |row| {
+        postio_storage::sql::RowExt::col::<Option<String>>(row, 2)
+    })
+    .await
+    .expect("its columns")
+    .into_iter()
+    .flatten()
+    .collect()
 }
 
 /// Which of [`FILTER_COLUMNS`] `index` cannot answer.
-fn missing_from(connection: &rusqlite::Connection, index: &str) -> Vec<&'static str> {
-    let columns = columns_of(connection, index);
+async fn missing_from(connection: &Connection, index: &str) -> Vec<&'static str> {
+    // Read before the filter: a closure cannot await, and the answer is the
+    // same for every column.
+    let columns = columns_of(connection, index).await;
     FILTER_COLUMNS
         .iter()
         .copied()
@@ -74,42 +82,45 @@ fn missing_from(connection: &rusqlite::Connection, index: &str) -> Vec<&'static 
         .collect()
 }
 
-#[test]
-fn a_narrow_list_index_is_reported_as_missing_its_filters() {
+#[tokio::test]
+async fn a_narrow_list_index_is_reported_as_missing_its_filters() {
     // The control. This test was written after migration 0005, so on its own
     // it says only that the schema is what it is today; what makes it an
     // assertion is that the same check fails on the shape 0005 replaced.
     // Built here rather than by undoing the migration, because re-breaking
     // working code to test the test is the one thing CLAUDE.md rules out.
-    let database = test_support::memory();
-    let connection = database.connection().expect("a connection");
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("a connection");
     connection
         .execute_batch(
             "CREATE INDEX idx_probe_narrow_list
                  ON messages (mailbox_id, received_at DESC, id DESC);",
         )
+        .await
         .expect("the pre-0005 shape");
 
     assert_eq!(
-        missing_from(&connection, "idx_probe_narrow_list"),
+        missing_from(&connection, "idx_probe_narrow_list").await,
         FILTER_COLUMNS,
         "the check does not notice an index that carries neither filter \
          column, so it cannot be what stands between this schema and #638"
     );
     assert!(
-        missing_from(&connection, "idx_messages_list").is_empty(),
+        missing_from(&connection, "idx_messages_list")
+            .await
+            .is_empty(),
         "and it must not report the migrated index, or it would fail for \
          every schema alike and mean nothing"
     );
 }
 
-#[test]
-fn every_list_index_carries_the_columns_every_list_query_filters_on() {
-    let database = test_support::memory();
-    let connection = database.connection().expect("a connection");
+#[tokio::test]
+async fn every_list_index_carries_the_columns_every_list_query_filters_on() {
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("a connection");
 
     for index in LIST_INDEXES {
-        let columns = columns_of(&connection, index);
+        let columns = columns_of(&connection, index).await;
 
         assert!(
             !columns.is_empty(),
@@ -130,15 +141,15 @@ fn every_list_index_carries_the_columns_every_list_query_filters_on() {
     }
 }
 
-#[test]
-fn a_deep_page_returns_the_same_rows_the_narrow_index_would_have() {
+#[tokio::test]
+async fn a_deep_page_returns_the_same_rows_the_narrow_index_would_have() {
     // The index changed shape, so the thing to prove beyond the schema is
     // that it still answers the same question. A wider key that reordered or
     // dropped rows would be a far worse bug than the one it fixes.
-    let database = test_support::temp();
-    let report = seed_small(&database, 11);
+    let database = test_support::temp().await;
+    let report = seed_small(&database, 11).await;
     let inbox = report.mailbox(MailboxRole::Inbox).expect("an inbox").id;
-    let connection = database.connection().expect("a connection");
+    let connection = database.connect().await.expect("a connection");
     let messages = MessageRepository::new(&connection);
     let query = ListQuery {
         scope: ListScope::Mailbox(inbox),
@@ -148,6 +159,7 @@ fn a_deep_page_returns_the_same_rows_the_narrow_index_would_have() {
 
     let through_the_index: Vec<_> = messages
         .page_at(&query, 3)
+        .await
         .expect("a page three in")
         .iter()
         .map(|row| row.id)
@@ -156,21 +168,24 @@ fn a_deep_page_returns_the_same_rows_the_narrow_index_would_have() {
     // The same window, taken without the index: `+0` on a column defeats its
     // use without changing what the query means, so this is the same rows by
     // a route the optimiser cannot take.
-    let unindexed: Vec<_> = connection
-        .prepare(
-            "SELECT id FROM messages
-              WHERE mailbox_id + 0 = ?1
-                AND deleted_locally = 0
-                AND (snoozed_until IS NULL
-                     OR snoozed_until <= strftime('%s','now') * 1000)
-              ORDER BY received_at DESC, id DESC
-              LIMIT 5 OFFSET 3",
-        )
-        .expect("prepare")
-        .query_map([inbox.get()], |row| row.get::<_, i64>(0))
-        .expect("rows")
-        .map(|id| postio_model::ids::MessageId::new(id.expect("an id")))
-        .collect();
+    let unindexed: Vec<_> = postio_storage::sql::all(
+        &connection,
+        "SELECT id FROM messages
+          WHERE mailbox_id + 0 = ?1
+            AND deleted_locally = 0
+            AND (snoozed_until IS NULL
+                 OR snoozed_until <= strftime('%s','now') * 1000)
+          ORDER BY received_at DESC, id DESC
+          LIMIT 5 OFFSET 3",
+        [inbox.get()],
+        |row| {
+            Ok(postio_model::ids::MessageId::new(
+                postio_storage::sql::RowExt::col::<i64>(row, 0)?,
+            ))
+        },
+    )
+    .await
+    .expect("rows");
 
     assert_eq!(
         through_the_index, unindexed,

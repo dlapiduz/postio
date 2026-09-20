@@ -12,23 +12,23 @@ repository.workspace = true
 workspace = true
 
 [dependencies]
-async-trait = "0.1.92"
-chrono = { version = "0.4", default-features = false, features = ["clock"] }
+async-trait = { workspace = true }
+chrono = { workspace = true }
 
 # The RFC 8620/8621 protocol crate — coroutines plus the std blocking
 # client. No TLS features: connections are opened on this workspace's own
 # cancellable pimalaya-stream, exactly like postio-account's OAuth exchange.
 io-jmap = { version = "0.3", default-features = false, features = ["client"] }
-pimalaya-stream = { version = "0.3", features = ["rustls-ring"] }
+pimalaya-stream = { workspace = true }
 
 # The MailBackend seam and nothing else: default-features = false leaves
 # io-imap and the IMAP TLS stack out of this crate's tree entirely.
-postio-account = { version = "0.2.0", path = "../postio-account", default-features = false }
-postio-model = { version = "0.2.0", path = "../postio-model" }
+postio-account = { version = "0.3.0", path = "../postio-account", default-features = false }
+postio-model = { version = "0.3.0", path = "../postio-model" }
 
-secrecy = { version = "0.10", default-features = false }
-tokio = { version = "1.53.1", features = ["rt", "sync", "time"] }
-url = "2"
+secrecy = { workspace = true }
+tokio = { workspace = true, features = ["rt", "sync", "time"] }
+url = { workspace = true }
 
 [dev-dependencies]
-tokio = { version = "1.53.1", features = ["rt-multi-thread", "macros", "time"] }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "time"] }

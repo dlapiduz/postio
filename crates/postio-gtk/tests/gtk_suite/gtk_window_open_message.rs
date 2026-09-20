@@ -58,6 +58,7 @@ impl MailboxSource for Store {
                 unread: 0,
                 flagged: 0,
                 snoozed: 0,
+                attention: 0,
             };
             mailbox
         };
@@ -83,6 +84,7 @@ impl MessageSource for Store {
             | ListScope::Unified
             | ListScope::Flagged(_)
             | ListScope::Snoozed(_)
+            | ListScope::Outbox(_)
             | ListScope::Thread(_) => MailboxId::new(0),
         };
         let total = 40;
@@ -101,7 +103,8 @@ impl MessageSource for Store {
                     seen: false,
                     flagged: false,
                     answered: false,
-                    draft: false,
+                    send_state: None,
+                    send_at: None,
                     has_attachments: false,
                     thread_count: 1,
                     participants: Vec::new(),

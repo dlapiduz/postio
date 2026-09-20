@@ -19,46 +19,48 @@
 
 use gtk::glib;
 use postio_gtk::window::Window;
-use postio_storage::Database;
+use postio_storage::Store;
 use postio_storage::repository::MailboxRepository;
 
 use crate::Wiring;
 
 /// Wires `window`'s sidebar to `wiring`: skipping or resuming a folder's
 /// background backfill from its own context menu.
-pub fn install(window: &Window, wiring: &Wiring) {
+pub async fn install(window: &Window, wiring: &Wiring) {
     let database = wiring.database.clone();
     // Weak: the window owns the sidebar that owns this handler (#1072).
     let weak = glib::object::ObjectExt::downgrade(window);
     window.sidebar().connect_backfill_exclusion_changed({
         move |id, excluded| {
-            let Some(window) = weak.upgrade() else {
-                return;
-            };
-            let Ok(connection) = database.connection() else {
-                return;
-            };
-            let mailboxes = MailboxRepository::new(&connection);
-            if let Err(error) = mailboxes.set_backfill_excluded(id, excluded) {
-                tracing::warn!(%error, "could not change whether a folder backs up locally");
-                return;
-            }
-            refresh(&window, &database, id);
+            postio_session::blocking::now(async {
+                let Some(window) = weak.upgrade() else {
+                    return;
+                };
+                let Ok(connection) = database.connect().await else {
+                    return;
+                };
+                let mailboxes = MailboxRepository::new(&connection);
+                if let Err(error) = mailboxes.set_backfill_excluded(id, excluded).await {
+                    tracing::warn!(%error, "could not change whether a folder backs up locally");
+                    return;
+                }
+                refresh(&window, &database, id).await;
+            })
         }
     });
 }
 
 /// Re-reads `id`'s account and hands the sidebar its mailboxes again, so the
 /// context menu's wording is correct the moment it is reopened.
-fn refresh(window: &Window, database: &Database, id: postio_model::ids::MailboxId) {
-    let Ok(connection) = database.connection() else {
+async fn refresh(window: &Window, database: &Store, id: postio_model::ids::MailboxId) {
+    let Ok(connection) = database.connect().await else {
         return;
     };
     let mailboxes = MailboxRepository::new(&connection);
-    let Ok(Some(mailbox)) = mailboxes.get(id) else {
+    let Ok(Some(mailbox)) = mailboxes.get(id).await else {
         return;
     };
-    if let Ok(all) = mailboxes.list_for_account(mailbox.account_id) {
+    if let Ok(all) = mailboxes.list_for_account(mailbox.account_id).await {
         window.sidebar().set_mailboxes(&all);
     }
 }

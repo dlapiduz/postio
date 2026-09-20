@@ -13,7 +13,7 @@
 //! presses `a`, and the rules pass, when a message arrives — and ADR 0028
 //! puts the shared half below both rather than beside either. The half that
 //! moves down is the one that touches SQLite; what stays up in
-//! [`postio_session::actions`] is everything that only a person's gesture
+//! `postio_session::actions` is everything that only a person's gesture
 //! has: resolving what the selection meant, pushing an undo entry, and
 //! emitting the events the panes repaint from.
 //!
@@ -37,7 +37,6 @@
 use std::collections::BTreeMap;
 
 use chrono::{DateTime, Utc};
-use rusqlite::Transaction;
 
 use postio_model::{
     AccountId, Flag, FlagSet, MailboxId, Message, MessageId, Operation, OperationTarget, ThreadId,
@@ -47,6 +46,7 @@ use crate::Result;
 use crate::repository::{
     FlagSource, MessageRepository, OperationQueueRepository, ThreadOrder, ThreadRepository,
 };
+use crate::store::Connection;
 
 /// Which server operation a relocation is.
 ///
@@ -76,8 +76,8 @@ pub enum Relocation {
 /// move at all but ADR 0005 Q9's three-phase saga, and resolving that is the
 /// caller's business — this verb would write a row claiming a mailbox the
 /// account does not own.
-pub fn relocate(
-    transaction: &Transaction<'_>,
+pub async fn relocate(
+    transaction: &Connection,
     account: AccountId,
     by_source: &BTreeMap<MailboxId, Vec<MessageId>>,
     destination: MailboxId,
@@ -97,17 +97,22 @@ pub fn relocate(
                 to: destination,
             },
         };
-        // The queue row first, as `postio_session::actions` has always done
-        // it. The comment there says the move would otherwise null the
-        // coordinates the enqueue snapshots (#289); that is not quite what
-        // the code does today -- `enqueue_many` snapshots `remote_id`, and
-        // `move_to` nulls `uid`, `uid_validity` and `mod_seq` but not
-        // `remote_id` -- so the two orders currently produce identical rows,
-        // and no test here can tell them apart. The order is kept because
-        // this is a move and because it is the safe one if the snapshot ever
-        // widens to a column the move does clear. See #1125 for the check.
-        queue.enqueue_many(account, ids, &operation, at)?;
-        messages.move_to(ids, destination)?;
+        // The queue row first, and now it matters. `enqueue_many` snapshots
+        // `remote_id` and `move_to` clears it, so swapping these two lines
+        // enqueues an operation with no coordinate to address the server
+        // with -- which is what #289 said, and became true again the moment
+        // the move started clearing that column.
+        //
+        // It did not always. `move_to` used to null `uid`, `uid_validity` and
+        // `mod_seq` and leave `remote_id` behind, which made the two orders
+        // equivalent and this comment a caveat about a hazard that was not
+        // real yet. It also left an archived message carrying coordinates
+        // minted in the folder it came from, so the next command on it
+        // compared the source's generation against the destination's and
+        // reported a UIDVALIDITY change that never happened. Seen on a live
+        // account, on the first archive.
+        queue.enqueue_many(account, ids, &operation, at).await?;
+        messages.move_to(ids, destination).await?;
     }
     Ok(())
 }
@@ -126,8 +131,8 @@ pub fn relocate(
 /// flags to compute the new set, and its thread to recompute. Rows whose flag
 /// is already `wanted` are the caller's to filter -- this writes what it is
 /// given.
-pub fn set_flag(
-    transaction: &Transaction<'_>,
+pub async fn set_flag(
+    transaction: &Connection,
     account: AccountId,
     rows: &[&Message],
     flag: &Flag,
@@ -144,18 +149,22 @@ pub fn set_flag(
         } else {
             flags.remove(flag);
         }
-        messages.set_flags(message.id, &flags, FlagSource::Local)?;
+        messages
+            .set_flags(message.id, &flags, FlagSource::Local)
+            .await?;
         let operation = if wanted {
             Operation::SetFlags { flags: one.clone() }
         } else {
             Operation::ClearFlags { flags: one.clone() }
         };
-        queue.enqueue(
-            account,
-            OperationTarget::Message(message.id),
-            &operation,
-            at,
-        )?;
+        queue
+            .enqueue(
+                account,
+                OperationTarget::Message(message.id),
+                &operation,
+                at,
+            )
+            .await?;
     }
 
     let threads = ThreadRepository::new(transaction);
@@ -164,8 +173,8 @@ pub fn set_flag(
     conversations.dedup();
     let mut siblings: Vec<MessageId> = Vec::new();
     for thread in &conversations {
-        threads.recompute(*thread)?;
-        for row in threads.messages(*thread, ThreadOrder::Oldest)? {
+        threads.recompute(*thread).await?;
+        for row in threads.messages(*thread, ThreadOrder::Oldest).await? {
             siblings.push(row.id);
         }
     }

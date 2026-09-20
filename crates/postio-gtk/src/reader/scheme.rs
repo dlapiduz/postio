@@ -91,12 +91,12 @@ fn face_name_from_uri(uri: &str) -> String {
 }
 
 fn respond(request: &URISchemeRequest, source: &dyn BlobSource) {
-    let content_id = request
+    let (scope, content_id) = request
         .uri()
-        .map(|uri| content_id_from_uri(&uri))
+        .map(|uri| reference_from_uri(&uri))
         .unwrap_or_default();
 
-    match source.resolve(&content_id) {
+    match source.resolve_in(scope.as_deref(), &content_id) {
         Some((bytes, mime_type)) => {
             let length = bytes.len() as i64;
             let stream = gio::MemoryInputStream::from_bytes(&glib::Bytes::from_owned(bytes));
@@ -109,12 +109,28 @@ fn respond(request: &URISchemeRequest, source: &dyn BlobSource) {
     }
 }
 
-fn content_id_from_uri(uri: &str) -> String {
+/// The message a request names, and the `Content-ID` within it.
+///
+/// A single-message document produces `postio-cid:<id>` and answers `None`
+/// for the message: the reader knows which one is open. ADR 0032's
+/// conversation document produces `postio-cid:<scope>/<id>`, because one
+/// document holds a whole thread and "whichever is open" no longer names one.
+///
+/// The split is on the **first** literal `/` and only that one. It is
+/// unambiguous because `postio_body::sanitize::percent_encode` escapes `/`,
+/// so an encoded `Content-ID` never contains a literal one — a slash in the
+/// id itself arrives as `%2F` and comes back through the decode. Splitting on
+/// the last, or on every, slash would let a sender grow their own scope by
+/// adding separators.
+fn reference_from_uri(uri: &str) -> (Option<String>, String) {
     let rest = uri
         .strip_prefix(CID_SCHEME)
         .and_then(|rest| rest.strip_prefix(':'))
         .unwrap_or(uri);
-    percent_decode(rest)
+    match rest.split_once('/') {
+        Some((scope, id)) => (Some(percent_decode(scope)), percent_decode(id)),
+        None => (None, percent_decode(rest)),
+    }
 }
 
 #[cfg(test)]
@@ -122,9 +138,44 @@ mod tests {
     use super::*;
 
     #[test]
+    fn a_scoped_uri_names_its_message_and_its_part() {
+        // ADR 0032's conversation document: every reference carries the
+        // message it belongs to, because one document holds a whole thread.
+        assert_eq!(
+            reference_from_uri("postio-cid:42/logo"),
+            (Some("42".to_string()), "logo".to_string())
+        );
+    }
+
+    #[test]
+    fn an_unscoped_uri_is_what_it_always_was() {
+        assert_eq!(
+            reference_from_uri("postio-cid:reader-left.44b1%40example.com"),
+            (None, "reader-left.44b1@example.com".to_string())
+        );
+    }
+
+    #[test]
+    fn a_content_id_cannot_smuggle_a_separator() {
+        // `percent_encode` escapes `/`, so a literal one is always Postio's
+        // separator and never part of an id. An id that arrived with a slash
+        // in it comes back through the escape, not through the split.
+        assert_eq!(
+            reference_from_uri("postio-cid:42/a%2Fb"),
+            (Some("42".to_string()), "a/b".to_string())
+        );
+        // And the split is on the *first* slash only, so a scope cannot be
+        // grown by adding more.
+        assert_eq!(
+            reference_from_uri("postio-cid:42/7/x"),
+            (Some("42".to_string()), "7/x".to_string())
+        );
+    }
+
+    #[test]
     fn the_uri_prefix_is_stripped_and_decoded() {
         assert_eq!(
-            content_id_from_uri("postio-cid:reader-left.44b1%40example.com"),
+            reference_from_uri("postio-cid:reader-left.44b1%40example.com").1,
             "reader-left.44b1@example.com"
         );
     }
@@ -133,7 +184,7 @@ mod tests {
     fn a_uri_missing_the_scheme_prefix_is_decoded_as_is() {
         // Defensive: WebKit always hands us our own scheme's URIs, but a
         // malformed one should not panic.
-        assert_eq!(content_id_from_uri("not-our-scheme"), "not-our-scheme");
+        assert_eq!(reference_from_uri("not-our-scheme").1, "not-our-scheme");
     }
 
     #[test]

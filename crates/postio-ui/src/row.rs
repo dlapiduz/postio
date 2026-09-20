@@ -15,10 +15,12 @@ use postio_model::EmailAddress;
 
 /// Canvas 1b's row geometry for one density, in logical pixels.
 ///
-/// Type and colour come from the cascade ([`Palette`]); this is the layout
-/// the snapshot arranges them in, which a hand-drawn widget owns the way a
-/// `GtkBox` owns its spacing. The airy numbers are measured straight off the
-/// canvas; the other two tighten the same anatomy rather than changing it.
+/// Type and colour come from the cascade — `postio-gtk`'s own private
+/// `row::Palette` reads them off the style context, which is why there is
+/// nothing to link to from here. This is the layout the snapshot arranges
+/// them in, which a hand-drawn widget owns the way a `GtkBox` owns its
+/// spacing. The airy numbers are measured straight off the canvas; the other
+/// two tighten the same anatomy rather than changing it.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Metrics {
     /// Space above and below the row's content.
@@ -187,6 +189,40 @@ impl RowAction {
             RowAction::Flag => CommandId::Flag,
             RowAction::Delete => CommandId::Delete,
         }
+    }
+}
+
+/// What a row says about a draft's send state, in one word or two.
+///
+/// Here rather than in a widget for the reason `initials` and `timestamp` are:
+/// what a mail client calls a state is answered once, and two frontends
+/// wording it apart is the drift these moves exist to stop.
+///
+/// # Why not just "Draft"
+///
+/// It was "Draft" for all five, which is #1491's third open question. Drafts
+/// holds what you are writing, what failed and what cannot be confirmed, and
+/// the Outbox holds what is on its way -- and a row that says only "Draft"
+/// makes a message that *needs you* look like one you simply have not
+/// finished. The words are the user's, not the state machine's: nobody is
+/// looking for an "unconfirmed draft", they are looking for the one that did
+/// not go.
+pub fn send_state_word(state: postio_model::DraftState) -> &'static str {
+    use postio_model::DraftState;
+    match state {
+        DraftState::Editing => "Draft",
+        DraftState::Queued => "Waiting to send",
+        DraftState::Sending => "Sending",
+        // Not "Failed": what matters to the reader is that it did not go, and
+        // the reason is on the draft itself when they open it (#1487).
+        DraftState::Failed => "Not sent",
+        // ADR 0021 Decision 3: nobody can say whether it arrived. The word has
+        // to carry that rather than claim either.
+        DraftState::Unconfirmed => "Not confirmed",
+        // The moment between the server accepting and the row being deleted.
+        // It has a word because the column can hold it, not because a person
+        // is expected to read it.
+        DraftState::Sent => "Sent",
     }
 }
 

@@ -32,6 +32,7 @@ Exit status: 0 all cases behaved, 1 otherwise.
 from __future__ import annotations
 
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -142,6 +143,27 @@ def main() -> int:
              "func nextEvent() async" in text,
              "nextEvent() is not async in the generated Swift; the drain would "
              "have to be hand-wrapped on the Swift side")
+
+        # The typed errors have to be reachable from outside the generated
+        # module, or the frontend can catch them only as `Error` and is back
+        # to matching on message text -- which `SessionError`'s own doc
+        # comment says is the thing it exists to prevent, because "locked
+        # keyring, retry" and "no account, onboard" are different answers.
+        #
+        # Visibility rather than existence, and it is the visibility that
+        # moves: uniffi 0.32 emits `public` on its own line above the
+        # declaration where 0.29 put it inline, so a reader -- or a check --
+        # looking for `public enum SessionError` on one line concludes the
+        # type was demoted to internal when it was not. Asserted the way the
+        # compiler sees it, on the token and not the line.
+        for error in ("SessionError", "SettingsError"):
+            declaration = re.search(
+                r"\bpublic\s+enum\s+" + error + r"\b", text
+            )
+            case(f"{error} is public in the generated Swift",
+                 declaration is not None,
+                 f"{error} is not declared public, so Swift outside this "
+                 f"module cannot name it in a `catch`")
 
         # The module map is what makes `import` work from Swift at all.
         case("the module map names a module Swift can import",

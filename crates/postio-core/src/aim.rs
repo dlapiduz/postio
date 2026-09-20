@@ -149,7 +149,16 @@ pub fn view_scope(scope: ListScope, reachable: &[AccountId]) -> Option<ViewScope
         ListScope::Unified => Some(ViewScope::Unified {
             accounts: reachable.to_vec(),
         }),
-        ListScope::Account(_) | ListScope::Snoozed(_) | ListScope::Thread(_) => None,
+        // The Outbox joins Snoozed for the same reason: nothing needs
+        // `Ctrl+A` over "everything on its way" yet. It is also the scope
+        // where a whole-view bulk gesture is least obviously wanted -- the
+        // verbs it would reach are cancel and discard, and doing either to
+        // every message in flight at once is not a thing to make easy by
+        // accident. A rejection, not a no-op that claims to have acted.
+        ListScope::Account(_)
+        | ListScope::Snoozed(_)
+        | ListScope::Outbox(_)
+        | ListScope::Thread(_) => None,
     }
 }
 

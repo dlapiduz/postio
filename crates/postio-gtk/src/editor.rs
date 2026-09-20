@@ -29,16 +29,16 @@ use postio_body::{Document, EditHistory, parse};
 use webkit6::prelude::*;
 
 use crate::reader::scheme::{self, BlobSource};
+use postio_ui::editor::document as editor_document;
 
 /// A fixed, non-`http(s)` base for the editing shell, so edited content is
 /// never same-origin with anything real — the same reasoning as the
 /// reader's `postio-reader:///`.
-pub const EDITOR_BASE_URI: &str = "postio-editor:///";
-
-/// The CSP the editing shell carries: no remote origin can be named, styles
-/// stay inline (the shell's own), and images resolve only through the local
-/// blob scheme.
-const EDITOR_CSP: &str = "default-src 'none'; style-src 'unsafe-inline'; img-src postio-cid:";
+///
+/// Re-exported from `postio-ui` rather than restated: the document that
+/// declares the policy and the view that loads it must agree, and two copies
+/// of a security-relevant string are two that can drift (#567).
+pub use postio_ui::editor::document::EDITOR_BASE_URI;
 
 /// The bridge script — profile settings plus edit reporting.
 ///
@@ -47,10 +47,57 @@ const EDITOR_CSP: &str = "default-src 'none'; style-src 'unsafe-inline'; img-src
 /// and it removes a registration-order dependency from every test that
 /// builds an editor. The file lives beside the other bundled assets in
 /// `data/`.
-const EDITOR_SCRIPT: &str = include_str!("../data/editor.js");
+const EDITOR_SCRIPT_BODY: &str = include_str!("../data/editor.js");
+
+/// The whole script, table and all.
+///
+/// The markdown table is *generated* from `postio_ui::editor::markdown`
+/// rather than restated in JavaScript, so the set of supported sequences has
+/// one source. A hand-written copy in `editor.js` is a copy that drifts, and
+/// the thing it would drift from is the contract both frontends implement.
+fn editor_script() -> &'static str {
+    static SCRIPT: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    SCRIPT.get_or_init(|| format!("{}{EDITOR_SCRIPT_BODY}", markdown_table_js()))
+}
+
+/// `POSTIO_MARKDOWN`, as a JavaScript literal.
+fn markdown_table_js() -> String {
+    use postio_ui::editor::markdown::{SEQUENCES, Trigger};
+    use std::fmt::Write as _;
+
+    let mut out = String::from("const POSTIO_MARKDOWN = [\n");
+    for sequence in SEQUENCES {
+        let trigger = match sequence.trigger {
+            Trigger::LinePrefix => "line_prefix",
+            Trigger::Wrapping => "wrapping",
+        };
+        // The markers are `&'static str` from a table in this workspace, not
+        // anybody's input, and every one of them is punctuation -- but they
+        // are being written into source, so they are escaped rather than
+        // trusted to stay that way.
+        let _ = writeln!(
+            out,
+            "    {{ marker: \"{}\", command: \"{}\", trigger: \"{trigger}\" }},",
+            sequence.marker.replace('\\', "\\\\").replace('"', "\\\""),
+            sequence.command,
+        );
+    }
+    out.push_str("];\n");
+    out
+}
 
 /// The script-message channel the bridge reports edits on.
 const EDITED_MESSAGE: &str = "postioEdited";
+
+/// The channel a markdown conversion reports on.
+///
+/// Separate from [`EDITED_MESSAGE`] because it means something the ordinary
+/// channel cannot say: *this edit begins a new undo step*. A conversion
+/// arrives in the middle of a typing run, and `absorb`'s coalescing would
+/// fold it into that run -- so one undo would take back the whole sentence
+/// rather than the conversion, and the literal characters the user meant
+/// would be gone with it (FR-070).
+const CONVERTED_MESSAGE: &str = "postioConverted";
 
 /// The channel the bridge reports the caret's formatting on — what a
 /// toolbar toggle reflects, named after the same registry ids it serves.
@@ -71,7 +118,7 @@ const COALESCE: Duration = Duration::from_millis(700);
 pub fn editing_view(source: Rc<dyn BlobSource>) -> webkit6::WebView {
     let content = webkit6::UserContentManager::new();
     content.add_script(&webkit6::UserScript::new(
-        EDITOR_SCRIPT,
+        editor_script(),
         webkit6::UserContentInjectedFrames::TopFrame,
         webkit6::UserScriptInjectionTime::End,
         &[],
@@ -102,6 +149,15 @@ fn view_with(
     view.add_css_class("postio-editor-view");
     view.set_accessible_role(gtk::AccessibleRole::TextBox);
     view.connect_decide_policy(handle_decide_policy);
+    paint_ground(&view);
+    crate::web_process::watch(&view);
+    // The scheme can change while a draft is open, and the only right answer
+    // is a new sheet rather than a new document: reloading would take the
+    // caret and the undo history with it (FR-075).
+    adw::StyleManager::default().connect_dark_notify({
+        let view = view.clone();
+        move |_| restyle(&view)
+    });
     view
 }
 
@@ -113,12 +169,84 @@ fn view_with(
 /// what makes running script beside it acceptable at all (ADR 0003,
 /// hardening requirement 2).
 pub fn seed(view: &webkit6::WebView, inner_html: &str) {
-    let shell = format!(
-        "<!doctype html><html><head>\
-         <meta http-equiv=\"Content-Security-Policy\" content=\"{EDITOR_CSP}\">\
-         </head><body contenteditable=\"true\">{inner_html}</body></html>"
-    );
+    let shell = editor_document::wrap_document(inner_html, presentation());
     view.load_html(&shell, Some(EDITOR_BASE_URI));
+}
+
+/// How the surface should be drawn right now.
+///
+/// The scheme comes from libadwaita rather than from the engine: a web view
+/// resolves `prefers-color-scheme` from its own settings, which is how the
+/// editing surface managed to be white inside a dark application.
+fn presentation() -> editor_document::Presentation {
+    editor_document::Presentation {
+        dark: adw::StyleManager::default().is_dark(),
+        ..editor_document::Presentation::default()
+    }
+}
+
+/// Paints the ground on the widget as well as the document.
+///
+/// The document paints `--r-ground` on `body`, but only once it has parsed,
+/// and a web view between one document and the next has nothing to paint
+/// from. That interval is the white flash — the reader's `paint_ground`
+/// exists for the same reason and is where this was learned.
+fn paint_ground(view: &webkit6::WebView) {
+    let dark = adw::StyleManager::default().is_dark();
+    match editor_document::editor_ground(dark).parse::<gtk::gdk::RGBA>() {
+        Ok(ground) => view.set_background_color(&ground),
+        Err(error) => glib::g_warning!(
+            "postio",
+            "could not parse the editor ground colour: {error}"
+        ),
+    }
+}
+
+/// Re-applies the sheet for the current scheme **without reloading**.
+///
+/// A reload would take the caret and the undo history with it (FR-075), so
+/// the sheet is replaced in place: the document keeps its DOM and its
+/// selection, and only the `<style>` element's text changes.
+pub fn restyle(view: &webkit6::WebView) {
+    paint_ground(view);
+    let css = editor_document::editor_css(presentation());
+    // `textContent`, not `innerHTML`: a stylesheet is text, and the engine
+    // would otherwise be parsing our own CSS as markup looking for entities.
+    let script = format!(
+        "(() => {{ const s = document.querySelector('style'); \
+         if (s) s.textContent = {}; }})()",
+        json_string(&css)
+    );
+    view.evaluate_javascript(&script, None, None, None::<&gtk::gio::Cancellable>, |_| {});
+}
+
+/// `value` as a JavaScript string literal.
+///
+/// Hand-rolled rather than pulled from a JSON crate: this crate has no JSON
+/// dependency and wants none for one function, and what has to be escaped in
+/// a double-quoted literal is a short, closed list.
+fn json_string(value: &str) -> String {
+    let mut out = String::with_capacity(value.len() + 2);
+    out.push('"');
+    for character in value.chars() {
+        match character {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            // U+2028 and U+2029 terminate a line in JavaScript but not in
+            // JSON, which is the classic way a valid string becomes a syntax
+            // error. CSS can hold them inside a `content:` value.
+            '\u{2028}' => out.push_str("\\u2028"),
+            '\u{2029}' => out.push_str("\\u2029"),
+            other if (other as u32) < 0x20 => {
+                out.push_str(&format!("\\u{:04x}", other as u32));
+            }
+            other => out.push(other),
+        }
+    }
+    out.push('"');
+    out
 }
 
 /// The reader's lockdown list with exactly one line changed.
@@ -163,7 +291,7 @@ fn handle_decide_policy(
     if kind != webkit6::PolicyDecisionType::NavigationAction {
         return false;
     }
-    let Some(mut action) = decision
+    let Some(action) = decision
         .downcast_ref::<webkit6::NavigationPolicyDecision>()
         .and_then(|decision| decision.navigation_action())
     else {
@@ -208,6 +336,12 @@ struct EditorState {
     coalesce: Duration,
     format: Cell<FormatState>,
     format_watchers: RefCell<Vec<FormatWatcher>>,
+    /// Whether anything has ever been loaded into the view.
+    ///
+    /// The first `load_html` on a fresh `WebView` starts a WebKit web process,
+    /// which is tens of milliseconds, and it would otherwise all fall on the
+    /// first composition somebody writes. See [`Editor::warm`].
+    loaded: Cell<bool>,
 }
 
 /// The editing surface with its document attached: Document in, WebKit's
@@ -236,13 +370,14 @@ impl Editor {
     pub fn with_coalesce(source: Rc<dyn BlobSource>, coalesce: Duration) -> Self {
         let content = webkit6::UserContentManager::new();
         content.add_script(&webkit6::UserScript::new(
-            EDITOR_SCRIPT,
+            editor_script(),
             webkit6::UserContentInjectedFrames::TopFrame,
             webkit6::UserScriptInjectionTime::End,
             &[],
             &[],
         ));
         content.register_script_message_handler(EDITED_MESSAGE, None);
+        content.register_script_message_handler(CONVERTED_MESSAGE, None);
         content.register_script_message_handler(FORMAT_MESSAGE, None);
 
         let view = view_with(&content, source);
@@ -254,6 +389,7 @@ impl Editor {
             coalesce,
             format: Cell::new(FormatState::default()),
             format_watchers: RefCell::new(Vec::new()),
+            loaded: Cell::new(false),
         });
 
         content.connect_script_message_received(Some(EDITED_MESSAGE), {
@@ -263,6 +399,16 @@ impl Editor {
                     return;
                 }
                 absorb(&state, &value.to_str());
+            }
+        });
+
+        content.connect_script_message_received(Some(CONVERTED_MESSAGE), {
+            let state = state.clone();
+            move |_, value| {
+                if !value.is_string() {
+                    return;
+                }
+                absorb_as_new_step(&state, &value.to_str());
             }
         });
 
@@ -304,7 +450,33 @@ impl Editor {
         self.state.history.borrow_mut().clear();
         self.state.last_edit.set(None);
         seed(&self.view, &document.editor_html());
+        self.state.loaded.set(true);
         *self.state.document.borrow_mut() = document;
+    }
+
+    /// Start the editing surface before anybody is waiting for it.
+    ///
+    /// The first `load_html` on a fresh `WebView` starts a WebKit web process.
+    /// Measured here, splitting `Composer::open` into its parts: 28.7ms on the
+    /// first open against 0.2ms on every one after it — so without this, the
+    /// whole cost falls on the first composition a person writes, which is the
+    /// one they notice (#1216).
+    ///
+    /// Seeds an empty document, which is what a fresh composer holds anyway,
+    /// so a later [`load`](Self::load) replaces a blank page rather than
+    /// starting one. Does nothing once anything has been loaded — including a
+    /// draft somebody is part-way through typing, which a second seed would
+    /// throw away.
+    pub fn warm(&self) {
+        if self.state.loaded.get() {
+            return;
+        }
+        self.load(Document::default());
+    }
+
+    /// Whether the editing surface has been started. See [`warm`](Self::warm).
+    pub fn is_warm(&self) -> bool {
+        self.state.loaded.get()
     }
 
     /// The document as it now stands. The record; the DOM is its copy.
@@ -371,24 +543,39 @@ impl Editor {
 /// handler holds only the `Rc`, never a whole `Editor`, so dropping the
 /// editor drops the state as soon as WebKit lets go of the closure.
 fn absorb(state: &Rc<EditorState>, html: &str) {
+    let now = Instant::now();
+    let within_run = state
+        .last_edit
+        .get()
+        .is_some_and(|last| now.duration_since(last) < state.coalesce);
+    absorb_with(state, html, within_run);
+}
+
+/// [`absorb`], but this edit always starts its own undo step.
+///
+/// What a markdown conversion needs. The edit before it is the literal text
+/// the user typed — `**loudly**`, markers and all — and that state has to be
+/// something one undo can return to (FR-070). Coalescing it into the typing
+/// run would make undo take back the sentence instead, and the escape hatch
+/// that makes an automatic conversion tolerable would not be there.
+fn absorb_as_new_step(state: &Rc<EditorState>, html: &str) {
+    absorb_with(state, html, false);
+}
+
+fn absorb_with(state: &Rc<EditorState>, html: &str, within_run: bool) {
     let after = parse(html);
     let before = state.document.borrow().clone();
     if after == before {
         return;
     }
 
-    let now = Instant::now();
-    let within_run = state
-        .last_edit
-        .get()
-        .is_some_and(|last| now.duration_since(last) < state.coalesce);
     {
         let mut history = state.history.borrow_mut();
         if !(within_run && history.amend(after.clone())) {
             history.record(before, after.clone());
         }
     }
-    state.last_edit.set(Some(now));
+    state.last_edit.set(Some(Instant::now()));
 
     *state.document.borrow_mut() = after;
     let current = state.document.borrow();
@@ -461,12 +648,20 @@ impl Editor {
     }
 
     /// The caret's character offset into the body's text, for assertions.
+    ///
+    /// **`-1` means there is no caret at all**, which is not the same as one
+    /// at the start and used to be reported as the same `0`. A WebView that
+    /// has only been loaded and focused has no selection — `execCommand`
+    /// against it returns `false` and changes nothing — and a test asserting
+    /// `offset == 0` against that passes while proving nothing. Something has
+    /// to have edited or clicked into the surface first; `test_type` leaves a
+    /// selection behind, which is how the detach tests get one.
     #[doc(hidden)]
     pub fn caret_offset(&self) -> i32 {
         self.wait_ready();
         self.run_blocking(
             "(() => { const s = window.getSelection(); \
-               if (s.rangeCount === 0) return '0'; \
+               if (s.rangeCount === 0) return '-1'; \
                const r = s.getRangeAt(0).cloneRange(); \
                r.selectNodeContents(document.body); \
                r.setEnd(s.getRangeAt(0).startContainer, s.getRangeAt(0).startOffset); \

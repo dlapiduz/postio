@@ -59,15 +59,7 @@ if [[ "${1:-}" == "--uninstall" ]]; then
 fi
 
 check_build_dependencies() {
-    local missing_modules=() missing_libraries=() lines=() module library
-
-    if ! command -v perl >/dev/null 2>&1; then
-        lines+=("  perl itself — OpenSSL's \`Configure\` is a perl program")
-    else
-        for module in "${PERL_MODULES[@]}"; do
-            perl "-M$module" -e1 >/dev/null 2>&1 || missing_modules+=("$module")
-        done
-    fi
+    local missing_libraries=() lines=() library
 
     if ! command -v pkg-config >/dev/null 2>&1; then
         lines+=("  pkg-config — nothing can find the GTK libraries without it")
@@ -77,9 +69,6 @@ check_build_dependencies() {
         done
     fi
 
-    if [ ${#missing_modules[@]} -gt 0 ]; then
-        lines+=("  perl modules: ${missing_modules[*]}")
-    fi
     if [ ${#missing_libraries[@]} -gt 0 ]; then
         lines+=("  libraries: ${missing_libraries[*]}")
     fi
@@ -92,21 +81,6 @@ check_build_dependencies() {
         echo
         printf '%s\n' "${lines[@]}"
         echo
-        if [ ${#missing_modules[@]} -gt 0 ]; then
-            echo "The perl modules are for OpenSSL: the store is SQLCipher and its"
-            echo "OpenSSL is compiled from source (ADR 0014), by a \`Configure\`"
-            echo "written in perl. Distributions that split the perl standard"
-            echo "library into packages ship none of them by default."
-            echo
-            # Fedora's package for a perl module is its name with `::`
-            # hyphenated, which is mechanical enough to print. Every other
-            # distribution has its own spelling, so this says whose command it is.
-            local packages=()
-            for module in "${missing_modules[@]}"; do
-                packages+=("perl-${module//::/-}")
-            done
-            echo "On Fedora: sudo dnf install ${packages[*]}"
-        fi
         if [ ${#missing_libraries[@]} -gt 0 ]; then
             echo "On Fedora, each library is a \`-devel\` package: see README.md."
         fi
@@ -121,22 +95,23 @@ check_build_dependencies() {
     exit 1
 }
 
-# Checked here rather than discovered by the compiler, because the compiler
-# discovers them one build at a time: OpenSSL's `Configure` stops at the first
-# `Can't locate X.pm in @INC` it hits, several minutes into a release build,
-# and the next module is only found by the next build. Six modules were six
-# failed builds (#646). Probing costs milliseconds and answers in one go.
-PERL_MODULES=(FindBin IPC::Cmd Pod::Html Digest::SHA Text::Template Time::Piece)
 # The three top-level libraries the app links. Each names glib, pango and
 # gdk-pixbuf in its own `Requires:`, so pkg-config resolves those transitively
 # — listing them here would only add names a distribution might spell
-# differently. SQLite is deliberately absent: rusqlite bundles SQLCipher, so
-# no system sqlite3 is involved in a build.
+# differently. There is deliberately nothing else: the store engine is pure
+# Rust, so no system sqlite3, no OpenSSL and none of the perl modules #646
+# used to probe for are involved in a build.
 PKG_CONFIG_LIBS=(gtk4 libadwaita-1 webkitgtk-6.0)
 
 if [ -z "${POSTIO_SKIP_DEP_CHECK:-}" ]; then
     check_build_dependencies
 fi
+
+# The linker and C compiler .cargo/config.toml names are bare program names
+# (postio-linker, postio-cc) so one compile cache serves every worktree
+# (#1101). A fresh clone has neither on PATH, and the first thing a person
+# following the README would see is "linker `postio-linker` not found".
+"$here/scripts/install-shims.sh"
 
 echo "Building postio (release) — the first build takes a while..."
 cargo build --release --package postio-app --bin postio \

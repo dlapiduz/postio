@@ -152,11 +152,17 @@ pub fn the_preview_follows_the_focus_and_answers_the_query_on_screen() {
     })
     .expect("the preview renders in a WebView");
     let web_view: webkit6::WebView = reader.downcast().expect("a WebView");
+    // `enables_javascript_markup`, not `enables_javascript`. The claim this
+    // makes is that a preview is still **someone else's HTML** and their
+    // script cannot run — which is the markup setting. Since #1367 the reader
+    // evaluates Postio's own script, so asserting `!enables_javascript` would
+    // now be asserting that the rail cannot work, which is a different and
+    // much weaker thing to want.
     assert!(
         !webkit6::prelude::WebViewExt::settings(&web_view)
             .expect("a WebView has settings")
-            .enables_javascript(),
-        "a preview is still someone else's HTML"
+            .enables_javascript_markup(),
+        "a preview is still someone else's HTML, and their script must not run"
     );
 
     // -- staying on the same result keeps the body it already has ---------

@@ -243,9 +243,35 @@ def workspace_unit_tier(calls: str) -> list[str]:
 
 
 def per_crate_tests(calls: str) -> list[str]:
+    """The per-crate *integration* runs -- the ones that cost binaries to link.
+
+    `--doc` is deliberately not one of them. A doctest run compiles the
+    examples in a crate's own docs and links no test binary, which is why
+    #1440 put it in the default tier; counting it here would make the tier
+    look expensive for something that is nearly free, and would make this
+    self-test fail on the very change it is meant to describe.
+
+    **`cargo nextest run` counts, and used to not.** The integration suites
+    have run under nextest since the tiers were measured, so a matcher that
+    only knew `cargo test` matched nothing in `--full` -- and the case that
+    asserts `--full` still runs them was passing on the doctest line instead,
+    which is a different tier's call and was not there until #1440 added it.
+    Two wrongs: the moment `--doc` was excluded above, the `--full` case went
+    red and said what it had really been resting on.
+    """
     return [
         l for l in calls.splitlines()
-        if l.startswith("cargo ") and " test " in f" {l} " and " -p " in f" {l} "
+        if l.startswith("cargo ")
+        and " -p " in f" {l} "
+        and (" test " in f" {l} " or " nextest run " in f" {l} ")
+        and " --doc " not in f" {l} "
+    ]
+
+
+def per_crate_doctests(calls: str) -> list[str]:
+    return [
+        l for l in calls.splitlines()
+        if l.startswith("cargo ") and " test " in f" {l} " and " --doc " in f" {l} "
     ]
 
 
@@ -267,6 +293,18 @@ def main() -> int:
             not per_crate_tests(calls),
             "a default landing still paid for the integration binaries, which "
             f"is the cost this change exists to remove:\n{per_crate_tests(calls)}",
+        )
+
+        # The doctests are in the default tier, and that is the whole of
+        # #1440: `cargo test --lib` does not run them and does not say so, so
+        # a doctest that stopped compiling reached `main` and was found by
+        # CI's nightly rather than by the landing that broke it. Asserting
+        # only "no integration suites" above would pass just as happily if
+        # the doctest run had never been added.
+        case(
+            "a default landing runs the doctests for a crate it changed",
+            bool(per_crate_doctests(calls)),
+            f"no `cargo test --doc -p <crate>` in:\n{calls}",
         )
 
         # -- 2. --full still runs them ---------------------------------------

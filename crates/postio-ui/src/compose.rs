@@ -62,6 +62,50 @@ mod tests {
 /// `WKWebView`, which is why one file can serve both without a shim.
 pub const EDITOR_SCRIPT: &str = include_str!("../data/editor.js");
 
+/// The bridge as a frontend should run it: the markdown table, then the body.
+///
+/// [`EDITOR_SCRIPT`] alone is not runnable. It reads `POSTIO_MARKDOWN` and
+/// does not define it, because the set of supported sequences is
+/// [`crate::editor::markdown::SEQUENCES`] and a hand-written copy in
+/// JavaScript is a copy that drifts from the contract both frontends
+/// implement. So the table is generated and prepended here, once, rather
+/// than once per frontend.
+///
+/// Built on first use and kept: the table is a few hundred bytes derived
+/// from a `&'static` table, so it cannot change while the process runs, and
+/// the composer asks for it every time a window opens.
+pub fn editor_script() -> &'static str {
+    static SCRIPT: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    SCRIPT.get_or_init(|| format!("{}{EDITOR_SCRIPT}", markdown_table_js()))
+}
+
+/// `POSTIO_MARKDOWN`, as a JavaScript literal.
+///
+/// The markers are `&'static str` from a table in this workspace, not
+/// anybody's input, and every one of them is punctuation — but they are
+/// being written into source, so they are escaped rather than trusted to
+/// stay that way.
+pub fn markdown_table_js() -> String {
+    use crate::editor::markdown::{SEQUENCES, Trigger};
+    use std::fmt::Write as _;
+
+    let mut out = String::from("const POSTIO_MARKDOWN = [\n");
+    for sequence in SEQUENCES {
+        let trigger = match sequence.trigger {
+            Trigger::LinePrefix => "line_prefix",
+            Trigger::Wrapping => "wrapping",
+        };
+        let _ = writeln!(
+            out,
+            "    {{ marker: \"{}\", command: \"{}\", trigger: \"{trigger}\" }},",
+            sequence.marker.replace('\\', "\\\\").replace('"', "\\\""),
+            sequence.command,
+        );
+    }
+    out.push_str("];\n");
+    out
+}
+
 #[cfg(test)]
 mod editor_script_tests {
     use super::EDITOR_SCRIPT;
@@ -72,6 +116,32 @@ mod editor_script_tests {
     /// files are pinned to each other: this fails the moment either is
     /// edited alone, which is the only thing that makes a temporary
     /// duplicate safe.
+    /// The body names `POSTIO_MARKDOWN` and does not define it — the table
+    /// is generated from [`crate::editor::markdown::SEQUENCES`] so the set of
+    /// supported sequences has one source. A frontend handed the body alone
+    /// gets a `ReferenceError` on the first keystroke, and nothing on either
+    /// side of the boundary would say so: the script is loaded into a WebView
+    /// and its failures stay there.
+    #[test]
+    fn the_assembled_script_defines_the_table_before_it_reads_it() {
+        let script = super::editor_script();
+        let defined = script
+            .find("const POSTIO_MARKDOWN")
+            .expect("the table is defined");
+        let read = script
+            .find("for (const sequence of POSTIO_MARKDOWN)")
+            .expect("the body reads the table");
+        assert!(
+            defined < read,
+            "the table has to be in scope before the recognisers run"
+        );
+        assert!(
+            script.contains(r#"marker: "**", command: "bold""#),
+            "the table is the real one, not an empty literal: {}",
+            &script[defined..read.min(defined + 400)]
+        );
+    }
+
     #[test]
     fn the_gtk_copy_of_the_bridge_has_not_drifted_from_this_one() {
         let gtk =

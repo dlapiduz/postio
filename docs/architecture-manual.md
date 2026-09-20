@@ -48,8 +48,10 @@ running as many parallel sessions) directed by a human maintainer who sets
 scope and makes product calls. Every change starts as a GitHub issue, gets
 built test-first on its own private copy of the code, and only merges after
 an automated gate — tests, linting, architectural rule-checking, a scan for
-accidentally-leaked personal data — all pass. As of this writing the project
-is six days old and has 840 commits. The reason a document like this one can
+accidentally-leaked personal data — all pass. When this was written, on
+2026-08-28, the project was six days old and had 840 commits; by 2026-09-14,
+on the eve of its 0.4.0 release, `main` held 1,690 commits at twenty-three
+days. The reason a document like this one can
 be written accurately at all is that the project keeps an unusually thorough
 paper trail of *why* — architecture decision records, an engineering-notes
 journal, issue discussions — precisely because the people (and agents) doing
@@ -84,7 +86,7 @@ refuses to compile a program where those rules could be broken — before the
 program ever runs, not by crashing while it runs. This is why the project's
 top-level build configuration contains the line `unsafe_code = "forbid"`: it
 is telling the compiler to refuse to compile *any* code, anywhere in the
-eighteen packages that make up Postio, that opts out of this checking —
+twenty packages that make up Postio, that opts out of this checking —
 except in two narrowly justified places (interfacing with C libraries, which
 by definition weren't written under Rust's rules). For a program that parses
 untrusted data arriving over the network — and email, from strangers, is
@@ -103,7 +105,7 @@ and what other crates it depends on. A crate can produce a *library* (code
 other crates can call into) or a *binary* (a standalone program you can run),
 or sometimes both.
 
-Postio is not one crate. It is **eighteen** of them, living side by side in
+Postio is not one crate. It is **twenty** of them, living side by side in
 one repository, each with a narrow, named job — `postio-model`,
 `postio-storage`, `postio-search`, `postio-gtk`, and so on. Part Three walks
 through what each one is for and, more importantly, *why* the program is cut
@@ -133,7 +135,7 @@ with a build system for Python. Three things Cargo does that matter here:
 ### What a "workspace" is
 
 When several crates are meant to be developed and built together — which is
-Postio's situation, since the eighteen crates all belong to one application —
+Postio's situation, since the twenty crates all belong to one application —
 Cargo lets you declare a **workspace**: one top-level `Cargo.toml` that lists
 every member crate, shares one lockfile across all of them, and lets you
 build or test the whole set (or any subset) with one command. It's the same
@@ -214,25 +216,28 @@ is a good small example of how much devil lives in these details.
 Put together: Postio is a GTK4/libadwaita program (the window, the widgets,
 the keyboard handling), with an embedded, locked-down WebKitGTK view for
 rendering mail content, talking to the desktop shell through D-Bus portals
-when it needs to, all compiled from Rust source organized as an
-eighteen-crate Cargo workspace. The next part explains why eighteen crates,
+when it needs to, all compiled from Rust source organized as a
+twenty-crate Cargo workspace. The next part explains why twenty crates,
 and what each one does.
 
 ---
 
 ## Part Four: Postio's shape — the crate map
 
-### Why split one program into eighteen crates at all?
+### Why split one program into twenty crates at all?
 
 The short answer: **so that a machine, not a person's memory, can enforce
 which parts of the program are allowed to know about which other parts.**
 
 Here's the concrete problem this solves. Postio's core promise is that it can
 grow a second frontend someday — a native Mac app, say — without rewriting
-the mail engine underneath. (This isn't hypothetical: as of the most recent
-measurement, a native macOS frontend is scheduled, and thirteen of Postio's
-fifteen core crates already build and test on macOS with *no changes at
-all*.) For that promise to hold, the code that talks to SQLite and the code
+the mail engine underneath. (This isn't hypothetical: a read-only native
+macOS frontend exists — `macos/` and `postio-ffi`, not yet shipped — and when
+the question was first measured, on 2026-08-27, thirteen of what were then
+Postio's fifteen crates already built and tested on macOS with *no changes at
+all*; the workspace is twenty crates now.) For that promise to hold, the code
+that talks to the database — Turso, a Rust rewrite of SQLite; Part Six tells
+how it got there — and the code
 that talks to GTK have to be genuinely separable — not "separable if everyone
 remembers to keep them apart," but separable in a way a computer can check on
 every single change. Rust's crate boundary is what makes that checkable: a
@@ -289,11 +294,13 @@ types and the logic that belongs to them:
 **The engine layer** — "the database half": everything that talks to a
 server or to disk:
 
-- **`postio-storage`** — the SQLite schema, database migrations, and a
+- **`postio-storage`** — the database schema (one declared `HEAD`; a store
+  an older schema wrote is resynced rather than migrated), and a
   separate content-addressed store for raw message bytes and attachments
   (the "blob store"). This is where Part Five and Part Six's stories live.
-- **`postio-index`** — the full-text search index (built on a SQLite feature
-  called FTS5) and the code that actually executes a parsed query against
+- **`postio-index`** — the full-text search index (the engine's `fts` index
+  method, over a flattened `search_documents` table and the folded body
+  column) and the code that actually executes a parsed query against
   it.
 - **`postio-account`**, **`postio-jmap`**, **`postio-gmail`** — three different
   implementations of talking to a mail server, one per protocol (the
@@ -341,6 +348,13 @@ server or to disk:
   names a widget belongs in `postio-app`; anything that doesn't belongs in
   `postio-session`.
 
+**Two members that ship nothing** — which is how eighteen crates by role
+come to twenty in the manifest: **`postio-bench`** holds every benchmark, in
+one place so that the benchmarking library and its dozen dependencies are
+compiled once rather than by every crate that has something to measure; and
+**`postio-test-support`** holds the one deadline-and-backoff helper the test
+suites share, which used to exist as 171 hand-rolled copies.
+
 ### The rule that makes the split real, not aspirational
 
 It would be easy for this four-layer picture to be true on the day it's
@@ -353,7 +367,8 @@ comments, not intentions — for two rules specifically: the contract layer
 library. Second, and more subtly: Cargo's dependency *features* resolve as a
 union across everything being built in one program — meaning if the
 database code were merely an optional feature of the contract crate, turning
-that feature on anywhere in the program would pull SQLite into the graph of
+that feature on anywhere in the program would pull the database engine into
+the graph of
 *every* crate depending on the contract crate, including the view layer,
 whether or not the view layer wanted it. That's a real trap a less careful
 design would fall into silently. It's the specific reason `postio-runtime`
@@ -374,8 +389,9 @@ months into something that made the program *segfault*.
 
 ### Act Zero: what a "write-ahead log" even is, and why Postio chose one
 
-SQLite — the database engine Postio stores everything in — has more than one
-way of guaranteeing that a crash or power failure can't corrupt your data.
+SQLite — the database engine Postio stored everything in when this story
+happened, and whose Rust rewrite it stores everything in now — has more than
+one way of guaranteeing that a crash or power failure can't corrupt your data.
 The traditional way is a **rollback journal**: before changing the real
 database file, SQLite copies the *old* version of whatever it's about to
 change into a separate journal file, so a crash mid-write can be undone by
@@ -405,10 +421,14 @@ readers. That single sentence is the seed of everything that follows.
 Once Postio was actually syncing real mailboxes, an odd, specific complaint
 showed up: **archiving a single message took 1.8 seconds.** Not "syncing is
 slow" — one keystroke, on one row, taking almost two full seconds to
-register. And it wasn't the connection pool: Postio keeps a small pool of
-database connections so multiple parts of the program can talk to SQLite
-concurrently, and measurement showed the pool handed out a connection in two
-*microseconds*. The pool was never waiting for anything.
+register. And it wasn't connection handling: at the time Postio kept a small
+hand-written pool of database connections, and measurement showed it handed
+out a connection in two *microseconds* — connections were never what anything
+was waiting for. (That pool is gone entirely now: the current engine manages
+its own connections internally behind a cheap connect-per-use call, so
+`postio-storage` no longer keeps one. Nothing else about this story changes,
+because the contended thing was never the connections — it was the database's
+single write lock.)
 
 The actual mechanism: during a first sync, the background sync engine is
 committing batches of newly-downloaded messages back-to-back, with almost no
@@ -496,7 +516,9 @@ WAL and the encryption work covered in Part Six — collide directly, and it's
 the best illustration in the whole project of a lesson worth stating plainly:
 **a change can be entirely correct in isolation and still expose a bug that
 was sitting there all along, waiting for exactly this combination of
-conditions to occur.**
+conditions to occur.** The encrypting engine in this act, SQLCipher, has
+since been replaced (Part Six tells that story); the lesson is about threads
+and `exit()`, and it outlives the engine.
 
 Once Postio's database was switched over to SQLCipher — meaning every page
 of the database is now encrypted and decrypted through a cryptography
@@ -551,22 +573,22 @@ under "performance tuning, adjust if a benchmark trips" was actually a
 **correctness** setting for this specific, concurrent application, and
 turning it off permanently, before it ever got the chance to be tuned.
 
-One more small, sharp detail from the same stretch of work, because it's a
-nice example of a failure that reports itself as the wrong problem entirely:
-SQLCipher's `PRAGMA key` — the statement that actually tells the database
-what encryption key to use — **cannot fail on its own.** It will silently
-accept *any* key at all, correct or not, and the wrong key only reveals
-itself later, elsewhere, the first time SQLite actually tries to read a page
-and finds garbage where a database page should be — surfacing as the generic
-SQLite error "file is not a database." That error message, reaching an
-actual person's screen, tells them their mail is *corrupted*, when in fact it
-is perfectly intact and simply locked behind the wrong key. The fix was to
-deliberately force the failure to happen early and honestly: immediately
-after issuing `PRAGMA key`, the code now reads one page on purpose, purely
-to force SQLite to prove the key actually works before the rest of the
-program can proceed, and translates a decrypt failure at that specific,
-controlled moment into an explicit "wrong key" error rather than letting a
-wrong key surface, unpredictably, as an apparently corrupted mailbox.
+One more small, sharp detail, because it's a nice example of a failure that
+reports itself as the wrong problem entirely: a database opened with the
+wrong encryption key does not say so. The engine decrypts the first page to
+find out whether the file is a database at all, so a wrong key and a
+genuinely damaged file arrive as the same error — a decryption failure, or,
+for a file this build was never able to read, an "invalid page size"
+complaint that is really ciphertext being misread as a file header. That
+error, reaching an actual person's screen, tells them their mail is
+*corrupted*, when in fact it is perfectly intact and simply locked behind
+the wrong key. Postio can tell apart what the engine cannot: it writes
+exactly one key per store and takes it from the keyring, so a store that
+will not open is the key (a keyring entry replaced, or belonging to another
+installation), essentially never a rotted disk — and `postio-storage`
+translates those specific error spellings into an explicit "wrong key" error
+that also says the mail is intact, rather than letting the generic wording
+stand.
 
 ### What this saga adds up to
 
@@ -588,9 +610,9 @@ the stack — not by guessing.
 
 ---
 
-## Part Six: Encrypting a mailbox — SQLCipher and what it costs
+## Part Six: Encrypting a mailbox, and what it costs
 
-### The decision: SQLCipher, not filesystem encryption
+### The decision: encrypt in the application, not the filesystem
 
 Postio's stance is that relying on the operating system's own disk
 encryption isn't enough — a mail client that promises privacy should encrypt
@@ -600,14 +622,24 @@ wandering somewhere the user didn't intend. That decision — encrypt at rest,
 in the application itself — was made deliberately by the maintainer as an
 architecture decision (documented, with its full reasoning, as ADR 0014).
 
-The database engine underneath Postio's SQLite usage is **SQLCipher**, a
-well-established fork of SQLite that adds transparent encryption *below*
-SQLite's own machinery — meaning every individual page of the database file
-is encrypted, but everything built on top (the full-text search index, WAL
-itself, every existing database query) keeps working completely unchanged,
-because as far as SQLite's own code is concerned, nothing about how pages are
-read or written has changed at all. The alternative approaches considered and
-rejected are worth naming, because each rejection teaches something: relying
+The database engine underneath is **Turso**, a from-scratch Rust rewrite of
+SQLite whose page-level encryption belongs to the engine itself: opening the
+store (`Store::open`) hands the engine a key derived from the mailbox's
+master key, and every individual page of the database file is encrypted with
+AES-256-GCM — an authenticated cipher — *below* the SQL machinery, so
+everything built on top (the full-text index, the write-ahead log, every
+existing query) works unchanged. Postio first shipped this feature on
+SQLCipher, an encrypting fork of SQLite; the engine was swapped later
+(ADR 0038), for reasons measured rather than assumed — nearly half the CPU
+cost of reading a real mailbox turned out to be SQLCipher's per-page
+integrity check, done in software beside the cipher where GCM authenticates
+as part of it, and building SQLCipher meant compiling OpenSSL from source in
+every fresh checkout. The swap kept the threat model and the key design
+below fully intact, and gave up one convenience deliberately: this engine
+has no read-only way to open a store, so the diagnostic tools that used to
+open the live database read-only now insist on being pointed at a copy. The
+alternative approaches considered and rejected are worth naming, because
+each rejection teaches something: relying
 on the Linux filesystem feature `fscrypt` was rejected because the actual
 development machine's filesystem (btrfs) doesn't even support it, which would
 have made "Postio encrypts your mail" true only on some filesystems by
@@ -692,7 +724,12 @@ mailbox are still recognized as identical and stored only once.
 
 A few honest numbers, each one obtained by actually measuring rather than
 reasoning about what should be true, because more than one plausible-sounding
-guess in this project's own history turned out wrong once someone measured:
+guess in this project's own history turned out wrong once someone measured.
+One caveat covers all of them, the same one `docs/PERFORMANCE.md` carries:
+they were measured against SQLCipher, the engine of the day, and none has
+been re-measured since the swap to Turso (ADR 0038) — the memory shape is
+expected to hold, and the cipher's share is expected to fall, but that is
+arithmetic until someone runs the recipe on a real store.
 
 - The most visible casualty was memory-mapping the database file directly
   into the program's address space (`mmap`), a feature the project had
@@ -727,17 +764,6 @@ guess in this project's own history turned out wrong once someone measured:
   measurements can never prove a trend has leveled off — it took a third
   data point, at a much larger mailbox size, to actually confirm that a
   rising number had stopped rising rather than merely paused.
-- Getting the encryption library itself to build turned out to be more
-  expensive than the architecture decision anticipated. The chosen build
-  configuration compiles its own copy of OpenSSL from source as part of
-  building Postio, for reproducibility — but OpenSSL's own build process is
-  a Perl program, and the Linux distribution used for development splits
-  Perl's standard library across many small packages, several of which
-  aren't installed by default. The actual list of missing pieces was
-  discovered the hard way, one cryptic "can't locate this module" build
-  failure at a time, and had to be worked out by directly reading which
-  Perl modules OpenSSL's own build script imports — because no single
-  package metadata anywhere listed them all together.
 
 ---
 
@@ -780,9 +806,9 @@ anyone's memory of a conversation that happened once.
 ## Closing
 
 The thread running through all of this: nearly every distinctive thing about
-how Postio is built — eighteen crates instead of one, commands flowing one
+how Postio is built — twenty crates instead of one, commands flowing one
 direction and events flowing back the other, write-ahead logging, an
-application-level write queue in front of SQLite, encryption keys derived
+application-level write queue in front of the store, encryption keys derived
 three separate ways from one master key — is not decoration. Each one is a
 direct, traceable answer to a specific problem that was measured, not
 assumed: a UI that must never freeze waiting on a network it doesn't

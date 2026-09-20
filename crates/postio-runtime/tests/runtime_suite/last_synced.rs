@@ -32,19 +32,20 @@ fn server() -> MockBackend {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_folder_that_has_synced_says_when() {
-    let database = test_support::memory();
+    let database = test_support::memory().await;
     let (account, inbox) = {
-        let connection = database.connection().expect("a connection");
-        let account = test_support::account(&connection);
-        let inbox = test_support::mailbox(&connection, &account, "INBOX");
+        let connection = database.connect().await.expect("a connection");
+        let account = test_support::account(&connection).await;
+        let inbox = test_support::mailbox(&connection, &account, "INBOX").await;
         (account, inbox)
     };
 
     // Before: nothing has synced, and the store says so honestly.
     {
-        let connection = database.connection().expect("a connection");
+        let connection = database.connect().await.expect("a connection");
         let before = MailboxRepository::new(&connection)
             .get(inbox.id)
+            .await
             .expect("a read")
             .expect("the inbox");
         assert_eq!(before.last_synced_at, None, "nothing has synced yet");
@@ -85,9 +86,10 @@ async fn a_folder_that_has_synced_says_when() {
         "the fixture synced nothing: {summary:?}"
     );
 
-    let connection = database.connection().expect("a connection");
+    let connection = database.connect().await.expect("a connection");
     let after = MailboxRepository::new(&connection)
         .get(inbox.id)
+        .await
         .expect("a read")
         .expect("the inbox");
     let recorded = after

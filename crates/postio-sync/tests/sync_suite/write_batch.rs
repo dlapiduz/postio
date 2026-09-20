@@ -15,10 +15,10 @@ use std::collections::BTreeSet;
 use postio_model::{
     Account, EmailAddress, Generation, Mailbox, Message, RfcMessageId, Uid, UidValidity,
 };
+use postio_storage::Connection;
 use postio_storage::repository::{ContactRepository, MessageRepository};
 use postio_storage::test_support;
 use postio_sync::commit_batch;
-use rusqlite::Connection;
 
 const INBOX: &str = "INBOX";
 
@@ -30,9 +30,9 @@ const UID_VALIDITY: UidValidity = UidValidity::new(1);
 const GENERATION: Generation = Generation::new(1);
 
 /// An account and an empty local `INBOX`.
-fn local(connection: &Connection) -> (Account, Mailbox) {
-    let account = test_support::account(connection);
-    let inbox = test_support::mailbox(connection, &account, INBOX);
+async fn local(connection: &Connection) -> (Account, Mailbox) {
+    let account = test_support::account(connection).await;
+    let inbox = test_support::mailbox(connection, &account, INBOX).await;
     (account, inbox)
 }
 
@@ -48,11 +48,11 @@ fn message(account: &Account, mailbox: &Mailbox, uid: u32, subject: &str) -> Mes
     message
 }
 
-#[test]
-fn a_committed_batch_is_stored_threaded_and_its_correspondents_recorded() {
-    let database = test_support::memory();
-    let connection = database.connection().expect("checkout");
-    let (account, inbox) = local(&connection);
+#[tokio::test]
+async fn a_committed_batch_is_stored_threaded_and_its_correspondents_recorded() {
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    let (account, inbox) = local(&connection).await;
 
     let mut batch = vec![
         message(&account, &inbox, 1, "Note one"),
@@ -66,6 +66,7 @@ fn a_committed_batch_is_stored_threaded_and_its_correspondents_recorded() {
         &BTreeSet::new(),
         &mut batch,
     )
+    .await
     .expect("the batch commits");
 
     assert_eq!(report.inserted, 2, "both messages are new");
@@ -84,6 +85,7 @@ fn a_committed_batch_is_stored_threaded_and_its_correspondents_recorded() {
         assert!(written.id.get() > 0, "the upsert assigned an id");
         let stored = messages
             .get(written.id)
+            .await
             .expect("read the message back")
             .expect("the message is in the store");
         assert!(
@@ -92,7 +94,10 @@ fn a_committed_batch_is_stored_threaded_and_its_correspondents_recorded() {
         );
     }
 
-    let stored = messages.uids_in(inbox.id, GENERATION).expect("uids_in");
+    let stored = messages
+        .uids_in(inbox.id, GENERATION)
+        .await
+        .expect("uids_in");
     assert_eq!(stored.len(), 2, "both messages reached the store");
 
     // Recorded: the correspondent list is built by the sync path and nothing
@@ -100,6 +105,7 @@ fn a_committed_batch_is_stored_threaded_and_its_correspondents_recorded() {
     // finder and the composer's completion empty however much mail arrives.
     let contacts = ContactRepository::new(&connection)
         .list(Some(account.id))
+        .await
         .expect("list contacts");
     let addresses: Vec<String> = contacts.iter().map(|c| c.address.normalized()).collect();
     assert!(
@@ -112,11 +118,11 @@ fn a_committed_batch_is_stored_threaded_and_its_correspondents_recorded() {
     );
 }
 
-#[test]
-fn a_uid_already_known_is_written_again_but_its_correspondents_are_not() {
-    let database = test_support::memory();
-    let connection = database.connection().expect("checkout");
-    let (account, inbox) = local(&connection);
+#[tokio::test]
+async fn a_uid_already_known_is_written_again_but_its_correspondents_are_not() {
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    let (account, inbox) = local(&connection).await;
 
     // The pass that first wrote UID 1.
     let mut first = vec![message(&account, &inbox, 1, "Note one")];
@@ -127,12 +133,13 @@ fn a_uid_already_known_is_written_again_but_its_correspondents_are_not() {
         &BTreeSet::new(),
         &mut first,
     )
+    .await
     .expect("the first batch commits");
 
     // A re-enumeration: UID 1 is known going in, so it is refreshed but not
     // counted as a new sighting. Recording it again would inflate `times_seen`
     // without a new message ever having arrived.
-    let before = sightings_of(&connection, &account, "ada@example.com");
+    let before = sightings_of(&connection, &account, "ada@example.com").await;
     let mut again = vec![message(&account, &inbox, 1, "Note one")];
     let report = commit_batch(
         &connection,
@@ -141,21 +148,23 @@ fn a_uid_already_known_is_written_again_but_its_correspondents_are_not() {
         &BTreeSet::from([1]),
         &mut again,
     )
+    .await
     .expect("the second batch commits");
 
     assert_eq!(report.inserted, 0, "nothing was new");
     assert_eq!(report.updated, 1, "the known message was written again");
     assert_eq!(
-        sightings_of(&connection, &account, "ada@example.com"),
+        sightings_of(&connection, &account, "ada@example.com").await,
         before,
         "a known UID records no second sighting"
     );
 }
 
 /// How many times `address` has been seen for `account`.
-fn sightings_of(connection: &Connection, account: &Account, address: &str) -> u32 {
+async fn sightings_of(connection: &Connection, account: &Account, address: &str) -> u32 {
     ContactRepository::new(connection)
         .list(Some(account.id))
+        .await
         .expect("list contacts")
         .iter()
         .find(|contact| contact.address.normalized() == address)

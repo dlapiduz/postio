@@ -55,6 +55,7 @@ impl Store {
                 unread: 0,
                 flagged,
                 snoozed: 0,
+                attention: 0,
             };
             mailbox
         };
@@ -88,6 +89,7 @@ impl MessageSource for Store {
             ListScope::Account(_)
             | ListScope::Unified
             | ListScope::Snoozed(_)
+            | ListScope::Outbox(_)
             | ListScope::Thread(_) => 0,
         };
         Box::pin(async move {
@@ -105,7 +107,8 @@ impl MessageSource for Store {
                     seen: false,
                     flagged: true,
                     answered: false,
-                    draft: false,
+                    send_state: None,
+                    send_at: None,
                     has_attachments: false,
                     thread_count: 1,
                     participants: Vec::new(),
@@ -215,6 +218,7 @@ impl MailboxSource for LiveStore {
             unread: 0,
             flagged: *self.flagged.borrow(),
             snoozed: *self.snoozed.borrow(),
+            attention: 0,
         };
         Box::pin(async move { Ok(vec![inbox]) })
     }
@@ -229,6 +233,7 @@ impl MessageSource for LiveStore {
             ListScope::Mailbox(_)
             | ListScope::Account(_)
             | ListScope::Unified
+            | ListScope::Outbox(_)
             | ListScope::Thread(_) => 0,
         };
         Box::pin(async move {
@@ -246,7 +251,8 @@ impl MessageSource for LiveStore {
                     seen: false,
                     flagged: true,
                     answered: false,
-                    draft: false,
+                    send_state: None,
+                    send_at: None,
                     has_attachments: false,
                     thread_count: 1,
                     participants: Vec::new(),

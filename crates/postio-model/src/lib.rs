@@ -49,10 +49,13 @@ pub mod contact_group;
 pub mod draft;
 pub mod egress;
 pub mod flag;
+pub mod fold;
 pub mod headers;
 pub mod ids;
 pub mod label;
 pub mod mailbox;
+pub mod mailto;
+pub mod mention;
 pub mod message;
 pub mod mime;
 pub mod operation;
@@ -61,6 +64,7 @@ pub mod reply;
 pub mod scope;
 pub mod signature;
 pub mod signature_default;
+pub mod size;
 pub mod subject;
 pub mod sync;
 #[cfg(feature = "test-corpus")]
@@ -86,7 +90,7 @@ pub use ids::{
     ThreadId, Uid, UidValidity,
 };
 pub use label::Label;
-pub use mailbox::{Mailbox, MailboxCounts, MailboxRole, RoleOverrides};
+pub use mailbox::{Mailbox, MailboxCounts, MailboxRole, RoleKind, RoleOverrides};
 pub use message::{BodyState, LocalSyncState, Message, MessageBody, ServerIdentifiers};
 pub use mime::{ParsedMessage, ParsedPart};
 pub use operation::{Operation, OperationRange, OperationState, OperationTarget};

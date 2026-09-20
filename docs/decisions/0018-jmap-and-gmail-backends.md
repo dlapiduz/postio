@@ -39,9 +39,10 @@ never a branch on a vendor name.
 ## Q1 — Where do the backends live?
 
 Two new crates, `postio-jmap` and `postio-gmail`, each depending on its
-Pimalaya wire crate and on `postio-imap` **with
-`default-features = false`** — the crate that (wart acknowledged in ADR
-0006 Q2) owns the `MailBackend` trait, the keyring, and OAuth. They
+Pimalaya wire crate and on `postio-account` (`postio-imap` when this was
+written; renamed by #153) **with `default-features = false`** — the crate
+that (wart acknowledged in ADR 0006 Q2, and answered by the rename) owns
+the `MailBackend` trait, the keyring, and OAuth. They
 implement the trait; nothing above the composition root learns a new
 name. The engine keeps one code path.
 
@@ -131,6 +132,10 @@ compatibility net.
 - Two new crates; two new rows in `check-crate-boundaries.py`.
 - One migration (remote identity) that every existing store crosses
   once, IMAP adapters filling `remote_id` from `uidvalidity:uid`.
+  *(ADR 0038: there are no migrations any more. `messages.remote_id`,
+  `accounts.backend` and `accounts.jmap_session_url` are declared in
+  `crates/postio-storage/src/schema.rs`'s `HEAD`, and an old store is
+  resynced rather than crossed.)*
 - The preset schema gains `backend` (a preference list, default
   `["imap"]`); the Fastmail row advertises jmap once the backend ships.
 - The slices are tracked under the initiative epic this ADR lands with;

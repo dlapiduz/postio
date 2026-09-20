@@ -1,0 +1,24 @@
+Message-ID: <20260309T101112.escaping.styles@promo.example.org>
+Date: Mon, 09 Mar 2026 10:11:12 +0000
+From: Harbour Deals <deals@promo.example.org>
+To: Quinn Abara <quinn.abara@example.net>
+Subject: One weekend only
+MIME-Version: 1.0
+Content-Type: text/html; charset=utf-8
+Content-Transfer-Encoding: 7bit
+
+<html>
+<body>
+<div style="position:fixed;top:0;left:0;width:100vw;height:100vh;z-index:2147483647;background:#fff">
+  <p>This banner would cover the whole pane if `position` survived.</p>
+</div>
+<div style="position:absolute;top:-400px">Lifted out of its own block.</div>
+<p style="transform:translateY(-600px)">Painted over whatever is above.</p>
+<table width="100%" cellpadding="6"><tr>
+  <td width="50%" bgcolor="#f5f0e8" valign="top">A column that must survive.</td>
+  <td width="50%">And its neighbour.</td>
+</tr></table>
+<p style="font-size:8vw;margin:4vh 0">Sized against the window, not the message.</p>
+<p style="color:#2b6cb0;font-weight:700">Ordinary styling, which must not be caught by any of it.</p>
+</body>
+</html>

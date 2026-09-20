@@ -90,7 +90,13 @@ print(floors['$crate'])
     # turned a tool failure into `JSONDecodeError: Expecting value: line 1
     # column 1`, a Python traceback naming neither the crate nor the reason.
     # That is what this looked like on CI, and it cost a run to find out.
-    if ! report=$(env -u RUSTUP_TOOLCHAIN cargo llvm-cov -p "$crate" --json --summary-only); then
+    # Through nextest, not `cargo test`: the measurement tier is held off the
+    # merge path by nextest's `default-filter`, which `cargo test` cannot
+    # read, so it ran here -- two 253 MiB stores and a 400,000-message seed
+    # inside an instrumented build, on a runner that has run out of disk
+    # once already (#1456). cargo-llvm-cov drives nextest with the same
+    # profile, and the floors measure the same tests every other run does.
+    if ! report=$(env -u RUSTUP_TOOLCHAIN cargo llvm-cov nextest -p "$crate" --json --summary-only); then
         echo >&2
         echo "could not measure coverage for '$crate': cargo llvm-cov failed." >&2
         echo "Its error is above; this is a broken measurement, not a floor." >&2

@@ -3,10 +3,17 @@
 //! A message body is hostile input that has to render correctly anyway. The
 //! four rules, each backed by a real API rather than a promise:
 //!
-//! * **JavaScript is off**, at the `WebKitSettings` level, along with every
-//!   other scripting-adjacent surface (`WebGL`, `WebRTC`, IndexedDB-style
-//!   storage, the offline application cache) — a script disabled by policy in
-//!   one place and reachable through another is not disabled.
+//! * **A message's script never runs. Postio's own does.** Those are two
+//!   settings: `enable_javascript_markup(false)` refuses a `<script>`
+//!   element, an event-handler attribute and a `javascript:` href, and the
+//!   document's `Content-Security-Policy` sends `script-src 'none'` — a
+//!   sender is refused twice. `enable_javascript` itself is deliberately
+//!   **on**, because an injected script is exempt from the page's CSP and
+//!   the conversation rail needs one: see `hardened_settings` for the whole
+//!   argument. Every other scripting-adjacent surface is off outright
+//!   (`WebGL`, `WebRTC`, `WebAudio`, the media stack, IndexedDB-style
+//!   storage) — a script disabled by policy in one place and reachable
+//!   through another is not disabled.
 //! * **Nothing is fetched.** [`postio_body::sanitize_body`] never leaves a
 //!   remote `src` in the markup unless the caller explicitly allows it
 //!   (`postio-xxz`), so there is nothing in the DOM to fetch in the first
@@ -63,7 +70,8 @@ struct Open {
     /// Whether reader view had something to offer on this message.
     ///
     /// Recorded at `render` rather than asked again per draw:
-    /// [`suits_reader_view`] parses the markup, and the answer cannot change
+    /// [`postio_ui::reader::document::suits_reader_view`] parses the markup,
+    /// and the answer cannot change
     /// while one message is on screen. It is what tells `View original` apart
     /// from ordinary correspondence, which is also `Rendering::Original` and
     /// must keep following the theme.
@@ -105,7 +113,38 @@ pub struct Reader {
     // hand-rolled bar with the shared one, and `actions.rs` now owns only
     // which four verbs it carries.
     actions: Rc<ActionBar>,
+    /// The bar a message waiting to be sent gets, and the one a stopped send
+    /// gets. See [`Reader::set_send_state`].
+    queued_actions: Rc<ActionBar>,
+    stopped_actions: Rc<ActionBar>,
+    /// What the message on screen is doing, so `render` can put the right
+    /// bar back after clearing.
+    send_state: Rc<std::cell::Cell<Option<postio_model::DraftState>>>,
+    /// Whether a message occupies the pane at all.
+    ///
+    /// Separate from [`Self::send_state`], and from `actions_suppressed`,
+    /// because they answer different questions: *which* verbs, *whether the
+    /// surface allows any*, and *is there anything to act on*. Without this
+    /// third one, picking the verbs for "no send state" showed the ordinary
+    /// bar over an empty pane.
+    showing: Rc<std::cell::Cell<bool>>,
     allowlist: Rc<RefCell<RemoteImageAllowList>>,
+    /// The thread currently drawn, so a `Show` verb inside the document can
+    /// find the message its scope names and the sender that message is from.
+    /// Empty whenever a single message is drawn instead.
+    thread: Rc<RefCell<Vec<ThreadMessage>>>,
+    /// The messages of the open thread the reader has been asked to show
+    /// whole, by scope.
+    ///
+    /// A thread's rendering is decided per message from its own content, and
+    /// this is the reader overruling that for one of them. Kept beside the
+    /// thread rather than inside `Open`, which only the single-message path
+    /// fills — reading `Open` is what made `⌃O` a no-op here (#1398).
+    originals: Rc<RefCell<std::collections::HashSet<String>>>,
+    /// Who to tell when a message's own verb is activated.
+    on_message_action: Rc<RefCell<Vec<MessageActionHandler>>>,
+    /// Who to tell when the message filling the pane changes.
+    on_current_message: Rc<RefCell<Vec<CurrentMessageHandler>>>,
     open: Rc<RefCell<Option<Open>>>,
     /// Which [`Absent`] the pane is explaining, when it has no body to draw.
     /// `None` whenever a body is on screen — the two are exclusive, and
@@ -175,6 +214,19 @@ struct DarkNotify {
     handler: Option<glib::SignalHandlerId>,
 }
 
+impl Drop for Reader {
+    /// Balances [`postio_ui::reader::cost::note_surface_created`] so that
+    /// `surfaces_held` means what it says.
+    ///
+    /// Dropping the `Reader` is what lets its `WebView` go, and the web
+    /// process with it. A conversation that keeps every surface it ever
+    /// opened is the defect ADR 0032 describes, and it is invisible to any
+    /// count that only watches creations.
+    fn drop(&mut self) {
+        postio_ui::reader::cost::note_surface_released();
+    }
+}
+
 impl Drop for DarkNotify {
     fn drop(&mut self) {
         if let Some(handler) = self.handler.take() {
@@ -183,8 +235,101 @@ impl Drop for DarkNotify {
     }
 }
 
+/// The script message handler the rail's observer posts through.
+///
+/// Named rather than derived, because the same string has to appear in the
+/// injected script and in the Rust registration, and a mismatch is a channel
+/// that silently never delivers.
+const RAIL_HANDLER: &str = "postioRail";
+
+/// What [`Reader::connect_current_message`] holds: the scope of the message
+/// filling most of the pane.
+type CurrentMessageHandler = Box<dyn Fn(&str)>;
+
+/// What [`Reader::connect_message_action`] holds: the scope a verb named, and
+/// which verb it was.
+type MessageActionHandler = Box<dyn Fn(&str, MessageVerb)>;
+
+/// A verb a message offers for itself, inside the document.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MessageVerb {
+    /// Reply to this message rather than to the latest one.
+    Reply,
+    /// Forward this message.
+    Forward,
+    /// Resume the composer on this draft (#1212).
+    ///
+    /// The verb a draft offers instead of the other two, and the same command
+    /// activating the row raises -- `CommandId::OpenMessage` -- so a button
+    /// and `Return` cannot come to mean different things.
+    Continue,
+}
+
 /// What [`Reader::connect_parts_requested`] holds.
 type PartsRequestedHandler = Box<dyn Fn()>;
+
+/// One message's place in a conversation rendered into a single view.
+///
+/// `Clone` because the reader keeps the thread it drew: the `Show` verb inside
+/// the document has to re-render after granting consent, and it re-renders the
+/// same messages rather than asking the application for them again.
+///
+/// See [`Reader::render_thread`] and ADR 0032.
+#[derive(Clone)]
+pub struct ThreadMessage {
+    /// What this message's `cid:` references are stamped with, and what the
+    /// scheme handler routes on. The message id in decimal: unreserved
+    /// characters only, since it goes into a URI unescaped.
+    pub scope: String,
+    /// Who it is from, as a person reads it.
+    pub sender: String,
+    /// Their address, shown beside the name on an open message (canvas 17).
+    pub address: String,
+    /// When, already formatted.
+    pub when: String,
+    /// Who it went to, already drawn by
+    /// `postio_ui::reader::header::recipient_line` -- the same rule the
+    /// stacked pane's per-entry header uses, so the two panes cannot start
+    /// counting recipients differently (#1427).
+    pub recipients: String,
+    /// Who else was copied, by the same rule. Empty when nobody was.
+    pub cc: String,
+    /// The one line a collapsed message shows.
+    pub preview: String,
+    /// Whether it starts open.
+    pub expanded: bool,
+    /// Whether the body has not been backfilled yet.
+    ///
+    /// A conversation is one document (ADR 0032), so a message with no body
+    /// used to contribute an empty section and say nothing -- the reader saw
+    /// a message that would not open and no reason why. `Absent::Partial`'s
+    /// plate is the answer the single-message path has always given, and this
+    /// is what carries the question into the thread.
+    ///
+    /// Only the message that is *open* shows the plate. Everything unfetched
+    /// stays the one line it already was, because
+    /// `expanded_in_document` opens every message in the thread and a plate
+    /// on each would be thirty explanations of one fact.
+    pub absent: bool,
+    /// Whether this is the newest message in the thread — canvas 17's badge.
+    pub latest: bool,
+    /// Whether this is a draft: written here and never sent.
+    ///
+    /// Changes which verbs the message offers -- `Continue editing` alone
+    /// (#1212). The conversation knows it from `Row::draft`; the reader only
+    /// carries it through to the document.
+    pub draft: bool,
+    /// Whether it came from one of the account's own addresses (#1241).
+    ///
+    /// Folded by the conversation, which is the only layer that knows the
+    /// account's identities -- `postio-gtk`'s reader has no notion of who
+    /// the user is and should not grow one.
+    pub mine: bool,
+    /// The message body, unsanitised — [`Reader::render_thread`] sanitises it
+    /// under [`scope`](Self::scope), which is the only way the reference
+    /// stamping can be guaranteed.
+    pub body: MessageBody,
+}
 
 impl Reader {
     /// Build a reader that resolves inline (`cid:`) images through `source`.
@@ -209,16 +354,30 @@ impl Reader {
         allowlist: RemoteImageAllowList,
         allowlist_path: std::path::PathBuf,
     ) -> Self {
+        // One `Reader` is one `WebView` is one web process -- measured, in
+        // `gtk_reader.rs`'s `each_reader_costs_a_web_process_of_its_own`. That
+        // is the cost ADR 0032 put at thirty processes for a thirty-message
+        // thread, so it is counted from the moment one is built.
+        postio_ui::reader::cost::note_surface_created();
+
         let network_session = webkit6::NetworkSession::new_ephemeral();
         network_session.set_persistent_credential_storage_enabled(false);
 
         let context = webkit6::WebContext::new();
         scheme::register(&context, source);
 
+        // The channel the rail's observer reports through (#1370). Registered
+        // on the view rather than on the context, because the context is per
+        // reader and a handler on a shared one would deliver another reader's
+        // scrolling here.
+        let content = webkit6::UserContentManager::new();
+        content.register_script_message_handler(RAIL_HANDLER, None);
+
         let view = webkit6::WebView::builder()
             .web_context(&context)
             .network_session(&network_session)
             .settings(&hardened_settings())
+            .user_content_manager(&content)
             .hexpand(true)
             .vexpand(true)
             .build();
@@ -226,6 +385,7 @@ impl Reader {
         view.set_accessible_role(gtk::AccessibleRole::Article);
         view.connect_decide_policy(handle_decide_policy);
         paint_ground(&view);
+        crate::web_process::watch(&view);
         // The scheme can change while the application runs, and the widget
         // background is not a document, so no re-render fixes it.
         let dark_notify = adw::StyleManager::default().connect_dark_notify({
@@ -246,13 +406,21 @@ impl Reader {
         );
         let unsubscribe_banner = Rc::new(UnsubscribeBanner::new());
         let actions = super::actions::new();
+        // One bar per verb set `ReaderAction::for_send_state` can return.
+        // Exactly one is visible, and for `Sending` none is: cancelling is
+        // refused once the submission started and retrying would risk a
+        // second copy, so the bar offers nothing rather than a refusal.
+        let queued_actions = super::actions::new_for(&super::actions::QUEUED);
+        let stopped_actions = super::actions::new_for(&super::actions::STOPPED);
 
         let chips = crate::parts::Chips::new();
 
         // The header sits above the banner and does not scroll away with
         // the body (#319): it is a sibling in this native box, never markup
-        // inside the `WebView`'s document. The action bar (#498) sits last,
-        // under the attachment chips, matching the canvas' footer treatment.
+        // inside the `WebView`'s document. The action bar (#498) used to sit
+        // last, under the attachment chips; it is in the header now, with
+        // the subject, which is where the conversation pane has always put
+        // it (#1435).
         let container = gtk::Box::new(gtk::Orientation::Vertical, 0);
         container.append(&header.widget());
         container.append(&banner.widget());
@@ -261,7 +429,17 @@ impl Reader {
         container.append(&unsubscribe_banner.widget());
         container.append(&view);
         container.append(&chips.widget());
-        container.append(&actions.widget());
+        // **Not appended last any more.** #498 put the bar under the chips,
+        // "matching the canvas' footer treatment"; the conversation pane
+        // puts the same bar in its header, so the same message drew Reply in
+        // two different places depending on which surface opened it -- and
+        // for a one-message row that surface is this one, so the older
+        // placement was what most mail showed (#1435).
+        let verbs = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+        verbs.append(&actions.widget());
+        verbs.append(&queued_actions.widget());
+        verbs.append(&stopped_actions.widget());
+        header.set_verbs(verbs.upcast_ref::<gtk::Widget>());
 
         let reader = Reader {
             container,
@@ -274,7 +452,15 @@ impl Reader {
             unsubscribe_list: Rc::new(RefCell::new(None)),
             on_unsubscribe: Rc::new(RefCell::new(Vec::new())),
             actions,
+            queued_actions,
+            stopped_actions,
+            send_state: Rc::new(std::cell::Cell::new(None)),
+            showing: Rc::new(std::cell::Cell::new(false)),
             allowlist: Rc::new(RefCell::new(allowlist)),
+            thread: Rc::new(RefCell::new(Vec::new())),
+            originals: Rc::new(RefCell::new(std::collections::HashSet::new())),
+            on_message_action: Rc::new(RefCell::new(Vec::new())),
+            on_current_message: Rc::new(RefCell::new(Vec::new())),
             open: Rc::new(RefCell::new(None)),
             absent: Rc::new(std::cell::Cell::new(None)),
             highlight: Rc::new(RefCell::new(Vec::new())),
@@ -306,6 +492,94 @@ impl Reader {
         {
             let weak = Rc::downgrade(&reader.reader_notice);
             let view = reader.view.clone();
+            {
+                // The `Show` verb inside a blocked-images notice. Intercepted
+                // here because `handle_decide_policy` hands every navigation that
+                // leaves the pane to the system browser, and a consent verb must
+                // be told apart from a link the sender wrote before that happens.
+                let allowlist = Rc::clone(&reader.allowlist);
+                let originals = Rc::clone(&reader.originals);
+                let thread = Rc::clone(&reader.thread);
+                let document = Rc::clone(&reader.document);
+                let page = Rc::clone(&reader.page);
+                let loads = Rc::clone(&reader.loads);
+                let allowlist_path = allowlist_path.clone();
+                let on_message_action = Rc::clone(&reader.on_message_action);
+                view.connect_decide_policy(move |view, decision, kind| {
+                    if let Some((scope, verb)) = message_verb(decision, kind) {
+                        // **No re-render.** Replying opens a composer; reloading
+                        // the document to do it would throw away the scroll
+                        // position and every `<details>` the reader had opened.
+                        // #1316's note calls a reload "affordable for a verb and
+                        // not for a disclosure triangle" -- this is a verb that
+                        // needs none at all.
+                        for handler in on_message_action.borrow().iter() {
+                            handler(&scope, verb);
+                        }
+                        decision.ignore();
+                        return true;
+                    }
+                    if let Some(scope) = allow_scope(decision, kind) {
+                        // Whose consent this is. The scope names a message and the
+                        // message names a sender: allowing "this thread" would be
+                        // a different, worse promise than the one the banner makes.
+                        let sender = thread
+                            .borrow()
+                            .iter()
+                            .find(|message| message.scope == scope)
+                            .map(|message| message.address.clone());
+                        if let Some(sender) = sender {
+                            let mut list = allowlist.borrow_mut();
+                            list.allow(&sender);
+                            if let Err(error) = list.save_to(&allowlist_path) {
+                                glib::g_warning!(
+                                    "postio",
+                                    "could not save the remote-image allow list: {error}"
+                                );
+                            }
+                        }
+                        let messages = thread.borrow().clone();
+                        load_document(
+                            &Canvas {
+                                view,
+                                document: &document,
+                                page: &page,
+                                loads: &loads,
+                            },
+                            &compose_thread_document(&messages, &allowlist, &originals.borrow()),
+                        );
+                        decision.ignore();
+                        return true;
+                    }
+                    handle_decide_policy(view, decision, kind)
+                });
+            }
+            {
+                // What the observer reports, arriving from the document.
+                //
+                // Treated as untrusted input even though Postio wrote the
+                // script: it comes from a page that also holds several
+                // senders' markup, and a panic here would take the
+                // application down from inside a message. An unparseable or
+                // unknown payload is dropped.
+                let on_current_message = Rc::clone(&reader.on_current_message);
+                let thread = Rc::clone(&reader.thread);
+                content.connect_script_message_received(Some(RAIL_HANDLER), move |_, value| {
+                    let Some(scope) = value.to_str().split('\n').next().map(str::to_owned) else {
+                        return;
+                    };
+                    // Only a scope this document actually rendered. A message
+                    // naming something else is not a message the rail can act
+                    // on, whoever sent it.
+                    if !thread.borrow().iter().any(|message| message.scope == scope) {
+                        return;
+                    }
+                    for handler in on_current_message.borrow().iter() {
+                        handler(&scope);
+                    }
+                });
+            }
+
             let open = Rc::clone(&reader.open);
             let allowlist = Rc::clone(&reader.allowlist);
             // Weakly, and this is the half that is easy to get wrong: the
@@ -397,6 +671,32 @@ impl Reader {
         }
         {
             let view = reader.view.clone();
+            {
+                // What the observer reports, arriving from the document.
+                //
+                // Treated as untrusted input even though Postio wrote the
+                // script: it comes from a page that also holds several
+                // senders' markup, and a panic here would take the
+                // application down from inside a message. An unparseable or
+                // unknown payload is dropped.
+                let on_current_message = Rc::clone(&reader.on_current_message);
+                let thread = Rc::clone(&reader.thread);
+                content.connect_script_message_received(Some(RAIL_HANDLER), move |_, value| {
+                    let Some(scope) = value.to_str().split('\n').next().map(str::to_owned) else {
+                        return;
+                    };
+                    // Only a scope this document actually rendered. A message
+                    // naming something else is not a message the rail can act
+                    // on, whoever sent it.
+                    if !thread.borrow().iter().any(|message| message.scope == scope) {
+                        return;
+                    }
+                    for handler in on_current_message.borrow().iter() {
+                        handler(&scope);
+                    }
+                });
+            }
+
             let open = Rc::clone(&reader.open);
             let allowlist = Rc::clone(&reader.allowlist);
             let highlight = Rc::clone(&reader.highlight);
@@ -461,6 +761,23 @@ impl Reader {
 
     /// The widget to place in [`crate::shell::Shell::reader`]: the banner
     /// and the `WebView`, stacked.
+    /// Start this reader's web process now, before anything needs it.
+    ///
+    /// A `WebView` does not spawn its process when it is built -- measured:
+    /// building one leaves the process count unchanged, and the first *load*
+    /// is what starts it. So a reader built ahead of time is not ready ahead
+    /// of time, and expanding a message still waits for a process to start,
+    /// relocate its libraries and paint. Until it has, it composites black:
+    /// that is the flicker moving between messages in a conversation (#1216).
+    ///
+    /// An empty document is enough. What matters is that the process exists
+    /// and has finished starting by the time a real message is rendered into
+    /// it, which is why this is called on a spare rather than on the reader
+    /// somebody is waiting for.
+    pub fn warm(&self) {
+        self.view.load_html("", None);
+    }
+
     pub fn widget(&self) -> gtk::Widget {
         self.container.clone().upcast()
     }
@@ -495,22 +812,111 @@ impl Reader {
     /// opinion.
     pub fn set_actions_visible(&self, visible: bool) {
         self.actions_suppressed.set(!visible);
-        self.actions.set_visible(visible);
+        if visible {
+            self.set_send_state(self.send_state.get());
+        } else {
+            self.actions.set_visible(false);
+            self.queued_actions.set_visible(false);
+            self.stopped_actions.set_visible(false);
+        }
+    }
+
+    /// Say what the message on screen is doing, so the bar offers verbs that
+    /// apply to it (#1525, spec 003).
+    ///
+    /// The reading pane has always assumed a message *arrived* — Reply,
+    /// Reply all, Forward and Archive are all answers to somebody else's
+    /// mail. Until the Outbox there was no folder holding one that had not
+    /// arrived, so the assumption was never wrong; now it is, and on the
+    /// message a person is most likely to want to act on.
+    ///
+    /// Which verbs each state gets is
+    /// [`ReaderAction::for_send_state`](postio_ui::reader::header::ReaderAction::for_send_state),
+    /// in `postio-ui`, so the macOS reader
+    /// reaches the same answer rather than a second copy of this judgement.
+    ///
+    /// Call it after [`render`](Self::render), which clears it — the same
+    /// convention as [`set_unsubscribe`](Self::set_unsubscribe) and
+    /// [`set_encoding_problems`](Self::set_encoding_problems), and for the
+    /// same reason: this belongs to one message and must not outlive it.
+    pub fn set_send_state(&self, state: Option<postio_model::DraftState>) {
+        use postio_ui::reader::header::ReaderAction;
+
+        self.send_state.set(state);
+        let wanted = ReaderAction::for_send_state(state);
+        let is = |verb: ReaderAction| wanted.contains(&verb);
+
+        let show = self.showing.get() && !self.actions_suppressed.get();
+        self.actions.set_visible(show && is(ReaderAction::Reply));
+        self.queued_actions
+            .set_visible(show && is(ReaderAction::CancelSend));
+        self.stopped_actions
+            .set_visible(show && is(ReaderAction::RetrySend));
+
+        // And the banner, which offers to unsubscribe from the sender's
+        // domain when there is no `List-Id` (#971) — the sender of an
+        // outgoing message being the user themselves.
+        if !ReaderAction::unsubscribable(state) {
+            self.unsubscribe_banner.set_list(None);
+        }
     }
 
     /// Show the action bar unless [`Reader::set_actions_visible`]`(false)`
     /// has suppressed it — what every call site that used to say
     /// `self.actions.set_visible(true)` means now.
     fn show_actions_unless_suppressed(&self) {
-        if !self.actions_suppressed.get() {
-            self.actions.set_visible(true);
+        self.showing.set(true);
+        if self.actions_suppressed.get() {
+            return;
         }
+        // Through `set_send_state` rather than straight to `self.actions`, so
+        // a repaint of a message being sent does not put Reply back on it.
+        self.set_send_state(self.send_state.get());
+    }
+
+    /// Press a verb wherever it is currently drawn. Test-facing.
+    ///
+    /// Across all three bars on purpose: which one holds a verb depends on
+    /// the send state, and a test that reached into one of them by name
+    /// could not have caught two bars going unconnected.
+    #[doc(hidden)]
+    pub fn test_press(&self, command: postio_core::CommandId) {
+        for bar in [&self.actions, &self.queued_actions, &self.stopped_actions] {
+            if bar.button(command).is_some() {
+                bar.press(command);
+                return;
+            }
+        }
+    }
+
+    /// The action bar's widget, so a test can ask where it is mounted.
+    #[doc(hidden)]
+    pub fn actions_widget(&self) -> gtk::Widget {
+        self.actions.widget()
     }
 
     /// Whether the action bar is currently on screen. For tests.
     #[doc(hidden)]
     pub fn actions_visible(&self) -> bool {
         self.actions.widget().is_visible()
+    }
+
+    /// The verbs a person can actually see and press, by their labels.
+    ///
+    /// Across all three bars, because which one is showing is the thing
+    /// under test: asking `actions_visible` alone cannot tell "Reply is
+    /// offered" from "Send again is offered" (#1525).
+    #[doc(hidden)]
+    pub fn visible_verbs(&self) -> Vec<String> {
+        let mut found = Vec::new();
+        for bar in [&self.actions, &self.queued_actions, &self.stopped_actions] {
+            let widget = bar.widget();
+            if !widget.is_visible() {
+                continue;
+            }
+            collect_labels(&widget, &mut found);
+        }
+        found
     }
 
     /// The banner's "always allow" button label, naming whichever sender it
@@ -598,6 +1004,9 @@ impl Reader {
         // they are showing, through `set_encoding_problems`.
         self.decode_notice.set_visible(false);
         self.set_unsubscribe(None);
+        // Per-message, like the two above: a message drawn over one that
+        // was being sent must not inherit its bar.
+        self.set_send_state(None);
         // Reader view is decided per message, from the message. Bulk mail
         // opens reduced; correspondence never does. See
         // `document::suits_reader_view` for why the question is "was this
@@ -630,6 +1039,163 @@ impl Reader {
             remote,
             &self.rendered,
         );
+    }
+
+    /// The document a thread composes to, without handing it over.
+    /// Ask the document to say which message is filling the pane, and to keep
+    /// saying so as the reader scrolls.
+    ///
+    /// Injected after the load rather than written into the document, so the
+    /// markup a sender's message sits in carries no script at all — the
+    /// document is still something that would be inert if the setting changed
+    /// back, and the observer is unmistakably Postio's rather than something
+    /// that arrived with the mail.
+    ///
+    /// The **rule** is not here. This measures and reports; which message wins
+    /// is `postio_ui::reader::rail::current`, which is where the judgement
+    /// lives and where it can be proven without a display. What crosses the
+    /// boundary is a scope, already decided.
+    ///
+    /// Only for a thread: a single message is always the current one, and a
+    /// pane that reported it on every scroll would be spending a message per
+    /// wheel notch to say nothing.
+    fn watch_for_the_current_message(&self) {
+        if self.thread.borrow().len() < 2 {
+            return;
+        }
+        // Debounced, not continuous. The brief asks for the marked row to
+        // settle rather than track the scroll exactly: "jitter during a
+        // flick-scroll is worse than lag".
+        let script = format!(
+            "(() => {{\
+               const post = () => {{\
+                 const view = document.documentElement.clientHeight;\
+                 const top = window.scrollY;\
+                 let best = null, most = 0;\
+                 for (const el of document.querySelectorAll('.postio-message')) {{\
+                   const box = el.getBoundingClientRect();\
+                   const visible = Math.max(0, Math.min(box.bottom, view) - Math.max(box.top, 0));\
+                   if (visible > most) {{ most = visible; best = el.id; }}\
+                 }}\
+                 if (best) {{\
+                   window.webkit.messageHandlers.{handler}.postMessage(best.replace(/^m-/, ''));\
+                 }}\
+               }};\
+               let pending = null;\
+               addEventListener('scroll', () => {{\
+                 clearTimeout(pending);\
+                 pending = setTimeout(post, 100);\
+               }}, {{ passive: true }});\
+               post();\
+             }})()",
+            handler = RAIL_HANDLER,
+        );
+        self.view.evaluate_javascript(
+            &script,
+            None,
+            None,
+            None::<&gtk::gio::Cancellable>,
+            |outcome| {
+                if let Err(error) = outcome {
+                    glib::g_warning!("postio", "the rail observer did not start: {error}");
+                }
+            },
+        );
+    }
+
+    fn compose_thread(&self, messages: &[ThreadMessage]) -> String {
+        compose_thread_document(messages, &self.allowlist, &self.originals.borrow())
+    }
+
+    /// Whether [`render_thread`](Self::render_thread) would change anything.
+    ///
+    /// Composing a document is cheap; handing it to WebKit is not — it is a
+    /// full teardown and reload, and the scroll position goes with it. So a
+    /// caller that cannot easily tell whether its redraw is needed can ask.
+    pub fn would_render_thread(&self, messages: &[ThreadMessage]) -> bool {
+        self.compose_thread(messages) != *self.document.borrow()
+    }
+
+    /// Draw a whole conversation into this one view (ADR 0032, #1316).
+    ///
+    /// The experiment behind #1316: one thread is one document is one view is
+    /// one web process, whatever the thread's length. The stacked pane builds
+    /// a `Reader` per expanded message and WebKitGTK runs a process per
+    /// *view*, so a thirty-message thread ends with thirty of them and moving
+    /// between them composites black while a new one starts.
+    ///
+    /// # Remote images stay blocked here, deliberately
+    ///
+    /// The allow list is a decision about *a sender*, and a document has one
+    /// Content-Security-Policy for all of it. Allowing one sender's images in
+    /// a thread would allow every sender's in that thread, which is not what
+    /// anybody agreed to.
+    ///
+    /// That is no longer what happens. #1353 made the decision per message,
+    /// from its own sender's place in the allowlist, so an allowed
+    /// correspondent no longer carries the rest of the thread with them — and
+    /// #1398 does the same for reader view, which each message decides for
+    /// itself and `⌃O` overrules one at a time. This comment said the whole
+    /// document was `Blocked` long after it had stopped being true.
+    pub fn render_thread(&self, messages: &[ThreadMessage]) {
+        self.thread.replace(messages.to_vec());
+        self.paints.set(self.paints.get() + 1);
+        self.absent.set(None);
+        self.decode_notice.set_visible(false);
+        self.set_unsubscribe(None);
+        // Per-message, like the two above: a message drawn over one that
+        // was being sent must not inherit its bar.
+        self.set_send_state(None);
+        self.banner.set_visible(false);
+
+        let document = self.compose_thread(messages);
+        load_document(&self.canvas(), &document);
+        self.watch_for_the_current_message();
+    }
+
+    /// Draw one message of a thread as its sender wrote it — `⌃O`.
+    ///
+    /// Per message, which is what the single-message [`Reader::view_original`] has
+    /// always promised and what a pane holding several has to mean: showing
+    /// one newsletter whole says nothing about the message below it.
+    ///
+    /// A no-op when no thread is on screen, so the key is safe to press
+    /// anywhere, and when that message is already whole.
+    pub fn view_original_for(&self, scope: &str) {
+        if self.thread.borrow().is_empty() {
+            return;
+        }
+        if !self.originals.borrow_mut().insert(scope.to_owned()) {
+            return;
+        }
+        let thread = self.thread.borrow().clone();
+        self.render_thread(&thread);
+    }
+
+    /// Forget which messages were asked for whole.
+    ///
+    /// Called when the conversation changes, not on every redraw: a body
+    /// arriving re-renders the thread, and clearing there would undo the
+    /// choice the moment the rest of the thread loaded.
+    pub fn forget_originals(&self) {
+        self.originals.borrow_mut().clear();
+    }
+
+    /// Where the pane is scrolled to, as a marker index. Test-facing.
+    ///
+    /// The scroll itself is a fragment navigation and leaves nothing a test
+    /// can read back, so this is the only observable the page keys have.
+    /// Without it #1431 was invisible: the three scrolling methods returned
+    /// having done nothing and every caller reported success.
+    #[doc(hidden)]
+    pub fn page_for_test(&self) -> u32 {
+        self.page.get()
+    }
+
+    /// The document currently composed for the open thread. Test-facing.
+    #[doc(hidden)]
+    pub fn document_for_test(&self) -> String {
+        self.compose_thread(&self.thread.borrow().clone())
     }
 
     /// Draw the sender's own markup for whatever is on screen — `C-o`.
@@ -745,6 +1311,26 @@ impl Reader {
     /// chip to click. Same destination as [`Reader::connect_attachment`],
     /// with no particular part in hand: it opens on whatever the pane is
     /// showing, same as clicking any chip does today.
+    /// Called when a message's own reply or forward is activated, with the
+    /// scope that message was rendered under.
+    ///
+    /// A scope rather than a `MessageId` because that is what the document
+    /// carries; the conversation view owns the mapping back, as it already
+    /// does for the per-message bars in the stacked pane.
+    /// Called with the scope of the message filling most of the pane, as the
+    /// reader scrolls.
+    ///
+    /// The rail's own rule decides *which* that is —
+    /// [`postio_ui::reader::rail::current`] — from extents the observer
+    /// measures. What arrives here is already the answer.
+    pub fn connect_current_message(&self, handler: impl Fn(&str) + 'static) {
+        self.on_current_message.borrow_mut().push(Box::new(handler));
+    }
+
+    pub fn connect_message_action(&self, handler: impl Fn(&str, MessageVerb) + 'static) {
+        self.on_message_action.borrow_mut().push(Box::new(handler));
+    }
+
     pub fn connect_parts_requested(&self, handler: impl Fn() + 'static) {
         self.on_parts_requested.borrow_mut().push(Box::new(handler));
     }
@@ -764,7 +1350,12 @@ impl Reader {
     ///
     /// [`Window::apply_keymap`]: crate::window::Window::apply_keymap
     pub fn set_keymap(&self, keymap: &postio_core::Keymap) {
+        // All three, for the reason `connect_command` gives: a bar nobody
+        // hands a keymap to draws a verb with no key on it, and these two are
+        // the ones a person meets when a send has gone wrong.
         self.actions.set_keymap(keymap);
+        self.queued_actions.set_keymap(keymap);
+        self.stopped_actions.set_keymap(keymap);
         // The notice's own cap, from the same keymap. Written down here it
         // would go on saying `C-o` after a rebind moved the key, which is the
         // drift `KeycapButton` exists to end (#1002).
@@ -779,7 +1370,22 @@ impl Reader {
     /// whoever mounts the reader hands this straight to the same
     /// `Window::act` the list's row actions do.
     pub fn connect_command(&self, handler: impl Fn(postio_core::Command) + 'static) {
-        self.actions.connect_command(handler);
+        // **Every bar, not just the first.** There are three -- one per verb
+        // set `ReaderAction::for_send_state` can return -- and only the
+        // received-mail one was ever connected. So "Send again" on a failed
+        // send and "Cancel send" on a queued one were drawn, were clickable,
+        // and did nothing at all: no toast, no rejection, nothing, because
+        // the command was never raised for anything to reject.
+        //
+        // Reported as the button not working, and it looked like a dispatch
+        // or resolution bug all the way down -- the session resolves
+        // `RetrySend { draft: None }` from the row in view perfectly well.
+        // Nothing was ever asking it to.
+        let handler = std::rc::Rc::new(handler);
+        for bar in [&self.actions, &self.queued_actions, &self.stopped_actions] {
+            let handler = handler.clone();
+            bar.connect_command(move |command| handler(command));
+        }
     }
 
     /// Paint `terms` wherever they appear in the body.
@@ -918,10 +1524,16 @@ impl Reader {
         *self.open.borrow_mut() = None;
         self.absent.set(None);
         self.header.clear();
+        // Nothing occupies the pane now, which is what `set_send_state`
+        // below reads to decide that no bar belongs on it.
+        self.showing.set(false);
         self.actions.set_visible(false);
         self.banner.set_visible(false);
         self.decode_notice.set_visible(false);
         self.set_unsubscribe(None);
+        // Per-message, like the two above: a message drawn over one that
+        // was being sent must not inherit its bar.
+        self.set_send_state(None);
         load_document(
             &self.canvas(),
             &wrap_document("", RemoteImages::Blocked, Sheet::Theme),
@@ -931,6 +1543,73 @@ impl Reader {
         }
     }
 
+    /// Move the document to `fragment`, by script rather than by navigating.
+    ///
+    /// **This used to be `load_uri("postio-reader:///#…")`, and that was a
+    /// latent error page.** A fragment-only `load_uri` is a same-document
+    /// scroll *only* while the view's current URI is exactly the base one.
+    /// `Reader::warm` does `load_html("", None)`, which leaves the URI empty,
+    /// and after that the same call is a real navigation to a scheme whose
+    /// own comment says "nothing is ever registered to handle this scheme" --
+    /// so WebKit answers with "The URL can't be shown" (#1433). Reported from
+    /// a real store, and caught in the end by asking WebKit which URI failed:
+    ///
+    /// ```text
+    /// load started -> Some("postio-reader:///")
+    /// load started -> Some("")
+    /// LOAD FAILED [Started] postio-reader:///#m-82161
+    /// ```
+    ///
+    /// Script is the right mechanism anyway: it moves the document without
+    /// touching the navigation machinery at all, so nothing can be refused,
+    /// no history entry is pushed, and the reader cannot be navigated out
+    /// from under the person reading it. `enable_javascript(true)` is
+    /// Postio's own script only -- `enable_javascript_markup(false)` still
+    /// refuses everything that arrives in a message (ADR 0003).
+    fn scroll_to_fragment(&self, fragment: &str) {
+        // `getElementById` takes a string and never parses a selector, so
+        // there is no selector syntax to escape against -- only the string
+        // literal this is interpolated into. The id is Postio's own
+        // (`message_anchor` escapes the scope, `pos-N` is a number), so this
+        // is belt and braces rather than the load-bearing control.
+        let quoted: String = fragment
+            .chars()
+            .map(|character| match character {
+                '\\' => "\\\\".to_owned(),
+                '"' => "\\\"".to_owned(),
+                '\n' | '\r' => String::new(),
+                other => other.to_string(),
+            })
+            .collect();
+        let script = format!(
+            "(() => {{ const target = document.getElementById(\"{quoted}\"); \
+             if (target) {{ target.scrollIntoView(); }} }})()"
+        );
+        self.view
+            .evaluate_javascript(&script, None, None, None::<&gtk::gio::Cancellable>, |_| {});
+    }
+
+    /// Whether there is anything on screen to scroll.
+    ///
+    /// **Two fields, because there are two panes.** `open` is set by
+    /// [`render`](Self::render) and describes a single message;
+    /// `thread` is set by [`render_thread`](Self::render_thread) and
+    /// describes a conversation. `render_thread` has never touched `open`.
+    ///
+    /// The three scrolling methods below all guarded on `open` alone, so
+    /// every one of them was a no-op in the one-document pane -- which is the
+    /// pane the application now opens conversations in. `scroll_to_message`
+    /// said in its own doc comment that it was "a no-op when the pane is not
+    /// showing a thread", and did exactly the opposite (#1431).
+    ///
+    /// It survived #1402's tests because they assert that
+    /// `ConversationView::page` *returned true*, which it did: it found a
+    /// document reader and called this. Nothing asked whether the page
+    /// turned.
+    fn showing(&self) -> bool {
+        self.open.borrow().is_some() || !self.thread.borrow().is_empty()
+    }
+
     /// Scroll the pane down by about a screenful, without moving the
     /// keyboard off wherever it already is (#438).
     ///
@@ -938,24 +1617,38 @@ impl Reader {
     /// lays down — walking past the end of a message is a stop, not a
     /// wrap-around or an error.
     pub fn page_down(&self) {
-        if self.open.borrow().is_none() {
+        if !self.showing() {
             return;
         }
         let next = (self.page.get() + 1).min(SCROLL_MARKERS - 1);
         self.page.set(next);
-        self.view
-            .load_uri(&format!("{DOCUMENT_BASE_URI}#pos-{next}"));
+        self.scroll_to_fragment(&format!("pos-{next}"));
+    }
+
+    /// Scroll a thread document to one of its messages.
+    ///
+    /// A fragment navigation to the `<details id="m-{scope}">` the thread
+    /// document already gives every message, the same mechanism
+    /// [`page_down`](Self::page_down) uses for its `#pos-N` markers — so it
+    /// costs no reload and no script.
+    ///
+    /// A no-op when the pane is not showing a thread, so the caller does not
+    /// have to ask which pane it is talking to.
+    pub fn scroll_to_message(&self, scope: &str) {
+        if !self.showing() {
+            return;
+        }
+        self.scroll_to_fragment(&postio_ui::reader::thread::message_anchor(scope));
     }
 
     /// Scroll the pane up by about a screenful. See [`Reader::page_down`].
     pub fn page_up(&self) {
-        if self.open.borrow().is_none() {
+        if !self.showing() {
             return;
         }
         let previous = self.page.get().saturating_sub(1);
         self.page.set(previous);
-        self.view
-            .load_uri(&format!("{DOCUMENT_BASE_URI}#pos-{previous}"));
+        self.scroll_to_fragment(&format!("pos-{previous}"));
     }
 }
 
@@ -1028,11 +1721,138 @@ struct Canvas<'a> {
 /// judgement belongs where message identity exists, in `postio_app::reading`.
 fn load_document(canvas: &Canvas<'_>, document: &str) {
     canvas.loads.set(canvas.loads.get() + 1);
+    // The single choke point every render passes through, which is what makes
+    // it the honest place to count from: a second path to the engine would
+    // have to avoid this function to avoid the counter. `canvas.loads` beside
+    // it is per-canvas and cannot be read from another crate's suite.
+    postio_ui::reader::cost::note_render();
     canvas.document.replace(document.to_owned());
     canvas.view.load_html(document, Some(DOCUMENT_BASE_URI));
     // `load_html` always starts a document at the top, whatever `page` said
     // before this call -- see `Reader::page_down`.
     canvas.page.set(0);
+}
+
+/// The whole thread as one document.
+///
+/// A free function over the allow list rather than a method, for the reason
+/// `render_open` is one: the `Show` verb inside the document has to be able
+/// to re-render after granting consent, and a closure that held the whole
+/// `Reader` to do it would hold the widget that owns the closure.
+fn compose_thread_document(
+    messages: &[ThreadMessage],
+    allowlist: &RefCell<RemoteImageAllowList>,
+    originals: &std::collections::HashSet<String>,
+) -> String {
+    // Rendered first, and held, because `Entry` borrows the markup.
+    // Reader view is decided per message, from the message, exactly as
+    // `render` decides it for one: bulk mail opens reduced, correspondence
+    // never does. A thread can hold both.
+    let rendered: Vec<postio_ui::reader::document::Rendered> = messages
+        .iter()
+        .map(|message| {
+            // The reader's own choice first: `⌃O` on a message overrules what
+            // its content suggests, for that message and no other (#1398).
+            let rendering = if originals.contains(&message.scope) {
+                Rendering::Original
+            } else if postio_ui::reader::document::suits_reader_view(&message.body) {
+                Rendering::Reader
+            } else {
+                Rendering::Original
+            };
+            // Per **message**, from its own sender. A conversation holds
+            // several and the decision is per sender (`PRODUCT.md` §21),
+            // so one allowed correspondent must not carry the rest of the
+            // thread with them. This asked for `Blocked` unconditionally,
+            // which threw away a decision the user had already made the
+            // moment the message appeared in a conversation (#1353).
+            let remote = if allowlist.borrow().is_allowed(&message.address) {
+                RemoteImages::Allowed
+            } else {
+                RemoteImages::Blocked
+            };
+            if message.absent && message.expanded {
+                // The same words the single-message pane has always used, not
+                // a second way of saying it -- `absent_html` carries the
+                // `role="status"` live region with it, so a screen reader is
+                // told when the body is still coming and told it once.
+                //
+                // `Partial` rather than a state read per message: the thread
+                // knows only that no body is here yet, which is what `Partial`
+                // means. Offline is said by the connection banner, which is
+                // about the account and not about one message.
+                //
+                // Only when it is open. A collapsed message contributes its
+                // section to the document either way, so emitting the plate
+                // for all of them puts thirty copies of one sentence into a
+                // thirty-message thread -- invisible, but each carrying an
+                // `aria-live` region, which is not invisible to a screen
+                // reader. A collapsed message is its one preview line, and
+                // that line is built from headers, which are here.
+                return postio_ui::reader::document::Rendered {
+                    html: postio_ui::reader::document::absent_html(
+                        postio_ui::reader::document::Absent::Partial,
+                    ),
+                    ..postio_ui::reader::document::Rendered::default()
+                };
+            }
+            postio_ui::reader::document::body_html_in(
+                &message.body,
+                remote,
+                rendering,
+                Some(&message.scope),
+            )
+        })
+        .collect();
+    let entries: Vec<postio_ui::reader::thread::Entry<'_>> = messages
+        .iter()
+        .zip(&rendered)
+        .map(|(message, rendered)| postio_ui::reader::thread::Entry {
+            scope: &message.scope,
+            sender: &message.sender,
+            address: &message.address,
+            when: &message.when,
+            preview: &message.preview,
+            expanded: message.expanded,
+            latest: message.latest,
+            draft: message.draft,
+            mine: message.mine,
+            blocked: rendered.held_back.remote_images,
+            body: &rendered.html,
+            styles: &rendered.styles,
+            recipients: &message.recipients,
+            cc: &message.cc,
+        })
+        .collect();
+
+    // The document's `Content-Security-Policy` is one policy for the whole
+    // page, and there is no per-message form of it -- which is exactly the
+    // limitation ADR 0032 names: "a document-level network policy cannot
+    // express [per-sender], so the distinction has to move into how each
+    // message's images are addressed".
+    //
+    // So it opens only when some message in the thread is from a sender
+    // the user allowed, and the *sanitizer* is what keeps the others out:
+    // a blocked sender's `src` is dropped before the markup is composed,
+    // and the assertion in `gtk_reader` that a stranger's image is absent
+    // is what holds that line.
+    //
+    // Worth saying plainly rather than leaving implied: for such a
+    // document the CSP is no longer a second, independent refusal. It is
+    // still the only refusal for every thread where nobody is allowed,
+    // which is the ordinary case.
+    let anyone_allowed = messages
+        .iter()
+        .any(|message| allowlist.borrow().is_allowed(&message.address));
+    postio_ui::reader::thread::conversation_document(
+        &entries,
+        if anyone_allowed {
+            RemoteImages::Allowed
+        } else {
+            RemoteImages::Blocked
+        },
+        postio_ui::reader::document::Sheet::Theme,
+    )
 }
 
 /// Re-render whatever is in `open` at `remote`'s policy, and put the banner
@@ -1098,17 +1918,42 @@ fn render_open(
     // actually sent. `sheet_for` is where that rule lives, so this frontend
     // and the FFI one cannot express it differently.
     let sheet = sheet_for(drawn.rendering, bulk);
-    load_document(canvas, &document_for(&content, remote, sheet));
+    load_document(
+        canvas,
+        &document_for(&content, &drawn.styles, remote, sheet),
+    );
 
     for handler in rendered.borrow().iter() {
         handler(held_back);
     }
 }
 
-/// Every scripting-adjacent `WebKitSettings` flag, turned off.
+/// Every scripting-adjacent `WebKitSettings` flag, turned off — and the one
+/// that is deliberately on.
 ///
-/// JavaScript is the headline, but each of these is a surface JavaScript
-/// being off does not automatically close: WebGL and WebRTC run without a
+/// **Script that arrives in a message never runs. Postio's own does.** Those
+/// are two settings, not one: `enable_javascript_markup(false)` is what
+/// refuses a `<script>` element, an event-handler attribute and a
+/// `javascript:` href in the document, while `enable_javascript(true)` is what
+/// lets the application evaluate its own. The guarantee a user cares about is
+/// the first one, and it is unchanged — a message cannot run code, reach the
+/// network, or observe the reader.
+///
+/// Why the second is on at all: the conversation rail marks the message you
+/// are actually reading, and once a whole conversation is one document those
+/// positions live in coordinates only the engine has.
+/// `document::scroll_markers` moves the document *to* a position without
+/// script; nothing without script can ask where the reader stopped. Decided by
+/// the maintainer on 2026-09-08 (research.md R3), proved as a mechanism in
+/// #1323 and against these settings in #1367.
+///
+/// The document's own `Content-Security-Policy` still sends
+/// `script-src 'none'`, so a sender's script is refused twice: once by the
+/// setting and once by the policy. An injected script is exempt from the
+/// page's CSP, which is why the observer works and the message's does not.
+///
+/// The rest of the list stands unchanged. Each is a surface JavaScript being
+/// off does not automatically close: WebGL and WebRTC run without a
 /// `<script>` tag executing, and the storage APIs persist to disk regardless
 /// of whether anything is currently running to read them back.
 ///
@@ -1119,7 +1964,8 @@ fn render_open(
 /// setter to turn off.
 fn hardened_settings() -> webkit6::Settings {
     let settings = webkit6::Settings::new();
-    settings.set_enable_javascript(false);
+    // On for Postio, off for the sender. See this function's doc comment.
+    settings.set_enable_javascript(true);
     settings.set_enable_javascript_markup(false);
     settings.set_javascript_can_open_windows_automatically(false);
     settings.set_javascript_can_access_clipboard(false);
@@ -1161,6 +2007,66 @@ fn leaves_the_pane(kind: webkit6::PolicyDecisionType, navigation: webkit6::Navig
         && navigation == webkit6::NavigationType::LinkClicked
 }
 
+/// The message scope and verb a per-message action names, if this navigation
+/// is one.
+///
+/// Checked before the consent verb and before anything reaches the browser,
+/// and matched on the scheme for `allow_scope`'s reason: a sender controls a
+/// link's text and its class, and neither of the schemes the sanitizer will
+/// emit.
+fn message_verb(
+    decision: &webkit6::PolicyDecision,
+    kind: webkit6::PolicyDecisionType,
+) -> Option<(String, MessageVerb)> {
+    let uri = navigation_uri(decision, kind)?;
+    for (scheme, verb) in [
+        (postio_ui::reader::thread::REPLY_SCHEME, MessageVerb::Reply),
+        (
+            postio_ui::reader::thread::FORWARD_SCHEME,
+            MessageVerb::Forward,
+        ),
+        (
+            postio_ui::reader::thread::CONTINUE_SCHEME,
+            MessageVerb::Continue,
+        ),
+    ] {
+        if let Some(scope) = uri.strip_prefix(&format!("{scheme}:")) {
+            return Some((scope.to_owned(), verb));
+        }
+    }
+    None
+}
+
+/// The URI a navigation is for, when it is a navigation at all.
+fn navigation_uri(
+    decision: &webkit6::PolicyDecision,
+    kind: webkit6::PolicyDecisionType,
+) -> Option<String> {
+    if kind != webkit6::PolicyDecisionType::NavigationAction {
+        return None;
+    }
+    decision
+        .downcast_ref::<webkit6::NavigationPolicyDecision>()?
+        .navigation_action()?
+        .request()?
+        .uri()
+        .map(|uri| uri.to_string())
+}
+
+/// The message scope a `Show` link names, if this navigation is one.
+///
+/// Matched on the scheme rather than on the link's text or class: the sender
+/// controls both of those and controls neither the scheme the sanitizer emits
+/// nor the one it refuses to pass through.
+fn allow_scope(
+    decision: &webkit6::PolicyDecision,
+    kind: webkit6::PolicyDecisionType,
+) -> Option<String> {
+    navigation_uri(decision, kind)?
+        .strip_prefix(&format!("{}:", postio_ui::reader::thread::ALLOW_SCHEME))
+        .map(str::to_owned)
+}
+
 fn handle_decide_policy(
     view: &webkit6::WebView,
     decision: &webkit6::PolicyDecision,
@@ -1172,7 +2078,7 @@ fn handle_decide_policy(
     let Some(navigation) = decision.downcast_ref::<webkit6::NavigationPolicyDecision>() else {
         return false;
     };
-    let Some(mut action) = navigation.navigation_action() else {
+    let Some(action) = navigation.navigation_action() else {
         return false;
     };
     if !leaves_the_pane(kind, action.navigation_type()) {
@@ -1200,8 +2106,80 @@ fn handle_decide_policy(
     true
 }
 
+/// Every verb title under `widget`, depth first. Test support for
+/// [`Reader::visible_verbs`].
+///
+/// The titles are in child `Label`s rather than on the buttons: a keycap
+/// button's content is a box holding the word and the key hint beside it, so
+/// `Button::label` answers `None` for every one of them. The hint carries
+/// `postio-keyhint`, which is the class that exists to tell the two apart.
+fn collect_labels(widget: &gtk::Widget, found: &mut Vec<String>) {
+    if let Some(label) = widget.downcast_ref::<gtk::Label>()
+        && !label.has_css_class("postio-keyhint")
+    {
+        let text = label.text().to_string();
+        if !text.is_empty() {
+            found.push(text);
+        }
+    }
+    let mut child = widget.first_child();
+    while let Some(node) = child {
+        child = node.next_sibling();
+        collect_labels(&node, found);
+    }
+}
+
 #[cfg(test)]
 mod tests {
+    /// The ground colour must not fail silently (#1343, spec FR-060).
+    ///
+    /// #749's second mechanism: nothing ever set a background colour on the
+    /// reader's `WebView`, and under the GTK4 GL / DMA-BUF path an
+    /// uncommitted WebKit surface composites **black**. `paint_ground` is the
+    /// fix, and it degrades quietly — hand it a value gdk cannot parse and it
+    /// warns, returns, and leaves the view unpainted. That is the bug
+    /// restored, with a warning nobody reads and every test still green.
+    ///
+    /// `reader-tokens.css` is *generated* from the design tokens, so the
+    /// value can change without anyone touching this file.
+    ///
+    /// No display needed: parsing a colour is string work, which is why this
+    /// belongs in `src/` rather than in `tests/`.
+    #[test]
+    fn the_reader_ground_parses_in_both_schemes() {
+        for dark in [false, true] {
+            let ground = postio_ui::reader::document::reader_ground(dark);
+            let parsed = ground.parse::<gtk::gdk::RGBA>().unwrap_or_else(|error| {
+                panic!(
+                    "the {} ground {ground:?} is not a colour gdk can parse \
+                     ({error}), so paint_ground will warn and leave the view \
+                     unpainted -- which is #749's black frame, back",
+                    if dark { "dark" } else { "light" }
+                )
+            });
+            assert_eq!(
+                parsed.alpha(),
+                1.0,
+                "the {} ground is not opaque, so the surface composites \
+                 through to whatever is behind it -- the state a ground colour \
+                 exists to replace",
+                if dark { "dark" } else { "light" }
+            );
+        }
+    }
+
+    #[test]
+    fn the_two_schemes_do_not_share_a_ground() {
+        // A palette that collapsed to one value would paint a white flash
+        // into dark mode and pass a test that only checked parseability.
+        assert_ne!(
+            postio_ui::reader::document::reader_ground(false),
+            postio_ui::reader::document::reader_ground(true),
+            "both schemes report the same ground, so one of them is painting \
+             the wrong colour between messages"
+        );
+    }
+
     use super::*;
 
     /// #752: a clicked link goes to the desktop, and nothing else does.

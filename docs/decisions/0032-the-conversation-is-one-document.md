@@ -1,6 +1,6 @@
-# ADR 0032 — Proposed: the conversation is one document, not one WebView per message
+# ADR 0032 — Accepted: the conversation is one document, not one WebView per message
 
-- **Status:** **Proposed** (2026-09-06) — written to be argued with, not to be implemented from
+- **Status:** **Accepted** (2026-09-09) — **with its own deciding gate not met**; see Status at the foot
 - **Date:** 2026-09-06
 - **Raised by:** the maintainer, reporting a black flicker when moving between messages, and asking directly: *"Why do we need a view per message in the conversation view? Isn't there a way to render all messages in the single view? Maybe with html?"*
 - **Issue:** [#1216](https://github.com/dlapiduz/postio/issues/1216)
@@ -54,14 +54,37 @@ thing anyone will reach for.
 
 The objection to putting several senders' HTML in one document is that they
 contaminate each other: one message's CSS restyles the next, one unclosed
-element swallows the rest. **In Postio they cannot.** `postio-body`'s
-sanitizer already removes `<style>` tag-and-contents and strips every inline
-`style` attribute — *"so postio CSS always wins"* — and parses to a tree rather
-than passing text through. Every message is already rendered under Postio's own
-stylesheet and nothing else.
+element swallows the rest. **In Postio they cannot.**
 
-That is the precondition, and it is already met. It was met for reasons that
-had nothing to do with this.
+> **This paragraph's original reason is no longer true.** It read: the
+> sanitizer "already removes `<style>` tag-and-contents and strips every
+> inline `style` attribute — *so postio CSS always wins*", so every message is
+> rendered under Postio's stylesheet and nothing else. #1325 admitted the
+> inline attribute and #1326 admitted the `<style>` block, so a sender's CSS
+> is no longer absent. **The decision stands; its argument had to be
+> rebuilt.** An ADR whose reasoning is false is worse than one that is merely
+> out of date, because the next person reasons from the reasoning.
+>
+> What holds now, in three parts, each with something that fails when it
+> stops holding:
+>
+> * **A `<style>` block's selectors are rewritten** under the message's own
+>   container before the document is composed (`postio_body::styles`,
+>   #1326), so a rule naming `p` — or naming Postio's own chrome — can match
+>   only inside the message it arrived in.
+> * **Inline declarations are contained** by `sanitize::contain_declarations`
+>   and the refusal tables, which drop what escapes a message's own block.
+> * **`contain_body`'s non-visible overflow** is what actually stops a
+>   `transform` painting over a neighbour (#1346). This one is load-bearing
+>   for containment and not only for the visible edge it was added for
+>   (#323): removing or flattening it looks cosmetic and is not.
+>
+> Parsing to a tree rather than passing text through is unchanged, and still
+> answers the unclosed element.
+
+That is the precondition, and it is met — now by construction rather than by
+accident. It was originally met for reasons that had nothing to do with this,
+which is exactly why it needed re-establishing when those reasons went.
 
 Expansion needs no script either, which matters because the reader runs with
 JavaScript off by construction (ADR 0003). `<details>` and `<summary>` are a
@@ -131,6 +154,8 @@ document means moving all of it into HTML:
 - A screen-reader pass over an HTML conversation is at least as good as the
   widget tree it replaces. **This is the one that should decide it**, and it is
   not a matter of opinion — it is testable with Orca before anything is built.
+  **Not met.** The ADR was accepted without it; the pass is [#1424] and is
+  owed after the fact rather than before.
 - The action verbs work through `decide_policy` navigation as reliably as
   `connect_clicked`, including the ones that are destructive.
 - Per-sender image policy survives the move to one document.
@@ -144,13 +169,133 @@ document means moving all of it into HTML:
   this proposal is a lot of work for a surface nobody wanted.
 - Is a 200-message thread a real case, or is thread length bounded in practice
   by how mail is actually used?
-- Does WebKit's own memory for one large document beat N small processes? Not
-  measured. It is the obvious rebuttal to "one view is cheaper" and nothing
-  here has tested it.
+- ~~Does WebKit's own memory for one large document beat N small processes? Not
+  measured.~~ **Measured — see below.**
+
+## What the experiment measured (2026-09-08, #1316)
+
+Built behind `POSTIO_ONE_DOCUMENT`, on a feature branch, next to the stacked
+pane rather than instead of it. The numbers, on this workstation:
+
+| messages | web processes | document handed | resident |
+|---|---|---|---|
+| 1 | 1 | 607 µs | +4 MiB |
+| 50 | 1 | 7.2 ms | +5 MiB |
+| 200 | 1 | 25.6 ms | +5 MiB |
+
+**One process and flat memory, whatever the thread's length.** That settles the
+open question above, and settles it in this proposal's favour: the obvious
+rebuttal does not hold. `gtk_reader::a_whole_thread_costs_one_web_process` pins
+it — two messages and thirty cost the same, and the view adds exactly one
+process.
+
+The cost it *does* have, which the proposal did not predict: handing the
+document over is linear in thread length and crosses the 16 ms interaction
+budget somewhere past a hundred messages. Not what the stacked pane was failing
+at, and worth knowing before anyone calls this free.
+
+The maintainer's own reading of it, trying it on real mail: *"outside of
+stylistic issues it seems to perform much better."*
+
+### Three things the building of it found
+
+**Every render is a full teardown and reload.** JavaScript is off (ADR 0003),
+so there is no incremental path: a changed document is a new document. Bodies
+arrive one per turn of the main loop, so rendering on arrival cost one document
+per message — the first open of a thread was visibly slower than every return
+to it. The pane draws when the thread is whole, holds out 400 ms for bodies
+that have not come, and refuses a document identical to the one loaded.
+
+**Expansion is the reader's state, not a function of the model.** Recomputing
+it on each redraw from `seen` and focus meant a message folded shut under the
+person reading it the moment resting on it marked it read. Decided once per
+message and then kept.
+
+**And with JavaScript off, the application cannot see a `<details>` toggle.**
+This is the constraint the proposal did not state and the one that most shapes
+what is still open: expansion the *user* performs is invisible to Postio, so
+any reload loses it. It does not arise while nothing reloads — which is why
+the coalescing above matters for more than speed.
+
+### A hole it found in code that already ships
+
+A sender writing `src="postio-cid:..."` directly passed through the sanitiser
+untouched: only `cid:` is rewritten, and the scheme is in `add_url_schemes`.
+Harmless while one document is one message, because it reaches that message's
+own parts. Under one document it reaches *another message's*. Dropped now, in
+both modes. Worth landing whether or not this proposal is ever accepted.
 
 ## Status
 
-Proposed, and deliberately not started. It revisits an accepted ADR, moves a
+**Accepted 2026-09-09, by the maintainer, with the screen-reader gate not
+met.** Stated plainly rather than folded into the acceptance, because this
+document says of that gate: *"This is the one that should decide it."*
+
+The paragraph this replaces read: *"Still Proposed, and now built, measured
+and depended on — but not accepted, because the thing this ADR names as
+deciding it has still not happened... letting the measurements alone carry it
+to Accepted would be answering the easy half of its own question."* That
+reasoning was not wrong and has not been rebutted. It was overruled, which is
+a different thing and is the maintainer's to do.
+
+What was accepted, and what was not:
+
+- **The one-document pane is the default**, not an experiment behind
+  `POSTIO_ONE_DOCUMENT`. Everything else under *What would have to be true to
+  accept this* is done and has tests: the verbs work through `decide_policy`
+  navigation (#1394), per-sender image policy survived the move (#1353), the
+  token layer dresses the HTML chrome from one place, and a sender's CSS is
+  confined to its own message (#1326).
+- **The Orca pass has not been run.** It is [#1424]. It is now a check made
+  *after* the fact rather than before, and if it finds the HTML worse than the
+  widget tree it replaces, that is a defect against this ADR rather than a
+  reopening of it.
+
+Two of the three reasons the original Status gave for holding back are
+settled: it was decided by the maintainer rather than by whoever was
+profiling that week, and the surface did move. The third — the accessibility
+trade — is what #1424 still owes an answer for.
+
+[#1424]: https://github.com/dlapiduz/postio/issues/1424
+
+### What has been settled since (2026-09-09)
+
+The cost question, which the proposal left open, is answered. #1348 measured
+both panes with one instrument, in Pss rather than RSS — the first attempt
+reported 7.3 GB, mostly the same pages counted fifty times:
+
+| | one document | a view per message |
+|---|---|---|
+| memory | flat, ~101 MiB | ~31 MiB per message, 1559 MiB at fifty |
+| time to show a thread | 47–102 ms | up to 1.34 s at fifty |
+
+The pane is what `specs/001-conversation-reading-pane/` builds on, and several
+of its requirements now depend on this shape: FR-013 (every body visible) is
+only affordable because of the flat line above, and FR-015, the conversation
+rail and the per-message verbs are all built against one document.
+
+### Amendment: containment is not free
+
+The proposal assumed the sender's markup arrived stripped of styling. #1325
+admitted the inline `style` attribute, so a document holding several senders
+has to contain what their CSS can reach — which the widget tree got for free by
+giving each message its own view. That cost is now part of "one document":
+
+- `sanitize::contain_declarations` and the refusal table, which drop the
+  declarations that escape a message's own block (`position`, `z-index`, and
+  the viewport units)
+- `contain_body`'s non-visible overflow, which is what actually stops a
+  `transform` painting over a neighbour (#1346 corrected my claim that an
+  inline style "has no selector therefore no reach")
+- `style-src` naming no source to fetch from, so a sender's stylesheet cannot
+  phone home (#1383). That day has arrived: #1326 admits `<style>` blocks, so
+  this is no longer an unexercised second layer but a live one, behind
+  `postio_body::styles` refusing `@import` and `@font-face` outright
+- selector rewriting itself (#1326), which is the part the widget tree never
+  needed because a message that owns its own view cannot name anything in
+  anyone else's
+
+Originally: proposed, and deliberately not started. It revisits an accepted ADR, moves a
 surface out of the widget layer, and trades accessibility guarantees for
 performance — none of which should be decided by whoever happened to be
 profiling that week.

@@ -12,6 +12,9 @@ pub enum UiRecovery {
     None,
     /// Reversible from the undo stack, and worth an "— Undo" toast.
     Undo,
+    /// Reversible for a limited time through its own affordance, not from the
+    /// undo stack (#1481). A send is the case: the window is the queue's.
+    Window,
     /// Irreversible enough to ask first.
     Confirm,
 }
@@ -22,6 +25,7 @@ impl From<postio_core::registry::Recovery> for UiRecovery {
         match recovery {
             Recovery::None => UiRecovery::None,
             Recovery::Undo => UiRecovery::Undo,
+            Recovery::Window => UiRecovery::Window,
             Recovery::Confirm => UiRecovery::Confirm,
         }
     }

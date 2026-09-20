@@ -4,8 +4,8 @@
 //! Canvas 3e. Type an address, Postio finds the servers, you confirm, then
 //! choose a sync window (#876) — the canvas draws a local-store format
 //! picker beside that step and `postio-hiy` records that decision as
-//! dropped, so it is not here: every account is single SQLite/SQLCipher
-//! store (ADR 0014), and there is no format to choose.
+//! dropped, so it is not here: every account is one encrypted local store
+//! (ADR 0014, ADR 0038), and there is no format to choose.
 //!
 //! # What this widget will not do
 //!
@@ -688,7 +688,25 @@ impl Onboarding {
         self.imp().manual.is_visible()
     }
 
-    /// Put the keyboard where the user starts.
+    /// Put the keyboard where the user starts: the first field.
+    ///
+    /// Which is the name, and has been since #603 added it above the address.
+    /// `focus_address` kept the job it was given when the address *was* the
+    /// first field (canvas 3e), so first run opened with the cursor in the
+    /// second field and the one above it looking skipped.
+    ///
+    /// That is the third time a field added at the top of this form left
+    /// something below it addressing the old first: #68 and #629 were the
+    /// same shape on Return. `gtk_onboarding_enter` drives Return through
+    /// every field for exactly that reason; this is the focus half.
+    pub fn focus_name(&self) {
+        self.imp().name.grab_focus();
+    }
+
+    /// Put the keyboard on the address.
+    ///
+    /// Not where a fresh form starts — see [`focus_name`](Self::focus_name).
+    /// This is where Return from the name field lands.
     pub fn focus_address(&self) {
         self.imp().address.grab_focus();
     }
@@ -889,6 +907,17 @@ impl Onboarding {
     /// `has_focus`, which also asks whether the *toplevel* is active, which
     /// a headless test window never becomes.
     #[doc(hidden)]
+    pub fn test_name_has_focus(&self) -> bool {
+        self.root()
+            .and_downcast::<gtk::Window>()
+            .and_then(|window| gtk::prelude::RootExt::focus(&window))
+            .is_some_and(|focus| {
+                focus.is_ancestor(&self.imp().name)
+                    || focus == self.imp().name.clone().upcast::<gtk::Widget>()
+            })
+    }
+
+    /// Whether the address field is the one `grab_focus` last landed on.
     pub fn test_address_has_focus(&self) -> bool {
         self.root()
             .and_then(|root| root.downcast::<gtk::Window>().ok())
@@ -1117,9 +1146,7 @@ impl Onboarding {
         self.set_valign(gtk::Align::Center);
         self.set_accessible_role(gtk::AccessibleRole::Group);
 
-        let kicker = gtk::Label::new(Some("Add account"));
-        kicker.add_css_class("postio-kicker");
-        kicker.set_xalign(0.0);
+        let kicker = crate::widgets::kicker("Add account");
         kicker.set_hexpand(true);
         kicker.set_accessible_role(gtk::AccessibleRole::Presentation);
 

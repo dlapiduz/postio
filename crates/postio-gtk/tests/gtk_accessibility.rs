@@ -72,6 +72,7 @@ impl MailboxSource for Sample {
                 unread,
                 flagged: 0,
                 snoozed: 0,
+                attention: 0,
             };
             mailbox.last_synced_at = Some(Utc::now() - chrono::Duration::seconds(12));
             mailbox
@@ -109,7 +110,8 @@ impl MessageSource for Sample {
                     seen: position % 2 == 0,
                     flagged: false,
                     answered: false,
-                    draft: false,
+                    send_state: None,
+                    send_at: None,
                     has_attachments: false,
                     thread_count: 1,
                     participants: Vec::new(),
@@ -251,6 +253,34 @@ fn every_widget_a_screen_reader_meets_has_a_role_and_a_name() {
 
     require_an_accessibility_backend();
 
+    // ── a mode says which one it is, and how to leave it ─────────────────
+    // The ⌫ chip on the field is decoration -- announcing a bare glyph reads
+    // as furniture -- so the fact it carries belongs to the field the user is
+    // typing in. Drawn and not spoken is the same mode with no door for
+    // anybody not looking at it.
+    window.open_finder(finder::Mode::Mailbox);
+    pump();
+    let field = window
+        .finder()
+        .field()
+        .expect("the box drives the header field");
+    assert!(
+        gtk::test_accessible_has_property(
+            field.text.upcast_ref::<gtk::Widget>(),
+            AccessibleProperty::Description
+        ),
+        "the field says which question is being asked and how to stop asking it"
+    );
+    assert!(
+        gtk::test_accessible_has_role(
+            field.hint.upcast_ref::<gtk::Widget>(),
+            AccessibleRole::Presentation
+        ),
+        "the chip stays decoration; the field it sits in is what speaks"
+    );
+    window.close_finder();
+    pump();
+
     // ── the panes are landmarks a screen reader can navigate by ──────────
     assert!(gtk::test_accessible_has_role(
         &window.shell().sidebar(),
@@ -277,6 +307,66 @@ fn every_widget_a_screen_reader_meets_has_a_role_and_a_name() {
             "a visible row in the list has no name for a screen reader"
         );
     }
+
+    // ── the conversation rail announces more than it draws ───────────────
+    // The rail's rows are a number, a name and sometimes a count, because
+    // screen 28 wants a column you can scan rather than read. That only works
+    // if the label carries what the eye gets from position and from the
+    // message header — so the terseness is a promise about the label, and
+    // this is where the promise is kept or not.
+    //
+    // Against the accessibility tree rather than the widget's own fields: a
+    // label handed to `update_property` and a label a screen reader can read
+    // are different claims, and only one of them is what `GTK_A11Y=test`
+    // above is for.
+    window.show_conversation(rail_conversation());
+    // The ladder is about the window, and this one is whatever size the test
+    // compositor felt like giving it. Saying the width makes the surface
+    // under audit the one that has a rail, rather than one that unmounted it
+    // and passed by having nothing to check.
+    let pane = window.conversation();
+    pane.set_window_width(1400);
+    pump();
+
+    let rail = pane.rail();
+    assert!(
+        rail.widget().is_visible(),
+        "the rail is not drawn, so the audit below would prove nothing"
+    );
+    assert!(
+        gtk::test_accessible_has_role(&rail.list(), AccessibleRole::List),
+        "FR-046: the rail is a list, not a group of unrelated rows"
+    );
+
+    let first = rail
+        .row_widget(0)
+        .expect("a six-message conversation has a first row");
+    let sixth = rail.row_widget(5).expect("a sixth row");
+    assert!(
+        announces(&first, "Message 1 of 6, Ada Norwood, 21 Aug"),
+        "a rail row must announce position, sender and date -- the visible \
+         row deliberately says none of the last two"
+    );
+    assert!(named(&sixth), "every row is named, not only the first");
+
+    // Marked to the tree, not only drawn. `:selected` paints a row; a screen
+    // reader is told by the toolkit's own selection state, and the two came
+    // apart in #1374's first draft where `set_marked` moved a CSS class.
+    rail.set_marked(Some(2));
+    pump();
+    let marked = rail.row_widget(2).expect("a third row");
+    assert!(
+        selected(&marked, true),
+        "the marked row must be selected to the accessibility tree, not only \
+         painted -- a screen reader is told by the toolkit's state and reads \
+         no CSS"
+    );
+    assert!(
+        selected(&first, false),
+        "and the row it left is no longer current, so exactly one is"
+    );
+
+    expect_usable(&window, "a conversation and its rail");
 
     // ── 200% text stays usable ───────────────────────────────────────────
     // Not a look-and-see: if the row's type came from constants rather than
@@ -662,6 +752,89 @@ fn require_an_accessibility_backend() {
 /// GTK has no getter for a property value, only `check_property`, which
 /// compares and returns NULL on a match — so the question has to be asked as
 /// "is it equal to empty".
+/// A six-message conversation, so the rail has something to index.
+///
+/// Six because the ladder's floor is a single message and the brief's own
+/// example is six; the dates are fixed so the announced name is a constant
+/// rather than something that changes with the clock.
+fn rail_conversation() -> Vec<Row> {
+    (1..=6)
+        .map(|position| Row {
+            id: MessageId::new(position),
+            thread: Some(postio_model::ids::ThreadId::new(1)),
+            from: Some(postio_model::address::EmailAddress::new(
+                Some("Ada Norwood"),
+                "ada@example.com",
+            )),
+            subject: Some("Tide gate interlock".into()),
+            preview: Some("a snippet under it".into()),
+            // Fixed, and long enough ago that the window's own relative
+            // formatting settles on a date rather than a time -- the
+            // announced name has to be a constant, not something that
+            // changes with the clock.
+            received_at: Utc.with_ymd_and_hms(2026, 8, 21, 9, 41, 0).unwrap(),
+            seen: true,
+            flagged: false,
+            answered: false,
+            send_state: None,
+            send_at: None,
+            has_attachments: false,
+            thread_count: 6,
+            participants: Vec::new(),
+        })
+        .collect()
+}
+
+/// Whether `widget` reports `expected` for the selected state.
+///
+/// `test_accessible_has_state` is not enough: it answers whether the state is
+/// *set*, and every row of a `ListBox` sets it — the unselected ones set it to
+/// false. Asking that question of two rows returns true for both, which is a
+/// test that cannot fail. `check_state` compares the value.
+fn selected(widget: &gtk::Widget, expected: bool) -> bool {
+    use glib::translate::ToGlibPtr;
+    unsafe {
+        let message = gtk4_sys::gtk_test_accessible_check_state(
+            ToGlibPtr::<*mut gtk4_sys::GtkWidget>::to_glib_none(widget).0
+                as *mut gtk4_sys::GtkAccessible,
+            gtk4_sys::GTK_ACCESSIBLE_STATE_SELECTED,
+            expected as std::ffi::c_int,
+        );
+        if message.is_null() {
+            return true;
+        }
+        glib::ffi::g_free(message as *mut _);
+        false
+    }
+}
+
+/// Whether `widget` announces exactly `expected`.
+///
+/// `gtk_test_accessible_check_property` returns NULL when the property
+/// matches and a message when it does not, which is the only way to read a
+/// label's *value* back rather than merely ask whether there is one.
+fn announces(widget: &gtk::Widget, expected: &str) -> bool {
+    use glib::translate::ToGlibPtr;
+    let expected = std::ffi::CString::new(expected).expect("no interior nul");
+    unsafe {
+        let message = gtk4_sys::gtk_test_accessible_check_property(
+            ToGlibPtr::<*mut gtk4_sys::GtkWidget>::to_glib_none(widget).0
+                as *mut gtk4_sys::GtkAccessible,
+            gtk4_sys::GTK_ACCESSIBLE_PROPERTY_LABEL,
+            expected.as_ptr(),
+        );
+        if message.is_null() {
+            return true;
+        }
+        eprintln!(
+            "accessible label mismatch: {}",
+            std::ffi::CStr::from_ptr(message).to_string_lossy()
+        );
+        glib::ffi::g_free(message as *mut _);
+        false
+    }
+}
+
 fn labelled_empty(widget: &gtk::Widget) -> bool {
     use glib::translate::ToGlibPtr;
     unsafe {
@@ -800,6 +973,9 @@ fn pump_until(ready: impl Fn() -> bool) {
         while context.iteration(false) {}
         if ready() {
             return;
+        }
+        if let Some(reason) = postio_gtk::web_process::take_death() {
+            panic!("a WebKit web process died ({reason}) while waiting");
         }
         std::thread::sleep(std::time::Duration::from_millis(1));
     }

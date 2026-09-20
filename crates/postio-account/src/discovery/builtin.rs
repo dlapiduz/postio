@@ -489,6 +489,35 @@ mod tests {
         assert!(preset_for_imap_host("").is_none());
     }
 
+    /// iCloud's SMTP is the port Apple documents, on the transport they
+    /// document it with.
+    ///
+    /// This row said 465 with implicit TLS. Sending a real message produced
+    ///
+    /// ```text
+    /// Not sent -- connecting to smtp.mail.me.com:465 failed:
+    ///   no answer within 30s (gave up after 8 attempts)
+    /// ```
+    ///
+    /// Apple documents 587 with STARTTLS and documents no other port
+    /// (<https://support.apple.com/en-us/102525>). 465 is not refused, it is
+    /// unanswered, so every send spent the queue's whole retry budget before
+    /// telling the user anything.
+    ///
+    /// Asserted through the preset rather than by reading the TOML: the
+    /// spelling of the transport is `start-tls`, kebab-cased by serde, and
+    /// `starttls` parses as nothing at all.
+    #[test]
+    fn icloud_sends_on_the_port_apple_documents() {
+        let icloud = preset_for_domain("icloud.com").expect("iCloud should be a shipped row");
+        assert_eq!(icloud.smtp_host(), "smtp.mail.me.com");
+        assert_eq!(
+            icloud.smtp_port(),
+            587,
+            "587 is the only port Apple documents"
+        );
+    }
+
     /// The account #501 and #943 describe: iCloud's own real folders, so a
     /// role tie-break has something to prefer over the look-alike another
     /// client left beside each one.

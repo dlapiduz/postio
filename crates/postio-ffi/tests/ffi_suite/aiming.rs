@@ -71,7 +71,7 @@ fn sample_row() -> RowFfi {
         seen: true,
         flagged: false,
         answered: false,
-        draft: false,
+        send_state: None,
         has_attachments: false,
         thread_count: 1,
         participants: String::new(),
@@ -149,25 +149,28 @@ mod through_the_boundary {
 
     /// A session over a store holding one conversation of two messages, with
     /// the real action handlers on the bus.
-    fn conversation() -> (
+    async fn conversation() -> (
         std::sync::Arc<Session>,
         ScopeFfi,
         Vec<i64>,
-        postio_storage::Database,
+        postio_storage::Store,
     ) {
-        let database = test_support::memory();
+        let database = test_support::memory().await;
         let (mailbox, members) = {
-            let connection = database.connection().expect("a connection");
-            let (account, inbox) = test_support::account_with_inbox(&connection);
+            let connection = database.connect().await.expect("a connection");
+            let (account, inbox) = test_support::account_with_inbox(&connection).await;
             let messages = MessageRepository::new(&connection);
             let threads = ThreadRepository::new(&connection);
             let mut thread = postio_model::Thread::new(account.id);
-            threads.create(&mut thread).expect("a thread");
+            threads.create(&mut thread).await.expect("a thread");
             let mut members = Vec::new();
             for _ in 0..2 {
                 let mut message = Message::new(account.id, inbox, Utc::now());
-                let id = messages.create(&mut message).expect("a message");
-                threads.add_message(thread.id, id).expect("membership");
+                let id = messages.create(&mut message).await.expect("a message");
+                threads
+                    .add_message(thread.id, id)
+                    .await
+                    .expect("membership");
                 members.push(id.get());
             }
             (inbox, members)
@@ -199,28 +202,31 @@ mod through_the_boundary {
     }
 
     /// Whether the store has this message marked read.
-    fn is_seen(database: &postio_storage::Database, message: i64) -> bool {
-        MessageRepository::new(&database.connection().expect("a connection"))
+    async fn is_seen(database: &postio_storage::Store, message: i64) -> bool {
+        let connection = database.connect().await.expect("a connection");
+        MessageRepository::new(&connection)
             .get(postio_model::ids::MessageId::new(message))
+            .await
             .expect("a read")
             .expect("the message is still there")
             .flags
             .contains(&Flag::Seen)
     }
 
-    fn is_flagged(database: &postio_storage::Database, message: i64) -> bool {
-        let connection = database.connection().expect("a connection");
+    async fn is_flagged(database: &postio_storage::Store, message: i64) -> bool {
+        let connection = database.connect().await.expect("a connection");
         MessageRepository::new(&connection)
             .get(postio_model::ids::MessageId::new(message))
+            .await
             .expect("a read")
             .expect("the message is still there")
             .flags
             .contains(&Flag::Flagged)
     }
 
-    #[test]
-    fn invoking_a_verb_on_a_conversation_row_acts_on_the_conversation() {
-        let (session, scope, members, database) = conversation();
+    #[tokio::test(flavor = "multi_thread")]
+    async fn invoking_a_verb_on_a_conversation_row_acts_on_the_conversation() {
+        let (session, scope, members, database) = conversation().await;
         session.open_scope(scope);
         // Draw the row, the way a table does. Pages load when something asks
         // for them, so a session that has only opened a scope is holding no
@@ -242,26 +248,36 @@ mod through_the_boundary {
         session.invoke("flag");
         session.settle_for_test();
 
-        let flagged = settle_until(|| members.iter().all(|id| is_flagged(&database, *id)));
+        let flagged = settle_until(async || {
+            for id in &members {
+                if !is_flagged(&database, *id).await {
+                    return false;
+                }
+            }
+            true
+        })
+        .await;
+        // Counted before the assertion rather than inside it: the message is
+        // only built on failure, and it cannot await there.
+        let mut acted_on = 0usize;
+        for id in &members {
+            acted_on += usize::from(is_flagged(&database, *id).await);
+        }
         assert!(
             flagged,
-            "flagging a conversation row reached the bus but acted on {} of \
-             its {} messages -- the boundary aimed at the row's own message \
-             instead of the thread it stands for",
-            members
-                .iter()
-                .filter(|id| is_flagged(&database, **id))
-                .count(),
+            "flagging a conversation row reached the bus but acted on \
+             {acted_on} of its {} messages -- the boundary aimed at the row's \
+             own message instead of the thread it stands for",
             members.len()
         );
         session.shutdown();
     }
 
-    #[test]
-    fn an_id_this_build_does_not_know_is_ignored_rather_than_fatal() {
+    #[tokio::test(flavor = "multi_thread")]
+    async fn an_id_this_build_does_not_know_is_ignored_rather_than_fatal() {
         // It arrives from another process. A boundary that panicked on a
         // typo would be one Swift could crash.
-        let (session, scope, _members, _database) = conversation();
+        let (session, scope, _members, _database) = conversation().await;
         session.open_scope(scope);
         session.invoke("no_such_command");
         session.invoke("");
@@ -269,17 +285,22 @@ mod through_the_boundary {
         session.shutdown();
     }
 
-    fn settle_until(done: impl Fn() -> bool) -> bool {
+    async fn settle_until<F, Fut>(done: F) -> bool
+    where
+        F: Fn() -> Fut,
+        Fut: std::future::Future<Output = bool>,
+    {
         let deadline = std::time::Instant::now()
             + postio_test_support::scaled(std::time::Duration::from_secs(5));
         while std::time::Instant::now() < deadline {
-            if done() {
+            if done().await {
                 return true;
             }
-            std::thread::sleep(std::time::Duration::from_millis(10));
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
         }
-        done()
+        done().await
     }
+
     // --- the bus a session builds for itself (user report) ----------------------
 
     /// A session opened the way the application opens it: no bus supplied.
@@ -288,8 +309,8 @@ mod through_the_boundary {
     /// used it for a verb. Every case above hands the session a bus built with
     /// `actions::wire`, so all of them exercised a bus the shipped application
     /// never has.
-    #[test]
-    fn select_all_then_a_verb_acts_on_the_view() {
+    #[tokio::test(flavor = "multi_thread")]
+    async fn select_all_then_a_verb_acts_on_the_view() {
         // #1300. Every message verb defaults to `MessageTarget::Selection`.
         // `aim::refine` narrows that for thread rows — and in a threaded
         // folder every row is one, which is why the rest of this module never
@@ -299,13 +320,14 @@ mod through_the_boundary {
         //
         // The boundary never wrote to that state, so select-all-then-flag
         // resolved against an empty one and acted on nothing at all.
-        let database = test_support::memory();
+        let database = test_support::memory().await;
         let (mailbox, message) = {
-            let connection = database.connection().expect("a connection");
-            let (account, inbox) = test_support::account_with_inbox(&connection);
+            let connection = database.connect().await.expect("a connection");
+            let (account, inbox) = test_support::account_with_inbox(&connection).await;
             let mut message = Message::new(account.id, inbox, Utc::now());
             let id = MessageRepository::new(&connection)
                 .create(&mut message)
+                .await
                 .expect("a message")
                 .get();
             (inbox, id)
@@ -327,27 +349,33 @@ mod through_the_boundary {
         session.settle_for_test();
 
         assert!(
-            settle_until(|| is_flagged(&database, message)),
+            settle_until(async || is_flagged(&database, message).await).await,
             "select-all stayed a predicate the actions resolved against an app \
              state the boundary never mirrored its view into"
         );
         session.shutdown();
     }
 
-    #[test]
-    fn a_session_that_was_given_no_bus_still_runs_its_verbs() {
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_session_that_was_given_no_bus_still_runs_its_verbs() {
         // The report was "emails are not marked read in the UI when open for the
         // dwell time". The dwell was innocent: it armed, it fired, and it sent
         // `MarkReadOnDwell` into a bus whose handler was `|_, _| async {}` —
         // received and dropped. So was every other verb that is not cursor
         // movement or selection: archive, flag, delete, undo, mark read.
-        let database = test_support::memory();
+        //
+        // `dwell.rs` asks the neighbouring question and cannot see this one:
+        // it hands the session a bus built with `actions::wire`, so it proves
+        // the verb travels once somebody has given the session somewhere to
+        // send it. This one gives it nowhere, which is what `openAt` does.
+        let database = test_support::memory().await;
         let (mailbox, message) = {
-            let connection = database.connection().expect("a connection");
-            let (account, inbox) = test_support::account_with_inbox(&connection);
+            let connection = database.connect().await.expect("a connection");
+            let (account, inbox) = test_support::account_with_inbox(&connection).await;
             let mut message = Message::new(account.id, inbox, Utc::now());
             let id = MessageRepository::new(&connection)
                 .create(&mut message)
+                .await
                 .expect("a message")
                 .get();
             (inbox, id)
@@ -373,7 +401,7 @@ mod through_the_boundary {
         session.mark_read_on_dwell(row.id);
         session.settle_for_test();
 
-        let read = settle_until(|| is_seen(&database, message));
+        let read = settle_until(async || is_seen(&database, message).await).await;
         assert!(
             read,
             "the verb reached a bus that dropped it: a session that builds its \

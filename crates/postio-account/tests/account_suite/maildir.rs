@@ -505,3 +505,84 @@ fn filenames(directory: &Path) -> Vec<String> {
     names.sort();
     names
 }
+
+#[tokio::test]
+async fn a_role_with_no_folder_gets_one_made_and_listed() {
+    // Discovery calls `create_mailbox` for a reserved role that resolves to
+    // nothing — `\Sent` on a tree somebody rsynced without one. A maildir has
+    // no server to ask, so the folder is three directories, and the proof it
+    // worked is that the next `LIST` names it.
+    let tree = tree();
+    let backend = opened(tree.path()).await;
+
+    assert!(
+        !listed(&backend).await.contains(&"Sent".to_owned()),
+        "the fixture has no Sent folder to begin with"
+    );
+
+    backend.create_mailbox("Sent").await.expect("create Sent");
+
+    assert!(
+        listed(&backend).await.contains(&"Sent".to_owned()),
+        "a folder that was made is a folder that lists"
+    );
+    for subdir in ["cur", "new", "tmp"] {
+        assert!(
+            tree.path().join("Sent").join(subdir).is_dir(),
+            "a maildir folder is cur/new/tmp, and {subdir} is missing"
+        );
+    }
+}
+
+#[tokio::test]
+async fn making_a_folder_that_is_already_there_is_success_not_a_clash() {
+    // The trait's contract: the caller wants the folder to *exist*, not to
+    // have been the one that made it. Two passes must not turn the second
+    // into an error, and must not disturb what is in the folder already.
+    let tree = tree();
+    let backend = opened(tree.path()).await;
+
+    backend.create_mailbox("Archive").await.expect("first");
+    backend.create_mailbox("Archive").await.expect("second");
+
+    assert_eq!(
+        listed(&backend)
+            .await
+            .iter()
+            .filter(|path| *path == "Archive")
+            .count(),
+        1,
+        "the folder is named once, not twice"
+    );
+}
+
+#[tokio::test]
+async fn a_nested_role_is_made_at_the_depth_it_names() {
+    // `INBOX/Sent` on an fs-layout tree is a directory inside a directory.
+    // The separator this backend advertises is `/`, so a caller that asks for
+    // a child must get one rather than a folder with a slash in its name.
+    let tree = tree();
+    let backend = opened(tree.path()).await;
+
+    backend
+        .create_mailbox("Lists/rust")
+        .await
+        .expect("create a nested folder");
+
+    assert!(
+        listed(&backend).await.contains(&"Lists/rust".to_owned()),
+        "the nested folder lists under the name it was asked for"
+    );
+    assert!(tree.path().join("Lists").join("rust").join("cur").is_dir());
+}
+
+/// Every folder path the backend lists.
+async fn listed(backend: &MaildirBackend) -> Vec<String> {
+    backend
+        .list_mailboxes(&MailboxFilter::all())
+        .await
+        .expect("list")
+        .into_iter()
+        .map(|summary| summary.path)
+        .collect()
+}

@@ -5,6 +5,47 @@
 # settings here exist because that speed changes what the machine looks like
 # to a test, not because the tests changed.
 
+# The measurement tier is not on the merge path (#1450).
+#
+# `#[ignore]` was doing two unrelated jobs. Fifteen tests use it to mean *this
+# machine may not have what I need* -- a live IMAP or JMAP server, a system
+# D-Bus, a Secret Service session, the real desktop -- and `ci.yml` greps the
+# workflow directory to be sure nothing ever opts back into them. Six used it
+# to mean *too slow for the merge path*, and that guard, right for the first
+# fifteen, made the last six unrunnable: nothing anywhere passes
+# `--run-ignored`, so they had never executed in CI once.
+#
+# They are not `#[ignore]`d any more. `#[ignore]` means one thing again,
+# `ci.yml`'s guard goes on being exactly as true as it was, and *when* a test
+# runs is a scheduling question answered here, where scheduling belongs.
+#
+# Three more joined them that had the same character and never got the marker:
+# `idle_store_cpu` (44.1s), `navigation_cost` (21.3s) and `smtp_wait_cpu`
+# (10.2s). Each says in its own doc comment that what it produces is numbers a
+# person reads. Together with the six, 75.6s off every pull request.
+#
+# Four of the nine have since gone, with the thing they measured. `hmac_cost`
+# timed SQLCipher's per-page HMAC-SHA512 against SHA-256, `header_block_size`
+# weighed a zstd-compressed header block, and `measurements::` read
+# `cipher_page_size` -- none of which the engine has any more. Turso
+# authenticates a page as part of AES-256-GCM rather than beside it, so the
+# ratio `hmac_cost` existed to report is not a number this store can have.
+#
+# The filter is written once, negated, and `profile.nightly` lifts it with
+# `all()` rather than repeating it -- nextest config has no bindings, and a
+# second copy of an expression this long is a second thing to keep true.
+# `scripts/checks/check-measurement-tier.py` is what stops it drifting from
+# the `POSTIO-MEASUREMENT:` markers in the tests themselves, and what enforces
+# the rule this tier must never break: nothing it selects may be a test that
+# reaches a live service.
+#
+# A `default-filter` is ANDed with what the command line asks for rather than
+# replaced by it, so a measurement cannot be run from this profile even by
+# name. That is deliberate, and it is not silent -- nextest answers
+# `error: no tests to run` and names the profile that excluded it. To run one,
+# ask for the profile that owns it:
+#
+#     cargo nextest run --profile nightly -E 'binary(cache_pressure)'
 [profile.default]
 # A test that hangs should fail, not stall the run. The GTK suites already
 # carry their own deadlines (`POSTIO_TEST_PATIENCE` scales them); this is the
@@ -12,30 +53,215 @@
 # that never answers, a compositor that went away mid-test.
 slow-timeout = { period = "60s", terminate-after = 4 }
 
+default-filter = 'not (binary(cache_pressure) + binary(idle_store_cpu) + binary(smtp_wait_cpu) + (package(postio-index) & test(/^body_index_size::/)) + (package(postio-index) & test(/^total_hits_cap::/)) + (package(postio-app) & test(/^navigation_cost::/)))'
+
 # Retries are OFF by default, deliberately. A retry turns a real failure into
 # a slow pass, and this project's characteristic bug is something that works
 # on the second look (#70 twice). The narrow exception is below.
 retries = 0
 
-# The GUI suites, and only those.
+# Two WebKit processes starting at once is what breaks; more than two is what
+# a full run does (#957).
 #
-# #957 is a case that "consumes real time" failing under concurrent load and
-# passing in isolation -- `gtk_composer_toolbar` fails inside a full parallel
-# run and passes 6 times out of 6 alone. Process-per-test puts far more load
-# on the box than `cargo test` does, so it meets that failure mode more often.
+# Each of these binaries builds a `WebView` per case, and nextest gives every
+# case its own process, so eight cases in flight is eight web processes
+# starting within a second of one another. One of them dies, its JavaScript
+# callback never fires, and the case waits out `gtk_suite`'s 120s deadline.
+# Measured on an idle workstation, `postio-gtk`, `--retries 0`:
 #
-# Two retries rather than holding the case out: ignoring it would delete a
-# test that works to hide a load problem, and #957 is where the load problem
-# gets fixed. This is a mask with a pointer to what it masks, which is the
-# only kind worth having -- when #957 closes, this override should go with it.
+#     the 8 gtk_editor_* + gtk_composer_toolbar cases, 8 at a time   2 fail
+#     the same 8, one at a time                            8 pass, 10.2s
+#     the same 8, two/three/four at a time                 8 pass, 4-5s
+#     all 671, uncapped                                              2 fail
+#     all 671, these binaries capped to 4                            1 fail
+#     all 671, these binaries capped to 2                          671 pass
+#     all 671, these binaries capped to 1                671 pass, 349s
+#
+# So it is concurrency and not a slow box -- eight tests on an idle machine
+# reproduce it -- and the cap is the fix rather than a mask.
+#
+# **One, because two is not enough.** Two was nearly what landed here: green
+# on its first full run, and `gtk_editor_format` at 122s on its second. That
+# is the same failure at a lower rate, which is the kind of number that reads
+# as fixed until it lands on somebody else's branch. Four failed outright.
+# One matches the mechanism -- what breaks is two web processes starting at
+# once, so the cap that fixes it is the one that never has two.
+#
+# It costs about 143s -> 350s on `postio-gtk`. That is the price of a
+# deterministic suite, and not obviously worse than a masked one: the run
+# that failed during #1510's landing took 379s *with* the retries. #1521 is
+# where the time comes back -- fix the web-process death, or narrow this
+# group from whole binaries to the cases that actually build a `WebView`.
+#
+# The group is shared across the binaries deliberately: they contend for
+# whatever WebKit resource this is, so a budget each would add up to the
+# number that fails. #1521 is the fault underneath -- when it is fixed this
+# cap should be tried at `num-cpus` again and removed if it holds.
+[test-groups]
+webkit = { max-threads = 1 }
+
+[[profile.default.overrides]]
+filter = 'binary(gtk_suite) + binary(gtk_reader) + binary(gtk_composer) + binary(gtk_accessibility) + binary(drag_out) + binary(webkit_probe) + binary(app_suite)'
+test-group = 'webkit'
+
+# `app_suite` alone, for #1497, and nothing else.
+#
+# This was `package(postio-gtk) + package(postio-app)` with #957's name on it.
+# The cap above fixes the `postio-gtk` half outright -- 671/671 with retries
+# off, twice -- so the mask no longer has anything to do there and has been
+# taken off that package.
+#
+# What still needs it is one case:
+# `render_dedup::one_gesture_renders_once_and_reselecting_renders_nothing`
+# fails **5 runs in 8 on its own**, in its own process, with nothing before
+# it (measured; recorded on #1497). That is not a load problem and this cap
+# cannot help it. Two retries keep it off the merge path while #1497 finds
+# out whether the second render is the harness or the flash #749 fixed.
+#
+# Still a mask with a pointer to what it masks, which is the only kind worth
+# having -- when #1497 closes, this override goes with it.
 #
 # Note what it does NOT cover: a case that fails alone still fails here, three
 # times, and nextest reports the retries. A test that only ever passes on
 # attempt three is a bug report, not a pass.
 [[profile.default.overrides]]
-filter = 'package(postio-gtk) + package(postio-app)'
+filter = 'package(postio-app)'
 retries = 2
+
+# `total_hits_stops_counting_at_the_cap` used to need a longer clock here,
+# and does not any more: it moved to `total_hits_cap::` and into the
+# measurement tier above, so `profile.default` never selects it and an
+# override in this profile could not fire if it wanted to. The clock it needs
+# is `profile.nightly`'s, which is already longer than the 480s this granted.
+#
+# The override is deleted rather than repointed, because a filter naming a
+# test that cannot run under the profile it is written for is worse than no
+# filter: it reads as protection and is not. The cost it was sized against is
+# still real -- 139s and 288s on two idle runs of this workstation, 10,050
+# messages inserted one at a time -- and making that fixture cheap is still
+# the follow-up noted in
+# `2026-09-13-what-the-frontend-audit-found-and-what-remains.md`.
 
 # CI wants the same thresholds but a machine-readable trail of what flaked.
 [profile.ci]
+fail-fast = false
+
+# **The outer watchdog has to outlast the inner one.**
+#
+# `profile.default`'s backstop is 60s x 4 = 240s, sized against this
+# workstation. CI sets `POSTIO_TEST_PATIENCE: "3"`, which triples every
+# deadline the tests set for *themselves* -- `gtk_suite`'s is
+# `scaled(120s)`, so 360s there. Those two numbers were inconsistent in the
+# one direction that does damage: nextest killed at 240s a case whose own
+# harness was still waiting until 360s, on the machine where the extra
+# patience exists precisely because it is slow.
+#
+# Seen on 2026-09-19:
+#
+#     TIMEOUT [ 241.016s] (410/653) postio-gtk::gtk_suite
+#       gtk_editor_markdown::typed_markdown_becomes_the_formatting_its_command_produces
+#
+# 652 passed, that one killed, and the report says TIMEOUT rather than
+# whatever the test would have said for itself -- which is the worse half. A
+# case killed by the outer clock tells you nothing about why it was slow.
+#
+# 60s x 8 = 480s: comfortably past the 360s a patience of 3 gives the
+# harness, and still far short of a wedge running for ever. It stays a
+# backstop for the case `profile.default`'s comment describes -- a WebKit
+# process that never answers, a compositor that went away -- because those do
+# not finish at 480s either.
+#
+# If `POSTIO_TEST_PATIENCE` is ever raised above 3 in `ci.yml`, this has to
+# move with it. The rule is the ordering, not the numbers: the harness must
+# always be allowed to fail on its own terms first.
+slow-timeout = { period = "60s", terminate-after = 8 }
+
+# Everything, measurements included. `nightly.yml`'s full-suite job runs this,
+# and it is also how you run one measurement by hand: `all()` is a filter an
+# `-E` on the command line narrows rather than fights.
+[profile.nightly]
+# A bench's clock, not the merge path's.
+#
+# `profile.default`'s 240s (60s x 4) is a backstop for a case that *wedges* --
+# a WebKit process that never answers, a compositor that went away. The
+# measurement tier is the opposite: tests whose whole character is that they
+# take minutes, which is why they are held off the merge path at all. They
+# inherited the backstop when this profile was written and it killed one.
+#
+# `cache_pressure` seeds 400,000 messages and measures **393s** on this
+# workstation, idle. It was terminated at 240s on CI on 2026-09-12 and
+# terminates at 240s here too, so this is not a slow-runner story. Nothing had
+# ever measured it because before acbd0943 the test was `#[ignore]`d and had
+# never run anywhere -- the sizing came from its own doc comment, which said
+# "about three and a half minutes" and was wrong by most of two minutes. That
+# comment is corrected in the same change as this one.
+#
+# 720s is about 1.8x the measured cost, which leaves room for a CI runner
+# being slower than this box without leaving a genuine hang to run for ever.
+# The job has no `timeout-minutes`, so GitHub's 6h is the only other ceiling
+# and it is not a useful one.
+slow-timeout = { period = "120s", terminate-after = 6 }
+default-filter = 'all()'
+fail-fast = false
+
+# `cache_pressure` outgrew even that, on the runner rather than here.
+#
+# The 720s above was sized as "~1.8x the measured cost" of a 393s run on this
+# workstation, idle, and explicitly "leaves room for a CI runner being slower
+# than this box". It does not: the nightly of 2026-09-19 terminated it at
+# 720.035s, which is the third time a timeout on this project was sized
+# against this machine and found wanting on a shared one. (The other two the
+# same week: `profile.ci`'s backstop killing a GTK case whose own harness was
+# still waiting, and the 240s that killed this very test on 2026-09-12.)
+#
+# 1200s is ~3x the local measurement rather than 1.8x. The test seeds 400,000
+# messages and then reads against a cache deliberately too small for them, so
+# it is I/O-bound in exactly the way a shared runner is worst at, and the
+# ratio that holds on an idle workstation is the wrong one to extrapolate
+# from. A genuine wedge still ends: GitHub's own job timeout is the ceiling
+# behind this one.
+#
+# The rule, since this keeps happening: a timeout sized from a local run
+# needs a CI measurement before it is trusted, not a multiplier.
+#
+# 1200s was wrong too -- the nightly of 2026-09-19 terminated it at 1200.042s,
+# the fourth timeout in a row sized this way. There is no fifth number here,
+# because the fault was never the number. `cache_pressure` asserts that a
+# larger page cache is *measurably faster*, and CLAUDE.md is explicit that
+# this project does not ask a shared runner to defend a stopwatch -- it is the
+# reason `bench.yml` compiles the bench targets and times nothing. So
+# no shared runner runs this binary any more (see `ci-full` below), and the
+# timeout here is now what a *workstation* run gets, which is the only place
+# the test's numbers mean anything:
+#
+#     cargo nextest run --profile nightly -E 'binary(cache_pressure)'
+#
+# It stays generous because this box is often compiling four branches at once
+# while it runs.
+[[profile.nightly.overrides]]
+filter = 'binary(cache_pressure)'
+slow-timeout = { period = "120s", terminate-after = 10 }
+
+# What a *shared runner* runs: the nightly profile's reach, minus the one
+# measurement that asserts on a stopwatch.
+#
+# This exists because the exclusion has two callers -- `nightly.yml`'s
+# full-suite job and `release.yml`'s release gate, which are the same run for
+# different reasons -- and the first attempt put it in one of them as an `-E`
+# on the command line. That is a rule living in two places, and it had already
+# drifted before it ever ran: the nightly stopped killing itself on
+# `cache_pressure` and the release gate, which nobody had looked at, would
+# still have spent twenty minutes dying on it and published nothing. A named
+# profile is one definition both can ask for by name, and a workflow that
+# forgets it now fails loudly rather than quietly doing the old thing.
+#
+# `profile.nightly` keeps `all()` deliberately: on a workstation "run
+# everything" should mean everything, and `-E` narrows it there.
+[profile.ci-full]
+# Same clock as `profile.nightly` -- these are the same tests.
+slow-timeout = { period = "120s", terminate-after = 6 }
+default-filter = 'not binary(cache_pressure)'
+# One red crate hiding a thousand passing tests is the wrong shape for a
+# report nobody is watching live, and for a release gate it is worse: it would
+# name one failure when the next line might be the reason.
 fail-fast = false

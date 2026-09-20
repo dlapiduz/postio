@@ -177,7 +177,8 @@ mod imp {
         /// other's change. `notify` is how the button learns that widening
         /// the window brought the sidebar back.
         /// Whether the sidebar is drawn right now — derived, never stored as
-        /// an answer to "does the user want it". See [`sidebar_wanted`].
+        /// an answer to "does the user want it". See
+        /// [`super::Shell::sidebar_wanted`].
         #[property(get, set = Self::set_sidebar_visible, name = "sidebar-visible")]
         pub sidebar_visible: Cell<bool>,
         /// Whether the user wants the sidebar, independent of whether this

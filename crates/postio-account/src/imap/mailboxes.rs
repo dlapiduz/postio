@@ -67,6 +67,62 @@ pub async fn list_mailboxes(
     .map(|mailboxes| finish(mailboxes, filter, &pool.settings().host))
 }
 
+/// Creates `path`, and subscribes to it.
+///
+/// RFC 3501 `CREATE` followed by `SUBSCRIBE`, which is two commands because
+/// IMAP separates "this folder exists" from "this client wants to see it in a
+/// `LSUB`" — a folder created and not subscribed is invisible to any client
+/// listing subscriptions, which is how a role Postio just created could go
+/// missing on the next pass.
+///
+/// **Already existing is success.** Servers spell that refusal differently and
+/// some race with other clients, so rather than parse the reason, this asks
+/// whether the folder is there afterwards and reports `Ok` if it is. The
+/// caller wants the folder to exist, not to have been the one that made it.
+///
+/// A subscription that fails is *not* fatal: the folder exists, which is what
+/// was asked for, and a server that refuses `SUBSCRIBE` while accepting
+/// `CREATE` would otherwise make the whole role unusable.
+pub async fn create_mailbox(
+    pool: &ConnectionPool,
+    path: &str,
+    priority: Priority,
+) -> BackendResult<()> {
+    let path = path.to_owned();
+
+    pool.execute(priority, async |session| {
+        let mailbox = mailbox_argument(&path)?;
+
+        if let Err(error) = session.create(mailbox.clone()).await {
+            // Ask the server rather than read the refusal: "already exists" has
+            // no standard spelling, and `LIST`ing the one name is cheap.
+            let existing = session
+                .list(mailbox_argument("")?, list_pattern(&path)?)
+                .await
+                .map_err(|error| BackendError::Rejected {
+                    command: "LIST".to_owned(),
+                    reason: error.to_string(),
+                })?;
+            if existing.is_empty() {
+                return Err(BackendError::Rejected {
+                    command: "CREATE".to_owned(),
+                    reason: error.to_string(),
+                });
+            }
+        }
+
+        // Best-effort: see the doc above.
+        if let Err(error) = session.subscribe(mailbox).await {
+            tracing::warn!(%error, "created the folder but could not subscribe to it");
+        }
+        Ok(())
+    })
+    .await
+    // Ids and outcomes only -- never the folder name a server rejected.
+    .inspect(|()| tracing::info!("created a folder for a mailbox role"))
+    .inspect_err(|error| tracing::warn!(%error, "cannot create a folder for a mailbox role"))
+}
+
 /// Issues the listing commands against one open session.
 async fn list_with(
     session: &mut ImapSession,

@@ -125,7 +125,7 @@ async fn an_unparseable_endpoint_is_refused_before_a_browser_opens() {
 
 #[tokio::test]
 async fn the_account_is_written_with_its_client_and_the_token_goes_to_the_keyring() {
-    let database = test_support::temp();
+    let database = test_support::temp().await;
     let keyring = MemorySecretStore::new();
 
     let outcome = provision_oauth(
@@ -142,9 +142,10 @@ async fn the_account_is_written_with_its_client_and_the_token_goes_to_the_keyrin
 
     assert!(matches!(outcome, Provisioned::Created(_)));
 
-    let connection = database.connection().expect("a connection");
+    let connection = database.connect().await.expect("a connection");
     let stored = AccountRepository::new(&connection)
         .list()
+        .await
         .expect("a list")
         .into_iter()
         .find(|account| account.address.address == ADDRESS)
@@ -176,7 +177,7 @@ async fn the_account_is_written_with_its_client_and_the_token_goes_to_the_keyrin
 async fn signing_in_twice_leaves_one_account() {
     // Somebody who stumbles and starts again has one account, not two — the
     // same rule the password path keeps.
-    let database = test_support::temp();
+    let database = test_support::temp().await;
     let keyring = MemorySecretStore::new();
     let scopes = ["https://provider.example/mail".to_owned()];
 
@@ -194,10 +195,11 @@ async fn signing_in_twice_leaves_one_account() {
         .expect("both attempts answer");
     }
 
-    let connection = database.connection().expect("a connection");
+    let connection = database.connect().await.expect("a connection");
     assert_eq!(
         AccountRepository::new(&connection)
             .list()
+            .await
             .expect("a list")
             .into_iter()
             .filter(|account| account.address.address == ADDRESS)
@@ -211,7 +213,7 @@ async fn a_keyring_that_will_not_take_the_token_writes_no_account_row() {
     // The order that cannot strand an account: the credential first. An
     // account row with no reachable token could not sync, could not
     // authenticate, and could not be repaired from inside the application.
-    let database = test_support::temp();
+    let database = test_support::temp().await;
     let locked = MemorySecretStore::locked();
 
     let error = provision_oauth(
@@ -227,10 +229,11 @@ async fn a_keyring_that_will_not_take_the_token_writes_no_account_row() {
     .expect_err("a locked keyring refuses");
 
     assert!(error.contains("keyring"), "{error}");
-    let connection = database.connection().expect("a connection");
+    let connection = database.connect().await.expect("a connection");
     assert!(
         AccountRepository::new(&connection)
             .list()
+            .await
             .expect("a list")
             .is_empty(),
         "nothing was written"

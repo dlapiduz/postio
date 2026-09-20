@@ -1,6 +1,7 @@
 # ADR 0010 — Exposing Postio over MCP
 
-- **Status:** Accepted — **GO** (2026-08-24)
+- **Status:** Accepted — **GO** (2026-08-24); the hub prerequisite landed
+  (ADR 0013), `postio-mcp` itself is not built — noted 2026-09-14
 - **Date:** 2026-08-24
 - **Issue:** [#14 Expose Postio over MCP](https://github.com/dlapiduz/postio/issues/14)
 - **Related:** [ADR 0002](0002-extensible-command-vocabulary.md) (built for
@@ -48,7 +49,7 @@ There are two ways to build an MCP server on top of this, and one of them is a
 trap.
 
 **The trap: talk to `postio-storage` directly.** An MCP binary that opens the
-SQLite file and runs queries needs no refactor and works next week. It also
+store file and runs queries needs no refactor and works next week. It also
 means every invariant Postio holds — local-first ordering, the undo stack,
 event emission, the operation queue, per-account scope — exists only in the
 path the GTK frontend takes. Two writers to one database with different rules
@@ -109,8 +110,10 @@ server can sit beside a running window, is the constraint its own "Implemented"
 section names: there is still exactly one `EventStream`, so a tracked caller
 and the window cannot both read it. [ADR 0013](0013-event-fanout.md) decided
 the fix — a hub, N subscribers — and [#176](https://github.com/dlapiduz/postio/issues/176)
-tracks building it. Without it the MCP server is reduced to polling the store,
-which is Q2's trap wearing a different hat.
+built it: `EventHub` in `crates/postio-core/src/bridge.rs`, `sink()` for
+producers and `subscribe(label)` for consumers. Without it the MCP server
+would be reduced to polling the store, which is Q2's trap wearing a different
+hat.
 
 ---
 
@@ -134,7 +137,7 @@ raised by an external agent, repeatedly, is a control that trains the user to
 click through it — and it fails entirely when Postio is not running, which is
 exactly when an agent is most likely to be working the mailbox unattended.
 
-**A draft is safe because a draft is local.** Creating one writes SQLite,
+**A draft is safe because a draft is local.** Creating one writes the store,
 enqueues nothing external, and emits an event; the mail leaves only when a human
 opens the composer and presses send, which is a gesture they already perform for
 every message they send. `Draft` and `drafts` already exist, and
@@ -209,7 +212,7 @@ the test is already there asking why.
 
 ## Alternatives
 
-**Read the SQLite store directly from a standalone binary.** Fastest to build
+**Read the store directly from a standalone binary.** Fastest to build
 and the reason for Q2's length. Two writers with different invariants over one
 database.
 
@@ -229,17 +232,19 @@ design. If it is ever wanted, it is an ADR of its own.
 
 ## Consequences
 
-- **Prerequisite work — both already landed, and neither was MCP code:**
+- **Prerequisite work — all of it landed, and none of it was MCP code:**
   `postio-session` extracted with its own boundary rule
   ([#82](https://github.com/dlapiduz/postio/issues/82)); correlation ids
   shipped as `send_tracked`/`EventEnvelope`/`InvocationFinished`
-  ([ADR 0002](0002-extensible-command-vocabulary.md), #33). What is left
-  before a server can subscribe beside the window is the fan-out hub
-  [ADR 0013](0013-event-fanout.md) decided and
-  [#176](https://github.com/dlapiduz/postio/issues/176) tracks building.
+  ([ADR 0002](0002-extensible-command-vocabulary.md), #33); and the fan-out
+  hub [ADR 0013](0013-event-fanout.md) decided is `EventHub` in
+  `crates/postio-core/src/bridge.rs`
+  ([#176](https://github.com/dlapiduz/postio/issues/176)). What is left is
+  `postio-mcp` itself, which is not built (2026-09-14).
 - `postio-mcp` is a thin binary: stdio framing, tool schemas, and a translation
   to commands and queries. It is small precisely because Q2 was decided the
   expensive way.
-- `check-crate-boundaries.py` grows a third guarded crate, alongside the one
+- `check-crate-boundaries.py` grows another guarded crate (it guards ten at
+  0.4.0, `postio-session` among them), alongside the one
   [ADR 0009](0009-ai-subsystem.md) adds.
 - `ARCHITECTURE.md`'s known-gaps table loses two rows.

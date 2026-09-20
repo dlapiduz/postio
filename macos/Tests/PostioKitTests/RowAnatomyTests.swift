@@ -248,7 +248,10 @@ import Testing
             seen: false,
             flagged: false,
             answered: false,
-            draft: false,
+            // A received message is in no send state. `draft: Bool` became
+            // `sendState: String?` when a row learned to say *which* state a
+            // message it is sending is in.
+            sendState: nil,
             hasAttachments: false,
             threadCount: 8,
             participants: "Tessa, Mara, Pinepoint"
@@ -277,7 +280,10 @@ import Testing
             seen: true,
             flagged: false,
             answered: false,
-            draft: false,
+            // A received message is in no send state. `draft: Bool` became
+            // `sendState: String?` when a row learned to say *which* state a
+            // message it is sending is in.
+            sendState: nil,
             hasAttachments: false,
             threadCount: 8,
             participants: ""

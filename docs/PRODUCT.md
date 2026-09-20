@@ -74,27 +74,39 @@ to work. Verified against gtk4 4.22, libadwaita 1.9, WebKitGTK 2.52.
 macOS and Windows frontends over the same Rust engine were always possible,
 and that possibility is the reason for two CI-enforced boundaries rather than
 an aspiration in a document: `postio-core` must not depend on GTK, and
-`postio-gtk` must not depend on SQLite or the protocol crates
+`postio-gtk` must not depend on the database engine or the protocol crates
 (`ARCHITECTURE.md` §9).
 
-**A native macOS frontend is now scheduled** — Swift over the same engine,
-[ADR 0019](decisions/0019-macos-frontend.md), tracked in its own milestone and
-not part of v1. The invariant it was kept for turned out to be load-bearing and
-not merely tidy: thirteen of the fifteen crates build and test on macOS with no
-changes at all. Windows remains unscheduled.
+**A native macOS frontend is built, as a read-only slice, and not yet
+shipped** — Swift over the same engine through the UniFFI boundary in
+`crates/postio-ffi` and the Swift package in `macos/`,
+[ADR 0019](decisions/0019-macos-frontend.md): sign in, sync, the three-pane
+shell, list, reader, search and keyboard, with compose deferred. It is left out
+of the workspace's default members until it ships (#1306) and is not part of
+v1. The invariant it was kept for turned out to be load-bearing and not merely
+tidy: measured on 2026-08-27, thirteen of what were then fifteen crates built
+and tested on macOS with no changes at all (the workspace is twenty crates
+now). Windows remains unscheduled.
 
 ---
 
 ## 3. Accounts and providers
 
-v1 connects over **IMAP and SMTP**, authenticated with a password, an
-app-specific password, or OAuth 2 — the bearer mechanisms reach the IMAP and
-SMTP sessions as of #193, and
+Postio connects over **IMAP and SMTP**, over **JMAP**, or over the **Gmail
+REST API**, authenticated with a password, an app-specific password, or
+OAuth 2. The bearer mechanisms reach the IMAP and SMTP sessions as of #193;
+the authorization flow itself — the consent screen in the system browser, a
+loopback redirect, PKCE — is `crates/postio-account/src/oauth/`, and
 [ADR 0006](decisions/0006-oauth-and-provider-presets.md) is the design.
-Multiple accounts are in scope and are
-[ADR 0005](decisions/0005-multiple-accounts.md), tracked under #1. JMAP, the Gmail API
-and Microsoft Graph are unscheduled, and the `MailBackend` seam
-(`ARCHITECTURE.md` §8) is what keeps them possible.
+**Multiple accounts are built**: one engine per enabled account, one
+database, and a unified inbox that is a scope rather than a mailbox
+(`g a` walks the scopes, `account:` names one in a query) —
+[ADR 0005](decisions/0005-multiple-accounts.md). JMAP and Gmail are the two
+further `MailBackend` implementations of
+[ADR 0018](decisions/0018-jmap-and-gmail-backends.md), `crates/postio-jmap`
+and `crates/postio-gmail`, chosen per account by the preset row. Microsoft
+Graph is unscheduled, and the `MailBackend` seam (`ARCHITECTURE.md` §8) is
+what keeps it possible.
 
 **Providers are data, not code.** Server settings live in a preset table where
 every provider is one row — never a named constant, never a special-cased
@@ -110,10 +122,12 @@ Credentials live in the OS keyring. Never in `config.toml`, never in a log.
 ## 4. The domain model is Postio's own
 
 Postio's types are not IMAP's. `Account`, `Mailbox`, `Message`, `Thread`,
-`Attachment`, `Contact`, `Label`, `Flag`, `Draft`, `Identity` and `Rule` are
-defined in `postio-model` and would survive a second protocol without changing
-shape. That is what makes §3's future protocols a backend rather than a
-rewrite.
+`Attachment`, `Contact`, `ContactGroup`, `Label`, `Flag`, `Draft` and
+`Identity` are defined in `postio-model` and survive a second protocol without
+changing shape — which is what made §3's JMAP and Gmail backends a backend
+each rather than a rewrite. A `Rule` is designed
+([ADR 0008](decisions/0008-filters-and-rules.md)) and not yet built; it will
+be defined there too when it is.
 
 ---
 
@@ -137,26 +151,51 @@ at read time instead; the reasoning is
 
 ## 6. What is stored locally
 
-SQLite for everything listable and searchable, plus a **content-addressed blob
-directory** for raw messages and attachments. No maildir, no mbox, no notmuch.
+An encrypted database for everything listable and searchable — Turso, a
+Rust rewrite of SQLite, encrypting every page with AES-256-GCM
+([ADR 0038](decisions/0038-the-store-is-turso-not-sqlcipher.md)) — plus a
+**content-addressed blob directory** for raw messages and attachments. No
+maildir, no mbox, no notmuch.
 
-The database must hold `accounts`, `identities`, `mailboxes`, `messages`,
-`threads`, `recipients`, `attachments`, `labels`, `message_labels`, `drafts`,
-`sync_state`, `settings` and `operation_queue` — a migrations test asserts
-exactly that list, so this is a checked requirement rather than a description.
-`contacts` is there too, beyond what this section requires, because recipient
-autocomplete has to rank from somewhere ([ADR 0007](decisions/0007-address-book.md)).
+The schema is one declared `HEAD` in `crates/postio-storage/src/schema.rs`:
+no numbered migrations and no `.sql` files, and a store an older schema
+wrote is resynced rather than migrated. The tables it declares are the
+requirement — `accounts`, `identities`, `signatures`, `mailboxes`,
+`mailbox_roles`, `mailbox_role_refusals`, `messages`, `threads`,
+`thread_links`, `recipients`, `addresses`, `attachments`, `labels`,
+`message_labels`, `drafts`, `contacts`, `contact_groups`,
+`contact_group_members`, `sync_state`, `settings`, `operation_queue`,
+`cross_account_moves`, `egress_log`, `unsubscribe_activations` and
+`message_search_bodies` — and `schema::declared()` reads that list back off
+the text so a test can hold it against every object the old migrations ever
+built: an object leaves the schema only by being named as deliberately
+absent, which makes this a checked requirement rather than a description.
+`contacts` and its groups are there because recipient autocomplete has to
+rank from somewhere ([ADR 0007](decisions/0007-address-book.md)).
 
 **Secrets are not among them.** No password and no token is ever written to the
 database or to `config.toml`.
 
-Search is FTS5 over that database, in `postio-index`. Tantivy and hybrid
-lexical/vector retrieval were considered; the vector half is now
-[ADR 0009](decisions/0009-ai-subsystem.md), which re-ranks FTS5 results rather
-than replacing them. **The index stores no second copy of a body**: SQLite holds
-the inverted index, the message row holds the text (compressed — ADR 0020),
-and result highlighting is generated from that. The blob store holds
-attachment payloads and raw `.eml`.
+Search is the engine's own full-text index method, owned by `postio-index`:
+`CREATE INDEX … USING fts` over two ordinary tables, `search_documents` (one
+flattened metadata row per message — sender, recipients, subject, filenames,
+list id) and `message_search_bodies` (the body, folded for search). Hybrid
+lexical/vector retrieval was considered; the vector half is now
+[ADR 0009](decisions/0009-ai-subsystem.md), which re-ranks these results rather
+than replacing them. **The message row holds the text the reader shows**, and
+the index keeps a folded copy of it in a table of its own, because an index
+over a column can neither tokenise compressed bytes nor apply Postio's own
+fold. The blob store holds attachment payloads and raw `.eml`.
+
+The body in the message row is **zstd per row when that is smaller**, the
+text itself when it is not (`postio_storage::body_codec`); a reader tells the
+two apart by the frame's magic bytes, so there is no version column. ADR 0020
+compressed it against a *trained dictionary*, and the dictionary is gone —
+no training pass, no `body_dictionaries` table — because the engine change
+first moved the full-text index onto the column itself, where nothing could
+be compressed (`specs/004-turso-store`, ADR 0038); once the index read its own
+folded table instead, the column was free to be small again, and per-row
+zstd without a dictionary is what it costs nothing to have.
 
 **The store is a complete replica, and it has a budget.** Under §14's backfill
 every message's text ends up local, so the database and blob store together hold
@@ -261,8 +300,23 @@ format that cannot be renamed casually (`ARCHITECTURE.md` §3).
 ## 9. Layout
 
 Three panes — sidebar, message list, reading pane — with the sidebar
-deliberately not consuming the screen. The list is windowed over paged SQLite
-and is never fully materialised (§18).
+deliberately not consuming the screen. The list is windowed over the paged
+store and is never fully materialised (§18).
+
+**The sidebar draws two kinds of row and the difference is load-bearing.** A
+*folder* is one the server has: Inbox, Archive, Sent, Drafts, Trash, Junk, and
+whatever else the account holds. A *view* is a saved question about messages
+filed elsewhere — Flagged, Snoozed, and the **Outbox** — with a name, a place
+and a count, and nothing a message can be moved into. Every account has a real
+folder for all six roles, created on the server if it has none, so `!` and `a`
+and `d` always have somewhere to put mail. [ADR 0036](decisions/0036-a-sidebar-row-is-a-folder-or-a-view.md).
+
+**The Outbox holds what is on its way**, and is not drawn when it holds
+nothing, which is its ordinary state. Pressing Send puts the message there
+immediately — offline included — and it leaves for Sent when the server
+accepts it. What it is *not* is a place things pile up: Drafts holds what you
+are writing and what has stopped, and its row says how many of those need you,
+separately from how many there are.
 
 The layout adapts rather than being fixed: three panes on a desktop monitor,
 two on a laptop, message-focused for reading and writing, and search-focused
@@ -309,12 +363,21 @@ neutral document type and each platform's editor is a view over it, so a second
 frontend's composer is a port rather than a rewrite and identical gestures
 produce identical bytes on the wire. Rich text is
 [ADR 0003](decisions/0003-rich-text-compose.md); where the document lives is
-[ADR 0004](decisions/0004-composer-document-model.md). **v1 composes plain
-text over that model** — which is a perfectly good v1, and is the point of
-deciding the model first.
+[ADR 0004](decisions/0004-composer-document-model.md). **The composer is rich
+text over that model**: its editing surface is a WebView (`postio_gtk::editor`)
+with bold, italic, bulleted
+and numbered lists, links, quote blocks and inserted images — the bindings are
+in [`keybindings.md`](keybindings.md). Plain text is what a message that used
+none of that is sent as, not the only thing the editor can do; deciding the
+model first is what let the editor grow without the wire format moving.
 
-Outgoing HTML is *generated* from that document, never passed through, so
-nothing a sender wrote is ever re-emitted to a third party (§21).
+Outgoing HTML is *generated* from that document for everything the user
+writes, and for a forward. A **reply's quote** is the exception, decided in
+[ADR 0033](decisions/0033-a-reply-quotes-what-the-reader-shows.md): it carries
+the original as the reader rendered it, because a quote rebuilt from the
+closed type does not look like the message being answered. What the sender
+wrote is therefore re-emitted — as the reader's own sanitiser permits it, and
+never more than that (§21).
 
 ---
 
@@ -397,7 +460,7 @@ steady state, not a half-synced one.
 prices both axes against a real 81,744-message account and settles the memory,
 disk, compression and encryption consequences.
 
-**The UI never awaits the network.** Every mutating action is: SQLite write →
+**The UI never awaits the network.** Every mutating action is: store write →
 enqueue the remote operation → emit the event → repaint. The sync engine drains
 the queue later and somewhere else. `ARCHITECTURE.md` §1.
 
@@ -458,7 +521,7 @@ Pane switches use *no* transition, and `prefers-reduced-motion` is always
 honoured.
 
 **A mailbox is never loaded into memory.** The message list is windowed over
-paged SQLite, and "select all" is a predicate — `Everything { except }` — not a
+the paged store, and "select all" is a predicate — `Everything { except }` — not a
 hundred thousand ids. This constraint shapes the store, the list widget and
 the selection model, and it is the single most-cited line in this document.
 
@@ -514,12 +577,23 @@ is one sentence: **nothing leaves this machine that the user did not ask for.**
 - `List-Unsubscribe` One-Click fires only on deliberate activation — sending it
   confirms to a spammer that the address is live.
 - No link prefetch, no favicon fetch, no speculative connections. The reader's
-  WebView has JavaScript off and network off; `cid:` images resolve from the
+  WebView refuses script that arrived in a message — a `<script>` element, an
+  event-handler attribute, a `javascript:` href — and has network off. Postio's
+  own script runs there, which is how the conversation rail knows which message
+  is on screen (ADR 0003, #1367); `cid:` images resolve from the
   local blob store.
-- Replies and forwards carry nothing outward: quoted content is sanitised on
-  the way in and the outgoing body is generated from Postio's own types, so a
-  forwarded phishing mail cannot make a recipient run what its own user was
-  protected from.
+- Replies and forwards carry nothing outward, and since
+  [ADR 0033](decisions/0033-a-reply-quotes-what-the-reader-shows.md) they rest
+  on different mechanisms for it. A **forward** is still generated from
+  Postio's own types, where a script has no representation at all. A **reply**
+  carries the sender's markup as the reader sanitised it, so the gate is the
+  sanitiser rather than the closed type — the same policy the reader defends
+  its own user with, with remote images blocked regardless of what the reader
+  was allowed to show. Either way a forwarded phishing mail cannot make a
+  recipient run what its own user was protected from, and the corpus-wide
+  assertion in `postio-body` is what keeps that true: zero scripts, zero
+  remote-loading references, zero tracking pixels, and not one broken image
+  element, across every HTML message in the corpus.
 - No telemetry, no crash reporting, no update ping.
 - **The local store holds the whole mailbox, and it is encrypted.** §14's
   backfill means this machine ends up with a complete copy of the user's mail
@@ -554,16 +628,25 @@ drawing of it here would be a picture that is wrong.
 
 ## 23. What v1 is, and what it is not
 
-**In:** one IMAP + SMTP account with an app-specific password; inbox, folders,
-threads; read/unread, archive, delete, flag, move; HTML and plaintext reading
-with attachments and quoted-message folding; compose, reply, reply-all,
-forward, attachments, drafts; local FTS5 search with operators and an instant
-search box; vim-style navigation, a command palette and configurable shortcuts;
-SQLite, background sync, offline reading, undo.
+**In:** multiple accounts and a unified inbox; IMAP + SMTP, JMAP, or the
+Gmail API, with a password, an app-specific password, or OAuth 2; inbox,
+folders, threads, labels; read/unread, archive, delete, flag, move, snooze;
+HTML and plaintext reading with attachments, quoted-message folding, remote
+images blocked per sender, and one-click unsubscribe on request; rich-text
+compose, reply, reply-all, forward, attachments, drafts, signatures and
+identities, scheduled send, an outbox that sends at most once; contacts and
+contact groups, filled from the mail and completing recipients; local
+full-text search with operators, an instant search box, and saved searches
+pinned in the sidebar; vim-style navigation, a command palette and
+configurable shortcuts; an encrypted local store, background sync, offline
+reading, undo, desktop notifications.
 
-**Out, deliberately:** Rules. Contacts management.
-Snooze and scheduled send. **And AI** — a founding principle, deferred so that
-core mail, search and the keyboard land excellently first. Shipping AI over a
+**Out, deliberately:** Rules — the language is shared and the design is
+[ADR 0008](decisions/0008-filters-and-rules.md), but no rule fires yet. A
+contacts management surface, and vCard import and export — the tables are
+there, the screen is not. Microsoft Graph. PGP and S/MIME, phishing and link
+warnings. Windows. **And AI** — a founding principle, deferred so that core
+mail, search and the keyboard land excellently first. Shipping AI over a
 mediocre mail client would produce a mediocre mail client with AI in it.
 
 Each of these has an issue and an ADR; none of them is forgotten.

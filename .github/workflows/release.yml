@@ -19,8 +19,79 @@ env:
   MANIFEST: flatpak/dev.postio.Postio.json
 
 jobs:
+  # **The full suite, and nothing ships without it** (2026-09-19).
+  #
+  # This workflow used to build and publish without running a test at all --
+  # CLAUDE.md said so in as many words, and the answer was "a release needs a
+  # local full-suite run first", which is a rule that lives in a person's
+  # memory and fails the day they are in a hurry.
+  #
+  # It matters more now than it did. The pull-request gate is the sanity tier,
+  # so the integration suites that catch layers which each pass and were never
+  # joined up run on the nightly timer and here. A tag is the last point at
+  # which finding one is cheaper than shipping it.
+  #
+  # `--profile ci-full`: the measurement tier runs here too -- a release is the
+  # job with no one waiting on it and therefore the least excuse for running
+  # less than everything -- minus the one measurement that asserts on a
+  # stopwatch, which a shared runner cannot defend and which has never once
+  # finished on one. `.config/nextest.toml` says which and why.
+  #
+  # This asked for `--profile nightly` until 2026-09-19, and would have taken
+  # the release down with it: `cache_pressure` has been terminated on a runner
+  # at 240s, 720s and 1200s, so this gate could not have gone green and
+  # `flatpak` below `needs` it. Nothing would have been published, twenty
+  # minutes after the tag, for a reason nowhere near the tag.
+  suite:
+    name: Full suite
+    runs-on: ubuntu-26.04
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: ./.github/actions/rust-workspace
+
+      - name: Give the GTK suites a runtime directory
+        run: |
+          runtime="${RUNNER_TEMP:-/tmp}/xdg"
+          mkdir -p "$runtime" && chmod 700 "$runtime"
+          echo "XDG_RUNTIME_DIR=$runtime" >> "$GITHUB_ENV"
+
+      # Keyed on the script rather than a version repeated here, as `ci.yml`
+      # and `nightly.yml` both do it: the key changes when the pin does and
+      # cannot go stale against it.
+      - name: Cache cargo-nextest
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ~/.cargo/bin/cargo-nextest
+          key: ${{ runner.os }}-cargo-nextest-${{ hashFiles('scripts/install-nextest.sh') }}
+
+      - name: Install cargo-nextest
+        run: scripts/install-nextest.sh
+
+      # Through the flake-retry script, not a bare nextest run. A release
+      # does not ship on a test that only failed because this runner was
+      # busy, and it does not *fail to ship* on one either: a target that
+      # fails once is retried alone before it is allowed to block anything,
+      # and one that fails twice still blocks. Cutting v0.2.0 by hand hit
+      # exactly that twice, and this repository's GTK editor cases still
+      # flake on a shared runner often enough to matter.
+      - name: Run the release gate
+        env:
+          POSTIO_TEST_PATIENCE: "3"
+        run: dbus-run-session -- scripts/test-with-flake-retry.sh ci-full
+
+      # nextest does not run doctests and does not say so. Asked for by name
+      # here for the same reason `nightly.yml` asks for them.
+      - name: cargo test --doc
+        env:
+          POSTIO_TEST_PATIENCE: "3"
+        run: dbus-run-session -- cargo test --workspace --doc
+
   flatpak:
     name: Flatpak bundle
+    # Nothing is built, signed, attested or published until the suite above
+    # is green. The bundle is the artifact people install; it is the wrong
+    # thing to produce optimistically.
+    needs: suite
     runs-on: ubuntu-26.04
     steps:
       # Full history, not the default single commit: bumping the version
@@ -49,21 +120,33 @@ jobs:
       # already checked out, unbumped.
       #
       # This has to be the same job the Flatpak build runs in, not a job of
-      # its own: the bump below lands as a commit to `main`, and the build
-      # further down needs to see that commit's Cargo.toml without a second
-      # checkout, which is the only way the bundle it produces and the
-      # version it claims to be never disagree.
+      # its own: the bump below edits the working tree, and the build further
+      # down is what reads those files. Splitting them would need the edits
+      # carried across a job boundary, and the bundle agreeing with the
+      # version it claims to be rests on there being exactly one copy of
+      # them.
       - uses: ./.github/actions/rust-workspace
         if: github.ref_type == 'tag'
 
+      # Hand-written notes win when there are any: docs/releases/<version>.md
+      # is a paragraph or two and a list of what changed, written for a
+      # person, and it becomes both the GitHub release body and the AppStream
+      # changelog entry (release-bump.py renders its paragraphs and bullets).
+      # Without one the notes are the commit subjects since the last tag --
+      # complete, and unreadable past a few dozen commits.
       - name: Generate release notes since the last tag
         if: github.ref_type == 'tag'
         run: |
           : > release-notes.txt
-          LAST_TAG=$(git describe --tags --abbrev=0 --match 'v*' HEAD^ 2>/dev/null || true)
-          if [ -n "$LAST_TAG" ]; then
-            git log "$LAST_TAG"..HEAD --no-merges --format='- %s' \
-              | grep -v '^- chore(release):' >> release-notes.txt || true
+          VERSION="${GITHUB_REF_NAME#v}"
+          if [ -s "docs/releases/${VERSION}.md" ]; then
+            cp "docs/releases/${VERSION}.md" release-notes.txt
+          else
+            LAST_TAG=$(git describe --tags --abbrev=0 --match 'v*' HEAD^ 2>/dev/null || true)
+            if [ -n "$LAST_TAG" ]; then
+              git log "$LAST_TAG"..HEAD --no-merges --format='- %s' \
+                | grep -v '^- chore(release):' >> release-notes.txt || true
+            fi
           fi
           [ -s release-notes.txt ] || echo "- Maintenance release" >> release-notes.txt
           echo "--- release-notes.txt ---"
@@ -84,57 +167,55 @@ jobs:
         if: github.ref_type == 'tag'
         run: cargo check --workspace --all-targets
 
-      # Same reasoning and the same mechanism as ci.yml's `test` job: no
-      # display means the GTK suites skip themselves and report a false
-      # green, so the release gate gets the real compositor, not a weaker
-      # substitute. See that job's comments for the "why" in full.
-      - name: Give the GTK suites a runtime directory
+      # No GTK suite runs in this job any more -- the gate moved to `suite`,
+      # which sets this up for itself. Kept because `flatpak --user` below
+      # wants a runtime directory too, and a release is the wrong place to
+      # find out which of the two needed it.
+      - name: Give flatpak a runtime directory
         if: github.ref_type == 'tag'
         run: |
           runtime="${RUNNER_TEMP:-/tmp}/xdg"
           mkdir -p "$runtime" && chmod 700 "$runtime"
           echo "XDG_RUNTIME_DIR=$runtime" >> "$GITHUB_ENV"
 
-      # A release does not ship on a test that only failed because this
-      # runner was busy. See scripts/test-with-flake-retry.sh -- a target
-      # that fails once is retried alone before it is allowed to block
-      # anything; one that fails twice still blocks the release.
-      - name: Run the release gate
-        if: github.ref_type == 'tag'
-        env:
-          POSTIO_TEST_PATIENCE: "3"
-        run: dbus-run-session -- scripts/test-with-flake-retry.sh
-
+      # The release gate used to run here as well as in `suite` above, which
+      # meant the whole workspace twice per release -- about forty minutes,
+      # for one answer. `suite` is the one that runs now: it gates the same
+      # way (`flatpak` `needs` it, so nothing is built, signed, attested or
+      # published until it is green), it covers strictly more (the
+      # measurement tier), and since it goes through the same flake-retry
+      # script it is no more likely to stop a release on noise. What is left
+      # here is the half that genuinely belongs after the bump: proving the
+      # bumped tree still compiles and still satisfies the invariants.
       - name: Run repository invariant checks
         if: github.ref_type == 'tag'
         run: bash scripts/check.sh
 
-      # `main` moves while this job runs -- it did, three times, cutting
-      # v0.2.0 by hand. A push rejected as non-fast-forward means exactly
-      # that; the fix is to rebase the one bump commit onto wherever `main`
-      # ended up and try again, not to fail a release over an ordinary
-      # landing that happened at the wrong moment.
-      - name: Commit and push the version bump
-        if: github.ref_type == 'tag'
-        run: |
-          VERSION="${GITHUB_REF_NAME#v}"
-          git config user.name "postio-release-bot"
-          git config user.email "release-bot@users.noreply.github.com"
-          git add Cargo.toml Cargo.lock crates/*/Cargo.toml \
-            crates/postio-gtk/data/dev.postio.Postio.metainfo.xml
-          git commit -m "chore(release): bump workspace to ${VERSION}"
-
-          for attempt in 1 2 3 4 5; do
-            if git push origin HEAD:main; then
-              exit 0
-            fi
-            echo "push rejected -- main moved, rebasing and retrying ($attempt/5)" >&2
-            git fetch origin main
-            git rebase origin/main
-          done
-          echo "::error::could not push the version bump after 5 attempts" >&2
-          exit 1
-
+      # The bump is not committed and not pushed. It used to be pushed
+      # straight to `main`, and that could never have worked: the ruleset
+      # requires seven status checks on `main`, a direct push has no pull
+      # request and therefore no checks, and there is no bypass actor. v0.4.0
+      # is where this was finally found, because it is the first tag whose
+      # release gate went green -- v0.2.0 and v0.3.0 both died earlier and
+      # never reached the push. GitHub refused it with
+      #
+      #     GH013: ... 7 of 7 required status checks are expected
+      #
+      # five times, because the retry loop read every rejection as "main
+      # moved" and rebased against an error that rebasing cannot fix.
+      #
+      # Nothing needed the commit. `flatpak/dev.postio.Postio.json` builds the
+      # `postio` module from a `"type": "dir"` source pointing at the checkout,
+      # so the bundle is built from the working tree that `release-bump.py`
+      # has already edited -- the bundle and the version it claims agree
+      # because they come from the same files, not because a commit exists.
+      #
+      # So `main`'s Cargo.toml keeps saying whatever it said. That is the
+      # status quo made deliberate rather than a regression: it is already
+      # true after v0.3.0, and the tag is the real record of what was
+      # released. The alternative was letting an automated job push past the
+      # branch's own rules, which is a bigger thing to give up than a version
+      # string that nothing reads (maintainer, 2026-09-19).
       - name: Install flatpak
         run: |
           sudo apt-get update
@@ -231,13 +312,20 @@ jobs:
       # below it: `create` has no clobber flag, and a rerun (workflow_dispatch
       # against the same tag, after some earlier step failed) must not error
       # out here just because this step already succeeded once.
+      #
+      # A 0.x tag is a pre-release on the release page too: `--prerelease`
+      # keeps it off the "Latest" badge and says what the version number
+      # already says. The same rule marks the AppStream entry
+      # `type="development"` (scripts/release-bump.py).
       - name: Create the release
         if: github.ref_type == 'tag'
         run: |
+          PRERELEASE=""
+          case "${GITHUB_REF_NAME#v}" in 0.*) PRERELEASE="--prerelease" ;; esac
           gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1 || \
             gh release create "$GITHUB_REF_NAME" \
               --title "$GITHUB_REF_NAME" \
-              --notes-file release-notes.txt
+              --notes-file release-notes.txt $PRERELEASE
         env:
           GH_TOKEN: ${{ github.token }}
 

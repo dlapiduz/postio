@@ -125,6 +125,10 @@ pub fn section_for(command: CommandId) -> Option<MenuSection> {
         C::NextMessage | C::PrevMessage | C::ExtendSelectionDown | C::ExtendSelectionUp => None,
         C::FirstMessage | C::LastMessage => Some(M::Go),
         C::NextFolder | C::PrevFolder | C::FocusSidebar => Some(M::Go),
+        // The destinations belong in the Go menu for the same reason they
+        // belong in the palette: a person who does not know `g i` still wants
+        // the inbox, and this is where they look for it.
+        C::GoToInbox | C::GoToDrafts | C::GoToSent | C::GoToFlagged => Some(M::Go),
         C::CyclePane | C::CyclePaneBack => Some(M::Go),
         C::NextScope => Some(M::Go),
         C::NextInConversation | C::PrevInConversation => Some(M::Go),
@@ -133,7 +137,12 @@ pub fn section_for(command: CommandId) -> Option<MenuSection> {
 
         // ── File ─────────────────────────────────────────────────────────
         C::Compose | C::Send | C::ScheduleSend | C::SaveDraft | C::DiscardDraft => Some(M::File),
-        C::AttachFile | C::DetachComposer | C::MarkSent => Some(M::File),
+        // Retry and cancel sit with `MarkSent`: all three are about a message
+        // that has left the composer and not arrived, which is a File concern
+        // rather than an editing one.
+        C::AttachFile | C::DetachComposer | C::MarkSent | C::RetrySend | C::CancelSend => {
+            Some(M::File)
+        }
         C::SavePart | C::SaveAllParts | C::OpenPartExternally => Some(M::File),
         C::Refresh => Some(M::File),
 
@@ -154,10 +163,16 @@ pub fn section_for(command: CommandId) -> Option<MenuSection> {
         | C::RemoveAccount
         | C::UpdateCredential
         | C::RebuildAccountIndex
-        | C::SetDefaultAccount => None,
+        | C::SetDefaultAccount
+        | C::MapMailboxRole => None,
 
         // ── View ─────────────────────────────────────────────────────────
         C::ToggleSidebar | C::ToggleFolder | C::ToggleFold | C::ExpandAll => Some(M::View),
+        C::ToggleRail => Some(M::View),
+        // With the other two show/hide toggles rather than under File
+        // beside the composer's verbs: this raises and lowers rows, it
+        // does not do anything to the draft.
+        C::CopyFields => Some(M::View),
         C::ToggleResultOrder => Some(M::View),
         C::OpenParts | C::ViewOriginal => Some(M::View),
         C::CommandPalette => Some(M::View),
@@ -190,6 +205,9 @@ pub fn section_for(command: CommandId) -> Option<MenuSection> {
 
         // ── Format ───────────────────────────────────────────────────────
         C::Bold | C::Italic | C::BulletList | C::NumberedList => Some(M::Format),
+        // With the other thing you put into the text, not under File with
+        // the attachment it is deliberately not.
+        C::InsertImage => Some(M::Format),
         C::InsertLink | C::QuoteBlock => Some(M::Format),
     }
 }

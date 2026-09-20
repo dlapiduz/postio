@@ -1,6 +1,7 @@
 //! Backfilling message bodies: newest first, out of the user's way, and never
 //! in front of the message they just opened.
 
+use postio_storage::sql::bind;
 use std::time::Duration;
 
 use chrono::{DateTime, TimeDelta, TimeZone, Utc};
@@ -9,10 +10,11 @@ use postio_account::cancel::CancelToken;
 use postio_model::{BodyState, Mailbox, MessageId, Uid, UidValidity};
 use postio_storage::BlobStore;
 use postio_storage::repository::{MailboxRepository, MessageRepository};
-use postio_storage::test_support::{self, TempDatabase};
+use postio_storage::test_support::{self, TempStore};
 use postio_sync::backfill::{
-    AttachmentPolicy, Backfill, BackfillPolicy, BodyRequest, Outcome, Priority, Want, fetch_body,
-    request_body, request_payloads, seed, seed_header_blocks, seed_payloads,
+    AttachmentPolicy, Backfill, BackfillPolicy, BodyRequest, Outcome, Prefetched, Priority, Want,
+    fetch_body, prefetch_text_sections, request_body, request_payloads, seed, seed_header_blocks,
+    seed_payloads,
 };
 use postio_sync::sync_mailbox;
 
@@ -48,17 +50,17 @@ async fn server(count: u32) -> MockBackend {
 /// A file-backed database and a blob store beside it, because a blob store is
 /// a directory and an in-memory database has no directory to sit next to.
 struct Local {
-    database: TempDatabase,
-    connection: postio_storage::PooledConnection,
+    database: TempStore,
+    connection: postio_storage::Checkout,
     blobs: BlobStore,
     inbox: Mailbox,
 }
 
-fn local() -> Local {
-    let database = test_support::temp();
-    let connection = database.connection().expect("checkout");
-    let account = test_support::account(&connection);
-    let inbox = test_support::mailbox(&connection, &account, INBOX);
+async fn local() -> Local {
+    let database = test_support::temp().await;
+    let connection = database.connect().await.expect("checkout");
+    let account = test_support::account(&connection).await;
+    let inbox = test_support::mailbox(&connection, &account, INBOX).await;
     let blobs = BlobStore::open(
         database.directory().join("blobs"),
         &postio_storage::test_support::blob_keys(),
@@ -104,18 +106,19 @@ async fn headers(local: &Local, backend: &MockBackend) -> Vec<(MessageId, u32)> 
     .expect("headers");
 
     let messages = MessageRepository::new(&local.connection);
-    let mut rows: Vec<(MessageId, u32)> = messages
+    let uids = messages
         .uids_in(local.inbox.id, postio_model::Generation::new(VALIDITY))
-        .expect("uids")
-        .into_iter()
-        .map(|uid| {
-            let message = messages
-                .by_uid(local.inbox.id, postio_model::Generation::new(VALIDITY), uid)
-                .expect("look up")
-                .expect("stored");
-            (message.id, uid.get())
-        })
-        .collect();
+        .await
+        .expect("uids");
+    let mut rows: Vec<(MessageId, u32)> = Vec::with_capacity(uids.len());
+    for uid in uids {
+        let message = messages
+            .by_uid(local.inbox.id, postio_model::Generation::new(VALIDITY), uid)
+            .await
+            .expect("look up")
+            .expect("stored");
+        rows.push((message.id, uid.get()));
+    }
     rows.sort_by_key(|(_, uid)| *uid);
     rows
 }
@@ -124,9 +127,9 @@ async fn headers(local: &Local, backend: &MockBackend) -> Vec<(MessageId, u32)> 
 // The user always wins — the acceptance criterion
 // ---------------------------------------------------------------------------
 
-#[test]
-fn opening_a_message_jumps_the_whole_backlog() {
-    let local = local();
+#[tokio::test]
+async fn opening_a_message_jumps_the_whole_backlog() {
+    let local = local().await;
     let mut backfill = Backfill::new(policy());
 
     for uid in 1..=200 {
@@ -149,9 +152,9 @@ fn opening_a_message_jumps_the_whole_backlog() {
     );
 }
 
-#[test]
-fn the_backlog_never_starves_the_user_more_than_one_body_at_a_time() {
-    let local = local();
+#[tokio::test]
+async fn the_backlog_never_starves_the_user_more_than_one_body_at_a_time() {
+    let local = local().await;
     let mut backfill = Backfill::new(policy());
     for uid in 1..=50 {
         backfill.enqueue(request(
@@ -175,9 +178,9 @@ fn the_backlog_never_starves_the_user_more_than_one_body_at_a_time() {
     );
 }
 
-#[test]
-fn a_queued_message_the_user_opens_is_promoted_rather_than_fetched_twice() {
-    let local = local();
+#[tokio::test]
+async fn a_queued_message_the_user_opens_is_promoted_rather_than_fetched_twice() {
+    let local = local().await;
     let mut backfill = Backfill::new(policy());
     // The *oldest* of the three, so it would be last out of the backlog and
     // the assertion cannot pass by accident.
@@ -195,9 +198,9 @@ fn a_queued_message_the_user_opens_is_promoted_rather_than_fetched_twice() {
     assert_eq!(backfill.progress().pending, 2);
 }
 
-#[test]
-fn a_message_already_in_flight_is_not_handed_out_again() {
-    let local = local();
+#[tokio::test]
+async fn a_message_already_in_flight_is_not_handed_out_again() {
+    let local = local().await;
     let mut backfill = Backfill::new(policy());
     backfill.enqueue(request(&local.inbox, MessageId::new(1), 1, 1_024));
 
@@ -215,9 +218,9 @@ fn a_message_already_in_flight_is_not_handed_out_again() {
 // Newest first
 // ---------------------------------------------------------------------------
 
-#[test]
-fn the_backlog_is_worked_newest_first() {
-    let local = local();
+#[tokio::test]
+async fn the_backlog_is_worked_newest_first() {
+    let local = local().await;
     let mut backfill = Backfill::new(policy());
     for uid in [3, 1, 5, 2, 4] {
         backfill.enqueue(request(
@@ -245,9 +248,9 @@ fn the_backlog_is_worked_newest_first() {
 // The size cap
 // ---------------------------------------------------------------------------
 
-#[test]
-fn a_body_over_the_cap_is_left_on_the_server_until_it_is_wanted() {
-    let local = local();
+#[tokio::test]
+async fn a_body_over_the_cap_is_left_on_the_server_until_it_is_wanted() {
+    let local = local().await;
     let cap = 1_000_000;
     let mut backfill = Backfill::new(BackfillPolicy {
         max_body_bytes: Some(cap),
@@ -269,9 +272,9 @@ fn a_body_over_the_cap_is_left_on_the_server_until_it_is_wanted() {
     assert_eq!(backfill.next_body().expect("work").request.message, huge);
 }
 
-#[test]
-fn no_cap_means_no_cap() {
-    let local = local();
+#[tokio::test]
+async fn no_cap_means_no_cap() {
+    let local = local().await;
     let mut backfill = Backfill::new(BackfillPolicy {
         max_body_bytes: None,
         ..policy()
@@ -286,9 +289,9 @@ fn no_cap_means_no_cap() {
 // Getting out of the way
 // ---------------------------------------------------------------------------
 
-#[test]
-fn a_metered_connection_pauses_the_backlog_but_never_the_user() {
-    let local = local();
+#[tokio::test]
+async fn a_metered_connection_pauses_the_backlog_but_never_the_user() {
+    let local = local().await;
     let mut backfill = Backfill::new(policy());
     backfill.enqueue(request(&local.inbox, MessageId::new(1), 1, 1_024));
 
@@ -310,9 +313,9 @@ fn a_metered_connection_pauses_the_backlog_but_never_the_user() {
     assert!(backfill.next_body().is_some(), "and the backlog resumes");
 }
 
-#[test]
-fn an_active_user_pauses_the_backlog() {
-    let local = local();
+#[tokio::test]
+async fn an_active_user_pauses_the_backlog() {
+    let local = local().await;
     let mut backfill = Backfill::new(policy());
     backfill.enqueue(request(&local.inbox, MessageId::new(1), 1, 1_024));
 
@@ -323,9 +326,9 @@ fn an_active_user_pauses_the_backlog() {
     assert!(backfill.next_body().is_some());
 }
 
-#[test]
-fn a_policy_with_the_background_lane_off_still_serves_the_user() {
-    let local = local();
+#[tokio::test]
+async fn a_policy_with_the_background_lane_off_still_serves_the_user() {
+    let local = local().await;
     let mut backfill = Backfill::new(BackfillPolicy {
         background: false,
         ..policy()
@@ -346,9 +349,9 @@ fn a_policy_with_the_background_lane_off_still_serves_the_user() {
 // Cancellation and progress — the acceptance criterion
 // ---------------------------------------------------------------------------
 
-#[test]
-fn cancelling_stops_the_backlog_and_whatever_is_on_the_wire() {
-    let local = local();
+#[tokio::test]
+async fn cancelling_stops_the_backlog_and_whatever_is_on_the_wire() {
+    let local = local().await;
     let mut backfill = Backfill::new(policy());
     for uid in 1..=10 {
         backfill.enqueue(request(
@@ -371,9 +374,9 @@ fn cancelling_stops_the_backlog_and_whatever_is_on_the_wire() {
     assert!(backfill.is_cancelled());
 }
 
-#[test]
-fn a_cancelled_backfill_can_be_restarted() {
-    let local = local();
+#[tokio::test]
+async fn a_cancelled_backfill_can_be_restarted() {
+    let local = local().await;
     let mut backfill = Backfill::new(policy());
     backfill.enqueue(request(&local.inbox, MessageId::new(1), 1, 1_024));
     backfill.cancel();
@@ -385,9 +388,9 @@ fn a_cancelled_backfill_can_be_restarted() {
     assert!(!claim.cancel.is_cancelled());
 }
 
-#[test]
-fn progress_accounts_for_every_message_that_went_in() {
-    let local = local();
+#[tokio::test]
+async fn progress_accounts_for_every_message_that_went_in() {
+    let local = local().await;
     let mut backfill = Backfill::new(BackfillPolicy {
         max_body_bytes: Some(2_048),
         ..policy()
@@ -437,15 +440,18 @@ fn progress_accounts_for_every_message_that_went_in() {
 #[tokio::test]
 async fn an_excluded_folder_seeds_nothing_into_the_background_lane() {
     let backend = server(5).await;
-    let local = local();
+    let local = local().await;
     headers(&local, &backend).await;
 
     MailboxRepository::new(&local.connection)
         .set_backfill_excluded(local.inbox.id, true)
+        .await
         .expect("exclude the inbox");
 
     let mut backfill = Backfill::new(policy());
-    let queued = seed(&local.connection, &mut backfill, local.inbox.id, 200).expect("seed");
+    let queued = seed(&local.connection, &mut backfill, local.inbox.id, 200)
+        .await
+        .expect("seed");
 
     assert_eq!(
         queued, 0,
@@ -459,11 +465,13 @@ async fn an_ordinary_folder_still_seeds_once_excluded_elsewhere() {
     // Regression guard beside the exclusion test above: the new check must
     // not turn into "nothing ever seeds again".
     let backend = server(5).await;
-    let local = local();
+    let local = local().await;
     headers(&local, &backend).await;
 
     let mut backfill = Backfill::new(policy());
-    let queued = seed(&local.connection, &mut backfill, local.inbox.id, 200).expect("seed");
+    let queued = seed(&local.connection, &mut backfill, local.inbox.id, 200)
+        .await
+        .expect("seed");
 
     assert_eq!(queued, 5);
 }
@@ -475,16 +483,19 @@ async fn opening_a_message_in_an_excluded_folder_still_fetches_its_body() {
     // `BackfillPolicy::background`'s doc comment already draws for the
     // account-wide knob.
     let backend = server(1).await;
-    let local = local();
+    let local = local().await;
     let rows = headers(&local, &backend).await;
     let (id, uid) = rows[0];
 
     MailboxRepository::new(&local.connection)
         .set_backfill_excluded(local.inbox.id, true)
+        .await
         .expect("exclude the inbox");
 
     let mut backfill = Backfill::new(policy());
-    let asked = request_body(&local.connection, &mut backfill, id).expect("request_body");
+    let asked = request_body(&local.connection, &mut backfill, id)
+        .await
+        .expect("request_body");
     assert!(asked, "an on-open request must still be honoured");
 
     let outcome = fetch_body(
@@ -493,6 +504,7 @@ async fn opening_a_message_in_an_excluded_folder_still_fetches_its_body() {
         &backend,
         &request(&local.inbox, id, uid, 1_024),
         BackfillPolicy::default().max_inline_bytes,
+        None,
         &CancelToken::new(),
     )
     .await
@@ -507,13 +519,19 @@ async fn opening_a_message_in_an_excluded_folder_still_fetches_its_body() {
 #[tokio::test]
 async fn fetching_a_body_stores_the_raw_message_and_its_decoded_text() {
     let backend = server(2).await;
-    let local = local();
+    let local = local().await;
     let rows = headers(&local, &backend).await;
     let (id, uid) = rows[1];
 
     let messages = MessageRepository::new(&local.connection);
     assert_eq!(
-        messages.get(id).expect("get").expect("row").sync.body_state,
+        messages
+            .get(id)
+            .await
+            .expect("get")
+            .expect("row")
+            .sync
+            .body_state,
         BodyState::HeadersOnly,
         "the header pass leaves the body on the server"
     );
@@ -524,6 +542,7 @@ async fn fetching_a_body_stores_the_raw_message_and_its_decoded_text() {
         &backend,
         &request(&local.inbox, id, uid, 1_024),
         BackfillPolicy::default().max_inline_bytes,
+        None,
         &CancelToken::new(),
     )
     .await
@@ -531,7 +550,7 @@ async fn fetching_a_body_stores_the_raw_message_and_its_decoded_text() {
 
     assert!(matches!(outcome, Outcome::Stored { .. }));
 
-    let stored = messages.get(id).expect("get").expect("row");
+    let stored = messages.get(id).await.expect("get").expect("row");
     assert_eq!(stored.sync.body_state, BodyState::Full);
     let raw = stored.raw_blob_id.expect("the raw message is kept");
     assert_eq!(
@@ -541,7 +560,7 @@ async fn fetching_a_body_stores_the_raw_message_and_its_decoded_text() {
          re-read them"
     );
 
-    let body = messages.body(id).expect("body").expect("the row");
+    let body = messages.body(id).await.expect("body").expect("the row");
     let text = body.text.expect("a text/plain body");
     assert_eq!(text, format!("The body of note {uid}.\r\n"));
     assert!(body.html.is_none(), "this message has no HTML alternative");
@@ -550,11 +569,12 @@ async fn fetching_a_body_stores_the_raw_message_and_its_decoded_text() {
 #[tokio::test]
 async fn a_message_deleted_before_its_body_arrived_is_gone_rather_than_failed() {
     let backend = server(1).await;
-    let local = local();
+    let local = local().await;
     let rows = headers(&local, &backend).await;
     let (id, uid) = rows[0];
     MessageRepository::new(&local.connection)
         .delete(&[id])
+        .await
         .expect("delete");
 
     let outcome = fetch_body(
@@ -563,6 +583,7 @@ async fn a_message_deleted_before_its_body_arrived_is_gone_rather_than_failed() 
         &backend,
         &request(&local.inbox, id, uid, 1_024),
         BackfillPolicy::default().max_inline_bytes,
+        None,
         &CancelToken::new(),
     )
     .await
@@ -577,7 +598,7 @@ async fn a_message_deleted_before_its_body_arrived_is_gone_rather_than_failed() 
 #[tokio::test]
 async fn a_dropped_connection_mid_body_stores_nothing() {
     let backend = server(1).await;
-    let local = local();
+    let local = local().await;
     let rows = headers(&local, &backend).await;
     let (id, uid) = rows[0];
 
@@ -588,6 +609,7 @@ async fn a_dropped_connection_mid_body_stores_nothing() {
         &backend,
         &request(&local.inbox, id, uid, 1_024),
         BackfillPolicy::default().max_inline_bytes,
+        None,
         &CancelToken::new(),
     )
     .await
@@ -596,6 +618,7 @@ async fn a_dropped_connection_mid_body_stores_nothing() {
 
     let stored = MessageRepository::new(&local.connection)
         .get(id)
+        .await
         .expect("get")
         .expect("row");
     assert_eq!(
@@ -610,7 +633,7 @@ async fn a_dropped_connection_mid_body_stores_nothing() {
 async fn a_cancelled_fetch_stores_nothing() {
     let backend = server(1).await;
     backend.set_latency(Duration::from_millis(20));
-    let local = local();
+    let local = local().await;
     let rows = headers(&local, &backend).await;
     let (id, uid) = rows[0];
 
@@ -622,6 +645,7 @@ async fn a_cancelled_fetch_stores_nothing() {
         &backend,
         &request(&local.inbox, id, uid, 1_024),
         BackfillPolicy::default().max_inline_bytes,
+        None,
         &cancel,
     )
     .await
@@ -631,6 +655,7 @@ async fn a_cancelled_fetch_stores_nothing() {
     assert_eq!(
         MessageRepository::new(&local.connection)
             .get(id)
+            .await
             .expect("get")
             .expect("row")
             .sync
@@ -653,27 +678,36 @@ async fn a_cancelled_fetch_stores_nothing() {
 /// mailbox duplicated inside SQLite). Presence and matching are therefore the
 /// only two questions available, and between them they are the ones these
 /// tests were always really asking.
-fn body_is_indexed(connection: &postio_storage::PooledConnection, id: MessageId) -> bool {
-    connection
-        .query_row(
-            "SELECT EXISTS (SELECT 1 FROM message_bodies_fts WHERE rowid = ?1)",
-            [id.get()],
-            |row| row.get::<_, bool>(0),
-        )
-        .unwrap_or(false)
+/// Whether `id` has been through `index_body` at all.
+///
+/// `body_search` is `NULL` until it has and the **empty string** after it,
+/// even for a message with no words — a row in `message_search_bodies` is the
+/// record that indexing happened, and #500's infinite loop is what "tried,
+/// nothing there" spelled as a missing row cost.
+async fn body_is_indexed(connection: &postio_storage::Checkout, id: MessageId) -> bool {
+    postio_storage::sql::exists(
+        connection,
+        "SELECT 1 FROM message_search_bodies WHERE message_id = ?1",
+        bind![id.get()],
+    )
+    .await
+    .unwrap_or(false)
 }
 
-/// Whether `id`'s indexed body matches `query` — an FTS5 match expression, so
-/// a bare word or a `"quoted phrase"`.
-fn body_matches(connection: &postio_storage::PooledConnection, id: MessageId, query: &str) -> bool {
-    connection
-        .query_row(
-            "SELECT EXISTS (SELECT 1 FROM message_bodies_fts
-                             WHERE rowid = ?1 AND message_bodies_fts MATCH ?2)",
-            rusqlite::params![id.get(), query],
-            |row| row.get::<_, bool>(0),
-        )
-        .unwrap_or(false)
+/// Whether `id`'s indexed body matches `query` — a full-text match
+/// expression, so a bare word or a `"quoted phrase"`.
+///
+/// Folded on the way in, because the engine's tokenizer does not fold
+/// diacritics and `index_body` folded the text it stored. A query that skips
+/// the fold matches nothing an accented body contains.
+async fn body_matches(connection: &postio_storage::Checkout, id: MessageId, query: &str) -> bool {
+    postio_storage::sql::exists(
+        connection,
+        "SELECT 1 FROM message_search_bodies WHERE message_id = ?1 AND fts_match(body_search, ?2)",
+        bind![id.get(), postio_model::fold::fold(query)],
+    )
+    .await
+    .unwrap_or(false)
 }
 
 /// Issue #327: `index_body` existed, was tested, and nothing ever called it.
@@ -688,13 +722,15 @@ fn body_matches(connection: &postio_storage::PooledConnection, id: MessageId, qu
 #[tokio::test]
 async fn a_fetched_body_becomes_searchable_text() {
     let backend = server(2).await;
-    let local = local();
-    postio_index::index::ensure_schema(&local.connection).expect("the search schema");
+    let local = local().await;
+    postio_index::index::ensure_schema(&local.connection)
+        .await
+        .expect("the search schema");
     let rows = headers(&local, &backend).await;
     let (id, uid) = rows[1];
 
     assert!(
-        !body_is_indexed(&local.connection, id),
+        !body_is_indexed(&local.connection, id).await,
         "the header pass indexes no body — it has none to index — which is \
          the state this test is about leaving behind"
     );
@@ -705,16 +741,52 @@ async fn a_fetched_body_becomes_searchable_text() {
         &backend,
         &request(&local.inbox, id, uid, 1_024),
         BackfillPolicy::default().max_inline_bytes,
+        None,
         &CancelToken::new(),
     )
     .await
     .expect("fetch");
 
+    // The fetch stores; the indexer indexes. A stored body with no search
+    // row is the indexer's queue, and the fetch must leave it there rather
+    // than write the row itself on the sync lane.
     assert!(
-        body_matches(&local.connection, id, &format!("\"body of note {uid}\"")),
-        "the body landed in the blob store and never reached the index, so \
-         a word that appears only in a message's body finds nothing (#327)"
+        !body_is_indexed(&local.connection, id).await,
+        "the fetch wrote the search row itself, on the sync lane"
     );
+    index_pending(&local.connection).await;
+    assert!(
+        body_matches(&local.connection, id, &format!("\"body of note {uid}\"")).await,
+        "the body landed in the store and never reached the index, so a word \
+         that appears only in a message's body finds nothing (#327)"
+    );
+}
+
+/// One batch of the indexer, in miniature: everything the store holds a
+/// body for and no search row, indexed the way `postio_session::
+/// spawn_body_indexer` does it. What a test asserts through here is the
+/// contract between the fetch and the indexer, not the indexer itself --
+/// that has its own suite in `postio-session`.
+async fn index_pending(connection: &postio_storage::Checkout) {
+    let pending = postio_index::index::messages_missing_body_text(connection, 1_000, None)
+        .await
+        .expect("the indexer's queue");
+    let messages = postio_storage::repository::MessageRepository::new(connection);
+    for candidate in pending {
+        let id = candidate.id;
+        let stored = messages
+            .body(MessageId::new(id))
+            .await
+            .expect("read a body")
+            .unwrap_or_default();
+        let body = postio_model::MessageBody {
+            text: stored.text,
+            html: stored.html,
+        };
+        postio_index::index::index_body_of(connection, id, &body)
+            .await
+            .expect("index a body");
+    }
 }
 
 /// The other half of the same call: an HTML-only message is indexed as its
@@ -741,8 +813,10 @@ async fn an_html_only_body_is_indexed_as_text_and_not_as_markup() {
     let backend = MockBackend::builder().mailbox(inbox).build();
     backend.connect().await.expect("connect");
 
-    let local = local();
-    postio_index::index::ensure_schema(&local.connection).expect("the search schema");
+    let local = local().await;
+    postio_index::index::ensure_schema(&local.connection)
+        .await
+        .expect("the search schema");
     let rows = headers(&local, &backend).await;
     let (id, uid) = rows[0];
 
@@ -752,22 +826,24 @@ async fn an_html_only_body_is_indexed_as_text_and_not_as_markup() {
         &backend,
         &request(&local.inbox, id, uid, 4_096),
         BackfillPolicy::default().max_inline_bytes,
+        None,
         &CancelToken::new(),
     )
     .await
     .expect("fetch");
 
+    index_pending(&local.connection).await;
     assert!(
-        body_is_indexed(&local.connection, id),
+        body_is_indexed(&local.connection, id).await,
         "an HTML-only message reached the index at all"
     );
     assert!(
-        body_matches(&local.connection, id, "\"stayed nominal\""),
+        body_matches(&local.connection, id, "\"stayed nominal\"").await,
         "an HTML-only message is not findable by anything it actually says"
     );
     for markup in ["div", "href", "tracker.example"] {
         assert!(
-            !body_matches(&local.connection, id, markup),
+            !body_matches(&local.connection, id, markup).await,
             "{markup:?} matches, so this message is a hit for a word it never \
              contained — the markup went into the index instead of the text"
         );
@@ -831,7 +907,7 @@ async fn backfilling_a_message_fetches_its_text_and_leaves_the_attachment_alone(
     let backend = MockBackend::builder().mailbox(inbox).build();
     backend.connect().await.expect("connect");
 
-    let local = local();
+    let local = local().await;
     let rows = headers(&local, &backend).await;
     let (id, uid) = rows[0];
 
@@ -841,6 +917,7 @@ async fn backfilling_a_message_fetches_its_text_and_leaves_the_attachment_alone(
         &backend,
         &request(&local.inbox, id, uid, HUGE),
         BackfillPolicy::default().max_inline_bytes,
+        None,
         &CancelToken::new(),
     )
     .await
@@ -852,9 +929,9 @@ async fn backfilling_a_message_fetches_its_text_and_leaves_the_attachment_alone(
     );
 
     let messages = MessageRepository::new(&local.connection);
-    let stored = messages.get(id).expect("get").expect("row");
+    let stored = messages.get(id).await.expect("get").expect("row");
 
-    let body = messages.body(id).expect("body").expect("the row");
+    let body = messages.body(id).await.expect("body").expect("the row");
     let text = body.text.expect("a text/plain body");
     assert_eq!(text, "Your statement is attached.");
 
@@ -892,7 +969,7 @@ async fn a_message_with_no_attachments_is_full_once_its_text_is_local() {
     let backend = MockBackend::builder().mailbox(inbox).build();
     backend.connect().await.expect("connect");
 
-    let local = local();
+    let local = local().await;
     let rows = headers(&local, &backend).await;
     let (id, uid) = rows[0];
 
@@ -902,6 +979,7 @@ async fn a_message_with_no_attachments_is_full_once_its_text_is_local() {
         &backend,
         &request(&local.inbox, id, uid, 1_024),
         BackfillPolicy::default().max_inline_bytes,
+        None,
         &CancelToken::new(),
     )
     .await
@@ -909,6 +987,7 @@ async fn a_message_with_no_attachments_is_full_once_its_text_is_local() {
 
     let stored = MessageRepository::new(&local.connection)
         .get(id)
+        .await
         .expect("get")
         .expect("row");
     assert_eq!(stored.sync.body_state, BodyState::Full);
@@ -921,7 +1000,7 @@ async fn a_row_synced_before_the_text_sections_existed_still_gets_its_body() {
     // falls back to the whole-message fetch -- slower and fatter, but never
     // a message that silently has no body and never a hole in search.
     let backend = server(1).await;
-    let local = local();
+    let local = local().await;
     let rows = headers(&local, &backend).await;
     let (id, uid) = rows[0];
 
@@ -929,7 +1008,12 @@ async fn a_row_synced_before_the_text_sections_existed_still_gets_its_body() {
     // sections -- exactly the shape of a pre-0008 row.
     let messages = MessageRepository::new(&local.connection);
     assert_eq!(
-        messages.get(id).expect("get").expect("row").text_part_id,
+        messages
+            .get(id)
+            .await
+            .expect("get")
+            .expect("row")
+            .text_part_id,
         None
     );
 
@@ -939,13 +1023,14 @@ async fn a_row_synced_before_the_text_sections_existed_still_gets_its_body() {
         &backend,
         &request(&local.inbox, id, uid, 1_024),
         BackfillPolicy::default().max_inline_bytes,
+        None,
         &CancelToken::new(),
     )
     .await
     .expect("fetch");
 
-    let stored = messages.get(id).expect("get").expect("row");
-    let body = messages.body(id).expect("body").expect("the row");
+    let stored = messages.get(id).await.expect("get").expect("row");
+    let body = messages.body(id).await.expect("body").expect("the row");
     let text = body.text.expect("a text/plain body");
     assert_eq!(text, "The body of note 1.\r\n");
     assert!(
@@ -969,7 +1054,7 @@ async fn a_payload_with_nothing_to_explain_its_bytes_asks_for_every_byte() {
     let backend = MockBackend::builder().mailbox(inbox).build();
     backend.connect().await.expect("connect");
 
-    let local = local();
+    let local = local().await;
     let rows = headers(&local, &backend).await;
     let (id, uid) = rows[0];
 
@@ -982,6 +1067,7 @@ async fn a_payload_with_nothing_to_explain_its_bytes_asks_for_every_byte() {
         &backend,
         &request,
         BackfillPolicy::default().max_inline_bytes,
+        None,
         &CancelToken::new(),
     )
     .await
@@ -989,6 +1075,7 @@ async fn a_payload_with_nothing_to_explain_its_bytes_asks_for_every_byte() {
 
     let stored = MessageRepository::new(&local.connection)
         .get(id)
+        .await
         .expect("get")
         .expect("row");
     assert!(
@@ -1000,18 +1087,20 @@ async fn a_payload_with_nothing_to_explain_its_bytes_asks_for_every_byte() {
 
 #[tokio::test]
 async fn text_fetched_by_section_reaches_the_search_index() {
-    // #327 was "bodies are never indexed", and the fix hung `index_body_of`
-    // off the one place every body arrived. The text axis is a *second* place
-    // bodies arrive, so it needs its own proof -- otherwise ADR 0017 would
-    // quietly reintroduce the bug it exists to serve.
+    // #327 was "bodies are never indexed". The text axis is a *second* place
+    // bodies arrive, so it needs its own proof that what it stores is what
+    // the indexer picks up -- otherwise ADR 0017 would quietly reintroduce
+    // the bug it exists to serve.
     let inbox = MockMailbox::new(INBOX)
         .uid_validity(UidValidity::new(VALIDITY))
         .message(with_a_big_attachment(1));
     let backend = MockBackend::builder().mailbox(inbox).build();
     backend.connect().await.expect("connect");
 
-    let local = local();
-    postio_index::index::ensure_schema(&local.connection).expect("the search schema");
+    let local = local().await;
+    postio_index::index::ensure_schema(&local.connection)
+        .await
+        .expect("the search schema");
     let rows = headers(&local, &backend).await;
     let (id, uid) = rows[0];
 
@@ -1021,13 +1110,15 @@ async fn text_fetched_by_section_reaches_the_search_index() {
         &backend,
         &request(&local.inbox, id, uid, HUGE),
         BackfillPolicy::default().max_inline_bytes,
+        None,
         &CancelToken::new(),
     )
     .await
     .expect("fetch");
 
+    index_pending(&local.connection).await;
     assert!(
-        body_matches(&local.connection, id, "\"statement is attached\""),
+        body_matches(&local.connection, id, "\"statement is attached\"").await,
         "the text part's words did not reach the index"
     );
 }
@@ -1035,21 +1126,22 @@ async fn text_fetched_by_section_reaches_the_search_index() {
 /// Whether `id` carries an indexed header row for `name`, whose value
 /// contains `value` — the two questions `header:` asks, straight off the
 /// table (ADR 0025 Q2).
-fn header_is_indexed(
-    connection: &postio_storage::PooledConnection,
+async fn header_is_indexed(
+    connection: &postio_storage::Checkout,
     id: MessageId,
     name: &str,
     value: &str,
 ) -> bool {
-    connection
-        .query_row(
-            "SELECT EXISTS (SELECT 1 FROM message_headers
+    postio_storage::sql::one(
+        connection,
+        "SELECT EXISTS (SELECT 1 FROM message_headers
                              WHERE message_id = ?1 AND name = ?2
                                AND value LIKE '%' || ?3 || '%')",
-            rusqlite::params![id.get(), name, value],
-            |row| row.get::<_, bool>(0),
-        )
-        .unwrap_or(false)
+        bind![id.get(), name, value],
+        |row| postio_storage::sql::RowExt::col::<bool>(row, 0),
+    )
+    .await
+    .unwrap_or(false)
 }
 
 #[tokio::test]
@@ -1061,13 +1153,15 @@ async fn a_fetched_body_reaches_the_header_index() {
     // -- a feature that works on old mail and not on new is worse than one
     // that does not work.
     let backend = server(2).await;
-    let local = local();
-    postio_index::index::ensure_schema(&local.connection).expect("the search schema");
+    let local = local().await;
+    postio_index::index::ensure_schema(&local.connection)
+        .await
+        .expect("the search schema");
     let rows = headers(&local, &backend).await;
     let (id, uid) = rows[1];
 
     assert!(
-        !header_is_indexed(&local.connection, id, "content-type", "text/plain"),
+        !header_is_indexed(&local.connection, id, "content-type", "text/plain").await,
         "the header-sync pass indexes no block -- it has none -- which is the \
          state this test is about leaving behind"
     );
@@ -1078,13 +1172,14 @@ async fn a_fetched_body_reaches_the_header_index() {
         &backend,
         &request(&local.inbox, id, uid, 1024),
         BackfillPolicy::default().max_inline_bytes,
+        None,
         &CancelToken::new(),
     )
     .await
     .expect("fetch");
 
     assert!(
-        header_is_indexed(&local.connection, id, "content-type", "text/plain"),
+        header_is_indexed(&local.connection, id, "content-type", "text/plain").await,
         "a fetched message's own headers did not reach the index -- and \
          `Content-Type` is a field no envelope column carries, so nothing but \
          the block could have answered it"
@@ -1102,8 +1197,10 @@ async fn text_fetched_by_section_reaches_the_header_index() {
     let backend = MockBackend::builder().mailbox(inbox).build();
     backend.connect().await.expect("connect");
 
-    let local = local();
-    postio_index::index::ensure_schema(&local.connection).expect("the search schema");
+    let local = local().await;
+    postio_index::index::ensure_schema(&local.connection)
+        .await
+        .expect("the search schema");
     let rows = headers(&local, &backend).await;
     let (id, uid) = rows[0];
 
@@ -1113,13 +1210,14 @@ async fn text_fetched_by_section_reaches_the_header_index() {
         &backend,
         &request(&local.inbox, id, uid, HUGE),
         BackfillPolicy::default().max_inline_bytes,
+        None,
         &CancelToken::new(),
     )
     .await
     .expect("fetch");
 
     assert!(
-        header_is_indexed(&local.connection, id, "from", "ada@example.com"),
+        header_is_indexed(&local.connection, id, "from", "ada@example.com").await,
         "the section fetch stored a block that nothing indexed"
     );
 }
@@ -1160,7 +1258,7 @@ async fn text_that_is_not_part_one_is_still_found() {
     let backend = MockBackend::builder().mailbox(inbox).build();
     backend.connect().await.expect("connect");
 
-    let local = local();
+    let local = local().await;
     let rows = headers(&local, &backend).await;
     let (id, uid) = rows[0];
 
@@ -1170,20 +1268,27 @@ async fn text_that_is_not_part_one_is_still_found() {
         &backend,
         &request(&local.inbox, id, uid, HUGE),
         BackfillPolicy::default().max_inline_bytes,
+        None,
         &CancelToken::new(),
     )
     .await
     .expect("fetch");
 
     let messages = MessageRepository::new(&local.connection);
-    let body = messages.body(id).expect("body").expect("the row");
+    let body = messages.body(id).await.expect("body").expect("the row");
 
     let text = body.text.expect("the plain-text part at 2.1");
     assert_eq!(text, "Scan attached.");
     let html = body.html.expect("the HTML alternative at 2.2");
     assert_eq!(html, "<p>Scan attached.</p>");
     assert_eq!(
-        messages.get(id).expect("get").expect("row").sync.body_state,
+        messages
+            .get(id)
+            .await
+            .expect("get")
+            .expect("row")
+            .sync
+            .body_state,
         BodyState::Partial,
         "the scan itself stayed on the server"
     );
@@ -1304,12 +1409,14 @@ async fn a_partial_message(local: &Local, backend: &MockBackend) -> (MessageId, 
         backend,
         &request(&local.inbox, id, uid, 4_096),
         BackfillPolicy::default().max_inline_bytes,
+        None,
         &CancelToken::new(),
     )
     .await
     .expect("text");
     let stored = MessageRepository::new(&local.connection)
         .get(id)
+        .await
         .expect("get")
         .expect("row");
     assert_eq!(
@@ -1342,12 +1449,14 @@ async fn opening_an_attachment_fetches_the_part_and_records_where_it_landed() {
     let backend = MockBackend::builder().mailbox(inbox).build();
     backend.connect().await.expect("connect");
 
-    let local = local();
+    let local = local().await;
     let (id, _uid) = a_partial_message(&local, &backend).await;
 
     let mut backfill = Backfill::new(policy());
     assert!(
-        request_payloads(&local.connection, &mut backfill, id, &["2".to_owned()]).expect("ask"),
+        request_payloads(&local.connection, &mut backfill, id, &["2".to_owned()])
+            .await
+            .expect("ask"),
         "there is a payload on the server to ask for"
     );
     let claim = backfill.next_body().expect("a claim");
@@ -1363,13 +1472,14 @@ async fn opening_an_attachment_fetches_the_part_and_records_where_it_landed() {
         &backend,
         &claim.request,
         BackfillPolicy::default().max_inline_bytes,
+        None,
         &claim.cancel,
     )
     .await
     .expect("fetch");
 
     let messages = MessageRepository::new(&local.connection);
-    let stored = messages.get(id).expect("get").expect("row");
+    let stored = messages.get(id).await.expect("get").expect("row");
     let part = &stored.attachments[0];
     assert!(part.is_downloaded(), "the chip can honestly say 'open' now");
     let blob = part.blob_id.clone().expect("a key");
@@ -1397,11 +1507,13 @@ async fn a_payload_already_on_this_machine_is_never_fetched_twice() {
     let backend = MockBackend::builder().mailbox(inbox).build();
     backend.connect().await.expect("connect");
 
-    let local = local();
+    let local = local().await;
     let (id, _uid) = a_partial_message(&local, &backend).await;
 
     let mut backfill = Backfill::new(policy());
-    request_payloads(&local.connection, &mut backfill, id, &["2".to_owned()]).expect("ask");
+    request_payloads(&local.connection, &mut backfill, id, &["2".to_owned()])
+        .await
+        .expect("ask");
     let claim = backfill.next_body().expect("a claim");
     fetch_body(
         &local.connection,
@@ -1409,6 +1521,7 @@ async fn a_payload_already_on_this_machine_is_never_fetched_twice() {
         &backend,
         &claim.request,
         BackfillPolicy::default().max_inline_bytes,
+        None,
         &claim.cancel,
     )
     .await
@@ -1416,7 +1529,9 @@ async fn a_payload_already_on_this_machine_is_never_fetched_twice() {
     let after_first = backend.calls();
 
     assert!(
-        !request_payloads(&local.connection, &mut backfill, id, &["2".to_owned()]).expect("ask"),
+        !request_payloads(&local.connection, &mut backfill, id, &["2".to_owned()])
+            .await
+            .expect("ask"),
         "the bytes are here; opening it again must not reach the network"
     );
     assert!(backfill.next_body().is_none());
@@ -1443,12 +1558,14 @@ async fn an_evicted_payload_can_be_fetched_again() {
     let backend = MockBackend::builder().mailbox(inbox).build();
     backend.connect().await.expect("connect");
 
-    let local = local();
+    let local = local().await;
     let (id, _uid) = a_partial_message(&local, &backend).await;
     let messages = MessageRepository::new(&local.connection);
 
     let mut backfill = Backfill::new(policy());
-    request_payloads(&local.connection, &mut backfill, id, &["2".to_owned()]).expect("ask");
+    request_payloads(&local.connection, &mut backfill, id, &["2".to_owned()])
+        .await
+        .expect("ask");
     let claim = backfill.next_body().expect("a claim");
     fetch_body(
         &local.connection,
@@ -1456,6 +1573,7 @@ async fn an_evicted_payload_can_be_fetched_again() {
         &backend,
         &claim.request,
         BackfillPolicy::default().max_inline_bytes,
+        None,
         &claim.cancel,
     )
     .await
@@ -1469,7 +1587,12 @@ async fn an_evicted_payload_can_be_fetched_again() {
             bytes: PDF.len() as u64,
         },
     );
-    let blob = messages.get(id).expect("get").expect("row").attachments[0]
+    let blob = messages
+        .get(id)
+        .await
+        .expect("get")
+        .expect("row")
+        .attachments[0]
         .blob_id
         .clone()
         .expect("the payload is here to begin with");
@@ -1478,11 +1601,12 @@ async fn an_evicted_payload_can_be_fetched_again() {
     let report = local
         .blobs
         .evict_to_fit(&local.connection, 0)
+        .await
         .expect("evict");
     assert_eq!(report.removed, 1, "the payload was the only thing to take");
     assert!(!local.blobs.contains(&blob), "the bytes really are gone");
 
-    let evicted = messages.get(id).expect("get").expect("row");
+    let evicted = messages.get(id).await.expect("get").expect("row");
     assert_eq!(
         evicted.sync.body_state,
         BodyState::Partial,
@@ -1492,7 +1616,9 @@ async fn an_evicted_payload_can_be_fetched_again() {
     // And the part is askable again, from the same call the attachment chip
     // makes when somebody presses download.
     assert!(
-        request_payloads(&local.connection, &mut backfill, id, &["2".to_owned()]).expect("ask"),
+        request_payloads(&local.connection, &mut backfill, id, &["2".to_owned()])
+            .await
+            .expect("ask"),
         "an evicted payload is a payload the server still has: eviction is \
          not a delete from the user's point of view"
     );
@@ -1503,12 +1629,13 @@ async fn an_evicted_payload_can_be_fetched_again() {
         &backend,
         &claim.request,
         BackfillPolicy::default().max_inline_bytes,
+        None,
         &claim.cancel,
     )
     .await
     .expect("refetch");
 
-    let restored = messages.get(id).expect("get").expect("row");
+    let restored = messages.get(id).await.expect("get").expect("row");
     let back = restored.attachments[0]
         .blob_id
         .clone()
@@ -1538,7 +1665,7 @@ async fn two_messages_carrying_the_same_file_share_one_blob() {
     let backend = MockBackend::builder().mailbox(inbox).build();
     backend.connect().await.expect("connect");
 
-    let local = local();
+    let local = local().await;
     let rows = headers(&local, &backend).await;
     let messages = MessageRepository::new(&local.connection);
     let mut keys = Vec::new();
@@ -1550,13 +1677,16 @@ async fn two_messages_carrying_the_same_file_share_one_blob() {
             &backend,
             &request(&local.inbox, id, uid, 4_096),
             BackfillPolicy::default().max_inline_bytes,
+            None,
             &CancelToken::new(),
         )
         .await
         .expect("text");
 
         let mut backfill = Backfill::new(policy());
-        request_payloads(&local.connection, &mut backfill, id, &["2".to_owned()]).expect("ask");
+        request_payloads(&local.connection, &mut backfill, id, &["2".to_owned()])
+            .await
+            .expect("ask");
         let claim = backfill.next_body().expect("a claim");
         fetch_body(
             &local.connection,
@@ -1564,12 +1694,13 @@ async fn two_messages_carrying_the_same_file_share_one_blob() {
             &backend,
             &claim.request,
             BackfillPolicy::default().max_inline_bytes,
+            None,
             &claim.cancel,
         )
         .await
         .expect("fetch");
 
-        let stored = messages.get(id).expect("get").expect("row");
+        let stored = messages.get(id).await.expect("get").expect("row");
         keys.push(stored.attachments[0].blob_id.clone().expect("a key"));
     }
 
@@ -1584,7 +1715,7 @@ async fn never_leaves_a_payload_on_the_server_even_when_it_is_opened() {
     let backend = MockBackend::builder().mailbox(inbox).build();
     backend.connect().await.expect("connect");
 
-    let local = local();
+    let local = local().await;
     let (id, _uid) = a_partial_message(&local, &backend).await;
 
     let mut backfill = Backfill::new(BackfillPolicy {
@@ -1593,7 +1724,9 @@ async fn never_leaves_a_payload_on_the_server_even_when_it_is_opened() {
     });
 
     assert!(
-        !request_payloads(&local.connection, &mut backfill, id, &["2".to_owned()]).expect("ask"),
+        !request_payloads(&local.connection, &mut backfill, id, &["2".to_owned()])
+            .await
+            .expect("ask"),
         "filename search and nothing more -- that is what `never` promises"
     );
     assert!(backfill.next_body().is_none());
@@ -1607,7 +1740,7 @@ async fn eager_queues_the_payloads_the_text_lane_left_behind() {
     let backend = MockBackend::builder().mailbox(inbox).build();
     backend.connect().await.expect("connect");
 
-    let local = local();
+    let local = local().await;
     let (id, _uid) = a_partial_message(&local, &backend).await;
 
     let mut backfill = Backfill::new(BackfillPolicy {
@@ -1615,7 +1748,9 @@ async fn eager_queues_the_payloads_the_text_lane_left_behind() {
         ..policy()
     });
     assert_eq!(
-        seed_payloads(&local.connection, &mut backfill, local.inbox.id, 10).expect("seed"),
+        seed_payloads(&local.connection, &mut backfill, local.inbox.id, 10)
+            .await
+            .expect("seed"),
         1
     );
 
@@ -1633,6 +1768,7 @@ async fn eager_queues_the_payloads_the_text_lane_left_behind() {
         &backend,
         &claim.request,
         BackfillPolicy::default().max_inline_bytes,
+        None,
         &claim.cancel,
     )
     .await
@@ -1640,12 +1776,15 @@ async fn eager_queues_the_payloads_the_text_lane_left_behind() {
 
     let stored = MessageRepository::new(&local.connection)
         .get(id)
+        .await
         .expect("get")
         .expect("row");
     assert!(stored.attachments[0].is_downloaded());
     assert_eq!(stored.sync.body_state, BodyState::Full);
     assert_eq!(
-        seed_payloads(&local.connection, &mut backfill, local.inbox.id, 10).expect("seed"),
+        seed_payloads(&local.connection, &mut backfill, local.inbox.id, 10)
+            .await
+            .expect("seed"),
         0,
         "and there is nothing left for it to find"
     );
@@ -1675,13 +1814,15 @@ async fn a_message_is_full_only_once_its_last_payload_is_local() {
     let backend = MockBackend::builder().mailbox(inbox).build();
     backend.connect().await.expect("connect");
 
-    let local = local();
+    let local = local().await;
     let (id, _uid) = a_partial_message(&local, &backend).await;
     let messages = MessageRepository::new(&local.connection);
 
     for (part, expected) in [("2", BodyState::Partial), ("3", BodyState::Full)] {
         let mut backfill = Backfill::new(policy());
-        request_payloads(&local.connection, &mut backfill, id, &[part.to_owned()]).expect("ask");
+        request_payloads(&local.connection, &mut backfill, id, &[part.to_owned()])
+            .await
+            .expect("ask");
         let claim = backfill.next_body().expect("a claim");
         fetch_body(
             &local.connection,
@@ -1689,25 +1830,32 @@ async fn a_message_is_full_only_once_its_last_payload_is_local() {
             &backend,
             &claim.request,
             BackfillPolicy::default().max_inline_bytes,
+            None,
             &claim.cancel,
         )
         .await
         .expect("fetch");
         assert_eq!(
-            messages.get(id).expect("get").expect("row").sync.body_state,
+            messages
+                .get(id)
+                .await
+                .expect("get")
+                .expect("row")
+                .sync
+                .body_state,
             expected,
             "after fetching part {part}"
         );
     }
 }
 
-#[test]
-fn a_part_asked_for_while_another_is_on_the_wire_is_not_lost() {
+#[tokio::test]
+async fn a_part_asked_for_while_another_is_on_the_wire_is_not_lost() {
     // Two chips clicked in quick succession. The second request cannot join a
     // fetch already on the wire, and dropping it silently would leave the
     // second spinner turning until it timed out -- so it waits for the first
     // to settle and is offered again.
-    let local = local();
+    let local = local().await;
     let mut backfill = Backfill::new(policy());
 
     let mut first = request(&local.inbox, MessageId::new(1), 1, 4_096);
@@ -1729,9 +1877,9 @@ fn a_part_asked_for_while_another_is_on_the_wire_is_not_lost() {
     assert_eq!(next.request.want, Want::Payloads(vec!["3".to_owned()]));
 }
 
-#[test]
-fn a_part_asked_for_while_another_is_still_queued_joins_it() {
-    let local = local();
+#[tokio::test]
+async fn a_part_asked_for_while_another_is_still_queued_joins_it() {
+    let local = local().await;
     let mut backfill = Backfill::new(policy());
 
     let mut first = request(&local.inbox, MessageId::new(1), 1, 4_096);
@@ -1859,7 +2007,7 @@ async fn the_text_axis_carries_the_inline_images_the_body_references() {
     let backend = MockBackend::builder().mailbox(inbox).build();
     backend.connect().await.expect("connect");
 
-    let local = local();
+    let local = local().await;
     let rows = headers(&local, &backend).await;
     let (id, uid) = rows[0];
 
@@ -1869,6 +2017,7 @@ async fn the_text_axis_carries_the_inline_images_the_body_references() {
         &backend,
         &request(&local.inbox, id, uid, HUGE),
         policy().max_inline_bytes,
+        None,
         &CancelToken::new(),
     )
     .await
@@ -1876,6 +2025,7 @@ async fn the_text_axis_carries_the_inline_images_the_body_references() {
 
     let stored = MessageRepository::new(&local.connection)
         .get(id)
+        .await
         .expect("get")
         .expect("row");
 
@@ -1939,7 +2089,7 @@ async fn a_message_whose_inline_parts_all_fit_is_full_once_its_text_lands() {
     let backend = MockBackend::builder().mailbox(inbox).build();
     backend.connect().await.expect("connect");
 
-    let local = local();
+    let local = local().await;
     let rows = headers(&local, &backend).await;
     let (id, uid) = rows[0];
 
@@ -1949,6 +2099,7 @@ async fn a_message_whose_inline_parts_all_fit_is_full_once_its_text_lands() {
         &backend,
         &request(&local.inbox, id, uid, 4_096),
         policy().max_inline_bytes,
+        None,
         &CancelToken::new(),
     )
     .await
@@ -1956,6 +2107,7 @@ async fn a_message_whose_inline_parts_all_fit_is_full_once_its_text_lands() {
 
     let stored = MessageRepository::new(&local.connection)
         .get(id)
+        .await
         .expect("get")
         .expect("row");
     assert_eq!(stored.sync.body_state, BodyState::Full);
@@ -1989,7 +2141,7 @@ async fn a_named_attachment_is_never_dragged_down_the_text_axis() {
     let backend = MockBackend::builder().mailbox(inbox).build();
     backend.connect().await.expect("connect");
 
-    let local = local();
+    let local = local().await;
     let rows = headers(&local, &backend).await;
     let (id, uid) = rows[0];
 
@@ -1999,6 +2151,7 @@ async fn a_named_attachment_is_never_dragged_down_the_text_axis() {
         &backend,
         &request(&local.inbox, id, uid, 4_096),
         policy().max_inline_bytes,
+        None,
         &CancelToken::new(),
     )
     .await
@@ -2006,6 +2159,7 @@ async fn a_named_attachment_is_never_dragged_down_the_text_axis() {
 
     let stored = MessageRepository::new(&local.connection)
         .get(id)
+        .await
         .expect("get")
         .expect("row");
     assert!(
@@ -2026,7 +2180,7 @@ async fn a_fetched_body_stores_the_header_block_it_arrived_with() {
     // `headers: None` on purpose -- "a copy nobody reads is a copy that can go
     // stale" -- which was right until ADR 0025 gave it a reader.
     let backend = server(1).await;
-    let local = local();
+    let local = local().await;
     let rows = headers(&local, &backend).await;
     let (id, uid) = rows[0];
 
@@ -2036,6 +2190,7 @@ async fn a_fetched_body_stores_the_header_block_it_arrived_with() {
         &backend,
         &request(&local.inbox, id, uid, HUGE),
         policy().max_inline_bytes,
+        None,
         &CancelToken::new(),
     )
     .await
@@ -2043,6 +2198,7 @@ async fn a_fetched_body_stores_the_header_block_it_arrived_with() {
 
     let stored = MessageRepository::new(&local.connection)
         .body(id)
+        .await
         .expect("body")
         .expect("the row");
     let block = stored
@@ -2075,11 +2231,13 @@ async fn the_text_axis_stores_a_block_even_though_it_stores_no_raw_blob() {
     let backend = MockBackend::builder().mailbox(inbox).build();
     backend.connect().await.expect("connect");
 
-    let local = local();
+    let local = local().await;
     let (id, _uid) = a_partial_message(&local, &backend).await;
 
     let mut backfill = Backfill::new(policy());
-    request_payloads(&local.connection, &mut backfill, id, &["2".to_owned()]).expect("ask");
+    request_payloads(&local.connection, &mut backfill, id, &["2".to_owned()])
+        .await
+        .expect("ask");
     let claim = backfill.next_body().expect("a claim");
     fetch_body(
         &local.connection,
@@ -2087,13 +2245,14 @@ async fn the_text_axis_stores_a_block_even_though_it_stores_no_raw_blob() {
         &backend,
         &claim.request,
         BackfillPolicy::default().max_inline_bytes,
+        None,
         &claim.cancel,
     )
     .await
     .expect("fetch");
 
     let messages = MessageRepository::new(&local.connection);
-    let stored = messages.body(id).expect("body").expect("the row");
+    let stored = messages.body(id).await.expect("body").expect("the row");
     let block = stored
         .headers
         .expect("a payload fetch has to bring the block, because nothing else will");
@@ -2104,6 +2263,7 @@ async fn the_text_axis_stores_a_block_even_though_it_stores_no_raw_blob() {
     assert!(
         messages
             .get(id)
+            .await
             .expect("get")
             .expect("row")
             .raw_blob_id
@@ -2127,15 +2287,19 @@ async fn a_legacy_row_with_no_block_and_no_blob_is_queued_and_filled() {
     let backend = MockBackend::builder().mailbox(inbox).build();
     backend.connect().await.expect("connect");
 
-    let local = local();
+    let local = local().await;
     let (id, _uid) = a_partial_message(&local, &backend).await;
     let messages = MessageRepository::new(&local.connection);
 
     // Wind it back to what a pre-#884 store holds: body local, block absent.
-    messages.set_headers(id, None).expect("clear the block");
+    messages
+        .set_headers(id, None)
+        .await
+        .expect("clear the block");
     assert!(
         messages
             .body(id)
+            .await
             .expect("body")
             .expect("row")
             .headers
@@ -2145,6 +2309,7 @@ async fn a_legacy_row_with_no_block_and_no_blob_is_queued_and_filled() {
     assert!(
         messages
             .get(id)
+            .await
             .expect("get")
             .expect("row")
             .raw_blob_id
@@ -2153,8 +2318,9 @@ async fn a_legacy_row_with_no_block_and_no_blob_is_queued_and_filled() {
     );
 
     let mut backfill = Backfill::new(policy());
-    let queued =
-        seed_header_blocks(&local.connection, &mut backfill, local.inbox.id, 10).expect("seed");
+    let queued = seed_header_blocks(&local.connection, &mut backfill, local.inbox.id, 10)
+        .await
+        .expect("seed");
     assert_eq!(
         queued, 1,
         "the row needs a block and nothing local can give it"
@@ -2168,12 +2334,13 @@ async fn a_legacy_row_with_no_block_and_no_blob_is_queued_and_filled() {
         &backend,
         &claim.request,
         BackfillPolicy::default().max_inline_bytes,
+        None,
         &claim.cancel,
     )
     .await
     .expect("fetch");
 
-    let stored = messages.body(id).expect("body").expect("row");
+    let stored = messages.body(id).await.expect("body").expect("row");
     assert!(
         stored
             .headers
@@ -2190,7 +2357,412 @@ async fn a_legacy_row_with_no_block_and_no_blob_is_queued_and_filled() {
 
     // And it stops being offered, or the lane spins (#500).
     assert_eq!(
-        seed_header_blocks(&local.connection, &mut backfill, local.inbox.id, 10).expect("seed"),
+        seed_header_blocks(&local.connection, &mut backfill, local.inbox.id, 10)
+            .await
+            .expect("seed"),
         0
+    );
+}
+
+// ---------------------------------------------------------------------------
+// And it waits its turn
+// ---------------------------------------------------------------------------
+
+/// A backfilled body does not write while a person holds the gate.
+///
+/// #425's rule, and the same omission `resync.rs` had before
+/// `resync_interactive_write.rs` caught it: `postio_storage::WriteGate` is the
+/// whole of this engine's write serialisation -- its busy timeout is **0**
+/// where SQLCipher's was 5,000 ms -- so a writer outside the gate is not
+/// merely rude, it is a collision the engine reports and nobody retries.
+///
+/// The backfill was that writer. Every other path takes a permit;
+/// `backfill.rs` took none, and it writes `messages` (the row, the body, the
+/// attachment blobs) and then `messages.body_search` through the indexer.
+///
+/// Seen on a live account: archiving a message while the body backfill ran
+/// answered *"Could not save that change"*, over
+///
+/// ```text
+/// the local store refused a write: engine: database snapshot is stale,
+/// rollback and retry the transaction
+/// ```
+///
+/// A person's archive is what must not lose, so the backfill is the one that
+/// waits. It takes `WritePriority::Background`, which cannot even *begin*
+/// while an interactive writer is waiting.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_backfilled_body_waits_for_the_write_a_person_is_doing() {
+    let backend = server(2).await;
+    let local = local().await;
+    let fetched = headers(&local, &backend).await;
+    let (id, uid) = fetched[0];
+
+    // Somebody is mid-archive.
+    let permit = local
+        .connection
+        .write_gate()
+        .acquire(postio_storage::WritePriority::Interactive)
+        .await;
+
+    // A duration is the assertion here rather than a wait for a condition:
+    // what is being claimed is that something does *not* happen, and that
+    // cannot be settled by waiting for it. Generous enough that a loaded
+    // machine does not read as a pass.
+    let raced = tokio::time::timeout(
+        Duration::from_millis(750),
+        fetch_body(
+            &local.connection,
+            &local.blobs,
+            &backend,
+            &request(&local.inbox, id, uid, 1_024),
+            BackfillPolicy::default().max_inline_bytes,
+            None,
+            &CancelToken::new(),
+        ),
+    )
+    .await;
+    assert!(
+        raced.is_err(),
+        "the backfill wrote a body while a person held the write gate; that \
+         is the collision the gate exists to prevent, and this engine answers \
+         it with `database snapshot is stale` rather than a retry"
+    );
+
+    // And once the person is done, it goes through.
+    drop(permit);
+    let outcome = fetch_body(
+        &local.connection,
+        &local.blobs,
+        &backend,
+        &request(&local.inbox, id, uid, 1_024),
+        BackfillPolicy::default().max_inline_bytes,
+        None,
+        &CancelToken::new(),
+    )
+    .await
+    .expect("fetch");
+    assert!(
+        matches!(outcome, Outcome::Stored { .. }),
+        "waiting for the gate must not cost the body: {outcome:?}"
+    );
+}
+
+/// `seed_payloads` walks past a window it cannot use (#318), and the
+/// comparisons that decide when to stop walking were the densest cluster of
+/// surviving mutants in the first baseline (#1470): no test told `queued > 0`
+/// from `>= 0`, or `read < limit` from `<=`. Two partial messages and a
+/// window of one message tell them apart. The second seed finds the newest
+/// already queued and has to reach the older one behind it; the third finds
+/// both queued and has to stop at the folder's end rather than walk for
+/// ever.
+#[tokio::test]
+async fn seeding_payloads_walks_past_a_window_that_is_already_queued() {
+    let inbox = MockMailbox::new(INBOX)
+        .uid_validity(UidValidity::new(VALIDITY))
+        .message(with_a_payload(1, "first.pdf"))
+        .message(with_a_payload(2, "second.pdf"));
+    let backend = MockBackend::builder().mailbox(inbox).build();
+    backend.connect().await.expect("connect");
+
+    let local = local().await;
+    let rows = headers(&local, &backend).await;
+    assert_eq!(rows.len(), 2, "the fixture is two messages");
+    for (id, uid) in &rows {
+        fetch_body(
+            &local.connection,
+            &local.blobs,
+            &backend,
+            &request(&local.inbox, *id, *uid, 4_096),
+            BackfillPolicy::default().max_inline_bytes,
+            None,
+            &CancelToken::new(),
+        )
+        .await
+        .expect("text");
+    }
+
+    let mut backfill = Backfill::new(BackfillPolicy {
+        attachments: AttachmentPolicy::Eager,
+        ..policy()
+    });
+    let window = 1;
+
+    assert_eq!(
+        seed_payloads(&local.connection, &mut backfill, local.inbox.id, window)
+            .await
+            .expect("seed"),
+        1,
+        "the first window is the newest message, and it queues"
+    );
+    assert_eq!(
+        seed_payloads(&local.connection, &mut backfill, local.inbox.id, window)
+            .await
+            .expect("seed"),
+        1,
+        "the newest is already queued, so the seed has to reach the window \
+         behind it rather than answer the same row again"
+    );
+    assert_eq!(
+        seed_payloads(&local.connection, &mut backfill, local.inbox.id, window)
+            .await
+            .expect("seed"),
+        0,
+        "both are queued: an empty window is the end of the folder, not a \
+         reason to keep walking"
+    );
+
+    let queued: Vec<_> = std::iter::from_fn(|| backfill.next_body())
+        .map(|claim| claim.request.message)
+        .collect();
+    assert_eq!(queued.len(), 2, "each message queued once: {queued:?}");
+}
+
+// ---------------------------------------------------------------------------
+// Asking for a set, not a list (#1551)
+// ---------------------------------------------------------------------------
+
+/// The text axis asks for the same section over and over, so it can be one
+/// command.
+///
+/// A body fetch is almost all round trip. Fetching one message per command
+/// makes a first sync one wait per message — tens of thousands of them, end
+/// to end, which no bandwidth shortens. `prefetch_text_sections` groups the
+/// requests by the section path they want and asks for each group at once.
+///
+/// What this pins is the *shape of the question*: one batched call naming
+/// every message that wants section `1`, rather than one call each. The mock
+/// has no set primitive to be faster with — it is a `Vec` — so it records
+/// what it was asked and answers it the slow way, which is exactly what makes
+/// the assertion about the caller rather than the server.
+#[tokio::test]
+async fn the_text_axis_asks_for_a_set_of_messages_in_one_command() {
+    // Every message's words at section `1`, which is what most mail looks
+    // like and what makes a set worth asking for.
+    let mut inbox = MockMailbox::new(INBOX).uid_validity(UidValidity::new(VALIDITY));
+    for uid in 1..=5u32 {
+        inbox = inbox.message(
+            MockMessage::new(note(uid))
+                .with_internal_date(at(uid as i64))
+                .with_structure(postio_account::backend::BodyStructure::from_parts(
+                    "text/plain",
+                    [
+                        postio_account::backend::PartNode::new("1", "text/plain", 26)
+                            .with_charset("utf-8"),
+                    ],
+                ))
+                .with_part("1", format!("The body of note {uid}.\r\n").into_bytes()),
+        );
+    }
+    let backend = MockBackend::builder().mailbox(inbox).build();
+    backend.connect().await.expect("connect");
+    let local = local().await;
+    let rows = headers(&local, &backend).await;
+    assert!(
+        rows.len() >= 3,
+        "the fixture needs several messages to batch"
+    );
+
+    let requests: Vec<_> = rows
+        .iter()
+        .map(|(id, uid)| request(&local.inbox, *id, *uid, 1_024))
+        .collect();
+
+    let prefetched =
+        prefetch_text_sections(&local.connection, &backend, &requests, &CancelToken::new()).await;
+
+    let batches = backend.section_batches();
+    assert!(
+        !batches.is_empty(),
+        "nothing was batched at all, so the backfill is still asking one \
+         message at a time"
+    );
+    assert_eq!(
+        batches.len(),
+        1,
+        "every message wants section 1, so that is one command: {batches:?}"
+    );
+    assert_eq!(
+        batches[0],
+        ("1".to_owned(), rows.len()),
+        "the one command should name every message"
+    );
+    assert_eq!(
+        prefetched.len(),
+        rows.len(),
+        "the cache should hold a section for each"
+    );
+}
+
+/// A batch is an optimisation, so a miss must cost nothing but a round trip.
+///
+/// `fetch_body` takes the cache by option and consults it per section; a
+/// message that was never batched — too large, a section nobody else wanted,
+/// a batch that failed — has to store exactly what it always did. Without
+/// this, the batch would be a second code path that can be wrong on its own.
+#[tokio::test]
+async fn a_body_the_batch_missed_is_fetched_and_stored_the_old_way() {
+    let backend = server(1).await;
+    let local = local().await;
+    let rows = headers(&local, &backend).await;
+    let (id, uid) = rows[0];
+
+    // An empty cache is the miss, stated directly.
+    let mut empty = Prefetched::default();
+    let outcome = fetch_body(
+        &local.connection,
+        &local.blobs,
+        &backend,
+        &request(&local.inbox, id, uid, 1_024),
+        BackfillPolicy::default().max_inline_bytes,
+        Some(&mut empty),
+        &CancelToken::new(),
+    )
+    .await
+    .expect("fetch");
+
+    assert!(
+        matches!(outcome, Outcome::Stored { .. }),
+        "a cache miss must fall through to the wire: {outcome:?}"
+    );
+    let stored = MessageRepository::new(&local.connection)
+        .body(id)
+        .await
+        .expect("read the body")
+        .expect("a stored body");
+    assert!(
+        stored.text.is_some() || stored.html.is_some(),
+        "the body stored through a missed batch has no words in it"
+    );
+}
+
+/// A prefetched batch hands each message its own sections and no others.
+///
+/// `Prefetched` holds a whole window's worth of bytes keyed by
+/// `(remote id, section)`, and `split_for` is what lifts one message's share
+/// out before its fetch runs — taken *before* the await, because the window's
+/// fetches share the cache and run concurrently, so a borrow held across one
+/// would be the second borrower's panic.
+///
+/// The consequence of getting this wrong is not a slow sync, it is one
+/// person's mail stored on another's row. Worth a test on those grounds
+/// alone; that it is also the only exercise this gets inside its own crate —
+/// the engine in `postio-runtime` is the sole caller — is the second reason.
+#[tokio::test]
+async fn a_split_takes_one_messages_sections_and_leaves_the_rest() {
+    // A real batch first, so there is something to split. Same shape as
+    // `the_text_axis_asks_for_a_set_of_messages_in_one_command`: every
+    // message's words at section `1`.
+    let mut inbox = MockMailbox::new(INBOX).uid_validity(UidValidity::new(VALIDITY));
+    for uid in 1..=3u32 {
+        inbox = inbox.message(
+            MockMessage::new(note(uid))
+                .with_internal_date(at(uid as i64))
+                .with_structure(postio_account::backend::BodyStructure::from_parts(
+                    "text/plain",
+                    [
+                        postio_account::backend::PartNode::new("1", "text/plain", 26)
+                            .with_charset("utf-8"),
+                    ],
+                ))
+                .with_part("1", format!("The body of note {uid}.\r\n").into_bytes()),
+        );
+    }
+    let backend = MockBackend::builder().mailbox(inbox).build();
+    backend.connect().await.expect("connect");
+    let local = local().await;
+    let rows = headers(&local, &backend).await;
+    let requests: Vec<_> = rows
+        .iter()
+        .map(|(id, uid)| request(&local.inbox, *id, *uid, 1_024))
+        .collect();
+
+    let mut prefetched =
+        prefetch_text_sections(&local.connection, &backend, &requests, &CancelToken::new()).await;
+    assert_eq!(
+        prefetched.len(),
+        rows.len(),
+        "the batch should hold a section for each message"
+    );
+
+    let mine = prefetched.split_for(&requests[0].remote_id);
+    assert_eq!(mine.len(), 1, "exactly this message's own section");
+    assert_eq!(
+        prefetched.len(),
+        rows.len() - 1,
+        "and it is *moved*, not copied — a second fetch must not find it \
+         still there and store it twice"
+    );
+
+    // The bytes that came out are this message's, which is the half that
+    // matters: keyed wrong, a split hands one person's mail to another's row.
+    let again = prefetched.split_for(&requests[0].remote_id);
+    assert!(
+        again.is_empty(),
+        "splitting the same message twice found something the first call left"
+    );
+    let other = prefetched.split_for(&requests[1].remote_id);
+    assert_eq!(other.len(), 1, "the other messages are untouched by either");
+}
+
+/// One message is not a batch.
+///
+/// Asking for a set of one costs a round trip to save none, so the prefetch
+/// declines rather than paying it — which also means the window's last, lone
+/// claim is never worse off for the batching existing.
+#[tokio::test]
+async fn a_single_request_is_not_worth_a_batch() {
+    let backend = server(3).await;
+    let local = local().await;
+    let rows = headers(&local, &backend).await;
+    let requests: Vec<_> = rows
+        .iter()
+        .map(|(id, uid)| request(&local.inbox, *id, *uid, 1_024))
+        .collect();
+
+    let alone = prefetch_text_sections(
+        &local.connection,
+        &backend,
+        &requests[..1],
+        &CancelToken::new(),
+    )
+    .await;
+    assert!(alone.is_empty(), "a set of one is not a set");
+    assert!(
+        backend.section_batches().is_empty(),
+        "and nothing should have gone to the server"
+    );
+}
+
+/// A message too large for the batch's budget is left on the streaming path.
+///
+/// A batch does not stream — every answer is held at once — so
+/// `PREFETCH_BUDGET` is what stops a window of large messages being pulled
+/// into memory together. A message over it is simply absent from the cache,
+/// and `fetch_body` fetches it the way it always did.
+#[tokio::test]
+async fn a_message_too_large_for_the_budget_is_not_batched() {
+    let backend = server(3).await;
+    let local = local().await;
+    let rows = headers(&local, &backend).await;
+
+    // `size` is `RFC822.SIZE` as the header sync recorded it, and the budget
+    // is measured against it before a byte is asked for. A gigabyte each is
+    // past any budget this will ever have.
+    let huge: Vec<_> = rows
+        .iter()
+        .map(|(id, uid)| request(&local.inbox, *id, *uid, 1_024 * 1_024 * 1_024))
+        .collect();
+
+    let prefetched =
+        prefetch_text_sections(&local.connection, &backend, &huge, &CancelToken::new()).await;
+
+    assert!(
+        prefetched.is_empty(),
+        "a window of gigabyte messages was batched into memory together"
+    );
+    assert!(
+        backend.section_batches().is_empty(),
+        "nothing should have been asked for at all"
     );
 }

@@ -36,7 +36,7 @@ use postio_account::imap::{ConnectionSettings, ImapSession, RustlsConnector};
 use postio_account::oauth::{self, BrowserOpener, Endpoints, OAuthError, TokenResponse};
 use postio_account::secret::{AccountKey, Password, SecretStore};
 use postio_model::account::{AuthMethod, TransportSecurity};
-use postio_storage::Database;
+use postio_storage::Store;
 use postio_storage::repository::AccountRepository;
 
 /// The user's own OAuth client (ADR 0006 Q1).
@@ -181,7 +181,7 @@ async fn verify(settings: &AccountSettings, tokens: &TokenResponse) -> Result<()
 /// Answers the same [`crate::provision::Provisioned`] a password sign-in
 /// does, so a caller that has both routes has one answer to interpret.
 pub async fn provision_oauth(
-    database: &Database,
+    database: &Store,
     secrets: Arc<dyn SecretStore>,
     settings: &AccountSettings,
     client: &OAuthClient,
@@ -197,10 +197,12 @@ pub async fn provision_oauth(
     // account, not two.
     {
         let connection = database
-            .connection()
+            .connect()
+            .await
             .map_err(|error| format!("Postio could not open its local store: {error}"))?;
         if let Some(found) = AccountRepository::new(&connection)
             .list()
+            .await
             .map_err(|error| format!("Postio could not read its local store: {error}"))?
             .into_iter()
             .find(|account| account.address.address.eq_ignore_ascii_case(&address))
@@ -240,7 +242,9 @@ pub async fn provision_oauth(
         &signed_in.endpoints,
         scopes,
         refresh_token_lifetime_days,
-    ) {
+    )
+    .await
+    {
         Ok(id) => Ok(crate::provision::Provisioned::Created(id)),
         Err(reason) => {
             // Rolled back the way `provision` rolls back a password: nothing
@@ -255,8 +259,8 @@ pub async fn provision_oauth(
 }
 
 /// The row write: the account, then its auth method and OAuth client.
-fn write_row(
-    database: &Database,
+async fn write_row(
+    database: &Store,
     settings: &AccountSettings,
     client: &OAuthClient,
     endpoints: &Endpoints,
@@ -276,10 +280,12 @@ fn write_row(
     });
 
     let connection = database
-        .connection()
+        .connect()
+        .await
         .map_err(|error| format!("Postio could not open its local store: {error}"))?;
     AccountRepository::new(&connection)
         .create(&mut account)
+        .await
         .map_err(|error| format!("Postio could not record the sign-in: {error}"))
 }
 

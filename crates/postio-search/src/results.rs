@@ -110,6 +110,12 @@ pub struct SearchResults {
     ///
     /// [`total_hits_capped`]: Self::total_hits_capped
     pub corpus_complete: bool,
+    /// A term to search for instead, when this query found nothing.
+    ///
+    /// Always `None` when there are hits: a query that worked is not one to
+    /// second-guess. See ADR 0037 for why the tolerance is here, in what is
+    /// *offered*, rather than in what the index matches.
+    pub suggestion: Option<crate::suggest::Suggestion>,
 }
 
 /// The most `total_hits` will ever count exactly. See

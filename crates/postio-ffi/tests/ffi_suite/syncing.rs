@@ -14,14 +14,15 @@ fn session() -> std::sync::Arc<Session> {
     Session::open(SessionOptions::in_memory()).expect("an in-memory session")
 }
 
-#[test]
-fn a_store_with_no_accounts_starts_nothing_and_says_so() {
+#[tokio::test(flavor = "multi_thread")]
+async fn a_store_with_no_accounts_starts_nothing_and_says_so() {
     // Not an error. A fresh store with no account configured is the ordinary
     // first-run state, and treating it as a failure would put an error on
     // screen for someone who has simply not finished setting up.
     let session = session();
     let started = session
         .start_syncing()
+        .await
         .expect("no accounts is not a failure");
     assert_eq!(
         started, 0,
@@ -30,15 +31,15 @@ fn a_store_with_no_accounts_starts_nothing_and_says_so() {
     session.shutdown();
 }
 
-#[test]
-fn starting_twice_is_harmless() {
+#[tokio::test(flavor = "multi_thread")]
+async fn starting_twice_is_harmless() {
     // `postio-app`'s own comment records that a second `start_syncing` used
     // to run a duplicate pass. An application lifecycle will call this twice
     // — a window reopening, a wake from sleep — and doubling the engines
     // would double every connection to the server.
     let session = session();
-    let first = session.start_syncing().expect("first start");
-    let second = session.start_syncing().expect("second start");
+    let first = session.start_syncing().await.expect("first start");
+    let second = session.start_syncing().await.expect("second start");
     assert_eq!(first, second, "a second start produced a different result");
     session.shutdown();
 }
@@ -139,27 +140,27 @@ fn sync_progress_reaches_the_frontend() {
     session.shutdown();
 }
 
-#[test]
-fn a_seeded_account_is_seen_by_the_starter() {
+#[tokio::test(flavor = "multi_thread")]
+async fn a_seeded_account_is_seen_by_the_starter() {
     // Guards the account read itself: a `start_syncing` that could not see a
     // configured account would answer zero for ever and look exactly like the
     // no-accounts case above.
-    let database = test_support::memory();
+    let database = test_support::memory().await;
     {
-        let connection = database.connection().expect("a connection");
-        test_support::account_with_inbox(&connection);
+        let connection = database.connect().await.expect("a connection");
+        test_support::account_with_inbox(&connection).await;
     }
     let session = Session::open(SessionOptions::in_memory_with(database)).expect("a session");
     assert_eq!(
-        session.configured_accounts(),
+        session.configured_accounts().await,
         1,
         "the configured account was not seen"
     );
     session.shutdown();
 }
 
-#[test]
-fn an_account_added_while_running_is_not_left_without_an_engine() {
+#[tokio::test(flavor = "multi_thread")]
+async fn an_account_added_while_running_is_not_left_without_an_engine() {
     // **The bug this pins.** `start_syncing` used to return early whenever
     // *any* engine existed. That is right for the case it was written for — a
     // window reopening, a wake from sleep — and wrong for the one nobody had
@@ -181,6 +182,7 @@ fn an_account_added_while_running_is_not_left_without_an_engine() {
     // it is *considered* at all rather than skipped because an engine exists.
     let started = session
         .start_syncing()
+        .await
         .expect("a running engine must not make this an error");
 
     assert!(
@@ -190,15 +192,15 @@ fn an_account_added_while_running_is_not_left_without_an_engine() {
     session.shutdown();
 }
 
-#[test]
-fn a_second_start_still_does_not_double_the_engines() {
+#[tokio::test(flavor = "multi_thread")]
+async fn a_second_start_still_does_not_double_the_engines() {
     // The property the early return was protecting, kept: the same account
     // must never get two engines, or every connection to the server doubles.
     let session = session();
     session.adopt_mock_engine_for_test();
 
-    let first = session.start_syncing().expect("first");
-    let second = session.start_syncing().expect("second");
+    let first = session.start_syncing().await.expect("first");
+    let second = session.start_syncing().await.expect("second");
 
     assert_eq!(
         first, second,

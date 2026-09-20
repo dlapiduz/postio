@@ -22,7 +22,6 @@ use postio_model::{
     DraftState, EmailAddress, IdentityId, MailboxRole, MessageBody, MessageId, ModSeq, Operation,
     OperationTarget, RemoteId, RfcMessageId, ServerIdentifiers, ThreadId, Uid, UidValidity,
 };
-use rusqlite::{Connection, OptionalExtension, Row, params};
 
 /// Where an appended draft landed, as [`DraftRepository::set_server_copy`]
 /// records it: the backend-neutral identity the engine addresses (#543),
@@ -54,7 +53,11 @@ pub enum CancelSendOutcome {
     AlreadyInFlight,
 }
 use super::{from_millis, require_persisted, to_millis, unknown_enum};
+
 use crate::error::{Error, Result};
+use crate::sql::{self, RowExt as _, bind};
+use crate::store::Connection;
+use turso::Row;
 
 /// Reads and writes [`Draft`] rows.
 #[derive(Debug)]
@@ -89,100 +92,104 @@ impl<'a> DraftRepository<'a> {
     /// this, every autosave after an upload would wipe the id of the copy on
     /// the server, and the next upload would add a second one instead of
     /// replacing the first.
-    pub fn save(&self, draft: &mut Draft) -> Result<DraftId> {
-        let transaction = super::Scope::open(self.connection)?;
-
-        if draft.id.is_assigned() {
-            let changed = transaction.execute(
-                "UPDATE drafts
-                    SET account_id = ?2, identity_id = ?3, kind = ?4,
-                        in_reply_to_message_id = ?5, thread_id = ?6, subject = ?7,
-                        body_text = ?8, body_html = ?9, rich = ?10, state = ?11,
-                        uid = coalesce(?12, uid),
-                        uid_validity = coalesce(?13, uid_validity),
-                        mod_seq = coalesce(?14, mod_seq),
-                        remote_id = coalesce(?15, remote_id),
-                        updated_at = ?16,
-                        rfc_message_id = ?17
-                  WHERE id = ?1",
-                params![
-                    draft.id.get(),
-                    draft.account_id.get(),
-                    optional_identity(draft.identity_id),
-                    draft.kind.as_str(),
-                    optional_message(draft.in_reply_to),
-                    optional_thread(draft.thread_id),
-                    draft.subject,
-                    draft.body.text,
-                    draft.body.html,
-                    draft.rich,
-                    draft.state.as_str(),
-                    draft.server.uid.map(|uid| i64::from(uid.get())),
-                    draft
-                        .server
-                        .uid_validity
-                        .map(|validity| i64::from(validity.get())),
-                    draft.server.mod_seq.map(|seq| seq.get() as i64),
-                    draft
-                        .server
-                        .remote_id
-                        .as_ref()
-                        .map(|id| id.as_str().to_owned()),
-                    to_millis(draft.updated_at),
-                    reservation_for(draft),
-                ],
-            )?;
-            if changed == 0 {
-                return Err(Error::NotFound {
-                    entity: "draft",
-                    id: draft.id.get(),
-                });
+    pub async fn save(&self, draft: &mut Draft) -> Result<DraftId> {
+        sql::in_scope(self.connection, |transaction| async move {
+            if draft.id.is_assigned() {
+                let changed = transaction
+                    .execute(
+                        "UPDATE drafts
+                        SET account_id = ?2, identity_id = ?3, kind = ?4,
+                            in_reply_to_message_id = ?5, thread_id = ?6, subject = ?7,
+                            body_text = ?8, body_html = ?9, rich = ?10, state = ?11,
+                            uid = coalesce(?12, uid),
+                            uid_validity = coalesce(?13, uid_validity),
+                            mod_seq = coalesce(?14, mod_seq),
+                            remote_id = coalesce(?15, remote_id),
+                            updated_at = ?16,
+                            rfc_message_id = ?17
+                      WHERE id = ?1",
+                        bind![
+                            draft.id.get(),
+                            draft.account_id.get(),
+                            optional_identity(draft.identity_id),
+                            draft.kind.as_str(),
+                            optional_message(draft.in_reply_to),
+                            optional_thread(draft.thread_id),
+                            draft.subject,
+                            draft.body.text,
+                            draft.body.html,
+                            draft.rich,
+                            draft.state.as_str(),
+                            draft.server.uid.map(|uid| i64::from(uid.get())),
+                            draft
+                                .server
+                                .uid_validity
+                                .map(|validity| i64::from(validity.get())),
+                            draft.server.mod_seq.map(|seq| seq.get() as i64),
+                            draft
+                                .server
+                                .remote_id
+                                .as_ref()
+                                .map(|id| id.as_str().to_owned()),
+                            to_millis(draft.updated_at),
+                            reservation_for(draft),
+                        ],
+                    )
+                    .await?;
+                if changed == 0 {
+                    return Err(Error::NotFound {
+                        entity: "draft",
+                        id: draft.id.get(),
+                    });
+                }
+            } else {
+                let account_id = require_persisted(draft.account_id.get(), "account")?;
+                transaction
+                    .execute(
+                        "INSERT INTO drafts (account_id, identity_id, kind, in_reply_to_message_id,
+                                         thread_id, subject, body_text, body_html, rich, state,
+                                         uid, uid_validity, mod_seq, remote_id, created_at,
+                                         updated_at, rfc_message_id)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15,
+                             ?16, ?17)",
+                        bind![
+                            account_id,
+                            optional_identity(draft.identity_id),
+                            draft.kind.as_str(),
+                            optional_message(draft.in_reply_to),
+                            optional_thread(draft.thread_id),
+                            draft.subject,
+                            draft.body.text,
+                            draft.body.html,
+                            draft.rich,
+                            draft.state.as_str(),
+                            draft.server.uid.map(|uid| i64::from(uid.get())),
+                            draft
+                                .server
+                                .uid_validity
+                                .map(|validity| i64::from(validity.get())),
+                            draft.server.mod_seq.map(|seq| seq.get() as i64),
+                            draft
+                                .server
+                                .remote_id
+                                .as_ref()
+                                .map(|id| id.as_str().to_owned()),
+                            to_millis(draft.created_at),
+                            to_millis(draft.updated_at),
+                            reservation_for(draft),
+                        ],
+                    )
+                    .await?;
+                draft.id = DraftId::new(transaction.last_insert_rowid());
             }
-        } else {
-            let account_id = require_persisted(draft.account_id.get(), "account")?;
-            transaction.execute(
-                "INSERT INTO drafts (account_id, identity_id, kind, in_reply_to_message_id,
-                                     thread_id, subject, body_text, body_html, rich, state,
-                                     uid, uid_validity, mod_seq, remote_id, created_at,
-                                     updated_at, rfc_message_id)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15,
-                         ?16, ?17)",
-                params![
-                    account_id,
-                    optional_identity(draft.identity_id),
-                    draft.kind.as_str(),
-                    optional_message(draft.in_reply_to),
-                    optional_thread(draft.thread_id),
-                    draft.subject,
-                    draft.body.text,
-                    draft.body.html,
-                    draft.rich,
-                    draft.state.as_str(),
-                    draft.server.uid.map(|uid| i64::from(uid.get())),
-                    draft
-                        .server
-                        .uid_validity
-                        .map(|validity| i64::from(validity.get())),
-                    draft.server.mod_seq.map(|seq| seq.get() as i64),
-                    draft
-                        .server
-                        .remote_id
-                        .as_ref()
-                        .map(|id| id.as_str().to_owned()),
-                    to_millis(draft.created_at),
-                    to_millis(draft.updated_at),
-                    reservation_for(draft),
-                ],
-            )?;
-            draft.id = DraftId::new(transaction.last_insert_rowid());
-        }
 
-        write_recipients(&transaction, draft)?;
-        write_attachments(&transaction, draft)?;
-        list_row(&transaction, draft)?;
+            write_recipients(&transaction, draft).await?;
+            write_attachments(&transaction, draft).await?;
+            list_row(&transaction, draft).await?;
 
-        transaction.commit()?;
-        Ok(draft.id)
+            Ok(draft.id)
+        })
+        .await
     }
 
     /// Saves a draft and queues its server copy to be brought up to date.
@@ -197,30 +204,35 @@ impl<'a> DraftRepository<'a> {
     /// Drafts mailbox yet, which is the ordinary state of an account that has
     /// not finished its first sync. The draft is durable here regardless, and
     /// the next save after the folder turns up files it.
-    pub fn save_and_sync(
+    pub async fn save_and_sync(
         &self,
         draft: &mut Draft,
         at: DateTime<Utc>,
     ) -> Result<Option<QueuedOperation>> {
-        let scope = super::Scope::open(self.connection)?;
+        sql::in_scope(self.connection, |scope| async move {
+            DraftRepository::new(&scope).save(draft).await?;
+            let queued = match super::MailboxRepository::new(&scope)
+                .by_role(draft.account_id, MailboxRole::Drafts)
+                .await?
+            {
+                Some(mailbox) => Some(
+                    OperationQueueRepository::new(&scope)
+                        .enqueue(
+                            draft.account_id,
+                            OperationTarget::Draft(draft.id),
+                            &Operation::SaveDraft {
+                                mailbox: mailbox.id,
+                            },
+                            at,
+                        )
+                        .await?,
+                ),
+                None => None,
+            };
 
-        DraftRepository::new(&scope).save(draft)?;
-        let queued = match super::MailboxRepository::new(&scope)
-            .by_role(draft.account_id, MailboxRole::Drafts)?
-        {
-            Some(mailbox) => Some(OperationQueueRepository::new(&scope).enqueue(
-                draft.account_id,
-                OperationTarget::Draft(draft.id),
-                &Operation::SaveDraft {
-                    mailbox: mailbox.id,
-                },
-                at,
-            )?),
-            None => None,
-        };
-
-        scope.commit()?;
-        Ok(queued)
+            Ok(queued)
+        })
+        .await
     }
 
     /// Hands a draft to the operation queue to be sent, in one write.
@@ -251,22 +263,28 @@ impl<'a> DraftRepository<'a> {
     ///
     /// Unlike `save_and_sync` this always returns a queue row: a send names no
     /// mailbox, so there is no folder that might not exist yet to stop it.
-    pub fn queue_send(&self, draft: &mut Draft, at: DateTime<Utc>) -> Result<QueuedOperation> {
-        let scope = super::Scope::open(self.connection)?;
+    pub async fn queue_send(
+        &self,
+        draft: &mut Draft,
+        at: DateTime<Utc>,
+    ) -> Result<QueuedOperation> {
+        sql::in_scope(self.connection, |scope| async move {
+            reserve_message_id(&scope, draft).await?;
+            draft.state = DraftState::Queued;
+            draft.updated_at = at;
+            DraftRepository::new(&scope).save(draft).await?;
+            let queued = OperationQueueRepository::new(&scope)
+                .enqueue(
+                    draft.account_id,
+                    OperationTarget::Draft(draft.id),
+                    &Operation::Send { draft: draft.id },
+                    at,
+                )
+                .await?;
 
-        reserve_message_id(&scope, draft)?;
-        draft.state = DraftState::Queued;
-        draft.updated_at = at;
-        DraftRepository::new(&scope).save(draft)?;
-        let queued = OperationQueueRepository::new(&scope).enqueue(
-            draft.account_id,
-            OperationTarget::Draft(draft.id),
-            &Operation::Send { draft: draft.id },
-            at,
-        )?;
-
-        scope.commit()?;
-        Ok(queued)
+            Ok(queued)
+        })
+        .await
     }
 
     /// [`queue_send`](Self::queue_send), except the drainer must not touch
@@ -278,28 +296,121 @@ impl<'a> DraftRepository<'a> {
     /// queue. What differs is only when [`OperationQueueRepository::pending`]
     /// starts offering the row to the drainer, which is stored on the row
     /// itself and so survives a restart with no timer to lose.
-    pub fn queue_send_at(
+    pub async fn queue_send_at(
         &self,
         draft: &mut Draft,
         at: DateTime<Utc>,
         send_at: DateTime<Utc>,
     ) -> Result<QueuedOperation> {
-        let scope = super::Scope::open(self.connection)?;
+        sql::in_scope(self.connection, |scope| async move {
+            reserve_message_id(&scope, draft).await?;
+            draft.state = DraftState::Queued;
+            draft.updated_at = at;
+            DraftRepository::new(&scope).save(draft).await?;
+            let queued = OperationQueueRepository::new(&scope)
+                .enqueue_not_before(
+                    draft.account_id,
+                    OperationTarget::Draft(draft.id),
+                    &Operation::Send { draft: draft.id },
+                    at,
+                    send_at,
+                )
+                .await?;
 
-        reserve_message_id(&scope, draft)?;
-        draft.state = DraftState::Queued;
-        draft.updated_at = at;
-        DraftRepository::new(&scope).save(draft)?;
-        let queued = OperationQueueRepository::new(&scope).enqueue_not_before(
-            draft.account_id,
-            OperationTarget::Draft(draft.id),
-            &Operation::Send { draft: draft.id },
-            at,
-            send_at,
-        )?;
+            // The chosen time, on the row the list draws. Only here: a
+            // `next_attempt_at` set by backoff is the retry clock, not a plan
+            // anybody made, and showing it as one would be a lie about intent.
+            scope
+                .execute(
+                    "UPDATE messages SET send_at = ?2
+                  WHERE id IN (SELECT message_id FROM drafts
+                                WHERE id = ?1 AND message_id IS NOT NULL)",
+                    bind![draft.id.get(), to_millis(send_at)],
+                )
+                .await?;
+            Ok(queued)
+        })
+        .await
+    }
 
-        scope.commit()?;
-        Ok(queued)
+    /// Mark every send that has nothing left to carry it as `Failed`.
+    ///
+    /// A draft is `Queued` because `queue_send` wrote the state and the
+    /// `Send` operation in one transaction, so the two cannot come apart at
+    /// the moment of queueing. They come apart afterwards: an operation that
+    /// gives up is marked `failed`, and `prune_settled` removes settled rows
+    /// in time. A draft left `Queued` behind that is in the Outbox for ever,
+    /// under a row that says it is on its way, with nothing coming.
+    ///
+    /// **`Queued` only, and that is the safety argument.** The drainer commits
+    /// `Sending` before it hands anything to SMTP (ADR 0021), so a draft still
+    /// at `Queued` was never submitted and "it did not go" is a fact rather
+    /// than a guess. A `Sending` draft with no operation is the *uncertain*
+    /// case -- nobody can say whether the server took it -- and
+    /// `postio_sync::send::resolve` promotes that one to `Unconfirmed`. This
+    /// must never touch it, or it would tell a user a message failed that may
+    /// be in somebody's inbox.
+    ///
+    /// Returns how many were healed. Idempotent, because it runs on every
+    /// drain pass.
+    pub async fn fail_orphaned_sends(&self, account: AccountId) -> Result<usize> {
+        // Read first, and write only when there is something to write. This
+        // runs on every drain pass, and the answer is almost always zero: an
+        // `UPDATE` issued regardless would take the writer each time to
+        // decide it had nothing to do.
+        let orphans = sql::scalar(
+            self.connection,
+            "SELECT count(*) FROM drafts
+              WHERE account_id = ?1
+                AND state = 'queued'
+                AND NOT EXISTS (
+                      SELECT 1 FROM operation_queue q
+                       WHERE q.target_kind = 'draft'
+                         AND q.target_id = drafts.id
+                         AND q.op_type = 'send'
+                         AND q.state IN ('pending', 'in_flight'))",
+            [account.get()],
+        )
+        .await?;
+        if orphans == 0 {
+            return Ok(0);
+        }
+
+        sql::in_scope(self.connection, |transaction| async move {
+            let healed = transaction
+                .execute(
+                    "UPDATE drafts
+                        SET state = 'failed'
+                      WHERE account_id = ?1
+                        AND state = 'queued'
+                        AND NOT EXISTS (
+                              SELECT 1 FROM operation_queue q
+                               WHERE q.target_kind = 'draft'
+                                 AND q.target_id = drafts.id
+                                 AND q.op_type = 'send'
+                                 AND q.state IN ('pending', 'in_flight'))",
+                    [account.get()],
+                )
+                .await?;
+            // The mirror row #166 keeps in Drafts carries the same state, and
+            // the lists read *it* rather than the draft -- so a heal that
+            // stopped at the `drafts` table would leave the Outbox still
+            // drawing the row.
+            transaction
+                .execute(
+                    "UPDATE messages
+                        SET send_state = 'failed'
+                      WHERE account_id = ?1
+                        AND send_state = 'queued'
+                        AND id IN (SELECT message_id FROM drafts
+                                    WHERE drafts.state = 'failed'
+                                      AND drafts.message_id IS NOT NULL)",
+                    [account.get()],
+                )
+                .await?;
+            Ok(healed as usize)
+        })
+        .await
     }
 
     /// Cancels a draft's pending send and hands it back for editing (#433).
@@ -324,50 +435,46 @@ impl<'a> DraftRepository<'a> {
     /// anything once the drainer has: at that point a submission may already
     /// be on the wire, and reopening the draft as editable would risk a
     /// second, different message going out behind it.
-    pub fn cancel_send(&self, id: DraftId, at: DateTime<Utc>) -> Result<CancelSendOutcome> {
-        let scope = super::Scope::open(self.connection)?;
-        let drafts = DraftRepository::new(&scope);
+    pub async fn cancel_send(&self, id: DraftId, at: DateTime<Utc>) -> Result<CancelSendOutcome> {
+        sql::in_scope(self.connection, |scope| async move {
+            let drafts = DraftRepository::new(&scope);
 
-        let Some(mut draft) = drafts.get(id)? else {
-            scope.commit()?;
-            return Ok(CancelSendOutcome::NotQueued);
-        };
-        // `Sending` and `Sent` are not "nothing to cancel" — they are "too
-        // late", and the two are opposite facts. `postio-sync::send` commits
-        // `Sending` immediately before it opens the SMTP transaction (ADR
-        // 0021), so a draft in either state may already have reached the
-        // recipient's server, and answering `NotQueued` here would let a
-        // caller report a message recalled while it was on the wire.
-        if matches!(draft.state, DraftState::Sending | DraftState::Sent) {
-            scope.commit()?;
-            return Ok(CancelSendOutcome::AlreadyInFlight);
-        }
-        if draft.state != DraftState::Queued {
-            scope.commit()?;
-            return Ok(CancelSendOutcome::NotQueued);
-        }
+            let Some(mut draft) = drafts.get(id).await? else {
+                return Ok(CancelSendOutcome::NotQueued);
+            };
+            // `Sending` and `Sent` are not "nothing to cancel" — they are "too
+            // late", and the two are opposite facts. `postio-sync::send` commits
+            // `Sending` immediately before it opens the SMTP transaction (ADR
+            // 0021), so a draft in either state may already have reached the
+            // recipient's server, and answering `NotQueued` here would let a
+            // caller report a message recalled while it was on the wire.
+            if matches!(draft.state, DraftState::Sending | DraftState::Sent) {
+                return Ok(CancelSendOutcome::AlreadyInFlight);
+            }
+            if draft.state != DraftState::Queued {
+                return Ok(CancelSendOutcome::NotQueued);
+            }
 
-        let queue = OperationQueueRepository::new(&scope);
-        let target = OperationTarget::Draft(id);
-        let Some(pending) = queue.pending_for(target)? else {
-            // The row says `Queued` but the operation is already gone --
-            // settled between the caller's read and this one. Too late to
-            // pretend otherwise.
-            scope.commit()?;
-            return Ok(CancelSendOutcome::AlreadyInFlight);
-        };
-        if pending.state != postio_model::OperationState::Pending {
-            scope.commit()?;
-            return Ok(CancelSendOutcome::AlreadyInFlight);
-        }
+            let queue = OperationQueueRepository::new(&scope);
+            let target = OperationTarget::Draft(id);
+            let Some(pending) = queue.pending_for(target).await? else {
+                // The row says `Queued` but the operation is already gone --
+                // settled between the caller's read and this one. Too late to
+                // pretend otherwise.
+                return Ok(CancelSendOutcome::AlreadyInFlight);
+            };
+            if pending.state != postio_model::OperationState::Pending {
+                return Ok(CancelSendOutcome::AlreadyInFlight);
+            }
 
-        queue.delete(pending.id)?;
-        draft.state = DraftState::Editing;
-        draft.updated_at = at;
-        drafts.save(&mut draft)?;
+            queue.delete(pending.id).await?;
+            draft.state = DraftState::Editing;
+            draft.updated_at = at;
+            drafts.save(&mut draft).await?;
 
-        scope.commit()?;
-        Ok(CancelSendOutcome::Cancelled)
+            Ok(CancelSendOutcome::Cancelled)
+        })
+        .await
     }
 
     /// Deletes a draft and queues the removal of its server copy.
@@ -380,58 +487,61 @@ impl<'a> DraftRepository<'a> {
     ///
     /// Returns `None` when nothing needed queueing: the draft was already gone,
     /// it never reached the server, or the account has no Drafts mailbox.
-    pub fn discard(&self, id: DraftId, at: DateTime<Utc>) -> Result<Option<QueuedOperation>> {
-        let scope = super::Scope::open(self.connection)?;
-        let drafts = DraftRepository::new(&scope);
+    pub async fn discard(&self, id: DraftId, at: DateTime<Utc>) -> Result<Option<QueuedOperation>> {
+        sql::in_scope(self.connection, |scope| async move {
+            let drafts = DraftRepository::new(&scope);
 
-        let Some(draft) = drafts.get(id)? else {
-            // A retried discard, or one racing a send that already cleared the
-            // row. Both are the expected case rather than a failure.
-            scope.commit()?;
-            return Ok(None);
-        };
+            let Some(draft) = drafts.get(id).await? else {
+                // A retried discard, or one racing a send that already cleared the
+                // row. Both are the expected case rather than a failure.
+                return Ok(None);
+            };
 
-        let queued = match server_copy(&draft) {
-            Some(remote_id) => {
-                match super::MailboxRepository::new(&scope)
-                    .by_role(draft.account_id, MailboxRole::Drafts)?
-                {
-                    Some(mailbox) => Some(OperationQueueRepository::new(&scope).enqueue(
-                        draft.account_id,
-                        OperationTarget::Draft(id),
-                        &Operation::DiscardDraft {
-                            mailbox: mailbox.id,
-                            remote_id,
-                        },
-                        at,
-                    )?),
-                    None => None,
+            let queued = match server_copy(&draft) {
+                Some(remote_id) => {
+                    match super::MailboxRepository::new(&scope)
+                        .by_role(draft.account_id, MailboxRole::Drafts)
+                        .await?
+                    {
+                        Some(mailbox) => Some(
+                            OperationQueueRepository::new(&scope)
+                                .enqueue(
+                                    draft.account_id,
+                                    OperationTarget::Draft(id),
+                                    &Operation::DiscardDraft {
+                                        mailbox: mailbox.id,
+                                        remote_id,
+                                    },
+                                    at,
+                                )
+                                .await?,
+                        ),
+                        None => None,
+                    }
                 }
-            }
-            // Never uploaded, so there is nothing on the server to remove and
-            // no round trip worth spending to say so.
-            None => None,
-        };
+                // Never uploaded, so there is nothing on the server to remove and
+                // no round trip worth spending to say so.
+                None => None,
+            };
 
-        drafts.delete(id)?;
-        scope.commit()?;
-        Ok(queued)
+            drafts.delete(id).await?;
+            Ok(queued)
+        })
+        .await
     }
 
     /// One draft, with its recipients and attachments.
-    pub fn get(&self, id: DraftId) -> Result<Option<Draft>> {
+    pub async fn get(&self, id: DraftId) -> Result<Option<Draft>> {
         let mut statement = self
             .connection
-            .prepare(&format!("SELECT {DRAFT_COLUMNS} FROM drafts WHERE id = ?1"))?;
-        let mut rows = statement.query([id.get()])?;
-        let Some(row) = rows.next()? else {
+            .prepare(&format!("SELECT {DRAFT_COLUMNS} FROM drafts WHERE id = ?1"))
+            .await?;
+        let found = crate::sql::first_of(&mut statement, [id.get()], read_draft).await?;
+        let Some(mut draft) = found else {
             return Ok(None);
         };
-        let mut draft = read_draft(row)?;
-        drop(rows);
-        drop(statement);
 
-        self.fill(&mut draft)?;
+        self.fill(&mut draft).await?;
         Ok(Some(draft))
     }
 
@@ -445,42 +555,45 @@ impl<'a> DraftRepository<'a> {
     ///
     /// `None` for a draft written by another client: it has a row in the
     /// folder and no local buffer behind it.
-    pub fn by_message(&self, message: MessageId) -> Result<Option<Draft>> {
-        let mut drafts = self.query("WHERE message_id = ?1", [message.get()])?;
+    pub async fn by_message(&self, message: MessageId) -> Result<Option<Draft>> {
+        let mut drafts = self.query("WHERE message_id = ?1", [message.get()]).await?;
         Ok(drafts.pop())
     }
 
     /// An account's drafts, most recently edited first.
-    pub fn list_for_account(&self, account_id: AccountId) -> Result<Vec<Draft>> {
+    pub async fn list_for_account(&self, account_id: AccountId) -> Result<Vec<Draft>> {
         self.query(
             "WHERE account_id = ?1 ORDER BY updated_at DESC, id DESC",
             [account_id.get()],
         )
+        .await
     }
 
     /// Every draft in one life-cycle state, oldest first.
     ///
     /// Oldest first because this is how the sender drains its queue, and a
     /// queue that serves the newest first is a stack.
-    pub fn by_state(&self, state: DraftState) -> Result<Vec<Draft>> {
-        let mut statement = self.connection.prepare(&format!(
-            "SELECT {DRAFT_COLUMNS} FROM drafts WHERE state = ?1 ORDER BY updated_at, id"
-        ))?;
-        let rows = statement.query_map([state.as_str()], read_draft)?;
-        let mut drafts: Vec<Draft> = rows.collect::<Result<_, _>>()?;
-        drop(statement);
-        for draft in &mut drafts {
-            self.fill(draft)?;
+    pub async fn by_state(&self, state: DraftState) -> Result<Vec<Draft>> {
+        let mut drafts: Vec<Draft> = sql::all(
+            self.connection,
+            &format!("SELECT {DRAFT_COLUMNS} FROM drafts WHERE state = ?1 ORDER BY updated_at, id"),
+            [state.as_str()],
+            read_draft,
+        )
+        .await?;
+        for draft in drafts.iter_mut() {
+            self.fill(draft).await?;
         }
         Ok(drafts)
     }
 
     /// The drafts belonging to a thread, so the composer can appear inline.
-    pub fn in_thread(&self, thread_id: ThreadId) -> Result<Vec<Draft>> {
+    pub async fn in_thread(&self, thread_id: ThreadId) -> Result<Vec<Draft>> {
         self.query(
             "WHERE thread_id = ?1 ORDER BY updated_at DESC, id DESC",
             [thread_id.get()],
         )
+        .await
     }
 
     /// Records where the draft's server copy landed, or that it has none.
@@ -492,66 +605,78 @@ impl<'a> DraftRepository<'a> {
     /// uploaded was typed and quite possibly while the user is still typing.
     /// Writing the whole row back from what the drainer read would undo
     /// whatever they have added since.
-    pub fn set_server_copy(&self, id: DraftId, copy: Option<&ServerCopyLocation>) -> Result<()> {
-        let changed = self.connection.execute(
-            "UPDATE drafts SET remote_id = ?2, uid = ?3, uid_validity = ?4 WHERE id = ?1",
-            params![
-                id.get(),
-                copy.map(|copy| copy.remote_id.as_str().to_owned()),
-                copy.map(|copy| i64::from(copy.uid.get())),
-                copy.map(|copy| i64::from(copy.uid_validity.get())),
-            ],
-        )?;
+    pub async fn set_server_copy(
+        &self,
+        id: DraftId,
+        copy: Option<&ServerCopyLocation>,
+    ) -> Result<()> {
+        let changed = self
+            .connection
+            .execute(
+                "UPDATE drafts SET remote_id = ?2, uid = ?3, uid_validity = ?4 WHERE id = ?1",
+                bind![
+                    id.get(),
+                    copy.map(|copy| copy.remote_id.as_str().to_owned()),
+                    copy.map(|copy| i64::from(copy.uid.get())),
+                    copy.map(|copy| i64::from(copy.uid_validity.get())),
+                ],
+            )
+            .await?;
         if changed == 0 {
             return Err(Error::NotFound {
                 entity: "draft",
                 id: id.get(),
             });
         }
-        let scope = super::Scope::open(self.connection)?;
-        // The stray row goes first, and it has to: it is a row for this very
-        // copy, and `messages` is unique on (mailbox, UIDVALIDITY, UID), so
-        // attaching the UID below while it still exists is a constraint
-        // violation rather than a duplicate.
-        //
-        // It is a duplicate a sync pass made before this ran, and
-        // `upsert_batch`'s skip cannot reach it — that only declines to create
-        // one, and every later pass would find this row and keep it current
-        // for ever. See #51.
-        //
-        // Scoped to the account's Drafts mailbox because identities are
-        // per-mailbox for IMAP: the message that happens to hold the same
-        // number in the inbox is mail.
-        scope.execute(
-            "DELETE FROM messages
-               WHERE remote_id = ?2
-                 AND id IS NOT (SELECT message_id FROM drafts WHERE id = ?1)
-                 AND mailbox_id IN (SELECT mailboxes.id FROM mailboxes
-                                      JOIN drafts ON drafts.account_id = mailboxes.account_id
-                                     WHERE drafts.id = ?1 AND mailboxes.role = 'drafts')",
-            params![
-                id.get(),
-                copy.map(|copy| copy.remote_id.as_str().to_owned())
-            ],
-        )?;
-        // The row the folder is already showing becomes the row that names the
-        // server copy. It is the same message: this draft, listed since the
-        // moment it was first saved (#166), now with somewhere on the server
-        // to point at.
-        scope.execute(
-            "UPDATE messages
-                SET remote_id = ?2, uid = ?3, uid_validity = ?4
-              WHERE id IN (SELECT message_id FROM drafts
-                            WHERE id = ?1 AND message_id IS NOT NULL)",
-            params![
-                id.get(),
-                copy.map(|copy| copy.remote_id.as_str().to_owned()),
-                copy.map(|copy| i64::from(copy.uid.get())),
-                copy.map(|copy| i64::from(copy.uid_validity.get())),
-            ],
-        )?;
-        scope.commit()?;
-        Ok(())
+        sql::in_scope(self.connection, |scope| async move {
+            // The stray row goes first, and it has to: it is a row for this very
+            // copy, and `messages` is unique on (mailbox, UIDVALIDITY, UID), so
+            // attaching the UID below while it still exists is a constraint
+            // violation rather than a duplicate.
+            //
+            // It is a duplicate a sync pass made before this ran, and
+            // `upsert_batch`'s skip cannot reach it — that only declines to create
+            // one, and every later pass would find this row and keep it current
+            // for ever. See #51.
+            //
+            // Scoped to the account's Drafts mailbox because identities are
+            // per-mailbox for IMAP: the message that happens to hold the same
+            // number in the inbox is mail.
+            scope
+                .execute(
+                    "DELETE FROM messages
+                   WHERE remote_id = ?2
+                     AND id IS NOT (SELECT message_id FROM drafts WHERE id = ?1)
+                     AND mailbox_id IN (SELECT mailboxes.id FROM mailboxes
+                                          JOIN drafts ON drafts.account_id = mailboxes.account_id
+                                         WHERE drafts.id = ?1 AND mailboxes.role = 'drafts')",
+                    bind![
+                        id.get(),
+                        copy.map(|copy| copy.remote_id.as_str().to_owned())
+                    ],
+                )
+                .await?;
+            // The row the folder is already showing becomes the row that names the
+            // server copy. It is the same message: this draft, listed since the
+            // moment it was first saved (#166), now with somewhere on the server
+            // to point at.
+            scope
+                .execute(
+                    "UPDATE messages
+                    SET remote_id = ?2, uid = ?3, uid_validity = ?4
+                  WHERE id IN (SELECT message_id FROM drafts
+                                WHERE id = ?1 AND message_id IS NOT NULL)",
+                    bind![
+                        id.get(),
+                        copy.map(|copy| copy.remote_id.as_str().to_owned()),
+                        copy.map(|copy| i64::from(copy.uid.get())),
+                        copy.map(|copy| i64::from(copy.uid_validity.get())),
+                    ],
+                )
+                .await?;
+            Ok(())
+        })
+        .await
     }
 
     /// Moves a draft through its life cycle.
@@ -561,22 +686,44 @@ impl<'a> DraftRepository<'a> {
     /// be both editable and still named by a message a previous attempt may
     /// have delivered, and it holds on every write path or it is not an
     /// invariant. See [`reservation_for`] for why.
-    pub fn set_state(&self, id: DraftId, state: DraftState) -> Result<()> {
-        let changed = self.connection.execute(
-            "UPDATE drafts
-                SET state = ?2,
-                    rfc_message_id = CASE WHEN ?2 = 'editing'
-                                          THEN NULL ELSE rfc_message_id END
-              WHERE id = ?1",
-            params![id.get(), state.as_str()],
-        )?;
-        if changed == 0 {
-            return Err(Error::NotFound {
-                entity: "draft",
-                id: id.get(),
-            });
-        }
-        Ok(())
+    pub async fn set_state(&self, id: DraftId, state: DraftState) -> Result<()> {
+        sql::in_scope(self.connection, |transaction| async move {
+            let changed = transaction
+                .execute(
+                    "UPDATE drafts
+                    SET state = ?2,
+                        rfc_message_id = CASE WHEN ?2 = 'editing'
+                                              THEN NULL ELSE rfc_message_id END
+                  WHERE id = ?1",
+                    bind![id.get(), state.as_str()],
+                )
+                .await?;
+            if changed == 0 {
+                return Err(Error::NotFound {
+                    entity: "draft",
+                    id: id.get(),
+                });
+            }
+            // In the same transaction, so the row the list draws cannot be seen
+            // disagreeing with the draft it stands for. This is the path the
+            // drainer takes -- Queued, Sending, Failed, Unconfirmed -- and it is
+            // what moves a message between the Outbox and Drafts.
+            transaction
+                .execute(
+                    "UPDATE messages
+                    SET send_state = ?2,
+                        -- Cleared unless it is still merely waiting: once the
+                        -- drainer has it, or it has failed, the time somebody
+                        -- chose is history rather than a plan.
+                        send_at = CASE WHEN ?2 = 'queued' THEN send_at ELSE NULL END
+                  WHERE id IN (SELECT message_id FROM drafts
+                                WHERE id = ?1 AND message_id IS NOT NULL)",
+                    bind![id.get(), state.as_str()],
+                )
+                .await?;
+            Ok(())
+        })
+        .await
     }
 
     /// Point a draft at the `messages` row it turned out to be.
@@ -588,11 +735,14 @@ impl<'a> DraftRepository<'a> {
     /// the same breath but are not the same fact — a draft can be `Sent`
     /// with no synced copy yet, and the link is what makes "show me it"
     /// work once there is one.
-    pub fn set_synced_message(&self, id: DraftId, message: MessageId) -> Result<()> {
-        let changed = self.connection.execute(
-            "UPDATE drafts SET message_id = ?2 WHERE id = ?1",
-            params![id.get(), message.get()],
-        )?;
+    pub async fn set_synced_message(&self, id: DraftId, message: MessageId) -> Result<()> {
+        let changed = self
+            .connection
+            .execute(
+                "UPDATE drafts SET message_id = ?2 WHERE id = ?1",
+                bind![id.get(), message.get()],
+            )
+            .await?;
         if changed == 0 {
             return Err(Error::NotFound {
                 entity: "draft",
@@ -608,46 +758,55 @@ impl<'a> DraftRepository<'a> {
     /// discard and send go through — `postio-sync::send` finishes here — so it
     /// is the one place that has to remember, and a draft that has been sent
     /// must not go on being listed as unsent.
-    pub fn delete(&self, id: DraftId) -> Result<bool> {
-        let scope = super::Scope::open(self.connection)?;
-        scope.execute(
-            "DELETE FROM messages
-              WHERE id IN (SELECT message_id FROM drafts
-                            WHERE id = ?1 AND message_id IS NOT NULL)",
-            [id.get()],
-        )?;
-        let deleted = scope.execute("DELETE FROM drafts WHERE id = ?1", [id.get()])?;
-        scope.commit()?;
-        Ok(deleted > 0)
+    pub async fn delete(&self, id: DraftId) -> Result<bool> {
+        sql::in_scope(self.connection, |scope| async move {
+            scope
+                .execute(
+                    "DELETE FROM messages
+                  WHERE id IN (SELECT message_id FROM drafts
+                                WHERE id = ?1 AND message_id IS NOT NULL)",
+                    [id.get()],
+                )
+                .await?;
+            let deleted = scope
+                .execute("DELETE FROM drafts WHERE id = ?1", [id.get()])
+                .await?;
+            Ok(deleted > 0)
+        })
+        .await
     }
 
-    fn query<P: rusqlite::Params>(&self, filter: &str, parameters: P) -> Result<Vec<Draft>> {
-        let mut statement = self
-            .connection
-            .prepare(&format!("SELECT {DRAFT_COLUMNS} FROM drafts {filter}"))?;
-        let rows = statement.query_map(parameters, read_draft)?;
-        let mut drafts: Vec<Draft> = rows.collect::<Result<_, _>>()?;
-        drop(statement);
-        for draft in &mut drafts {
-            self.fill(draft)?;
+    async fn query(&self, filter: &str, parameters: impl turso::IntoParams) -> Result<Vec<Draft>> {
+        let mut drafts: Vec<Draft> = sql::all(
+            self.connection,
+            &format!("SELECT {DRAFT_COLUMNS} FROM drafts {filter}"),
+            parameters,
+            read_draft,
+        )
+        .await?;
+        for draft in drafts.iter_mut() {
+            self.fill(draft).await?;
         }
         Ok(drafts)
     }
 
-    fn fill(&self, draft: &mut Draft) -> Result<()> {
-        let mut statement = self.connection.prepare(
-            "SELECT r.kind, r.name, a.address FROM recipients r
+    async fn fill(&self, draft: &mut Draft) -> Result<()> {
+        let mut statement = self
+            .connection
+            .prepare(
+                "SELECT r.kind, r.name, a.address FROM recipients r
                JOIN addresses a ON a.id = r.address_id
               WHERE r.draft_id = ?1 ORDER BY r.kind, r.position, r.id",
-        )?;
-        let rows = statement.query_map([draft.id.get()], |row| {
+            )
+            .await?;
+        let rows = sql::mapped(&mut statement, [draft.id.get()], |row| {
             Ok((
-                row.get::<_, String>(0)?,
-                EmailAddress::new(row.get::<_, Option<String>>(1)?, row.get::<_, String>(2)?),
+                row.col::<String>(0)?,
+                EmailAddress::new(row.col::<Option<String>>(1)?, row.col::<String>(2)?),
             ))
-        })?;
-        for row in rows {
-            let (kind, address) = row?;
+        })
+        .await?;
+        for (kind, address) in rows {
             match kind.as_str() {
                 "to" => draft.to.push(address),
                 "cc" => draft.cc.push(address),
@@ -655,40 +814,36 @@ impl<'a> DraftRepository<'a> {
                 other => return Err(unknown_enum("recipients.kind", other)),
             }
         }
-        drop(statement);
 
-        let mut statement = self.connection.prepare(
-            "SELECT id, filename, mime_type, size, content_id, disposition, disposition_raw,
+        let mut statement = self
+            .connection
+            .prepare(
+                "SELECT id, filename, mime_type, size, content_id, disposition, disposition_raw,
                     part_id, blob_id, part_headers
                FROM attachments WHERE draft_id = ?1 ORDER BY position, id",
-        )?;
-        let rows = statement.query_map([draft.id.get()], |row| {
-            let disposition: String = row.get(5)?;
-            let raw: Option<String> = row.get(6)?;
+            )
+            .await?;
+        let rows = sql::mapped(&mut statement, [draft.id.get()], |row| {
+            let disposition: String = row.col(5)?;
+            let raw: Option<String> = row.col(6)?;
             Ok(Attachment {
-                id: AttachmentId::new(row.get(0)?),
+                id: AttachmentId::new(row.col(0)?),
                 // A draft's attachment has no message yet; the model spells
                 // that UNASSIGNED and the schema spells it NULL.
                 message_id: MessageId::UNASSIGNED,
-                filename: row.get(1)?,
-                mime_type: row.get(2)?,
-                size: row.get::<_, i64>(3)? as u64,
-                content_id: row.get(4)?,
-                disposition: Disposition::from_parts(&disposition, raw.as_deref()).ok_or_else(
-                    || {
-                        rusqlite::Error::FromSqlConversionFailure(
-                            5,
-                            rusqlite::types::Type::Text,
-                            Box::new(unknown_enum("attachments.disposition", disposition)),
-                        )
-                    },
-                )?,
-                part_id: row.get(7)?,
-                blob_id: row.get::<_, Option<String>>(8)?.map(BlobId::new),
-                part_headers: row.get(9)?,
+                filename: row.col(1)?,
+                mime_type: row.col(2)?,
+                size: row.col::<i64>(3)? as u64,
+                content_id: row.col(4)?,
+                disposition: Disposition::from_parts(&disposition, raw.as_deref())
+                    .ok_or_else(|| unknown_enum("attachments.disposition", disposition))?,
+                part_id: row.col(7)?,
+                blob_id: row.col::<Option<String>>(8)?.map(BlobId::new),
+                part_headers: row.col(9)?,
             })
-        })?;
-        draft.attachments = rows.collect::<Result<_, _>>()?;
+        })
+        .await?;
+        draft.attachments = rows;
         Ok(())
     }
 }
@@ -732,20 +887,21 @@ fn server_copy(draft: &Draft) -> Option<RemoteId> {
 /// state of an account that has not finished its first sync. The draft is
 /// durable regardless; it simply has nowhere to be listed, and the next save
 /// after the folder turns up files it.
-fn list_row(connection: &Connection, draft: &Draft) -> Result<()> {
-    let Some(mailbox) =
-        super::MailboxRepository::new(connection).by_role(draft.account_id, MailboxRole::Drafts)?
+async fn list_row(connection: &Connection, draft: &Draft) -> Result<()> {
+    let Some(mailbox) = super::MailboxRepository::new(connection)
+        .by_role(draft.account_id, MailboxRole::Drafts)
+        .await?
     else {
         return Ok(());
     };
-    let existing: Option<i64> = connection
-        .query_row(
-            "SELECT message_id FROM drafts WHERE id = ?1",
-            [draft.id.get()],
-            |row| row.get(0),
-        )
-        .optional()?
-        .flatten();
+    let existing: Option<i64> = sql::first(
+        connection,
+        "SELECT message_id FROM drafts WHERE id = ?1",
+        [draft.id.get()],
+        |row| row.col(0),
+    )
+    .await?
+    .flatten();
 
     let mut message = postio_model::Message::new(draft.account_id, mailbox.id, draft.updated_at);
     message.subject = (!draft.subject.trim().is_empty()).then(|| draft.subject.clone());
@@ -753,28 +909,56 @@ fn list_row(connection: &Connection, draft: &Draft) -> Result<()> {
     message.to = draft.to.clone();
     message.cc = draft.cc.clone();
     message.bcc = draft.bcc.clone();
-    message.from = sender(connection, draft)?.into_iter().collect();
+    message.from = sender(connection, draft).await?.into_iter().collect();
     message.flags = [postio_model::Flag::Draft, postio_model::Flag::Seen]
         .into_iter()
         .collect();
     message.attachments = draft.attachments.clone();
 
     let messages = super::MessageRepository::new(connection);
-    match existing {
+    let id = match existing {
         // `update` rewrites the children, which is what makes a recipient
         // removed in the composer disappear from the row.
         Some(id) => {
             message.id = MessageId::new(id);
-            messages.update(&mut message)?;
+            messages.update(&mut message).await?;
+            message.id
         }
         None => {
-            let id = messages.create(&mut message)?;
-            connection.execute(
-                "UPDATE drafts SET message_id = ?2 WHERE id = ?1",
-                params![draft.id.get(), id.get()],
-            )?;
+            let id = messages.create(&mut message).await?;
+            connection
+                .execute(
+                    "UPDATE drafts SET message_id = ?2 WHERE id = ?1",
+                    bind![draft.id.get(), id.get()],
+                )
+                .await?;
+            id
         }
-    }
+    };
+    // The send state, denormalised onto the row the list draws (spec 003).
+    // `Message` has no field for it: it is a fact about a draft, and every
+    // other message has none, so it is written here rather than travelling
+    // through a type that would carry `None` for the whole mailbox.
+    set_send_state(connection, id, draft.state).await?;
+    Ok(())
+}
+
+/// Write a draft's state onto the `messages` row standing for it.
+///
+/// The only writer of `messages.send_state`, and it runs in whatever
+/// transaction its caller opened — which is how the column cannot be seen
+/// disagreeing with `drafts.state`.
+async fn set_send_state(
+    connection: &Connection,
+    message: MessageId,
+    state: DraftState,
+) -> Result<()> {
+    connection
+        .execute(
+            "UPDATE messages SET send_state = ?2 WHERE id = ?1",
+            bind![message.get(), state.as_str()],
+        )
+        .await?;
     Ok(())
 }
 
@@ -784,26 +968,30 @@ fn list_row(connection: &Connection, draft: &Draft) -> Result<()> {
 /// Read rather than carried on [`Draft`], which holds an `identity_id` and not
 /// an address. One indexed point read per save, which is the same order as the
 /// recipient rewrite beside it.
-fn sender(connection: &Connection, draft: &Draft) -> Result<Option<EmailAddress>> {
+async fn sender(connection: &Connection, draft: &Draft) -> Result<Option<EmailAddress>> {
     let found: Option<(Option<String>, String)> = match draft.identity_id {
-        Some(identity) => connection
-            .query_row(
+        Some(identity) => {
+            sql::first(
+                connection,
                 "SELECT display_name, address FROM identities WHERE id = ?1",
                 [identity.get()],
-                |row| Ok((row.get(0)?, row.get(1)?)),
+                |row| Ok((row.col(0)?, row.col(1)?)),
             )
-            .optional()?,
+            .await?
+        }
         None => None,
     };
     let found = match found {
         Some(found) => Some(found),
-        None => connection
-            .query_row(
+        None => {
+            sql::first(
+                connection,
                 "SELECT display_name, address FROM accounts WHERE id = ?1",
                 [draft.account_id.get()],
-                |row| Ok((row.get(0)?, row.get(1)?)),
+                |row| Ok((row.col(0)?, row.col(1)?)),
             )
-            .optional()?,
+            .await?
+        }
     };
     Ok(found.map(|(name, address)| EmailAddress::new(name, address)))
 }
@@ -820,11 +1008,11 @@ fn sender(connection: &Connection, draft: &Draft) -> Result<Option<EmailAddress>
 /// Idempotent: a draft that already carries a reservation keeps it. Re-queuing
 /// is the same attempt series, and only a return to `Editing` gives the
 /// reservation back — see [`reservation_for`].
-fn reserve_message_id(connection: &Connection, draft: &mut Draft) -> Result<()> {
+async fn reserve_message_id(connection: &Connection, draft: &mut Draft) -> Result<()> {
     if draft.rfc_message_id.is_some() {
         return Ok(());
     }
-    let from = sender(connection, draft)?;
+    let from = sender(connection, draft).await?;
     let domain = from.as_ref().and_then(EmailAddress::domain);
     draft.rfc_message_id = Some(postio_model::outgoing::reserve_message_id(domain));
     Ok(())
@@ -847,24 +1035,28 @@ fn preview(text: Option<&str>) -> Option<String> {
 /// Deleting and reinserting is right here in a way it would not be for a
 /// message: a recipient row carries no identity of its own that anything else
 /// points at, and the composer's list is small and changes on every keystroke.
-fn write_recipients(connection: &Connection, draft: &Draft) -> Result<()> {
-    connection.execute(
-        "DELETE FROM recipients WHERE draft_id = ?1",
-        [draft.id.get()],
-    )?;
+async fn write_recipients(connection: &Connection, draft: &Draft) -> Result<()> {
+    connection
+        .execute(
+            "DELETE FROM recipients WHERE draft_id = ?1",
+            [draft.id.get()],
+        )
+        .await?;
     for (kind, addresses) in [("to", &draft.to), ("cc", &draft.cc), ("bcc", &draft.bcc)] {
         for (position, address) in addresses.iter().enumerate() {
-            connection.execute(
-                "INSERT INTO recipients (draft_id, kind, position, name, address_id)
+            connection
+                .execute(
+                    "INSERT INTO recipients (draft_id, kind, position, name, address_id)
                  VALUES (?1, ?2, ?3, ?4, ?5)",
-                params![
-                    draft.id.get(),
-                    kind,
-                    position as i64,
-                    address.name,
-                    crate::repository::messages::address_id(connection, address)?,
-                ],
-            )?;
+                    bind![
+                        draft.id.get(),
+                        kind,
+                        position as i64,
+                        address.name,
+                        crate::repository::messages::address_id(connection, address).await?,
+                    ],
+                )
+                .await?;
         }
     }
     Ok(())
@@ -876,7 +1068,7 @@ fn write_recipients(connection: &Connection, draft: &Draft) -> Result<()> {
 /// id, and the bytes it points at are in the blob store. Rewriting them on
 /// every keystroke would hand the composer a new id for a file the user has not
 /// touched.
-fn write_attachments(connection: &Connection, draft: &mut Draft) -> Result<()> {
+async fn write_attachments(connection: &Connection, draft: &mut Draft) -> Result<()> {
     let keep: Vec<i64> = draft
         .attachments
         .iter()
@@ -888,110 +1080,102 @@ fn write_attachments(connection: &Connection, draft: &mut Draft) -> Result<()> {
     let mut arguments: Vec<i64> = Vec::with_capacity(keep.len() + 1);
     arguments.push(draft.id.get());
     arguments.extend(&keep);
-    connection.execute(
-        &format!("DELETE FROM attachments WHERE draft_id = ?1 AND id NOT IN ({placeholders})"),
-        rusqlite::params_from_iter(arguments),
-    )?;
+    connection
+        .execute(
+            &format!("DELETE FROM attachments WHERE draft_id = ?1 AND id NOT IN ({placeholders})"),
+            arguments,
+        )
+        .await?;
 
     for (position, attachment) in draft.attachments.iter_mut().enumerate() {
         if attachment.id.is_assigned() {
-            connection.execute(
-                "UPDATE attachments
+            connection
+                .execute(
+                    "UPDATE attachments
                     SET position = ?2, filename = ?3, mime_type = ?4, size = ?5,
                         content_id = ?6, disposition = ?7, disposition_raw = ?8,
                         part_id = ?9, blob_id = ?10, part_headers = ?11
                   WHERE id = ?1",
-                params![
-                    attachment.id.get(),
-                    position as i64,
-                    attachment.filename,
-                    attachment.mime_type,
-                    attachment.size as i64,
-                    attachment.content_id,
-                    attachment.disposition.as_str(),
-                    attachment.disposition.raw(),
-                    attachment.part_id,
-                    attachment.blob_id.as_ref().map(BlobId::as_str),
-                    attachment.part_headers,
-                ],
-            )?;
+                    bind![
+                        attachment.id.get(),
+                        position as i64,
+                        attachment.filename,
+                        attachment.mime_type,
+                        attachment.size as i64,
+                        attachment.content_id,
+                        attachment.disposition.as_str(),
+                        attachment.disposition.raw(),
+                        attachment.part_id,
+                        attachment.blob_id.as_ref().map(BlobId::as_str),
+                        attachment.part_headers,
+                    ],
+                )
+                .await?;
         } else {
-            connection.execute(
-                "INSERT INTO attachments (draft_id, position, filename, mime_type, size,
+            connection
+                .execute(
+                    "INSERT INTO attachments (draft_id, position, filename, mime_type, size,
                                           content_id, disposition, disposition_raw, part_id,
                                           blob_id, part_headers)
                  VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
-                params![
-                    draft.id.get(),
-                    position as i64,
-                    attachment.filename,
-                    attachment.mime_type,
-                    attachment.size as i64,
-                    attachment.content_id,
-                    attachment.disposition.as_str(),
-                    attachment.disposition.raw(),
-                    attachment.part_id,
-                    attachment.blob_id.as_ref().map(BlobId::as_str),
-                    attachment.part_headers,
-                ],
-            )?;
+                    bind![
+                        draft.id.get(),
+                        position as i64,
+                        attachment.filename,
+                        attachment.mime_type,
+                        attachment.size as i64,
+                        attachment.content_id,
+                        attachment.disposition.as_str(),
+                        attachment.disposition.raw(),
+                        attachment.part_id,
+                        attachment.blob_id.as_ref().map(BlobId::as_str),
+                        attachment.part_headers,
+                    ],
+                )
+                .await?;
             attachment.id = AttachmentId::new(connection.last_insert_rowid());
         }
     }
     Ok(())
 }
 
-fn read_draft(row: &Row<'_>) -> rusqlite::Result<Draft> {
-    let kind: String = row.get(3)?;
-    // 10, not 9: `rich` was inserted after `body_html` (#1271), and every
-    // column after it moved along one.
-    let state: String = row.get(10)?;
+fn read_draft(row: &Row) -> Result<Draft> {
+    let kind: String = row.col(3)?;
+    // 10, not 9: `rich` sits after `body_html` in `DRAFT_COLUMNS` (#1271),
+    // and every column after it moved along one.
+    let state: String = row.col(10)?;
 
     Ok(Draft {
-        id: DraftId::new(row.get(0)?),
-        account_id: AccountId::new(row.get(1)?),
-        identity_id: row.get::<_, Option<i64>>(2)?.map(IdentityId::new),
-        kind: DraftKind::from_name(&kind).ok_or_else(|| {
-            rusqlite::Error::FromSqlConversionFailure(
-                3,
-                rusqlite::types::Type::Text,
-                Box::new(unknown_enum("drafts.kind", kind)),
-            )
-        })?,
-        in_reply_to: row.get::<_, Option<i64>>(4)?.map(MessageId::new),
-        thread_id: row.get::<_, Option<i64>>(5)?.map(ThreadId::new),
+        id: DraftId::new(row.col(0)?),
+        account_id: AccountId::new(row.col(1)?),
+        identity_id: row.col::<Option<i64>>(2)?.map(IdentityId::new),
+        kind: DraftKind::from_name(&kind).ok_or_else(|| unknown_enum("drafts.kind", kind))?,
+        in_reply_to: row.col::<Option<i64>>(4)?.map(MessageId::new),
+        thread_id: row.col::<Option<i64>>(5)?.map(ThreadId::new),
         to: Vec::new(),
         cc: Vec::new(),
         bcc: Vec::new(),
-        subject: row.get(6)?,
+        subject: row.col(6)?,
         body: MessageBody {
-            text: row.get(7)?,
-            html: row.get(8)?,
+            text: row.col(7)?,
+            html: row.col(8)?,
         },
-        rich: row.get(9)?,
+        rich: row.col(9)?,
         attachments: Vec::new(),
-        state: DraftState::from_name(&state).ok_or_else(|| {
-            rusqlite::Error::FromSqlConversionFailure(
-                10,
-                rusqlite::types::Type::Text,
-                Box::new(unknown_enum("drafts.state", state)),
-            )
-        })?,
+        state: DraftState::from_name(&state).ok_or_else(|| unknown_enum("drafts.state", state))?,
         server: ServerIdentifiers {
-            uid: row
-                .get::<_, Option<i64>>(11)?
-                .map(|uid| Uid::new(uid as u32)),
+            uid: row.col::<Option<i64>>(11)?.map(|uid| Uid::new(uid as u32)),
             uid_validity: row
-                .get::<_, Option<i64>>(12)?
+                .col::<Option<i64>>(12)?
                 .map(|validity| UidValidity::new(validity as u32)),
             mod_seq: row
-                .get::<_, Option<i64>>(13)?
+                .col::<Option<i64>>(13)?
                 .map(|seq| ModSeq::new(seq as u64)),
-            remote_id: row.get::<_, Option<String>>(14)?.map(RemoteId::new),
+            remote_id: row.col::<Option<String>>(14)?.map(RemoteId::new),
         },
-        rfc_message_id: row.get::<_, Option<String>>(17)?.map(RfcMessageId::new),
-        created_at: from_millis(row.get(15)?),
-        updated_at: from_millis(row.get(16)?),
+        rfc_message_id: row.col::<Option<String>>(17)?.map(RfcMessageId::new),
+        created_at: from_millis(row.col(15)?),
+        updated_at: from_millis(row.col(16)?),
     })
 }
 

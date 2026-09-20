@@ -21,145 +21,214 @@ use postio_app::feed_the_window;
 use postio_gtk::settings::SettingsPanel;
 use postio_gtk::window::Window;
 use postio_gtk::{app, fonts, style};
+use postio_model::MailboxRole;
 use postio_session::Wiring;
-use postio_storage::repository::AccountRepository;
+use postio_storage::repository::{AccountRepository, MailboxRepository, MailboxRoleRepository};
 use postio_storage::seed::seed_small;
 use postio_storage::{BlobStore, test_support};
 
 pub fn editing_the_detail_view_writes_straight_to_the_accounts_table() {
-    let state_dir = tempfile::tempdir().expect("a state directory");
-    // SAFETY: first statement of a single-threaded test.
-    unsafe { std::env::set_var("XDG_STATE_HOME", state_dir.path()) };
+    crate::gtk_case(async {
+        let state_dir = tempfile::tempdir().expect("a state directory");
+        // SAFETY: first statement of a single-threaded test.
+        unsafe { std::env::set_var("XDG_STATE_HOME", state_dir.path()) };
 
-    if adw::init().is_err() || gdk::Display::default().is_none() {
-        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
-        return;
-    }
-    let display = gdk::Display::default().unwrap();
-    fonts::install().expect("the embedded fonts should install");
-    style::install(&display);
-    app::install_icons(&display);
+        if adw::init().is_err() || gdk::Display::default().is_none() {
+            eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
+            return;
+        }
+        let display = gdk::Display::default().unwrap();
+        fonts::install().expect("the embedded fonts should install");
+        style::install(&display);
+        app::install_icons(&display);
 
-    let database = test_support::memory();
-    seed_small(&database, 41);
-    let directory = tempfile::tempdir().expect("a blob directory");
-    let blobs = BlobStore::open(
-        directory.path().to_path_buf(),
-        &postio_storage::test_support::blob_keys(),
-    )
-    .expect("a blob store");
+        let database = test_support::memory().await;
+        seed_small(&database, 41).await;
+        let directory = tempfile::tempdir().expect("a blob directory");
+        let blobs = BlobStore::open(
+            directory.path().to_path_buf(),
+            &postio_storage::test_support::blob_keys(),
+        )
+        .expect("a blob store");
 
-    let connection = database.connection().expect("a connection");
-    let seeded_id = AccountRepository::new(&connection)
-        .list()
-        .expect("list")
-        .first()
-        .expect("seed_small seeds one account")
-        .id;
-    drop(connection);
-
-    let (bridge, _replies) =
-        postio_core::bridge::Bridge::new(postio_core::bridge::handler_fn(|_, _| async {}))
-            .expect("a runtime");
-    let (sink, _events) = postio_core::bridge::event_channel();
-    let wiring = Wiring::new(
-        database.clone(),
-        blobs.clone(),
-        bridge.handle(),
-        sink,
-        bridge.commands(),
-    );
-
-    let window = Window::default();
-    window.present();
-    // Give the window a chance to actually map and pick up a frame clock
-    // before anything below asks it to paint -- `present()` only schedules
-    // that, and `frames()`'s own pumping cannot make up for zero prior
-    // iterations on a runner slow to map a brand new window (matches
-    // `settings_accounts_wiring.rs`'s own `window.present(); settle();`).
-    pump();
-    let _wired = feed_the_window(&window, &wiring).expect("the seeded store has an account");
-    let panel = window.settings();
-
-    assert!(
-        settle_until(|| !rows(&panel).is_empty()),
-        "expected at least one account row"
-    );
-
-    window.toggle_settings();
-    assert!(
-        frames(&window, 2),
-        "the compositor never painted the settings panel"
-    );
-
-    panel.open_account_detail(seeded_id);
-    pump();
-
-    let entry = display_name_entry(&panel);
-    entry.set_text("Renamed");
-    entry.emit_activate();
-
-    assert!(
-        settle_until(|| read_display_name(&database, seeded_id) == "Renamed"),
-        "editing the display name should have reached the database"
-    );
-
-    let imap_host = imap_host_entry(&panel);
-    imap_host.set_text("imap.new-host.example.com");
-    imap_host.emit_activate();
-
-    assert!(
-        settle_until(|| read_imap_host(&database, seeded_id) == "imap.new-host.example.com"),
-        "editing the IMAP host should have reached the database"
-    );
-
-    // #979: the signature picker, which is the one control in this view
-    // whose value is not text the user typed. The account needs signatures
-    // before it has anything to pick between -- nothing in Postio creates
-    // one yet, which is why the picker hides without them and why this test
-    // makes them through the repository.
-    let (work, brief) = {
-        let connection = database.connection().expect("a connection");
-        let signatures = postio_storage::repository::SignatureRepository::new(&connection);
-        let mut work = postio_model::Signature::new("Work", "-- \nAda, Analytical Engines");
-        let mut brief = postio_model::Signature::new("Brief", "-- \nAda");
-        signatures
-            .create(seeded_id, &mut work)
-            .expect("a signature");
-        signatures
-            .create(seeded_id, &mut brief)
-            .expect("a second signature");
-        (work.id, brief.id)
-    };
-
-    // Reopened so the view is built from an account that now has them.
-    panel.set_accounts(
-        AccountRepository::new(&database.connection().expect("a connection"))
+        let connection = database.connect().await.expect("a connection");
+        let seeded_id = AccountRepository::new(&connection)
             .list()
-            .expect("list"),
-    );
-    pump();
-    panel.open_account_detail(seeded_id);
-    pump();
+            .await
+            .expect("list")
+            .first()
+            .expect("seed_small seeds one account")
+            .id;
+        drop(connection);
 
-    let picker = signature_picker(&panel);
-    assert!(
-        picker.is_visible(),
-        "the account has two signatures and the picker is hidden"
-    );
-    // Index 1 is "Brief" -- deliberately not the first, so the selection
-    // genuinely moves and the notification genuinely fires.
-    picker.set_selected(1);
+        // The real bus over the real store, composed the way `run` composes it:
+        // a role mapping is a command, so a no-op handler here would make the
+        // second half of this test assert nothing (`keystroke.rs`'s own reason).
+        let bus = postio_session::actions::wire(
+            postio_core::dispatch::DispatcherBuilder::new(),
+            postio_session::actions::Actions::new(
+                database.clone(),
+                postio_core::state::SharedState::default(),
+            ),
+        )
+        .build();
+        assert!(
+            bus.wired()
+                .any(|id| id == postio_core::CommandId::MapMailboxRole),
+            "the bus does not answer a role mapping, so this test cannot mean anything"
+        );
+        let bus_wired: Vec<postio_core::CommandId> = bus.wired().collect();
+        let (bridge, _replies) = postio_core::bridge::Bridge::new(bus).expect("a runtime");
+        let (sink, _events) = postio_core::bridge::event_channel();
+        let wiring = Wiring::new(
+            database.clone(),
+            blobs.clone(),
+            bridge.handle(),
+            sink,
+            bridge.commands(),
+        );
 
-    assert!(
-        settle_until(|| read_default_signature(&database, seeded_id) == Some(brief)),
-        "choosing a signature should have reached the database: the picker \
-         is drawn, it is selectable, and `default_signature_id` is still {:?}",
-        read_default_signature(&database, seeded_id)
-    );
-    assert_ne!(work, brief, "the fixture needs two distinct signatures");
+        let window = Window::default();
+        window.present();
+        // Give the window a chance to actually map and pick up a frame clock
+        // before anything below asks it to paint -- `present()` only schedules
+        // that, and `frames()`'s own pumping cannot make up for zero prior
+        // iterations on a runner slow to map a brand new window (matches
+        // `settings_accounts_wiring.rs`'s own `window.present(); settle();`).
+        pump();
+        let wired = feed_the_window(&window, &wiring)
+            .await
+            .expect("the seeded store has an account");
+        // What `run` does on the line after this one: without it every gesture
+        // the window produces resolves correctly and then reaches nothing, which
+        // is precisely what the role-mapping half below is about.
+        postio_app::commands::install(
+            &window,
+            &wired.feeds,
+            postio_core::state::SharedState::default(),
+            wiring.commands.clone(),
+            bus_wired.clone(),
+        );
+        let panel = window.settings();
 
-    bridge.shutdown();
+        assert!(
+            settle_until(async || !rows(&panel).is_empty()).await,
+            "expected at least one account row"
+        );
+
+        window.toggle_settings();
+        assert!(
+            frames(&window, 2),
+            "the compositor never painted the settings panel"
+        );
+
+        panel.open_account_detail(seeded_id);
+        pump();
+
+        let entry = display_name_entry(&panel);
+        entry.set_text("Renamed");
+        entry.emit_activate();
+
+        assert!(
+            settle_until(async || read_display_name(&database, seeded_id).await == "Renamed").await,
+            "editing the display name should have reached the database"
+        );
+
+        let imap_host = imap_host_entry(&panel);
+        imap_host.set_text("imap.new-host.example.com");
+        imap_host.emit_activate();
+
+        assert!(
+            settle_until(
+                async || read_imap_host(&database, seeded_id).await == "imap.new-host.example.com"
+            )
+            .await,
+            "editing the IMAP host should have reached the database"
+        );
+
+        // #979: the signature picker, which is the one control in this view
+        // whose value is not text the user typed. The account needs signatures
+        // before it has anything to pick between -- nothing in Postio creates
+        // one yet, which is why the picker hides without them and why this test
+        // makes them through the repository.
+        let (work, brief) = {
+            let connection = database.connect().await.expect("a connection");
+            let signatures = postio_storage::repository::SignatureRepository::new(&connection);
+            let mut work = postio_model::Signature::new("Work", "-- \nAda, Analytical Engines");
+            let mut brief = postio_model::Signature::new("Brief", "-- \nAda");
+            signatures
+                .create(seeded_id, &mut work)
+                .await
+                .expect("a signature");
+            signatures
+                .create(seeded_id, &mut brief)
+                .await
+                .expect("a second signature");
+            (work.id, brief.id)
+        };
+
+        // Reopened so the view is built from an account that now has them.
+        panel.set_accounts(
+            AccountRepository::new(&database.connect().await.expect("a connection"))
+                .list()
+                .await
+                .expect("list"),
+        );
+        pump();
+        panel.open_account_detail(seeded_id);
+        pump();
+
+        let picker = signature_picker(&panel);
+        assert!(
+            picker.is_visible(),
+            "the account has two signatures and the picker is hidden"
+        );
+        // Index 1 is "Brief" -- deliberately not the first, so the selection
+        // genuinely moves and the notification genuinely fires.
+        picker.set_selected(1);
+
+        assert!(
+            settle_until(async || read_default_signature(&database, seeded_id).await == Some(brief)).await,
+            "choosing a signature should have reached the database: the picker \
+             is drawn, it is selectable, and `default_signature_id` is still {:?}",
+            read_default_signature(&database, seeded_id).await
+        );
+        assert_ne!(work, brief, "the fixture needs two distinct signatures");
+        // ADR 0035: picking a folder for a role is a command, not a column
+        // write, so this half proves the whole path -- the pane's seam, the
+        // dispatch, the map, and the folder that now wears the role.
+        let folders = folder_paths(&database, seeded_id).await;
+        let target = folders
+            .iter()
+            .find(|path| !path.eq_ignore_ascii_case("INBOX"))
+            .cloned()
+            .expect("the seeded account has a folder besides its inbox");
+        let dropdown = role_dropdown(&panel, MailboxRole::Archive);
+        let index = folders
+            .iter()
+            .position(|path| *path == target)
+            .expect("the folder is in the list the pane was given");
+        dropdown.set_selected(index as u32 + 1);
+
+        assert!(
+            settle_until(
+                async || mapped_archive(&database, seeded_id).await.as_deref()
+                    == Some(target.as_str())
+            )
+            .await,
+            "picking a folder for Archive should have reached the account's map"
+        );
+        assert!(
+            settle_until(
+                async || archive_folder(&database, seeded_id).await.as_deref()
+                    == Some(target.as_str())
+            )
+            .await,
+            "and the folder wearing the role should be the one that was picked"
+        );
+
+        bridge.shutdown();
+    });
 }
 
 fn signature_picker(panel: &postio_gtk::settings::SettingsPanel) -> gtk::DropDown {
@@ -181,13 +250,14 @@ fn signature_picker(panel: &postio_gtk::settings::SettingsPanel) -> gtk::DropDow
     found.expect("the detail view has a signature picker")
 }
 
-fn read_default_signature(
-    database: &postio_storage::Database,
+async fn read_default_signature(
+    database: &postio_storage::Store,
     id: postio_model::ids::AccountId,
 ) -> Option<postio_model::ids::SignatureId> {
-    let connection = database.connection().expect("a connection");
+    let connection = database.connect().await.expect("a connection");
     AccountRepository::new(&connection)
         .get(id)
+        .await
         .expect("get")
         .expect("still there")
         .default_signature_id
@@ -198,22 +268,27 @@ fn pump() {
     while context.iteration(false) {}
 }
 
-fn read_display_name(
-    database: &postio_storage::Database,
+async fn read_display_name(
+    database: &postio_storage::Store,
     id: postio_model::ids::AccountId,
 ) -> String {
-    let connection = database.connection().expect("a connection");
+    let connection = database.connect().await.expect("a connection");
     AccountRepository::new(&connection)
         .get(id)
+        .await
         .expect("get")
         .expect("still there")
         .display_name
 }
 
-fn read_imap_host(database: &postio_storage::Database, id: postio_model::ids::AccountId) -> String {
-    let connection = database.connection().expect("a connection");
+async fn read_imap_host(
+    database: &postio_storage::Store,
+    id: postio_model::ids::AccountId,
+) -> String {
+    let connection = database.connect().await.expect("a connection");
     AccountRepository::new(&connection)
         .get(id)
+        .await
         .expect("get")
         .expect("still there")
         .incoming
@@ -293,4 +368,55 @@ fn collect(widget: &gtk::Widget, class: &str) -> Vec<gtk::Widget> {
         child = current.next_sibling();
     }
     found
+}
+
+async fn folder_paths(
+    database: &postio_storage::Store,
+    account: postio_model::ids::AccountId,
+) -> Vec<String> {
+    let connection = database.connect().await.expect("a connection");
+    MailboxRepository::new(&connection)
+        .list_for_account(account)
+        .await
+        .expect("a read")
+        .into_iter()
+        .filter(|mailbox| mailbox.selectable)
+        .map(|mailbox| mailbox.path)
+        .collect()
+}
+
+async fn mapped_archive(
+    database: &postio_storage::Store,
+    account: postio_model::ids::AccountId,
+) -> Option<String> {
+    let connection = database.connect().await.expect("a connection");
+    MailboxRoleRepository::new(&connection)
+        .for_account(account)
+        .await
+        .expect("a read")
+        .into_iter()
+        .find(|(role, _)| *role == MailboxRole::Archive)
+        .map(|(_, path)| path)
+}
+
+async fn archive_folder(
+    database: &postio_storage::Store,
+    account: postio_model::ids::AccountId,
+) -> Option<String> {
+    let connection = database.connect().await.expect("a connection");
+    MailboxRepository::new(&connection)
+        .by_role(account, MailboxRole::Archive)
+        .await
+        .expect("a read")
+        .map(|mailbox| mailbox.path)
+}
+
+fn role_dropdown(panel: &SettingsPanel, role: MailboxRole) -> gtk::DropDown {
+    collect(
+        panel.upcast_ref::<gtk::Widget>(),
+        &format!("postio-settings-account-detail-role-{}", role.as_str()),
+    )
+    .into_iter()
+    .find_map(|widget| widget.downcast::<gtk::DropDown>().ok())
+    .unwrap_or_else(|| panic!("the detail view has a {role:?} dropdown"))
 }

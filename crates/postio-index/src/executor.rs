@@ -1,4 +1,4 @@
-//! Query execution: combining structured filters with the FTS5 index,
+//! Query execution: combining structured filters with the full-text index,
 //! ranking the results, and cutting snippets out of the match.
 //!
 //! [`search`] is the one entry point. It takes a [`ParsedQuery`] (see
@@ -9,7 +9,7 @@
 //!
 //! # Ranking
 //!
-//! FTS5's `bm25()` scores relevance alone, and lower is better. That is not
+//! The index's `fts_score` ranks relevance alone. That is not
 //! the whole story a mail search wants: a five-year-old message that happens
 //! to say "invoice" once should not usually outrank one from yesterday, and
 //! a sender the user emails constantly deserves a nudge. [`rank_score`] folds
@@ -26,14 +26,14 @@ use std::time::Instant;
 
 use chrono::{DateTime, NaiveDate, Utc};
 use postio_model::{AccountScope, EmailAddress, MailboxId, MessageId, ThreadId};
-use rusqlite::types::Value;
-use rusqlite::{Connection, params_from_iter};
 
 use postio_search::facets::{Facets, Refinement, Scope, ScopeCount};
 use postio_search::query::{Filter, ParsedQuery, fts_literal};
 use postio_search::results::{SearchHit, SearchResults, TOTAL_HITS_CAP};
 
 use crate::error::Result;
+use postio_storage::Connection;
+use postio_storage::sql::{self, RowExt as _};
 
 /// How many candidates `search` pulls out of SQL before re-ranking in Rust,
 /// as a multiple of the requested page size.
@@ -86,10 +86,38 @@ const RECENCY_POOL_MULTIPLIER: u32 = 2;
 /// [`CANDIDATE_POOL_MIN`], for a recency-ordered fetch.
 const RECENCY_POOL_MIN: u32 = 50;
 
-/// Recency's weight in [`rank_score`], relative to `bm25`'s native scale.
+/// Recency's weight in [`rank_score`], relative to the match term's native
+/// scale.
 ///
 /// Raised with the half-life below, and the two go together: a heavier weight
 /// on a term that is zero for every candidate changes nothing.
+///
+/// # Re-measured against `fts_score`, and deliberately unchanged
+///
+/// This number was calibrated against `bm25()`, which is gone. Measured on
+/// `index_suite::ranking_weights`' corpus — 2,000 messages, term frequency
+/// crossed with document length, which is what BM25 is a function of:
+///
+/// ```text
+///                        bm25 (a real store)   fts_score (the fixture)
+/// spread                 0.80 over the top 40  0.20 over the whole match set
+/// the best forty         separated             all one value
+/// ```
+///
+/// About a quarter of the range, and the top of a result set is routinely
+/// tied outright — the score is a function of frequency and length, and mail
+/// is full of near-identical subjects. So the blend is **more recency-led
+/// than it was**, and no weight avoids that: 0.20 is the entire relevance
+/// range, and a recency term small enough to fit under it cannot separate
+/// last week from last year.
+///
+/// Unchanged, then, as a decision rather than a carry-over. #1216's complaint
+/// was search surfacing very old mail, and recency leading is what that asked
+/// for. What still has to hold is the narrow case — a *clearly* better match
+/// beats a *small* recency difference — which
+/// `newest_order_answers_in_date_order_however_the_ranking_disagrees` pins
+/// with a 5x-density contrast five hours apart, and `ranking_weights` pins in
+/// the units it measures.
 const RECENCY_WEIGHT: f64 = 3.0;
 /// The age, in days, at which the recency boost has halved.
 ///
@@ -128,7 +156,7 @@ const RECENCY_HALF_LIFE_DAYS: f64 = 730.0;
 /// over a year old -- and no ranking function can surface a recent message
 /// that never entered the pool.
 ///
-/// **Linear, not exponential, and not by choice.** This SQLCipher build has no
+/// **Linear, not exponential, and not by choice.** The store engine has no
 /// math functions -- `exp`, `ln` and `pow` are all absent -- so the ordering
 /// can only use arithmetic. Linear in years is what that allows, and it has
 /// the virtue of never saturating: it keeps separating eighteen years from
@@ -143,6 +171,10 @@ const POOL_AGE_WEIGHT_PER_YEAR: f64 = 0.25;
 /// Milliseconds in a year, for the pool ordering's age term.
 const MILLIS_PER_YEAR: f64 = 31_557_600_000.0;
 /// Sender affinity's weight in [`rank_score`].
+///
+/// Unchanged for the reason [`RECENCY_WEIGHT`] gives, and it is the smaller
+/// risk of the two: affinity is bounded in `[0, 1)` before weighting and only
+/// separates correspondents, so at worst it orders a tie by who writes most.
 const SENDER_WEIGHT: f64 = 1.0;
 
 /// A search over one account's mail.
@@ -180,7 +212,7 @@ pub struct SearchRequest<'a> {
 /// `now` is the reference clock for the recency boost, taken as a parameter
 /// for the same reason [`postio_search::parse`] takes `today`: it keeps
 /// ranking a pure, reproducible function of its inputs.
-pub fn search(
+pub async fn search(
     connection: &Connection,
     request: &SearchRequest<'_>,
     now: DateTime<Utc>,
@@ -188,7 +220,7 @@ pub fn search(
     let start = Instant::now();
     let plan = Plan::build(request);
 
-    let total_hits = plan.count(connection)?;
+    let total_hits = plan.count(connection).await?;
     let total_hits_capped = total_hits >= TOTAL_HITS_CAP;
     // A term matched by most of a large mailbox has no cheap true top-K by
     // `bm25`: FTS5's incremental top-K scan only pays off when few enough
@@ -222,7 +254,9 @@ pub fn search(
             .saturating_mul(RECENCY_POOL_MULTIPLIER)
             .max(RECENCY_POOL_MIN)
     };
-    let mut candidates = plan.fetch(connection, pool_size, rank_by_relevance, total_hits, now)?;
+    let mut candidates = plan
+        .fetch(connection, pool_size, rank_by_relevance, total_hits, now)
+        .await?;
 
     match request.order {
         postio_search::ResultOrder::Relevance => {
@@ -264,12 +298,120 @@ pub fn search(
     );
 
     Ok(SearchResults {
+        // Only when nothing matched. A query that worked is not one to
+        // second-guess, and this is the one moment the cost is free: there
+        // are no rows to draw.
+        suggestion: match total_hits {
+            0 => suggestion_for(connection, request.query).await?,
+            _ => None,
+        },
         hits,
         total_hits,
         total_hits_capped,
         elapsed,
-        corpus_complete: corpus_complete(connection, request)?,
+        corpus_complete: corpus_complete(connection, request).await?,
     })
+}
+
+/// The term to offer instead, when a query matched nothing.
+///
+/// # Why only a single bare word
+///
+/// With two terms, correcting one is a guess about which of them was wrong,
+/// and the wrong guess reads as the app misunderstanding the question. With a
+/// filter in the query — `from:ada hanah` — the filter is the likelier reason
+/// nothing matched. Both cases are left alone rather than answered badly.
+///
+/// # Where the vocabulary comes from on this engine
+///
+/// SQLite's `fts5vocab` — a virtual table over the index's own term
+/// dictionary — has no equivalent here: the engine's full-text index keeps
+/// its terms to itself. But `search_documents` is an ordinary table holding
+/// the already-folded text the index was built from, so the vocabulary is
+/// rebuilt from its newest [`VOCABULARY_DOCUMENTS`] rows instead. A sample,
+/// deliberately: the intended word is overwhelmingly a name that recurs, and
+/// a term that appears nowhere in the last few thousand messages is a weak
+/// offer anyway. Term counts count documents, not occurrences, which is what
+/// `fts5vocab('row')` reported and what the ranking expects.
+///
+/// This runs only on a search that found nothing, so the scan never sits on
+/// the typing path.
+///
+/// # What it does not read
+///
+/// Body terms. `search_documents` holds senders, recipients, subjects,
+/// filenames and list ids, which is where the names people mistype live; the
+/// body index is a separate table and a much larger vocabulary. Consulting
+/// it too is a later question, and one for measurement rather than taste.
+async fn suggestion_for(
+    connection: &Connection,
+    query: &postio_search::ParsedQuery,
+) -> Result<Option<postio_search::suggest::Suggestion>> {
+    use std::collections::{HashMap, HashSet};
+
+    let mut terms = query.text_terms();
+    let Some(term) = terms.next() else {
+        return Ok(None);
+    };
+    if terms.next().is_some() || term.negated || query.filters().next().is_some() {
+        return Ok(None);
+    }
+
+    let documents = sql::all(
+        connection,
+        "SELECT sender, recipients, subject, filenames, list_id
+           FROM search_documents
+          ORDER BY message_id DESC
+          LIMIT ?1",
+        [VOCABULARY_DOCUMENTS],
+        |row| {
+            Ok([
+                row.opt_text(0)?,
+                row.opt_text(1)?,
+                row.opt_text(2)?,
+                row.opt_text(3)?,
+                row.opt_text(4)?,
+            ])
+        },
+    )
+    .await?;
+
+    // A wider net than the rule needs: `postio-search` owns how far a word
+    // may be mistyped, and this only has to avoid carrying every term across
+    // the boundary to find out.
+    let typed = term.value.chars().count() as i64;
+    let band = (typed - MOST_EDITS_CONSIDERED)..=(typed + MOST_EDITS_CONSIDERED);
+    let mut counts: HashMap<String, u64> = HashMap::new();
+    for document in &documents {
+        // Each document counts a term once, however often it repeats it.
+        let mut seen: HashSet<&str> = HashSet::new();
+        for text in document.iter().flatten() {
+            for word in text
+                .split(|c: char| !c.is_alphanumeric())
+                .filter(|word| !word.is_empty())
+            {
+                if band.contains(&(word.chars().count() as i64)) && seen.insert(word) {
+                    *counts.entry(word.to_owned()).or_default() += 1;
+                }
+            }
+        }
+    }
+
+    // Commonest first, so the cap keeps the terms most likely to be the
+    // intended word.
+    let mut vocabulary: Vec<(String, u64)> = counts.into_iter().collect();
+    vocabulary.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+    vocabulary.truncate(VOCABULARY_CAP as usize);
+
+    Ok(postio_search::suggest::suggest(
+        &term.value,
+        vocabulary
+            .iter()
+            .map(|(text, documents)| postio_search::suggest::Term {
+                text,
+                documents: *documents,
+            }),
+    ))
 }
 
 /// Whether every message in the searched scope has a body to search.
@@ -281,13 +423,18 @@ pub fn search(
 /// figure would be alarming about something that needs no action and will be
 /// zero on its own. What the surface needs is the boolean.
 ///
-/// Which is also the only version that fits the `<100 ms` budget.
-/// `idx_messages_body_state` is a **partial** index over exactly
-/// `body_state IN ('not_fetched', 'headers_only')`, so this is a seek into an
-/// index that holds only the outstanding messages: it stops at the first row
-/// when the corpus is incomplete, and when it is complete the index is empty
-/// for this scope and there is nothing to scan. Both answers cost the same
-/// nothing, which is what lets it run per query rather than per session.
+/// Which is also the only version that fits the `<100 ms` budget. It is a
+/// seek into `idx_messages_list` on `mailbox_id` with a `LIMIT 1`, so it stops
+/// at the first outstanding row rather than counting them.
+///
+/// This used to lean on `idx_messages_body_state`, a partial index over
+/// exactly `body_state IN ('not_fetched', 'headers_only')` — which held only
+/// the outstanding messages, so the complete case had an empty index and
+/// nothing at all to look at. This engine will not read through a partial
+/// index (`docs/notes/2026-09-12-a-partial-index-the-planner-will-not-read.md`),
+/// so that index is gone and the complete case now walks the mailbox's
+/// newest rows until it runs out. The `LIMIT 1` bounds the incomplete case,
+/// which is the common one; the complete case is the one that got worse.
 ///
 /// Scoped, deliberately: the claim on screen is about the search that was
 /// just run, so "complete" has to mean complete *here* — a fully backfilled
@@ -297,7 +444,7 @@ pub fn search(
 ///
 /// It asks *does backfill still owe bodies here*, not *is every local body in
 /// the index*. Those differ for a message whose body has arrived but whose
-/// text has not been indexed yet — the window `catch_up_the_body_index`
+/// text has not been indexed yet — the window `postio_session::spawn_body_indexer`
 /// closes at startup for a store that predates #327.
 ///
 /// Answering the second question exactly would mean `NOT EXISTS (SELECT 1
@@ -312,17 +459,21 @@ pub fn search(
 /// that heals itself. Under-reporting the caveat for a few seconds after
 /// launch is the right way to be wrong here — the alternative is a caveat
 /// that costs the query its budget forever.
-fn corpus_complete(connection: &Connection, request: &SearchRequest<'_>) -> Result<bool> {
+async fn corpus_complete(connection: &Connection, request: &SearchRequest<'_>) -> Result<bool> {
     let mut conditions = vec![
         "m.deleted_locally = 0".to_string(),
         "m.body_state IN ('not_fetched', 'headers_only')".to_string(),
     ];
-    let mut params: Vec<Value> = Vec::new();
+    let mut params: Vec<turso::Value> = Vec::new();
     if let Some(id) = request.account.account() {
         conditions.push("m.account_id = ?".to_string());
-        params.push(Value::Integer(id.get()));
+        params.push(turso::Value::Integer(id.get()));
     }
-    if let Some((sql, values)) = scope_condition(request.scope, request.account) {
+    if let Some((sql, values)) = scope_condition(
+        request.scope,
+        request.account,
+        names_a_folder(request.query),
+    ) {
         conditions.push(sql);
         params.extend(values);
     }
@@ -331,7 +482,7 @@ fn corpus_complete(connection: &Connection, request: &SearchRequest<'_>) -> Resu
         "SELECT NOT EXISTS (SELECT 1 FROM messages m WHERE {})",
         conditions.join(" AND ")
     );
-    let complete = connection.query_row(&sql, params_from_iter(&params), |row| row.get(0))?;
+    let complete = sql::one(connection, &sql, params.clone(), |row| row.col(0)).await?;
     Ok(complete)
 }
 
@@ -352,6 +503,30 @@ const LARGE_TOKEN: &str = "larger:1M";
 /// spend the whole shortlist on them and crowd out `is:unread`.
 const REFINE_FOLDERS: usize = 2;
 
+/// The widest a suggestion's length may differ from what was typed.
+///
+/// A pre-filter, not the rule: `postio_search::suggest` decides how far a word
+/// of a given length may be mistyped, and this only spares the boundary the
+/// whole vocabulary. It must stay at or above that rule's widest tolerance or
+/// it would quietly overrule it.
+const MOST_EDITS_CONSIDERED: i64 = 2;
+
+/// How many terms a suggestion considers, commonest first.
+///
+/// A mailbox holds far more distinct terms than any of them is worth
+/// comparing, and the intended word is overwhelmingly a common one — a name
+/// in hundreds of messages rather than a token that appeared once. This runs
+/// only on a search that found nothing, so it never sits on the typing path.
+const VOCABULARY_CAP: i64 = 4_096;
+
+/// How many of the newest documents the vocabulary is rebuilt from.
+///
+/// The bound on the scan [`suggestion_for`] pays, since this engine keeps no
+/// term dictionary to read instead. Five thousand rows of short metadata
+/// columns read and tokenize in a few milliseconds, and only on a search
+/// that already found nothing.
+const VOCABULARY_DOCUMENTS: i64 = 5_000;
+
 /// Measures what the query's result set is made of: how it splits across the
 /// scopes, and which narrowings are worth offering.
 ///
@@ -365,7 +540,7 @@ const REFINE_FOLDERS: usize = 2;
 /// Every count here is bounded the same way [`SearchResults::total_hits`] is
 /// — see [`TOTAL_HITS_CAP`] — so a query broad enough to match a whole
 /// mailbox costs the same as any other.
-pub fn facets(connection: &Connection, request: &SearchRequest<'_>) -> Result<Facets> {
+pub async fn facets(connection: &Connection, request: &SearchRequest<'_>) -> Result<Facets> {
     // Scope counts hold the query and vary the scope: the column says what
     // *switching* would find, so it cannot be measured inside the scope the
     // user is already in.
@@ -374,15 +549,15 @@ pub fn facets(connection: &Connection, request: &SearchRequest<'_>) -> Result<Fa
         let plan = Plan::build(&SearchRequest { scope, ..*request });
         scopes.push(ScopeCount {
             scope,
-            hits: plan.count(connection)?,
+            hits: plan.count(connection).await?,
         });
     }
 
     // Refinements are the opposite: they narrow what is on screen, so they
     // are measured inside the current scope.
     let plan = Plan::build(request);
-    let mut refinements = plan.flag_refinements(connection)?;
-    refinements.extend(plan.folder_refinements(connection)?);
+    let mut refinements = plan.flag_refinements(connection).await?;
+    refinements.extend(plan.folder_refinements(connection).await?);
 
     Ok(Facets {
         scopes,
@@ -465,12 +640,80 @@ const BODY_SCORE_WEIGHT: f64 = 0.5;
 /// query that matched 1% of it, measured at 49 ms where the single-index
 /// version took 2.9. Driving from the matches is a point lookup per hit into
 /// `messages`' own primary key.
+///
+/// # `fts_score` is projected bare, and negated outside
+///
+/// This was `bm25()`, where a *more negative* number is a better match, and
+/// [`rank_score`] and the sort after it both take that convention: candidates
+/// are sorted ascending and the best one is first. `fts_score` is the other
+/// way round -- higher is better, which is why the engine's own examples say
+/// `ORDER BY score DESC`. So the value has to be negated somewhere.
+///
+/// **Not here.** `fts_score` answers with a score only when the call is the
+/// whole select-list expression; put it inside *any* arithmetic and it
+/// answers `0.0`:
+///
+/// ```text
+/// SELECT id, fts_score(subject, ?1)        3.82, 1.87
+/// SELECT id, fts_score(subject, ?1) AS s   3.82, 1.87
+/// SELECT id, -fts_score(subject, ?1)       0.00, 0.00
+/// SELECT id, 0 - fts_score(subject, ?1)    0.00, 0.00
+/// ```
+///
+/// Which is the worst kind of trap: every row still comes back, in the right
+/// set, and only the *ranking* is silently gone. With `-fts_score(...)` here,
+/// every candidate scored `0.0`, `rank_score` reduced to recency and affinity,
+/// and search answered every query in date order. One test noticed
+/// (`newest_order_answers_in_date_order_however_the_ranking_disagrees`);
+/// nothing else could have.
+///
+/// So the projection is bare and the outer `SELECT` negates the alias, which
+/// is an ordinary column by then. `the_score_is_lost_to_any_arithmetic_around_it`
+/// in `postio-storage`'s capability suite is what will notice if a later
+/// release makes the wrapped form work.
+///
+/// # `?1` and `?2`, not four bare `?`s
+///
+/// `fts_score` also answers `0.0` unless its query term is the *same
+/// parameter* as the `fts_match` that selected the row -- not the same value,
+/// the same expression. So the term is written once per index and reused. A
+/// bare `?` after an explicit `?N` continues from `N + 1` here exactly as it
+/// does in SQLite, so the conditions that follow still number themselves.
+/// # `?1` and `?2`, not four bare `?`s
+///
+/// **`fts_score` answers `0.0` unless its query term is the *same parameter*
+/// as the `fts_match` that selected the row.** Not the same value — the same
+/// expression. Measured:
+///
+/// ```text
+/// fts_match(body, 'report')  fts_score(body, 'report')   3.82, 1.87
+/// fts_match(body, ?1)        fts_score(body, ?1)         3.82, 1.87
+/// fts_match(body, ?2)        fts_score(body, ?1)         0.00, 0.00
+/// fts_match(body, ?1)        fts_score(body, 'report')   0.00, 0.00
+/// ```
+///
+/// Which is a trap rather than an inconvenience: every row still comes back,
+/// in the right set, and only the *ranking* is silently gone. With four bare
+/// `?`s this statement bound four parameters of equal value and scored every
+/// candidate `0.0`, so `rank_score` reduced to recency and affinity and
+/// search answered every query in date order. One test noticed
+/// (`newest_order_answers_in_date_order_however_the_ranking_disagrees`);
+/// nothing else could have.
+///
+/// So the term is written once per index and reused. A bare `?` after an
+/// explicit `?N` continues from `N + 1` here exactly as it does in SQLite, so
+/// the conditions that follow still number themselves — and `match_params`
+/// binds two values rather than four, in the same order.
 const HITS_JOIN: &str = "FROM (
-             SELECT rowid AS rid, bm25(messages_fts) AS meta, NULL AS body
-               FROM messages_fts WHERE messages_fts MATCH ?
+             SELECT message_id AS rid,
+                    fts_score(sender, recipients, subject, filenames, list_id, ?1) AS meta,
+                    NULL AS body
+               FROM search_documents
+              WHERE fts_match(sender, recipients, subject, filenames, list_id, ?1)
              UNION ALL
-             SELECT rowid, NULL, bm25(message_bodies_fts)
-               FROM message_bodies_fts WHERE message_bodies_fts MATCH ?
+             SELECT message_id, NULL, fts_score(body_search, ?2)
+               FROM message_search_bodies
+              WHERE fts_match(body_search, ?2)
           ) hits CROSS JOIN messages m ON m.id = hits.rid";
 
 /// The same match, asked one message at a time.
@@ -490,9 +733,11 @@ const HITS_JOIN: &str = "FROM (
 /// and `m.id IN (SELECT rowid ...)` builds an ephemeral b-tree of every
 /// posting. On a word in most of the mailbox either is ~120 ms of setup to
 /// answer a `LIMIT 50`.
-const CORRELATED_MATCH: &str =
-    "(EXISTS (SELECT 1 FROM messages_fts WHERE rowid = m.id AND messages_fts MATCH ?)
-   OR EXISTS (SELECT 1 FROM message_bodies_fts WHERE rowid = m.id AND message_bodies_fts MATCH ?))";
+const CORRELATED_MATCH: &str = "(EXISTS (SELECT 1 FROM search_documents d
+               WHERE d.message_id = m.id
+                 AND fts_match(d.sender, d.recipients, d.subject, d.filenames, d.list_id, ?))
+   OR EXISTS (SELECT 1 FROM message_search_bodies b
+               WHERE b.message_id = m.id AND fts_match(b.body_search, ?)))";
 
 /// Which plan a statement asks for. See [`HITS_JOIN`] and [`CORRELATED_MATCH`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -540,7 +785,7 @@ impl Candidate {
 /// state, compiled once and shared by the count query and the fetch query.
 struct Plan {
     conditions: Vec<String>,
-    params: Vec<Value>,
+    params: Vec<turso::Value>,
     /// Which accounts the request was about.
     ///
     /// Carried rather than recovered from `params`, which `hydrate` used to
@@ -563,7 +808,7 @@ struct Plan {
     /// `bm25`/`snippet` against what the user actually typed as text rather
     /// than, say, an unrelated `from:` value that happens to also be a valid
     /// (if redundant) constraint on the same rows.
-    match_param: Option<Value>,
+    match_param: Option<turso::Value>,
 }
 
 impl Plan {
@@ -573,11 +818,11 @@ impl Plan {
         // without `idx_messages_recency` the recency path has no index that
         // can supply its ordering once this conjunct is gone (ADR 0005 Q5a).
         let mut conditions = vec!["m.deleted_locally = 0".to_string()];
-        let mut params: Vec<Value> = Vec::new();
+        let mut params: Vec<turso::Value> = Vec::new();
         match request.account.account() {
             Some(id) => {
                 conditions.push("m.account_id = ?".to_string());
-                params.push(Value::Integer(id.get()));
+                params.push(turso::Value::Integer(id.get()));
             }
             // `Unified` is "every **enabled** account", not "every account",
             // and the difference only became observable when #961 gave the
@@ -604,24 +849,28 @@ impl Plan {
         let mut has_match = false;
         let mut match_param = None;
 
-        // Negated terms are excluded across the whole union rather than
-        // folded into each index's own `MATCH`, and that is a correctness
-        // fix rather than tidiness. `("report") NOT ("spam")` asked of
-        // `messages_fts` is true for a message whose "spam" is in its *body*
-        // — the metadata genuinely does not contain it — so the message came
+        // Negated terms are excluded across both indexes rather than folded
+        // into each one's own match, and that is a correctness fix rather
+        // than tidiness. `("report") NOT ("spam")` asked of the metadata
+        // index alone is true for a message whose "spam" is in its *body* --
+        // the metadata genuinely does not contain it -- so the message came
         // back from a query that had explicitly refused it. An exclusion has
         // to be about the message, and only a condition outside the join can
         // be.
         for term in request.query.text_terms().filter(|term| term.negated) {
             conditions.push(
-                "m.id NOT IN (SELECT rowid FROM messages_fts WHERE messages_fts MATCH ?)
-                 AND m.id NOT IN (SELECT rowid FROM message_bodies_fts
-                                   WHERE message_bodies_fts MATCH ?)"
+                "m.id NOT IN (SELECT message_id FROM search_documents
+                               WHERE fts_match(sender, recipients, subject,
+                                               filenames, list_id, ?))
+                 AND m.id NOT IN (SELECT message_id FROM message_search_bodies
+                                   WHERE fts_match(body_search, ?))"
                     .to_string(),
             );
-            let literal = Value::Text(fts_literal(&term.value));
-            params.push(literal.clone());
-            params.push(literal);
+            let literal = fts_literal(&term.value);
+            // The body half folded, the metadata half not -- the same rule
+            // `match_params` keeps, for the same reason.
+            params.push(turso::Value::Text(literal.clone()));
+            params.push(turso::Value::Text(postio_model::fold::fold(&literal)));
         }
 
         let positive = request
@@ -642,11 +891,15 @@ impl Plan {
             // Nothing is pushed onto `params` here: the join's parameters sit
             // before every condition's in the statement text, and
             // `from_params` is what binds them.
-            match_param = Some(Value::Text(expr));
+            match_param = Some(turso::Value::Text(expr));
             has_match = true;
         }
 
-        if let Some((sql, mut values)) = scope_condition(request.scope, request.account) {
+        if let Some((sql, mut values)) = scope_condition(
+            request.scope,
+            request.account,
+            names_a_folder(request.query),
+        ) {
             conditions.push(sql);
             params.append(&mut values);
         }
@@ -696,16 +949,16 @@ impl Plan {
     /// field: a driven statement matches in its `FROM`, so its two
     /// expressions come first, and a probed one matches in its `WHERE`, so
     /// they come last.
-    fn params_for(&self, form: Form) -> Vec<Value> {
+    fn params_for(&self, form: Form) -> Vec<turso::Value> {
         match form {
             Form::Driven => {
-                let mut params = self.match_params();
+                let mut params = self.match_params(Form::Driven);
                 params.extend(self.params.iter().cloned());
                 params
             }
             Form::Probed => {
                 let mut params = self.params.clone();
-                params.extend(self.match_params());
+                params.extend(self.match_params(Form::Probed));
                 params
             }
         }
@@ -728,13 +981,25 @@ impl Plan {
     /// list rather than pushed onto `params` in `build`, so that every caller
     /// composing a statement has to think about the order once, here, rather
     /// than each getting it right separately.
-    fn match_params(&self) -> Vec<Value> {
-        match &self.match_param {
-            // Once for each index. The same expression: a term the user typed
-            // is asked of the metadata and of the body, and either is a hit.
-            Some(expr) => vec![expr.clone(), expr.clone()],
-            None => Vec::new(),
-        }
+    fn match_params(&self, _form: Form) -> Vec<turso::Value> {
+        let Some(expr) = &self.match_param else {
+            return Vec::new();
+        };
+        // The body index is built over folded text, so the body's half of the
+        // expression is folded to match. The metadata index is not -- its
+        // columns are stored as they read -- so that half goes through
+        // unchanged. Both or neither, per `postio_model::fold`.
+        let folded = match expr {
+            turso::Value::Text(text) => turso::Value::Text(postio_model::fold::fold(text)),
+            other => other.clone(),
+        };
+        // Two, either way. The driven form writes the term as `?1`/`?2` and
+        // uses each twice -- once to score, once to match -- because
+        // `fts_score` returns `0.0` when the two are different parameters;
+        // see [`HITS_JOIN`]. The probed form has no score and one `fts_match`
+        // per arm, and its `?`s are bare because its match sits in the
+        // `WHERE`, after the conditions.
+        vec![expr.clone(), folded]
     }
 
     /// [`Plan::source_sql`], but for `fetch` specifically, where the join order
@@ -769,15 +1034,15 @@ impl Plan {
     /// ask "how many". Wrapping the scan in its own `LIMIT` bounds that cost
     /// regardless of how broad the match is, at the price of an exact count
     /// past the cap. See [`SearchResults::total_hits_capped`].
-    fn count(&self, connection: &Connection) -> Result<u64> {
+    async fn count(&self, connection: &Connection) -> Result<u64> {
         let sql = format!(
             "SELECT count(*) FROM (SELECT DISTINCT m.id {} WHERE {} LIMIT ?)",
             self.source_sql(Form::Driven),
             self.where_sql(Form::Driven)
         );
         let mut params = self.params_for(Form::Driven);
-        params.push(Value::Integer(TOTAL_HITS_CAP as i64));
-        let count: i64 = connection.query_row(&sql, params_from_iter(&params), |row| row.get(0))?;
+        params.push(turso::Value::Integer(TOTAL_HITS_CAP as i64));
+        let count: i64 = sql::one(connection, &sql, params.clone(), |row| row.col(0)).await?;
         Ok(count as u64)
     }
 
@@ -794,29 +1059,33 @@ impl Plan {
     /// [`SearchResults::total_hits`] is — and since [`Facets::suggested`]
     /// only ever compares them against that same capped total, a capped
     /// result set still ranks its refinements against each other correctly.
-    fn flag_refinements(&self, connection: &Connection) -> Result<Vec<Refinement>> {
+    async fn flag_refinements(&self, connection: &Connection) -> Result<Vec<Refinement>> {
         let sql = format!(
             "SELECT
                  coalesce(sum(seen = 0), 0),
                  coalesce(sum(flagged), 0),
                  coalesce(sum(has_attachments), 0),
-                 coalesce(sum(size >= ?), 0)
+                 coalesce(sum(size >= {LARGE_BYTES}), 0)
              FROM (SELECT DISTINCT m.id, m.seen, m.flagged, m.has_attachments, m.size
                      {from} WHERE {where_sql} LIMIT ?)",
             from = self.source_sql(Form::Driven),
             where_sql = self.where_sql(Form::Driven),
         );
 
-        // The `size >= ?` bind sits before every condition's parameter,
-        // because the aggregate is in the outer SELECT and the conditions are
-        // in the subquery.
-        let mut params = vec![Value::Integer(LARGE_BYTES as i64)];
-        params.extend(self.params_for(Form::Driven));
-        params.push(Value::Integer(TOTAL_HITS_CAP as i64));
+        // `LARGE_BYTES` is written into the SQL rather than bound, and that
+        // is not a shortcut: it is a compile-time constant, and a bound `?`
+        // for it would sit in the outer `SELECT` -- textually *before* the
+        // `{from}` that [`HITS_JOIN`] numbers `?1` and `?2`. Mixing a bare `?`
+        // in front of explicit ones is how this statement came to bind five
+        // parameters into three slots. Nothing user-supplied is interpolated
+        // here; every value the caller controls is still a parameter.
+        let mut params = self.params_for(Form::Driven);
+        params.push(turso::Value::Integer(TOTAL_HITS_CAP as i64));
 
-        let counts: [i64; 4] = connection.query_row(&sql, params_from_iter(&params), |row| {
-            Ok([row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?])
-        })?;
+        let counts: [i64; 4] = sql::one(connection, &sql, params.clone(), |row| {
+            Ok([row.col(0)?, row.col(1)?, row.col(2)?, row.col(3)?])
+        })
+        .await?;
 
         Ok(["is:unread", "is:flagged", "has:attach", LARGE_TOKEN]
             .into_iter()
@@ -834,7 +1103,7 @@ impl Plan {
     /// because `list:` cannot yet be answered exactly — see [`Scope::Lists`]
     /// and `postio-0bz`. `in:` names the same folder and is exact today, and
     /// the chip is a token the user could have typed either way.
-    fn folder_refinements(&self, connection: &Connection) -> Result<Vec<Refinement>> {
+    async fn folder_refinements(&self, connection: &Connection) -> Result<Vec<Refinement>> {
         let sql = format!(
             "SELECT name, count(*) AS hits FROM (
                  SELECT DISTINCT m.id, mb.name AS name {from}
@@ -846,17 +1115,17 @@ impl Plan {
         );
 
         let mut params = self.params_for(Form::Driven);
-        params.push(Value::Integer(TOTAL_HITS_CAP as i64));
-        params.push(Value::Integer(REFINE_FOLDERS as i64));
+        params.push(turso::Value::Integer(TOTAL_HITS_CAP as i64));
+        params.push(turso::Value::Integer(REFINE_FOLDERS as i64));
 
-        let mut statement = connection.prepare(&sql)?;
-        let rows = statement.query_map(params_from_iter(&params), |row| {
+        sql::all(connection, &sql, params.clone(), |row| {
             Ok(Refinement {
-                token: format!("in:{}", quote_value(&row.get::<_, String>(0)?)),
-                hits: row.get::<_, i64>(1)?.max(0) as u64,
+                token: format!("in:{}", quote_value(&row.col::<String>(0)?)),
+                hits: row.col::<i64>(1)?.max(0) as u64,
             })
-        })?;
-        rows.collect::<rusqlite::Result<_>>().map_err(Into::into)
+        })
+        .await
+        .map_err(Into::into)
     }
 
     /// Selects a candidate pool, then hydrates it into full [`Candidate`]s.
@@ -873,7 +1142,7 @@ impl Plan {
     /// back to the same statement was enough to lose the plan again. Hydrating
     /// afterward, for only the (at most `pool_size`) ids that survive, keeps
     /// that cost paid once per candidate rather than once per match.
-    fn fetch(
+    async fn fetch(
         &self,
         connection: &Connection,
         pool_size: u32,
@@ -881,9 +1150,10 @@ impl Plan {
         total_hits: u64,
         now: DateTime<Utc>,
     ) -> Result<Vec<Candidate>> {
-        let scored =
-            self.fetch_candidates(connection, pool_size, rank_by_relevance, total_hits, now)?;
-        self.hydrate(connection, &scored)
+        let scored = self
+            .fetch_candidates(connection, pool_size, rank_by_relevance, total_hits, now)
+            .await?;
+        self.hydrate(connection, &scored).await
     }
 
     /// The candidate pool: an id and the combined `bm25` for each, in the
@@ -896,7 +1166,7 @@ impl Plan {
     /// budget, whether the second walk was a `GROUP BY` over the whole union
     /// or an `IN` list FTS5 declines to use as a docid constraint. The pool
     /// query has the scores in hand already; carrying them out costs nothing.
-    fn fetch_candidates(
+    async fn fetch_candidates(
         &self,
         connection: &Connection,
         pool_size: u32,
@@ -921,7 +1191,7 @@ impl Plan {
         // `POOL_AGE_WEIGHT_PER_YEAR`. `?` is bound to now, in milliseconds.
         let order_by = if rank_by_relevance {
             &format!(
-                "coalesce(hits.meta, 0.0) + coalesce(hits.body, 0.0) \
+                "-coalesce(hits.meta, 0.0) - coalesce(hits.body, 0.0) \
                  + {POOL_AGE_WEIGHT_PER_YEAR} * (? - m.received_at) / {MILLIS_PER_YEAR}"
             )
         } else {
@@ -937,10 +1207,12 @@ impl Plan {
         // the hydrate columns), and correlated subqueries in the select list
         // are no exception.
         let scores = match (self.has_match, form) {
-            (true, Form::Driven) => "hits.meta, hits.body",
+            // Negated here rather than in the projection inside the union:
+            // see [`HITS_JOIN`]. By this point they are ordinary columns.
+            (true, Form::Driven) => "-hits.meta, -hits.body",
             _ => "NULL, NULL",
         };
-        let mut params: Vec<Value> = Vec::new();
+        let mut params: Vec<turso::Value> = Vec::new();
         let sql = format!(
             "SELECT m.id, {scores} {from} WHERE {where_sql} ORDER BY {order_by} LIMIT ?",
             from = self.source_sql(form),
@@ -953,22 +1225,25 @@ impl Plan {
         // `WHERE`'s and the `LIMIT`'s -- and only when that ordering is the
         // one carrying the term, or the count would not match the statement.
         if rank_by_relevance {
-            params.push(Value::Integer(now.timestamp_millis()));
+            params.push(turso::Value::Integer(now.timestamp_millis()));
         }
         // Asked for more than the pool, because the union can hand back the
         // same message twice and the duplicates are folded below. Doubling is
         // the bound: a message appears at most once per index.
-        params.push(Value::Integer(i64::from(pool_size).saturating_mul(2)));
+        params.push(turso::Value::Integer(
+            i64::from(pool_size).saturating_mul(2),
+        ));
 
-        let mut statement = connection.prepare(&sql)?;
-        let rows = statement.query_map(params_from_iter(&params), |row| {
-            let meta: Option<f64> = row.get(1)?;
-            let body: Option<f64> = row.get(2)?;
+        let mut statement = connection.prepare(&sql).await?;
+        let rows = sql::mapped(&mut statement, params.clone(), |row| {
+            let meta: Option<f64> = row.col(1)?;
+            let body: Option<f64> = row.col(2)?;
             Ok((
-                row.get::<_, i64>(0)?,
+                row.col::<i64>(0)?,
                 meta.unwrap_or(0.0) + BODY_SCORE_WEIGHT * body.unwrap_or(0.0),
             ))
-        })?;
+        })
+        .await?;
 
         // Folded here rather than with a `GROUP BY`, which would cost a sort
         // over the match set — the thing this whole shape exists to avoid.
@@ -978,8 +1253,7 @@ impl Plan {
         let mut order: Vec<i64> = Vec::with_capacity(pool_size as usize);
         let mut scored: std::collections::HashMap<i64, f64> =
             std::collections::HashMap::with_capacity(pool_size as usize);
-        for row in rows {
-            let (id, score) = row?;
+        for (id, score) in rows {
             match scored.entry(id) {
                 std::collections::hash_map::Entry::Occupied(mut seen) => *seen.get_mut() += score,
                 std::collections::hash_map::Entry::Vacant(empty) => {
@@ -1029,29 +1303,45 @@ impl Plan {
         // query against 18k contacts, 15 s for a full pool (#746). Hoisted,
         // the same workload is single-digit milliseconds, and
         // `hydrate_probes_contacts_by_address_key` pins the plan.
+        // **One correlated lookup, not three.** This asked `recipients` for the
+        // sender three times per candidate -- the name, the address, and the
+        // normalized address -- and the last two were the same row reached by
+        // the same join, differing only in the column selected. Measured on a
+        // real store after the search plan was fixed, this statement was
+        // 384 ms of a 520 ms cold search: the largest single cost in a search,
+        // and two thirds of it was asking the same question again.
+        //
+        // So the subquery finds the sender's `recipients` row once, and the
+        // outer query joins it and `addresses` by primary key. The contacts
+        // probe still compares against a plain column -- now the joined
+        // `a.address_normalized` rather than a nested subquery -- which is
+        // what keeps it on `idx_contacts_account_address` rather than walking
+        // every contact per candidate (#746, and
+        // `hydrate_probes_contacts_by_address_key` pins it).
         format!(
             "SELECT
                  sub.id, sub.thread_id, sub.mailbox_id, sub.subject, sub.received_at,
-                 sub.from_name, sub.from_address,
+                 sender.name AS from_name, a.address AS from_address,
                  (SELECT max(c.times_seen) FROM contacts c
-                    WHERE c.address_normalized = sub.from_normalized
+                    WHERE c.address_normalized = a.address_normalized
                       {affinity}) AS sender_times_seen,
                  0 AS unused
              FROM (SELECT
                      m.id, m.thread_id, m.mailbox_id, m.subject, m.received_at,
-                     (SELECT name FROM recipients WHERE message_id = m.id AND kind = 'from'
-                        ORDER BY position LIMIT 1) AS from_name,
-                     (SELECT a.address FROM recipients r JOIN addresses a ON a.id = r.address_id
+                     (SELECT r.id FROM recipients r
                         WHERE r.message_id = m.id AND r.kind = 'from'
-                        ORDER BY r.position LIMIT 1) AS from_address,
-                     (SELECT a.address_normalized FROM recipients r JOIN addresses a ON a.id = r.address_id
-                        WHERE r.message_id = m.id AND r.kind = 'from'
-                        ORDER BY r.position LIMIT 1) AS from_normalized
-                   FROM messages m WHERE m.id IN ({placeholders})) sub",
+                        ORDER BY r.position LIMIT 1) AS from_recipient
+                   FROM messages m WHERE m.id IN ({placeholders})) sub
+             LEFT JOIN recipients sender ON sender.id = sub.from_recipient
+             LEFT JOIN addresses a ON a.id = sender.address_id",
         )
     }
 
-    fn hydrate(&self, connection: &Connection, scored: &[(i64, f64)]) -> Result<Vec<Candidate>> {
+    async fn hydrate(
+        &self,
+        connection: &Connection,
+        scored: &[(i64, f64)],
+    ) -> Result<Vec<Candidate>> {
         if scored.is_empty() {
             return Ok(Vec::new());
         }
@@ -1073,25 +1363,25 @@ impl Plan {
         // subquery's own if it has one.
         let mut params = Vec::with_capacity(ids.len() + 1);
         if let Some(id) = self.account.account() {
-            params.push(Value::Integer(id.get()));
+            params.push(turso::Value::Integer(id.get()));
         }
-        params.extend(ids.iter().map(|id| Value::Integer(*id)));
+        params.extend(ids.iter().map(|id| turso::Value::Integer(*id)));
 
-        let mut statement = connection.prepare(&sql)?;
-        let by_id: std::collections::HashMap<i64, Candidate> = statement
-            .query_map(params_from_iter(&params), |row| {
-                let id: i64 = row.get(0)?;
+        let mut statement = connection.prepare(&sql).await?;
+        let by_id: std::collections::HashMap<i64, Candidate> =
+            sql::mapped(&mut statement, params.clone(), |row| {
+                let id: i64 = row.col(0)?;
                 Ok((
                     id,
                     Candidate {
                         message_id: MessageId::new(id),
-                        thread_id: row.get::<_, Option<i64>>(1)?.map(ThreadId::new),
-                        mailbox_id: MailboxId::new(row.get(2)?),
-                        subject: row.get(3)?,
-                        received_at: from_millis(row.get(4)?),
-                        from_name: row.get(5)?,
-                        from_address: row.get(6)?,
-                        sender_times_seen: row.get::<_, Option<i64>>(7)?.unwrap_or(0),
+                        thread_id: row.col::<Option<i64>>(1)?.map(ThreadId::new),
+                        mailbox_id: MailboxId::new(row.col(2)?),
+                        subject: row.col(3)?,
+                        received_at: from_millis(row.col(4)?),
+                        from_name: row.col(5)?,
+                        from_address: row.col(6)?,
+                        sender_times_seen: row.col::<Option<i64>>(7)?.unwrap_or(0),
                         // Filled in below, from the pool.
                         bm25: 0.0,
                         // Filled by whoever can read the body — see
@@ -1100,8 +1390,10 @@ impl Plan {
                         score: 0.0,
                     },
                 ))
-            })?
-            .collect::<rusqlite::Result<_>>()?;
+            })
+            .await?
+            .into_iter()
+            .collect();
 
         // `hydrate`'s own query has no `ORDER BY`; the caller's ordering (by
         // relevance or by recency) lives entirely in the pool's order.
@@ -1123,9 +1415,21 @@ impl Plan {
 /// Scoped by mailbox *role* rather than by id, because the scope has to mean
 /// the same thing on every account and before any folder has been chosen. See
 /// [`Scope::Lists`] for why "lists" is a role test and not a `List-Id` one.
-fn scope_condition(scope: Scope, account: AccountScope) -> Option<(String, Vec<Value>)> {
+fn scope_condition(
+    scope: Scope,
+    account: AccountScope,
+    names_a_folder: bool,
+) -> Option<(String, Vec<turso::Value>)> {
     let role = match scope {
-        Scope::AllMail => return None,
+        // "All mail" is every folder except drafts, junk and trash
+        // (maintainer's decision, #1523): a search is navigation, and what a
+        // person is navigating to is almost never a draft of what they were
+        // going to say, something they binned, or spam. Sent stays in. An
+        // `in:` anywhere in the query lifts the exclusion, because a query
+        // that names a folder is already confined to it, and the one thing
+        // the exclusion could then do is hide the folder they named.
+        Scope::AllMail if names_a_folder => return None,
+        Scope::AllMail => "role NOT IN ('drafts', 'junk', 'trash')",
         Scope::Inbox => "role = 'inbox'",
         Scope::Lists => "role = 'regular'",
     };
@@ -1136,7 +1440,7 @@ fn scope_condition(scope: Scope, account: AccountScope) -> Option<(String, Vec<V
     Some(match account.account() {
         Some(id) => (
             format!("m.mailbox_id IN (SELECT id FROM mailboxes WHERE account_id = ? AND {role})"),
-            vec![Value::Integer(id.get())],
+            vec![turso::Value::Integer(id.get())],
         ),
         None => (
             format!("m.mailbox_id IN (SELECT id FROM mailboxes WHERE {role})"),
@@ -1145,9 +1449,19 @@ fn scope_condition(scope: Scope, account: AccountScope) -> Option<(String, Vec<V
     })
 }
 
+/// Whether the query confines itself to a folder with an `in:` of its own.
+///
+/// Only an affirmative one: `-in:trash` is a person keeping the default
+/// exclusion and adding to it, not asking to see the trash.
+fn names_a_folder(query: &ParsedQuery) -> bool {
+    query
+        .filters()
+        .any(|clause| !clause.negated && matches!(clause.filter, Filter::In(_)))
+}
+
 /// Translates one structured filter into a SQL condition (unnegated) plus its
 /// bound parameters, in the order the `?` placeholders appear.
-fn filter_condition(filter: &Filter) -> (String, Vec<Value>) {
+fn filter_condition(filter: &Filter) -> (String, Vec<turso::Value>) {
     match filter {
         Filter::From(value) => fts_column_condition("sender", value),
         Filter::To(value) => fts_column_condition("recipients", value),
@@ -1161,16 +1475,19 @@ fn filter_condition(filter: &Filter) -> (String, Vec<Value>) {
             "m.account_id IN (SELECT id FROM accounts \
              WHERE lower(display_name) = lower(?) OR lower(address) = lower(?))"
                 .to_string(),
-            vec![Value::Text(value.clone()), Value::Text(value.clone())],
+            vec![
+                turso::Value::Text(value.clone()),
+                turso::Value::Text(value.clone()),
+            ],
         ),
         Filter::In(value) => (
             "m.mailbox_id IN (SELECT id FROM mailboxes \
              WHERE lower(name) = lower(?) OR lower(path) = lower(?) OR role = lower(?))"
                 .to_string(),
             vec![
-                Value::Text(value.clone()),
-                Value::Text(value.clone()),
-                Value::Text(value.clone()),
+                turso::Value::Text(value.clone()),
+                turso::Value::Text(value.clone()),
+                turso::Value::Text(value.clone()),
             ],
         ),
         // ADR 0007 Q3: "from or to any member", resolved against `recipients`
@@ -1189,7 +1506,7 @@ fn filter_condition(filter: &Filter) -> (String, Vec<Value>) {
                  JOIN contact_groups g ON g.id = gm.group_id \
                  WHERE lower(g.name) = lower(?)))"
                 .to_string(),
-            vec![Value::Text(value.clone())],
+            vec![turso::Value::Text(value.clone())],
         ),
         // ADR 0025 Q2, and the one operator that is not an FTS `MATCH`. Header
         // values are short and structured -- `spf=pass`, `1.5.24`,
@@ -1208,7 +1525,7 @@ fn filter_condition(filter: &Filter) -> (String, Vec<Value>) {
                 "EXISTS (SELECT 1 FROM message_headers h \
                   WHERE h.message_id = m.id AND h.name = ?)"
                     .to_string(),
-                vec![Value::Text(name.clone())],
+                vec![turso::Value::Text(name.clone())],
             ),
             // `LIKE` folds ASCII case on its own, which is what ADR 0025 Q6
             // asks for. It does not fold anything else, so a value that
@@ -1220,7 +1537,10 @@ fn filter_condition(filter: &Filter) -> (String, Vec<Value>) {
                   WHERE h.message_id = m.id AND h.name = ? \
                     AND h.value LIKE '%' || ? || '%' ESCAPE '\\')"
                     .to_string(),
-                vec![Value::Text(name.clone()), Value::Text(escape_like(value))],
+                vec![
+                    turso::Value::Text(name.clone()),
+                    turso::Value::Text(escape_like(value)),
+                ],
             ),
         },
         Filter::Filename(value) => fts_column_condition("filenames", value),
@@ -1239,27 +1559,24 @@ fn filter_condition(filter: &Filter) -> (String, Vec<Value>) {
         }
         Filter::After(date) => (
             "m.received_at >= ?".to_string(),
-            vec![Value::Integer(day_start_millis(*date))],
+            vec![turso::Value::Integer(day_start_millis(*date))],
         ),
         Filter::Before(date) => (
             "m.received_at < ?".to_string(),
-            vec![Value::Integer(day_start_millis(*date))],
+            vec![turso::Value::Integer(day_start_millis(*date))],
         ),
         Filter::Larger(bytes) => (
             "m.size >= ?".to_string(),
-            vec![Value::Integer(*bytes as i64)],
+            vec![turso::Value::Integer(*bytes as i64)],
         ),
         Filter::Smaller(bytes) => (
             "m.size <= ?".to_string(),
-            vec![Value::Integer(*bytes as i64)],
+            vec![turso::Value::Integer(*bytes as i64)],
         ),
     }
 }
 
-/// Builds a condition against one `messages_fts` column, via a non-correlated
-/// `IN (SELECT rowid FROM messages_fts WHERE messages_fts MATCH ...)`
-/// subquery — the same shape [`Plan::build`] uses to exclude negated-only
-/// free text.
+/// Builds a condition against one indexed column of `search_documents`.
 ///
 /// This is why `from:`/`to:`/`subject:`/`filename:`/`list:` match whole
 /// tokens (as FTS5 tokenizes them) rather than an arbitrary substring: the
@@ -1268,13 +1585,39 @@ fn filter_condition(filter: &Filter) -> (String, Vec<Value>) {
 /// row, but `total_hits`'s `count(*)` has no `LIMIT` to short-circuit it, so
 /// a plain `from:` search over a large mailbox paid for one such scan per
 /// message in the account and blew the `<100 ms` budget (postio-y47's
-/// benchmark caught this). Querying the column FTS5 already indexes turns
+/// benchmark caught this). Querying the column the index already covers turns
 /// that into a single inverted-index lookup, the same cost class as free
 /// text.
-fn fts_column_condition(column: &str, value: &str) -> (String, Vec<Value>) {
+///
+/// # Why the term is asked twice
+///
+/// FTS5 scoped a match to one column inside the query string —
+/// `messages_fts MATCH 'sender:ada'`. This engine takes the columns as
+/// arguments instead, and `fts_match(sender, ?)` on its own is *correct* and
+/// **does not use the index**: a subset of an index's columns gets `SCAN`,
+/// which is exactly the per-message scan the paragraph above is about.
+///
+/// So the term is asked twice. The five-column form narrows through the
+/// index to messages carrying the term *anywhere*; the one-column form then
+/// says which column it had to be in. Both are token matches, so
+/// `from:`/`to:`/`subject:`/`filename:`/`list:` keep matching whole tokens
+/// rather than substrings — and the per-row check only ever runs on what the
+/// index already narrowed to.
+///
+/// Verified in `turso_capabilities.rs`: a column subset alone scans, and the
+/// pair uses the index.
+fn fts_column_condition(column: &str, value: &str) -> (String, Vec<turso::Value>) {
+    let literal = fts_literal(value);
     (
-        "m.id IN (SELECT rowid FROM messages_fts WHERE messages_fts MATCH ?)".to_string(),
-        vec![Value::Text(format!("{column}:{}", fts_literal(value)))],
+        format!(
+            "m.id IN (SELECT message_id FROM search_documents
+                       WHERE fts_match(sender, recipients, subject, filenames, list_id, ?)
+                         AND fts_match({column}, ?))"
+        ),
+        vec![
+            turso::Value::Text(literal.clone()),
+            turso::Value::Text(literal),
+        ],
     )
 }
 
@@ -1335,7 +1678,7 @@ mod tests {
             params: Vec::new(),
             account: AccountScope::Unified,
             has_match: true,
-            match_param: Some(Value::Text("invoice".to_owned())),
+            match_param: Some(turso::Value::Text("invoice".to_owned())),
         }
     }
 
@@ -1449,11 +1792,13 @@ mod tests {
     /// 18k contacts, which is 4.5 s for a 320-match query. The plan is the
     /// deterministic thing to pin: a timing assertion at that scale is a
     /// bench's job (`search_budget.rs` seeds contacts for exactly that).
-    #[test]
-    fn hydrate_probes_contacts_by_address_key() {
-        let database = postio_storage::test_support::memory();
-        let connection = database.connection().expect("checkout");
-        crate::index::ensure_schema(&connection).expect("schema");
+    #[tokio::test]
+    async fn hydrate_probes_contacts_by_address_key() {
+        let database = postio_storage::test_support::memory().await;
+        let connection = database.connect().await.expect("checkout");
+        crate::index::ensure_schema(&connection)
+            .await
+            .expect("schema");
 
         let query = postio_search::parse("invoice", at(0).date_naive());
         let request = SearchRequest {
@@ -1468,19 +1813,27 @@ mod tests {
         let sql = plan.hydrate_sql("?, ?, ?");
         let mut statement = connection
             .prepare(&format!("EXPLAIN QUERY PLAN {sql}"))
+            .await
             .expect("prepare the hydrate statement");
-        let steps: Vec<String> = statement
-            .query_map(rusqlite::params![1i64, 10i64, 11i64, 12i64], |row| {
-                row.get(3)
-            })
-            .expect("explain")
-            .flatten()
-            .collect();
+        let steps: Vec<String> = sql::mapped(
+            &mut statement,
+            postio_storage::bind![1i64, 10i64, 11i64, 12i64],
+            |row| row.col(3),
+        )
+        .await
+        .expect("explain");
 
+        // Either the scoped index or the shared one, and either the
+        // constraint's own index or its read companion: the claim is that the
+        // probe is *keyed on the address*, not which of the four keys it.
+        // The companions exist because this engine's planner will not read
+        // through a partial index -- see
+        // `turso_capabilities.rs::the_planner_does_not_use_a_partial_index`.
         assert!(
-            steps.iter().any(|step| step
-                .contains("idx_contacts_account_address (account_id=? AND address_normalized=?)")),
-            "the per-account contacts probe is not keyed on the address; plan:\n{steps:#?}"
+            steps
+                .iter()
+                .any(|step| step.contains("idx_contacts_") && step.contains("address_normalized=?")),
+            "the contacts probe is not keyed on the address; plan:\n{steps:#?}"
         );
         assert!(
             !steps.iter().any(|step| step.starts_with("SCAN c")),

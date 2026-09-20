@@ -28,37 +28,14 @@
 //!
 //! # Driving the model from events
 //!
-//! [`ListScope::reaction`] answers this, per scope, and both sides agree on
-//! one rule: a list reacts to an event only when the event can change its
-//! own membership or order, and it inserts at the top only when its own
-//! order guarantees the new rows belong there. Everything else reloads
-//! (`Feed::reload`, dropping everything cached and asking again). #773 is
-//! the investigation this table closes.
-//!
-//! | Scope | [`Event::NewMail`] | [`Event::MessagesRemoved`] | [`Event::MessageListChanged`] | [`Event::MessagesChanged`] |
-//! |---|---|---|---|---|
-//! | [`ListScope::Mailbox`] | insert at top when the mailbox matches | reload when the mailbox matches | reload when the mailbox matches | refetch resident pages holding them |
-//! | [`ListScope::Account`] | insert at top when the account matches | reload when the account matches | reload when the account matches | refetch resident pages holding them |
-//! | [`ListScope::Flagged`] / [`ListScope::Snoozed`] | ignore — a delivery is neither flagged nor snoozed | reload when the account matches | reload when the account matches | **reload** when the account matches |
-//! | a result set | ignore | ignore | ignore | refetch resident pages holding them |
-//!
-//! `Flagged`/`Snoozed` reloading on `MessagesChanged` rather than
-//! refetching is the one cell that looks like the others and is not: for
-//! them the flag or the snooze *is* the membership predicate, so a change
-//! can remove a row the same event would repaint for a mailbox. A page
-//! refetch cannot express a row leaving; only a reload can, because the
-//! total moved. They are gated on the *account*, not the mailbox, because
-//! they span every folder in one — the mailbox an event names carries no
-//! information for them.
-//!
+//! What the list does with a runtime event — insert at the top, refetch
+//! the pages holding the rows, reload, or nothing — is
+//! [`postio_ui::paging::Paging`]'s table, per scope, shared with the macOS
+//! frontend; this module only carries the answer out to the widget.
 //! [`ListScope::Thread`] never reaches a `Feed` at all: a drill-in issues
 //! one direct [`MessageSource::fetch`] instead
 //! (`postio_gtk::window::Window::open_thread`), so it has no event routing
 //! to get wrong.
-//!
-//! An event naming a different mailbox, or a different account, is ignored
-//! outright — a folder or a scope nobody is looking at costs nothing to be
-//! wrong about until it is opened.
 
 use std::cell::{Cell, RefCell};
 use std::future::Future;
@@ -71,28 +48,23 @@ use gtk::glib;
 use gtk::prelude::*;
 use postio_core::{ConnectionState, Event};
 use postio_model::ids::{AccountId, MailboxId, MessageId};
-use postio_model::mailbox::Mailbox;
-use postio_model::{Arrival, Reaction};
+use postio_model::mailbox::{Mailbox, MailboxRole};
+use postio_ui::paging::{Fetch, Paging, Plan};
 
-use crate::list::{MessageList, PAGE_SIZE, PageSource, Row};
-use crate::sidebar::SyncStatus;
+use crate::list::{MessageList, PageSource, Row};
+use crate::sidebar::{SidebarChoice, SyncStatus};
+use postio_ui::sidebar::ViewCounts;
 
 /// One page of a mailbox, as the runtime answered it.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Page {
-    /// How many rows the mailbox has in total, as of this read.
-    ///
-    /// Carried with every page rather than asked for separately: the count
-    /// and the rows have to come from one read of the database, or the list
-    /// can be told about a total that no page will ever fill.
-    pub total: u32,
-    /// The rows themselves, in list order.
-    ///
-    /// [`Row::thread_count`] is expected to be real here — the badge in the
-    /// canvas is a count of the thread, and a source that leaves it at 1
-    /// silently removes the badge from every row.
-    pub rows: Vec<Row>,
-}
+///
+/// [`Row::thread_count`] is expected to be real here — the badge in the
+/// canvas is a count of the thread, and a source that leaves it at 1
+/// silently removes the badge from every row.
+pub type Page = postio_ui::paging::Page<Row>;
+
+/// Which rows are wanted. The shared spelling, so `postio-app`'s adapter
+/// and the macOS boundary ask the store for the same thing.
+pub use postio_ui::paging::PageRequest;
 
 /// Which messages a list is showing.
 ///
@@ -110,19 +82,6 @@ pub struct Page {
 /// tell app state which mailbox is open, and a smart folder must not claim
 /// to be one.
 pub use postio_model::ListScope;
-
-/// Which rows are wanted.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct PageRequest {
-    /// The messages being listed.
-    pub scope: ListScope,
-    /// The page index, for the reply to be matched against.
-    pub page: u32,
-    /// The first row wanted, counted from the newest.
-    pub offset: u32,
-    /// How many rows to read.
-    pub limit: u32,
-}
 
 /// The answer to a [`PageRequest`], awaited on the main thread.
 ///
@@ -174,8 +133,9 @@ struct Inner {
     /// Weak, because the list owns the [`PageSource`] that owns this.
     list: glib::WeakRef<MessageList>,
     source: Rc<dyn MessageSource>,
-    /// What the list is showing: one folder, or a role-scoped query.
-    scope: Cell<Option<ListScope>>,
+    /// What the list is showing, what a page of it means and what an event
+    /// does to it — the policy, shared with the macOS frontend.
+    paging: RefCell<Paging>,
     total: Cell<u32>,
     /// How long the *mailbox* was, last time one was read.
     ///
@@ -185,8 +145,6 @@ struct Inner {
     /// back — and the scroll offset the window restores would be measured
     /// against a scroller that had collapsed in between.
     mailbox_total: Cell<u32>,
-    /// The hits in view, ranked, or `None` when a mailbox is in view.
-    results: RefCell<Option<Rc<Vec<MessageId>>>>,
     /// Where a result set's rows come from. `None` in a window that has no
     /// search wired to it, which is the only reason this is an `Option`.
     hits: RefCell<Option<Rc<dyn ResultSource>>>,
@@ -226,69 +184,62 @@ impl PageSource for Source {
     }
 }
 
-impl Inner {
-    fn request(self: Rc<Self>, page: u32) {
-        if self.results.borrow().is_some() {
-            self.request_hits(page);
-            return;
-        }
-        let Some(scope) = self.scope.get() else {
-            return;
-        };
-        let Some(list) = self.list.upgrade() else {
-            return;
-        };
-        let generation = list.generation();
-        let future = self.source.fetch(PageRequest {
-            scope,
-            page,
-            offset: page * PAGE_SIZE,
-            limit: PAGE_SIZE,
-        });
-        glib::spawn_future_local(async move {
-            // POSTIO-GLIB-SAFE: `MessageSource::fetch` is a trait method, and the trait's
-            // contract is that what it returns is pollable on the main
-            // context -- `postio-app` implements it by spawning the runtime
-            // work and handing back a channel receive. A `MailBackend` future
-            // must never be returned from it directly.
-            match future.await {
-                Ok(answer) => self.deliver(generation, page, answer),
-                Err(message) => self.fail(generation, message),
-            }
-        });
-    }
+/// How many pages of a mailbox the feed has asked the store for.
+///
+/// "Never load a whole mailbox into memory" is a product promise, and this is
+/// the number that keeps it honest: a folder switch should cost a screenful of
+/// rows and their neighbours, not a mailbox. Counted rather than timed, for the
+/// reason [`crate::list::emissions`] gives.
+pub fn fetches() -> u64 {
+    FETCHES.load(std::sync::atomic::Ordering::Relaxed)
+}
+static FETCHES: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
-    /// The same request, for a page of a result set rather than of a mailbox.
-    fn request_hits(self: Rc<Self>, page: u32) {
-        let ids = self.results.borrow().clone();
-        let source = self.hits.borrow().clone();
-        let (Some(ids), Some(source)) = (ids, source) else {
+impl Inner {
+    /// Ask for `page` of whatever is in view — a mailbox by offset, or a
+    /// result set by its ids — and deliver the answer when it lands.
+    fn request(self: Rc<Self>, page: u32) {
+        FETCHES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let Some(fetch) = self.paging.borrow().fetch_for(page) else {
             return;
         };
-        let start = (page * PAGE_SIZE) as usize;
-        if start >= ids.len() {
-            return;
-        }
-        // The last page of a result set is short, and asking for the ids it
-        // does not have would make the source answer for messages nobody
-        // matched.
-        let end = ids.len().min(start + PAGE_SIZE as usize);
         let Some(list) = self.list.upgrade() else {
             return;
         };
         let generation = list.generation();
-        let future = source.rows(ids[start..end].to_vec());
-        glib::spawn_future_local(async move {
-            // POSTIO-GLIB-SAFE: `MessageSource::rows` is a trait method, and the trait's
-            // contract is that what it returns is pollable on the main
-            // context -- `postio-app` implements it by spawning the runtime
-            // work and handing back a channel receive. A `MailBackend` future
-            // must never be returned from it directly.
-            match future.await {
-                Ok(rows) => self.deliver_hits(generation, page, rows),
-                Err(message) => self.fail(generation, message),
+        match fetch {
+            Fetch::Scope(request) => {
+                let future = self.source.fetch(request);
+                glib::spawn_future_local(async move {
+                    // POSTIO-GLIB-SAFE: `MessageSource::fetch` is a trait method, and the trait's
+                    // contract is that what it returns is pollable on the main
+                    // context -- `postio-app` implements it by spawning the runtime
+                    // work and handing back a channel receive. A `MailBackend` future
+                    // must never be returned from it directly.
+                    match future.await {
+                        Ok(answer) => self.deliver(generation, page, answer),
+                        Err(message) => self.fail(generation, page, message),
+                    }
+                });
             }
-        });
+            Fetch::Hits { ids, .. } => {
+                let Some(source) = self.hits.borrow().clone() else {
+                    return;
+                };
+                let future = source.rows(ids);
+                glib::spawn_future_local(async move {
+                    // POSTIO-GLIB-SAFE: `ResultSource::rows` is a trait method, and the trait's
+                    // contract is that what it returns is pollable on the main
+                    // context -- `postio-app` implements it by spawning the runtime
+                    // work and handing back a channel receive. A `MailBackend` future
+                    // must never be returned from it directly.
+                    match future.await {
+                        Ok(rows) => self.deliver_hits(generation, page, rows),
+                        Err(message) => self.fail(generation, page, message),
+                    }
+                });
+            }
+        }
     }
 
     /// Hand over a page of hits.
@@ -317,46 +268,44 @@ impl Inner {
         list.deliver_page(generation, answer.total, page, answer.rows);
     }
 
-    fn fail(&self, generation: u64, message: String) {
+    /// A page that came back an error rather than rows.
+    ///
+    /// Two things have to happen and only one of them used to. The handlers
+    /// raise a banner, which tells a person; `abandon_page` lets the page be
+    /// asked for again, which is the only thing that can actually put the
+    /// rows back. `MessageList` asks once per page and never again until it
+    /// is answered or abandoned -- the rule that keeps a 100,000-message
+    /// folder cheap -- so a failure that answered neither left those fifty
+    /// rows as placeholders for the rest of the session.
+    ///
+    /// It does not retry here. The page becomes askable and the next repaint
+    /// that needs a row in it asks, which is the ordinary path and cannot
+    /// become a spin against a store that is failing every read.
+    fn fail(self: Rc<Self>, generation: u64, page: u32, message: String) {
         let Some(list) = self.list.upgrade() else {
             return;
         };
         if generation != list.generation() {
             return;
         }
+        // Ask again, up to a bound. Abandoning alone is not enough: the row
+        // objects already handed to the view for those positions are returned
+        // from `MessageList::row_at` without consulting the window, so nothing
+        // would ever ask a second time on its own. The page has to be pushed.
+        if self.paging.borrow_mut().retry(page) {
+            list.abandon_page(generation, page);
+            Rc::clone(&self).request(page);
+            // Quiet while it is still trying. A read that collided with a
+            // write and succeeds on the next ask is not something to tell
+            // somebody about -- the retry is the answer, and a banner that
+            // appears and is immediately wrong is worse than none.
+            return;
+        }
+
+        // Out of attempts: now it is worth saying, and it is said once.
         for handler in self.errors.borrow().iter() {
             handler(message.clone());
         }
-    }
-
-    /// What the list showing `self.scope` does with one mailbox-shaped
-    /// `arrival`.
-    ///
-    /// A result set has taken the list — however much it remembers which
-    /// folder to go back to — behaves like [`ListScope::Mailbox`] for
-    /// [`Arrival::MessagesChanged`] (the same rows in the same order;
-    /// refetch the pages holding them) and ignores the other three, the
-    /// scope underneath set aside until the result set is left: its
-    /// membership is decided by the query, not by delivery order or a
-    /// resync. Nothing has been opened yet answers [`Reaction::Ignore`] too.
-    fn reaction(
-        &self,
-        arrival: Arrival,
-        account: AccountId,
-        mailbox: Option<MailboxId>,
-    ) -> Reaction {
-        if self.results.borrow().is_some() {
-            return match arrival {
-                Arrival::MessagesChanged => Reaction::Refetch,
-                Arrival::NewMail | Arrival::MessagesRemoved | Arrival::MessageListChanged => {
-                    Reaction::Ignore
-                }
-            };
-        }
-        self.scope
-            .get()
-            .map(|scope| scope.reaction(arrival, account, mailbox))
-            .unwrap_or(Reaction::Ignore)
     }
 }
 
@@ -373,10 +322,9 @@ impl Feed {
         Feed(Rc::new(Inner {
             list: list.downgrade(),
             source,
-            scope: Cell::new(None),
+            paging: RefCell::new(Paging::default()),
             total: Cell::new(0),
             mailbox_total: Cell::new(0),
-            results: RefCell::new(None),
             hits: RefCell::new(None),
             errors: RefCell::new(Vec::new()),
             opened: RefCell::new(Vec::new()),
@@ -392,12 +340,11 @@ impl Feed {
     /// wait, the query is the bug.
     pub fn open(&self, scope: ListScope) {
         let inner = &self.0;
-        inner.scope.set(Some(scope));
-        inner.total.set(0);
-        inner.mailbox_total.set(0);
         // Opening a folder is leaving the results, if there were any: the
         // sidebar is a way out of a search as much as `Esc` is.
-        *inner.results.borrow_mut() = None;
+        inner.paging.borrow_mut().open(scope);
+        inner.total.set(0);
+        inner.mailbox_total.set(0);
         if let Some(list) = inner.list.upgrade() {
             list.set_source(Rc::new(Source(inner.clone())));
         }
@@ -428,12 +375,12 @@ impl Feed {
     /// and a role-scoped query is not a mailbox an action can be aimed at.
     /// See [`ListScope::mailbox`].
     pub fn mailbox(&self) -> Option<MailboxId> {
-        self.0.scope.get().and_then(ListScope::mailbox)
+        self.0.paging.borrow().mailbox()
     }
 
     /// What the list is showing, folder or query.
     pub fn scope(&self) -> Option<ListScope> {
-        self.0.scope.get()
+        self.0.paging.borrow().scope()
     }
 
     /// Where a result set's rows come from.
@@ -448,7 +395,7 @@ impl Feed {
 
     /// Whether the list is showing search hits rather than a mailbox.
     pub fn showing_results(&self) -> bool {
-        self.0.results.borrow().is_some()
+        self.0.paging.borrow().showing_results()
     }
 
     /// Called when a result set takes the list, with how many hits it holds.
@@ -471,8 +418,7 @@ impl Feed {
         if inner.hits.borrow().is_none() {
             return;
         }
-        let total = messages.len() as u32;
-        *inner.results.borrow_mut() = Some(Rc::new(messages));
+        let total = inner.paging.borrow_mut().show_results(messages);
         inner.total.set(total);
         if let Some(list) = inner.list.upgrade() {
             list.set_source(Rc::new(Source(inner.clone())));
@@ -495,10 +441,9 @@ impl Feed {
     /// scroll offset without waiting for a read.
     pub fn close_results(&self) -> bool {
         let inner = &self.0;
-        if inner.results.borrow().is_none() {
+        if !inner.paging.borrow_mut().close_results() {
             return false;
         }
-        *inner.results.borrow_mut() = None;
         inner.total.set(inner.mailbox_total.get());
         if let Some(list) = inner.list.upgrade() {
             list.set_source(Rc::new(Source(inner.clone())));
@@ -514,73 +459,34 @@ impl Feed {
 
     /// Apply one runtime event to the list.
     ///
-    /// Everything it does not recognise it ignores, deliberately: the event
-    /// stream carries the whole application, and a list that reacted to all
-    /// of it would repaint on every keystroke in the composer. What each
-    /// scope does with the four that remain is [`ListScope::reaction`]'s
-    /// table, in the module docs above.
+    /// What each scope does with an event is [`Paging::plan`]'s table; this
+    /// carries the answer to the model. A refetch re-reads only the pages
+    /// holding the rows — `MessageList::deliver` replaces the data inside
+    /// the existing `GObject`, so nothing above rediscovers anything — and a
+    /// reload drops everything cached and asks again.
     pub fn apply(&self, event: &Event) {
         let inner = &self.0;
         let Some(list) = inner.list.upgrade() else {
             return;
         };
-        match event {
-            Event::NewMail {
-                account,
-                mailbox,
-                messages,
-                ..
-            } => {
-                if inner.reaction(Arrival::NewMail, *account, Some(*mailbox))
-                    == Reaction::InsertAtTop
-                {
-                    list.inserted_at_top(messages.len() as u32);
+        // The hits are the list now. Handled here rather than by whoever
+        // ran the search because this is where the list's source lives,
+        // and because it makes every route to a search -- the box, a
+        // saved query, a command -- land in one place.
+        if let Event::SearchResults { messages, .. } = event {
+            self.show_results(messages.clone());
+            return;
+        }
+        let plan = inner.paging.borrow().plan(event);
+        match plan {
+            Plan::Ignore => {}
+            Plan::InsertAtTop(count) => list.inserted_at_top(count),
+            Plan::Refetch(messages) => {
+                for page in list.pages_holding(messages) {
+                    inner.clone().request(page);
                 }
             }
-            // Flags, read state, labels, a snooze: the same rows in the same
-            // order for a mailbox, so only the pages holding them are
-            // refetched -- `MessageList::deliver` replaces the data inside
-            // the existing `GObject`, so nothing above rediscovers anything.
-            // For `Flagged`/`Snoozed` the flag *is* the membership predicate,
-            // so `ListScope::reaction` answers `Reload` there instead: a page
-            // refetch cannot express a row leaving.
-            Event::MessagesChanged { account, messages } => {
-                match inner.reaction(Arrival::MessagesChanged, *account, None) {
-                    Reaction::Refetch => {
-                        for page in list.pages_holding(messages) {
-                            inner.clone().request(page);
-                        }
-                    }
-                    Reaction::Reload => self.reload(),
-                    Reaction::Ignore | Reaction::InsertAtTop => {}
-                }
-            }
-            // The count moved, and so did every position after the gap.
-            Event::MessagesRemoved {
-                account, mailbox, ..
-            } => {
-                if inner.reaction(Arrival::MessagesRemoved, *account, Some(*mailbox))
-                    == Reaction::Reload
-                {
-                    self.reload();
-                }
-            }
-            // The order itself moved: a resync, a re-sort, a filter change.
-            Event::MessageListChanged { account, mailbox } => {
-                if inner.reaction(Arrival::MessageListChanged, *account, Some(*mailbox))
-                    == Reaction::Reload
-                {
-                    self.reload();
-                }
-            }
-            // The hits are the list now. Handled here rather than by whoever
-            // ran the search because this is where the list's source lives,
-            // and because it makes every route to a search -- the box, a
-            // saved query, a command -- land in one place.
-            Event::SearchResults { messages, .. } => {
-                self.show_results(messages.clone());
-            }
-            _ => {}
+            Plan::Reload => self.reload(),
         }
     }
 
@@ -614,7 +520,27 @@ pub type MailboxFuture = Pin<Box<dyn Future<Output = Result<Vec<Mailbox>, String
 pub trait MailboxSource {
     /// Read `account`'s folders, with their counts as of now.
     fn mailboxes(&self, account: AccountId) -> MailboxFuture;
+
+    /// What the sidebar draws beside Drafts and the Outbox.
+    ///
+    /// Separate from [`mailboxes`](Self::mailboxes) because the Outbox is not
+    /// one: it has no row to carry a count, and the Drafts badge needs a
+    /// number the cached column deliberately does not hold (spec 003 T066).
+    ///
+    /// **Defaults to `None`, meaning "I do not know"** — not to zero.
+    ///
+    /// The difference matters. Zero is an answer: it says this account has no
+    /// drafts, and the sidebar acts on it by replacing what the Drafts row
+    /// shows. A fixture that has never heard of drafts is not saying that, and
+    /// treating its silence as zero empties the badge of a folder with mail in
+    /// it. `None` leaves the cached counts alone.
+    fn draft_counts(&self, _account: AccountId) -> DraftCountsFuture {
+        Box::pin(async { Ok(None) })
+    }
 }
+
+/// The answer to a request for an account's draft counts.
+pub type DraftCountsFuture = Pin<Box<dyn Future<Output = Result<Option<ViewCounts>, String>>>>;
 
 /// The status line, folded out of the runtime's events.
 ///
@@ -861,9 +787,23 @@ struct FolderInner {
     /// field rather than `account` becoming a `Vec` — a store with one
     /// account must not start paying for a loop it has no use for.
     sections: RefCell<Vec<AccountId>>,
-    /// The folders as last read — including the synthetic ones — so picking
-    /// one can name it without another round trip.
+    /// The folders as last read — including the view rows — so picking one
+    /// can name it without another round trip.
     mailboxes: RefCell<Vec<Mailbox>>,
+    /// What the sidebar draws beside Drafts and the Outbox, as last read.
+    ///
+    /// Held beside the folders rather than derived from them: the Outbox is
+    /// not a mailbox, so no folder's cached count adds up to it, and what
+    /// Drafts should show excludes what is on its way, which `total_count`
+    /// deliberately does not. Read in the same pass as the folders so the
+    /// sidebar redraws once, with both.
+    ///
+    /// `None` until a source has actually answered. Not `ViewCounts::default()`:
+    /// the trait's default answers "nothing in flight", which is true for a
+    /// source with no drafts and is *not* a true answer for how many Drafts
+    /// holds -- and overwriting a real cached total with a default zero empties
+    /// the badge of a folder that has mail in it.
+    drafts: Cell<Option<ViewCounts>>,
     trackers: RefCell<Trackers>,
     generation: Cell<u64>,
     /// Whether a reload is already queued for this turn of the main loop.
@@ -897,6 +837,14 @@ impl FolderInner {
             .iter()
             .map(|account| self.source.mailboxes(*account))
             .collect();
+        // Built here, beside the folder reads, and awaited below for the same
+        // reason they are: the future has to be made before the main context
+        // starts polling, or `check-runtime-crossings` is right that this is a
+        // runtime-dependent await on the glib loop.
+        let counting = self
+            .account
+            .get()
+            .map(|account| self.source.draft_counts(account));
         glib::spawn_future_local(async move {
             let mut all = Vec::new();
             for future in futures {
@@ -913,6 +861,19 @@ impl FolderInner {
                         }
                         return;
                     }
+                }
+            }
+            // Alongside the folders, in the same pass: the sidebar redraws
+            // once with both, rather than drawing an Outbox-less column and
+            // then correcting itself. A failure here is not worth abandoning
+            // the folder list over -- the sidebar draws, without an Outbox
+            // row, which is what it did before this existed.
+            if let Some(counting) = counting {
+                // POSTIO-GLIB-SAFE: a channel receive, like the folder reads
+                // above -- `MailboxSource::draft_counts` returns something
+                // pollable on the main context by the same contract.
+                if let Ok(Some(counts)) = counting.await {
+                    self.drafts.set(Some(counts));
                 }
             }
             self.arrived(generation, all);
@@ -942,15 +903,35 @@ impl FolderInner {
             }
             moved
         };
-        // The smart folder goes in here, before anything else sees the list,
-        // so the sidebar keeps drawing exactly what it is handed and learns
-        // nothing about folders the server does not have. The next one — a
-        // saved search — joins the same way.
+        // The view rows go in here, before anything else sees the list, so
+        // the sidebar keeps drawing exactly what it is handed and learns
+        // nothing about folders the server does not have. *Which* rows and
+        // what they hold is `postio_ui::sidebar`'s answer, not this file's —
+        // that is what makes the macOS sidebar draw the same ones.
         if let Some(account) = self.account.get() {
-            let flagged = mailboxes.iter().map(|folder| folder.counts.flagged).sum();
-            let snoozed = mailboxes.iter().map(|folder| folder.counts.snoozed).sum();
-            mailboxes.push(flagged_folder(account, flagged));
-            mailboxes.push(snoozed_folder(account, snoozed));
+            let counts = postio_ui::sidebar::ViewCounts {
+                flagged: mailboxes.iter().map(|folder| folder.counts.flagged).sum(),
+                snoozed: mailboxes.iter().map(|folder| folder.counts.snoozed).sum(),
+                // Summed over the account's folders like the two above, but
+                // asked for rather than derived: the Outbox is not a mailbox
+                // and has no cached column to sum.
+                outbox: self.drafts.get().map_or(0, |counts| counts.outbox),
+                drafts: 0,
+                attention: 0,
+            };
+            // The Drafts row's two numbers, which no cached column holds:
+            // what Drafts shows excludes what is on its way, and nothing on a
+            // mailbox row counts what has stopped and is waiting for somebody.
+            if let Some(drafts) = self.drafts.get() {
+                for mailbox in mailboxes
+                    .iter_mut()
+                    .filter(|m| m.role == MailboxRole::Drafts)
+                {
+                    mailbox.counts.total = drafts.drafts;
+                    mailbox.counts.attention = drafts.attention;
+                }
+            }
+            mailboxes.extend(postio_ui::sidebar::view_rows(account, &mailboxes, counts));
         }
         self.sidebar.set_mailboxes(&mailboxes);
         *self.mailboxes.borrow_mut() = mailboxes;
@@ -975,61 +956,6 @@ impl FolderInner {
     }
 }
 
-/// The id the synthetic "Flagged" row is keyed by in the sidebar.
-///
-/// # Why a sentinel is safe here, and where it must not go
-///
-/// The sidebar keys its rows by [`MailboxId`], so a folder it draws needs one
-/// even when nothing in the database corresponds to it. Negative is
-/// unambiguous: SQLite rowids start at 1 and `MailboxId::UNASSIGNED` is 0, so
-/// this can never collide with a real folder.
-///
-/// It is contained to exactly one hop. The sidebar hands it back on a click,
-/// [`Folders::scope_of`] turns it into a [`ListScope`], and from there the
-/// list, the store and app state all deal in scopes. It must never reach a
-/// query — `MessageSet::InMailbox { mailbox: -1 }` matches nothing, silently
-/// — nor `Command::Move`, whose destination is a foreign key.
-const FLAGGED_ROW: MailboxId = MailboxId::new(-1);
-
-/// The sidebar's "Flagged" row: a query wearing a folder's clothes.
-///
-/// Not a mailbox the server has, and deliberately not one the store has
-/// either. `path` is empty because there is nothing to `SELECT`, and
-/// `last_synced_at` stays `None` because a query is never out of date.
-fn flagged_folder(account: AccountId, flagged: u32) -> Mailbox {
-    let mut folder = Mailbox::new(account, "", None);
-    folder.id = FLAGGED_ROW;
-    folder.role = postio_model::mailbox::MailboxRole::Flagged;
-    folder.counts = postio_model::mailbox::MailboxCounts {
-        total: flagged,
-        unread: 0,
-        flagged,
-        snoozed: 0,
-    };
-    folder
-}
-
-/// The id the synthetic "Snoozed" row is keyed by — see [`FLAGGED_ROW`] for
-/// why a sentinel is safe and where it must not go. A second, distinct
-/// negative value: the two synthetic rows must never collide with each
-/// other any more than with a real folder.
-const SNOOZED_ROW: MailboxId = MailboxId::new(-2);
-
-/// The sidebar's "Snoozed" row — [`flagged_folder`]'s own shape, for the
-/// other view every ordinary scope hides its rows from.
-fn snoozed_folder(account: AccountId, snoozed: u32) -> Mailbox {
-    let mut folder = Mailbox::new(account, "", None);
-    folder.id = SNOOZED_ROW;
-    folder.role = postio_model::mailbox::MailboxRole::Snoozed;
-    folder.counts = postio_model::mailbox::MailboxCounts {
-        total: snoozed,
-        unread: 0,
-        flagged: 0,
-        snoozed,
-    };
-    folder
-}
-
 /// The sidebar, fed.
 ///
 /// Owns the account's folders and the status line, and keeps both in step
@@ -1046,6 +972,7 @@ impl Folders {
             account: Cell::new(None),
             sections: RefCell::new(Vec::new()),
             mailboxes: RefCell::new(Vec::new()),
+            drafts: Cell::new(None),
             trackers: RefCell::new(Trackers::default()),
             generation: Cell::new(0),
             queued: Cell::new(false),
@@ -1119,13 +1046,24 @@ impl Folders {
     ///
     /// The one place a sidebar row becomes a query. Everything downstream —
     /// the list, the store, app state — deals in [`ListScope`], so this is
-    /// where [`FLAGGED_ROW`] stops being an id and starts being what it
-    /// actually meant.
-    pub fn scope_of(&self, id: MailboxId) -> ListScope {
-        match self.0.account.get() {
-            Some(account) if id == FLAGGED_ROW => ListScope::Flagged(account),
-            Some(account) if id == SNOOZED_ROW => ListScope::Snoozed(account),
-            _ => ListScope::Mailbox(id),
+    /// where a [`SidebarChoice::View`] stops being a row and starts being
+    /// what it actually meant.
+    pub fn scope_of(&self, choice: SidebarChoice) -> ListScope {
+        match (choice, self.0.account.get()) {
+            (SidebarChoice::Folder(id), _) => ListScope::Mailbox(id),
+            (SidebarChoice::View(role), Some(account)) => match role {
+                MailboxRole::Flagged => ListScope::Flagged(account),
+                MailboxRole::Snoozed => ListScope::Snoozed(account),
+                MailboxRole::Outbox => ListScope::Outbox(account),
+                // No other role reaches here: `view_rows` builds exactly those
+                // three, and a row with an id is a `Folder` above. The account
+                // is the one safe answer -- a superset of what was asked for,
+                // never a scope that silently matches nothing and reads as an
+                // empty folder.
+                _ => ListScope::Account(account),
+            },
+            // A view with no account in scope: nothing to narrow to.
+            (SidebarChoice::View(_), None) => ListScope::Unified,
         }
     }
 

@@ -25,6 +25,8 @@ pub enum MailboxRoleFfi {
     Flagged,
     /// The snoozed view.
     Snoozed,
+    /// The outbox view: drafts whose send is under way.
+    Outbox,
     /// An ordinary user folder.
     Regular,
 }
@@ -40,6 +42,7 @@ impl From<MailboxRole> for MailboxRoleFfi {
             MailboxRole::Junk => MailboxRoleFfi::Junk,
             MailboxRole::Flagged => MailboxRoleFfi::Flagged,
             MailboxRole::Snoozed => MailboxRoleFfi::Snoozed,
+            MailboxRole::Outbox => MailboxRoleFfi::Outbox,
             MailboxRole::Regular => MailboxRoleFfi::Regular,
         }
     }
@@ -85,6 +88,17 @@ pub struct MailboxFfi {
     /// folder under its server name — which is #501, already fixed on the
     /// GTK side and reproduced on macOS until #1155.
     pub special: bool,
+    /// How many messages in this mailbox carry `\Flagged`.
+    ///
+    /// Here because the sidebar's badge rules need it: a Flagged row shows
+    /// this rather than `unread`, and without the field on the wire a macOS
+    /// `count_for` could not reproduce what GTK draws even once the row
+    /// itself crossed (spec 003, FR-013).
+    pub flagged: u32,
+    /// How many are snoozed, for the Snoozed row's badge. Snoozed messages
+    /// are counted as away rather than present, so this is not a subset of
+    /// `total`.
+    pub snoozed: u32,
 }
 
 impl From<Mailbox> for MailboxFfi {
@@ -103,6 +117,8 @@ impl From<Mailbox> for MailboxFfi {
             selectable: mailbox.selectable,
             last_synced_at: mailbox.last_synced_at.map(|at| at.timestamp()),
             special: false,
+            flagged: mailbox.counts.flagged,
+            snoozed: mailbox.counts.snoozed,
         }
     }
 }

@@ -27,7 +27,6 @@ use gtk::gdk;
 use postio_gtk::window::Window;
 use postio_gtk::{fonts, style};
 use postio_model::MessageBody;
-use webkit6::prelude::WebViewExt;
 
 fn press(window: &Window, key: gdk::Key) -> bool {
     window.handle_key(key, gdk::ModifierType::empty()) == glib::Propagation::Stop
@@ -48,11 +47,22 @@ fn body() -> MessageBody {
     }
 }
 
-/// The fragment `reader.view().uri()` currently carries, or `None` for a
-/// bare base URI with nothing after it.
-fn fragment(window: &Window) -> Option<String> {
-    let uri = window.reader().view().uri()?;
-    uri.split_once('#').map(|(_, frag)| frag.to_owned())
+/// Which marker the reader believes it is on.
+///
+/// **Was `view().uri()`'s fragment, and could not stay that way.** Scrolling
+/// used to be `load_uri("postio-reader:///#pos-N")`, so the URI *was* the
+/// bookkeeping; #1433 made it a scripted `scrollIntoView`, because a
+/// fragment `load_uri` is a same-document scroll only while the URI still
+/// matches the base -- and after `Reader::warm` empties it, the same call
+/// became a real navigation to a scheme with no handler and put "The URL
+/// can't be shown" in front of a reader.
+///
+/// So the URI no longer moves, deliberately, and a test that watched it hung
+/// for two minutes waiting. What this file owns is unchanged and is asserted
+/// here directly: the right marker for the right key, clamped, and reset when
+/// a new message replaces the old one.
+fn marker(window: &Window) -> u32 {
+    window.reader().page_for_test()
 }
 
 pub fn page_down_and_page_up_move_a_marker_at_a_time() {
@@ -82,8 +92,8 @@ pub fn page_down_and_page_up_move_a_marker_at_a_time() {
         "a message should be open before paging it"
     );
     assert_eq!(
-        fragment(&window),
-        None,
+        marker(&window),
+        0,
         "a freshly rendered message starts with no fragment -- the top"
     );
 
@@ -96,12 +106,10 @@ pub fn page_down_and_page_up_move_a_marker_at_a_time() {
     // The fragment navigation is asynchronous; wait for it rather
     // than trusting the turn count above (#851, and this file again
     // on #187).
-    crate::settle_until("the reader to reach pos-1", || {
-        fragment(&window).as_deref() == Some("pos-1")
-    });
+    crate::settle_until("the reader to reach pos-1", || marker(&window) == 1);
     assert_eq!(
-        fragment(&window).as_deref(),
-        Some("pos-1"),
+        marker(&window),
+        1,
         "one Page_Down should land on the first marker"
     );
 
@@ -110,10 +118,8 @@ pub fn page_down_and_page_up_move_a_marker_at_a_time() {
     // The fragment navigation is asynchronous; wait for it rather
     // than trusting the turn count above (#851, and this file again
     // on #187).
-    crate::settle_until("the reader to reach pos-2", || {
-        fragment(&window).as_deref() == Some("pos-2")
-    });
-    assert_eq!(fragment(&window).as_deref(), Some("pos-2"));
+    crate::settle_until("the reader to reach pos-2", || marker(&window) == 2);
+    assert_eq!(marker(&window), 2);
 
     // -- Page_Up walks it back ------------------------------------------
     assert!(
@@ -124,10 +130,8 @@ pub fn page_down_and_page_up_move_a_marker_at_a_time() {
     // The fragment navigation is asynchronous; wait for it rather
     // than trusting the turn count above (#851, and this file again
     // on #187).
-    crate::settle_until("the reader to reach pos-1", || {
-        fragment(&window).as_deref() == Some("pos-1")
-    });
-    assert_eq!(fragment(&window).as_deref(), Some("pos-1"));
+    crate::settle_until("the reader to reach pos-1", || marker(&window) == 1);
+    assert_eq!(marker(&window), 1);
 
     // -- the space/shift+space alternates do the same thing -----------------
     assert!(press(&window, gdk::Key::space));
@@ -135,12 +139,10 @@ pub fn page_down_and_page_up_move_a_marker_at_a_time() {
     // The fragment navigation is asynchronous; wait for it rather
     // than trusting the turn count above (#851, and this file again
     // on #187).
-    crate::settle_until("the reader to reach pos-2", || {
-        fragment(&window).as_deref() == Some("pos-2")
-    });
+    crate::settle_until("the reader to reach pos-2", || marker(&window) == 2);
     assert_eq!(
-        fragment(&window).as_deref(),
-        Some("pos-2"),
+        marker(&window),
+        2,
         "space is the alternate binding for scrolling down"
     );
     assert!(press_shift(&window, gdk::Key::space));
@@ -148,12 +150,10 @@ pub fn page_down_and_page_up_move_a_marker_at_a_time() {
     // The fragment navigation is asynchronous; wait for it rather
     // than trusting the turn count above (#851, and this file again
     // on #187).
-    crate::settle_until("the reader to reach pos-1", || {
-        fragment(&window).as_deref() == Some("pos-1")
-    });
+    crate::settle_until("the reader to reach pos-1", || marker(&window) == 1);
     assert_eq!(
-        fragment(&window).as_deref(),
-        Some("pos-1"),
+        marker(&window),
+        1,
         "shift+space is the alternate binding for scrolling up"
     );
 
@@ -163,10 +163,8 @@ pub fn page_down_and_page_up_move_a_marker_at_a_time() {
     // The fragment navigation is asynchronous; wait for it rather
     // than trusting the turn count above (#851, and this file again
     // on #187).
-    crate::settle_until("the reader to reach pos-0", || {
-        fragment(&window).as_deref() == Some("pos-0")
-    });
-    assert_eq!(fragment(&window).as_deref(), Some("pos-0"));
+    crate::settle_until("the reader to reach pos-0", || marker(&window) == 0);
+    assert_eq!(marker(&window), 0);
     assert!(
         press(&window, gdk::Key::Page_Up),
         "still claimed at the top -- it is this command's key either way"
@@ -175,12 +173,10 @@ pub fn page_down_and_page_up_move_a_marker_at_a_time() {
     // The fragment navigation is asynchronous; wait for it rather
     // than trusting the turn count above (#851, and this file again
     // on #187).
-    crate::settle_until("the reader to reach pos-0", || {
-        fragment(&window).as_deref() == Some("pos-0")
-    });
+    crate::settle_until("the reader to reach pos-0", || marker(&window) == 0);
     assert_eq!(
-        fragment(&window).as_deref(),
-        Some("pos-0"),
+        marker(&window),
+        0,
         "Page_Up at the top stays at the top rather than going negative"
     );
 
@@ -213,12 +209,10 @@ pub fn a_new_message_resets_the_scroll_position() {
     // The fragment navigation is asynchronous; wait for it rather
     // than trusting the turn count above (#851, and this file again
     // on #187).
-    crate::settle_until("the reader to reach pos-2", || {
-        fragment(&window).as_deref() == Some("pos-2")
-    });
+    crate::settle_until("the reader to reach pos-2", || marker(&window) == 2);
     assert_eq!(
-        fragment(&window).as_deref(),
-        Some("pos-2"),
+        marker(&window),
+        2,
         "two presses down before the message changes"
     );
 
@@ -228,8 +222,8 @@ pub fn a_new_message_resets_the_scroll_position() {
     window.show_message(&body(), Some("grace@example.com"));
     pump();
     assert_eq!(
-        fragment(&window),
-        None,
+        marker(&window),
+        0,
         "the new message starts with no fragment, same as any fresh render"
     );
 
@@ -241,11 +235,11 @@ pub fn a_new_message_resets_the_scroll_position() {
     // the thing being asserted removes the guess -- and a timeout now says
     // what it was waiting for instead of failing an equality (#851).
     crate::settle_until("the new message's first page marker", || {
-        fragment(&window).as_deref() == Some("pos-1")
+        marker(&window) == 1
     });
     assert_eq!(
-        fragment(&window).as_deref(),
-        Some("pos-1"),
+        marker(&window),
+        1,
         "paging the new message starts counting from zero again, not from \
          wherever the last one left off"
     );
@@ -272,8 +266,8 @@ pub fn paging_with_nothing_open_does_nothing() {
     press(&window, gdk::Key::Page_Down);
     pump();
     assert_eq!(
-        fragment(&window),
-        None,
+        marker(&window),
+        0,
         "nothing is open, so paging must not have navigated anywhere"
     );
 }

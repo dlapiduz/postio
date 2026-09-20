@@ -78,7 +78,7 @@ impl MessageSource for Sources {
         };
         // Which window answers is the store's decision, not this one's:
         // folders thread, query views list messages, and Drafts is a folder
-        // that does not (ADR 0015, and `SqliteStore::lists_conversations`).
+        // that does not (ADR 0015, and `LocalStore::lists_conversations`).
         // Asking here would put that line in two places, and the list model,
         // the row widget and the verbs all work from what comes back rather
         // than from a mode any of them keeps.
@@ -156,6 +156,35 @@ impl MailboxSource for Sources {
             }
         })
     }
+
+    fn draft_counts(&self, account: AccountId) -> postio_gtk::feed::DraftCountsFuture {
+        let answer =
+            self.ask(move |store| Box::pin(async move { store.draft_counts(account).await }));
+        Box::pin(async move {
+            match answer.recv().await {
+                Ok(Ok(counts)) => {
+                    // Counts and outcomes, never content: how many are on
+                    // their way says nothing about what any of them says.
+                    tracing::debug!(
+                        outbox = counts.outbox,
+                        attention = counts.attention,
+                        "draft counts read"
+                    );
+                    Ok(Some(postio_ui::sidebar::ViewCounts {
+                        // Filled by `Folders::arrived` from the account's own
+                        // folders; this answer is only about drafts.
+                        flagged: 0,
+                        snoozed: 0,
+                        outbox: counts.outbox,
+                        drafts: counts.drafts,
+                        attention: counts.attention,
+                    }))
+                }
+                Ok(Err(reason)) => Err(reason),
+                Err(_) => Err("the runtime stopped before the draft counts arrived".to_string()),
+            }
+        })
+    }
 }
 
 /// What a page read was asked for, for the log line above.
@@ -170,6 +199,7 @@ fn scope_name(scope: ListScope) -> String {
         ListScope::Unified => "unified".to_owned(),
         ListScope::Flagged(account) => format!("flagged in account {}", account.get()),
         ListScope::Snoozed(account) => format!("snoozed in account {}", account.get()),
+        ListScope::Outbox(account) => format!("outbox in account {}", account.get()),
         ListScope::Thread(id) => format!("thread {}", id.get()),
     }
 }
@@ -199,7 +229,8 @@ fn thread_row(summary: postio_runtime::store::ThreadSummary) -> Row {
         seen,
         flagged: summary.flagged,
         answered: summary.representative.answered,
-        draft: summary.representative.draft,
+        send_state: summary.representative.send_state,
+        send_at: summary.representative.send_at,
         has_attachments: summary.has_attachments,
         thread_count: summary.message_count,
         participants: summary.participants,
@@ -221,7 +252,8 @@ fn row(summary: postio_runtime::store::MessageSummary) -> Row {
         seen: summary.seen,
         flagged: summary.flagged,
         answered: summary.answered,
-        draft: summary.draft,
+        send_state: summary.send_state,
+        send_at: summary.send_at,
         has_attachments: summary.has_attachments,
         thread_count: summary.thread_count,
         participants: Vec::new(),

@@ -41,6 +41,7 @@
 //!   speed does not stutter on a page boundary.
 
 use std::cell::{Cell, RefCell};
+use std::collections::HashMap;
 use std::rc::Rc;
 
 use chrono::{DateTime, Utc};
@@ -83,8 +84,15 @@ pub struct Row {
     pub flagged: bool,
     /// Whether it has been replied to.
     pub answered: bool,
-    /// Whether it is a draft.
-    pub draft: bool,
+    /// Whether it is a draft, and which state its send is in.
+    ///
+    /// The renderer needs the state, not the fact: a queued send and a failed
+    /// one are both "a draft", and drawing them the same is the defect the
+    /// Outbox exists to fix (#1491).
+    pub send_state: Option<postio_model::DraftState>,
+    /// When a scheduled send is due, so the row can say *when* rather than
+    /// just that it is waiting (spec 003 FR-007).
+    pub send_at: Option<chrono::DateTime<chrono::Utc>>,
     /// Whether it has an attachment, for the paperclip.
     pub has_attachments: bool,
     /// How many messages are in its thread; the badge appears above one.
@@ -143,7 +151,18 @@ mod row_imp {
         type Type = super::MessageRow;
     }
 
-    impl ObjectImpl for MessageRow {}
+    impl ObjectImpl for MessageRow {
+        fn signals() -> &'static [glib::subclass::Signal] {
+            static SIGNALS: std::sync::OnceLock<Vec<glib::subclass::Signal>> =
+                std::sync::OnceLock::new();
+            SIGNALS.get_or_init(|| {
+                // What this row says has changed, while the row itself stayed
+                // where it is. A bound view re-reads and redraws; the model
+                // stays quiet. See `MessageRow::set_row`.
+                vec![glib::subclass::Signal::builder("changed").build()]
+            })
+        }
+    }
 }
 
 glib::wrapper! {
@@ -189,9 +208,39 @@ impl MessageRow {
     /// Replace the data in place, keeping the object's identity.
     ///
     /// This is what makes a flag change cheap: the same `GObject` stays where
-    /// it is, so nothing above has to rediscover which row the selection is on.
+    /// it is, so nothing above has to rediscover which row the selection is on
+    /// — and, since #1216, nothing above has to be told through the *model*
+    /// either. A row emits `changed` for itself, which a bound view answers by
+    /// redrawing one row. Saying it through `items_changed` instead is how
+    /// reading one message came to repaint the whole visible list: that signal
+    /// can only mean "these positions answer with different rows now", and
+    /// `GtkListView` answers it by rebuilding every widget in range.
+    ///
+    /// Quiet when nothing actually moved, so a page redelivered unchanged —
+    /// which a resync does constantly — costs no redraw at all.
     pub fn set_row(&self, row: Row) {
-        *self.imp().row.borrow_mut() = Some(row);
+        {
+            let mut held = self.imp().row.borrow_mut();
+            if held.as_ref() == Some(&row) {
+                return;
+            }
+            *held = Some(row);
+        }
+        self.emit_by_name::<()>("changed", &[]);
+    }
+
+    /// Call `on_change` whenever this row's contents are replaced.
+    ///
+    /// The handler id is the caller's to disconnect: a `GtkListItem` is
+    /// recycled across many rows, and a connection left behind would redraw a
+    /// widget for a message it is no longer showing.
+    pub fn connect_changed(&self, on_change: impl Fn(&Self) + 'static) -> glib::SignalHandlerId {
+        self.connect_local("changed", false, move |values| {
+            if let Some(row) = values.first().and_then(|value| value.get::<Self>().ok()) {
+                on_change(&row);
+            }
+            None
+        })
     }
 }
 
@@ -240,6 +289,26 @@ mod imp {
         /// `items_changed` while this is set waits for the next turn of the
         /// main loop instead.
         pub reading: Cell<bool>,
+        /// The `MessageRow` each position answers with, for as long as that
+        /// position means the same thing.
+        ///
+        /// A `GListModel` says "this position holds a different row now" with
+        /// `items_changed`, and `GtkListView` answers it by building a widget
+        /// for every item in range — measured, on a list whose viewport holds
+        /// ten rows: a page delivery of fifty built fifty (#1216). A page
+        /// landing on positions that already exist is not that change. It is
+        /// the same positions, holding the same messages, saying something
+        /// they could not say yet, and the way to say *that* is to fill in the
+        /// object the view is already holding and let it announce itself.
+        ///
+        /// Which only works if there is one object per position to fill. Handing
+        /// out a fresh placeholder per `item()` call left the view holding
+        /// objects the model had no way to reach.
+        ///
+        /// Dropped when a position stops meaning what it did — a new scope, an
+        /// insertion at the top, an eviction — because an object kept across
+        /// that would answer for the wrong message.
+        pub handed: RefCell<HashMap<u32, super::MessageRow>>,
     }
 
     #[glib::object_subclass]
@@ -249,7 +318,22 @@ mod imp {
         type Interfaces = (gio::ListModel,);
     }
 
-    impl ObjectImpl for MessageList {}
+    impl ObjectImpl for MessageList {
+        fn signals() -> &'static [glib::subclass::Signal] {
+            static SIGNALS: std::sync::OnceLock<Vec<glib::subclass::Signal>> =
+                std::sync::OnceLock::new();
+            SIGNALS.get_or_init(|| {
+                // Rows that already existed now have contents. Not
+                // `items_changed`: nothing moved, nothing was replaced, and
+                // saying it that way costs a rebuilt widget per row in range.
+                // What it is for is everyone who is not a `GtkListView` --
+                // the reading pane following the cursor onto a row that has
+                // just become real, and a seek waiting for the page carrying
+                // the message it is looking for.
+                vec![glib::subclass::Signal::builder("filled").build()]
+            })
+        }
+    }
 
     impl ListModelImpl for MessageList {
         fn item_type(&self) -> glib::Type {
@@ -273,6 +357,20 @@ mod imp {
     }
 }
 
+/// How many `items_changed` this process has emitted from a message list.
+///
+/// A diagnostic in the counting idiom `postio_storage::test_support::counting`
+/// uses for SQLite: a number that is the same on every machine, where the
+/// duration it causes is not. `GtkListView` answers each emission by
+/// re-examining the model and rebuilding the widgets it tracks, so what a
+/// navigation costs is roughly linear in this — which is why it is worth
+/// counting rather than timing (#1216).
+pub fn emissions() -> u64 {
+    EMISSIONS.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+static EMISSIONS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
 glib::wrapper! {
     /// A `GListModel` over a mailbox, windowed rather than loaded.
     pub struct MessageList(ObjectSubclass<imp::MessageList>)
@@ -286,6 +384,22 @@ impl Default for MessageList {
 }
 
 impl MessageList {
+    /// Call `on_filled` when a delivery gives contents to rows that already
+    /// existed.
+    ///
+    /// For everyone who is not a `GtkListView`: the reading pane follows the
+    /// cursor onto a row that has just become real, and a seek waits for the
+    /// page carrying the message it wants. Both used to ride on
+    /// `items_changed`, which a page delivery no longer emits (#1216).
+    pub fn connect_filled(&self, on_filled: impl Fn(&Self) + 'static) -> glib::SignalHandlerId {
+        self.connect_local("filled", false, move |values| {
+            if let Some(list) = values.first().and_then(|value| value.get::<Self>().ok()) {
+                on_filled(&list);
+            }
+            None
+        })
+    }
+
     /// An empty list with no source.
     pub fn new() -> Self {
         Self::default()
@@ -375,7 +489,10 @@ impl MessageList {
 
         *self.imp().source.borrow_mut() = Some(source);
         self.imp().window.borrow_mut().reset(total);
+        // Every position now stands for a different mailbox's mail.
+        self.imp().handed.borrow_mut().clear();
 
+        EMISSIONS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         self.items_changed(0, removed, total);
     }
 
@@ -403,16 +520,61 @@ impl MessageList {
             self.hold(move |list| list.deliver_for(generation, page, rows));
             return;
         }
+        // Fill the objects the view is already holding for these positions.
+        // Collected before any of them is told, because a handler is free to
+        // ask the model for a row and `row_at` takes this borrow mutably.
+        let start = page * postio_ui::list::PAGE_SIZE;
+        let filling: Vec<(MessageRow, Row)> = {
+            let handed = self.imp().handed.borrow();
+            rows.iter()
+                .enumerate()
+                .filter_map(|(offset, row)| {
+                    let position = start + offset as u32;
+                    handed
+                        .get(&position)
+                        .map(|held| (held.clone(), row.clone()))
+                })
+                .collect()
+        };
+
         let items: Vec<MessageRow> = rows.into_iter().map(MessageRow::new).collect();
         let delivered = self
             .imp()
             .window
             .borrow_mut()
             .deliver(generation, page, items);
-        if let Some(range) = delivered.changed {
-            let span = range.end - range.start;
-            self.items_changed(range.start, span, span);
+        if delivered.stale {
+            return;
         }
+        let filled = !filling.is_empty();
+        for (held, row) in filling {
+            held.set_row(row);
+        }
+        // An evicted page's positions are not on screen -- that is what makes
+        // them evictable -- so the objects standing for them can go too, and
+        // must, or a list scrolled through a mailbox would keep one per row it
+        // passed.
+        if !delivered.evicted.is_empty() {
+            let mut handed = self.imp().handed.borrow_mut();
+            for page in &delivered.evicted {
+                let first = page * postio_ui::list::PAGE_SIZE;
+                for position in first..first + postio_ui::list::PAGE_SIZE {
+                    handed.remove(&position);
+                }
+            }
+        }
+        if filled {
+            self.emit_by_name::<()>("filled", &[]);
+        }
+        // Nothing structural happened: the list is the same length, the same
+        // positions hold the same messages, and every row the view holds for
+        // them has just been told what it now says. Announcing it through the
+        // model as well would tell `GtkListView` that a page of positions
+        // answers with different rows now, and it would rebuild a widget for
+        // every row in range — the whole visible list blinking because one
+        // message was read, and half a folder switch's widgets rebuilding rows
+        // that had just been built.
+        let _ = delivered.changed;
     }
 
     /// A page of a *mailbox* arrived: a fresh `total` alongside this page's
@@ -436,6 +598,25 @@ impl MessageList {
         self.deliver_for(generation, page, rows);
     }
 
+    /// Give up on a page whose fetch failed, so the view can ask again.
+    ///
+    /// The banner an error raises tells a person something went wrong; it
+    /// does not put the rows back. Without this the page stays outstanding
+    /// for the life of the window and its fifty positions draw skeletons that
+    /// nothing can clear -- which is what a live inbox did, almost in its
+    /// entirety, while the body backfill ran.
+    ///
+    /// Behind the same `reading` guard as [`deliver_for`](Self::deliver_for):
+    /// `GListModel::item()` must not be re-entered, and a failure can arrive
+    /// mid-call exactly as a delivery can.
+    pub fn abandon_page(&self, generation: u64, page: u32) {
+        if self.reading() {
+            self.hold(move |list| list.abandon_page(generation, page));
+            return;
+        }
+        self.imp().window.borrow_mut().abandon(generation, page);
+    }
+
     /// Correct the row count without touching what is cached.
     ///
     /// For a total that shrank or grew at the *end* of the list — a mailbox
@@ -453,7 +634,15 @@ impl MessageList {
         // `item()` synchronously (a listening `GtkListView` does). Binding it
         // first ends that statement, and the borrow, before the signal fires.
         let change = self.imp().window.borrow_mut().set_total(total);
+        // A recount moves the *end* of the list. Positions before it still
+        // mean what they did, so their objects stay; the ones past the new end
+        // do not exist any more.
+        self.imp()
+            .handed
+            .borrow_mut()
+            .retain(|position, _| *position < total);
         if let Some((position, removed, added)) = change {
+            EMISSIONS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             self.items_changed(position, removed, added);
         }
     }
@@ -476,6 +665,10 @@ impl MessageList {
         // is gone before `items_changed` can re-enter `item()`.
         let inserted = self.imp().window.borrow_mut().inserted_at_top(count);
         if inserted {
+            // Every row shifted down by `count`, so every position stands for
+            // a different message than the object held for it does.
+            self.imp().handed.borrow_mut().clear();
+            EMISSIONS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             self.items_changed(0, 0, count);
         }
     }
@@ -498,11 +691,21 @@ impl MessageList {
             // that goes through `crate::feed` asks.
             return false;
         }
-        let incoming = MessageRow::new(row);
+        let incoming = MessageRow::new(row.clone());
         let Some(position) = self.imp().window.borrow_mut().update(incoming) else {
             return false;
         };
-        self.items_changed(position, 1, 1);
+        // Same position, same message, new contents — so the row says so for
+        // itself and the model stays quiet. Only a row nothing is holding for
+        // needs telling through `items_changed`, and there is nothing to tell.
+        let held = self.imp().handed.borrow().get(&position).cloned();
+        match held {
+            Some(held) => held.set_row(row),
+            None => {
+                EMISSIONS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                self.items_changed(position, 1, 1);
+            }
+        }
         true
     }
 
@@ -518,6 +721,9 @@ impl MessageList {
             return;
         }
         let total = self.imp().window.borrow_mut().invalidate();
+        // The order is what changed, so a position no longer means what it did.
+        self.imp().handed.borrow_mut().clear();
+        EMISSIONS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         self.items_changed(0, total, total);
     }
 
@@ -576,18 +782,40 @@ impl MessageList {
 
     /// The row at `position`, fetching its page if it is not resident.
     fn row_at(&self, position: u32) -> Option<MessageRow> {
-        let mut window = self.imp().window.borrow_mut();
-        let lookup = window.row_at(position)?;
-        match lookup {
-            Lookup::Resident(row) => Some(row.clone()),
-            Lookup::Missing { request } => {
-                drop(window);
-                for page in request {
-                    self.request(page);
-                }
-                Some(MessageRow::placeholder())
-            }
+        // Whatever this position answered with last time, it answers with
+        // again: see `imp::MessageList::handed`. Its contents are kept current
+        // by `deliver_for`, so a hit here is not a stale row, it is the same
+        // row told what it now says.
+        if let Some(row) = self.imp().handed.borrow().get(&position) {
+            return Some(row.clone());
         }
+
+        let mut window = self.imp().window.borrow_mut();
+        let (row, wanted) = match window.row_at(position)? {
+            Lookup::Resident(row) => (row.row(), Vec::new()),
+            Lookup::Missing { request } => (None, request),
+        };
+        drop(window);
+        for page in wanted {
+            // Which *position* provoked the request, which the reply-side log
+            // in `postio_app::feed` cannot say. A viewport asks for positions
+            // near each other; anything asking across a whole folder is the
+            // loop #1534 is about, and this is the line that names who.
+            tracing::debug!(position, page, "list page wanted");
+            self.request(page);
+        }
+
+        // Filled before it is handed out, so the one `set_row` that could
+        // reach a listener is the one `deliver_for` makes later.
+        let handed = MessageRow::placeholder();
+        if let Some(row) = row {
+            handed.set_row(row);
+        }
+        self.imp()
+            .handed
+            .borrow_mut()
+            .insert(position, handed.clone());
+        Some(handed)
     }
 
     /// Ask the source for `page`.
@@ -596,6 +824,11 @@ impl MessageList {
     /// fresh request — deduplication against what is cached or already
     /// pending happens there, not here.
     fn request(&self, page: u32) {
+        // The one place a page is asked for, which is what makes it the
+        // honest place to count from (#1534). Here rather than in the source:
+        // a frontend that grew a second path to the store would have to avoid
+        // this function to avoid the counter.
+        postio_ui::reader::cost::note_page_requested();
         let source = self.imp().source.borrow().clone();
         if let Some(source) = source {
             source.request(page);

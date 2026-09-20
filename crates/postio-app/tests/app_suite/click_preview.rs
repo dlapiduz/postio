@@ -45,126 +45,132 @@ use postio_storage::seed::seed_small;
 use postio_storage::{BlobStore, test_support};
 
 pub fn clicking_a_message_fills_the_reading_pane() {
-    let state_dir = tempfile::tempdir().expect("a state directory");
-    // SAFETY: first statement of a single-threaded test.
-    unsafe { std::env::set_var("XDG_STATE_HOME", state_dir.path()) };
+    crate::gtk_case(async {
+        let state_dir = tempfile::tempdir().expect("a state directory");
+        // SAFETY: first statement of a single-threaded test.
+        unsafe { std::env::set_var("XDG_STATE_HOME", state_dir.path()) };
 
-    if adw::init().is_err() || gdk::Display::default().is_none() {
-        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
-        return;
-    }
-    let display = gdk::Display::default().unwrap();
-    fonts::install().expect("the embedded fonts should install");
-    style::install(&display);
-    app::install_icons(&display);
+        if adw::init().is_err() || gdk::Display::default().is_none() {
+            eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
+            return;
+        }
+        let display = gdk::Display::default().unwrap();
+        fonts::install().expect("the embedded fonts should install");
+        style::install(&display);
+        app::install_icons(&display);
 
-    let database = test_support::memory();
-    let report = seed_small(&database, 11);
-    assert!(report.message_count > 2, "need rows to click");
-    let directory = tempfile::tempdir().expect("a blob directory");
-    let blobs = BlobStore::open(
-        directory.path().to_path_buf(),
-        &postio_storage::test_support::blob_keys(),
-    )
-    .expect("a blob store");
+        let database = test_support::memory().await;
+        let report = seed_small(&database, 11).await;
+        assert!(report.message_count > 2, "need rows to click");
+        let directory = tempfile::tempdir().expect("a blob directory");
+        let blobs = BlobStore::open(
+            directory.path().to_path_buf(),
+            &postio_storage::test_support::blob_keys(),
+        )
+        .expect("a blob store");
 
-    // Every message but the newest flagged, before anything is wired: the
-    // Flagged view is where rows are genuinely single messages (see the
-    // module comment). The newest is left out because the folder view the
-    // window opens on has already reported it — its row *is* that message —
-    // and the cursor's dedup would then swallow the Flagged view's own
-    // first report, leaving the pane unfilled.
-    let flagged_total: u32 = {
-        let connection = database.connection().expect("a connection");
-        connection
-            .execute(
-                "UPDATE messages SET flagged = 1 WHERE id NOT IN \
-                 (SELECT id FROM messages ORDER BY received_at DESC LIMIT 1)",
-                [],
-            )
-            .expect("the fixture writes");
-        connection
-            .query_row(
+        // Every message but the newest flagged, before anything is wired: the
+        // Flagged view is where rows are genuinely single messages (see the
+        // module comment). The newest is left out because the folder view the
+        // window opens on has already reported it — its row *is* that message —
+        // and the cursor's dedup would then swallow the Flagged view's own
+        // first report, leaving the pane unfilled.
+        let flagged_total: u32 = {
+            let connection = database.connect().await.expect("a connection");
+            connection
+                .execute(
+                    "UPDATE messages SET flagged = 1 WHERE id NOT IN \
+                     (SELECT id FROM messages ORDER BY received_at DESC LIMIT 1)",
+                    (),
+                )
+                .await
+                .expect("the fixture writes");
+            postio_storage::sql::one(
+                &connection,
                 "SELECT COUNT(*) FROM messages WHERE flagged = 1",
-                [],
-                |row| row.get(0),
+                (),
+                |row| postio_storage::sql::RowExt::col(row, 0),
             )
+            .await
             .expect("a count")
-    };
+        };
 
-    let (bridge, _replies) = Bridge::new(handler_fn(|_, _| async {})).expect("a runtime");
-    let (sink, _events) = event_channel();
-    let wiring = Wiring::new(
-        database.clone(),
-        blobs,
-        bridge.handle(),
-        sink,
-        bridge.commands(),
-    );
+        let (bridge, _replies) = Bridge::new(handler_fn(|_, _| async {})).expect("a runtime");
+        let (sink, _events) = event_channel();
+        let wiring = Wiring::new(
+            database.clone(),
+            blobs,
+            bridge.handle(),
+            sink,
+            bridge.commands(),
+        );
 
-    let window = Window::default();
-    window.present();
-    while glib::MainContext::default().iteration(false) {}
+        let window = Window::default();
+        window.present();
+        while glib::MainContext::default().iteration(false) {}
 
-    // ── the same call `run` makes ────────────────────────────────────────
-    let wired = feed_the_window(&window, &wiring).expect("the seeded store has an account");
+        // ── the same call `run` makes ────────────────────────────────────────
+        let wired = feed_the_window(&window, &wiring)
+            .await
+            .expect("the seeded store has an account");
 
-    // Into the Flagged view, the way the sidebar's row would take it — but
-    // only after the sidebar's own default pick has landed: the folder list
-    // loads asynchronously and picking the default folder is what it does
-    // on arrival, which would stomp a scope opened before it. Then wait for
-    // the swap itself, because the model keeps the folder's rows until the
-    // Flagged page answers.
-    let list = window.list();
-    assert!(
-        settle_until(|| list.model().n_items() > 0),
-        "the opening folder never filled, so no scope can be left"
-    );
-    wired
-        .feeds
-        .messages
-        .open(postio_model::ListScope::Flagged(report.account.id));
-    assert!(
-        settle_until(|| list.model().n_items() == flagged_total),
-        "the Flagged view never filled, so there is nothing to click"
-    );
+        // Into the Flagged view, the way the sidebar's row would take it — but
+        // only after the sidebar's own default pick has landed: the folder list
+        // loads asynchronously and picking the default folder is what it does
+        // on arrival, which would stomp a scope opened before it. Then wait for
+        // the swap itself, because the model keeps the folder's rows until the
+        // Flagged page answers.
+        let list = window.list();
+        assert!(
+            settle_until(async || list.model().n_items() > 0).await,
+            "the opening folder never filled, so no scope can be left"
+        );
+        wired
+            .feeds
+            .messages
+            .open(postio_model::ListScope::Flagged(report.account.id));
+        assert!(
+            settle_until(async || list.model().n_items() == flagged_total).await,
+            "the Flagged view never filled, so there is nothing to click"
+        );
 
-    // The autoselect fills the pane now (#601), so `window.reading()` is no
-    // longer what tells a click apart from a window that just opened. What
-    // this test is about is the *click* reaching the reader, so it clears the
-    // pane first and watches it come back.
-    window.clear_reader();
-    assert!(!window.reading(), "the pane was just cleared");
+        // The autoselect fills the pane now (#601), so `window.reading()` is no
+        // longer what tells a click apart from a window that just opened. What
+        // this test is about is the *click* reaching the reader, so it clears the
+        // pane first and watches it come back.
+        window.clear_reader();
+        assert!(!window.reading(), "the pane was just cleared");
 
-    // ── clicking the row the autoselect is already on ────────────────────
-    // The first thing a mouse user does: open the top message. The cursor is
-    // already there, so the position does not change and no
-    // `notify::selected` is emitted — and the autoselect has already put that
-    // id in `reported`. Both have to be got past for the pane to fill.
-    assert_eq!(list.cursor().selected(), 0, "the autoselect lands on row 0");
-    list.click_row(0);
-    assert!(
-        settle_until(|| window.reading()),
-        "clicking the top message left the reading pane empty. The row is \
-         under the cursor and the store has the message; what is missing is \
-         the pane being told about it at all — not even an `Absent` plate. \
-         That is #70 again, for the pointer: every other path to the cursor \
-         goes through `move_cursor_to`, and a plain click is the one that \
-         does not."
-    );
+        // ── clicking the row the autoselect is already on ────────────────────
+        // The first thing a mouse user does: open the top message. The cursor is
+        // already there, so the position does not change and no
+        // `notify::selected` is emitted — and the autoselect has already put that
+        // id in `reported`. Both have to be got past for the pane to fill.
+        assert_eq!(list.cursor().selected(), 0, "the autoselect lands on row 0");
+        list.click_row(0);
+        assert!(
+            settle_until(async || window.reading()).await,
+            "clicking the top message left the reading pane empty. The row is \
+             under the cursor and the store has the message; what is missing is \
+             the pane being told about it at all — not even an `Absent` plate. \
+             That is #70 again, for the pointer: every other path to the cursor \
+             goes through `move_cursor_to`, and a plain click is the one that \
+             does not."
+        );
 
-    // ── and a click that does move the cursor ────────────────────────────
-    let first = list.cursor_id().expect("the cursor is on a row");
-    list.click_row(2);
-    assert!(
-        settle_until(|| window.reading()),
-        "clicking a different row left the reading pane empty"
-    );
-    assert_ne!(
-        list.cursor_id().expect("the cursor is on a row"),
-        first,
-        "the click did not move the cursor"
-    );
+        // ── and a click that does move the cursor ────────────────────────────
+        let first = list.cursor_id().expect("the cursor is on a row");
+        list.click_row(2);
+        assert!(
+            settle_until(async || window.reading()).await,
+            "clicking a different row left the reading pane empty"
+        );
+        assert_ne!(
+            list.cursor_id().expect("the cursor is on a row"),
+            first,
+            "the click did not move the cursor"
+        );
 
-    bridge.shutdown();
+        bridge.shutdown();
+    });
 }

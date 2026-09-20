@@ -62,6 +62,9 @@ pub fn the_settings_panel_edits_the_file_in_place() {
     std::fs::write(&path, original).unwrap();
 
     let window = Window::default();
+    // A window with mail behind it, which is what this case is about: a
+    // store-less window offers the chrome and nothing else (#1114).
+    window.set_store_open(true);
     postio_gtk::config::install_at(&window, &path);
     window.present();
     settle();

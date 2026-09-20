@@ -213,21 +213,31 @@ fn play_the_browser(authorize_url: &Url, code: &str) {
 // --- harness ------------------------------------------------------------
 
 /// Run the main loop until `done` or the budget runs out.
-fn settle_until(done: impl Fn() -> bool) -> bool {
+async fn settle_until<F, Fut>(done: F) -> bool
+where
+    F: Fn() -> Fut,
+    Fut: std::future::Future<Output = bool>,
+{
     let deadline =
         std::time::Instant::now() + postio_test_support::scaled(std::time::Duration::from_secs(15));
     while std::time::Instant::now() < deadline {
         while glib::MainContext::default().iteration(false) {}
-        if done() {
+        if done().await {
             return true;
         }
-        std::thread::sleep(std::time::Duration::from_millis(10));
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
     }
-    done()
+    done().await
 }
 
-#[test]
-fn a_preset_oauth_provider_signs_in_with_the_browser_end_to_end() {
+/// `multi_thread`, and the flavour is load-bearing: see `backend_choice`'s
+/// own case, and `app_suite`'s `gtk_case`.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_preset_oauth_provider_signs_in_with_the_browser_end_to_end() {
+    sign_in().await;
+}
+
+async fn sign_in() {
     let scratch = tempfile::tempdir().expect("a scratch directory");
     let state_dir = scratch.path().join("state");
     let config_dir = scratch.path().join("config");
@@ -249,18 +259,19 @@ fn a_preset_oauth_provider_signs_in_with_the_browser_end_to_end() {
     app::install_icons(&display);
 
     // ── the servers ─────────────────────────────────────────────────────
-    // An auxiliary runtime carries the test server; the app's own work runs
-    // on the bridge's runtime as in production.
-    let runtime = tokio::runtime::Runtime::new().expect("a runtime for the servers");
-    let imap = runtime.block_on(async {
-        TestServer::builder()
-            .capabilities(["IMAP4rev1", "SASL-IR", "AUTH=XOAUTH2"])
-            .access_token(ACCESS_TOKEN)
-            .account(ADDRESS)
-            .mailbox(TestMailbox::new("INBOX"))
-            .start()
-            .await
-    });
+    // On this test's own runtime rather than an auxiliary one. It used to
+    // build its own -- "an auxiliary runtime carries the test server; the
+    // app's own work runs on the bridge's runtime as in production" -- and
+    // the second half is still true. What changed is that *this* function is
+    // async now, driven by a runtime, so a `Runtime::new().block_on()` here
+    // would be a runtime started from inside one, which tokio refuses.
+    let imap = TestServer::builder()
+        .capabilities(["IMAP4rev1", "SASL-IR", "AUTH=XOAUTH2"])
+        .access_token(ACCESS_TOKEN)
+        .account(ADDRESS)
+        .mailbox(TestMailbox::new("INBOX"))
+        .start()
+        .await;
     let idp = MockIdp::start();
 
     // ── the provider, as a user-overlay preset row ──────────────────────
@@ -292,7 +303,7 @@ sources = ["own-client"]
     .expect("the overlay row");
 
     // ── the app ─────────────────────────────────────────────────────────
-    let database = test_support::memory();
+    let database = test_support::memory().await;
     let directory = tempfile::tempdir().expect("a blob directory");
     let blobs = BlobStore::open(
         directory.path().to_path_buf(),
@@ -332,7 +343,8 @@ sources = ["own-client"]
         None,
         Arc::new(DeadTransport),
         Arc::new(browser.clone()),
-    );
+    )
+    .await;
     let screen = window
         .content()
         .and_downcast::<Onboarding>()
@@ -342,7 +354,7 @@ sources = ["own-client"]
     screen.set_address(ADDRESS);
     screen.probe();
     assert!(
-        settle_until(|| matches!(screen.status(), Status::Found(_))),
+        settle_until(async || matches!(screen.status(), Status::Found(_))).await,
         "the overlay preset never resolved: {:?}",
         screen.status()
     );
@@ -360,7 +372,7 @@ sources = ["own-client"]
 
     // ── the browser's part ──────────────────────────────────────────────
     assert!(
-        settle_until(|| browser.opened.lock().unwrap().is_some()),
+        settle_until(async || browser.opened.lock().unwrap().is_some()).await,
         "no authorization URL was ever opened: {:?}",
         screen.status()
     );
@@ -373,7 +385,8 @@ sources = ["own-client"]
     play_the_browser(&authorize_url, "the-code");
 
     assert!(
-        settle_until(|| matches!(screen.status(), Status::SyncWindow | Status::Failed(_))),
+        settle_until(async || matches!(screen.status(), Status::SyncWindow | Status::Failed(_)))
+            .await,
         "the sign-in never settled: {:?}",
         screen.status()
     );
@@ -384,9 +397,10 @@ sources = ["own-client"]
     );
 
     // ── what must be true afterwards ────────────────────────────────────
-    let connection = database.connection().expect("a connection");
+    let connection = database.connect().await.expect("a connection");
     let account = AccountRepository::new(&connection)
         .list()
+        .await
         .expect("accounts")
         .into_iter()
         .find(|account| account.address.address == ADDRESS)
@@ -396,14 +410,13 @@ sources = ["own-client"]
     assert_eq!(oauth.client_id, "the-client-id");
     assert_eq!(oauth.token_url, idp.url);
 
-    let refresh = runtime
-        .block_on(secrets.retrieve(&AccountKey::new(format!("{ADDRESS}#oauth-refresh"))))
+    let refresh = secrets
+        .retrieve(&AccountKey::new(format!("{ADDRESS}#oauth-refresh")))
+        .await
         .expect("the refresh token is in the keyring");
     assert_eq!(refresh.expose(), REFRESH_TOKEN);
     assert!(
-        runtime
-            .block_on(secrets.retrieve(&AccountKey::new(ADDRESS)))
-            .is_err(),
+        secrets.retrieve(&AccountKey::new(ADDRESS)).await.is_err(),
         "no password entry exists: this account never had one"
     );
 

@@ -51,7 +51,7 @@ fn settle(composer: &composer::Composer, what: &str, done: impl Fn() -> bool) {
         if done() {
             return;
         }
-        std::thread::sleep(Duration::from_millis(10));
+        std::thread::sleep(std::time::Duration::from_millis(10));
     }
     if done() {
         return;

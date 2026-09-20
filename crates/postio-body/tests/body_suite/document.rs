@@ -732,3 +732,94 @@ fn a_flowed_reply_body_unwraps_to_the_sentence_the_sender_actually_wrote() {
          three typed line breaks"
     );
 }
+
+#[test]
+fn a_tables_cells_come_apart_in_the_plain_text_rendering() {
+    // #1482. A table has no `Block` — that is the authoring subset working as
+    // designed and is not an argument for adding one. What was wrong is that
+    // its cells were concatenated with *nothing* between them, so
+    // `<td>Gate</td><td>Interlock</td>` narrowed to `GateInterlock` and a row
+    // ran straight into the row below it.
+    //
+    // Where it shows is the `text/plain` half of any reply to a table-based
+    // HTML message, which is most commercial mail: a recipient whose client
+    // prefers plain text sees the quote as one run-on word.
+    let document = parse(
+        "<table>\
+           <tr><td>Gate</td><td>Interlock</td></tr>\
+           <tr><td>North</td><td>Armed</td></tr>\
+         </table>",
+    );
+    let text = document.to_text();
+
+    assert!(
+        !text.contains("GateInterlock"),
+        "the cells in a row ran together: {text:?}"
+    );
+    assert!(
+        !text.contains("InterlockNorth"),
+        "one row ran into the next: {text:?}"
+    );
+    for cell in ["Gate", "Interlock", "North", "Armed"] {
+        assert!(text.contains(cell), "{cell} was lost entirely: {text:?}");
+    }
+}
+
+#[test]
+fn a_table_cell_does_not_gain_a_space_that_was_not_there() {
+    // The other direction: the separator is for the boundary between cells,
+    // not a licence to pad. A single cell is its own text and nothing else,
+    // and a cell whose content already ends in a space does not get a second.
+    let one = parse("<table><tr><td>Gate</td></tr></table>").to_text();
+    assert_eq!(one.trim(), "Gate", "{one:?}");
+
+    let spaced = parse("<table><tr><td>Gate </td><td>Interlock</td></tr></table>").to_text();
+    assert!(
+        !spaced.contains("Gate  Interlock"),
+        "a cell that already ended in a space got a second one: {spaced:?}"
+    );
+}
+
+#[test]
+fn a_space_between_two_loose_inlines_is_content_not_formatting() {
+    // #1486. `walk_blocks` dropped every whitespace-only text node, which is
+    // right between blocks and wrong between inlines: in `<b>x</b> <i>y</i>`
+    // that node is the space somebody typed, and losing it joins two words.
+    //
+    // Inside a `<p>` the same markup already survived, because paragraphs go
+    // through a different walker — so this was invisible to anything that
+    // tests well-formed mail and showed up in the composer, whose DOM has
+    // loose inlines in `<body>` after a formatting command.
+    assert_eq!(parse("<b>x</b> <i>y</i>").to_text(), "x y");
+    assert_eq!(parse("<b>x</b>\u{a0}<i>y</i>").to_text(), "x y");
+
+    // Still dropped where it is formatting rather than content: leading
+    // whitespace, and the newline-and-indent between two block elements.
+    assert_eq!(parse("   <b>x</b>").to_text(), "x");
+    assert_eq!(parse("<p>one</p>\n  <p>two</p>").to_text(), "one\n\ntwo");
+    // And never doubled.
+    assert_eq!(parse("<b>x</b>  <i>y</i>").to_text(), "x y");
+}
+
+#[test]
+fn the_folds_own_chrome_is_not_part_of_the_message() {
+    // What the editor's DOM holds for a reply: the quote inside the
+    // `<details>` that `fold_quotes` wraps it in. The bridge posts that back
+    // verbatim, so whatever `parse` makes of it is what gets sent.
+    let folded = "<p>Acknowledged.</p>\
+<details class=\"postio-quote\">\
+<summary contenteditable=\"false\">Quoted message</summary>\
+<blockquote data-postio-quoted=\"1\"><p>Do not reset.</p></blockquote>\
+</details>";
+    let text = parse(folded).to_text();
+
+    assert!(
+        !text.contains("Quoted message"),
+        "the summary became content, so a reply carries a line nobody wrote: {text:?}"
+    );
+    assert!(text.contains("Acknowledged."), "{text:?}");
+    assert!(
+        text.contains("> Do not reset."),
+        "the quote was lost: {text:?}"
+    );
+}

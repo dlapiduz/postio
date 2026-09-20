@@ -23,8 +23,46 @@ members = [
     "crates/postio-test-support",
 ]
 
+# What a bare `cargo build` or `cargo check` compiles: everything above
+# except the FFI layer.
+#
+# `postio-ffi` links a `staticlib` *and* a `cdylib`, and its `uniffi` takes
+# the `cli` feature, so it pulls `uniffi_bindgen`, `clap` and
+# `cargo_metadata` into every build — for a macOS frontend that does not
+# ship yet (#1306). Until it does, that is a cost each fresh worktree pays
+# before its first `cargo check` can answer.
+#
+# No coverage is lost: `--workspace` ignores this list, and `--workspace` is
+# what `issue-land.sh`'s check, every compile job in `ci.yml`, and
+# `check-crate-boundaries.py`'s `cargo metadata` already use.
+#
+# **A new member belongs in both lists.** Leaving it out here means a bare
+# cargo command silently stops building it; that is deliberate for this one
+# crate and an accident anywhere else (#1500).
+default-members = [
+    "crates/postio-model",
+    "crates/postio-storage",
+    "crates/postio-search",
+    "crates/postio-body",
+    "crates/postio-index",
+    "crates/postio-config",
+    "crates/postio-account",
+    "crates/postio-jmap",
+    "crates/postio-gmail",
+    "crates/postio-ui",
+    "crates/postio-smtp",
+    "crates/postio-sync",
+    "crates/postio-core",
+    "crates/postio-runtime",
+    "crates/postio-session",
+    "crates/postio-gtk",
+    "crates/postio-app",
+    "crates/postio-bench",
+    "crates/postio-test-support",
+]
+
 [workspace.package]
-version = "0.2.0"
+version = "0.3.0"
 edition = "2024"
 # The compiler this workspace is actually built with, everywhere.
 #
@@ -64,6 +102,21 @@ publish = false
 [workspace.lints.rust]
 unsafe_code = "forbid"
 missing_docs = "warn"
+# A future nobody awaits is a statement that silently does not run. Fifty-six
+# of them survived the move to an async storage layer into a *green build* --
+# indexing calls, a settings write, a sidebar refresh -- and every one
+# compiled, warned, and did nothing. Warning-grade is not enough for a failure
+# mode whose only symptom is the absence of one.
+unused_must_use = "deny"
+
+[workspace.lints.clippy]
+# `let _ = some_async_call();` is the hole `unused_must_use` cannot see: the
+# value *is* used -- it is bound to `_` -- so the compiler is satisfied and the
+# future is dropped unpolled. That is how the draft that had just been sent
+# went on existing (`send.rs`: `let _ = DraftRepository::new(..).delete(..)`),
+# and it reads exactly like the deliberate "I don't care about this Result"
+# it is copied from.
+let_underscore_future = "deny"
 
 [workspace.dependencies]
 postio-model   = { path = "crates/postio-model" }
@@ -83,6 +136,36 @@ postio-core    = { path = "crates/postio-core" }
 postio-runtime = { path = "crates/postio-runtime" }
 postio-gtk     = { path = "crates/postio-gtk" }
 postio-test-support = { path = "crates/postio-test-support" }
+
+# Third-party crates two or more members share, so a version, a feature
+# list and a default-features decision are made once (#1498). A member
+# adds features on top with `features = [...]`; it cannot take defaults
+# away, which is why the entries below turn them off only where every
+# member already had.
+async-channel = "2.5.0"
+async-trait = "0.1.92"
+base64 = "0.23.1"
+blake3 = "1.8.7"
+chrono = { version = "0.4.45", default-features = false, features = ["clock"] }
+futures-util = { version = "0.3.34", default-features = false, features = ["alloc"] }
+io-sasl = { version = "=0.1.0", default-features = false }
+pimalaya-stream = { version = "0.3", features = ["rustls-ring"] }
+rustls = { version = "0.23", default-features = false, features = ["logging", "ring", "std", "tls12"] }
+rustls-platform-verifier = "0.7"
+secrecy = "0.10.3"
+serde = { version = "1.0.229", features = ["derive"] }
+serde-xml-rs = "0.8"
+serde_json = "1.0.151"
+tempfile = "3.27.0"
+thiserror = "2.0.20"
+tokio = "1.53.1"
+tokio-rustls = { version = "0.26", default-features = false, features = ["ring"] }
+toml = "1.1.4"
+tracing = "0.1.44"
+tracing-subscriber = { version = "0.3.23", features = ["fmt"] }
+turso = { version = "=0.8.0-pre.11", default-features = false, features = ["fts"] }
+url = "2.5.8"
+zeroize = "1.9.0"
 
 [profile.release]
 lto = "thin"

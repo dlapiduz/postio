@@ -131,6 +131,7 @@ Fixtures are tagged, not filed — most carry several tags.
 
 | File | Exercises |
 |---|---|
+| `html-escaping-styles.eml` | Inline styling that tries to act on what is *around* the message: `position: fixed` with a viewport-sized overlay and a maximal `z-index`, `position: absolute` lifted out of its block, a `transform` big enough to paint over a neighbour, and lengths in `vw`/`vh`. Beside them, a layout table and ordinary colour that must **survive** — the point is that containment refuses a stated list (`sanitize::REFUSED`, spec FR-019b) rather than flattening a sender's styling. Matters since ADR 0032 put several senders in one document, where escaping a block means reaching someone else's mail. |
 | `html-newsletter.eml` | A newsletter shaped like the real thing: nested layout tables, inline CSS, a `@media` query, an XHTML doctype, `List-Unsubscribe` with One-Click, quoted-printable. The stress case for HTML sanitizing and for text extraction into the search index. |
 | `html-tracking-pixel-remote-images.eml` | A 1×1 open-rate beacon, remote `<img>` over both https and http, CSS `background-image` URLs, a `url()` inside a stylesheet, and a click-tracking redirect. The reader's remote-content blocking must catch **all** of these, not just `<img src>`. |
 

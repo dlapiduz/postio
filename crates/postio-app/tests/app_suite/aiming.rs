@@ -55,7 +55,8 @@ fn row_of(id: MessageId, kind: RowKind) -> Row {
         seen: true,
         flagged: false,
         answered: false,
-        draft: false,
+        send_state: None,
+        send_at: None,
         has_attachments: false,
         thread_count: if participants.is_empty() { 1 } else { 2 },
         participants,
@@ -63,53 +64,55 @@ fn row_of(id: MessageId, kind: RowKind) -> Row {
 }
 
 pub fn the_gtk_adapter_aims_every_gesture_the_way_the_shared_table_says() {
-    let state_dir = tempfile::tempdir().expect("a state directory");
-    // SAFETY: first statement of a single-threaded test.
-    unsafe { std::env::set_var("XDG_STATE_HOME", state_dir.path()) };
+    crate::gtk_case(async {
+        let state_dir = tempfile::tempdir().expect("a state directory");
+        // SAFETY: first statement of a single-threaded test.
+        unsafe { std::env::set_var("XDG_STATE_HOME", state_dir.path()) };
 
-    if adw::init().is_err() || gdk::Display::default().is_none() {
-        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
-        return;
-    }
-    let display = gdk::Display::default().unwrap();
-    fonts::install().expect("the embedded fonts should install");
-    style::install(&display);
-    app::install_icons(&display);
+        if adw::init().is_err() || gdk::Display::default().is_none() {
+            eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
+            return;
+        }
+        let display = gdk::Display::default().unwrap();
+        fonts::install().expect("the embedded fonts should install");
+        style::install(&display);
+        app::install_icons(&display);
 
-    let mut checked = 0;
-    for case in aim::conformance_cases() {
-        // A row the case calls `Missing` is one no list is holding, so it is
-        // named by the cursor and never delivered — which is the state
-        // `RowKind::Missing` exists for (#468).
-        let held: Vec<Row> = case
-            .rows
-            .iter()
-            .filter(|(_, kind)| !matches!(kind, RowKind::Missing))
-            .map(|(id, kind)| row_of(*id, *kind))
-            .collect();
+        let mut checked = 0;
+        for case in aim::conformance_cases() {
+            // A row the case calls `Missing` is one no list is holding, so it is
+            // named by the cursor and never delivered — which is the state
+            // `RowKind::Missing` exists for (#468).
+            let held: Vec<Row> = case
+                .rows
+                .iter()
+                .filter(|(_, kind)| !matches!(kind, RowKind::Missing))
+                .map(|(id, kind)| row_of(*id, *kind))
+                .collect();
 
-        let model = MessageList::new();
-        model.deliver_page(model.generation(), held.len() as u32, 0, held);
+            let model = MessageList::new();
+            model.deliver_page(model.generation(), held.len() as u32, 0, held);
 
-        let aim = Aim {
-            scope: None,
-            selection: &case.selection,
-            cursor: case.cursor,
-            rows: &model,
-        };
-        let command = aim::command_for(case.id, &aim);
+            let aim = Aim {
+                scope: None,
+                selection: &case.selection,
+                cursor: case.cursor,
+                rows: &model,
+            };
+            let command = aim::command_for(case.id, &aim);
 
-        assert_eq!(
-            command, case.expected,
-            "{}: GTK aimed {} at {command:?}, and the shared table says {:?}",
-            case.because, case.id, case.expected
+            assert_eq!(
+                command, case.expected,
+                "{}: GTK aimed {} at {command:?}, and the shared table says {:?}",
+                case.because, case.id, case.expected
+            );
+            checked += 1;
+        }
+
+        assert!(
+            checked > 0,
+            "the shared table is empty, so this proves nothing about either \
+             frontend"
         );
-        checked += 1;
-    }
-
-    assert!(
-        checked > 0,
-        "the shared table is empty, so this proves nothing about either \
-         frontend"
-    );
+    });
 }

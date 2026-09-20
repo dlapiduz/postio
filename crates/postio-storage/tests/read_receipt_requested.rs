@@ -26,19 +26,20 @@ Content-Type: text/plain; charset=utf-8\r\n\
 \r\n\
 Nothing special\r\n";
 
-#[test]
-fn a_requested_receipt_survives_a_round_trip_through_storage() {
-    let database = test_support::memory();
-    let connection = database.connection().expect("checkout");
-    let (account, mailbox) = test_support::account_with_inbox(&connection);
+#[tokio::test]
+async fn a_requested_receipt_survives_a_round_trip_through_storage() {
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    let (account, mailbox) = test_support::account_with_inbox(&connection).await;
     let repository = MessageRepository::new(&connection);
 
     let mut asked =
         postio_model::mime::parse(ASKED).into_message(account.id, mailbox, chrono::Utc::now());
-    let id = repository.create(&mut asked).expect("create");
+    let id = repository.create(&mut asked).await.expect("create");
 
     let reloaded = repository
         .get(id)
+        .await
         .expect("read")
         .expect("the message is there");
     assert!(
@@ -47,29 +48,30 @@ fn a_requested_receipt_survives_a_round_trip_through_storage() {
     );
 }
 
-#[test]
-fn a_message_that_never_asked_stores_false() {
-    let database = test_support::memory();
-    let connection = database.connection().expect("checkout");
-    let (account, mailbox) = test_support::account_with_inbox(&connection);
+#[tokio::test]
+async fn a_message_that_never_asked_stores_false() {
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    let (account, mailbox) = test_support::account_with_inbox(&connection).await;
     let repository = MessageRepository::new(&connection);
 
     let mut plain =
         postio_model::mime::parse(NOT_ASKED).into_message(account.id, mailbox, chrono::Utc::now());
-    let id = repository.create(&mut plain).expect("create");
+    let id = repository.create(&mut plain).await.expect("create");
 
     let reloaded = repository
         .get(id)
+        .await
         .expect("read")
         .expect("the message is there");
     assert!(!reloaded.read_receipt_requested);
 }
 
-#[test]
-fn the_count_is_scoped_to_its_own_account_and_ignores_ones_that_never_asked() {
-    let database = test_support::memory();
-    let connection = database.connection().expect("checkout");
-    let (mine, mine_inbox) = test_support::account_with_inbox(&connection);
+#[tokio::test]
+async fn the_count_is_scoped_to_its_own_account_and_ignores_ones_that_never_asked() {
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    let (mine, mine_inbox) = test_support::account_with_inbox(&connection).await;
     let repository = MessageRepository::new(&connection);
 
     let mut theirs_owner = postio_model::Account::new(
@@ -78,27 +80,31 @@ fn the_count_is_scoped_to_its_own_account_and_ignores_ones_that_never_asked() {
     );
     postio_storage::repository::AccountRepository::new(&connection)
         .create(&mut theirs_owner)
+        .await
         .expect("second account");
-    let theirs_inbox = test_support::mailbox(&connection, &theirs_owner, "INBOX").id;
+    let theirs_inbox = test_support::mailbox(&connection, &theirs_owner, "INBOX")
+        .await
+        .id;
 
     for _ in 0..2 {
         let mut asked =
             postio_model::mime::parse(ASKED).into_message(mine.id, mine_inbox, chrono::Utc::now());
-        repository.create(&mut asked).expect("create");
+        repository.create(&mut asked).await.expect("create");
     }
     let mut plain =
         postio_model::mime::parse(NOT_ASKED).into_message(mine.id, mine_inbox, chrono::Utc::now());
-    repository.create(&mut plain).expect("create");
+    repository.create(&mut plain).await.expect("create");
     let mut theirs = postio_model::mime::parse(ASKED).into_message(
         theirs_owner.id,
         theirs_inbox,
         chrono::Utc::now(),
     );
-    repository.create(&mut theirs).expect("create");
+    repository.create(&mut theirs).await.expect("create");
 
     assert_eq!(
         repository
             .read_receipt_requested_count(mine.id)
+            .await
             .expect("count"),
         2,
         "two of mine asked, one did not, and the other account's should not count"
@@ -106,6 +112,7 @@ fn the_count_is_scoped_to_its_own_account_and_ignores_ones_that_never_asked() {
     assert_eq!(
         repository
             .read_receipt_requested_count(AccountId::new(999_999))
+            .await
             .expect("count"),
         0,
         "an account with no mail at all has nothing to count"

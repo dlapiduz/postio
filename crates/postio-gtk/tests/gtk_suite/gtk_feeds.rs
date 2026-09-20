@@ -55,6 +55,7 @@ impl Store {
                 unread,
                 flagged: 0,
                 snoozed: 0,
+                attention: 0,
             };
             // A folder that has synced, so the status line has an age to show.
             //
@@ -99,6 +100,7 @@ impl MessageSource for Store {
             | ListScope::Unified
             | ListScope::Flagged(_)
             | ListScope::Snoozed(_)
+            | ListScope::Outbox(_)
             | ListScope::Thread(_) => MailboxId::new(0),
         };
         // Each mailbox holds a different amount of mail, so "the list shows
@@ -123,7 +125,8 @@ impl MessageSource for Store {
                     seen: false,
                     flagged: false,
                     answered: false,
-                    draft: false,
+                    send_state: None,
+                    send_at: None,
                     has_attachments: false,
                     thread_count: 1,
                     participants: Vec::new(),
@@ -307,9 +310,14 @@ pub fn the_panes_follow_the_account_the_sync_and_the_folder_you_pick() {
     assert_eq!(window.sidebar().selected(), Some(MailboxId::new(INBOX)));
     assert_eq!(window.list().model().n_items(), 940);
     assert_eq!(feeds.messages.mailbox(), Some(MailboxId::new(INBOX)));
+    // Eleven, not the twelve the inbox opened with: the count was moved to
+    // 11 above (and the sidebar badge followed it there), and the header
+    // above the rows follows a reload the same way the badge does. It used
+    // to keep its open-time value, so the two disagreed -- a real store read
+    // "32 unread" over a store holding two.
     assert_eq!(
         header(&window),
-        ("Inbox".to_string(), "12 unread".to_string())
+        ("Inbox".to_string(), "11 unread".to_string())
     );
 
     // ── picking a folder changes what the list shows ──────────────────────

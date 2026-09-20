@@ -4,8 +4,14 @@
 #886: two full workspace test runs while cutting v0.2.0 each threw a couple
 of failures, never the same targets twice, none touching the release
 commit's own diff -- and every one of them passed clean the moment it was
-rerun alone. This is that triage, mechanised, against a stubbed `cargo` so
-the case runs in milliseconds and never touches a real compiler.
+rerun alone. This is that triage, mechanised, against a stubbed `cargo`.
+
+#1504: cutting v0.3.0 found the script itself had drifted -- it still ran
+plain `cargo test`, from before this workspace adopted nextest, so it never
+saw `.config/nextest.toml`'s `default-filter` and had no timeout backstop
+when a measurement-tier test hung. The script now runs `cargo nextest run`
+and parses nextest's own `Summary` section instead of cargo's per-target
+one; this stub speaks nextest's shape.
 
 Usage: scripts/tests/test-flake-retry.py
 Exit status: 0 all cases behaved, 1 otherwise.
@@ -20,51 +26,54 @@ import sys
 import tempfile
 from pathlib import Path
 
-# The shared dial (#1249). `scripts/lib`, not beside this file, because CI
-# runs every `scripts/tests/*.py` it finds as a self-test.
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
-
-import patience  # noqa: E402  -- enabled by the sys.path line above
-
 HERE = Path(__file__).resolve().parent.parent
 SCRIPT = HERE / "test-with-flake-retry.sh"
 
+sys.path.insert(0, str(HERE / "lib"))
+import patience  # noqa: E402  -- enabled by the sys.path line above
+
 FAILURES: list[str] = []
 
-# A stub `cargo` that behaves like a real one just enough for the script
-# under test: the first `--workspace --no-fail-fast` call fails with two
-# targets named in cargo's own summary shape; any later call naming one of
-# those targets alone is a retry, and its own verdict comes from files the
-# test writes into $STUB_DIR before running.
+# A stub `cargo` that answers just enough like nextest for the script under
+# test: the first `nextest run --workspace ...` call fails with two tests
+# named the way nextest's own `Summary` section names them, one per line
+# after a `Summary [...]` marker (nextest repeats the same line once live
+# and once in the summary; only the summary copy is meant to be read). A
+# later call carrying `-E "binary_id(...) & test(=...)"` is a retry, and its
+# verdict comes from files the test writes into $STUB_DIR before running.
 CARGO_STUB = """#!/usr/bin/env bash
 printf '%s\\n' "$*" >> "$STUB_DIR/calls"
 
-if printf '%s' "$*" | grep -q -- "--workspace" && printf '%s' "$*" | grep -q -- "--no-fail-fast"; then
+if printf '%s' "$*" | grep -q -- "nextest run" && printf '%s' "$*" | grep -q -- "--workspace"; then
     if [ -f "$STUB_DIR/workspace-passes" ]; then
-        echo "test result: ok. 400 passed; 0 failed"
+        echo "Summary [   0.010s] 400 tests run: 400 passed, 0 skipped"
         exit 0
     fi
-    if [ -f "$STUB_DIR/no-target-summary" ]; then
+    if [ -f "$STUB_DIR/no-summary" ]; then
         echo "error: could not compile \\`postio-core\\`" >&2
-        exit 101
+        exit 100
     fi
-    echo "test result: FAILED. 398 passed; 2 failed"
-    echo "error: 2 targets failed:" >&2
-    echo "    \\`-p fake-a --lib\\`" >&2
-    echo "    \\`-p fake-b --test suite\\`" >&2
-    exit 101
+    echo "test result: FAILED"
+    echo "        FAIL [   0.010s] (1/2) fake-crate::fake_suite tests::a_thing"
+    echo "        FAIL [   0.020s] (2/2) fake-crate::fake_suite tests::b_thing"
+    echo "Summary [   0.030s] 400 tests run: 398 passed, 2 failed, 0 skipped"
+    echo "        FAIL [   0.010s] (1/2) fake-crate::fake_suite tests::a_thing"
+    echo "        FAIL [   0.020s] (2/2) fake-crate::fake_suite tests::b_thing"
+    exit 100
 fi
 
-if printf '%s' "$*" | grep -q -- "-p fake-a --lib"; then
-    [ ! -f "$STUB_DIR/fake-a-fails-again" ] && exit 0
-    echo "test result: FAILED. 0 passed; 1 failed"
-    exit 101
+if printf '%s' "$*" | grep -q -- "test(=tests::a_thing)"; then
+    [ ! -f "$STUB_DIR/a-thing-fails-again" ] && exit 0
+    echo "Summary [   0.010s] 1 test run: 0 passed, 1 failed, 0 skipped"
+    echo "        FAIL [   0.010s] (1/1) fake-crate::fake_suite tests::a_thing"
+    exit 100
 fi
 
-if printf '%s' "$*" | grep -q -- "-p fake-b --test suite"; then
-    [ ! -f "$STUB_DIR/fake-b-fails-again" ] && exit 0
-    echo "test result: FAILED. 0 passed; 1 failed"
-    exit 101
+if printf '%s' "$*" | grep -q -- "test(=tests::b_thing)"; then
+    [ ! -f "$STUB_DIR/b-thing-fails-again" ] && exit 0
+    echo "Summary [   0.010s] 1 test run: 0 passed, 1 failed, 0 skipped"
+    echo "        FAIL [   0.010s] (1/1) fake-crate::fake_suite tests::b_thing"
+    exit 100
 fi
 
 echo "unexpected invocation: cargo $*" >&2
@@ -117,7 +126,7 @@ def main() -> int:
         )
         case(
             "a green suite never retries anything",
-            calls.count("cargo") <= 1 or calls.strip().count("\n") == 0,
+            calls.strip().count("\n") == 0,
             f"expected exactly one cargo invocation, got:\n{calls}",
         )
 
@@ -128,55 +137,60 @@ def main() -> int:
         out = result.stdout + result.stderr
         calls = (stub_dir / "calls").read_text(encoding="utf-8")
         case(
-            "when every failing target passes alone, the release gate passes",
+            "when every failing test passes alone, the release gate passes",
             result.returncode == 0,
             f"exit {result.returncode}; output:\n{out}",
         )
         case(
-            "both failing targets were retried in isolation",
-            "-p fake-a --lib" in calls and "-p fake-b --test suite" in calls,
-            f"not every failing target was retried:\n{calls}",
+            "both failing tests were retried in isolation, by nextest filter expression",
+            "test(=tests::a_thing)" in calls and "test(=tests::b_thing)" in calls,
+            f"not every failing test was retried:\n{calls}",
         )
         case(
-            "the output says which targets were confirmed flakes",
-            "fake-a" in out and "fake-b" in out and "flake" in out,
+            "the retry names the test's own binary_id, not a bare crate name",
+            "binary_id(fake-crate::fake_suite)" in calls,
+            f"expected a binary_id() filter naming the test binary:\n{calls}",
+        )
+        case(
+            "the output says which tests were confirmed flakes",
+            "a_thing" in out and "b_thing" in out and "flake" in out,
             f"no flake confirmation in output:\n{out}",
         )
 
     # ── one failure reproduces alone: block the release ──────────────
     with tempfile.TemporaryDirectory() as directory:
-        stub_dir = stub(Path(directory), flags=("fake-b-fails-again",))
+        stub_dir = stub(Path(directory), flags=("b-thing-fails-again",))
         result = run(stub_dir)
         out = result.stdout + result.stderr
         case(
-            "a target that fails twice is not a flake and blocks the release",
+            "a test that fails twice is not a flake and blocks the release",
             result.returncode != 0,
             f"expected a non-zero exit, got {result.returncode}; output:\n{out}",
         )
         case(
-            "fake-a, which only failed once, is still named as a flake",
-            "fake-a" in out,
-            f"fake-a should still be mentioned as confirmed:\n{out}",
+            "a_thing, which only failed once, is still named as a flake",
+            "a_thing" in out,
+            f"a_thing should still be mentioned as confirmed:\n{out}",
         )
         case(
-            "fake-b is named as the real failure",
-            "fake-b" in out,
-            f"fake-b should be named as the blocker:\n{out}",
+            "b_thing is named as the real failure",
+            "b_thing" in out,
+            f"b_thing should be named as the blocker:\n{out}",
         )
 
     # ── a failure with nothing to retry: original status stands ──────
     with tempfile.TemporaryDirectory() as directory:
-        stub_dir = stub(Path(directory), flags=("no-target-summary",))
+        stub_dir = stub(Path(directory), flags=("no-summary",))
         result = run(stub_dir)
         calls = (stub_dir / "calls").read_text(encoding="utf-8")
         case(
-            "a failure with no per-target summary is not retried, and fails",
+            "a failure with no Summary section is not retried, and fails",
             result.returncode != 0,
             f"expected a non-zero exit, got {result.returncode}",
         )
         case(
-            "nothing named `fake-a` or `fake-b` was invoked -- there was nothing to retry",
-            "fake-a" not in calls and "fake-b" not in calls,
+            "nothing naming a_thing or b_thing was invoked -- there was nothing to retry",
+            "a_thing" not in calls and "b_thing" not in calls,
             f"a retry was attempted with nothing to retry:\n{calls}",
         )
 

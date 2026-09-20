@@ -25,7 +25,9 @@ use std::fmt;
 use std::path::PathBuf;
 use std::str::FromStr;
 
-use postio_model::{AccountId, DraftId, LabelId, MailboxId, MessageId, OperationRange, ThreadId};
+use postio_model::{
+    AccountId, DraftId, LabelId, MailboxId, MailboxRole, MessageId, OperationRange, ThreadId,
+};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 macro_rules! command_ids {
@@ -89,6 +91,8 @@ command_ids! {
     ViewOriginal => "view_original",
     /// Open every collapsed message in the conversation.
     ExpandAll => "expand_all",
+    /// Put the conversation rail away, or bring it back.
+    ToggleRail => "toggle_rail",
     /// Reply to the sender.
     Reply => "reply",
     /// Reply to everyone on the message.
@@ -129,10 +133,18 @@ command_ids! {
     DiscardDraft => "discard_draft",
     /// Settle an unconfirmed send by hand: it did arrive.
     MarkSent => "mark_sent",
+    /// Put a send that stopped back on the queue.
+    RetrySend => "retry_send",
+    /// Take a queued send back off the queue, leaving the draft editable.
+    CancelSend => "cancel_send",
     /// Attach a file to the draft.
     AttachFile => "attach_file",
     /// Move the composition between the reading pane and a window of its own.
     DetachComposer => "detach_composer",
+    /// Raise the draft's Cc and Bcc rows, or put them away again.
+    CopyFields => "copy_fields",
+    /// Put a picture in the body, where it is written rather than beside it.
+    InsertImage => "insert_image",
     /// Make the selection bold, or un-bold it.
     Bold => "bold",
     /// Make the selection italic, or straighten it.
@@ -161,6 +173,14 @@ command_ids! {
     ToggleSidebar => "toggle_sidebar",
     /// Put the keyboard in the folder list.
     FocusSidebar => "focus_sidebar",
+    /// Go to the inbox.
+    GoToInbox => "go_to_inbox",
+    /// Go to the drafts.
+    GoToDrafts => "go_to_drafts",
+    /// Go to the sent mail.
+    GoToSent => "go_to_sent",
+    /// Go to the flagged mail.
+    GoToFlagged => "go_to_flagged",
     /// Move the keyboard to the next pane: sidebar, list, reader, round.
     CyclePane => "cycle_pane",
     /// Move the keyboard to the previous pane.
@@ -189,6 +209,8 @@ command_ids! {
     RebuildAccountIndex => "rebuild_account_index",
     /// Make the focused account the one new messages come from.
     SetDefaultAccount => "set_default_account",
+    /// Point one of an account's roles at one of its folders.
+    MapMailboxRole => "map_mailbox_role",
     /// Move to the next account scope: unified, then each account in turn.
     NextScope => "next_scope",
     /// Ask the sync engine to check for new mail now.
@@ -393,6 +415,16 @@ pub enum Command {
     /// No payload: it means the conversation on screen, which is the only
     /// one there is.
     ExpandAll,
+    /// Put the conversation rail away, or bring it back (#1375).
+    ///
+    /// No payload, and a toggle rather than a hide: the control that hides
+    /// the rail lives *inside* it, so once it is away this is the only route
+    /// back. A one-way `HideRail` would make hiding irreversible for the
+    /// session.
+    ///
+    /// The choice belongs to the window and outlives the conversation open in
+    /// it (FR-047), which is why nothing here names a thread.
+    ToggleRail,
 
     // -- Message actions -------------------------------------------------
     /// Reply to the sender.
@@ -547,6 +579,30 @@ pub enum Command {
         /// Which draft, or the one in view.
         draft: Option<DraftId>,
     },
+    /// Put a send back on the queue after it stopped.
+    ///
+    /// The way out of `Failed` and `Unconfirmed` that is not "throw it away".
+    /// Until now the only retry was to open the draft and press Send again,
+    /// which works -- `queue_send` is what the composer calls, and it is what
+    /// this calls -- but is not something the Outbox could offer, because a
+    /// message on its way has no composer open.
+    ///
+    /// `None` means the draft in view.
+    RetrySend {
+        /// Which draft, or the one in view.
+        draft: Option<DraftId>,
+    },
+    /// Take a queued send back off the queue, leaving the draft editable.
+    ///
+    /// Refused once the submission has started: ADR 0021 keeps exactly-once
+    /// by never cancelling something that may already be in flight, and
+    /// `DraftRepository::cancel_send` reports which of those happened.
+    ///
+    /// `None` means the draft in view.
+    CancelSend {
+        /// Which draft, or the one in view.
+        draft: Option<DraftId>,
+    },
     /// Attach a file to the draft.
     AttachFile {
         /// The file; `None` opens the file chooser.
@@ -559,6 +615,23 @@ pub enum Command {
     /// step. Purely a view concern -- nothing downstream of the frontend can
     /// tell which container the draft is being typed into.
     DetachComposer,
+    /// Raise the draft's Cc and Bcc rows, or put them away again.
+    ///
+    /// A toggle with an asymmetric half. Raising always works; putting away
+    /// only works while both fields are empty, because a hidden row that still
+    /// held addresses would keep those recipients on the draft and still send
+    /// to them, under a sender who could no longer see them. When it will not
+    /// put them away it moves the keyboard to `Cc` instead, so the refusal is
+    /// visible rather than silent.
+    CopyFields,
+    /// Put a picture in the body, at the caret.
+    ///
+    /// The third of the three outcomes FR-049 asks the composer to keep
+    /// distinct — a link on text, an image *inside* the body, a file attached
+    /// alongside — and the only one that had no command. Pasting and dropping
+    /// reached it, which meant it was absent from the palette and the `?`
+    /// sheet and unreachable by anyone who does neither.
+    InsertImage,
     /// Make the selection bold, or un-bold it.
     Bold,
     /// Make the selection italic, or straighten it.
@@ -593,6 +666,20 @@ pub enum Command {
     ToggleSidebar,
     /// Put the keyboard in the folder list.
     FocusSidebar,
+    /// Go to a mailbox by the role it wears, rather than by its name.
+    ///
+    /// One variant each rather than `GoTo(MailboxRole)`, because [`Self::id`]
+    /// is total: a `GoTo(MailboxRole::Junk)` would be a value with no command
+    /// id, and the type would then permit something the registry cannot
+    /// answer. Four roles have a sequence; the rest are reached through the
+    /// box, which is what `#` is for.
+    GoToInbox,
+    /// Go to the drafts.
+    GoToDrafts,
+    /// Go to the sent mail.
+    GoToSent,
+    /// Go to the flagged mail.
+    GoToFlagged,
     /// Move the keyboard to the next pane: sidebar, list, reader, round.
     ///
     /// The *top-level* meaning of bare Tab, for when a pane itself has the
@@ -640,6 +727,22 @@ pub enum Command {
     /// particular not a reply's from address, which
     /// [`postio_model::reply`] decides from the message being replied to.
     SetDefaultAccount,
+    /// Point one of an account's roles at one of its folders (ADR 0035).
+    ///
+    /// The one verb whose `None` does not always mean "ask": `account` and
+    /// `role` follow the rule at the top of this enum -- a keystroke cannot
+    /// supply them, so `None` asks -- but `path: None` is a value in its own
+    /// right, **back to automatic**, because "stop choosing" is exactly what
+    /// a person picking the first entry of the pane's dropdown means, and a
+    /// second command for it would be a key in the reference for nothing.
+    MapMailboxRole {
+        /// Whose map; `None` means the focused account row.
+        account: Option<AccountId>,
+        /// Which role is being pointed somewhere; `None` asks.
+        role: Option<MailboxRole>,
+        /// The folder's server path, or `None` for automatic.
+        path: Option<String>,
+    },
     /// Move to the next account scope: unified, then each account in turn.
     ///
     /// Cycling rather than `SetScope(id)` because a keystroke has no argument
@@ -744,6 +847,7 @@ impl Command {
             Command::ToggleFold => CommandId::ToggleFold,
             Command::ViewOriginal => CommandId::ViewOriginal,
             Command::ExpandAll => CommandId::ExpandAll,
+            Command::ToggleRail => CommandId::ToggleRail,
             Command::Reply { .. } => CommandId::Reply,
             Command::ReplyAll { .. } => CommandId::ReplyAll,
             Command::Forward { .. } => CommandId::Forward,
@@ -766,8 +870,12 @@ impl Command {
             Command::SaveDraft => CommandId::SaveDraft,
             Command::DiscardDraft => CommandId::DiscardDraft,
             Command::MarkSent { .. } => CommandId::MarkSent,
+            Command::RetrySend { .. } => CommandId::RetrySend,
+            Command::CancelSend { .. } => CommandId::CancelSend,
             Command::AttachFile { .. } => CommandId::AttachFile,
             Command::DetachComposer => CommandId::DetachComposer,
+            Command::CopyFields => CommandId::CopyFields,
+            Command::InsertImage => CommandId::InsertImage,
             Command::Bold => CommandId::Bold,
             Command::Italic => CommandId::Italic,
             Command::BulletList => CommandId::BulletList,
@@ -782,6 +890,10 @@ impl Command {
             Command::EditConfig => CommandId::EditConfig,
             Command::ToggleSidebar => CommandId::ToggleSidebar,
             Command::FocusSidebar => CommandId::FocusSidebar,
+            Command::GoToInbox => CommandId::GoToInbox,
+            Command::GoToDrafts => CommandId::GoToDrafts,
+            Command::GoToSent => CommandId::GoToSent,
+            Command::GoToFlagged => CommandId::GoToFlagged,
             Command::CyclePane => CommandId::CyclePane,
             Command::CyclePaneBack => CommandId::CyclePaneBack,
             Command::NextFolder => CommandId::NextFolder,
@@ -796,6 +908,7 @@ impl Command {
             Command::UpdateCredential => CommandId::UpdateCredential,
             Command::RebuildAccountIndex => CommandId::RebuildAccountIndex,
             Command::SetDefaultAccount => CommandId::SetDefaultAccount,
+            Command::MapMailboxRole { .. } => CommandId::MapMailboxRole,
             Command::NextScope => CommandId::NextScope,
             Command::Refresh => CommandId::Refresh,
             Command::OpenParts => CommandId::OpenParts,
@@ -835,6 +948,7 @@ impl Command {
             CommandId::ToggleFold => Command::ToggleFold,
             CommandId::ViewOriginal => Command::ViewOriginal,
             CommandId::ExpandAll => Command::ExpandAll,
+            CommandId::ToggleRail => Command::ToggleRail,
             CommandId::Reply => Command::Reply { message: None },
             CommandId::ReplyAll => Command::ReplyAll { message: None },
             CommandId::Forward => Command::Forward { message: None },
@@ -876,8 +990,12 @@ impl Command {
             CommandId::SaveDraft => Command::SaveDraft,
             CommandId::DiscardDraft => Command::DiscardDraft,
             CommandId::MarkSent => Command::MarkSent { draft: None },
+            CommandId::RetrySend => Command::RetrySend { draft: None },
+            CommandId::CancelSend => Command::CancelSend { draft: None },
             CommandId::AttachFile => Command::AttachFile { path: None },
             CommandId::DetachComposer => Command::DetachComposer,
+            CommandId::CopyFields => Command::CopyFields,
+            CommandId::InsertImage => Command::InsertImage,
             CommandId::Bold => Command::Bold,
             CommandId::Italic => Command::Italic,
             CommandId::BulletList => Command::BulletList,
@@ -892,6 +1010,10 @@ impl Command {
             CommandId::EditConfig => Command::EditConfig,
             CommandId::ToggleSidebar => Command::ToggleSidebar,
             CommandId::FocusSidebar => Command::FocusSidebar,
+            CommandId::GoToInbox => Command::GoToInbox,
+            CommandId::GoToDrafts => Command::GoToDrafts,
+            CommandId::GoToSent => Command::GoToSent,
+            CommandId::GoToFlagged => Command::GoToFlagged,
             CommandId::CyclePane => Command::CyclePane,
             CommandId::CyclePaneBack => Command::CyclePaneBack,
             CommandId::NextFolder => Command::NextFolder,
@@ -906,6 +1028,11 @@ impl Command {
             CommandId::UpdateCredential => Command::UpdateCredential,
             CommandId::RebuildAccountIndex => Command::RebuildAccountIndex,
             CommandId::SetDefaultAccount => Command::SetDefaultAccount,
+            CommandId::MapMailboxRole => Command::MapMailboxRole {
+                account: None,
+                role: None,
+                path: None,
+            },
             CommandId::NextScope => Command::NextScope,
             CommandId::Refresh => Command::Refresh,
             CommandId::OpenParts => Command::OpenParts,

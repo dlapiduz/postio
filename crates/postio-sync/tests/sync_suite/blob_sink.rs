@@ -12,8 +12,8 @@ use postio_sync::blob_sink::BlobSink;
 /// `postio_storage::test_support::temp` rather than `tempfile` directly: it is
 /// what every other test in this crate uses to get a directory, and a second
 /// way of doing it would be a second thing to keep in step.
-fn store() -> (postio_storage::test_support::TempDatabase, BlobStore) {
-    let database = postio_storage::test_support::temp();
+async fn store() -> (postio_storage::test_support::TempStore, BlobStore) {
+    let database = postio_storage::test_support::temp().await;
     let store = BlobStore::open(
         database.directory().join("blobs"),
         &postio_storage::test_support::blob_keys(),
@@ -60,7 +60,7 @@ async fn a_fetch_through_the_sink_lands_in_the_blob_store() {
     // The bytes never exist whole in this process: they go socket, chunk,
     // file. What is asserted is that they arrived intact anyway, and that the
     // sink hands back the id the rest of the system stores.
-    let (_database, blobs) = store();
+    let (_database, blobs) = store().await;
     let backend = MockBackend::builder()
         .mailbox(
             MockMailbox::new("INBOX")
@@ -106,7 +106,7 @@ async fn a_cancelled_fetch_leaves_neither_a_blob_nor_a_temp_file() {
     //
     // What `purge_temporary` is actually for is the case a drop cannot cover:
     // a power cut or a kill -9, where no destructor runs at all.
-    let (_database, blobs) = store();
+    let (_database, blobs) = store().await;
 
     let mut sink = BlobSink::new(&blobs).expect("a sink");
     sink.chunk(b"half of a message").await.expect("a chunk");
@@ -125,7 +125,7 @@ async fn a_cancelled_fetch_leaves_neither_a_blob_nor_a_temp_file() {
 async fn a_sink_that_never_finished_has_no_blob_to_offer() {
     // `finished_blob` is the only way to get the id, and it is `None` until
     // `finish` -- so a caller cannot accidentally treat a fragment as a body.
-    let (_database, blobs) = store();
+    let (_database, blobs) = store().await;
 
     let mut sink = BlobSink::new(&blobs).expect("a sink");
     sink.chunk(b"partial").await.expect("a chunk");
@@ -139,7 +139,7 @@ async fn a_chunk_after_finish_is_an_error() {
     // chunk that arrives after that is not a fragment of the next fetch --
     // there is no next fetch on this sink -- it is a caller that kept using
     // one it should have dropped.
-    let (_database, blobs) = store();
+    let (_database, blobs) = store().await;
     let mut sink = BlobSink::new(&blobs).expect("a sink");
     sink.chunk(b"the whole body").await.expect("a chunk");
     sink.finish().await.expect("finish");
@@ -159,7 +159,7 @@ async fn finishing_twice_is_an_error() {
     // `finish` takes the writer, which is what makes it exactly-once: a
     // second call has nothing left to finish and must say so rather than
     // silently doing nothing or reusing state that has already moved on.
-    let (_database, blobs) = store();
+    let (_database, blobs) = store().await;
     let mut sink = BlobSink::new(&blobs).expect("a sink");
     sink.chunk(b"the whole body").await.expect("a chunk");
     sink.finish().await.expect("the first finish");
@@ -180,7 +180,7 @@ async fn a_storage_failure_while_finishing_reaches_the_caller_as_a_fetch_failure
     // the caller does not import and cannot handle.
     use std::os::unix::fs::PermissionsExt;
 
-    let (_database, blobs) = store();
+    let (_database, blobs) = store().await;
     let mut sink = BlobSink::new(&blobs).expect("a sink");
     // Short: under the probe size, so nothing has touched the store's shard
     // directories yet and `finish` is where the write actually lands.
@@ -212,7 +212,7 @@ async fn the_same_bytes_streamed_and_stored_at_once_are_one_blob() {
     // Content addressing has to survive the push form, or a body fetched by
     // the sync path and the same body written by any other path would be two
     // files. `BodyPart::Whole` is the shape the backfill uses.
-    let (_database, blobs) = store();
+    let (_database, blobs) = store().await;
     let raw = &b"Subject: twice\r\n\r\nthe very same bytes"[..];
     let at_once = blobs.put(raw).expect("put");
 

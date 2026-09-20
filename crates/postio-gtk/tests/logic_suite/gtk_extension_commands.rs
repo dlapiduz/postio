@@ -25,8 +25,8 @@ use postio_model::AccountId;
 
 /// These assert over context filtering and the extension door, so they run
 /// in the scope where every command is available.
-fn an_account() -> Scope {
-    Scope::Account(AccountId::new(1))
+fn an_account() -> postio_core::Availability {
+    postio_core::Availability::open(Scope::Account(AccountId::new(1)))
 }
 use postio_gtk::{cheatsheet, palette};
 

@@ -218,10 +218,16 @@ pub fn the_composer_detaches_into_its_own_window_and_comes_back() {
             .is_some_and(|content| has_header_bar(&content)),
         "a pop-out with no titlebar cannot be closed, moved or named"
     );
+    // The subject, not the kind. This asserted `"Compose"` while there could
+    // only ever be one composition, and "which composition it is holding" was
+    // a distinction with one answer. ADR 0034 makes several possible, and
+    // then the kind identifies nothing -- two replies would both say "Reply"
+    // and the window list would offer no way to tell them apart, which is
+    // exactly what FR-014 forbids.
     assert_eq!(
         gtk::prelude::GtkWindowExt::title(&detached).as_deref(),
-        Some("Compose"),
-        "and the titlebar says which composition it is holding"
+        Some("the mbox importer"),
+        "the titlebar does not say which composition it is holding"
     );
 
     // ── Nothing was lost on the way out ──────────────────────────────────

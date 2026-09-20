@@ -17,6 +17,7 @@
 //! it will change what its neighbours see.
 
 mod contrast;
+mod keybindings_doc;
 mod keymap_api;
 mod reader_tokens;
 mod tokens;

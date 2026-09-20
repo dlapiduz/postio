@@ -24,7 +24,7 @@ path = "src/bin/uniffi-bindgen.rs"
 testing = ["dep:tempfile", "postio-storage/test-support"]
 
 [dependencies]
-async-channel = "2.5.0"
+async-channel = { workspace = true }
 postio-body.workspace = true
 postio-config.workspace = true
 postio-core.workspace = true
@@ -37,7 +37,7 @@ postio-model.workspace = true
 # The query language's "today", for a relative date operator like
 # `after:yesterday`. One clock, on this side, so both frontends resolve a
 # relative date the same way.
-chrono = { version = "0.4.45", default-features = false, features = ["std", "clock"] }
+chrono = { workspace = true, features = ["std"] }
 # The query language and the highlighter. Parsed and marked in one place for
 # both frontends: two parsers of one syntax accept different queries, and two
 # highlighters disagree about what matched (#660).
@@ -45,11 +45,11 @@ postio-search.workspace = true
 postio-session.workspace = true
 postio-smtp.workspace = true
 postio-storage.workspace = true
-tempfile = { version = "3.27.0", optional = true }
-thiserror = "2.0.20"
-tokio = { version = "1.53.1", features = ["macros", "rt", "rt-multi-thread"] }
-tracing = "0.1"
-uniffi = { version = "0.29", features = ["cli"] }
+tempfile = { workspace = true, optional = true }
+thiserror = { workspace = true }
+tokio = { workspace = true, features = ["macros", "rt", "rt-multi-thread"] }
+tracing = { workspace = true }
+uniffi = { version = "0.32", features = ["cli"] }
 
 [dev-dependencies]
 # The crate's own testing feature, the way postio-storage does it: a test
@@ -57,8 +57,8 @@ uniffi = { version = "0.29", features = ["cli"] }
 postio-ffi = { path = ".", features = ["testing"] }
 # A `SecretStore` double that refuses, so the locked-keyring path is tested
 # without going near the developer's own login keyring.
-async-trait = "0.1.92"
-chrono = { version = "0.4.45", default-features = false, features = ["std", "clock"] }
+async-trait = { workspace = true }
+chrono = { workspace = true, features = ["std"] }
 # The index schema and `index_body`, so a search test seeds a store the way
 # the indexer would rather than asserting against an empty index.
 postio-index.workspace = true
@@ -66,7 +66,7 @@ postio-storage = { workspace = true, features = ["test-support"] }
 # The shared deadline dial: every wall-clock wait in a test answers to
 # `POSTIO_TEST_PATIENCE` (#842, #957).
 postio-test-support.workspace = true
-tempfile = "3.27.0"
+tempfile = { workspace = true }
 
 [lints]
 workspace = true

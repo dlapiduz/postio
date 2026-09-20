@@ -9,14 +9,12 @@ Each case builds a tiny sandbox workspace, breaks one thing, and asserts the
 check notices. The licence case reconstructs #639: a crate that hard-codes a
 licence outside the allow-list instead of inheriting the workspace's.
 
-Two of the cases run `cargo-deny` itself. It is not in `mise.toml`, so on a
-laptop that made that choice they stand down and say so -- and **under CI they
-do not**, because a runner without it is a broken runner and a skip nobody can
-tell from a pass is not a test (`scripts/lib/prereq.py`). That is the whole of
-#1290: the guard was `if not have_cargo_deny(): return True`, which meant the
-only two cases that exercise the check had never once run in CI on either
-platform, in a job that was green throughout. `ci.yml` installs the tool in
-both jobs that run the self-tests.
+cargo-deny is not in `mise.toml`, so the cases that need it stand down on a
+workstation without it -- and say so. Under CI they fail instead
+(`scripts/lib/prereq.py`): the two cases that exercise the check had never
+run in CI on either platform, because the job that runs the self-tests never
+had the tool on PATH and the skip looked like a pass (#1290).
+`scripts/install-cargo-deny.sh` is what puts it there.
 """
 
 from __future__ import annotations
@@ -32,7 +30,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
 
 import patience  # noqa: E402  -- enabled by the sys.path line above
-import prereq  # noqa: E402
+import prereq  # noqa: E402  -- enabled by the sys.path line above
 
 ROOT = Path(__file__).resolve().parents[2]
 CHECK = ROOT / "scripts" / "checks" / "check-dependency-policy.py"

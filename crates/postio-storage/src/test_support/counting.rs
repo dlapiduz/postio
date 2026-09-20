@@ -1,146 +1,156 @@
-//! Counting what a query *costs*, in numbers that do not depend on the machine.
+//! What a piece of work cost the database, counted.
 //!
-//! `docs/PRODUCT.md` §18 states three budgets — 500ms to a usable UI, 16ms per
-//! interaction, 100ms for local search — and `CLAUDE.md` calls them "enforced
-//! by benches in CI". They are not: `bench.yml` compiles the bench targets and
-//! deliberately times nothing, because a shared runner cannot defend 16ms.
-//! That decision is right, and it leaves the budgets as documentation (#100).
+//! # Why this is not the instrument it replaces
 //!
-//! So measure the budget's *cause* rather than its effect. These budgets hold
-//! because of the shape of the queries underneath them — one page, one
-//! statement, over an index — and shape is countable. A count is the same
-//! number on a laptop and on a noisy runner, so it can gate a pull request in
-//! a way wall-clock never safely can.
+//! It read SQLite's trace hook: `trace_v2` reported every statement as it
+//! finished, with its row count and its VM step count, and `rusqlite/trace`
+//! was the binding. This engine has no trace hook, so there is nothing to
+//! subscribe to.
 //!
-//! Two counts, from SQLite's own trace hook:
+//! What is left is this crate's own seam. Every read in the workspace goes
+//! through [`crate::sql`] -- `all`, `first`, `one`, `scalar`, `mapped` -- and
+//! every one of them is counted here.
 //!
-//! - **statements** catches an *N+1* — a per-row lookup added to a list path,
-//!   which costs milliseconds per row and is invisible to every other test in
-//!   the workspace, because the rows still come back correct.
-//! - **rows** catches a *full read* — the mailbox pulled into memory and
-//!   sliced in Rust. This is the one `page.len()` cannot see: a page that
-//!   returns fifty rows returns fifty rows either way, and only the number
-//!   SQLite *produced* tells the two apart.
+//! # What that can and cannot see
+//!
+//! It sees **statements** and **rows**, which is what the budgets are mostly
+//! written in, and it sees them exactly: the counter is incremented where the
+//! query is issued, not inferred.
+//!
+//! It cannot see **steps**, and that is a real loss. #1479 was found by them:
+//! `read_receipt_requested_count` was one statement returning one row and
+//! walking every message in the store, because an aggregate hides its cost
+//! from both other counts. A budget written in statements and rows alone
+//! would have passed it.
+//!
+//! There is deliberately **no always-zero `steps` field** standing in for the
+//! old one. A budget written as `assert!(counts.steps < BUDGET)` passes
+//! trivially against a zero, which is a worse answer than not compiling: the
+//! test still runs, still reports green, and no longer asks anything. Every
+//! caller that measured steps has had to say what it is really asking.
+//!
+//! [`scans`] is what replaces that, and it is a different kind of instrument:
+//! rather than measuring how much work a query did, it asks the planner
+//! whether the query *can* be cheap. An unindexed `count(*)` is a `SCAN`, and
+//! `SCAN` on a startup path is the bug #1479 was, caught structurally instead
+//! of by a number. It is not a superset -- a query that scans a small table
+//! is fine and this flags it -- so a budget using it says which scans it
+//! expects.
+//!
+//! # Availability
+//!
+//! Behind the `test-support` feature, like the rest of this module. Counting
+//! is always on when the feature is compiled in: there is no hook to install,
+//! so [`install`] and [`install_on`] are kept only so the suites that call
+//! them still read sensibly, and do nothing.
 
 use std::cell::Cell;
 
-use rusqlite::Connection;
-use rusqlite::trace::{TraceEvent, TraceEventCodes};
+/// What one piece of work cost.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Counts {
+    /// Statements issued through [`crate::sql`].
+    ///
+    /// The number a budget is usually written in: "opening a window reads a
+    /// bounded number of statements however big the mailbox is".
+    pub statements: usize,
+
+    /// Rows those statements yielded.
+    ///
+    /// Rows *returned*, not rows examined -- which is the distinction the
+    /// module documentation is about. A `count(*)` over a hundred thousand
+    /// messages returns one.
+    pub rows: usize,
+}
 
 thread_local! {
-    /// rusqlite's trace hook is a bare `fn(TraceEvent)` rather than a closure,
-    /// so the counters cannot be captured and have to live where that function
-    /// can reach them. Thread-local rather than global: one case counts at a
-    /// time, and a global would make two overlapping counts quietly wrong.
     static STATEMENTS: Cell<usize> = const { Cell::new(0) };
     static ROWS: Cell<usize> = const { Cell::new(0) };
 }
 
-/// What SQLite did while a body ran.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Counts {
-    /// Statements that began running — the unit an N+1 multiplies.
-    pub statements: usize,
-    /// Rows those statements produced, whether or not the caller kept them.
-    ///
-    /// Undercounts on a full-text path; see [`LAST_WAS_OURS`].
-    pub rows: usize,
-    /// Invocations SQLite reported as nested: trigger bodies, and the
-    /// statements a virtual table runs for itself.
-    ///
-    /// Per-row work that no other count can see. A trigger fires once per
-    /// affected row and produces no result rows, so an index rebuild over a
-    /// mailbox shows up here and nowhere else.
-    pub nested: usize,
+/// Count one statement. Called by [`crate::sql`].
+pub(crate) fn statement() {
+    STATEMENTS.with(|seen| seen.set(seen.get() + 1));
 }
 
-thread_local! {
-    /// Statements SQLite reported as nested — see [`is_application_statement`].
-    static NESTED: Cell<usize> = const { Cell::new(0) };
-    /// Whether the last statement to start was one the code under test asked
-    /// for. A `Row` event names no statement — `StmtRef` keeps its pointer
-    /// private — so a row is attributed to the statement that most recently
-    /// began.
-    ///
-    /// This is exact wherever nothing nests, which is every plain SQL read.
-    /// Where something does nest it *under*-counts: an FTS5 cursor runs its
-    /// own lookups between two rows of the statement being stepped, and the
-    /// rows after one of those are attributed to the lookup instead. That is
-    /// the safe direction for a ceiling to be wrong in, and it is why the
-    /// search budget is expressed in statements rather than rows.
-    ///
-    /// A stack would be exact, and cannot be built: it would have to be
-    /// unwound by `Profile`, and while SQLite fires `Profile` for the
-    /// separately-prepared statements a virtual table runs, it does not fire
-    /// one for a trigger body. Trying it left 4,000 statements unclosed over
-    /// a 2,000-message index build. Triggers emit no result rows, so nothing
-    /// is lost by treating them as an ordinary nested statement here.
-    static LAST_WAS_OURS: Cell<bool> = const { Cell::new(false) };
+/// Count `n` rows. Called by [`crate::sql`].
+pub(crate) fn rows(n: usize) {
+    ROWS.with(|seen| seen.set(seen.get() + n));
 }
 
-/// Whether `sql` is a statement the code under test issued.
+/// Does nothing, and is kept so the call sites still read.
 ///
-/// SQLite reports a nested or internal invocation — a trigger body, a virtual
-/// table's own machinery — as an SQL *comment* rather than as statement text.
-/// FTS5 is the reason this matters here: one search of a common word showed
-/// 1,111 invocations of `SELECT pgno FROM messages_fts_idx ...`, its b-tree
-/// segment lookups, which is 2,524 of the 2,584 rows a page of 25 appeared to
-/// cost. That number tracks how the index happens to be segmented, not the
-/// shape of the query, so counting it would make a budget that fails when
-/// SQLite merges segments differently and passes when the application starts
-/// reading whole mailboxes.
-fn is_application_statement(sql: &str) -> bool {
-    !sql.trim_start().starts_with("--")
-}
+/// There was a trace hook to install. There is not one now -- counting
+/// happens at this crate's own seam and is always on when `test-support` is
+/// compiled in.
+pub fn install(_connection: &crate::Connection) {}
 
-fn record(event: TraceEvent<'_>) {
-    match event {
-        TraceEvent::Stmt(_, sql) => {
-            let ours = is_application_statement(sql);
-            LAST_WAS_OURS.with(|last| last.set(ours));
-            if ours {
-                STATEMENTS.with(|seen| seen.set(seen.get() + 1));
-            } else {
-                NESTED.with(|seen| seen.set(seen.get() + 1));
-            }
-        }
-        TraceEvent::Row(..) if LAST_WAS_OURS.with(Cell::get) => {
-            ROWS.with(|seen| seen.set(seen.get() + 1));
-        }
-        _ => {}
-    }
-}
+/// Does nothing. See [`install`].
+pub fn install_on(_store: &crate::Store) {}
 
-/// Start counting on `connection`. Everything read through it from here on is
-/// counted, so install it on the connection the code under test will use.
-pub fn install(connection: &Connection) {
-    connection.trace_v2(
-        TraceEventCodes::SQLITE_TRACE_STMT | TraceEventCodes::SQLITE_TRACE_ROW,
-        Some(record),
-    );
-}
-
-/// What SQLite did while `body` ran, on any connection [`install`] was called
-/// on. Panics rather than returning zero: a count of nothing is not a cheap
-/// query, it is a measurement that did not happen, and `0 <= budget` is a
-/// green run that proves nothing at all.
+/// What `body` cost.
+///
+/// Counts only what happened on *this* thread: the counters are
+/// thread-local, so work the body spawned elsewhere is not included. That was
+/// true of the trace hook too -- it was per connection, and a spawned task
+/// checks out its own.
 pub fn counted(body: impl FnOnce()) -> Counts {
     STATEMENTS.with(|seen| seen.set(0));
     ROWS.with(|seen| seen.set(0));
-    NESTED.with(|seen| seen.set(0));
-    LAST_WAS_OURS.with(|last| last.set(false));
     body();
-    let counts = Counts {
+    here()
+}
+
+/// What `body` cost, for a body that awaits.
+///
+/// The async twin of [`counted`], and the one nearly every caller wants now
+/// that the storage layer is async.
+pub async fn counted_async<F, Fut>(body: F) -> Counts
+where
+    F: FnOnce() -> Fut,
+    Fut: std::future::Future<Output = ()>,
+{
+    STATEMENTS.with(|seen| seen.set(0));
+    ROWS.with(|seen| seen.set(0));
+    body().await;
+    here()
+}
+
+/// What has been counted on this thread since the last reset.
+pub fn here() -> Counts {
+    Counts {
         statements: STATEMENTS.with(Cell::get),
         rows: ROWS.with(Cell::get),
-        nested: NESTED.with(Cell::get),
-    };
-    assert!(
-        counts.statements > 0,
-        "the trace hook counted no statements at all, so any budget compared \
-         against these counts would pass without measuring anything. Either \
-         `install` was not called on the connection the body reads through, \
-         or the body issued no query."
-    );
-    counts
+    }
+}
+
+/// Start counting again from zero on this thread.
+pub fn reset() {
+    STATEMENTS.with(|seen| seen.set(0));
+    ROWS.with(|seen| seen.set(0));
+}
+
+/// Which steps of `sql`'s plan are full scans.
+///
+/// The structural half of the instrument, and what took over from the step
+/// count. An unindexed aggregate is one statement, one row, and a `SCAN` of
+/// the table -- so a budget that cannot see steps can still see *this*, which
+/// is the property that actually made #1479 a bug.
+///
+/// Returns the scanned table names, so a failure says which query is the
+/// problem rather than only that there is one.
+pub async fn scans(connection: &crate::Connection, sql: &str) -> Vec<String> {
+    let steps: Vec<String> = crate::sql::all(
+        connection,
+        &format!("EXPLAIN QUERY PLAN {sql}"),
+        (),
+        |row| crate::sql::RowExt::col(row, 3),
+    )
+    .await
+    .unwrap_or_default();
+
+    steps
+        .into_iter()
+        .filter(|step| step.starts_with("SCAN"))
+        .collect()
 }

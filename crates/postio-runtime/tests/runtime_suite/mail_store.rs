@@ -42,14 +42,16 @@ impl Fake {
             seen: position.is_multiple_of(2),
             flagged: false,
             answered: false,
-            draft: false,
+            send_state: None,
+            send_at: None,
             has_attachments: false,
             thread_count: 1,
         }
     }
 }
 
-impl MailStore for Fake {
+impl Fake {
+    /// The flat window, made up on demand.
     fn message_page(&self, request: PageRequest) -> Read<'_, MessagePage> {
         self.asked.lock().expect("not poisoned").push(request);
         let end = (request.offset + request.limit).min(self.total);
@@ -57,12 +59,9 @@ impl MailStore for Fake {
         let total = self.total;
         Box::pin(async move { Ok(MessagePage { total, rows }) })
     }
+}
 
-    fn message_count(&self, _scope: ListScope) -> Read<'_, u32> {
-        let total = self.total;
-        Box::pin(async move { Ok(total) })
-    }
-
+impl MailStore for Fake {
     // This fake is about the message window, so it lists messages: the
     // thread window has its own coverage in `thread_store.rs`.
     fn list_page(&self, request: PageRequest) -> Read<'_, postio_runtime::store::ListPage> {
@@ -70,21 +69,9 @@ impl MailStore for Fake {
         Box::pin(async move { page.await.map(postio_runtime::store::ListPage::Messages) })
     }
 
-    fn list_count(&self, scope: ListScope) -> Read<'_, u32> {
-        self.message_count(scope)
-    }
-
-    fn thread_page(&self, _: PageRequest) -> Read<'_, postio_runtime::store::ThreadPage> {
-        Box::pin(async {
-            Ok(postio_runtime::store::ThreadPage {
-                total: 0,
-                rows: Vec::new(),
-            })
-        })
-    }
-
-    fn thread_count(&self, _: ListScope) -> Read<'_, u32> {
-        Box::pin(async { Ok(0) })
+    fn list_count(&self, _scope: ListScope) -> Read<'_, u32> {
+        let total = self.total;
+        Box::pin(async move { Ok(total) })
     }
 
     fn message_rows(&self, ids: Vec<MessageId>) -> Read<'_, Vec<MessageSummary>> {
@@ -105,6 +92,10 @@ impl MailStore for Fake {
         inbox.role = MailboxRole::Inbox;
         Box::pin(async move { Ok(vec![inbox]) })
     }
+
+    fn draft_counts(&self, _: AccountId) -> Read<'_, postio_storage::repository::DraftCounts> {
+        Box::pin(async { Ok(postio_storage::repository::DraftCounts::default()) })
+    }
 }
 
 #[tokio::test]
@@ -116,14 +107,17 @@ async fn a_store_is_usable_behind_a_trait_object() {
         asked: Mutex::new(Vec::new()),
     });
 
-    let page = store
-        .message_page(PageRequest {
+    let postio_runtime::store::ListPage::Messages(page) = store
+        .list_page(PageRequest {
             scope: ListScope::Mailbox(MailboxId::new(INBOX)),
             offset: 0,
             limit: 50,
         })
         .await
-        .expect("the fake answers");
+        .expect("the fake answers")
+    else {
+        panic!("this fake lists messages, not threads");
+    };
 
     assert_eq!(page.total, 100_000, "the count comes with the page");
     assert_eq!(page.rows.len(), 50, "and only a page of rows with it");
@@ -175,22 +169,10 @@ async fn asking_for_a_window_asks_for_a_window() {
 async fn a_read_that_fails_carries_a_sentence_rather_than_a_sql_error() {
     struct Broken;
     impl MailStore for Broken {
-        fn message_page(&self, _: PageRequest) -> Read<'_, MessagePage> {
-            Box::pin(async { Err(StoreError::new("the database is locked")) })
-        }
-        fn message_count(&self, _: ListScope) -> Read<'_, u32> {
-            Box::pin(async { Err(StoreError::new("the database is locked")) })
-        }
         fn list_page(&self, _: PageRequest) -> Read<'_, postio_runtime::store::ListPage> {
             Box::pin(async { Err(StoreError::new("the database is locked")) })
         }
         fn list_count(&self, _: ListScope) -> Read<'_, u32> {
-            Box::pin(async { Err(StoreError::new("the database is locked")) })
-        }
-        fn thread_page(&self, _: PageRequest) -> Read<'_, postio_runtime::store::ThreadPage> {
-            Box::pin(async { Err(StoreError::new("the database is locked")) })
-        }
-        fn thread_count(&self, _: ListScope) -> Read<'_, u32> {
             Box::pin(async { Err(StoreError::new("the database is locked")) })
         }
         fn message_rows(&self, _: Vec<MessageId>) -> Read<'_, Vec<MessageSummary>> {
@@ -199,10 +181,13 @@ async fn a_read_that_fails_carries_a_sentence_rather_than_a_sql_error() {
         fn mailboxes(&self, _: AccountId) -> Read<'_, Vec<Mailbox>> {
             Box::pin(async { Err(StoreError::new("the database is locked")) })
         }
+        fn draft_counts(&self, _: AccountId) -> Read<'_, postio_storage::repository::DraftCounts> {
+            Box::pin(async { Err(StoreError::new("the database is locked")) })
+        }
     }
 
     let error = Broken
-        .message_count(ListScope::Account(AccountId::new(ACCOUNT)))
+        .list_count(ListScope::Account(AccountId::new(ACCOUNT)))
         .await
         .expect_err("this one fails");
     assert_eq!(error.message(), "the database is locked");

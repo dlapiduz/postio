@@ -161,9 +161,16 @@ if [ -n "$RESUME" ]; then
         exit 2
     fi
     RESUME_TREE="$WORKTREES/issue-$RESUME"
+    # The tree is usually still there: `--resume` is for coming back to a
+    # branch whose PR went red, and the tree it was worked in was left behind
+    # by whatever ended that session. Its existence used to be refused
+    # outright, before the lock below could say whether anyone was in it --
+    # which refused the ordinary case, and named no way out (#1422). Whether
+    # the tree is somebody's is the lock's question; a tree nobody holds is
+    # reused, which is also what a plain claim does with a landed tree.
+    REUSE_TREE=0
     if [ -d "$RESUME_TREE" ]; then
-        echo "$RESUME_TREE already exists; a session may be in it." >&2
-        exit 2
+        REUSE_TREE=1
     fi
     mkdir -p "$WORKTREES" "$CLAIMS"
     # `|| true` used to be here, so a resume walked straight through another
@@ -186,9 +193,44 @@ if [ -n "$RESUME" ]; then
     fi
     printf '%s\n' "$RESUME_TREE" > "$CLAIMS/issue-$RESUME.owner"
     git -C "$REPO_ROOT" fetch --quiet origin "$RESUME_BRANCH" "$BASE"
-    git -C "$REPO_ROOT" branch --quiet -D "$RESUME_BRANCH" 2>/dev/null || true
-    git -C "$REPO_ROOT" worktree add --quiet --track -b "$RESUME_BRANCH" "$RESUME_TREE" "origin/$RESUME_BRANCH"
-    printf '%s\n' "$BASE" > "$(git -C "$RESUME_TREE" rev-parse --git-dir)/postio-base"
+    if [ "$REUSE_TREE" = 1 ]; then
+        # Back into the tree that was left behind, on the branch it holds,
+        # brought up to what the PR has. Fast-forward only: a tree that has
+        # diverged from origin has work in it somebody should look at, and
+        # guessing which side wins is not this script's call.
+        HOLDING="$(git -C "$RESUME_TREE" rev-parse --abbrev-ref HEAD 2>/dev/null || true)"
+        if [ "$HOLDING" != "$RESUME_BRANCH" ]; then
+            echo "$RESUME_TREE holds '${HOLDING:-nothing}', not $RESUME_BRANCH; not resuming into it." >&2
+            echo "Move it aside, or: scripts/issue-release.sh $RESUME" >&2
+            rm -f "$CLAIMS/issue-$RESUME.owner"; rmdir "$CLAIMS/issue-$RESUME" 2>/dev/null || true
+            exit 2
+        fi
+        if ! git -C "$RESUME_TREE" merge --quiet --ff-only "origin/$RESUME_BRANCH" 2>/dev/null; then
+            echo "$RESUME_TREE has diverged from origin/$RESUME_BRANCH; reconcile it by hand first." >&2
+            rm -f "$CLAIMS/issue-$RESUME.owner"; rmdir "$CLAIMS/issue-$RESUME" 2>/dev/null || true
+            exit 2
+        fi
+    else
+        git -C "$REPO_ROOT" branch --quiet -D "$RESUME_BRANCH" 2>/dev/null || true
+        git -C "$REPO_ROOT" worktree add --quiet --track -b "$RESUME_BRANCH" "$RESUME_TREE" "origin/$RESUME_BRANCH"
+    fi
+    # The base comes from the open PR, not from `$BASE`.
+    #
+    # `--base` is a *claim*-time argument and nobody passes it to `--resume`;
+    # they should not have to, since the branch already exists and its PR
+    # already targets something. Taking the default recorded `main` on a
+    # branch claimed with `--base feature/x`, and `issue-land.sh` then refused
+    # to merge -- rightly, because a worktree and a PR that disagree about
+    # where work goes is not a thing to guess about. But the disagreement was
+    # this script's own doing, and the landing that hit it had already run
+    # every gate and pushed (#1401).
+    #
+    # The PR is the unambiguous answer: it is what the work will merge into.
+    # Without one -- a branch pushed and never opened -- `$BASE` is all there
+    # is, and is what was recorded before.
+    RESUME_BASE="$(gh pr list --head "$RESUME_BRANCH" --state open \
+                   --json baseRefName --jq '.[0].baseRefName // empty' 2>/dev/null || true)"
+    printf '%s\n' "${RESUME_BASE:-$BASE}" > "$(git -C "$RESUME_TREE" rev-parse --git-dir)/postio-base"
     mkdir -p "$RESUME_TREE/target/tmp"
     [ -x "$REPO_ROOT/scripts/install-shims.sh" ] && "$REPO_ROOT/scripts/install-shims.sh"
     gh issue edit "$RESUME" --add-assignee @me --add-label in-progress >/dev/null 2>&1 || true
@@ -198,6 +240,7 @@ if [ -n "$RESUME" ]; then
     echo
     echo "  tree:   $RESUME_TREE"
     echo "  branch: $RESUME_BRANCH, tracking origin -- a push updates the PR"
+    echo "  base:   ${RESUME_BASE:-$BASE}${RESUME_BASE:+ (from the PR)}"
     echo
     echo "Fix it there, then scripts/issue-land.sh --detach lands onto the same PR."
     exit 0
@@ -754,6 +797,20 @@ while IFS=$'\t' read -r NUM TITLE; do
                 echo "stops rather than cutting a worktree over it." >&2
                 SKIPPED_BRANCH="$SKIPPED_BRANCH $NUM"
                 continue
+            fi
+        fi
+        # A seeded tree costs about 5 GB of real disk (`du` says 11; the
+        # reflink shares the rest), and seeding one onto a disk that cannot
+        # hold it is how #1428 began: the landing that followed died of a
+        # compile error that was not one. Below the floor, the reaper's
+        # report says what is holding the space and how to get it back
+        # (#1460). A warning rather than a refusal, because the tree may
+        # still fit and the person reading this can decide.
+        CLAIM_FREE_GB=$(( $(df -Pk "$WORKTREES" 2>/dev/null | awk 'NR==2 { print $4 }' || echo 0) / 1024 / 1024 ))
+        if [ "${CLAIM_FREE_GB:-0}" -lt "${POSTIO_CLAIM_DISK_FLOOR_GB:-16}" ]; then
+            echo "warning: ${CLAIM_FREE_GB} GB free under $WORKTREES, and a seeded tree is about 5 GB of it." >&2
+            if [ -x "$REPO_ROOT/scripts/worktree-reap.sh" ]; then
+                "$REPO_ROOT/scripts/worktree-reap.sh" >&2 || true
             fi
         fi
         git -C "$REPO_ROOT" worktree add --quiet -b "$BRANCH" "$TREE" "origin/$BASE"

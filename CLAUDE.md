@@ -35,6 +35,47 @@ feature/<x> <n>` cuts the worktree from it and lands back onto it (details
 in `/issue`); rebase the feature branch onto `main` regularly, merge it when
 it is whole.
 
+**Spec-driven work has no issues at all.** A feature under `specs/<nnn>-<name>/`
+that has been through `/speckit-specify` and `/speckit-plan` is not broken into
+one issue per task — the constitution says so (Development Workflow), and this
+is the whole shape:
+
+```bash
+git worktree add ~/src/postio-worktrees/<name> -b feature/<name> origin/main
+cd ~/src/postio-worktrees/<name>
+# a linked worktree's `.git` is a file, so ask git where the directory is —
+# which is what issue-land.sh does to read it back
+printf 'main\n' > "$(git rev-parse --git-dir)/postio-base"   # or see below
+# work tasks.md top to bottom, one commit per task
+scripts/issue-land.sh --detach          # lands the branch; closes nothing
+```
+
+`tasks.md` is the queue and `spec.md` is the acceptance — both are in the
+repository and reviewable, which is what the issue was providing. So: **do not
+file an issue per task, and do not claim one.** Commits end
+`Refs: specs/<nnn>-<name>` and the task id rather than `Refs: #<issue>`.
+
+Two things still hold. Test-first is not relaxed — a task's test is observed
+red first, exactly as an issue's would be. And work *discovered* on the way
+that is not in the spec is still filed through `scripts/issue-file.sh`: the
+exemption is for the planned work, not for everything the branch touches.
+
+**A spec and an ADR are not both needed.** A `spec.md` records the decisions it
+takes and the alternatives it rejected, which is what an ADR is for, so a
+spec-driven feature does not also get a parallel ADR saying the same thing in a
+different file — that is two homes for one fact, and they drift. Cite an
+existing ADR the spec *inherits*; **fold in** one that is only about this
+feature — copy what still holds into the spec and delete the ADR in the same
+branch, leaving no orphan; and write a **new** ADR only for a decision that
+outlives this feature and that other work must obey (a boundary, a schema rule,
+a cross-crate contract), keeping it to that rule and letting the spec carry the
+feature's reasoning. A Proposed ADR whose experiment the spec settles is
+resolved by the spec, not left Proposed beside it.
+
+The branch lands to `main` once, as one pull request reviewed against the spec.
+If it grows long enough that `main` moves under it, rebase it as you go, the
+same as an initiative branch.
+
 **Finishing an issue is not finishing a session** — claim the next one and
 keep going. Never ask whether to continue; the answer is yes, and asking
 costs a round trip that may not come back for hours. Stop only when:
@@ -67,6 +108,17 @@ An issue is not done until its acceptance criteria are covered by tests. No
 test in the default suite may touch the network — live-server tests are
 `#[ignore]`. Protocol code tests against the `MailBackend` mock and the `.eml`
 corpus in `crates/postio-model/tests/corpus/` (`/add-fixture` extends it).
+
+**`#[ignore]` means one thing: this machine may not have what I need** — a
+live server, a system D-Bus, a Secret Service session, the real desktop.
+Nothing in CI may ever pass `--run-ignored` and `ci.yml` greps the workflows
+to be sure. So it is *not* how you say "too slow for the merge path": a test
+that wears it for that reason runs nowhere at all, which is where six of them
+were until #1450. Slowness is a scheduling question, and it is answered by
+`.config/nextest.toml` — mark the module `//! POSTIO-MEASUREMENT: …`, exclude
+it in `profile.default`'s `default-filter`, and it runs nightly under
+`--profile nightly` (which is also how you run one by hand).
+`check-measurement-tier.py` keeps the two halves honest.
 
 ## Build & test: verify what you touched, nothing more
 
@@ -113,12 +165,26 @@ in `docs/engineering-notes.md`. Three of #901's four gate failures were
 pre-existing and two of them became issues. Re-running without looking turns
 somebody else's bug into your twenty-five minutes, repeatedly.
 
-**It is safe only because CI still runs the whole workspace on every pull
-request**, and the nightly job runs it again. Unit tests are precisely the
-tier that cannot see this project's characteristic bug — layers that each
-pass and are not joined up, like the Reader that was built, tested and never
-mounted. Do not read the fast default as permission to skip integration
-tests: write them, and let CI be the thing that runs them.
+**The landing gate has a four-minute budget** (2026-09-19), and every landing
+prints what it actually cost against it. Over budget is a warning, not a
+refusal — the fix is never in your branch, it is in the chain: a crate whose
+suite has grown goes on `SLOW` in `scripts/full-suite-crates.sh`, and a single
+slow test goes in `.config/nextest.toml`'s `default-filter` with a
+`POSTIO-MEASUREMENT:` marker beside it. One `postio-index` test that bulk-loaded
+`TOTAL_HITS_CAP + 50` messages was 208s of a 531s chain and is how the budget
+came to exist.
+
+**What runs the integration suites has changed, and it matters.** A pull
+request runs the sanity tier plus the suites a vocabulary change breaks
+(`postio-core`, `postio-config`); the rest run on the nightly timer and again
+as the release gate. Unit tests are precisely the tier that cannot see this
+project's characteristic bug — layers that each pass and are not joined up,
+like the Reader that was built, tested and never mounted — so **the nightly is
+the first reader of that class now, not the second**. `ci.yml`'s `nightly` job
+is what makes that safe: it goes red on every pull request while the last
+nightly was a failure, so a broken join blocks merging rather than sitting in
+a mail. Do not read the fast default as permission to skip integration tests:
+write them, and let the nightly be the thing that runs them.
 
 **Iterate at the cheapest layer that can fail.** `postio-body`'s 49 unit
 tests run in 0.00s and `postio-gtk`'s 330 in 0.42s, while `app_suite` takes
@@ -219,15 +285,17 @@ to export.
 
 Startup < 500 ms, interaction < 16 ms, local search < 100 ms. Transitions
 ≤ 100 ms or absent; honor `prefers-reduced-motion`. Never load a whole
-mailbox into memory — the list is windowed over paged SQLite.
+mailbox into memory — the list is windowed over the paged store.
 
 **Gated as counts, not as timings.** `bench.yml` compiles the bench targets
 nightly and deliberately times nothing, because a shared runner cannot defend
 16 ms — so what gates a PR is the *cause* of each budget, counted:
-`postio_storage::test_support::counting` reads statements, rows and trigger
-firings off SQLite's trace hook, and those are the same numbers on any
-machine. When you touch a read path, that is the thing to add an assertion to;
-`docs/engineering-notes.md` has what the three counts can and cannot see.
+`postio_storage::test_support::counting` counts statements and rows at the
+crate's own `sql` seam (this engine has no trace hook), `counting::scans` asks
+the planner which steps are full table scans, and those are the same numbers
+on any machine. When you touch a read path, that is the thing to add an
+assertion to; `docs/engineering-notes.md` has what the counts can and cannot
+see.
 
 ## Invariants the checks enforce
 
@@ -236,12 +304,13 @@ machine. When you touch a read path, that is the thing to add an assertion to;
 one line each (the why is `docs/ARCHITECTURE.md` and the ADRs):
 
 - `postio-core`, `postio-session`: no GTK. `postio-gtk`: no SQL, no protocol.
-- `postio-search`, `postio-body`: pure leaves — no rusqlite, no gtk4.
-- `postio-model`: no ammonia/html5ever, rusqlite, gtk4, or tokio — the whole
-  workspace waits on it to compile.
-- `postio-config`: no rusqlite, no gtk4.
+- `postio-search`, `postio-body`: pure leaves — no database engine (turso;
+  rusqlite stays banned so the rule survives a rename), no gtk4.
+- `postio-model`: no ammonia/html5ever, database engine, gtk4, or tokio — the
+  whole workspace waits on it to compile.
+- `postio-config`: no database engine, no gtk4.
 - `postio-sync` talks to the `MailBackend` trait, never `io-imap` types.
-- Every mutating action is local-first: SQLite write, enqueue, emit, repaint.
+- Every mutating action is local-first: store write, enqueue, emit, repaint.
   **The UI never awaits the network.**
 - Providers are data, not code: server settings live in the preset table,
   never as named constants or special-cased branches. Postio is not built
@@ -267,8 +336,8 @@ one line each (the why is `docs/ARCHITECTURE.md` and the ADRs):
 **Nothing leaves this machine that the user did not ask for.** Remote images
 blocked until allowed per sender; read receipts never sent automatically;
 one-click unsubscribe only on deliberate activation; no prefetch, favicon
-fetches, or speculative connections; the reader's WebKit view has JS and
-network off. No telemetry. Credentials go in the OS keyring — never
+fetches, or speculative connections; the reader's WebKit view refuses script
+that arrived in a message and has network off. No telemetry. Credentials go in the OS keyring — never
 `config.toml`, never a log. **Logs never carry message content**: ids,
 counts, outcomes only.
 
@@ -288,6 +357,13 @@ chore ci build revert`, scope the crate without prefix (or `workspace`, `ci`,
 `docs`), summary imperative and ≤ 50 chars. Body explains **why**, wrapped at
 72. Every commit ends with `Refs: #<issue>`; the PR body's `Closes: #<issue>`
 does the closing. Every commit is green for the crates it touches.
+
+**A small fix has no issue and does not invent one.** The ten-minute rule
+above means some changes have nothing to refer to, and a made-up number is
+worse than none — the next reader follows it somewhere unrelated. Branch it
+`fix/<slug>`, `docs/<slug>` or `chore/<slug>` and `issue-land.sh` lands it
+with no `Refs:` and no `Closes`, saying in the PR that there is deliberately
+no issue. Everything else about the landing is the same, gates included.
 
 **Never write a closing keyword in a commit body, not even to deny it.**
 GitHub acts on `close|closes|closed|fix|fixes|fixed|resolve|resolves|resolved
@@ -339,7 +415,13 @@ things stay shared:
   crates are dropped and rebuilt — they carry the tree's absolute path, and
   cargo does not notice a move — so the sanity tier is about a minute, not
   the 19 of a cold tree. It is a copy, not the sharing #76 forbids. `--fresh` forces a new tree, `--cold` an unseeded one, and
-  `--reuse` is the strict form that refuses instead of falling back.
+  `--reuse` is the strict form that refuses instead of falling back. Trees nobody
+  will miss -- clean, every commit upstream by patch id, quiet for a day --
+  are reclaimed by `scripts/worktree-reap.sh` (a report by default, `--reap`
+  acts; a dirty tree is never touched, and one with unlanded commits loses
+  only its `target/`). A landing refuses below a floor of free disk and
+  names a full disk as such, because a full disk otherwise fails as a
+  compile error or SIGBUS (#1428, #1460).
 - **The main checkout** `~/src/postio` is for coordination, not work. A hook
   refuses the destructive commands there (`git add -A`, `reset --hard`,
   `stash`, `cargo fmt --all`, editing the root `Cargo.toml`, …) because other
@@ -361,11 +443,30 @@ for a stranger who can't ask follow-ups:
 |---|---|
 | Why the fix is shaped this way | the commit body |
 | What you discovered on the way | a comment on the issue |
-| Work this revealed | `scripts/issue-file.sh` — **search first** (`ready` only if startable unattended; post-v1 → `roadmap`, under its epic) |
+| Work this revealed, **if it is more than ~10 minutes** | `scripts/issue-file.sh` — **search first** (`ready` only if startable unattended; post-v1 → `roadmap`, under its epic) |
+| Work this revealed, if it is less | **just fix it**, here, as its own commit |
 | Something needing a design/architecture call an agent can make | `needs-architecture` — `/ux-architect`'s queue |
 | Something only the maintainer can decide | `needs-maintainer`, plus a comment naming the question and the options |
 | A constraint future sessions must respect | a new file under `docs/notes/` (date and title), listed in `docs/engineering-notes.md` |
 | An architectural decision | an ADR in `docs/decisions/` |
+
+**Fix the small thing; file the large one** (maintainer, 2026-09-10: *"only
+file issues for work that is longer than 10 min and fix smaller things right
+away"*). A one-line guard, a stale comment, a lint, a wrong issue number in a
+doc comment — these cost less to fix than to describe, and an issue for one
+spends a queue entry, a claim, a worktree and a landing on something that was
+already in front of you. Fix it in the branch you are in, in its own commit
+that says what it is: the commit body is the record, and it is a better one
+than an issue nobody will read.
+
+The rule is about **effort, not importance**. Something small and urgent still
+gets fixed now. Something small you *cannot* fix here — it belongs to another
+crate's design, or it needs a decision — is still an issue, because the
+blocker is not its size.
+
+Unchanged: anything genuinely larger, anything needing a decision
+(`needs-maintainer`, `needs-architecture`), and anything you are **not** going
+to do. A bug you walked past and did not write down is lost.
 
 **File through the script, because you will not think to search.** One bug
 collected three issue numbers in two days (#332, #392, #406), both duplicates
@@ -388,7 +489,18 @@ Every pull request runs `ci.yml`; its `changes` job decides what the diff
 obliges it to build, and the compile jobs skip themselves for docs and
 tooling (a skipped job counts as passed). Do not merge around a red check:
 a check that fails on your PR is your work to fix, on the same branch,
-however green the crates you touched were locally. The gate chain proves
+however green the crates you touched were locally. **That includes the
+`Nightly is green` check.** While the last nightly was red, every pull
+request runs the nightly itself — the same workflow, reused rather than
+copied — and the check passes if *that* goes green. So the way to clear it is
+to fix the nightly on your branch, which is the ordinary way to fix anything,
+and a pull request that does is never blocked by the thing it fixes.
+
+There is no override and no bypass actor, because neither is needed. What
+there is instead is a cost: while the nightly is red a pull request runs the
+full suite and the coverage floors, so it takes about twenty-five minutes
+rather than four. That is deliberate — a broken nightly should be
+uncomfortable until somebody fixes it — and it ends the moment one does. The gate chain proves
 the crates a branch changed; CI is the only thing that proves the
 *combination*, which is the failure two branches that are each green alone
 can produce together.
@@ -396,8 +508,12 @@ can produce together.
 The steward loop's periodic `cargo check --workspace --all-targets` and
 `cargo test --workspace --no-fail-fast` against `main` are now a backstop
 rather than the only proof. If either is ever red: pull `ready` from open
-issues, fix on a branch, land it, restore the labels. A release still needs a
-local full-suite run first — `release.yml` ships without testing.
+issues, fix on a branch, land it, restore the labels. A release runs the
+full suite itself now: `release.yml`'s `flatpak` job `needs: suite`, so
+nothing is built, signed, attested or published until the whole workspace
+passes under `--profile ci-full` — everything the nightly runs, through
+`scripts/test-with-flake-retry.sh`, so a busy runner cannot block a release
+on noise and a target that fails twice still can.
 
 ## Skills and design authorities
 

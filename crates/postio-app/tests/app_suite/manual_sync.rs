@@ -36,94 +36,99 @@ use postio_storage::seed::seed_small;
 use postio_storage::{BlobStore, test_support};
 
 pub fn the_status_lines_sync_button_asks_for_a_refresh() {
-    let state_dir = tempfile::tempdir().expect("a state directory");
-    // SAFETY: first statement of a single-threaded test.
-    unsafe { std::env::set_var("XDG_STATE_HOME", state_dir.path()) };
+    crate::gtk_case(async {
+        let state_dir = tempfile::tempdir().expect("a state directory");
+        // SAFETY: first statement of a single-threaded test.
+        unsafe { std::env::set_var("XDG_STATE_HOME", state_dir.path()) };
 
-    if adw::init().is_err() || gdk::Display::default().is_none() {
-        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
-        return;
-    }
-    let display = gdk::Display::default().unwrap();
-    fonts::install().expect("the embedded fonts should install");
-    style::install(&display);
-    app::install_icons(&display);
+        if adw::init().is_err() || gdk::Display::default().is_none() {
+            eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
+            return;
+        }
+        let display = gdk::Display::default().unwrap();
+        fonts::install().expect("the embedded fonts should install");
+        style::install(&display);
+        app::install_icons(&display);
 
-    let database = test_support::memory();
-    seed_small(&database, 11);
-    let directory = tempfile::tempdir().expect("a blob directory");
-    let blobs = BlobStore::open(
-        directory.path().to_path_buf(),
-        &postio_storage::test_support::blob_keys(),
-    )
-    .expect("a blob store");
+        let database = test_support::memory().await;
+        seed_small(&database, 11).await;
+        let directory = tempfile::tempdir().expect("a blob directory");
+        let blobs = BlobStore::open(
+            directory.path().to_path_buf(),
+            &postio_storage::test_support::blob_keys(),
+        )
+        .expect("a blob store");
 
-    // Every command that reaches the bus, recorded. `Refresh` starts a
-    // network pass in the real application, which this test has no business
-    // doing — what it asserts is that the ask *arrives*. Behind a lock
-    // because the bus runs handlers on its own runtime, not this thread.
-    let asked: Arc<Mutex<Vec<CommandId>>> = Arc::new(Mutex::new(Vec::new()));
-    let recorder = Arc::clone(&asked);
-    let (bridge, _replies) = Bridge::new(handler_fn(move |command: Command, _| {
-        recorder.lock().expect("not poisoned").push(command.id());
-        async {}
-    }))
-    .expect("a runtime");
-    let (sink, _events) = event_channel();
-    let wiring = Wiring::new(database, blobs, bridge.handle(), sink, bridge.commands());
+        // Every command that reaches the bus, recorded. `Refresh` starts a
+        // network pass in the real application, which this test has no business
+        // doing — what it asserts is that the ask *arrives*. Behind a lock
+        // because the bus runs handlers on its own runtime, not this thread.
+        let asked: Arc<Mutex<Vec<CommandId>>> = Arc::new(Mutex::new(Vec::new()));
+        let recorder = Arc::clone(&asked);
+        let (bridge, _replies) = Bridge::new(handler_fn(move |command: Command, _| {
+            recorder.lock().expect("not poisoned").push(command.id());
+            async {}
+        }))
+        .expect("a runtime");
+        let (sink, _events) = event_channel();
+        let wiring = Wiring::new(database, blobs, bridge.handle(), sink, bridge.commands());
 
-    let window = Window::default();
-    window.present();
-    while glib::MainContext::default().iteration(false) {}
+        let window = Window::default();
+        window.present();
+        while glib::MainContext::default().iteration(false) {}
 
-    let feeds = feed_the_window(&window, &wiring)
-        .expect("the seeded store has an account")
-        .feeds;
-    // `Refresh` has to be wired, or `commands::install`'s own filter drops it
-    // before it can reach anything — which would make this test pass for the
-    // wrong reason if it asserted on the button alone.
-    commands::install(
-        &window,
-        &feeds,
-        Default::default(),
-        wiring.commands.clone(),
-        vec![CommandId::Refresh],
-    );
+        let feeds = feed_the_window(&window, &wiring)
+            .await
+            .expect("the seeded store has an account")
+            .feeds;
+        // `Refresh` has to be wired, or `commands::install`'s own filter drops it
+        // before it can reach anything — which would make this test pass for the
+        // wrong reason if it asserted on the button alone.
+        commands::install(
+            &window,
+            &feeds,
+            Default::default(),
+            wiring.commands.clone(),
+            vec![CommandId::Refresh],
+        );
 
-    // ── the pointer ──────────────────────────────────────────────────────
-    let button = refresh_button(&window).expect("the status line offers a manual sync");
-    assert!(
-        button.is_visible() && button.is_sensitive(),
-        "the trigger is on screen but cannot be pressed"
-    );
-    button.emit_clicked();
+        // ── the pointer ──────────────────────────────────────────────────────
+        let button = refresh_button(&window).expect("the status line offers a manual sync");
+        assert!(
+            button.is_visible() && button.is_sensitive(),
+            "the trigger is on screen but cannot be pressed"
+        );
+        button.emit_clicked();
 
-    assert!(
-        settle_until(|| asked
-            .lock()
-            .expect("not poisoned")
-            .contains(&CommandId::Refresh)),
-        "the sync button reported into nothing: it is drawn, it is clickable, \
-         and no command reaches the bus — which is exactly what a control \
-         wired to nobody looks like ({:?})",
-        asked.lock().expect("not poisoned")
-    );
+        assert!(
+            settle_until(async || asked
+                .lock()
+                .expect("not poisoned")
+                .contains(&CommandId::Refresh))
+            .await,
+            "the sync button reported into nothing: it is drawn, it is clickable, \
+             and no command reaches the bus — which is exactly what a control \
+             wired to nobody looks like ({:?})",
+            asked.lock().expect("not poisoned")
+        );
 
-    // ── and the key, to the same place ───────────────────────────────────
-    // The acceptance asks for identical reach, so this asserts they are the
-    // same verb rather than two paths that happen to both work.
-    asked.lock().expect("not poisoned").clear();
-    window.handle_key(gdk::Key::F5, gdk::ModifierType::empty());
-    assert!(
-        settle_until(|| asked
-            .lock()
-            .expect("not poisoned")
-            .contains(&CommandId::Refresh)),
-        "`F5` no longer reaches the same command the button does: {:?}",
-        asked.lock().expect("not poisoned")
-    );
+        // ── and the key, to the same place ───────────────────────────────────
+        // The acceptance asks for identical reach, so this asserts they are the
+        // same verb rather than two paths that happen to both work.
+        asked.lock().expect("not poisoned").clear();
+        window.handle_key(gdk::Key::F5, gdk::ModifierType::empty());
+        assert!(
+            settle_until(async || asked
+                .lock()
+                .expect("not poisoned")
+                .contains(&CommandId::Refresh))
+            .await,
+            "`F5` no longer reaches the same command the button does: {:?}",
+            asked.lock().expect("not poisoned")
+        );
 
-    bridge.shutdown();
+        bridge.shutdown();
+    });
 }
 
 fn refresh_button(window: &Window) -> Option<gtk::Button> {

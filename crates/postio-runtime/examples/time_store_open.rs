@@ -6,7 +6,7 @@
 //! has a 676 MB write-ahead log beside an 868 MB database. This measures
 //! whether those two facts are the same fact.
 //!
-//! It opens the database the way the application does — `Database::open`,
+//! It opens the database the way the application does — `Store::open`,
 //! read-write, the same pragmas — because a read-only open does not recover
 //! a WAL and so cannot answer the question.
 //!
@@ -37,10 +37,11 @@ use std::path::{Path, PathBuf};
 use std::time::Instant;
 
 use postio_account::secret::{AccountKey, KeyringSecretStore, SecretStore};
-use postio_storage::Database;
+use postio_storage::Store;
 use postio_storage::key::{STORE_KEY_ENTRY, StoreKey};
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let path = match std::env::args().nth(1) {
         Some(path) => PathBuf::from(path),
         None => return Err("pass the path to a *copy* of a store; see the module docs".into()),
@@ -78,21 +79,23 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     report_sizes(&path);
 
     // ── the open the application pays for ────────────────────────────────
-    let first = time_open(&path, &key)?;
+    let first = time_open(&path, &key).await?;
     println!("\nopen #1 (as found):        {first:>8.0} ms");
     report_sizes(&path);
 
     // ── take the WAL out of the picture ──────────────────────────────────
     {
-        let database = Database::open(&path, &key.derive(postio_storage::key::Purpose::Database))?;
-        let connection = database.connection()?;
-        connection.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);")?;
+        let database =
+            Store::open(&path, &key.derive(postio_storage::key::Purpose::Database)).await?;
+        // `truncate_log`, not the pragma by hand: the pragma answers with a
+        // row, and the engine refuses a statement whose rows nobody reads.
+        database.truncate_log().await?;
     }
     println!("\nafter wal_checkpoint(TRUNCATE):");
     report_sizes(&path);
 
-    let second = time_open(&path, &key)?;
-    let third = time_open(&path, &key)?;
+    let second = time_open(&path, &key).await?;
+    let third = time_open(&path, &key).await?;
     println!("\nopen #2 (WAL truncated):   {second:>8.0} ms");
     println!("open #3 (WAL truncated):   {third:>8.0} ms");
 
@@ -108,14 +111,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-fn time_open(path: &Path, key: &StoreKey) -> Result<f64, Box<dyn std::error::Error>> {
+async fn time_open(path: &Path, key: &StoreKey) -> Result<f64, Box<dyn std::error::Error>> {
     let subkey = key.derive(postio_storage::key::Purpose::Database);
     let started = Instant::now();
-    let database = Database::open(path, &subkey)?;
+    let database = Store::open(path, &subkey).await?;
     // One real read, because an open that has not touched a page has not
     // paid for the WAL index the way the application's first query does.
-    let connection = database.connection()?;
-    let _: i64 = connection.query_row("SELECT count(*) FROM mailboxes", [], |row| row.get(0))?;
+    let connection = database.connect().await?;
+    let _ = postio_storage::sql::scalar(&connection, "SELECT count(*) FROM mailboxes", ()).await?;
     let elapsed = started.elapsed().as_secs_f64() * 1000.0;
     drop(connection);
     drop(database);

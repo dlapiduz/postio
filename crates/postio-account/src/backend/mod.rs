@@ -124,6 +124,26 @@ pub trait MailBackend: Send + Sync + fmt::Debug {
     /// Lists mailboxes, resolving each one's role at the edge.
     async fn list_mailboxes(&self, filter: &MailboxFilter) -> BackendResult<Vec<MailboxSummary>>;
 
+    /// Creates `path` on the server, subscribing to it where the protocol
+    /// separates the two.
+    ///
+    /// **Idempotent from the caller's point of view.** A server reporting that
+    /// the mailbox already exists is success, not failure: two clients may
+    /// race, and the caller wants the folder to *exist*, not to have been the
+    /// one that made it.
+    ///
+    /// Called only by discovery, and only for a reserved role that resolves to
+    /// no folder — never for `INBOX`, which RFC 3501 names and every server
+    /// has. A server that refuses is reported as
+    /// [`BackendError::Rejected`] so the refusal can be recorded and not
+    /// retried on every pass; it is never fatal to a discovery pass.
+    ///
+    /// No default implementation on purpose. One returning `Ok(())` would
+    /// report success for something that never happened, and one returning an
+    /// error would let a new backend forget to answer. A backend that cannot
+    /// create a folder has to say so.
+    async fn create_mailbox(&self, path: &str) -> BackendResult<()>;
+
     /// Opens a mailbox and reports its state.
     async fn select(&self, path: &str, mode: SelectMode) -> BackendResult<MailboxStatus>;
 
@@ -175,6 +195,59 @@ pub trait MailBackend: Send + Sync + fmt::Debug {
     ) -> BackendResult<FetchedBody> {
         self.fetch_part(mailbox, id, &BodyPart::Whole, sink, cancel)
             .await
+    }
+
+    /// Fetches **one section of many messages** in as few round trips as the
+    /// backend can manage.
+    ///
+    /// # Why this exists (#1551)
+    ///
+    /// [`fetch_part`](Self::fetch_part) is one message per call, and a body
+    /// fetch is almost all round trip: a first sync over a large archive is
+    /// one wait per message with nothing overlapping. IMAP can answer a whole
+    /// `UID FETCH 1,5,9 BODY.PEEK[1]` in one, and the text axis asks for the
+    /// same section path over and over — most mail's words are at `1` or
+    /// `1.1` — so grouping by section is what turns tens of thousands of
+    /// waits into hundreds.
+    ///
+    /// # What it does not do
+    ///
+    /// It does not stream. Every answer is held in memory at once, which is
+    /// the trade a batch makes and the reason the caller must bound the set
+    /// by `RFC822.SIZE` before calling — see `postio_sync::backfill`, which
+    /// batches only messages small enough that the whole group fits a stated
+    /// budget, and leaves large ones on the streaming path.
+    ///
+    /// # The default is correct, only slow
+    ///
+    /// Looping over [`fetch_part`](Self::fetch_part) answers the same bytes,
+    /// so a backend that has no batch primitive — JMAP fetches by id, and the
+    /// mock is a `Vec` — needs to do nothing. Only IMAP overrides it.
+    ///
+    /// Answers one entry per id **that the server returned**, in any order. A
+    /// message the server no longer has is absent rather than an error: the
+    /// caller is backfilling a queue derived from a local table and an
+    /// expunge between the two is ordinary.
+    async fn fetch_sections(
+        &self,
+        mailbox: &str,
+        ids: &[RemoteId],
+        part: &BodyPart,
+        cancel: &CancelToken,
+    ) -> BackendResult<Vec<(RemoteId, Vec<u8>)>> {
+        let mut answered = Vec::with_capacity(ids.len());
+        for id in ids {
+            let mut sink = crate::backend::sink::VecSink::new();
+            match self.fetch_part(mailbox, id, part, &mut sink, cancel).await {
+                Ok(_) if sink.is_finished() => answered.push((id.clone(), sink.into_inner())),
+                // An unfinished sink is a fragment, and a fragment is worse
+                // than nothing (the sink's own contract).
+                Ok(_) => continue,
+                Err(BackendError::NoSuchMessage { .. }) => continue,
+                Err(error) => return Err(error),
+            }
+        }
+        Ok(answered)
     }
 
     /// Changes flags on `ids` and reports what they are now.

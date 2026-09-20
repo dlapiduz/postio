@@ -143,9 +143,9 @@ three hex components from `mail-builder`'s own boundary generator, under the
 identity's domain, with `FALLBACK_DOMAIN` when the identity has none.
 
 Deliberately **not** the id `mail-builder` would generate on its own, which
-carries this machine's hostname — CLAUDE.md's "nothing leaves this machine that
-the user did not ask for" makes a header on every outgoing message the wrong
-place for it. The domain component is what carries the global part of the
+carries this machine's hostname — `docs/PRODUCT.md` §21's "nothing leaves this
+machine that the user did not ask for" makes a header on every outgoing message
+the wrong place for it. The domain component is what carries the global part of the
 uniqueness argument: two Postio installations sending as the same domain would
 have to collide within that domain's namespace, and the local part is 48 hex
 digits of which two components vary per call.

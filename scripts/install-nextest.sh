@@ -28,12 +28,22 @@
 # build time. The asset is immutable, so a changed digest means the artifact
 # changed and this should stop rather than install it.
 #
-# To bump: change both values below, download the tarball, and put its
+# # Why two checksums
+#
+# The tooling self-tests run on macOS as well since #1151, and
+# `scripts/lib/prereq.py` makes a missing prerequisite a *failure* under CI
+# rather than a skip -- so a runner that cannot install this is a runner that
+# cannot run `test-issue-land-no-tests.py`, whose whole subject is that the
+# gate must give the same answer under both runners. One host per asset, one
+# digest per asset.
+#
+# To bump: change the version, download both tarballs, and put their
 # `sha256sum` here. Nothing else names them.
 set -euo pipefail
 
 VERSION="0.9.143"
-SHA256="66786b9abe23920d022a182d1416b1bbc8130dd4872a9553d76985a1708dcd1e"
+SHA256_LINUX="66786b9abe23920d022a182d1416b1bbc8130dd4872a9553d76985a1708dcd1e"
+SHA256_MAC="4830d430411148d17602a75cc880bfb4dc8dac153dea59a48a2ef4cc93577f07"
 
 # `--version` rather than `command -v`: a cached or hand-installed copy at the
 # wrong version is the case that matters, and it looks identical on PATH.
@@ -42,11 +52,30 @@ if cargo nextest --version 2>/dev/null | grep -qw "$VERSION"; then
     exit 0
 fi
 
+# `sha256sum` is GNU and absent on macOS, where the tool is `shasum -a 256`.
+# Both read the same `<digest>  <path>` line on stdin with `-c`.
+case "$(uname -s)" in
+Darwin)
+    ASSET="mac"
+    SHA256="$SHA256_MAC"
+    CHECK="shasum -a 256 -c -"
+    ;;
+Linux)
+    ASSET="linux"
+    SHA256="$SHA256_LINUX"
+    CHECK="sha256sum -c -"
+    ;;
+*)
+    echo "install-nextest: no pinned asset for $(uname -s)" >&2
+    exit 1
+    ;;
+esac
+
 TARBALL=$(mktemp -t nextest-XXXXXX.tar.gz)
 trap 'rm -f "$TARBALL"' EXIT
 
-curl -fsSL --retry 3 -o "$TARBALL" "https://get.nexte.st/$VERSION/linux"
-echo "$SHA256  $TARBALL" | sha256sum -c -
+curl -fsSL --retry 3 -o "$TARBALL" "https://get.nexte.st/$VERSION/$ASSET"
+echo "$SHA256  $TARBALL" | $CHECK
 
 mkdir -p "$HOME/.cargo/bin"
 tar -xzf "$TARBALL" -C "$HOME/.cargo/bin" cargo-nextest

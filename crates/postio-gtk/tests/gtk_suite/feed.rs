@@ -37,6 +37,8 @@ struct Fake {
     totals: RefCell<Vec<(i64, u32)>>,
     /// Mailboxes whose reads fail, and why.
     broken: RefCell<Vec<(i64, String)>>,
+    /// Mailboxes whose reads fail a few times and then recover.
+    flaky: RefCell<Vec<(i64, u8, String)>>,
 }
 
 /// The folder a request names. These tests open folders, not smart folders —
@@ -56,6 +58,29 @@ impl Fake {
     fn holding(self: &Rc<Self>, mailbox: i64, total: u32) -> Rc<Self> {
         self.totals.borrow_mut().push((mailbox, total));
         self.clone()
+    }
+
+    /// Fail the next `times` reads of `mailbox`, then answer normally.
+    ///
+    /// A page read that collides with a write is transient, which is the case
+    /// the feed's retry exists for. `breaking` is the other one: a store that
+    /// never answers.
+    fn flaky(self: &Rc<Self>, mailbox: i64, times: u8, reason: &str) -> Rc<Self> {
+        self.flaky
+            .borrow_mut()
+            .push((mailbox, times, reason.to_string()));
+        Rc::clone(self)
+    }
+
+    /// How many times a page of `mailbox` has been asked for.
+    fn asks_for(self: &Rc<Self>, mailbox: i64, page: u32) -> usize {
+        self.asked
+            .borrow()
+            .iter()
+            .filter(|request| {
+                scope_mailbox(request) == MailboxId::new(mailbox) && request.page == page
+            })
+            .count()
     }
 
     fn breaking(self: &Rc<Self>, mailbox: i64, reason: &str) -> Rc<Self> {
@@ -85,7 +110,15 @@ impl MessageSource for Fake {
             .borrow()
             .iter()
             .find(|(id, _)| MailboxId::new(*id) == scope_mailbox(&request))
-            .map(|(_, reason)| reason.clone());
+            .map(|(_, reason)| reason.clone())
+            .or_else(|| {
+                let mut flaky = self.flaky.borrow_mut();
+                let entry = flaky.iter_mut().find(|(id, left, _)| {
+                    MailboxId::new(*id) == scope_mailbox(&request) && *left > 0
+                })?;
+                entry.1 -= 1;
+                Some(entry.2.clone())
+            });
         let total = self.total_of(scope_mailbox(&request));
         let mailbox = scope_mailbox(&request);
         Box::pin(async move {
@@ -116,7 +149,8 @@ fn row(mailbox: MailboxId, position: u32) -> Row {
         seen: false,
         flagged: false,
         answered: false,
-        draft: false,
+        send_state: None,
+        send_at: None,
         has_attachments: false,
         thread_count: 1,
         participants: Vec::new(),
@@ -326,5 +360,53 @@ pub fn the_message_list_is_fed_from_the_runtime() {
         reported.borrow().as_slice(),
         ["the database is locked".to_string()],
         "a failed read was swallowed"
+    );
+
+    // ── a page that failed transiently repairs itself ──────────────────────
+    //
+    // Seen on a live account: most of a 709-message inbox drew as skeletons
+    // and stayed that way while the body backfill ran. `MessageList` asks once
+    // per page and never again until it is answered -- the rule that keeps a
+    // 100,000-message folder cheap -- and a failed read answered nothing at
+    // all, so those fifty rows were placeholders for the rest of the session.
+    //
+    // Worse than "until you scroll away and back": the row objects already
+    // handed to the view are returned without consulting the window, so
+    // nothing would ever ask again on its own. The feed has to push it.
+    //
+    // A *later* page rather than the open: a failed open leaves no total and
+    // therefore no rows to ask about, which is a different state entirely.
+    let source = Fake::new()
+        .holding(INBOX, 500)
+        .flaky(INBOX, 1, "the database is locked");
+    let list = MessageList::new();
+    let feed = Feed::new(&list, source.clone());
+
+    let reported = Rc::new(RefCell::new(Vec::new()));
+    feed.connect_error({
+        let reported = reported.clone();
+        move |reason| reported.borrow_mut().push(reason)
+    });
+
+    feed.open(ListScope::Mailbox(MailboxId::new(INBOX)));
+    settle();
+
+    // The open's own page 0 read is the one that failed, and it recovered.
+    assert_eq!(list.n_items(), 500, "the folder opened after the retry");
+    assert!(
+        source.asks_for(INBOX, 0) >= 2,
+        "page 0 failed once and was never asked again: {}",
+        source.asks_for(INBOX, 0)
+    );
+    let row: MessageRow = list.item(0).expect("a row").downcast().expect("a row");
+    assert!(
+        row.is_loaded(),
+        "the retry landed but row 0 is still a placeholder, so the rows a \
+         person sees are skeletons whatever the store does afterwards"
+    );
+    assert!(
+        reported.borrow().is_empty(),
+        "a read that recovered on the retry raised a banner anyway: {:?}",
+        reported.borrow()
     );
 }

@@ -168,4 +168,107 @@ pub fn an_edit_becomes_the_document_and_undo_walks_typing_runs() {
         split.can_undo(),
         "a zero coalescing window must keep the runs separate"
     );
+
+    // ── The fold is chrome, and must not become the message ─────────────
+    //
+    // A reply's quote is wrapped in `<details><summary>Quoted message</summary>`
+    // by `postio_ui::editor::document::fold_quotes`, so that is what sits in
+    // the editor's DOM. The bridge posts that DOM back and `parse` reads it,
+    // and `summary` is not a tag the authoring subset knows -- so its text was
+    // collected as ordinary content and the draft grew a line saying "Quoted
+    // message". Typing one character into a reply was enough, and the
+    // recipient got it.
+    //
+    // Driven through the editor rather than over `parse` directly, because the
+    // fold is added by the document assembly on the way *in*: a unit test over
+    // `parse` would have to hand-write the very markup whose shape is the
+    // thing in question.
+    let mut reply = Document::new();
+    reply.blocks.push(paragraph("Acknowledged."));
+    reply.blocks.push(Block::Quoted(postio_body::quote_of(
+        Some("<p>Do not reset.</p>"),
+        "Do not reset.",
+        "q1",
+    )));
+    editor.load(reply);
+    settle("the folded reply to load", || {
+        eval(
+            editor.widget(),
+            "document.querySelectorAll('details').length",
+        ) == "1"
+    });
+
+    // Typing is what makes this happen, and is the whole point: the host's
+    // document is only rebuilt from the DOM when the bridge reports an edit,
+    // so reading it back without typing returns what was loaded and asserts
+    // nothing.
+    // Into the paragraph the reply is written in, not at the end of `body` --
+    // that lands after the `<details>`, where an insert has nowhere to go.
+    eval(
+        editor.widget(),
+        "(() => { const p = document.body.firstChild; \
+           const r = document.createRange(); \
+           r.setStart(p.firstChild, p.firstChild.length); r.collapse(true); \
+           const s = window.getSelection(); s.removeAllRanges(); s.addRange(r); \
+           document.execCommand('insertText', false, ' typed'); \
+           return 'typed'; })()",
+    );
+    settle("the edit to cross the bridge", || {
+        editor.document().to_text().contains("typed")
+    });
+
+    let after = editor.document();
+    let text = after.to_text();
+    assert!(
+        !text.contains("Quoted message"),
+        "the fold's summary became part of the message: {text:?}"
+    );
+    assert!(
+        after
+            .blocks
+            .iter()
+            .any(|block| matches!(block, Block::Quoted(_))),
+        "and the quote itself must survive the round trip: {after:?}"
+    );
+    assert!(
+        text.contains("Acknowledged."),
+        "the reply's own words went missing: {text:?}"
+    );
+
+    // ── And it opens when you click it, inside a contenteditable ────────
+    //
+    // `specs/002-compose-editor` T048 left this to a person at a display,
+    // and the folded-by-default half is covered above and in
+    // `postio_ui::editor::document`'s own tests. This is the other half, and
+    // it is the half with a real way to fail: the fold sits *inside* the
+    // editing surface, where a click's ordinary job is to place a caret. The
+    // mitigation is `<summary contenteditable="false">`, and whether that is
+    // enough is a question about WebKit rather than about our markup — which
+    // is exactly the kind a test should answer once instead of a person
+    // answering it every release.
+    //
+    // No script runs the fold, by design (FR-041), so `open` flipping is the
+    // browser doing it.
+    let open = || eval(editor.widget(), "document.querySelector('details').open");
+    assert_eq!(open(), "false", "a reply's quote starts folded");
+
+    eval(
+        editor.widget(),
+        "(() => { document.querySelector('details > summary').click();            return 'clicked'; })()",
+    );
+    settle("the fold to open", || open() == "true");
+    assert_eq!(
+        open(),
+        "true",
+        "clicking the summary did not open the quote"
+    );
+
+    // And it closes again, because a fold that only opens is a disclosure a
+    // person cannot undo.
+    eval(
+        editor.widget(),
+        "(() => { document.querySelector('details > summary').click();            return 'clicked'; })()",
+    );
+    settle("the fold to close", || open() == "false");
+    assert_eq!(open(), "false", "the quote would not fold back up");
 }

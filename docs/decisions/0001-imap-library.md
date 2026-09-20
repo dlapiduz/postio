@@ -1,9 +1,18 @@
 # ADR 0001 — IMAP library: `io-imap`
 
-- **Status:** Accepted — **GO**
+- **Status:** Accepted — **GO**; the crate it binds is `postio-account` since
+  #153, see the note below
 - **Date:** 2026-08-22
 - **Bead:** `postio-yop` (SPIKE), parent epic `postio-wy2` (E4), affects epic E5 (incremental sync)
 - **Decision:** adopt `io-imap` and **pin `= 0.6.0`**.
+
+> **Renamed 2026-09-03 (#153), noted 2026-09-14:** the crate this ADR calls
+> `postio-imap` — in "keep the blast radius inside", the capability rule, the
+> iCloud hazards and the binding rules at the end — is `postio-account`
+> (`crates/postio-account/`). Every rule below binds that crate unchanged.
+> The old name is left where it was written, the way
+> [ADR 0006](0006-oauth-and-provider-presets.md) records the same rename:
+> read it as history, not as the crate's current name.
 
 ---
 

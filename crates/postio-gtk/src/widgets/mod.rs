@@ -18,6 +18,7 @@
 
 pub mod action_bar;
 pub mod checkrow;
+pub mod chip;
 pub mod chrome;
 pub mod keycap;
 pub mod notice;
@@ -25,6 +26,7 @@ pub mod segmented;
 
 pub use action_bar::{Action, ActionBar};
 pub use checkrow::CheckRow;
+pub use chip::{chip_button, filter_chip};
 pub use chrome::{kicker, stat_line};
 pub use keycap::KeycapButton;
 pub use notice::{NoticeBar, NoticeMenuItem};

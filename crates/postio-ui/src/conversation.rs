@@ -15,7 +15,11 @@ use chrono::{DateTime, Datelike, Local, Utc};
 use postio_model::address::EmailAddress;
 
 /// How many names fit before the line starts eliding.
-const NAMES_SHOWN: usize = 3;
+///
+/// Public because the header's participant chips show the same people this
+/// line names, and two limits that could drift apart would let the faces and
+/// the names disagree about who was elided.
+pub const NAMES_SHOWN: usize = 3;
 
 /// The people in a conversation, short and newest-biased.
 ///
@@ -239,6 +243,22 @@ fn month(at: DateTime<Local>) -> String {
 /// to save more lines than it costs. Two collapsed rows become one divider
 /// plus nothing — no saving, and a gesture where there was none. Three
 /// become one, which is the first point the trade is worth making.
+///
+/// # Only one frontend folds
+///
+/// ADR 0032 made the GTK pane **one document**, and `0fe0d4f2` retired the
+/// stacked pane that had these dividers in it — so this and [`run_summary`]
+/// lost their Linux caller and were deleted with it. The macOS pane still
+/// stacks, still folds, and still calls them through
+/// `postio_ffi::conversation::conversation_runs`, which is why they are here
+/// rather than rewritten in Swift: a second implementation of "three in a
+/// row, and here is who is in them" is a second thing to keep in step.
+///
+/// The two panes are a **fork, not a duplication**, and reconciling them —
+/// ADR 0032 on macOS, or the stack kept deliberately as the platform's own
+/// answer — is a decision somebody has to make rather than a merge to
+/// perform. Until then this is the stacked pane's rule, shared by the one
+/// frontend that has one.
 pub fn collapsed_runs(collapsed: &[bool], minimum: usize) -> Vec<Range<usize>> {
     let mut runs = Vec::new();
     let mut start = None;
@@ -284,11 +304,12 @@ pub fn run_summary(count: usize, senders: &[EmailAddress]) -> String {
 /// A trait rather than a row type, because the two frontends carry different
 /// rows — `postio_gtk::list::Row` holds `EmailAddress`es and a GTK frontend's
 /// concerns, the FFI's `RowFfi` holds what crosses a C ABI — and neither is
-/// something this crate should own. What the rules actually read is four
+/// something this crate should own. What the rules actually read is three
 /// facts, and both rows have them.
 pub trait ConversationMessage {
-    /// Whether it has been read. Drives both where the pane opens and how
-    /// much of it expands.
+    /// Whether it has been read. What a conversation opens *expanded*, and
+    /// what `unread_only` keeps — not where it opens, which stopped asking
+    /// with FR-015; see [`opening_focus`].
     fn seen(&self) -> bool;
 
     /// When the server received it: the order a conversation is stacked in.
@@ -309,6 +330,12 @@ pub trait ConversationMessage {
 pub const EAGER_EXPANSION_CAP: usize = 3;
 
 /// How a conversation orders its messages.
+///
+/// Was the GTK frontend's `thread::Order`, when the drill-in column offered
+/// `o` to reverse it (#1003). The column is gone and so is the key: a
+/// conversation stacks oldest first, the way it was had. The type stays
+/// because the ordering itself is still a decision, and one worth being able
+/// to state.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Order {
     /// Oldest first — how a conversation was actually had, and how the pane
@@ -320,6 +347,9 @@ pub enum Order {
 }
 
 /// The rows a conversation shows, given what is in it and how it is ordered.
+///
+/// Pure, and tested without a display: the ordering is the part worth being
+/// sure about, and it has nothing to do with a toolkit.
 pub fn arrange<T: ConversationMessage + Clone>(
     rows: &[T],
     order: Order,
@@ -340,66 +370,94 @@ pub fn arrange<T: ConversationMessage + Clone>(
     rows
 }
 
-/// How many distinct people are in a conversation.
-///
-/// By address, folded: one correspondent who has changed their display name
-/// mid-thread is still one person, and the header's count is a count of
-/// correspondents rather than of `From` headers. Takes the senders rather
-/// than the rows for the same reason [`participants`] does — the two answer
-/// the same question about the same list, one as a number and one as a line.
-pub fn correspondents(senders: &[EmailAddress]) -> usize {
-    let mut seen: Vec<String> = senders
-        .iter()
-        .map(|from| from.address.to_lowercase())
-        .collect();
-    seen.sort();
-    seen.dedup();
-    seen.len()
-}
-
 /// Which message the pane opens on.
 ///
-/// **The first unread**, not the newest. A conversation you open is one you
-/// are part way through, and landing at the end means scrolling back past
-/// everything you have already read. When every message has been read there
-/// is no first unread and the newest is what you came back for.
+/// **The most recent, always** — spec FR-015, *"whether or not earlier
+/// messages are unread"*, and the maintainer's own words when the spec was
+/// clarified: the focus is on the last message when the thread opens.
+///
+/// # What this supersedes, and the argument it overrides
+///
+/// This used to be *the first unread*, from ADR 0015, and the reasoning was
+/// good: a conversation you open is one you are part way through, and landing
+/// at the end means scrolling back past everything you have already read. The
+/// case it was strongest on is a wholly unread thread, where the old rule
+/// opened at the beginning because reading from the end backwards is not how
+/// anyone reads.
+///
+/// FR-015 overrides it deliberately. Two things changed underneath it. The
+/// pane now shows every message's body rather than collapsing the read ones
+/// (FR-013), so "landing at the end" no longer means scrolling past collapsed
+/// headers to find anything — the thread is one document and the newest is
+/// where a reply is aimed. And the rail (#1374) makes the position of the
+/// mark a thing you can see and move, so opening somewhere and walking back
+/// is a gesture rather than a hunt.
+///
+/// The overridden argument is recorded rather than deleted because the
+/// wholly-unread case is where it still bites, and whoever revisits this
+/// should be arguing with a rule rather than rediscovering one. ADR 0015 is
+/// amended to match.
+///
+/// # One answer, both frontends
+///
+/// The rule was a function over `postio_gtk`'s own row while GTK was the only
+/// frontend. The macOS pane asks the same question across the FFI (#1263),
+/// and two implementations of FR-015 would be two products — so it is generic
+/// over [`ConversationMessage`] and lives here, where neither toolkit can
+/// reach it.
 ///
 /// `None` only for an empty conversation, which the pane does not draw.
 ///
 /// `messages` is oldest first, which is the order the pane stacks them in.
 pub fn opening_focus<T: ConversationMessage>(messages: &[T]) -> Option<usize> {
-    if messages.is_empty() {
-        return None;
-    }
-    messages
-        .iter()
-        .position(|message| !message.seen())
-        .or(Some(messages.len() - 1))
+    messages.len().checked_sub(1)
 }
 
 /// Which messages are expanded when the conversation opens.
 ///
 /// Read messages are collapsed: they are one line, and collapsing them is
-/// what makes a long conversation readable at all. From the focused message
-/// onwards the unread ones expand, because that is the part being read — up
-/// to `cap`, after which the rest stay one keystroke away rather than costing
-/// a web view each.
+/// what makes a long conversation readable at all. The focused message and
+/// the unread ones nearest it expand, because that is the part being read —
+/// up to `cap`, after which the rest stay one keystroke away rather than
+/// costing a web view each.
 ///
 /// The focused message always expands, even when it has been read: focus
 /// means "this is the one you are looking at", and looking at a one-line
 /// header is not reading.
+///
+/// This is the **stacked** pane's rule, and it is the macOS pane's. GTK draws
+/// a conversation as one document now (ADR 0032) and asks
+/// `postio_gtk::conversation::expanded_in_document` instead, where every
+/// message is open because a collapsed one saves no web process; the stacked
+/// path it keeps is what its widget-level tests drive.
+///
+/// # Backwards, since FR-015
+///
+/// This used to walk *forwards* from the focus, which was right while the
+/// pane opened on the first unread: the focus was the start of the run being
+/// read and everything after it was the rest of that run. FR-015 moved the
+/// opening focus to the newest message (#1385), and forwards from the last
+/// message is nothing at all — a six-message thread opened with one body and
+/// five collapsed headers.
+///
+/// So it walks back from the focus instead. The intent is unchanged: the
+/// message you landed on, and the ones a reader would want with it. Under the
+/// old rule those were ahead of you; under the new one they are behind.
 pub fn expanded_on_open<T: ConversationMessage>(
     messages: &[T],
     focus: usize,
     cap: usize,
 ) -> Vec<bool> {
+    if messages.is_empty() {
+        return Vec::new();
+    }
     let mut expanded = vec![false; messages.len()];
     let mut spent = 0;
-    for (index, message) in messages.iter().enumerate().skip(focus) {
+    for index in (0..=focus.min(messages.len() - 1)).rev() {
         if spent >= cap {
             break;
         }
-        if index == focus || !message.seen() {
+        if index == focus || !messages[index].seen() {
             expanded[index] = true;
             spent += 1;
         }
@@ -645,60 +703,6 @@ mod tests {
         );
     }
 
-    // -- folded runs (canvas turn 8a, #1005) ------------------------------
-
-    #[test]
-    fn a_run_of_three_folds_and_a_run_of_two_does_not() {
-        // Two collapsed rows become one divider plus nothing: no saving, and
-        // a gesture where there was none.
-        assert_eq!(collapsed_runs(&[true, true], RUN_MINIMUM), Vec::new());
-        assert_eq!(collapsed_runs(&[true, true, true], RUN_MINIMUM), vec![0..3]);
-    }
-
-    #[test]
-    fn the_canvas_shape_folds_only_its_middle() {
-        // 8 messages: one collapsed at the top, five collapsed in the middle,
-        // one collapsed, one expanded at the end. The top one is a run of
-        // one and stays as itself.
-        let collapsed = [true, false, true, true, true, true, true, false];
-        assert_eq!(collapsed_runs(&collapsed, RUN_MINIMUM), vec![2..7]);
-    }
-
-    #[test]
-    fn a_run_that_reaches_the_end_still_counts() {
-        // The loop has to close an open run when the slice ends, or a
-        // conversation whose tail is collapsed folds nothing.
-        assert_eq!(
-            collapsed_runs(&[false, true, true, true], RUN_MINIMUM),
-            vec![1..4]
-        );
-    }
-
-    #[test]
-    fn two_runs_are_two_dividers() {
-        let collapsed = [true, true, true, false, true, true, true, true];
-        assert_eq!(collapsed_runs(&collapsed, RUN_MINIMUM), vec![0..3, 4..8]);
-    }
-
-    #[test]
-    fn nothing_collapsed_folds_nothing() {
-        assert_eq!(
-            collapsed_runs(&[false, false, false], RUN_MINIMUM),
-            Vec::new()
-        );
-        assert_eq!(collapsed_runs(&[], RUN_MINIMUM), Vec::new());
-    }
-
-    #[test]
-    fn a_divider_names_its_count_and_who_is_in_it() {
-        let senders = people(&[
-            ("Ada Norwood", "ada@example.com"),
-            ("Bo Ferris", "bo@example.com"),
-            ("Ada Norwood", "ada@example.com"),
-        ]);
-        assert_eq!(run_summary(5, &senders), "5 earlier messages · Ada, Bo");
-    }
-
     // -- when one message arrived (#1259) ---------------------------------
 
     #[test]
@@ -731,11 +735,6 @@ mod tests {
         let now = at(2026, 1, 3);
         let arrived = at(2025, 12, 28);
         assert_eq!(message_when(arrived, now), "Sun 28 Dec 2025 at 12:00");
-    }
-
-    #[test]
-    fn a_divider_with_no_senders_still_says_how_many() {
-        assert_eq!(run_summary(4, &[]), "4 earlier messages");
     }
 
     // -- how a conversation stacks, and how much of it opens (ADR 0015 Q4) -
@@ -843,60 +842,46 @@ mod tests {
         );
     }
 
-    // -- how many people are in it ----------------------------------------
-
-    #[test]
-    fn one_correspondent_who_renamed_themselves_is_still_one_person() {
-        // Display names change mid-thread — a phone signature, a new job.
-        // The count is of correspondents, not of `From` headers.
-        let senders = [
-            EmailAddress::new(Some("Ada Norwood"), "ada@example.com"),
-            EmailAddress::new(Some("Ada N."), "Ada@Example.com"),
-        ];
-        assert_eq!(correspondents(&senders), 1);
-    }
-
-    #[test]
-    fn a_conversation_with_no_senders_has_no_correspondents() {
-        assert_eq!(correspondents(&[]), 0);
-    }
-
     // -- where the pane opens ---------------------------------------------
 
     #[test]
-    fn a_conversation_opens_on_its_first_unread_message() {
-        // The whole point of the rule: two read, then the one you stopped at.
+    fn a_conversation_opens_on_its_most_recent_message() {
+        // FR-015. Two read, then two unread: the old rule landed on index 2
+        // and this one lands at the end regardless.
         let messages = [
             message(1, true),
             message(2, true),
             message(3, false),
             message(4, false),
         ];
-        assert_eq!(opening_focus(&messages), Some(2));
+        assert_eq!(opening_focus(&messages), Some(3));
     }
 
     #[test]
     fn a_conversation_read_all_the_way_through_opens_on_its_newest() {
-        // There is no first unread, and the end is what you came back for.
         let messages = [message(1, true), message(2, true), message(3, true)];
         assert_eq!(opening_focus(&messages), Some(2));
     }
 
     #[test]
-    fn a_wholly_unread_conversation_opens_at_the_beginning() {
-        // Not at the newest: this is a conversation you have never read, and
-        // reading it from the end backwards is not how anyone reads.
+    fn a_wholly_unread_conversation_still_opens_at_the_end() {
+        // The case the superseded rule was strongest on: it opened at the
+        // beginning, because reading a thread from the end backwards is not
+        // how anyone reads. FR-015 overrides that on purpose -- see
+        // `opening_focus` for the argument, which is recorded rather than
+        // deleted.
         let messages = [message(1, false), message(2, false), message(3, false)];
-        assert_eq!(opening_focus(&messages), Some(0));
+        assert_eq!(opening_focus(&messages), Some(2));
     }
 
     #[test]
-    fn an_unread_message_older_than_a_read_one_still_wins() {
-        // Read state is not monotonic: someone can mark a later message
-        // unread, or read out of order. "First unread" means first, not
-        // "first after the last read one".
-        let messages = [message(1, true), message(2, false), message(3, true)];
-        assert_eq!(opening_focus(&messages), Some(1));
+    fn read_state_does_not_move_the_opening_focus_at_all() {
+        // The old rule read every message's `seen` flag and could land
+        // anywhere. This one reads none of them, so a message marked unread
+        // out of order cannot move where the pane opens.
+        let unread_early = [message(1, true), message(2, false), message(3, true)];
+        let all_read = [message(1, true), message(2, true), message(3, true)];
+        assert_eq!(opening_focus(&unread_early), opening_focus(&all_read));
     }
 
     #[test]
@@ -907,9 +892,13 @@ mod tests {
     // -- what opens expanded ----------------------------------------------
 
     #[test]
-    fn everything_before_the_focus_stays_collapsed() {
+    fn everything_after_the_focus_stays_collapsed() {
         // Read messages are one line. That is what makes a long conversation
         // readable rather than a wall.
+        //
+        // *After*, not before: the walk reversed with FR-015 (#1385). The
+        // focus is now the newest message rather than the start of the unread
+        // run, so the messages worth opening with it are the ones behind it.
         let messages = [
             message(1, true),
             message(2, true),
@@ -917,7 +906,12 @@ mod tests {
             message(4, false),
         ];
         let expanded = expanded_on_open(&messages, 2, EAGER_EXPANSION_CAP);
-        assert_eq!(expanded, vec![false, false, true, true]);
+        assert_eq!(
+            expanded,
+            vec![false, false, true, false],
+            "the focus opens, the read ones behind it stay shut, and the \
+             unread one *after* it is not part of what was landed on"
+        );
     }
 
     #[test]
@@ -926,7 +920,8 @@ mod tests {
         // platforms: thirty unread messages is thirty web views, and the cap
         // is what stops the pane from opening one per message.
         let messages: Vec<Msg> = (0..30).map(|id| message(id, false)).collect();
-        let expanded = expanded_on_open(&messages, 0, EAGER_EXPANSION_CAP);
+        // At the newest, which is where the pane now opens (FR-015).
+        let expanded = expanded_on_open(&messages, 29, EAGER_EXPANSION_CAP);
 
         assert_eq!(
             expanded.iter().filter(|open| **open).count(),
@@ -934,9 +929,10 @@ mod tests {
             "opening a conversation must not cost a web view per message"
         );
         assert!(
-            expanded[..EAGER_EXPANSION_CAP].iter().all(|open| *open),
-            "the ones that do expand are the ones being read, from the focus \
-             forward"
+            expanded[30 - EAGER_EXPANSION_CAP..]
+                .iter()
+                .all(|open| *open),
+            "the ones that do expand are the focus and the ones behind it"
         );
     }
 
@@ -951,11 +947,13 @@ mod tests {
     }
 
     #[test]
-    fn a_read_message_after_the_focus_stays_collapsed() {
-        // Only the focus is expanded unconditionally; past it, unread is what
-        // earns a web view.
+    fn a_read_message_behind_the_focus_stays_collapsed() {
+        // Only the focus is expanded unconditionally; behind it, unread is
+        // what earns a web view. A read message in the middle of the run does
+        // not stop the walk -- it is skipped, and the unread one past it
+        // still opens.
         let messages = [message(1, false), message(2, true), message(3, false)];
-        let expanded = expanded_on_open(&messages, 0, EAGER_EXPANSION_CAP);
+        let expanded = expanded_on_open(&messages, 2, EAGER_EXPANSION_CAP);
         assert_eq!(expanded, vec![true, false, true]);
     }
 
@@ -971,5 +969,58 @@ mod tests {
     #[test]
     fn an_empty_conversation_expands_nothing() {
         assert!(expanded_on_open::<Msg>(&[], 0, EAGER_EXPANSION_CAP).is_empty());
+    }
+    // -- folded runs (canvas turn 8a, #1005) ------------------------------
+
+    #[test]
+    fn a_run_of_three_folds_and_a_run_of_two_does_not() {
+        // Two collapsed rows become one divider plus nothing: no saving, and
+        // a gesture where there was none.
+        assert_eq!(collapsed_runs(&[true, true], RUN_MINIMUM), Vec::new());
+        assert_eq!(collapsed_runs(&[true, true, true], RUN_MINIMUM), vec![0..3]);
+    }
+
+    #[test]
+    fn the_canvas_shape_folds_only_its_middle() {
+        // 8 messages: one collapsed at the top, five collapsed in the middle,
+        // one collapsed, one expanded at the end. The top one is a run of
+        // one and stays as itself.
+        let collapsed = [true, false, true, true, true, true, true, false];
+        assert_eq!(collapsed_runs(&collapsed, RUN_MINIMUM), vec![2..7]);
+    }
+
+    #[test]
+    fn a_run_that_reaches_the_end_still_counts() {
+        // The loop has to close an open run when the slice ends, or a
+        // conversation whose tail is collapsed folds nothing.
+        assert_eq!(
+            collapsed_runs(&[false, true, true, true], RUN_MINIMUM),
+            vec![1..4]
+        );
+    }
+
+    #[test]
+    fn two_runs_are_two_dividers() {
+        let collapsed = [true, true, true, false, true, true, true, true];
+        assert_eq!(collapsed_runs(&collapsed, RUN_MINIMUM), vec![0..3, 4..8]);
+    }
+
+    #[test]
+    fn nothing_collapsed_folds_nothing() {
+        assert_eq!(
+            collapsed_runs(&[false, false, false], RUN_MINIMUM),
+            Vec::new()
+        );
+        assert_eq!(collapsed_runs(&[], RUN_MINIMUM), Vec::new());
+    }
+
+    #[test]
+    fn a_divider_names_its_count_and_who_is_in_it() {
+        let senders = people(&[
+            ("Ada Norwood", "ada@example.com"),
+            ("Bo Ferris", "bo@example.com"),
+            ("Ada Norwood", "ada@example.com"),
+        ]);
+        assert_eq!(run_summary(5, &senders), "5 earlier messages · Ada, Bo");
     }
 }

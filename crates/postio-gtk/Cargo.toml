@@ -9,38 +9,43 @@ publish.workspace = true
 repository.workspace = true
 
 [dependencies]
-adw = { version = "0.8", package = "libadwaita", features = ["v1_7"] }
-async-channel = "2.5.0"
-chrono = { version = "0.4.45", default-features = false, features = ["std", "clock"] }
-gio = "0.21.5"
-glib = { version = "0.21.5", features = ["v2_72"] }
-gtk = { version = "0.10.3", package = "gtk4", features = ["v4_20"] }
-pango = { version = "0.21.5", features = ["v1_56"] }
-pangocairo = "0.21.5"
+adw = { version = "0.9", package = "libadwaita", features = ["v1_7"] }
+async-channel = { workspace = true }
+chrono = { workspace = true, features = ["std"] }
+gio = "0.22.9"
+glib = { version = "0.22.9", features = ["v2_72"] }
+gtk = { version = "0.11.4", package = "gtk4", features = ["v4_20"] }
+pango = { version = "0.22.9", features = ["v1_56"] }
+pangocairo = "0.22.9"
 postio-body.workspace = true
 postio-config.workspace = true
 postio-core.workspace = true
 postio-model.workspace = true
 postio-ui.workspace = true
 postio-search.workspace = true
-thiserror = "2.0.20"
-tracing = "0.1.44"
-webkit6 = { version = "0.5", features = ["v2_50", "gtk_v4_18"] }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+webkit6 = { version = "0.6", features = ["v2_50", "gtk_v4_18"] }
 
 [dev-dependencies]
 postio-test-support.workspace = true
-gtk4-sys = "0.10.3"
+gtk4-sys = "0.11.4"
 postio-config.workspace = true
 postio-model = { workspace = true, features = ["test-corpus"] }
-tempfile = "3.27.0"
+tempfile = { workspace = true }
 
 [build-dependencies]
-glib-build-tools = "0.21.0"
+glib-build-tools = "0.22.8"
 postio-ui.workspace = true
 
 # The consolidated GTK suite: a custom harness, because GTK initializes on
 # exactly one thread and libtest runs tests on a pool — see
 # tests/gtk_suite.rs for the whole story. #329.
+[[test]]
+name = "gtk_reader"
+path = "tests/gtk_reader.rs"
+harness = false
+
 [[test]]
 name = "gtk_suite"
 path = "tests/gtk_suite/main.rs"
@@ -49,3 +54,10 @@ harness = false
 [lints.rust]
 # Not the workspace floor: see EXCEPTIONS in scripts/checks/check-lint-floor.py.
 unsafe_code = "deny"
+
+# A crate that keeps its own `[lints.rust]` inherits none of the workspace
+# lints, so the clippy floor's most load-bearing rule is restated here:
+# `let _ = some_async_call()` drops the future unpolled, which is how a sent
+# draft went on existing. See the workspace `[lints.clippy]`.
+[lints.clippy]
+let_underscore_future = "deny"

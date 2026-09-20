@@ -19,6 +19,7 @@ use gtk::gdk;
 use gtk::prelude::*;
 use postio_core::Context;
 use postio_gtk::sidebar::Sidebar;
+use postio_gtk::sidebar::SidebarChoice;
 use postio_gtk::state::SidebarState;
 use postio_gtk::window::Window;
 use postio_gtk::{fonts, style};
@@ -153,7 +154,10 @@ pub fn folders_nest_collapse_and_a_noselect_parent_only_toggles() {
     let opened: Rc<RefCell<Vec<i64>>> = Default::default();
     sidebar.connect_selected({
         let opened = Rc::clone(&opened);
-        move |id| opened.borrow_mut().push(id.get())
+        move |choice| match choice {
+            SidebarChoice::Folder(id) => opened.borrow_mut().push(id.get()),
+            SidebarChoice::View(role) => panic!("a folder was expected, got the {role:?} view"),
+        }
     });
 
     let lists_row = tree_rows(&sidebar)[2].clone();
@@ -240,7 +244,10 @@ pub fn folders_nest_collapse_and_a_noselect_parent_only_toggles() {
     let opened_via_keyboard: Rc<RefCell<Vec<i64>>> = Default::default();
     second.sidebar().connect_selected({
         let opened = Rc::clone(&opened_via_keyboard);
-        move |id| opened.borrow_mut().push(id.get())
+        move |choice| match choice {
+            SidebarChoice::Folder(id) => opened.borrow_mut().push(id.get()),
+            SidebarChoice::View(role) => panic!("a folder was expected, got the {role:?} view"),
+        }
     });
     press(&second, "g");
     press(&second, "f");

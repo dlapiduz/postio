@@ -40,10 +40,12 @@ mod compose;
 mod conversation;
 mod dwell;
 mod event;
+mod focus;
 mod keys;
 mod list;
 mod logging;
 mod mailbox;
+mod notify;
 mod palette;
 mod provisioning;
 mod reader;
@@ -58,11 +60,16 @@ pub use compose::{AttachmentFfi, ComposeError, DraftFfi, DraftKindFfi, PastedFfi
 pub use conversation::{ConversationFfi, RunFfi, conversation_runs, message_when};
 pub use dwell::{DwellArmFfi, dwell_on_cursor};
 pub use event::{ConnectionStateFfi, FailureReasonFfi, UiEvent};
+pub use focus::next_pane;
 pub use keys::{KeyOutcomeFfi, ModifiersFfi};
 pub use list::{RowFfi, ScopeFfi};
 pub use logging::start_logging;
 pub use mailbox::{MailboxFfi, MailboxRoleFfi};
-pub use palette::PaletteEntryFfi;
+pub use notify::{
+    MailArrivalFfi, MailNotificationFfi, NotificationDecisionFfi, SuppressedFfi,
+    decide_notification,
+};
+pub use palette::{CheatRowFfi, CheatSectionFfi, PaletteEntryFfi};
 pub use provisioning::{
     ProviderHintFfi, RouteFfi, ScopesFfi, SignInProgressFfi, provider_hint, sign_in_scopes,
 };

@@ -148,32 +148,39 @@ fn session_server(accepted: &'static str) -> u16 {
     port
 }
 
-fn settle_until(done: impl Fn() -> bool) -> bool {
+async fn settle_until<F, Fut>(done: F) -> bool
+where
+    F: Fn() -> Fut,
+    Fut: std::future::Future<Output = bool>,
+{
     let deadline =
         std::time::Instant::now() + postio_test_support::scaled(std::time::Duration::from_secs(15));
     while std::time::Instant::now() < deadline {
         while glib::MainContext::default().iteration(false) {}
-        if done() {
+        if done().await {
             return true;
         }
-        std::thread::sleep(std::time::Duration::from_millis(10));
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
     }
-    done()
+    done().await
 }
 
-fn drive() {
+/// The whole scenario, async because the store is.
+///
+async fn drive() {
     // ── servers ─────────────────────────────────────────────────────────
-    // An auxiliary runtime carries the test server; the app's own work runs
-    // on the bridge's runtime as in production.
-    let runtime = tokio::runtime::Runtime::new().expect("a runtime for the servers");
-    let imap = runtime.block_on(async {
-        TestServer::builder()
-            .account("grace@fallback.test")
-            .password("imap-only-password")
-            .mailbox(TestMailbox::new("INBOX"))
-            .start()
-            .await
-    });
+    // On this test's own runtime rather than an auxiliary one. It used to
+    // build its own -- "an auxiliary runtime carries the test server; the
+    // app's own work runs on the bridge's runtime as in production" -- and
+    // the second half is still true. What changed is that *this* function is
+    // async now, driven by a runtime, so a `Runtime::new().block_on()` here
+    // would be a runtime started from inside one, which tokio refuses.
+    let imap = TestServer::builder()
+        .account("grace@fallback.test")
+        .password("imap-only-password")
+        .mailbox(TestMailbox::new("INBOX"))
+        .start()
+        .await;
     let jmap_ok = session_server("the-api-token");
     // The refusing endpoint: every bearer is 401, so the fallback row's
     // JMAP proof always fails.
@@ -226,7 +233,7 @@ session_url = "http://127.0.0.1:{jmap_refusing}/jmap/session/"
     unsafe { std::env::set_var("XDG_CONFIG_HOME", config_dir) };
 
     // ── the app ─────────────────────────────────────────────────────────
-    let database = test_support::memory();
+    let database = test_support::memory().await;
     let directory = tempfile::tempdir().expect("a blob directory");
     let blobs = BlobStore::open(
         directory.path().to_path_buf(),
@@ -264,7 +271,8 @@ session_url = "http://127.0.0.1:{jmap_refusing}/jmap/session/"
         None,
         Arc::new(DeadTransport),
         Arc::new(postio_account::oauth::browser::SystemBrowserOpener),
-    );
+    )
+    .await;
     let screen = window
         .content()
         .and_downcast::<Onboarding>()
@@ -274,14 +282,15 @@ session_url = "http://127.0.0.1:{jmap_refusing}/jmap/session/"
     screen.set_address("ada@example.test");
     screen.probe();
     assert!(
-        settle_until(|| matches!(screen.status(), Status::Found(_))),
+        settle_until(async || matches!(screen.status(), Status::Found(_))).await,
         "the native row never resolved: {:?}",
         screen.status()
     );
     screen.test_set_password("the-api-token");
     screen.submit();
     assert!(
-        settle_until(|| matches!(screen.status(), Status::SyncWindow | Status::Failed(_))),
+        settle_until(async || matches!(screen.status(), Status::SyncWindow | Status::Failed(_)))
+            .await,
         "the add never settled: {:?}",
         screen.status()
     );
@@ -296,14 +305,15 @@ session_url = "http://127.0.0.1:{jmap_refusing}/jmap/session/"
     screen.set_address("grace@fallback.test");
     screen.probe();
     assert!(
-        settle_until(|| matches!(screen.status(), Status::Found(_))),
+        settle_until(async || matches!(screen.status(), Status::Found(_))).await,
         "the fallback row never resolved: {:?}",
         screen.status()
     );
     screen.test_set_password("imap-only-password");
     screen.submit();
     assert!(
-        settle_until(|| matches!(screen.status(), Status::SyncWindow | Status::Failed(_))),
+        settle_until(async || matches!(screen.status(), Status::SyncWindow | Status::Failed(_)))
+            .await,
         "the fallback add never settled: {:?}",
         screen.status()
     );
@@ -314,8 +324,11 @@ session_url = "http://127.0.0.1:{jmap_refusing}/jmap/session/"
     );
 
     // ── what the rows say ───────────────────────────────────────────────
-    let connection = database.connection().expect("a connection");
-    let accounts = AccountRepository::new(&connection).list().expect("list");
+    let connection = database.connect().await.expect("a connection");
+    let accounts = AccountRepository::new(&connection)
+        .list()
+        .await
+        .expect("list");
     let native = accounts
         .iter()
         .find(|account| account.address.address == "ada@example.test")
@@ -340,8 +353,12 @@ session_url = "http://127.0.0.1:{jmap_refusing}/jmap/session/"
     bridge.shutdown();
 }
 
-#[test]
-fn the_add_stores_the_first_backend_whose_proof_succeeds() {
+/// `multi_thread`, and the flavour is load-bearing:
+/// `postio_session::blocking::now` is how a synchronous GTK callback reads the
+/// store, and it reaches for `block_in_place`, which panics outright on a
+/// current_thread runtime. `app_suite`'s `gtk_case` is the same shape.
+#[tokio::test(flavor = "multi_thread")]
+async fn the_add_stores_the_first_backend_whose_proof_succeeds() {
     let state_dir = tempfile::tempdir().expect("a state directory");
     // SAFETY: first statements of a single-threaded test binary.
     unsafe { std::env::set_var("XDG_STATE_HOME", state_dir.path()) };
@@ -355,7 +372,7 @@ fn the_add_stores_the_first_backend_whose_proof_succeeds() {
     style::install(&display);
     app::install_icons(&display);
 
-    drive();
+    drive().await;
 
     // The window this test built joins GTK's toplevel list at
     // construction and stays there, holding a WebProcess, until it is

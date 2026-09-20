@@ -11,7 +11,7 @@ repository.workspace = true
 [dependencies]
 # Queue rows are stamped with when the user performed the action, so the
 # drainer replays them in the order they happened.
-chrono = { version = "0.4.45", default-features = false, features = ["std", "clock"] }
+chrono = { workspace = true, features = ["std"] }
 postio-config.workspace = true
 postio-core.workspace = true
 # `maildir` on: the composition root is where a stored account's backend is
@@ -37,33 +37,27 @@ postio-ui.workspace = true
 # The credential a "test connection" hands to SMTP. Same version the two
 # crates that already carry one use, because a second `SecretString` type in
 # the graph would defeat the zeroing this exists for.
-secrecy = "0.10.3"
-tokio = { version = "1.53.1", features = ["rt", "rt-multi-thread"] }
-tracing = "0.1"
+secrecy = { workspace = true }
+tokio = { workspace = true, features = ["rt", "rt-multi-thread"] }
+tracing = { workspace = true }
 tracing-journald = "0.3"
 tracing-log = "0.2"
-tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt", "ansi"] }
+tracing-subscriber = { workspace = true, features = ["ansi", "env-filter"] }
 
 [dev-dependencies]
+# The patience dial (#842), so the indexer test's wait scales with the machine.
+postio-test-support.workspace = true
 # Throwaway migrated databases, so a verb is an ordinary function over a real
 # schema rather than something only a running application can exercise. This
 # is the whole argument for the crate: the verbs are testable without a
 # toolkit, and they were not while they lived beside a GTK binary.
 postio-storage = { workspace = true, features = ["test-support"] }
-# `store_key.rs` builds a *plaintext* store to prove `open_store_at` encrypts
-# it. Nothing shipping here touches SQL, so this is dev-only -- and the
-# features match `postio-storage`'s, because one `links = "sqlite3"` crate in
-# the graph means the feature selecting SQLCipher has to agree everywhere
-# (ADR 0014).
-rusqlite = { version = "0.40.2", features = [
-    "bundled-sqlcipher-vendored-openssl",
-] }
 # The unkeyed digest a blob written before ADR 0014 was named by, so the
 # fixture is the shape a real pre-release store has rather than a plausible
 # one.
-blake3 = "1.8.7"
-tempfile = "3.27.0"
-tokio = { version = "1.53.1", features = ["rt-multi-thread", "macros", "time"] }
+blake3 = { workspace = true }
+tempfile = { workspace = true }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "time"] }
 
 [lints]
 workspace = true

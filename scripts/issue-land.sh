@@ -70,7 +70,19 @@ fi
 # Takes `cargo test` syntax; the selectors used here mean the same to both.
 run_tests() {
     if [ "$POSTIO_TEST_RUNNER" = "nextest" ]; then
-        cargo nextest run "$@"
+        # `--no-tests=pass`, because nextest exits 4 when a run selects
+        # nothing and this gate reads a non-zero exit as a failure. A crate
+        # with no tests ran all of them: `postio-bench` is bench targets and
+        # nothing else, on purpose, and the first branch to touch it -- a
+        # `criterion` bump -- could not land (#1308).
+        #
+        # `cargo test` has never behaved that way, so without this the gate's
+        # answer depends on which runner happens to be installed, and the
+        # machine without the pinned one is the machine that passes. "No
+        # tests" and "tests failed" are different answers; only the second
+        # stops a landing, and the self-test asserts both directions on both
+        # runners.
+        cargo nextest run --no-tests=pass "$@"
     else
         cargo test "$@"
     fi
@@ -82,6 +94,34 @@ run_tests() {
 # them stop running with nothing to report it.
 run_doctests() {
     cargo test --doc "$@"
+}
+
+# Build one crate's rustdoc under the same flags `nightly.yml`'s `doc` job
+# uses, so a broken intra-doc link fails the branch that wrote it (#1463).
+#
+# Nothing on the merge path used to build rustdoc at all. Not this gate, and
+# not CI either -- `ci.yml`'s "Docs site build" is `mdbook`, gated on prose
+# paths, and a pull request that changes only Rust never ran rustdoc
+# anywhere. The only thing that did was the nightly, hours later, on a job
+# that had never once been green.
+#
+# Per crate, not the workspace, and that is the whole reason #833's trade
+# does not have to be reopened: the workspace doc build was 23m35s and the
+# longest job on every pull request, while one crate is seconds. The changed
+# -crate list is already computed here for clippy and the suites.
+#
+# After the rebase, like everything else in this chain. #1448 is the worked
+# example of why: it left the workspace documenting cleanly, was rebased onto
+# a `main` that had gained the conversation pane, and merged six broken links
+# nothing had looked at -- because the rebase is where the combination first
+# exists, which CLAUDE.md already says about a shared type's new callers.
+#
+# `private_intra_doc_links` is allowed for the reason `nightly.yml` gives:
+# these docs cross-reference internals deliberately and the build passes
+# --document-private-items, so those links do resolve.
+run_rustdoc() {
+    RUSTDOCFLAGS="-D warnings -A rustdoc::private_intra_doc_links" \
+        cargo doc --no-deps --document-private-items "$@"
 }
 
 TREE=$(git rev-parse --show-toplevel)
@@ -112,6 +152,21 @@ case " $* " in
         grep -E '^\[timing\]|^issue:|^crates:|https://github.com/|^merged\.|auto-merge|MERGE DID NOT|Checks failed|hit a conflict|^Refusing|^error|^issue-land exit' "$LAND_LOG" || true
         echo "--- last lines ---"
         tail -n 5 "$LAND_LOG"
+        # A full disk fails a gate as a compile error, or as SIGBUS from
+        # inside a test binary, and the tell is several lines up in a log
+        # that mostly scrolls past (#1428, #1460). Said in those words, with
+        # what is free now, so nobody spends the afternoon on "my branch
+        # does not build".
+        if grep -qE 'No space left on device|os error 28|signal: 7, SIGBUS' "$LAND_LOG"; then
+            echo "disk:   the disk was full -- the compile error or SIGBUS above is what that looks like, not your diff."
+            echo "        free now: $(df -Ph "$TREE" | awk 'NR==2 { print $4 " of " $2 }'); scripts/worktree-reap.sh says what holds the rest."
+        fi
+        # Said out loud, because a flake's diagnosis is usually in the
+        # attempt before this one and nobody looks for a file they have not
+        # been told about (#710).
+        if [ -f "$LAND_LOG.1" ]; then
+            echo "previous attempt: $LAND_LOG.1"
+        fi
         exit 0
         ;;
     *" --detach "*)
@@ -119,12 +174,29 @@ case " $* " in
         for arg in "$@"; do
             [ "$arg" = "--detach" ] || DETACHED_ARGS+=("$arg")
         done
+        # Keep the previous attempt, one deep. A gate failure's diagnosis is
+        # often in the whole run's output rather than in the failing test's
+        # own block -- SQLCipher prints its reason as C `fprintf`, which
+        # `cargo test`'s per-test capture never holds -- and the obvious
+        # response to a flake is to land again. Truncating here meant that
+        # evidence survived exactly as long as it took to notice it was
+        # wanted: two occurrences of #710 were destroyed that way in one
+        # session, by the session that had just been asked to keep them.
+        [ -f "$LAND_LOG" ] && mv -f "$LAND_LOG" "$LAND_LOG.1" 2>/dev/null
         : > "$LAND_LOG"
+        # The child's last line is its exit status -- and, when the log
+        # carries the signature of a full disk, one line naming that first,
+        # because `--status` is not the only way this log gets read.
+        CHILD='bash "$0" "${@:2}"; status=$?
+            if [ "$status" -ne 0 ] && grep -qE "No space left on device|os error 28|signal: 7, SIGBUS" "$1"; then
+                echo "disk full: the failure above is what a full disk looks like, not your diff (scripts/issue-land.sh --status; scripts/worktree-reap.sh)"
+            fi
+            echo "issue-land exit $status"'
         if command -v setsid >/dev/null 2>&1; then
-            setsid bash -c 'bash "$0" "${@:1}"; echo "issue-land exit $?"' "$0" ${DETACHED_ARGS[@]+"${DETACHED_ARGS[@]}"} \
+            setsid bash -c "$CHILD" "$0" "$LAND_LOG" ${DETACHED_ARGS[@]+"${DETACHED_ARGS[@]}"} \
                 > "$LAND_LOG" 2>&1 < /dev/null &
         else
-            nohup bash -c 'bash "$0" "${@:1}"; echo "issue-land exit $?"' "$0" ${DETACHED_ARGS[@]+"${DETACHED_ARGS[@]}"} \
+            nohup bash -c "$CHILD" "$0" "$LAND_LOG" ${DETACHED_ARGS[@]+"${DETACHED_ARGS[@]}"} \
                 > "$LAND_LOG" 2>&1 < /dev/null &
         fi
         printf '%s\n' "$!" > "$LAND_PID"
@@ -155,6 +227,19 @@ REEXEC_LIMIT="${POSTIO_LAND_REEXEC_LIMIT:-2}"
 # this run was asked for; the loop underneath shifts them away.
 ORIGINAL_ARGS=("$@")
 
+# What the gate chain is allowed to cost, in seconds.
+#
+# Four minutes, set deliberately rather than observed: a landing is something
+# a person waits for, and the chain had grown to nine on a wide change --
+# 348s of it integration suites, 208s of that a single `postio-index` test
+# that bulk-loaded `TOTAL_HITS_CAP + 50` messages one at a time.
+#
+# Over budget is a **warning, not a refusal**: see where it is reported for
+# why. What keeps it true is that the number is printed on every landing, so
+# a suite creeping onto the merge path is visible the first time rather than
+# the twentieth.
+GATE_BUDGET_SECONDS=240
+
 MSG=""; WIP=0; GATES_ONLY=0; MERGE=1; FULL=0; WAIT=0; REFS_ONLY=0
 while [ $# -gt 0 ]; do
     case "$1" in
@@ -169,6 +254,27 @@ while [ $# -gt 0 ]; do
     esac
 done
 
+# Free space before a gate can run out of it. A gate chain writes gigabytes
+# of incremental output, and a disk that fills partway through fails as a
+# compile error or as SIGBUS -- never as itself -- on every session at once
+# (#1428, #1460). Fifty-two worktrees with a target/ each is how it filled;
+# `scripts/worktree-reap.sh` is how it empties. Refused below the floor,
+# said out loud below four times the floor.
+DISK_FLOOR_GB="${POSTIO_LAND_DISK_FLOOR_GB:-4}"
+FREE_KB=$(df -Pk "$TREE" 2>/dev/null | awk 'NR==2 { print $4 }')
+if [ -n "${FREE_KB:-}" ]; then
+    FREE_GB=$((FREE_KB / 1024 / 1024))
+    if [ "$FREE_GB" -lt "$DISK_FLOOR_GB" ]; then
+        echo "Refusing to land with ${FREE_GB} GB free under $TREE (floor ${DISK_FLOOR_GB} GB; POSTIO_LAND_DISK_FLOOR_GB)." >&2
+        echo "A gate chain needs more than that, and running out fails as a compile error or SIGBUS rather than as a full disk." >&2
+        echo "scripts/worktree-reap.sh lists the worktrees holding the space and reclaims the ones nothing will miss." >&2
+        exit 2
+    fi
+    if [ "$FREE_GB" -lt $((DISK_FLOOR_GB * 4)) ]; then
+        echo "warning: ${FREE_GB} GB free under $TREE. A gate that fails oddly is probably the disk; scripts/worktree-reap.sh reclaims landed worktrees."
+    fi
+fi
+
 if [ "$BRANCH" = "main" ]; then
     echo "Refusing to run on main. This lands a branch from a worktree;" >&2
     echo "claim an issue first with scripts/issue-claim.sh." >&2
@@ -178,8 +284,30 @@ fi
 # the empty string on macOS and the guard below reported "not an issue branch"
 # -- true-sounding, and about the wrong thing entirely. #559.
 ISSUE=$(printf '%s' "$BRANCH" | sed -n 's/^issue-\([0-9][0-9]*\)-.*/\1/p')
-if [ -z "$ISSUE" ]; then
-    echo "Branch '$BRANCH' is not an issue branch (expected issue-<n>-<slug>)." >&2
+# A small fix does not have an issue, and should not have to invent one
+# (maintainer, 2026-09-10). CLAUDE.md now says to fix anything under about ten
+# minutes on the spot rather than file it -- and a change with no issue had no
+# way to land at all: this guard refused the branch, so the only route was to
+# file the issue the rule exists to avoid.
+#
+# `fix/`, `docs/` and `chore/` are that route. Everything else about the
+# landing is identical; what changes is that no issue is closed, because there
+# is none to close.
+#
+# `feature/` is the same route for the opposite size of work: a feature under
+# `specs/<nnn>-<name>/` that has been through `/speckit-specify` and
+# `/speckit-plan` is not decomposed into one issue per task (constitution
+# 1.1.0, Development Workflow). Its `tasks.md` is the queue and its `spec.md`
+# is the acceptance, both in the repository, so there is no issue to reference
+# and none to close -- and without this the branch could not land at all.
+SMALL=0
+if [ -z "$ISSUE" ] && printf '%s' "$BRANCH" | grep -qE '^(fix|docs|chore|feature)/[a-z0-9._-]+$'; then
+    SMALL=1
+fi
+if [ -z "$ISSUE" ] && [ "$SMALL" != 1 ]; then
+    echo "Branch '$BRANCH' is not an issue branch (expected issue-<n>-<slug>)," >&2
+    echo "not a small fix (expected fix/<slug>, docs/<slug> or chore/<slug>)," >&2
+    echo "and not a spec feature branch (expected feature/<slug>)." >&2
     exit 2
 fi
 
@@ -209,7 +337,11 @@ CRATES=$(git diff --name-only "origin/$BASE...HEAD"; git status --porcelain \
          | sed 's/^...//') 
 CRATES=$(printf '%s\n' $CRATES | sed -n 's|^crates/\([^/]*\)/.*|\1|p' | sort -u)
 
-echo "issue:  #$ISSUE"
+if [ "$SMALL" = 1 ]; then
+    echo "issue:  none (a small fix; CLAUDE.md's ten-minute rule)"
+else
+    echo "issue:  #$ISSUE"
+fi
 echo "branch: $BRANCH"
 echo "base:   $BASE"
 echo "crates: ${CRATES:-none}"
@@ -323,6 +455,7 @@ echo "--- rustfmt ---"
 PHASE_START=$(date +%s)
 cargo fmt --all
 echo "[timing] rustfmt: $(( $(date +%s) - PHASE_START ))s"
+GATES_START=$PHASE_START
 
 # Stage now, before the invariants below rather than after them: this tree
 # is private, so staging is safe this early too. check-no-personal-data.py
@@ -398,6 +531,11 @@ if [ "$GATES_GREEN" != 1 ]; then
         PHASE_START=$(date +%s)
         cargo clippy -p "$crate" --all-targets -- -D warnings
         echo "[timing] clippy $crate: $(( $(date +%s) - PHASE_START ))s"
+
+        echo "--- rustdoc: $crate ---"
+        PHASE_START=$(date +%s)
+        run_rustdoc -p "$crate"
+        echo "[timing] rustdoc $crate: $(( $(date +%s) - PHASE_START ))s"
     done
 
     # The test tier. Default is the whole workspace's *unit* tests: 1,313
@@ -460,6 +598,34 @@ if [ "$GATES_GREEN" != 1 ]; then
             echo "[timing] suites $crate: $(( $(date +%s) - PHASE_START ))s"
         done
 
+        # Doctests, for the crates this branch changed (#1440).
+        #
+        # They used to run only under `--full`, and CLAUDE.md says to land on
+        # the default -- so in practice a broken doctest was found by CI,
+        # sixteen minutes later, on a branch whose landing had gone green.
+        #
+        # Met by three doc comments that quoted evidence as an indented
+        # block. rustdoc reads an indented block in a `///` comment as
+        # *Rust*, compiles it, and fails:
+        #
+        #     Reader::scroll_to_fragment (line 1373) ... FAILED
+        #     error: expected one of `!` or `::`, found `started`
+        #
+        # And the run aborts on the first error, so the other two were queued
+        # behind it, one round trip each.
+        #
+        # Cheap enough that the argument is one-sided: the three crates
+        # involved held 18 doctests and ran them in well under a second
+        # between them. This is #1047's argument again -- a gate that can
+        # only fail on CI costs a round trip every time it fires.
+        for crate in $CRATES; do
+            [ -d "$TREE/crates/$crate" ] || continue
+            echo "--- doctests: $crate ---"
+            PHASE_START=$(date +%s)
+            run_doctests -p "$crate"
+            echo "[timing] doctests $crate: $(( $(date +%s) - PHASE_START ))s"
+        done
+
         echo "--- test: workspace unit tests (sanity tier; --full for the rest) ---"
         PHASE_START=$(date +%s)
         # `cargo test` deliberately, not `run_tests`. This tier is ~1,459
@@ -469,8 +635,9 @@ if [ "$GATES_GREEN" != 1 ]; then
         # keep on the integration suites above, where 140 binaries are the
         # bottleneck rather than the tests inside them.
         #
-        # `--lib` excludes doctests under either runner, so this tier loses
-        # nothing by not calling run_doctests.
+        # `--lib` excludes doctests under either runner. The changed crates'
+        # doctests ran in their own pass above (#1440); this tier is the
+        # workspace's units and does not repeat them.
         #
         # Narrowed, not skipped, on a host missing the GTK libraries. The
         # workspace *check* below is skipped outright there and that is the
@@ -566,6 +733,34 @@ PHASE_START=$(date +%s)
 "$TREE/scripts/check.sh"
 echo "[timing] invariants: $(( $(date +%s) - PHASE_START ))s"
 
+# What the whole chain cost, against what it is allowed to cost.
+#
+# **The budget is the point, and it is reported rather than enforced.** A gate
+# that refused to land a slow branch would be refusing the landing for being
+# slow, which helps nobody at the moment they least want it -- and the fix is
+# never in the branch, it is in the chain. So this says the number and names
+# the worst phase, which is what a person needs to decide whether a suite has
+# crept onto the merge path that should be on the nightly timer.
+#
+# The line moves when a crate's suite grows. `scripts/full-suite-crates.sh`
+# holds the deny list and the measurements behind it; `.config/nextest.toml`
+# holds the tier for a test that is slow rather than a crate that is.
+GATES_TOTAL=$(( $(date +%s) - GATES_START ))
+echo "[timing] TOTAL: ${GATES_TOTAL}s (budget ${GATE_BUDGET_SECONDS}s)"
+if [ "$GATES_TOTAL" -gt "$GATE_BUDGET_SECONDS" ]; then
+    echo
+    echo "warning: the gate chain took ${GATES_TOTAL}s against a ${GATE_BUDGET_SECONDS}s budget."
+    echo "The worst phases in this run:"
+    grep -E '^\[timing\]' "${LAND_LOG:-/dev/null}" 2>/dev/null \
+        | sed -E 's/^\[timing\] (.*): ([0-9]+)s$/\2 \1/' \
+        | sort -rn | head -5 | awk '{printf "  %5ss  %s\n", $1, substr($0, index($0,$2))}'
+    echo
+    echo "A suite that has grown past the merge path belongs on the nightly"
+    echo "timer: add the crate to SLOW in scripts/full-suite-crates.sh, or the"
+    echo "single test to .config/nextest.toml's default-filter with a"
+    echo "POSTIO-MEASUREMENT marker. Both are documented where they live."
+fi
+
 # Recorded only now, after every gate above has passed -- a failure exits
 # via set -e before this line, so a red run can never mark the tree green.
 printf '%s\n' "$GATES_KEY" > "$GATES_STAMP"
@@ -593,9 +788,16 @@ if [ -n "$(git status --porcelain)" ]; then
     # before it started.
     #
     # Already staged, above -- before the invariants ran rather than here.
-    git commit -m "$MSG
+    if [ "$SMALL" = 1 ]; then
+        # No `Refs:` line: a small fix has no issue to refer to, and a
+        # made-up number is worse than none -- the next reader follows it
+        # somewhere unrelated.
+        git commit -m "$MSG"
+    else
+        git commit -m "$MSG
 
 Refs: #$ISSUE"
+    fi
 else
     echo "no local changes to commit"
 fi
@@ -805,7 +1007,11 @@ else
     # one that has to say so -- here, not by editing the PR after the fact
     # (#1189). Written out as "deliberately not `Closes`" rather than left
     # for a reader to guess whether it was an omission.
-    if [ "$REFS_ONLY" = 1 ]; then
+    if [ "$SMALL" = 1 ]; then
+        # Nothing to close. Said out loud so a reviewer does not go looking
+        # for the issue this PR forgot to name.
+        CLOSES_LINE="No issue: a small fix, made on the spot rather than filed (CLAUDE.md, \"Say it where it persists\")."
+    elif [ "$REFS_ONLY" = 1 ]; then
         CLOSES_LINE="Refs: #$ISSUE — deliberately not \`Closes\`: this PR does not meet #$ISSUE's acceptance criteria in full."
     else
         CLOSES_LINE="Closes #$ISSUE"
@@ -862,16 +1068,90 @@ LANDING=$(git log "origin/$BASE..HEAD" --format=%s)
 # auto-merge at all, and asking it for one is an error whose empty answer
 # reads as "no" -- which is how the first landing after #1107 quietly took
 # the watching path (#1136).
+# Arm GitHub's auto-merge, and say what happened either way.
+#
+# `gh pr merge --auto` fails for several reasons that are not failures of this
+# landing, and under `set -e` a bare call made every one of them look like one:
+# the gates had passed, the branch was pushed, the PR was open, and the script
+# exited non-zero with no line saying which of those was untrue. On one feature
+# branch four of six consecutive landings ended that way, for four different
+# reasons -- and an exit code that is wrong most of the time is one nobody
+# reads, so the landing where a check really did fail is the one that gets
+# missed.
+#
+# The landing is what the exit code is about. Every branch here returns 0
+# because the work landed; what differs is the line telling you whether
+# anything will merge it.
+arm_auto_merge() {
+    local attempt=1 output=""
+    while [ "$attempt" -le 3 ]; do
+        if output=$(gh pr merge --auto --rebase 2>&1); then
+            echo "auto-merge armed on $URL: GitHub merges it when the required checks pass."
+            echo "Nothing waits here. If a check fails, your next claim will say so, and"
+            if [ "$SMALL" = 1 ]; then
+                echo "    git checkout $BRANCH   (no issue to resume; the branch is still here)"
+            else
+                echo "    scripts/issue-claim.sh --resume $ISSUE"
+            fi
+            echo "comes back to this branch to fix it on the same PR."
+            echo "Now claim the next issue -- finishing an issue is not finishing a session."
+            return 0
+        fi
+
+        case "$output" in
+            # The checks have not been created yet, so the PR momentarily has
+            # nothing pending and GitHub refuses to wait for nothing. Pushing,
+            # opening the PR and arming can all happen faster than that.
+            *"clean status"*)
+                if [ "$attempt" -lt 3 ]; then
+                    sleep $((attempt * 5))
+                    attempt=$((attempt + 1))
+                    continue
+                fi
+                echo "$output"
+                echo "auto-merge could not be armed: this PR has no required checks to wait for."
+                echo "The landing succeeded -- gates green, branch pushed, PR open at $URL --"
+                echo "but nothing will merge it on its own. Merge it when you are satisfied:"
+                echo "    gh pr merge $URL --squash"
+                return 0
+                ;;
+            # No ruleset on the base branch, which is the ordinary state of a
+            # feature branch. There is nothing to arm and nothing wrong.
+            *"Protected branch rules not configured"*)
+                echo "auto-merge is not available: the base branch has no required checks."
+                echo "The landing succeeded; $URL is open and merges when you say so:"
+                echo "    gh pr merge $URL --squash"
+                return 0
+                ;;
+            # GitHub had a moment. Worth another try before saying anything.
+            *"502"*|*"503"*|*"Service Unavailable"*|*"timeout"*|*"Timeout"*)
+                if [ "$attempt" -lt 3 ]; then
+                    sleep $((attempt * 5))
+                    attempt=$((attempt + 1))
+                    continue
+                fi
+                echo "$output"
+                echo "auto-merge could not be armed: GitHub was unavailable, three times."
+                echo "The landing succeeded; $URL is open. Arm it later with:"
+                echo "    gh pr merge $URL --auto --rebase"
+                return 0
+                ;;
+            *)
+                echo "$output"
+                echo "auto-merge could not be armed, for a reason this script does not"
+                echo "recognise. The landing itself succeeded: $URL is open and its"
+                echo "gates passed. Read the message above before merging."
+                return 0
+                ;;
+        esac
+    done
+}
+
 AUTO_MERGE_ALLOWED=$(gh api "repos/{owner}/{repo}" --jq .allow_auto_merge 2>/dev/null || true)
 if [ "$WAIT" != 1 ] && [ "$AUTO_MERGE_ALLOWED" = "true" ]; then
     echo
     echo "--- auto-merge ---"
-    gh pr merge --auto --rebase
-    echo "auto-merge armed on $URL: GitHub merges it when the required checks pass."
-    echo "Nothing waits here. If a check fails, your next claim will say so, and"
-    echo "    scripts/issue-claim.sh --resume $ISSUE"
-    echo "comes back to this branch to fix it on the same PR."
-    echo "Now claim the next issue -- finishing an issue is not finishing a session."
+    arm_auto_merge
     exit 0
 fi
 
@@ -1073,5 +1353,7 @@ else
     echo "already be gone. Not fatal: the merge above already succeeded." >&2
 fi
 echo "Next: scripts/issue-claim.sh   (from here: reuses this worktree, build and all)"
-echo "      scripts/issue-release.sh $ISSUE   only if you are stopping."
+if [ "$SMALL" != 1 ]; then
+    echo "      scripts/issue-release.sh $ISSUE   only if you are stopping."
+fi
 echo "Finishing an issue is not finishing a session."

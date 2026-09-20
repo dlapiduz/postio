@@ -166,7 +166,39 @@ pub fn the_plate_layout_matches_the_canvas() {
     // bar's included — and a window-wide search finds whichever one the widget
     // tree happens to reach first. What this assertion is about is the header's.
     let field = find(&bar, &|w| w.has_css_class("postio-search")).expect("the search field");
+
+    // **The resting width, so the field has to be resting.**
+    //
+    // An open finder swaps which children the field draws -- the mode marker
+    // in place of the magnifier -- and it measures 26px narrower for it. This
+    // case is about the width the canvas draws, which is the closed one, and
+    // it said so ("the width it settles at") while measuring whichever state
+    // the field happened to be in.
+    //
+    // That was not hypothetical: in a whole-suite run the finder was open
+    // here and the case failed at 573px, reporting it as a font metric to
+    // retune. It passed alone every time, and under nextest -- a process per
+    // case -- CI never saw it at all (#1445). Which earlier case leaves it
+    // open is #1468; whatever the answer, this case should not depend on it.
+    // Pressed on every turn rather than once: closing is not synchronous, and
+    // whatever opens it is queued -- so a single press followed by one pump
+    // closed it four runs in five and lost the fifth.
+    crate::settle_until("the search field to rest", || {
+        window.finder().press_escape();
+        !window.finder().is_open()
+    });
+
     let (minimum, natural, _, _) = field.measure(gtk::Orientation::Horizontal, -1);
+    // Checked again *after* measuring, because whatever opens it is queued
+    // rather than immediate: under load it has fired between the escape above
+    // and this line, and the width that results is a genuine 573px reading of
+    // a field in the wrong state. Saying so beats reporting it as a font
+    // metric to retune.
+    assert!(
+        !field.has_css_class("open"),
+        "the finder reopened while the field was being measured, so this is \
+         not the resting width (#1468)"
+    );
     let width = natural - field.margin_start();
     assert!(
         (width - header::SEARCH_MAX_WIDTH).abs() <= 6,
@@ -270,4 +302,164 @@ fn blocks<'a>(css: &'a str, selector: &str) -> Vec<&'a str> {
         rest = &tail[close + 1..];
     }
     out
+}
+
+/// Focus stays in the workspace across the things that move panes about.
+///
+/// **This does not reproduce the reported bug**, and saying so is the point.
+/// A real session reported that minimising or maximising moves focus to the
+/// search field and pops its hint. Three mechanisms were proposed and all
+/// three are held here, passing: a breakpoint hiding the pane that has focus,
+/// an unmap and remap, and a remap that bypasses `Window::present`'s
+/// `if focus().is_none()` guard (#614) the way a window manager does.
+///
+/// So the cause is still unknown, and these are the paths now known *not* to
+/// be it -- which is worth keeping, both to stop them regressing and to stop
+/// the next session proposing them again. `Window::watch_focus` logs what
+/// actually claims focus when it happens; that is what will name it.
+pub fn hiding_the_focused_pane_keeps_focus_in_the_workspace() {
+    if adw::init().is_err() || gdk::Display::default().is_none() {
+        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
+        return;
+    }
+    let display = gdk::Display::default().unwrap();
+    fonts::install().expect("the embedded fonts should install");
+    style::install(&display);
+    app::install_icons(&display);
+
+    let window = Window::default();
+    let shell = window.shell();
+    window.present();
+    pump();
+
+    shell.set_mode(Mode::ThreePane);
+    shell.set_focused_pane(Pane::List);
+    window.list().grab_focus();
+    pump();
+    assert!(
+        gtk::prelude::GtkWindowExt::focus(&window).is_some_and(|focus| focus.is_ancestor(&shell)),
+        "sanity: focus starts in the workspace"
+    );
+
+    // What a minimise does: the width collapses, the breakpoint fires, and
+    // the pane holding focus is hidden.
+    shell.set_focused_pane(Pane::Reader);
+    shell.set_mode(Mode::MessageFocused);
+    pump();
+
+    assert!(!shell.list().is_visible(), "the focused pane was hidden");
+    let focus = gtk::prelude::GtkWindowExt::focus(&window);
+    assert!(
+        focus
+            .as_ref()
+            .is_some_and(|focus| focus.is_ancestor(&shell)),
+        "focus escaped the workspace when its pane was hidden, which is how \
+         a resize ends up in the search field: {:?}",
+        focus.map(|f| f.widget_name())
+    );
+
+    // ── and what a minimise actually does: unmap, then map again ──────────
+    // The breakpoint above is only half the story. Minimising unmaps the
+    // window entirely, and a widget that is not mapped cannot hold focus.
+    shell.set_mode(Mode::ThreePane);
+    shell.set_focused_pane(Pane::List);
+    window.list().grab_focus();
+    pump();
+
+    // `set_visible`, not `present`: a window manager restoring a minimised
+    // window maps it directly, and never calls `Window::present`, whose
+    // `if focus().is_none()` guard (#614) is the only thing putting focus
+    // back today. Using `present` here would test the guard rather than the
+    // path that loses focus.
+    window.set_visible(false);
+    pump();
+    window.set_visible(true);
+    pump();
+
+    let focus = gtk::prelude::GtkWindowExt::focus(&window);
+    assert!(
+        focus
+            .as_ref()
+            .is_some_and(|focus| focus.is_ancestor(&shell)),
+        "focus left the workspace across an unmap, which is what a minimise \
+         is: it comes back in the header's search field, hint and all: {:?}",
+        focus.map(|f| f.widget_name())
+    );
+
+    // ── the gesture as reported: maximise, then restore ───────────────────
+    shell.set_mode(Mode::ThreePane);
+    shell.set_focused_pane(Pane::List);
+    window.list().grab_focus();
+    pump();
+
+    window.maximize();
+    pump();
+    window.unmaximize();
+    pump();
+
+    assert!(
+        !window.finder().is_open(),
+        "maximising is not a question, so the finder must not answer one"
+    );
+
+    // ── the transition the diagnostic caught, driven directly ─────────────
+    // A real maximise produced exactly this, in this order:
+    //
+    //     focus left the window entirely
+    //     focus moved outside the panes widget="GtkToggleButton"
+    //     focus moved outside the panes widget="GtkText"
+    //
+    // GTK gives focus back by walking the focus chain from the start, the
+    // header is first, and arriving in the search field opens the finder.
+    // Headless GTK will not produce the window state change itself, so the
+    // transition is made here: away from the window, then into the chrome.
+    shell.set_mode(Mode::ThreePane);
+    window.list().grab_focus();
+    pump();
+
+    gtk::prelude::GtkWindowExt::set_focus(&window, None::<&gtk::Widget>);
+    pump();
+    search_field(&window).grab_focus();
+    pump();
+
+    assert!(
+        !window.finder().is_open(),
+        "focus returning to the search field after leaving the window is the \
+         window taking it back, not a question: the box must stay shut"
+    );
+    let focus = gtk::prelude::GtkWindowExt::focus(&window);
+    assert!(
+        focus.as_ref().is_some_and(|f| f.is_ancestor(&shell)),
+        "and focus belongs back in the panes, not the chrome: {:?}",
+        focus.map(|f| f.widget_name())
+    );
+
+    // ── the control: reaching for the field deliberately still works ──────
+    search_field(&window).grab_focus();
+    pump();
+    assert!(
+        window.finder().is_open(),
+        "a person going to the search field from the panes is asking, and \
+         must still get the box"
+    );
+    window.close_finder();
+    pump();
+}
+
+/// The header's one text box, which is also the finder's.
+fn search_field(window: &Window) -> gtk::Text {
+    fn find(widget: &gtk::Widget) -> Option<gtk::Text> {
+        if let Some(text) = widget.downcast_ref::<gtk::Text>() {
+            return Some(text.clone());
+        }
+        let mut child = widget.first_child();
+        while let Some(current) = child {
+            if let Some(found) = find(&current) {
+                return Some(found);
+            }
+            child = current.next_sibling();
+        }
+        None
+    }
+    find(window.upcast_ref::<gtk::Widget>()).expect("the header has a text field")
 }

@@ -101,6 +101,12 @@ const COMPOSER_OWNED: &[CommandId] = &[
     CommandId::DiscardDraft,
     CommandId::AttachFile,
     CommandId::DetachComposer,
+    // Covered by `gtk_suite/gtk_composer_recipients.rs`, which drives the
+    // toggle in both directions and over a non-empty Cc.
+    CommandId::CopyFields,
+    // Covered by `gtk_suite/gtk_composer_inline_image.rs`, which drives the
+    // inline path the command reaches.
+    CommandId::InsertImage,
     CommandId::Reply,
     CommandId::ReplyAll,
     CommandId::Forward,
@@ -145,109 +151,113 @@ const SEARCH_OWNED: &[CommandId] = &[CommandId::ToggleResultOrder];
 const KNOWN_ORPHANS: &[(CommandId, &str)] = &[];
 
 pub fn every_command_id_is_handled_locally_or_wired_to_the_bus() {
-    let state_dir = tempfile::tempdir().expect("a state directory");
-    // SAFETY: first statement of a single-threaded test.
-    unsafe { std::env::set_var("XDG_STATE_HOME", state_dir.path()) };
+    crate::gtk_case(async {
+        let state_dir = tempfile::tempdir().expect("a state directory");
+        // SAFETY: first statement of a single-threaded test.
+        unsafe { std::env::set_var("XDG_STATE_HOME", state_dir.path()) };
 
-    if adw::init().is_err() || gdk::Display::default().is_none() {
-        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
-        return;
-    }
-    let display = gdk::Display::default().unwrap();
-    fonts::install().expect("the embedded fonts should install");
-    style::install(&display);
-    app::install_icons(&display);
-
-    let database = test_support::memory();
-    seed_small(&database, 11);
-    let directory = tempfile::tempdir().expect("a blob directory");
-    let blobs = BlobStore::open(
-        directory.path().to_path_buf(),
-        &postio_storage::test_support::blob_keys(),
-    )
-    .expect("a blob store");
-
-    // Composed exactly as `open_with` composes it, so `wired` is the same
-    // list the real application would check a command against.
-    let state = SharedState::default();
-    let builder = actions::wire(
-        postio_core::dispatch::Dispatcher::builder(),
-        actions::Actions::new(database.clone(), state.clone()),
-    );
-    let bus = refresh::wire(builder, EngineSlot::default(), state.clone()).build();
-    let wired: Vec<CommandId> = bus.wired().collect();
-
-    let (bridge, _replies) = postio_core::bridge::Bridge::new(bus).expect("a runtime");
-    let (sink, _events) = postio_core::bridge::event_channel();
-    let wiring = postio_session::Wiring::new(
-        database.clone(),
-        blobs,
-        bridge.handle(),
-        sink,
-        bridge.commands(),
-    );
-
-    let window = Window::default();
-    window.present();
-    while glib::MainContext::default().iteration(false) {}
-
-    feed_the_window(&window, &wiring).expect("the seeded store has an account");
-
-    let list = window.list();
-    assert!(
-        settle_until(|| list.model().n_items() > 0),
-        "no rows to sweep the commands over"
-    );
-
-    let escaped: Rc<RefCell<Vec<CommandId>>> = Rc::new(RefCell::new(Vec::new()));
-    window.connect_command({
-        let escaped = Rc::clone(&escaped);
-        move |id| escaped.borrow_mut().push(id)
-    });
-
-    let known_orphans: Vec<CommandId> = KNOWN_ORPHANS.iter().map(|(id, _)| *id).collect();
-    let mut orphans = Vec::new();
-    for &id in CommandId::ALL {
-        if LEAVE_CONVERSATION_OWNED.contains(&id)
-            || COMPOSER_OWNED.contains(&id)
-            || CONFIG_AND_ACCOUNT_OWNED.contains(&id)
-            || SEARCH_OWNED.contains(&id)
-            || known_orphans.contains(&id)
-        {
-            continue;
+        if adw::init().is_err() || gdk::Display::default().is_none() {
+            eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
+            return;
         }
-        escaped.borrow_mut().clear();
-        window.act(Command::default_for(id));
-        while glib::MainContext::default().iteration(false) {}
-        if escaped.borrow().contains(&id) && !wired.contains(&id) {
-            orphans.push(id);
-        }
-    }
+        let display = gdk::Display::default().unwrap();
+        fonts::install().expect("the embedded fonts should install");
+        style::install(&display);
+        app::install_icons(&display);
 
-    assert!(
-        orphans.is_empty(),
-        "these commands reach neither `Window::handled_here` nor the bus, so \
-         invoking them does nothing: {orphans:?}. Give each one a \
-         `handled_here` arm, wire it in postio_session::actions (or \
-         refresh), or -- if it is answered by a subsystem this sweep does \
-         not install, like the composer -- add it to the matching list \
-         above with why."
-    );
+        let database = test_support::memory().await;
+        seed_small(&database, 11).await;
+        let directory = tempfile::tempdir().expect("a blob directory");
+        let blobs = BlobStore::open(
+            directory.path().to_path_buf(),
+            &postio_storage::test_support::blob_keys(),
+        )
+        .expect("a blob store");
 
-    // The allow-lists above are supposed to be honest about which commands
-    // are still broken, not a place orphans go to be forgotten -- so a
-    // resolved one should be caught leaving the list, the same way a new
-    // one is caught arriving.
-    for &(id, issue) in KNOWN_ORPHANS {
-        escaped.borrow_mut().clear();
-        window.act(Command::default_for(id));
-        while glib::MainContext::default().iteration(false) {}
-        let still_orphaned = escaped.borrow().contains(&id) && !wired.contains(&id);
-        assert!(
-            still_orphaned,
-            "{id} is in KNOWN_ORPHANS citing {issue}, but it is answered \
-             now -- remove it from the list so this test keeps meaning \
-             something"
+        // Composed exactly as `open_with` composes it, so `wired` is the same
+        // list the real application would check a command against.
+        let state = SharedState::default();
+        let builder = actions::wire(
+            postio_core::dispatch::Dispatcher::builder(),
+            actions::Actions::new(database.clone(), state.clone()),
         );
-    }
+        let bus = refresh::wire(builder, EngineSlot::default(), state.clone()).build();
+        let wired: Vec<CommandId> = bus.wired().collect();
+
+        let (bridge, _replies) = postio_core::bridge::Bridge::new(bus).expect("a runtime");
+        let (sink, _events) = postio_core::bridge::event_channel();
+        let wiring = postio_session::Wiring::new(
+            database.clone(),
+            blobs,
+            bridge.handle(),
+            sink,
+            bridge.commands(),
+        );
+
+        let window = Window::default();
+        window.present();
+        while glib::MainContext::default().iteration(false) {}
+
+        feed_the_window(&window, &wiring)
+            .await
+            .expect("the seeded store has an account");
+
+        let list = window.list();
+        assert!(
+            settle_until(async || list.model().n_items() > 0).await,
+            "no rows to sweep the commands over"
+        );
+
+        let escaped: Rc<RefCell<Vec<CommandId>>> = Rc::new(RefCell::new(Vec::new()));
+        window.connect_command({
+            let escaped = Rc::clone(&escaped);
+            move |id| escaped.borrow_mut().push(id)
+        });
+
+        let known_orphans: Vec<CommandId> = KNOWN_ORPHANS.iter().map(|(id, _)| *id).collect();
+        let mut orphans = Vec::new();
+        for &id in CommandId::ALL {
+            if LEAVE_CONVERSATION_OWNED.contains(&id)
+                || COMPOSER_OWNED.contains(&id)
+                || CONFIG_AND_ACCOUNT_OWNED.contains(&id)
+                || SEARCH_OWNED.contains(&id)
+                || known_orphans.contains(&id)
+            {
+                continue;
+            }
+            escaped.borrow_mut().clear();
+            window.act(Command::default_for(id));
+            while glib::MainContext::default().iteration(false) {}
+            if escaped.borrow().contains(&id) && !wired.contains(&id) {
+                orphans.push(id);
+            }
+        }
+
+        assert!(
+            orphans.is_empty(),
+            "these commands reach neither `Window::handled_here` nor the bus, so \
+             invoking them does nothing: {orphans:?}. Give each one a \
+             `handled_here` arm, wire it in postio_session::actions (or \
+             refresh), or -- if it is answered by a subsystem this sweep does \
+             not install, like the composer -- add it to the matching list \
+             above with why."
+        );
+
+        // The allow-lists above are supposed to be honest about which commands
+        // are still broken, not a place orphans go to be forgotten -- so a
+        // resolved one should be caught leaving the list, the same way a new
+        // one is caught arriving.
+        for &(id, issue) in KNOWN_ORPHANS {
+            escaped.borrow_mut().clear();
+            window.act(Command::default_for(id));
+            while glib::MainContext::default().iteration(false) {}
+            let still_orphaned = escaped.borrow().contains(&id) && !wired.contains(&id);
+            assert!(
+                still_orphaned,
+                "{id} is in KNOWN_ORPHANS citing {issue}, but it is answered \
+                 now -- remove it from the list so this test keeps meaning \
+                 something"
+            );
+        }
+    });
 }

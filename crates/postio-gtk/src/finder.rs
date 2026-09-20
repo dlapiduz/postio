@@ -54,7 +54,7 @@
 use adw::prelude::*;
 use adw::subclass::prelude::*;
 use gtk::{glib, pango};
-use postio_core::{ActionId, Context, Keymap, Scope};
+use postio_core::{ActionId, Availability, Context, Keymap, Scope};
 use postio_model::ids::{LabelId, MailboxId};
 use postio_model::mailbox::Mailbox;
 use postio_model::{Contact, Label};
@@ -62,6 +62,13 @@ use postio_search::ParsedQuery;
 
 use crate::palette::{Entry, entries, highlight, score};
 use crate::search::{Backspace, Chip, Live, backspace, chips};
+
+/// What the field shows as the way out of a mode: Backspace, which at the
+/// start of the text gives the mode back and keeps what was typed.
+///
+/// The glyph rather than the word, because it sits in the same `postio-key`
+/// chip the `/` does, and a chip is one key wide.
+const WAY_BACK: &str = "\u{232b}";
 
 /// Which question the box is asking.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -89,18 +96,23 @@ impl Mode {
         Mode::Label,
     ];
 
+    /// This mode's row in [`postio_ui::finder::MODES`].
+    ///
+    /// The strings moved there so the macOS frontend reads the same ones
+    /// rather than re-deriving them (ADR 0019), and so the bar's own hint and
+    /// the generated documentation have one table to read. The variants are
+    /// declared in the table's order, which is what makes the cast right, and
+    /// `the_enum_and_the_table_stay_in_step` is what keeps it right.
+    const fn entry(self) -> &'static postio_ui::finder::FinderMode {
+        &postio_ui::finder::MODES[self as usize]
+    }
+
     /// The character that switches into this mode from an empty box.
     ///
     /// `None` for [`Mode::Search`]: it is what the box already is, so there
     /// is nothing to type to get there.
     pub const fn prefix(self) -> Option<char> {
-        match self {
-            Mode::Search => None,
-            Mode::Command => Some('>'),
-            Mode::Mailbox => Some('#'),
-            Mode::Contact => Some('@'),
-            Mode::Label => Some('+'),
-        }
+        self.entry().prefix
     }
 
     /// The mode a prefix character asks for.
@@ -114,24 +126,12 @@ impl Mode {
     ///
     /// Search wears the `/` the canvas already draws on the field.
     pub const fn marker(self) -> &'static str {
-        match self {
-            Mode::Search => "/",
-            Mode::Command => ">",
-            Mode::Mailbox => "#",
-            Mode::Contact => "@",
-            Mode::Label => "+",
-        }
+        self.entry().marker
     }
 
     /// What the empty box invites the user to do.
     pub const fn placeholder(self) -> &'static str {
-        match self {
-            Mode::Search => "Search all mail",
-            Mode::Command => "Run a command",
-            Mode::Mailbox => "Go to a folder",
-            Mode::Contact => "Find a correspondent",
-            Mode::Label => "Add a label",
-        }
+        self.entry().purpose
     }
 
     /// The keyboard context this mode owns while the box is open.
@@ -443,7 +443,7 @@ mod imp {
         /// answers the same question from the other side: `context` is which
         /// surface has focus, this is what that surface is showing, and a
         /// command can need either (#182).
-        pub(super) scope: RefCell<Scope>,
+        pub(super) availability: RefCell<Availability>,
         pub(super) mailboxes: RefCell<Vec<Mailbox>>,
         pub(super) contacts: RefCell<Vec<Contact>>,
         pub(super) query: RefCell<Query>,
@@ -452,6 +452,11 @@ mod imp {
         pub(super) live: RefCell<Option<Live>>,
         pub(super) commands: RefCell<Vec<ActionId>>,
         pub(super) folders: RefCell<Vec<MailboxId>>,
+        /// What the empty box is offering, as a person reads it.
+        pub(super) hints: RefCell<Vec<String>>,
+        /// The mode each hint row enters, in the order the rows are drawn.
+        /// Parallel to `hints`, which is the readable half.
+        pub(super) hinted: RefCell<Vec<Mode>>,
         pub(super) available_labels: RefCell<Vec<Label>>,
         pub(super) labels: RefCell<Vec<LabelId>>,
         pub(super) matched: RefCell<Vec<ContactHit>>,
@@ -482,7 +487,12 @@ mod imp {
                 // The list is where the box opens from, and the context the
                 // commands are filtered by until the window says otherwise.
                 context: RefCell::new(Context::List),
-                scope: RefCell::new(Scope::default()),
+                // Before anything feeds the window there is no store, and
+                // the palette lists what this window can actually do (#1114).
+                availability: RefCell::new(Availability {
+                    scope: Scope::default(),
+                    store_open: false,
+                }),
                 mailboxes: RefCell::new(Vec::new()),
                 contacts: RefCell::new(Vec::new()),
                 query: RefCell::new(Query::new()),
@@ -490,6 +500,8 @@ mod imp {
                 live: RefCell::new(None),
                 commands: RefCell::new(Vec::new()),
                 folders: RefCell::new(Vec::new()),
+                hints: RefCell::new(Vec::new()),
+                hinted: RefCell::new(Vec::new()),
                 available_labels: RefCell::new(Vec::new()),
                 labels: RefCell::new(Vec::new()),
                 matched: RefCell::new(Vec::new()),
@@ -640,10 +652,11 @@ impl Finder {
         self.refresh();
     }
 
-    /// What the mail on screen belongs to, for the commands that need one
-    /// account rather than one surface — `Move`, so far (#182).
-    pub fn set_scope(&self, scope: Scope) {
-        *self.imp().scope.borrow_mut() = scope;
+    /// What the window can currently do: its scope, for the commands that
+    /// need one account rather than one surface (`Move`, #182), and whether
+    /// the store behind it is open at all (#1114).
+    pub fn set_availability(&self, state: Availability) {
+        *self.imp().availability.borrow_mut() = state;
         self.refresh();
     }
 
@@ -757,6 +770,27 @@ impl Finder {
         self.imp().folders.borrow().clone()
     }
 
+    /// The header field this box drives, for a test that has to ask a widget
+    /// what a screen reader would find on it.
+    pub fn field(&self) -> Option<Field> {
+        self.imp().field.borrow().clone()
+    }
+
+    /// How to get out of the mode the box is in, or `None` in search --
+    /// which is not a mode anyone backed into.
+    pub fn way_back(&self) -> Option<String> {
+        let query = self.query();
+        (self.is_open() && query.mode != Mode::Search).then(|| WAY_BACK.to_string())
+    }
+
+    /// What an empty box offers: every mode a prefix reaches, as the
+    /// character and what it is for.
+    ///
+    /// Search is not among them — it is what the box is already doing.
+    pub fn mode_hints(&self) -> Vec<String> {
+        self.imp().hints.borrow().clone()
+    }
+
     /// The correspondents listed, best first.
     pub fn matched_contacts(&self) -> Vec<ContactHit> {
         self.imp().matched.borrow().clone()
@@ -830,6 +864,25 @@ impl Finder {
         let imp = self.imp();
         match self.mode() {
             Mode::Search => {
+                // A picked hint is a mode, not a query. The rows an empty box
+                // offers are the only thing on the plate, so Return on one
+                // has to mean what the row says -- it draws, it highlights,
+                // and before this it did nothing, which is worse than not
+                // being there.
+                if let Some(mode) = self
+                    .selected_index()
+                    .and_then(|index| imp.hinted.borrow().get(index).copied())
+                {
+                    self.open(mode);
+                    return;
+                }
+                // Nothing typed is nothing to search for -- the same rule
+                // `refresh` follows when it offers the modes instead. Running
+                // the empty query put the folder back in the list, which
+                // reads as the box having thrown the gesture away.
+                if self.query().text.is_empty() {
+                    return;
+                }
                 // Enter means "search now": the debounce is sized to typing
                 // cadence (see `crate::search::DEBOUNCE`), which is long
                 // enough to feel when the query is finished and the person
@@ -1070,7 +1123,12 @@ impl Finder {
     fn row_count(&self) -> usize {
         let imp = self.imp();
         match self.mode() {
-            Mode::Search => 0,
+            // Search answers in the message list, so it has no *results* on
+            // the plate -- but an empty box offers the modes, and those are
+            // rows. Answering 0 for them hid the scroller they live in
+            // (`listing && count > 0`) and suppressed the empty line too
+            // (`!hinting`), which is a plate that is up with nothing on it.
+            Mode::Search => imp.hints.borrow().len(),
             Mode::Command => imp.commands.borrow().len(),
             Mode::Mailbox => imp.folders.borrow().len(),
             Mode::Contact => imp.matched.borrow().len(),
@@ -1164,6 +1222,46 @@ impl Finder {
 
         match query.mode {
             Mode::Search => {
+                // Nothing typed is nothing to search for, and that is the
+                // one moment there is room to say what else this box can be
+                // asked. Four of the five modes were reachable only by
+                // knowing the character already. The rows go the moment a
+                // query starts, so the hint never stands in the way of it.
+                // Assigned rather than pushed, like every other row list
+                // here: this runs on each rebuild, and appending would stack
+                // the same four hints up again on every keystroke.
+                let mut hints = Vec::new();
+                let mut hinted = Vec::new();
+                if query.text.is_empty() {
+                    for mode in postio_ui::finder::MODES {
+                        let Some(prefix) = mode.prefix else {
+                            continue;
+                        };
+                        // A mode with nothing behind it is not worth teaching:
+                        // `+` offered to a window with no labels is a key that
+                        // leads to an empty list, which is worse than not
+                        // knowing the key. The registry is never empty, so
+                        // commands are always worth offering.
+                        let answerable = match Mode::of_prefix(prefix) {
+                            Some(Mode::Mailbox) => !imp.mailboxes.borrow().is_empty(),
+                            Some(Mode::Contact) => !imp.contacts.borrow().is_empty(),
+                            Some(Mode::Label) => !imp.available_labels.borrow().is_empty(),
+                            _ => true,
+                        };
+                        if !answerable {
+                            continue;
+                        }
+                        imp.list.append(&hint_row(mode.purpose, prefix));
+                        hints.push(format!("{}, {prefix}", mode.purpose));
+                        // Beside the row, not derived from the prefix later:
+                        // the two lists are the same list, and reading the
+                        // prefix back off a label is how they drift.
+                        hinted.extend(Mode::of_prefix(prefix));
+                    }
+                }
+                *imp.hints.borrow_mut() = hints;
+                *imp.hinted.borrow_mut() = hinted;
+
                 let parsed = postio_search::parse(&query.text, today());
                 *imp.parsed.borrow_mut() = parsed;
                 let parsed = imp.parsed.borrow().clone();
@@ -1186,7 +1284,7 @@ impl Finder {
                 let found = entries(
                     &imp.keymap.borrow(),
                     *imp.context.borrow(),
-                    *imp.scope.borrow(),
+                    *imp.availability.borrow(),
                     &query.text,
                 );
                 for entry in &found {
@@ -1251,8 +1349,32 @@ impl Finder {
             field
                 .text
                 .set_placeholder_text(Some(query.mode.placeholder()));
-            // The `/` cap invites you in; once you are in, it is noise.
-            field.hint.set_visible(!open);
+            // The `/` cap invites you in. Once you are in, it has a better
+            // job: a mode was easy to fall into and had nothing saying how to
+            // get out, so the same slot carries the way back while one is on.
+            // In search there is nothing to back out of, so it goes.
+            let way_back = (open && !searching).then_some(WAY_BACK);
+            field.hint.set_text(way_back.unwrap_or("/"));
+            field.hint.set_visible(!open || way_back.is_some());
+
+            // The chip stays decoration -- a screen reader announcing a bare
+            // "⌫" would be reading furniture. The fact it carries belongs to
+            // the field the user is actually typing in, so that focusing the
+            // box says which question is being asked and how to stop asking
+            // it. Without this the way out is drawn and not spoken, which is
+            // the same mode with no door for anybody not looking at it.
+            field.text.update_property(&[
+                gtk::accessible::Property::Label(query.mode.placeholder()),
+                gtk::accessible::Property::Description(&match way_back {
+                    Some(_) => format!(
+                        "{}. Backspace at the start goes back to searching mail.",
+                        query.mode.placeholder()
+                    ),
+                    None => "Type to search. A prefix asks something else of the \
+                             same box; the empty box lists them."
+                        .to_owned(),
+                }),
+            ]);
         }
 
         // The operators, read back under the field rather than drawn inside
@@ -1275,13 +1397,17 @@ impl Finder {
         imp.chips.set_visible(!drawn.is_empty());
 
         let count = self.row_count();
-        let listing = open && query.mode.has_results();
+        // Search answers in the message list rather than on the plate -- but
+        // an empty search box is offering modes, and those are rows like any
+        // other.
+        let hinting = open && query.mode == Mode::Search && query.text.is_empty();
+        let listing = open && (query.mode.has_results() || hinting);
         // The plate is up when it has something to say: rows to pick from,
         // a reading of the query, or the fact that nothing matched.
         self.set_visible(open && (listing || !drawn.is_empty()));
         imp.scroller.set_visible(listing && count > 0);
         self.fit_whole_rows();
-        imp.empty.set_visible(listing && count == 0);
+        imp.empty.set_visible(listing && count == 0 && !hinting);
         if count == 0 {
             // Never a shrug: say what was looked in, so the next keystroke
             // is an informed one.
@@ -1333,6 +1459,18 @@ fn command_row(entry: &Entry) -> gtk::ListBoxRow {
         Some(binding) => format!("{}, {binding}", entry.title),
         None => entry.title.to_string(),
     })]);
+    row
+}
+
+/// One hint row: what a mode is for, with the character that reaches it on
+/// the right -- the arrangement the palette already uses for a command and
+/// its binding, because this is the same fact in the same shape.
+fn hint_row(purpose: &str, prefix: char) -> gtk::ListBoxRow {
+    let marker = prefix.to_string();
+    let row = row_shell(&glib::markup_escape_text(purpose), Some(&marker));
+    row.update_property(&[gtk::accessible::Property::Label(&format!(
+        "{purpose}, {prefix}"
+    ))]);
     row
 }
 
@@ -1407,19 +1545,13 @@ fn row_shell(title: &str, trailing: Option<&str>) -> gtk::ListBoxRow {
 }
 
 fn chip_widget(chip: &Chip) -> gtk::Label {
-    let label = gtk::Label::new(Some(&chip.label));
-    label.add_css_class("postio-chip");
-    if chip.negated {
-        label.add_css_class("negated");
-    }
-    if !chip.complete {
-        label.add_css_class("partial");
-    }
     // Read as what it does, not as the shorthand it is written in.
-    label.update_property(&[gtk::accessible::Property::Label(&crate::search::spoken(
-        chip,
-    ))]);
-    label
+    crate::widgets::filter_chip(
+        &chip.label,
+        &crate::search::spoken(chip),
+        chip.negated,
+        !chip.complete,
+    )
 }
 
 /// The day relative dates resolve against.
@@ -1449,6 +1581,33 @@ mod tests {
         let folder = box_.typed("#lk");
         assert_eq!(folder.mode, Mode::Mailbox);
         assert_eq!(folder.text, "lk");
+    }
+
+    #[test]
+    fn the_enum_and_the_table_stay_in_step() {
+        // `Mode::entry` indexes the shared table by the variant's own
+        // discriminant, so the enum's declaration order *is* the mapping.
+        // Reorder the variants and every mode silently answers to somebody
+        // else's character.
+        //
+        // Zipping `Mode::ALL` against `MODES` would not notice: `prefix()`
+        // reads the table through that same index, so such a test compares
+        // each row with itself and passes however wrong the order is. These
+        // assertions name the character each variant owes, which is the one
+        // statement of the mapping that does not go through it.
+        assert_eq!(Mode::Search.prefix(), None);
+        assert_eq!(Mode::Command.prefix(), Some('>'));
+        assert_eq!(Mode::Mailbox.prefix(), Some('#'));
+        assert_eq!(Mode::Contact.prefix(), Some('@'));
+        assert_eq!(Mode::Label.prefix(), Some('+'));
+        assert_eq!(Mode::Mailbox.placeholder(), "Go to a folder");
+
+        assert_eq!(
+            Mode::ALL.len(),
+            postio_ui::finder::MODES.len(),
+            "a row was added to the table with no variant to reach it, or the \
+             other way about"
+        );
     }
 
     #[test]
@@ -1512,6 +1671,7 @@ mod tests {
             unread,
             flagged: 0,
             snoozed: 0,
+            attention: 0,
         };
         mailbox
     }

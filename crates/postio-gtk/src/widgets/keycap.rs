@@ -37,6 +37,33 @@ impl KeycapButton {
     /// `primary` gives it the suggested-action treatment: one per bar, the
     /// verb the bar exists for.
     pub fn new(command: Option<CommandId>, label: &str, class: &str, primary: bool) -> Self {
+        Self::build(command, label, None, class, primary)
+    }
+
+    /// As [`new`](Self::new), drawn as `icon` instead of as words.
+    ///
+    /// `label` is still required and still does most of the work: it becomes
+    /// the accessible name and the tooltip, so the button is announced and
+    /// explained even though nothing on it is readable. An icon-only button
+    /// without one is a button a screen reader calls "button", which is worse
+    /// than the width it saved.
+    pub fn with_icon(
+        command: Option<CommandId>,
+        label: &str,
+        icon: &str,
+        class: &str,
+        primary: bool,
+    ) -> Self {
+        Self::build(command, label, Some(icon), class, primary)
+    }
+
+    fn build(
+        command: Option<CommandId>,
+        label: &str,
+        icon: Option<&str>,
+        class: &str,
+        primary: bool,
+    ) -> Self {
         let hint = gtk::Label::new(None);
         hint.add_css_class("postio-keyhint");
         // A class of its own, distinct from the button's: a test finding
@@ -47,8 +74,22 @@ impl KeycapButton {
         hint.set_visible(false);
 
         let content = gtk::Box::new(gtk::Orientation::Horizontal, 8);
-        content.append(&gtk::Label::new(Some(label)));
-        content.append(&hint);
+        match icon {
+            Some(name) => {
+                let image = gtk::Image::from_icon_name(name);
+                image.set_accessible_role(gtk::AccessibleRole::Presentation);
+                content.append(&image);
+                // The key hint stays out of an icon button. Canvas screen 30
+                // gives the letter to the labelled primary only, and putting
+                // it back here returns the width the icon was for -- the
+                // tooltip and the accessible name still carry the key.
+                hint.set_visible(false);
+            }
+            None => {
+                content.append(&gtk::Label::new(Some(label)));
+                content.append(&hint);
+            }
+        }
 
         let button = gtk::Button::new();
         button.set_child(Some(&content));

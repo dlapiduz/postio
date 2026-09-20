@@ -79,7 +79,7 @@ use postio_config::{
 };
 use postio_core::CommandId;
 use postio_model::ids::SignatureId;
-use postio_model::{Account, AccountId, UnsubscribeActivation};
+use postio_model::{Account, AccountId, MailboxRole, UnsubscribeActivation};
 
 use crate::keymap::{Chord, ChordFromGdk};
 use crate::widgets::{CheckRow, SegmentedControl, kicker, stat_line};
@@ -192,6 +192,53 @@ pub enum AccountEdit {
     /// holds — `Account::default_signature_id` is an `Option<SignatureId>`,
     /// and an account can have signatures without preferring one.
     DefaultSignature(Option<SignatureId>),
+    /// A role pointed at one of the account's own folders, or back to
+    /// resolving automatically (ADR 0035).
+    ///
+    /// The path rather than a `MailboxId`: what is stored is what the user
+    /// said about the server, and it has to survive the folder's row being
+    /// retired and re-created when a listing loses it and finds it again.
+    MailboxRole(MailboxRole, Option<String>),
+}
+
+/// The roles a folder can be mapped to, in the order the group lists them.
+///
+/// `Inbox` is not among them: RFC 3501 names that folder itself, and pointing
+/// it elsewhere would make Postio disagree with every other client on the
+/// same account about where mail arrives. `Flagged` is a view over folders
+/// rather than one of them.
+const MAPPABLE_ROLES: [(MailboxRole, &str); 5] = [
+    (MailboxRole::Sent, "Sent"),
+    (MailboxRole::Archive, "Archive"),
+    (MailboxRole::Drafts, "Drafts"),
+    (MailboxRole::Trash, "Trash"),
+    (MailboxRole::Junk, "Junk"),
+];
+
+/// One account's folders and role map, as the Mailboxes group needs them.
+///
+/// Three lists rather than one, because they answer three different
+/// questions: what folders there are to choose from, which roles the user has
+/// already pointed somewhere, and what each role resolves to as things stand.
+/// The third is what makes "Automatic" nameable -- a person can only disagree
+/// with an answer they can see.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct AccountMailboxes {
+    /// Every folder the account can open, by server path, in listing order.
+    pub folders: Vec<String>,
+    /// The roles this account has pointed somewhere, and where.
+    pub chosen: Vec<(MailboxRole, String)>,
+    /// What each role resolves to right now, mapped or not.
+    pub resolved: Vec<(MailboxRole, String)>,
+    /// The roles this account's server refused to create a folder for, and
+    /// what it said (spec 003, FR-031).
+    ///
+    /// Distinct from "not resolved": a role can have no folder because nobody
+    /// has synced yet, which fixes itself, or because the server said no,
+    /// which does not. Only the second has words worth showing, and they are
+    /// the server's own -- "Permission denied" tells a user where to look and
+    /// "could not create Junk" tells them nothing.
+    pub refused: Vec<(MailboxRole, String)>,
 }
 
 /// What to call when a field in the account detail view is committed.
@@ -411,8 +458,8 @@ fn row_account_id(row: &gtk::ListBoxRow) -> AccountId {
 pub use postio_ui::account::badge as account_badge;
 
 /// One labeled field in the account detail view (#880) — a plain label over
-/// the control. Unlike [`SettingsPanel::sync_row`], there is no second
-/// description line: a host or a port names itself.
+/// the control. Unlike the settings rows that carry a second description
+/// line, there is none here: a host or a port names itself.
 fn detail_row(label: &str, control: &impl IsA<gtk::Widget>) -> gtk::Box {
     let title = gtk::Label::new(Some(label));
     title.set_xalign(0.0);
@@ -637,9 +684,18 @@ mod imp {
         pub account_detail_signature_ids: RefCell<Vec<SignatureId>>,
         /// Set while [`super::SettingsPanel::open_account_detail`] is
         /// populating the fields above, so setting an `Entry`'s text does
-        /// not itself fire an edit — the same guard [`SettingsPanel::load`]
+        /// not itself fire an edit — the same guard [`super::SettingsPanel::load`]
         /// uses on the raw buffer, for the same reason.
         pub account_detail_loading: Cell<bool>,
+        /// The Mailboxes group inside the detail view (#966). The box itself
+        /// is safe to build early -- it carries no event controllers -- but
+        /// the dropdowns inside it are not, so they are built per open by
+        /// [`super::SettingsPanel::redraw_account_mailboxes`].
+        pub account_detail_mailboxes: gtk::Box,
+        /// Every account's folders and role map, as
+        /// [`super::SettingsPanel::set_account_mailboxes`] last gave them.
+        /// Order-independent with `set_accounts`, the way `mail_weights` is.
+        pub account_mailboxes: RefCell<Vec<(AccountId, AccountMailboxes)>>,
         pub account_edited: RefCell<Vec<AccountEditHandler>>,
         /// Who to tell when "Test connection" is pressed (#980). The panel
         /// never dials anything itself, exactly as it never writes an edit
@@ -800,6 +856,8 @@ mod imp {
                 account_detail_signature_row: OnceCell::new(),
                 account_detail_signature_ids: RefCell::new(Vec::new()),
                 account_detail_loading: Cell::new(false),
+                account_detail_mailboxes: gtk::Box::new(gtk::Orientation::Vertical, 0),
+                account_mailboxes: RefCell::new(Vec::new()),
                 account_edited: RefCell::new(Vec::new()),
                 test_connection: RefCell::new(Vec::new()),
                 account_detail_test_button: OnceCell::new(),
@@ -1194,7 +1252,7 @@ impl SettingsPanel {
         };
         list.revoke(sender);
         if let Err(error) = list.save_to(path) {
-            tracing::error!(%error, "could not save the remote-image allow-list");
+            tracing::error!(%error, "could not save the remote-image allow-list: {error}");
         }
         drop(guard);
         self.redraw_privacy();
@@ -1244,7 +1302,7 @@ impl SettingsPanel {
 
     /// Hands the panel the current account's unsubscribe-activation log
     /// (#971), newest first — `window.rs` reads it fresh from
-    /// [`postio_storage::repository::UnsubscribeRepository`] every time the
+    /// `postio_storage`'s `UnsubscribeRepository` every time the
     /// pane opens, the same reason [`SettingsPanel::set_remote_image_allowlist`]
     /// is handed its list rather than reading one itself: `postio-gtk` has
     /// no SQL of its own.
@@ -1255,7 +1313,7 @@ impl SettingsPanel {
 
     /// Hands the panel how many messages have asked for a read receipt
     /// (#970) — `window.rs` reads the count fresh from
-    /// [`postio_storage::repository::MessageRepository::read_receipt_requested_count`]
+    /// `postio_storage`'s `MessageRepository::read_receipt_requested_count`
     /// every time the pane opens, the same reason the two lists above are
     /// handed their state rather than reading it themselves.
     ///
@@ -1792,6 +1850,7 @@ impl SettingsPanel {
             list.set_visible(!account.signatures.is_empty());
         }
 
+        self.redraw_account_mailboxes(id);
         imp.account_detail.set_visible(true);
         // Reopening the account is how the app returns from a save, so the
         // editor must not be left over it.
@@ -2021,6 +2080,158 @@ impl SettingsPanel {
         let _ = imp.account_detail_test_status.set(status);
 
         self.build_signature_editor();
+        // Appended here rather than in `build()` so it reads below the
+        // server fields; the box is empty until an account is opened.
+        imp.account_detail_mailboxes
+            .set_orientation(gtk::Orientation::Vertical);
+        imp.account_detail_mailboxes
+            .add_css_class("postio-settings-account-detail-mailboxes");
+        imp.account_detail.append(&imp.account_detail_mailboxes);
+    }
+
+    /// Rebuilds the Mailboxes group for the account whose detail is open.
+    ///
+    /// Fresh widgets on every open rather than kept ones: the folders differ
+    /// per account, and this is the same trade `redraw_ui` makes -- a handful
+    /// of widgets against having to reconcile two lists that can differ in
+    /// length. It is also where the #873 rule lands: a `gtk::DropDown` is
+    /// built here, reached only from `open_account_detail`, and never while
+    /// the window is still constructing.
+    fn redraw_account_mailboxes(&self, account: AccountId) {
+        let imp = self.imp();
+        let group = &imp.account_detail_mailboxes;
+        while let Some(child) = group.first_child() {
+            group.remove(&child);
+        }
+
+        // "Mailbox roles", the phrase the `[sync]` pane already shows for
+        // the same idea -- not "Folders", which is what the sidebar calls its
+        // ordinary section, and not a third word for one thing.
+        let heading = gtk::Label::new(Some("Mailbox roles"));
+        heading.set_xalign(0.0);
+        heading.add_css_class("postio-settings-account-detail-group");
+        // The same 18px `ui_row` puts either side of a settings row: this
+        // group follows five fields, and flush against the last of them it
+        // reads as a sixth rather than as a heading over what comes next.
+        heading.set_margin_top(18);
+        heading.set_margin_bottom(4);
+        group.append(&heading);
+
+        let data = imp
+            .account_mailboxes
+            .borrow()
+            .iter()
+            .find(|(id, _)| *id == account)
+            .map(|(_, data)| data.clone())
+            .unwrap_or_default();
+
+        if data.folders.is_empty() {
+            // Not a blank frame: an account that has never synced has no
+            // folders to offer, and saying which it is beats an empty row.
+            let empty = gtk::Label::new(Some("Folders appear after the first sync."));
+            empty.set_xalign(0.0);
+            empty.set_wrap(true);
+            empty.add_css_class("postio-settings-account-detail-mailboxes-empty");
+            group.append(&empty);
+            return;
+        }
+
+        for (role, title) in MAPPABLE_ROLES {
+            group.append(&detail_row(title, &self.role_dropdown(role, &data)));
+        }
+    }
+
+    /// One role's picker: automatic first, then the account's folders, then
+    /// the mapped folder when the server no longer lists it.
+    fn role_dropdown(&self, role: MailboxRole, data: &AccountMailboxes) -> gtk::DropDown {
+        let chosen = data
+            .chosen
+            .iter()
+            .find(|(mapped, _)| *mapped == role)
+            .map(|(_, path)| path.clone());
+        let resolved = data
+            .resolved
+            .iter()
+            .find(|(mapped, _)| *mapped == role)
+            .map(|(_, path)| path.as_str());
+        // Named only when nothing is chosen: with a choice in force, what
+        // automatic *would* say is a question only the next discovery pass
+        // can answer, and guessing at it here would be a label that lies.
+        let refused = data
+            .refused
+            .iter()
+            .find(|(mapped, _)| *mapped == role)
+            .map(|(_, reason)| reason.as_str());
+        let automatic = match (&chosen, resolved, refused) {
+            (Some(_), _, _) => "Automatic".to_owned(),
+            (None, Some(path), _) => format!("Automatic ({path})"),
+            // The server said no, and said why. Shown here rather than left as
+            // a bare "no folder", which is true and gives a person nothing to
+            // do about it.
+            (None, None, Some(reason)) => format!("Automatic (no folder — {reason})"),
+            (None, None, None) => "Automatic (no folder)".to_owned(),
+        };
+
+        let mut entries = vec![automatic];
+        entries.extend(data.folders.iter().cloned());
+        let dangling = chosen
+            .as_ref()
+            .filter(|path| !data.folders.contains(path))
+            .cloned();
+        if let Some(path) = &dangling {
+            entries.push(format!("{path} (not on this server)"));
+        }
+        let labels: Vec<&str> = entries.iter().map(String::as_str).collect();
+        let dropdown = gtk::DropDown::from_strings(&labels);
+        dropdown.add_css_class("postio-settings-account-detail-role");
+        dropdown.add_css_class(&format!(
+            "postio-settings-account-detail-role-{}",
+            role.as_str()
+        ));
+        dropdown.update_property(&[gtk::accessible::Property::Label(&format!(
+            "{role:?} folder"
+        ))]);
+        dropdown.set_selected(match &chosen {
+            None => 0,
+            Some(path) => match data.folders.iter().position(|folder| folder == path) {
+                Some(index) => index as u32 + 1,
+                // The dangling entry, which is always last.
+                None => entries.len() as u32 - 1,
+            },
+        });
+
+        // Connected *after* `set_selected`, so restoring what is already
+        // stored never reports itself as a change the user made.
+        let folders = data.folders.clone();
+        dropdown.connect_selected_notify(glib::clone!(
+            #[weak(rename_to = panel)]
+            self,
+            move |dropdown| {
+                let index = dropdown.selected() as usize;
+                if index == 0 {
+                    panel.commit_account_edit(AccountEdit::MailboxRole(role, None));
+                    return;
+                }
+                // Past the folders is the dangling entry: it is the state
+                // already, not a new choice.
+                if let Some(path) = folders.get(index - 1) {
+                    panel.commit_account_edit(AccountEdit::MailboxRole(role, Some(path.clone())));
+                }
+            }
+        ));
+        dropdown
+    }
+
+    /// Every account's folders and role map, for the Mailboxes group.
+    ///
+    /// Order-independent with [`set_accounts`](Self::set_accounts): whichever
+    /// arrives second redraws what is open.
+    pub fn set_account_mailboxes(&self, mailboxes: Vec<(AccountId, AccountMailboxes)>) {
+        *self.imp().account_mailboxes.borrow_mut() = mailboxes;
+        let open = *self.imp().account_detail_id.borrow();
+        if let Some(account) = open {
+            self.redraw_account_mailboxes(account);
+        }
     }
 
     /// The signature editor: a name, a body, and the two verbs that need
@@ -2536,7 +2747,7 @@ impl SettingsPanel {
         mutate(&mut config);
         match patch_filters(&original, &config.filters) {
             Ok(patched) => self.imp().buffer.set_text(&patched),
-            Err(error) => tracing::error!(%error, "could not patch [filters]"),
+            Err(error) => tracing::error!(%error, "could not patch [filters]: {error}"),
         }
     }
 
@@ -2634,7 +2845,7 @@ impl SettingsPanel {
         mutate(&mut config.sync);
         match patch_sync(&original, &config.sync) {
             Ok(patched) => self.imp().buffer.set_text(&patched),
-            Err(error) => tracing::error!(%error, "could not patch [sync]"),
+            Err(error) => tracing::error!(%error, "could not patch [sync]: {error}"),
         }
     }
 
@@ -2907,7 +3118,7 @@ impl SettingsPanel {
         *config.keys.overrides_mut() = overrides.clone();
         match patch_keys(&original, &overrides) {
             Ok(patched) => self.imp().buffer.set_text(&patched),
-            Err(error) => tracing::error!(%error, "could not patch [keys]"),
+            Err(error) => tracing::error!(%error, "could not patch [keys]: {error}"),
         }
     }
 
@@ -3145,7 +3356,8 @@ impl SettingsPanel {
             seen: true,
             flagged: false,
             answered: false,
-            draft: false,
+            send_state: None,
+            send_at: None,
             has_attachments: false,
             thread_count: 1,
             participants: Vec::new(),
@@ -3283,7 +3495,7 @@ impl SettingsPanel {
         mutate(&mut config.ui);
         match patch_ui(&original, &config.ui) {
             Ok(patched) => self.imp().buffer.set_text(&patched),
-            Err(error) => tracing::error!(%error, "could not patch [ui]"),
+            Err(error) => tracing::error!(%error, "could not patch [ui]: {error}"),
         }
     }
 
@@ -3376,7 +3588,7 @@ impl SettingsPanel {
         mutate(&mut config.compose);
         match patch_compose(&original, &config.compose) {
             Ok(patched) => self.imp().buffer.set_text(&patched),
-            Err(error) => tracing::error!(%error, "could not patch [compose]"),
+            Err(error) => tracing::error!(%error, "could not patch [compose]: {error}"),
         }
     }
 
@@ -3559,7 +3771,7 @@ impl SettingsPanel {
             return;
         };
         if let Err(error) = write_atomically(&path, &text) {
-            tracing::error!(path = %path.display(), %error, "cannot revert the config file");
+            tracing::error!(path = %path.display(), %error, "cannot revert the config file: {error}");
             return;
         }
         imp.loading.set(true);
@@ -3605,7 +3817,7 @@ impl SettingsPanel {
             return;
         };
         if let Err(error) = write_atomically(&path, &self.text()) {
-            tracing::error!(path = %path.display(), %error, "cannot save the config file");
+            tracing::error!(path = %path.display(), %error, "cannot save the config file: {error}");
         }
     }
 
@@ -4361,6 +4573,9 @@ impl SettingsPanel {
         let editor_widget = editor.widget();
         let _ = imp.editor_button.set(editor);
 
+        // `postio-chip-base` carries the box; the tag class carries only its
+        // colours. See `widgets::chip` for why the metrics have one owner.
+        imp.tag.add_css_class("postio-chip-base");
         imp.tag.add_css_class("postio-settings-tag");
 
         let footer = gtk::Box::new(gtk::Orientation::Horizontal, 10);

@@ -52,8 +52,8 @@ use postio_session::actions::Actions;
 use postio_storage::repository::{
     AccountRepository, ListQuery, ListScope, MailboxRepository, MessageRepository,
 };
-use postio_storage::test_support::TempDatabase;
-use postio_storage::{BlobStore, Database, test_support};
+use postio_storage::test_support::TempStore;
+use postio_storage::{BlobStore, Store, test_support};
 
 /// Enough round-trip cost that the backfill is still going when the keystroke
 /// lands, without making the test slow.
@@ -107,11 +107,11 @@ fn folder(path: &str, attributes: &[&str], messages: u32) -> MockMailbox {
 /// records: an in-memory database uses SQLite's shared cache, whose
 /// table-level locking is a different model from the WAL one Postio runs on
 /// and the one this file is about.
-fn engine_over(backend: Arc<MockBackend>) -> (TempDatabase, Engine, tempfile::TempDir) {
-    let database = test_support::temp();
+async fn engine_over(backend: Arc<MockBackend>) -> (TempStore, Engine, tempfile::TempDir) {
+    let database = test_support::temp().await;
     let account = {
-        let connection = database.connection().expect("a connection");
-        test_support::account(&connection)
+        let connection = database.connect().await.expect("a connection");
+        test_support::account(&connection).await
     };
     let directory = tempfile::tempdir().expect("a blob directory");
     let blobs = BlobStore::open(
@@ -144,26 +144,28 @@ fn engine_over(backend: Arc<MockBackend>) -> (TempDatabase, Engine, tempfile::Te
 }
 
 /// The mailbox the store knows at `path`, once discovery has found it.
-fn mailbox_at(database: &Database, path: &str) -> Option<postio_model::Mailbox> {
-    let connection = database.connection().ok()?;
+async fn mailbox_at(database: &Store, path: &str) -> Option<postio_model::Mailbox> {
+    let connection = database.connect().await.ok()?;
     let account = AccountRepository::new(&connection)
         .list()
+        .await
         .ok()?
         .into_iter()
         .next()?;
     MailboxRepository::new(&connection)
         .list_for_account(account.id)
+        .await
         .ok()?
         .into_iter()
         .find(|mailbox| mailbox.path == path)
 }
 
 /// How many messages the store holds under `path`.
-fn stored(database: &Database, path: &str) -> u32 {
-    let Some(mailbox) = mailbox_at(database, path) else {
+async fn stored(database: &Store, path: &str) -> u32 {
+    let Some(mailbox) = mailbox_at(database, path).await else {
         return 0;
     };
-    let Ok(connection) = database.connection() else {
+    let Ok(connection) = database.connect().await else {
         return 0;
     };
     MessageRepository::new(&connection)
@@ -172,6 +174,7 @@ fn stored(database: &Database, path: &str) -> u32 {
             limit: 0,
             after: None,
         })
+        .await
         .unwrap_or(0)
 }
 
@@ -180,9 +183,13 @@ fn stored(database: &Database, path: &str) -> u32 {
 /// A liveness bound and nothing else — deliberately enormous, for the reason
 /// `sync_wave.rs` sets out: a deadline small enough to be a performance budget
 /// is a flake waiting for a loaded machine.
-async fn until(what: &str, mut condition: impl FnMut() -> bool) {
+async fn until<F, Fut>(what: &str, condition: F)
+where
+    F: Fn() -> Fut,
+    Fut: std::future::Future<Output = bool>,
+{
     let waited = tokio::time::timeout(Duration::from_secs(180), async {
-        while !condition() {
+        while !condition().await {
             tokio::time::sleep(Duration::from_millis(10)).await;
         }
     })
@@ -201,26 +208,27 @@ async fn an_archive_keystroke_does_not_wait_for_the_backfill() {
     );
     backend.set_latency(LATENCY);
 
-    let (database, engine, _directory) = engine_over(backend.clone());
+    let (database, engine, _directory) = engine_over(backend.clone()).await;
 
     // The keystroke needs somewhere to act: a message in INBOX, and an
     // Archive folder to file it into. Both come from the sync, which is also
     // what puts the bulk folder's backfill in the way.
-    until("INBOX and Archive to arrive", || {
-        stored(&database, "INBOX") > 0 && mailbox_at(&database, "Archive").is_some()
+    until("INBOX and Archive to arrive", async || {
+        stored(&database, "INBOX").await > 0 && mailbox_at(&database, "Archive").await.is_some()
     })
     .await;
 
-    let inbox = mailbox_at(&database, "INBOX").expect("an INBOX");
-    let archive = mailbox_at(&database, "Archive").expect("an Archive");
+    let inbox = mailbox_at(&database, "INBOX").await.expect("an INBOX");
+    let archive = mailbox_at(&database, "Archive").await.expect("an Archive");
     let subject = {
-        let connection = database.connection().expect("a connection");
+        let connection = database.connect().await.expect("a connection");
         MessageRepository::new(&connection)
             .page(&ListQuery {
                 scope: ListScope::Mailbox(inbox.id),
                 limit: 1,
                 after: None,
             })
+            .await
             .expect("a page")
             .into_iter()
             .next()
@@ -229,8 +237,8 @@ async fn an_archive_keystroke_does_not_wait_for_the_backfill() {
 
     // Mid-backfill, and demonstrably so: the bulk folder has begun arriving
     // and is nowhere near done.
-    until("the bulk backfill to be under way", || {
-        stored(&database, BULK) > 200
+    until("the bulk backfill to be under way", async || {
+        stored(&database, BULK).await > 200
     })
     .await;
 
@@ -244,7 +252,7 @@ async fn an_archive_keystroke_does_not_wait_for_the_backfill() {
     let actions = Actions::new((*database).clone(), state);
     let (events, _stream): (_, EventStream) = event_channel();
 
-    let backfill_before = stored(&database, BULK);
+    let backfill_before = stored(&database, BULK).await;
     let started = Instant::now();
     actions
         .run(
@@ -253,15 +261,17 @@ async fn an_archive_keystroke_does_not_wait_for_the_backfill() {
             },
             &events,
         )
+        .await
         .expect("the archive");
     let took = started.elapsed();
-    let backfill_after = stored(&database, BULK);
+    let backfill_after = stored(&database, BULK).await;
 
     // The write really happened, so none of the below is about a no-op.
     let landed = {
-        let connection = database.connection().expect("a connection");
+        let connection = database.connect().await.expect("a connection");
         MessageRepository::new(&connection)
             .get(subject.id)
+            .await
             .expect("a read")
             .expect("the message")
             .mailbox_id

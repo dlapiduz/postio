@@ -12,9 +12,10 @@ back	Escape
 toggle_result_order	o
 next_in_conversation	J | alt+Down
 prev_in_conversation	K | alt+Up
-toggle_fold	space
+toggle_fold	z
 view_original	ctrl+o
 expand_all	O | ctrl+shift+e
+toggle_rail	I
 reply	e | ctrl+r
 reply_all	E | ctrl+shift+r
 forward	f | ctrl+shift+f
@@ -35,8 +36,12 @@ schedule_send	ctrl+shift+Return
 save_draft	ctrl+s
 discard_draft	ctrl+d
 mark_sent	ctrl+shift+m
+retry_send	ctrl+shift+y
+cancel_send	ctrl+shift+x
 attach_file	ctrl+shift+a
 detach_composer	ctrl+shift+o
+copy_fields	ctrl+shift+c
+insert_image	ctrl+shift+g
 bold	ctrl+b
 italic	ctrl+i
 bullet_list	ctrl+shift+8
@@ -51,6 +56,10 @@ add_account	ctrl+shift+n
 edit_config	ctrl+e
 toggle_sidebar	ctrl+b
 focus_sidebar	g f
+go_to_inbox	g i
+go_to_drafts	g d
+go_to_sent	g t
+go_to_flagged	g s
 cycle_pane	tab
 cycle_pane_back	shift+tab
 next_folder	j | Down
@@ -65,6 +74,7 @@ remove_account	d
 update_credential	c
 rebuild_account_index	r
 set_default_account	m
+map_mailbox_role	M
 next_scope	g a
 refresh	F5 | R
 open_parts	p

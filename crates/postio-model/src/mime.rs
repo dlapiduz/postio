@@ -70,6 +70,8 @@ use mail_parser::{
     MessagePartId, MimeHeaders, PartType,
 };
 
+use mail_parser::decoders::charsets::map::charset_decoder;
+
 use crate::address::EmailAddress;
 use crate::attachment::{Attachment, Disposition};
 use crate::headers::Headers;
@@ -236,6 +238,21 @@ impl std::fmt::Display for Unparseable {
 }
 
 impl std::error::Error for Unparseable {}
+
+/// Which reading of a message [`parse`] produces — bumped whenever a change
+/// here makes it yield something different for bytes it already saw.
+///
+/// A body is fetched once and its raw bytes are not kept (ADR 0020), so a
+/// parser fix cannot reach a stored body by re-parsing it. The store stamps
+/// every body with the version that wrote it (`messages.body_parsed_with`),
+/// and the backfill fetches again the rows an older version got wrong: the
+/// ones that carried the decode caveat, an empty body from a failed decode
+/// among them. Bumping this is what makes that happen; not bumping it after
+/// a fix is how three empty messages stayed empty on a real account
+/// (2026-09-14).
+///
+/// 1: the lenient quoted-printable reading.
+pub const PARSER_VERSION: u32 = 1;
 
 /// Parses raw RFC 5322 bytes, body and attachments included.
 ///
@@ -477,20 +494,49 @@ fn parse_inner(raw: &[u8], headers_only: bool) -> ParsedMessage {
             .and_then(|content_type| content_type.attribute("format"))
             .is_some_and(|format| format.eq_ignore_ascii_case("flowed"))
     });
+    // A single-part `text/plain` message whose quoted-printable the parser
+    // refused is adopted as the text body *encoded*; `lenient_text` reads
+    // it properly. Anything else the parser gave up on is dropped from the
+    // bodies and offered as a nameless attachment, which the loop below
+    // takes back for the part it adopts.
+    let lenient_plain = text_part
+        .as_ref()
+        .and_then(|(part, _)| lenient_text(raw, part));
     message.body = MessageBody {
         // RFC 2046 §5.1.1: a multipart whose boundary could not be used has
         // no parts to have found a text body among, and is read as this
         // entity's own content instead. `text_is_flowed` is correctly left
         // `false` above -- the fallback part carries no `format` attribute
         // of its own to answer that from.
-        text: text_part
-            .map(|(_, text)| text)
+        text: lenient_plain
+            .or_else(|| text_part.map(|(_, text)| text))
             .or_else(|| multipart_boundary_fallback(&source)),
         html: source.html_bodies().find_map(|part| match &part.body {
             PartType::Html(html) => Some(html.to_string()),
             _ => None,
         }),
     };
+
+    // The bodies the parser dropped, read leniently — see `lenient_text`.
+    let mut adopted: Vec<u32> = Vec::new();
+    for (subtype, slot) in [
+        ("plain", &mut message.body.text),
+        ("html", &mut message.body.html),
+    ] {
+        if slot.is_some() {
+            continue;
+        }
+        if let Some((index, text)) = source.parts.iter().enumerate().find_map(|(index, part)| {
+            is_text_part(part, subtype)
+                .then(|| lenient_text(raw, part))
+                .flatten()
+                .map(|text| (index as u32, text))
+        }) {
+            *slot = Some(text);
+            adopted.push(index);
+        }
+    }
+
     // Falls back to the parser's HTML-to-text rendering when there is no
     // text/plain part: an HTML-only message still needs a list snippet, even
     // though a converted body is not good enough to *store* as the text body.
@@ -513,7 +559,7 @@ fn parse_inner(raw: &[u8], headers_only: bool) -> ParsedMessage {
             // §5.1.1's fallback above is what happens when one has to be
             // read anyway, and it must not also show up here as a nameless,
             // typeless attachment (#900).
-            if is_multipart_type(part) {
+            if is_multipart_type(part) || adopted.contains(id) {
                 return None;
             }
             Some(parsed_part(*id, part, &paths))
@@ -555,6 +601,117 @@ fn unknown_transfer_encoding(source: &MpMessage<'_>) -> bool {
                 })
         })
     })
+}
+
+/// A text part whose quoted-printable the parser refused, read leniently from
+/// the raw bytes — or `None` for a part that decoded, or that is not
+/// quoted-printable, or whose bytes this message does not hold.
+///
+/// `mail_parser`'s streaming decoder gives up on the whole part at the first
+/// `=` followed by another `=` — a data URI's base64 padding a sender left
+/// unescaped is how that usually arrives — and hands the part back *encoded*,
+/// typed as "other text". A `text/plain` part then reached the screen with
+/// its `=C3=A9` intact, and a `text/html` one was never adopted as the HTML
+/// body at all: the reader showed an empty pane under "parts of this message
+/// could not be decoded", and offered the body as a nameless attachment.
+/// Three of the first 433 bodies a real account fetched (2026-09-14) were
+/// exactly that.
+///
+/// The lenient reading undoes every valid escape and keeps a stray `=` as
+/// written. The caveat still stands — `is_encoding_problem` is what makes
+/// this run — because the words on screen are a reading, not a decoding.
+fn lenient_text(raw: &[u8], part: &mail_parser::MessagePart<'_>) -> Option<String> {
+    if !part.is_encoding_problem || !declares_quoted_printable(part) {
+        return None;
+    }
+    let bytes = raw.get(part.offset_body as usize..part.offset_end as usize)?;
+    let decoded = lenient_quoted_printable(bytes);
+    let decoder = part
+        .content_type()
+        .and_then(|content_type| content_type.attribute("charset"))
+        .and_then(|charset| charset_decoder(charset.as_bytes()));
+    Some(match decoder {
+        Some(decode) => decode(&decoded),
+        None => String::from_utf8_lossy(&decoded).into_owned(),
+    })
+}
+
+/// Whether `part` declares itself `text/<subtype>`.
+fn is_text_part(part: &mail_parser::MessagePart<'_>, subtype: &str) -> bool {
+    part.content_type().is_some_and(|content_type| {
+        content_type.ctype().eq_ignore_ascii_case("text")
+            && content_type
+                .subtype()
+                .is_some_and(|declared| declared.eq_ignore_ascii_case(subtype))
+    })
+}
+
+/// Whether `part` declares `Content-Transfer-Encoding: quoted-printable`.
+fn declares_quoted_printable(part: &mail_parser::MessagePart<'_>) -> bool {
+    part.headers.iter().any(|header| {
+        header
+            .name()
+            .eq_ignore_ascii_case("Content-Transfer-Encoding")
+            && header
+                .value()
+                .as_text()
+                .is_some_and(|value| value.trim().eq_ignore_ascii_case("quoted-printable"))
+    })
+}
+
+/// RFC 2045 §6.7 quoted-printable, decoded the way a reader would rather
+/// than the way a validator would: every `=XX` and every soft line break is
+/// undone, and an `=` that encodes nothing is kept as the sender wrote it.
+fn lenient_quoted_printable(bytes: &[u8]) -> Vec<u8> {
+    let hex = |byte: u8| (byte as char).to_digit(16).map(|digit| digit as u8);
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut at = 0;
+    // Whether the byte before this one was an `=` that encoded nothing. A
+    // run of them is the sender writing `==`, not an escape that happens to
+    // start after a stray one: `AA==` at the end of a line stays `AA==`
+    // rather than becoming `AA=` and a soft break.
+    let mut after_stray = false;
+    while at < bytes.len() {
+        if bytes[at] != b'=' {
+            out.push(bytes[at]);
+            at += 1;
+            after_stray = false;
+            continue;
+        }
+        if after_stray {
+            out.push(b'=');
+            at += 1;
+            continue;
+        }
+        let rest = &bytes[at + 1..];
+        // A soft line break: `=`, any trailing whitespace, then the newline.
+        let blank = rest
+            .iter()
+            .take_while(|byte| matches!(byte, b' ' | b'\t'))
+            .count();
+        match &rest[blank..] {
+            [b'\r', b'\n', ..] => {
+                at += 1 + blank + 2;
+                continue;
+            }
+            [b'\n', ..] => {
+                at += 1 + blank + 1;
+                continue;
+            }
+            _ => {}
+        }
+        if let [high, low, ..] = rest
+            && let (Some(high), Some(low)) = (hex(*high), hex(*low))
+        {
+            out.push((high << 4) | low);
+            at += 3;
+            continue;
+        }
+        out.push(b'=');
+        at += 1;
+        after_stray = true;
+    }
+    out
 }
 
 /// Whether decoding the charset lost octets.
@@ -714,8 +871,121 @@ fn addresses(value: Option<&MpAddress<'_>>) -> Vec<EmailAddress> {
         .collect()
 }
 
+/// Drops anything that reads as an HTML tag, leaving everything else.
+///
+/// The preview is built from the sender's `text/plain` part, and some senders
+/// put markup there -- a real list row read
+///
+/// ```text
+/// Eventbrite <hr style="height: 1;border: none;border-top: 1px ...
+/// ```
+///
+/// **Not a general sanitizer, and not allowed to be one.** `postio-model` may
+/// not depend on `ammonia` or `html5ever` (`check-crate-boundaries.py`,
+/// ADR 0004): the whole workspace waits on this crate to compile. Nothing
+/// here is a security control either -- the preview is drawn as a GTK label,
+/// never as markup. It is a legibility fix.
+///
+/// A tag is `<`, an optional `/`, an ASCII letter, then name characters, then
+/// whitespace or `/` or `>`. That deliberately spares `<https://example.com>`
+/// and `<ada@example.com>`, which are ordinary plain text and appear in
+/// previews constantly: after `https` comes a colon, which ends no tag name.
+fn without_tags(text: &str) -> std::borrow::Cow<'_, str> {
+    if !text.contains('<') {
+        return std::borrow::Cow::Borrowed(text);
+    }
+    let bytes = text.as_bytes();
+    let mut out = String::with_capacity(text.len());
+    let mut at = 0;
+    while at < text.len() {
+        let rest = &text[at..];
+        if bytes[at] == b'<'
+            && let Some(end) = tag_ends_at(rest)
+        {
+            at += end;
+            continue;
+        }
+        let character = rest.chars().next().expect("in bounds");
+        out.push(character);
+        at += character.len_utf8();
+    }
+    std::borrow::Cow::Owned(out)
+}
+
+/// How many bytes the tag starting at the front of `rest` occupies, if it is
+/// one.
+fn tag_ends_at(rest: &str) -> Option<usize> {
+    let bytes = rest.as_bytes();
+    let mut at = 1;
+    if bytes.get(at) == Some(&b'/') {
+        at += 1;
+    }
+    if !bytes.get(at)?.is_ascii_alphabetic() {
+        return None;
+    }
+    while bytes
+        .get(at)
+        .is_some_and(|b| b.is_ascii_alphanumeric() || *b == b'-')
+    {
+        at += 1;
+    }
+    match bytes.get(at) {
+        Some(b'>') => Some(at + 1),
+        Some(b) if b.is_ascii_whitespace() || *b == b'/' => {
+            rest[at..].find('>').map(|close| at + close + 1)
+        }
+        _ => None,
+    }
+}
+
+/// Unwraps markdown links, so a snippet is words rather than syntax.
+///
+/// A great many bulk senders write their `text/plain` part by running the
+/// HTML through a converter, and markdown is what those converters emit. The
+/// list showed the result verbatim:
+///
+/// ```text
+/// [ ](https://app.example.test/parent/home) 9/16/26 - 9/17/26 Overdue...
+/// ```
+///
+/// A label and a URL where four words of the message should be. `[label](url)`
+/// becomes `label`, and `[ ](url)` -- the wrapped logo at the top of every one
+/// of these -- becomes nothing, which is what it was worth.
+///
+/// Only the link form, and only in the snippet. A preview is a handful of
+/// words to recognise a message by; the body has its own rendering and its own
+/// reasons. Anything that is not a well-formed link is left exactly as typed,
+/// so prose containing a bracket survives it.
+fn without_markdown_links(text: &str) -> std::borrow::Cow<'_, str> {
+    if !text.contains("](") {
+        return std::borrow::Cow::Borrowed(text);
+    }
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(open) = rest.find('[') {
+        let (before, from_open) = rest.split_at(open);
+        out.push_str(before);
+        let Some(close) = from_open.find("](") else {
+            out.push_str(from_open);
+            return std::borrow::Cow::Owned(out);
+        };
+        let after_label = &from_open[close + 2..];
+        let Some(end) = after_label.find(')') else {
+            out.push_str(from_open);
+            return std::borrow::Cow::Owned(out);
+        };
+        out.push_str(&from_open[1..close]);
+        rest = &after_label[end + 1..];
+    }
+    out.push_str(rest);
+    std::borrow::Cow::Owned(out)
+}
+
 /// Flattens body text into a single-line snippet of at most [`PREVIEW_CHARS`].
 fn preview(text: &str) -> Option<String> {
+    let text = without_tags(text);
+    let text = without_markdown_links(text.as_ref());
+    let text = text.as_ref();
     let mut out = String::new();
     let mut truncated = false;
     for word in text.split_whitespace() {
@@ -900,5 +1170,163 @@ fn disposition(part: &MessagePart<'_>) -> Disposition {
             PartType::InlineBinary(_) => Disposition::Inline,
             _ => Disposition::Attachment,
         },
+    }
+}
+
+#[cfg(test)]
+mod preview_is_not_markup {
+    use super::*;
+
+    /// A tag in the sender's text part does not reach the list (#1436).
+    ///
+    /// Both of these are real rows, from a real inbox.
+    #[test]
+    fn a_tag_in_the_text_part_never_reaches_the_list() {
+        let leaked = "<hr style=\"height: 1;border: none;border-top: 1px solid #ccc\">\
+                      Eventbrite Order Confirmation";
+        let snippet = preview(leaked).expect("a preview");
+        assert!(
+            !snippet.contains('<') && !snippet.contains("border-top"),
+            "markup reached the list row: {snippet:?}"
+        );
+        assert!(
+            snippet.contains("Eventbrite"),
+            "and the words survived: {snippet:?}"
+        );
+    }
+
+    /// The control, and the reason this is not a blunt `<`..`>` strip.
+    ///
+    /// A bracketed URL or address is ordinary plain text and appears in
+    /// previews constantly. Stripping it would lose the only content some
+    /// rows have.
+    #[test]
+    fn a_bracketed_url_or_address_is_not_a_tag() {
+        let cloudflare = "You can also view this email as a webpage \
+                          <[[https://content.example.com/registrations]]>";
+        let snippet = preview(cloudflare).expect("a preview");
+        assert!(
+            snippet.contains("https://content.example.com"),
+            "a bracketed URL was mistaken for markup: {snippet:?}"
+        );
+
+        let reply = "On Mon, Ada Lovelace <ada@example.com> wrote:";
+        let snippet = preview(reply).expect("a preview");
+        assert!(
+            snippet.contains("ada@example.com"),
+            "a bracketed address was mistaken for markup: {snippet:?}"
+        );
+    }
+
+    // The first cargo-mutants baseline (#510) left every mutation of
+    // `tag_ends_at`'s arithmetic and every `&&` in `message_id` alive: no
+    // test told the difference (#1470). These do. Each case is chosen so
+    // that exactly one of the surviving mutants gives a different answer.
+
+    #[test]
+    fn without_tags_drops_a_closing_tag_and_only_a_tag() {
+        // `bytes.get(at) == Some(&b'/')`: with `!=`, a closing tag's slash
+        // is not stepped over and `</b>` survives as text.
+        assert_eq!(without_tags("a</b>c"), "ac");
+        // `at += 1` after the slash: `*=` leaves `at` at 1 and `-=` at 0, so
+        // the name check reads the slash or the `<` and refuses the tag.
+        assert_eq!(without_tags("<i>x</i>y"), "xy");
+        // A `<` that starts no tag is text: a digit, a space, the end.
+        assert_eq!(without_tags("3 < 4 and <3"), "3 < 4 and <3");
+        assert_eq!(without_tags("a <"), "a <");
+    }
+
+    #[test]
+    fn without_tags_ends_an_attributed_tag_at_its_own_close() {
+        // `at + close + 1`: with `*`, the span is wrong by a factor and
+        // either eats text after the tag or leaves part of the tag in.
+        assert_eq!(without_tags("<p class=\"x\">hi</p>"), "hi");
+        assert_eq!(without_tags("<br/>then"), "then");
+        assert_eq!(without_tags("<a href=\"u\">t</a> u"), "t u");
+        // An attributed tag that never closes is text, not a swallowed rest.
+        assert_eq!(without_tags("<p class=\"x\" oops"), "<p class=\"x\" oops");
+    }
+}
+
+#[cfg(test)]
+mod message_ids {
+    use super::*;
+
+    /// Each of the three `&&` in `message_id`, loosened to `||`, lets exactly
+    /// one of these through (#1470). A `Message-ID` is what threading keys
+    /// on, so what is accepted as one is load-bearing well beyond parsing.
+    #[test]
+    fn a_message_id_needs_every_one_of_its_four_conditions() {
+        assert!(message_id("<a@example.com>").is_some());
+        assert!(message_id("<>").is_none(), "empty");
+        assert!(message_id("<no-at-sign>").is_none(), "no @");
+        assert!(message_id("<a b@example.com>").is_none(), "whitespace");
+        assert!(message_id("<a@<b>>").is_none(), "a bracket inside");
+        // And a bare token with an @ but no brackets is still one: the
+        // brackets are the wrapper, not the identity.
+        assert!(message_id("a@example.com").is_some());
+    }
+}
+
+#[cfg(test)]
+mod a_snippet_is_words_not_syntax {
+    use super::without_markdown_links;
+
+    /// The shape measured against a real account.
+    ///
+    /// A school's daily summary, whose `text/plain` part is its HTML run
+    /// through a markdown converter. The list row showed the wrapped logo's
+    /// empty link and the URL behind it, where the first words of the message
+    /// belonged.
+    #[test]
+    fn a_converters_links_leave_only_their_labels() {
+        assert_eq!(
+            without_markdown_links("[ ](https://app.example.test/parent/home) 9/16/26 - 9/17/26"),
+            "  9/16/26 - 9/17/26",
+            "the wrapped logo leaves only the space it labelled itself with"
+        );
+        assert_eq!(
+            without_markdown_links(
+                "Assignment.[Bridges Practice #1](https://x.test/a/849) 3:59 pm"
+            ),
+            "Assignment.Bridges Practice #1 3:59 pm"
+        );
+        assert_eq!(
+            without_markdown_links("[one](http://a.test) and [two](http://b.test)"),
+            "one and two"
+        );
+    }
+
+    /// And the snippet a person actually sees has neither syntax nor URL.
+    ///
+    /// The end of the chain: `preview` collapses whitespace after this runs,
+    /// so the empty label leaves nothing behind either.
+    #[test]
+    fn the_snippet_reads_as_the_message_starts() {
+        let snippet = super::preview(
+            "[ ](https://app.example.test/parent/home) 9/16/26 - 9/17/26 Overdue Submissions",
+        )
+        .expect("a snippet");
+        assert_eq!(snippet, "9/16/26 - 9/17/26 Overdue Submissions");
+        assert!(!snippet.contains("http"), "no URL in a snippet: {snippet}");
+        assert!(!snippet.contains("]("), "and no syntax: {snippet}");
+    }
+
+    /// Prose survives unchanged, brackets and all.
+    ///
+    /// The snippet is the only place this runs, so a false positive costs a
+    /// message the words it is recognised by. Nothing that is not a
+    /// well-formed link may be touched.
+    #[test]
+    fn prose_is_left_exactly_as_typed() {
+        for prose in [
+            "I wrote [sic] in the margin (twice).",
+            "The array [1, 2, 3] and the tuple (a, b).",
+            "An unclosed [bracket and (parens",
+            "See https://example.test/agenda for the agenda.",
+            "",
+        ] {
+            assert_eq!(without_markdown_links(prose), prose, "{prose:?}");
+        }
     }
 }

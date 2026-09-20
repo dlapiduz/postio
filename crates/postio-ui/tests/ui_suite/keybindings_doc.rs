@@ -1,0 +1,211 @@
+//! `docs/keybindings.md` is generated from the command registry and the
+//! finder's mode table.
+//!
+//! A hand-written key reference is wrong within a release — that is the whole
+//! reason the registry exists (docs/PRODUCT.md §8: one table, every surface). So the
+//! document is rendered from [`registry::all()`] and this test fails when the
+//! file on disk no longer matches, with `POSTIO_UPDATE_DOCS=1` to rewrite it.
+//!
+//! The `?` cheat sheet renders the same table at runtime; this is the copy
+//! somebody reads before they have installed anything.
+//!
+//! It lives in `postio-ui` rather than `postio-core` because the document is
+//! rendered from two tables now: the registry, and `postio_ui::finder::MODES`
+//! for the modes of the one box. A prefix is not a command and cannot be in
+//! the registry — it selects which question is being asked and has no
+//! invocation, no context of its own and nothing to undo — so the one place
+//! that can see both is the crate that depends on the other.
+
+use postio_config::paths::Platform;
+use std::fmt::Write as _;
+use std::path::PathBuf;
+
+use postio_core::{Context, ContextSet, Recovery, registry};
+
+fn document_path() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../docs/keybindings.md")
+        .canonicalize()
+        .unwrap_or_else(|_| {
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../docs/keybindings.md")
+        })
+}
+
+/// Where a command is available, phrased for a reader rather than a compiler.
+fn where_available(contexts: ContextSet) -> String {
+    if contexts == ContextSet::ANY {
+        return "Everywhere".to_owned();
+    }
+    let names: Vec<&str> = contexts
+        .iter()
+        .map(|context| match context {
+            Context::List => "list",
+            Context::Conversation => "conversation",
+            Context::Reader => "reader",
+            Context::Composer => "composer",
+            Context::Search => "search",
+            Context::Palette => "palette",
+            Context::Sidebar => "folder list",
+            Context::Parts => "parts panel",
+            Context::Accounts => "account list",
+            Context::Keys => "keybinding list",
+        })
+        .collect();
+    let mut sentence = names.join(", ");
+    if let Some(first) = sentence.get_mut(0..1) {
+        first.make_ascii_uppercase();
+    }
+    sentence
+}
+
+fn keys(binding: &str) -> String {
+    // A sequence reads better as `g g` than as one run of characters, and
+    // backticks keep `?` and `/` from being read as Markdown.
+    format!("`{binding}`")
+}
+
+fn render() -> String {
+    let mut out = String::new();
+    out.push_str(
+        "# Keyboard reference\n\
+         \n\
+         <!-- Generated from `postio-core`'s command registry and the one\n\
+         box's mode table by `crates/postio-ui/tests/ui_suite/keybindings_doc.rs`.\n\
+         Do not edit by hand:\n\
+         change the registry and run `POSTIO_UPDATE_DOCS=1 cargo test -p postio-ui`. -->\n\
+         \n\
+         Every command below is also in the `Ctrl+K` palette and the `?` cheat\n\
+         sheet, because all three are generated from one table.\n\
+         \n\
+         Bindings come from the design canvas — `e` replies, not `r`.\n\
+         `docs/PRODUCT.md` §8 records that resolution; this table is the registry.\n\
+         \n\
+         ## Rebinding\n\
+         \n\
+         Every binding is overridable from the `[keys]` section of\n\
+         `config.toml`, keyed by the command id in the last column:\n\
+         \n\
+         ```toml\n\
+         [keys]\n\
+         archive = \"y\"\n\
+         first_message = \"g g\"\n\
+         ```\n\
+         \n\
+         A chord joins modifiers to a key with `+` (`ctrl+k`); a sequence\n\
+         separates chords with a space (`g g`). Shift is written into the\n\
+         character, so `A` is what you get by holding shift — `a` and `A` are\n\
+         different bindings. An override that cannot be used, or that collides\n\
+         with a key already taken in the same place, is reported in the settings\n\
+         panel and the command keeps its default.\n\
+         \n\
+         `mod` is the primary accelerator: Control here, Command on macOS.\n\
+         Every default above uses it, which is why the same `config.toml`\n\
+         means the same thing on both. Writing `ctrl` instead pins the\n\
+         binding to Control everywhere.\n\
+         \n\
+         While you are typing, single-key bindings do not fire. Only `Escape`,\n\
+         the function keys, and chords holding `Ctrl`, `Alt` or `Super` reach a\n\
+         command from inside a text field.\n\
+         \n\
+         ## Bindings\n\
+         \n\
+         | Keys | Command | Where | Undo | Id |\n\
+         |---|---|---|---|---|\n",
+    );
+
+    for spec in registry::all() {
+        // Expanded first: the registry stores `mod+k`, the reader presses
+        // Ctrl+K. This file documents Linux, so it renders the freedesktop
+        // spelling and reads exactly as it did before #669.
+        let bindings = spec
+            .bindings()
+            .map(|binding| postio_config::keys::expand_mod(binding, Platform::Freedesktop))
+            .map(|binding| keys(&binding))
+            .collect::<Vec<_>>()
+            .join(" or ");
+        let recovery = match spec.recovery {
+            Recovery::None => "",
+            Recovery::Undo => "Undoable",
+            // Deliberately not "Undoable": `u` does not reach it, and the
+            // keyboard reference is where somebody looks to find out which
+            // key does what (#1481).
+            Recovery::Window => "Undo briefly",
+            Recovery::Confirm => "Asks first",
+        };
+        let _ = writeln!(
+            out,
+            "| {bindings} | {} | {} | {recovery} | `{}` |",
+            spec.title,
+            where_available(spec.contexts),
+            spec.id
+        );
+    }
+
+    out.push_str(
+        "\n\
+         ## The one box\n\
+         \n\
+         `/` opens one box in the header, and it answers more than one\n\
+         question. Typing searches mail; a character typed into an empty box\n\
+         chooses what else to ask, and is absorbed into a marker on the field\n\
+         rather than staying in the query. Backspace at the start gives the\n\
+         mode back and keeps what was typed.\n\
+         \n\
+         | Typed | What it does |\n\
+         |---|---|\n",
+    );
+    for mode in postio_ui::finder::MODES {
+        let typed = match mode.prefix {
+            Some(prefix) => format!("`{prefix}`"),
+            None => "*(nothing)*".to_owned(),
+        };
+        let _ = writeln!(out, "| {typed} | {} |", mode.purpose);
+    }
+
+    out
+}
+
+#[test]
+fn the_keyboard_reference_matches_the_registry() {
+    let path = document_path();
+    let rendered = render();
+
+    if std::env::var_os("POSTIO_UPDATE_DOCS").is_some() {
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).expect("create docs/");
+        }
+        std::fs::write(&path, &rendered).expect("write the keyboard reference");
+        return;
+    }
+
+    let on_disk = std::fs::read_to_string(&path).unwrap_or_else(|error| {
+        panic!(
+            "{}: {error}\nrun `POSTIO_UPDATE_DOCS=1 cargo test -p postio-ui` to generate it",
+            path.display()
+        )
+    });
+
+    assert_eq!(
+        on_disk, rendered,
+        "docs/keybindings.md is out of date with the registry; \
+         run `POSTIO_UPDATE_DOCS=1 cargo test -p postio-ui`"
+    );
+}
+
+#[test]
+fn the_reference_names_every_command() {
+    let rendered = render();
+
+    for spec in registry::all() {
+        assert!(
+            rendered.contains(&format!("`{}`", spec.id)),
+            "`{}` is missing from the keyboard reference",
+            spec.id
+        );
+        assert!(
+            rendered.contains(spec.title),
+            "`{}` is missing from the keyboard reference",
+            spec.title
+        );
+    }
+}

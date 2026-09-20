@@ -73,11 +73,12 @@ use postio_model::{
     FullResyncReason, Generation, Mailbox, MailboxId, MailboxStatus, Message, MessageId,
     ResyncPlan, Uid,
 };
-use postio_storage::PooledConnection;
+use postio_storage::Connection;
 use postio_storage::repository::{
-    AccountRepository, MessageRepository, SyncStateRepository, ThreadingRepository,
+    AccountRepository, MessageRepository, OperationQueueRepository, SyncStateRepository,
+    ThreadingRepository,
 };
-use rusqlite::{Connection, Transaction, TransactionBehavior};
+use postio_storage::{Checkout, WritePriority};
 
 use crate::drain::SyncError;
 use crate::initial::{self, Progress};
@@ -126,20 +127,119 @@ pub enum Outcome {
     },
 }
 
+/// Whether the mailbox is still short of the server's `EXISTS` after an
+/// incremental pass has reconciled it.
+///
+/// # Why after, and not instead of, `plan`
+///
+/// A mailbox is short of `EXISTS` for two quite different reasons, and only
+/// one of them is a defect. The ordinary one is new mail: the server counts a
+/// delivery the moment it lands, and the local store catches up on the next
+/// pass. Checking before the pass therefore fires on *every* delivery, which
+/// would turn each new message into a full re-enumeration — caught by
+/// `loopback::an_incremental_resync_sees_a_flag_change_and_an_arrival`, which
+/// is what this comment exists to keep true.
+///
+/// After the pass, arrivals have been fetched and vanished rows removed, so
+/// the count should agree. When it still does not, the mailbox is missing
+/// mail that no delta accounts for: the state a UID listing shorter than
+/// `EXISTS` left behind, where `last_full_sync_at` is stamped on a mailbox
+/// that was never enumerated and every later pass asks what changed since a
+/// sync that never happened.
+///
+/// # Why the queue has to be consulted
+///
+/// The other way to be short is to have archived something the server has not
+/// been told about: the row has left this mailbox locally while the server
+/// still counts it. Enumerating then refetches the message the user archived
+/// and puts it back. A `failed` row counts as unsettled for exactly this
+/// reason — the local move stands, the server never heard, and it stays that
+/// way until the user clears it, so a check that looked only at `pending`
+/// would resurrect that message on every pass.
+async fn still_short_of_exists(
+    connection: &Checkout,
+    mailbox: &Mailbox,
+    previous: &postio_model::SyncState,
+    exists: u32,
+) -> Result<bool> {
+    let Some(generation) = previous.generation else {
+        return Ok(false);
+    };
+    let messages = MessageRepository::new(connection);
+    let held = messages.count_in(mailbox.id, generation).await?;
+    // Rows the store will not hold however often they are fetched: the
+    // server's copy of a draft this client wrote, which `upsert_batch`
+    // refuses so a draft is not stored twice. They are counted by the
+    // server's `EXISTS` and never by ours, so a mailbox holding drafts is
+    // permanently "short" by exactly that many -- and re-enumerating it
+    // fetches them, has them refused, and leaves the count where it was.
+    //
+    // Measured: Drafts re-enumerated on every pass, for ever, 27 held
+    // against 28 reported. A repair that cannot converge is a loop, and
+    // this is what makes the arithmetic able to balance.
+    let refused = messages.refused_rows_in(mailbox.id).await?;
+    if held.saturating_add(refused) >= exists {
+        return Ok(false);
+    }
+    if OperationQueueRepository::new(connection)
+        .has_unsettled_in(mailbox.id)
+        .await?
+    {
+        return Ok(false);
+    }
+    tracing::warn!(
+        mailbox = mailbox.id.get(),
+        held,
+        exists,
+        "the mailbox holds less than the server says it does after an \
+         incremental pass; re-enumerating"
+    );
+    Ok(true)
+}
+
+/// Fetches what a mailbox is missing, without disturbing what it has.
+///
+/// `Coverage::Missing` because nothing renumbered: the rows on disk are as
+/// valid as any other pass's, and the shortfall is precisely the mail that was
+/// never fetched. The repair therefore costs the missing mail and nothing
+/// else, and it resumes if it is cut short.
+async fn enumerate_the_shortfall(
+    connection: &Checkout,
+    backend: &dyn MailBackend,
+    mailbox: &Mailbox,
+    cancel: &CancelToken,
+    on_progress: impl FnMut(Progress),
+) -> Result<Outcome> {
+    let report = initial::enumerate(
+        connection,
+        backend,
+        mailbox,
+        initial::DEFAULT_BATCH_SIZE,
+        initial::Coverage::Missing,
+        cancel,
+        on_progress,
+    )
+    .await?;
+    Ok(Outcome::Full {
+        reason: FullResyncReason::ShortOfExists,
+        report,
+    })
+}
+
 /// Brings `mailbox` up to date, choosing full or incremental resync per
 /// [`SyncState::plan`](postio_model::SyncState::plan).
 ///
 /// `on_progress` is only called when a full pass runs; see
 /// [`initial::sync_mailbox`].
 pub async fn resync_mailbox(
-    connection: &PooledConnection,
+    connection: &Checkout,
     backend: &dyn MailBackend,
     mailbox: &Mailbox,
     cancel: &CancelToken,
     on_progress: impl FnMut(Progress),
 ) -> Result<Outcome> {
     let sync_state = SyncStateRepository::new(connection);
-    let previous = sync_state.require(mailbox.id)?;
+    let previous = sync_state.require(mailbox.id).await?;
 
     let selected = match backend.select(&mailbox.path, SelectMode::ReadWrite).await {
         Ok(selected) => selected,
@@ -196,16 +296,27 @@ pub async fn resync_mailbox(
             let coverage = match reason {
                 FullResyncReason::GenerationChanged => {
                     if let Some(generation) = previous.generation {
-                        wipe_mailbox(connection, mailbox.id, generation)?;
+                        wipe_mailbox(connection, mailbox.id, generation).await?;
                     }
                     initial::Coverage::Missing
                 }
+                // Nothing renumbered in either case, so the rows on disk are
+                // as valid as any other pass's and only what is absent is
+                // fetched. For `ShortOfExists` that is the whole point: the
+                // mail this mailbox never had, without refetching the mail it
+                // does.
                 FullResyncReason::NeverSynced => initial::Coverage::Missing,
+                // Never planned: `still_short_of_exists` decides it after an
+                // incremental pass and `enumerate_the_shortfall` runs it, so
+                // it does not reach this table.
+                FullResyncReason::ShortOfExists => initial::Coverage::Missing,
                 FullResyncReason::NoModSeq | FullResyncReason::ModSeqWentBackwards => {
                     initial::Coverage::Everything
                 }
             };
-            sync_state.observe(mailbox.id, &reported, Utc::now())?;
+            sync_state
+                .observe(mailbox.id, &reported, Utc::now())
+                .await?;
             let report = initial::enumerate(
                 connection,
                 backend,
@@ -237,7 +348,21 @@ pub async fn resync_mailbox(
 
             match outcome {
                 Ok(outcome) => {
-                    sync_state.observe(mailbox.id, &reported, Utc::now())?;
+                    sync_state
+                        .observe(mailbox.id, &reported, Utc::now())
+                        .await?;
+                    if still_short_of_exists(connection, mailbox, &previous, selected.exists)
+                        .await?
+                    {
+                        return enumerate_the_shortfall(
+                            connection,
+                            backend,
+                            mailbox,
+                            cancel,
+                            on_progress,
+                        )
+                        .await;
+                    }
                     Ok(outcome)
                 }
                 // The pull cannot be trusted, and asking the same question
@@ -253,7 +378,7 @@ pub async fn resync_mailbox(
                     tracing::error!(
                         mailbox = mailbox.id.get(),
                         %error,
-                        "the incremental pull cannot be trusted; rebuilding"
+                        "the incremental pull cannot be trusted; rebuilding: {error}"
                     );
                     rebuild(
                         connection,
@@ -270,7 +395,18 @@ pub async fn resync_mailbox(
         }
         ResyncPlan::UpToDate => {
             tracing::debug!(mailbox = mailbox.id.get(), "already up to date");
-            sync_state.observe(mailbox.id, &reported, Utc::now())?;
+            sync_state
+                .observe(mailbox.id, &reported, Utc::now())
+                .await?;
+            // The steady state of the poisoned mailbox, and the one that
+            // matters most: an idle server never moves `MODSEQ`, so a mailbox
+            // stamped as synced without ever having been enumerated plans
+            // `UpToDate` on every pass and agrees with itself for ever. "Up to
+            // date" has to mean "holds what the server says it holds".
+            if still_short_of_exists(connection, mailbox, &previous, selected.exists).await? {
+                return enumerate_the_shortfall(connection, backend, mailbox, cancel, on_progress)
+                    .await;
+            }
             Ok(Outcome::UpToDate)
         }
     }
@@ -296,7 +432,7 @@ pub async fn resync_mailbox(
 ///   notices that the server holds fewer messages than we do and reconciles —
 ///   which is a great deal cheaper than discarding rows that are still right.
 async fn rebuild(
-    connection: &PooledConnection,
+    connection: &Checkout,
     backend: &dyn MailBackend,
     mailbox: &Mailbox,
     known_generation: Option<Generation>,
@@ -308,10 +444,12 @@ async fn rebuild(
 
     let renumbered = known_generation.is_some_and(|known| known != selected.generation);
     if renumbered && let Some(stale) = known_generation {
-        wipe_mailbox(connection, mailbox.id, stale)?;
+        wipe_mailbox(connection, mailbox.id, stale).await?;
     }
 
-    SyncStateRepository::new(connection).observe(mailbox.id, &reported, Utc::now())?;
+    SyncStateRepository::new(connection)
+        .observe(mailbox.id, &reported, Utc::now())
+        .await?;
 
     // A wiped mailbox has nothing left to skip, so the cheaper pass covers
     // it; an intact one has to be re-read rather than filled in, because the
@@ -348,7 +486,10 @@ async fn rebuild(
 /// See the module docs for why vanish detection is conditional on the
 /// arithmetic rather than always run, and why arrivals get a second witness.
 async fn incremental(
-    connection: &Connection,
+    // A pooled connection rather than a bare one, because this is where the
+    // write gate lives: the units below take a background permit, and only
+    // the pool knows the gate they take it from.
+    connection: &Checkout,
     backend: &dyn MailBackend,
     mailbox: &Mailbox,
     selected: &ServerStatus,
@@ -357,7 +498,7 @@ async fn incremental(
     cancel: &CancelToken,
 ) -> Result<Outcome> {
     let messages = MessageRepository::new(connection);
-    let known = messages.uids_in(mailbox.id, selected.generation)?;
+    let known = messages.uids_in(mailbox.id, selected.generation).await?;
     let known_set: UidSet = known.iter().copied().collect();
     let known_count = known.len() as u32;
 
@@ -385,53 +526,94 @@ async fn incremental(
 
     let mut arrived: Vec<MessageId> = Vec::new();
     if !changed.is_empty() {
-        let mut batch: Vec<Message> = changed
+        let batch: Vec<Message> = changed
             .into_iter()
             .map(|message| message.into_message(mailbox.account_id, mailbox.id))
             .collect();
-        // One commit for the whole batch, for the reason `initial.rs` spells
-        // out at its own version of this loop: every repository call below
-        // releases a savepoint, and a release with nothing enclosing it is an
-        // fsync. Unenclosed, this wrote once for the upserts and then twice
-        // more per message. This is the path that runs on every start, for
-        // every folder, so it pays that on the ordinary case and not only on
-        // a first sync.
-        //
-        // IMMEDIATE for the reason `initial.rs` gives at its own transaction
-        // (#79): the first statement here is a SELECT, and a deferred
-        // transaction that has to promote a read lock to a write lock is told
-        // SQLITE_BUSY without the busy handler ever running. This path runs on
-        // every start for every folder, so it meets the UI thread's local-first
-        // writes more often than the first-sync one does.
-        let committed = Transaction::new_unchecked(connection, TransactionBehavior::Immediate)
-            .map_err(postio_storage::Error::from)?;
-        let connection: &Connection = &committed;
+        // Read once rather than per unit: the account does not change under
+        // this loop, and the lookup is a statement that would otherwise
+        // repeat for every twenty-five messages.
+        let account = AccountRepository::new(connection)
+            .get(mailbox.account_id)
+            .await?;
 
-        MessageRepository::new(connection).upsert_batch(&mut batch)?;
+        // `initial::WRITE_UNIT` at a time, the same size and for the same two
+        // reasons its own loop gives. A *unit* rather than a message, because
+        // every repository call below releases a savepoint and a release with
+        // nothing enclosing it is an fsync — unenclosed, this wrote once for
+        // the upserts and then twice more per message. A unit rather than the
+        // whole batch, because the lock this holds is the one a person's own
+        // write needs (#425): unchunked and ungated, a draft autosaving as it
+        // was typed waited out every changed message in the folder, ran past
+        // `busy_timeout`, and was lost. This is the path that runs on every
+        // start, for every folder, so it meets the UI thread's local-first
+        // writes more often than the first-sync one does — which is the
+        // argument for taking the permit here, not against it.
+        for slice in batch.chunks(initial::WRITE_UNIT) {
+            // Ahead of `BEGIN IMMEDIATE`, never after: the permit is what
+            // stands this aside for a keystroke's write, and standing aside
+            // after taking SQLite's lock would be standing aside too late.
+            let permit = connection
+                .write_gate()
+                .acquire(WritePriority::Background)
+                .await;
 
-        let threading = ThreadingRepository::new(connection, mailbox.account_id);
-        for message in &batch {
-            threading.thread(message)?;
-        }
+            // IMMEDIATE for the reason `initial.rs` gives at its own
+            // transaction (#79): the first statement here is a SELECT, and a
+            // deferred transaction that has to promote a read lock to a write
+            // lock is told SQLITE_BUSY without the busy handler ever running.
+            // IMMEDIATE for the reason `initial.rs` gives at its own
+            // transaction (#79): the first statement here is a SELECT, and a
+            // deferred transaction that has to promote a read lock to a write
+            // lock is refused without the busy handler ever running.
+            //
+            // `upsert_batch` assigns the ids and takes a `Vec`, so the unit
+            // is copied in and read back out -- the same shape `initial.rs`
+            // uses at its own version of this.
+            let source: Vec<Message> = slice.to_vec();
+            let account_id = mailbox.account_id;
+            let account_ref = account.as_ref();
+            let known_ref = &known_set;
+            let newly = postio_storage::transaction(connection, move |connection| async move {
+                let mut written = source;
+                MessageRepository::new(&connection)
+                    .upsert_batch(&mut written)
+                    .await?;
 
-        // Only the arrivals, by the same test twice over: `known_set` was
-        // read before this fetch, so a message already in it is a flag
-        // change or similar, not a new correspondent sighting and not new
-        // mail to notify about. See `contacts::record`'s docs for the
-        // double-counting this also avoids.
-        if let Some(account) = AccountRepository::new(connection).get(mailbox.account_id)? {
-            for message in &batch {
-                let is_new = message
-                    .server
-                    .uid
-                    .is_some_and(|uid| !known_set.contains(uid));
-                if is_new {
-                    crate::contacts::record(connection, &account, message)?;
-                    arrived.push(message.id);
+                let threading = ThreadingRepository::new(&connection, account_id);
+                for message in &written {
+                    threading.thread(message).await?;
                 }
-            }
+
+                // Only the arrivals, by the same test twice over: `known_set`
+                // was read before this fetch, so a message already in it is a
+                // flag change or similar, not a new correspondent sighting and
+                // not new mail to notify about. See `contacts::record`'s docs
+                // for the double-counting this also avoids.
+                let mut arrivals = Vec::new();
+                if let Some(account) = account_ref {
+                    for message in &written {
+                        let is_new = message
+                            .server
+                            .uid
+                            .is_some_and(|uid| !known_ref.contains(uid));
+                        if is_new {
+                            crate::contacts::record(&connection, account, message).await?;
+                            arrivals.push(message.id);
+                        }
+                    }
+                }
+                Ok::<_, SyncError>(arrivals)
+            })
+            .await?;
+            arrived.extend(newly);
+            drop(permit);
+            // One real yield per unit, for the reason `initial.rs` gives at
+            // its own batch loop: an uncontended gate and a commit whose work
+            // runs inside the poll can both come back `Ready`, and a pass
+            // that never yields cannot be interrupted or stood aside from.
+            initial::yield_once().await;
         }
-        committed.commit().map_err(postio_storage::Error::from)?;
     }
 
     let mut vanished_count = 0;
@@ -448,11 +630,14 @@ async fn incremental(
 
         let mut ids = Vec::with_capacity(vanished.len());
         for uid in vanished {
-            if let Some(message) = messages.by_uid(mailbox.id, selected.generation, uid)? {
+            if let Some(message) = messages
+                .by_uid(mailbox.id, selected.generation, uid)
+                .await?
+            {
                 ids.push(message.id);
             }
         }
-        vanished_count = messages.delete(&ids)?;
+        vanished_count = messages.delete(&ids).await?;
     }
 
     Ok(Outcome::Incremental {
@@ -490,21 +675,21 @@ fn unaccounted_arrivals(
 /// query: a `UIDVALIDITY` reset means every row under the old generation is
 /// meaningless, including ones a user has marked for deletion but that have
 /// not been expunged yet, and the list query hides those.
-fn wipe_mailbox(
+async fn wipe_mailbox(
     connection: &Connection,
     mailbox_id: MailboxId,
     generation: Generation,
 ) -> Result<()> {
     let messages = MessageRepository::new(connection);
-    let uids = messages.uids_in(mailbox_id, generation)?;
+    let uids = messages.uids_in(mailbox_id, generation).await?;
 
     let mut ids = Vec::with_capacity(uids.len());
     for uid in uids {
-        if let Some(message) = messages.by_uid(mailbox_id, generation, uid)? {
+        if let Some(message) = messages.by_uid(mailbox_id, generation, uid).await? {
             ids.push(message.id);
         }
     }
-    messages.delete(&ids)?;
+    messages.delete(&ids).await?;
     Ok(())
 }
 

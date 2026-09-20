@@ -16,7 +16,8 @@ ADR 0008 Q5 already decided the requirement, in a sentence that reads as a
 throwaway and is not:
 
 > **Every action is local-first, exactly like a keystroke** (`ARCHITECTURE.md` §1):
-> SQLite write, enqueue the remote operation, emit the event. **There is no
+> SQLite write *(read: store write — ADR 0038)*, enqueue the remote
+> operation, emit the event. **There is no
 > rules-only mutation path**, which means rules inherit offline behaviour,
 > reconciliation and event flow for free.
 
@@ -66,7 +67,8 @@ calls the same storage verb with an explicit message id, and does neither of
 the other two.
 
 **No new crate, and no cycle.** `postio-storage` gains nothing it did not
-already have — it is the crate where SQLite is allowed, `OperationQueueRepository`
+already have — it is the crate where the engine (`turso`, since ADR 0038)
+is allowed, `OperationQueueRepository`
 already lives there, and enqueueing beside the write it belongs to is the
 layer it belongs in. Nothing in `postio-storage` learns what a `Command` is.
 Lifting the verbs into a *new* crate below both was the obvious reading of
@@ -86,6 +88,19 @@ the insert*, which the sync pass owns. So the storage verb takes a
 that opens its own transaction cannot be called from a rule at all, and
 discovering that after the move is a rewrite of every verb rather than of one
 signature.
+
+> **Amended 2026-09-14 (specs/004-turso-store):** as built, the seam is the
+> one this paragraph asks for, spelled in the async store's terms. The
+> storage verbs in `crates/postio-storage/src/actions.rs` (`relocate`,
+> `set_flag`) take a `&Connection` that is already inside a transaction;
+> the interactive path in `crates/postio-session/src/actions.rs` opens it
+> with `connection.transaction().await` and passes the connection in, and a
+> caller composing a bigger write uses `postio_storage::transaction`, which
+> is `BEGIN IMMEDIATE` at the outermost level and a `SAVEPOINT` when
+> nested. There is no `Transaction` type in the signature. **The rules
+> pass that would be the second caller is not on `main`**: the rules engine
+> (`RuleSet`, `Stage`, `postio-search/src/rules.rs`) exists only on the
+> unmerged `feature/rules` branch.
 
 **2. A rule pushes no undo entry, and this is deliberate.** Undo walks back
 through *the user's* history; a rule firing during a sync is not in it, and an
@@ -189,13 +204,15 @@ change because they look load-bearing for something they were never holding.
 ## Consequences
 
 - `postio-storage` gains the mutating half of the verbs, taking a
-  `&Transaction` rather than opening one. `postio_session::actions` keeps the
-  command-shaped half and calls it. No crate is added; no boundary check
-  changes.
+  `&Transaction` rather than opening one *(as built, a `&Connection` inside a
+  transaction the caller opened — `crates/postio-storage/src/actions.rs`)*.
+  `postio_session::actions` keeps the command-shaped half and calls it. No
+  crate is added; no boundary check changes.
 - `postio-sync` gains the rules pass ADR 0008's Consequences already promised,
   and it calls the storage verbs — there is no second implementation of any
   verb, which is what `trash` routing through the recoverable flow is proved
-  by rather than tested for.
+  by rather than tested for. *(Not on `main`: the rules pass lives on the
+  unmerged `feature/rules` branch.)*
 - A rule's action pushes no undo entry and resolves nothing against
   `SharedState`.
 - `forward` ships with arbitrary targets and the three guards above. #481's

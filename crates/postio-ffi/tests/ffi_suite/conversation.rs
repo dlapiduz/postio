@@ -27,8 +27,8 @@ fn at(seconds: i64) -> DateTime<Utc> {
 }
 
 /// One message of the conversation, in `mailbox`, read or not.
-fn message(
-    connection: &postio_storage::PooledConnection,
+async fn message(
+    connection: &postio_storage::Checkout,
     account: AccountId,
     mailbox: MailboxId,
     sender: &str,
@@ -49,6 +49,7 @@ fn message(
     };
     MessageRepository::new(connection)
         .create(&mut message)
+        .await
         .expect("a message");
     message
 }
@@ -58,26 +59,29 @@ fn message(
 /// Four messages: three in the inbox and one filed in Archive, so "every
 /// message in the thread" is a claim with something to prove. The two oldest
 /// have been read.
-fn a_conversation() -> (std::sync::Arc<Session>, i64, Vec<i64>) {
-    let database = test_support::memory();
+async fn a_conversation() -> (std::sync::Arc<Session>, i64, Vec<i64>) {
+    let database = test_support::memory().await;
     let (thread, ids, inbox) = {
-        let connection = database.connection().expect("a connection");
-        let (account, inbox) = test_support::account_with_inbox(&connection);
-        let archive = test_support::mailbox(&connection, &account, "Archive");
+        let connection = database.connect().await.expect("a connection");
+        let (account, inbox) = test_support::account_with_inbox(&connection).await;
+        let archive = test_support::mailbox(&connection, &account, "Archive").await;
 
         let mut thread = Thread::new(account.id);
         thread.subject = Some("radon reduction".to_owned());
         let threads = ThreadRepository::new(&connection);
-        threads.create(&mut thread).expect("a thread");
+        threads.create(&mut thread).await.expect("a thread");
 
         // Out of order on purpose: what arrives from the store is not what
         // the pane stacks, and the ordering is the boundary's to apply.
-        let third = message(&connection, account.id, inbox, "Ada", 300, false);
-        let first = message(&connection, account.id, archive.id, "Ada", 100, true);
-        let fourth = message(&connection, account.id, inbox, "Quinn", 400, false);
-        let second = message(&connection, account.id, inbox, "Quinn", 200, true);
+        let third = message(&connection, account.id, inbox, "Ada", 300, false).await;
+        let first = message(&connection, account.id, archive.id, "Ada", 100, true).await;
+        let fourth = message(&connection, account.id, inbox, "Quinn", 400, false).await;
+        let second = message(&connection, account.id, inbox, "Quinn", 200, true).await;
         for message in [&first, &second, &third, &fourth] {
-            threads.add_message(thread.id, message.id).expect("add");
+            threads
+                .add_message(thread.id, message.id)
+                .await
+                .expect("add");
         }
         (
             thread.id.get(),
@@ -118,9 +122,9 @@ fn read(session: &Session, thread: i64) -> ConversationFfi {
     session.conversation().expect("the conversation was read")
 }
 
-#[test]
-fn a_conversation_arrives_whole_and_oldest_first() {
-    let (session, thread, ids) = a_conversation();
+#[tokio::test(flavor = "multi_thread")]
+async fn a_conversation_arrives_whole_and_oldest_first() {
+    let (session, thread, ids) = a_conversation().await;
     let conversation = read(&session, thread);
 
     assert_eq!(
@@ -136,24 +140,32 @@ fn a_conversation_arrives_whole_and_oldest_first() {
     assert_eq!(conversation.thread, thread);
 }
 
-#[test]
-fn the_boundary_folds_the_conversation_rather_than_the_frontend() {
-    let (session, thread, _) = a_conversation();
+#[tokio::test(flavor = "multi_thread")]
+async fn the_boundary_folds_the_conversation_rather_than_the_frontend() {
+    let (session, thread, _) = a_conversation().await;
     let conversation = read(&session, thread);
 
-    // Two read, then the first unread: that is where a pane opens, and it is
+    // The most recent message: that is where a pane opens, and it is
     // `postio_ui::conversation`'s rule rather than Swift's.
-    assert_eq!(conversation.focus, Some(2));
+    //
+    // It used to be the first unread, which is index 2 here. FR-015 moved it
+    // to the newest — a thread is opened to read the latest thing said in it,
+    // and "first unread" put the pane somewhere in the middle of a thread
+    // somebody had already half-read. GTK made that move first; this is the
+    // assertion that the macOS pane came with it rather than keeping the old
+    // rule in the shared crate.
+    assert_eq!(conversation.focus, Some(3));
     assert_eq!(
         conversation.expanded,
         vec![false, false, true, true],
-        "the read ones stay one line; the unread ones open"
+        "the focused one opens, and expansion walks back from it over the \
+         unread; the two already read stay one line"
     );
 }
 
-#[test]
-fn the_header_says_how_many_messages_and_who_is_in_it() {
-    let (session, thread, _) = a_conversation();
+#[tokio::test(flavor = "multi_thread")]
+async fn the_header_says_how_many_messages_and_who_is_in_it() {
+    let (session, thread, _) = a_conversation().await;
     let conversation = read(&session, thread);
 
     assert_eq!(conversation.subject, "Radon reduction");
@@ -169,18 +181,18 @@ fn the_header_says_how_many_messages_and_who_is_in_it() {
     );
 }
 
-#[test]
-fn a_thread_nobody_has_opened_has_no_conversation() {
-    let (session, _, _) = a_conversation();
+#[tokio::test(flavor = "multi_thread")]
+async fn a_thread_nobody_has_opened_has_no_conversation() {
+    let (session, _, _) = a_conversation().await;
     assert!(
         session.conversation().is_none(),
         "the pane draws nothing until a conversation has been asked for"
     );
 }
 
-#[test]
-fn a_thread_that_is_not_there_reads_as_empty_rather_than_stale() {
-    let (session, thread, _) = a_conversation();
+#[tokio::test(flavor = "multi_thread")]
+async fn a_thread_that_is_not_there_reads_as_empty_rather_than_stale() {
+    let (session, thread, _) = a_conversation().await;
     let _ = read(&session, thread);
 
     session.open_conversation(404);
@@ -211,7 +223,9 @@ fn row(id: i64, sender: &str) -> postio_ffi::RowFfi {
         seen: true,
         flagged: false,
         answered: false,
-        draft: false,
+        // A received message, so it is in no send state at all. `draft: bool`
+        // became this when a row learned to say *which* state it is in.
+        send_state: None,
         has_attachments: false,
         thread_count: 6,
         participants: String::new(),

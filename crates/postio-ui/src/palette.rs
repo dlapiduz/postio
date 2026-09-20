@@ -35,7 +35,7 @@
 //! canvas uses for the key hints on a focused row, so a key learned in the
 //! palette looks the same when it appears in the list.
 
-use postio_core::{ActionId, Context, Keymap, Scope, registry};
+use postio_core::{ActionId, Availability, Context, Keymap, registry};
 
 /// How many rows the palette will show at once.
 ///
@@ -191,12 +191,13 @@ const ID_PENALTY: i32 = 40;
 ///
 /// Filtered to commands reachable in `context` — offering to send a draft from
 /// the message list is a row the user can only be disappointed by — and to
-/// those `scope` satisfies, so a unified view does not offer a `Move` with no
-/// account to move within (#182). An empty query returns everything
-/// applicable, in registry order.
-pub fn entries(keymap: &Keymap, context: Context, scope: Scope, query: &str) -> Vec<Entry> {
+/// those `state` satisfies, so a unified view does not offer a `Move` with no
+/// account to move within (#182), and a window whose store has not opened yet
+/// does not offer anything that reads mail (#1114). An empty query returns
+/// everything applicable, in registry order.
+pub fn entries(keymap: &Keymap, context: Context, state: Availability, query: &str) -> Vec<Entry> {
     let query = query.trim();
-    let mut found: Vec<Entry> = registry::reachable_in(context, scope)
+    let mut found: Vec<Entry> = registry::reachable_in(context, state)
         .filter_map(|spec| {
             let by_title = score(query, spec.title);
             let by_id = score(query, spec.id.as_str());
@@ -229,12 +230,13 @@ pub fn entries(keymap: &Keymap, context: Context, scope: Scope, query: &str) -> 
 mod tests {
     use super::*;
     use postio_core::CommandId;
+    use postio_core::Scope;
     use postio_model::AccountId;
 
     /// These tests are about context filtering, so they run in the scope
     /// where every command is available: one account's own mailboxes.
-    fn an_account() -> Scope {
-        Scope::Account(AccountId::new(1))
+    fn an_account() -> Availability {
+        Availability::open(Scope::Account(AccountId::new(1)))
     }
 
     fn defaults() -> Keymap {
@@ -412,14 +414,45 @@ mod tests {
             "an account view is exactly where moving into a folder means something: {in_account:?}"
         );
 
-        let unified: Vec<&str> = entries(&defaults(), Context::List, Scope::Unified, "move")
-            .iter()
-            .map(|entry| entry.title)
-            .collect();
+        let unified: Vec<&str> = entries(
+            &defaults(),
+            Context::List,
+            Availability::open(Scope::Unified),
+            "move",
+        )
+        .iter()
+        .map(|entry| entry.title)
+        .collect();
         assert!(
             !unified.contains(&"Move to…"),
             "offering Move across every account promises a folder the user was \
              never given the chance to pick: {unified:?}"
+        );
+    }
+
+    #[test]
+    fn a_window_with_no_store_offers_only_what_can_run() {
+        // #1114. The palette is where somebody looks to find out what is
+        // available, so it is the one surface that must not offer something
+        // that cannot be: pressing Return on a row that does nothing reads
+        // as a broken application rather than as an unavailable command.
+        let waiting = Availability {
+            scope: Scope::Account(AccountId::new(1)),
+            store_open: false,
+        };
+        assert!(
+            entries(&defaults(), Context::List, waiting, "archive").is_empty(),
+            "archive is offered at a window whose store has not opened"
+        );
+        assert!(
+            !entries(&defaults(), Context::List, an_account(), "archive").is_empty(),
+            "and comes back once it has, so this is a wait rather than a \
+             removal"
+        );
+        assert!(
+            !entries(&defaults(), Context::List, waiting, "").is_empty(),
+            "an empty query still has to answer with something, or the box \
+             looks broken at exactly the moment it is being consulted"
         );
     }
 

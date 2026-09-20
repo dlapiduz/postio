@@ -25,6 +25,7 @@ use mail_builder::headers::address::Address as MbAddress;
 use mail_builder::headers::content_type::ContentType as MbContentType;
 use mail_builder::headers::date::Date as MbDate;
 use mail_builder::headers::message_id::MessageId as MbMessageId;
+use mail_builder::headers::raw::Raw;
 use mail_builder::mime::{BodyPart as MbBodyPart, MimePart as MbMimePart, make_boundary};
 
 use crate::account::Identity;
@@ -149,8 +150,33 @@ fn assemble(
     if !draft.subject.is_empty() {
         builder = builder.subject(header_text(&draft.subject));
     }
-    if let Some(to) = recipient_list(&draft.to) {
-        builder = builder.to(to);
+    match recipient_list(&draft.to) {
+        Some(to) => builder = builder.to(to),
+        // A message whose only recipients are bcc'd has nothing to name, and
+        // dropping the Bcc header correctly leaves it addressed to nobody:
+        // no `To`, no `Cc`, the recipients only in the envelope. That is
+        // valid and reads as broken -- clients show "(no recipients)", and a
+        // missing `To` is a well-known spam signal, so the honest message
+        // becomes the one least likely to arrive.
+        //
+        // `undisclosed-recipients:;` is an RFC 5322 group with no members:
+        // it says "there are recipients and they are not named here" in the
+        // one way every client already understands. Only when there is
+        // genuinely nothing else to name -- adding it beside a real `To`
+        // would announce to every recipient that somebody is hidden, which
+        // is not what Bcc means either.
+        // `Bcc::Omit` only -- the sent copy. The Drafts copy keeps a real
+        // `Bcc` header, so it *does* name its recipients, and telling it they
+        // are undisclosed would be the one message in the mailbox that
+        // contradicts itself.
+        None if bcc == Bcc::Omit && draft.cc.is_empty() && !draft.bcc.is_empty() => {
+            // A raw header rather than `Address::new_group`, which quotes the
+            // group name: `"undisclosed-recipients": ;` parses as the same
+            // group but is not the spelling clients recognise on sight, and
+            // being recognised is the entire reason this header is here.
+            builder = builder.header("To", Raw::new(UNDISCLOSED_RECIPIENTS));
+        }
+        None => {}
     }
     if let Some(cc) = recipient_list(&draft.cc) {
         builder = builder.cc(cc);
@@ -331,6 +357,12 @@ fn flowed_text_part(text: String) -> MbMimePart<'static> {
 
 /// A non-empty address list, or `None` — mail-builder writes a header even for
 /// an empty list, and a message has no reason to carry an empty `Cc`.
+/// The group name a message with nothing to name is addressed to.
+///
+/// What a message with nothing to name is addressed to, exactly as it goes on
+/// the wire: an RFC 5322 group with no members.
+const UNDISCLOSED_RECIPIENTS: &str = "undisclosed-recipients:;";
+
 fn recipient_list(addresses: &[EmailAddress]) -> Option<MbAddress<'static>> {
     if addresses.is_empty() {
         return None;
@@ -556,6 +588,97 @@ mod tests {
         assert!(
             !String::from_utf8_lossy(&built.raw).contains("quiet@example.com"),
             "the bcc'd address must not appear in the message at all, only in the envelope"
+        );
+    }
+
+    #[test]
+    fn a_bcc_only_message_says_undisclosed_recipients_rather_than_nothing() {
+        // FR-022, and the spec's fifth clarification. Dropping the Bcc header
+        // is right and leaves a message addressed to nobody: no `To`, no `Cc`,
+        // recipients only in the envelope. That is valid and reads as broken --
+        // clients show "(no recipients)", and a missing `To` is a well-known
+        // spam signal, so the honest message is the one most likely not to
+        // arrive.
+        //
+        // `undisclosed-recipients:;` is an RFC 5322 group with no members: it
+        // says "there are recipients and they are not being named" in the one
+        // way every client already understands.
+        let ada = identity("ada@example.com");
+        let mut draft = draft();
+        draft.to.clear();
+        draft.cc.clear();
+        draft.bcc = vec![
+            EmailAddress::new(None::<String>, "quiet@example.com"),
+            EmailAddress::new(None::<String>, "alsoquiet@example.net"),
+        ];
+
+        let built = build(&draft, &ada, &[], None);
+        let raw = String::from_utf8_lossy(&built.raw).into_owned();
+        let parsed = mime::parse(&built.raw);
+
+        assert_eq!(
+            parsed.headers.get("To"),
+            Some("undisclosed-recipients:;"),
+            "a Bcc-only message must still be addressed to something: {raw}"
+        );
+        for hidden in ["quiet@example.com", "alsoquiet@example.net"] {
+            assert!(
+                !raw.contains(hidden),
+                "{hidden} reached the message body; a bcc'd address travels in \
+                 the envelope and nowhere else: {raw}"
+            );
+        }
+        assert!(
+            parsed.bcc.is_empty(),
+            "a Bcc header would hand every recipient the bcc'd list"
+        );
+    }
+
+    #[test]
+    fn the_drafts_copy_of_a_bcc_only_message_names_its_recipients_instead() {
+        // The Drafts copy keeps the Bcc header, so it already says who the
+        // message is for. Giving it the placeholder as well would produce the
+        // one message in the mailbox that contradicts itself -- addressed to
+        // nobody in `To` and to somebody in `Bcc`.
+        let ada = identity("ada@example.com");
+        let mut draft = draft();
+        draft.to.clear();
+        draft.cc.clear();
+        draft.bcc = vec![EmailAddress::new(None::<String>, "quiet@example.com")];
+
+        let built = build_draft(&draft, &ada, &[], None);
+        let raw = String::from_utf8_lossy(&built.raw).into_owned();
+
+        assert!(
+            !raw.contains("undisclosed-recipients"),
+            "the Drafts copy names its recipients and must not also claim \
+             they are undisclosed: {raw}"
+        );
+        assert!(
+            raw.contains("quiet@example.com"),
+            "the Drafts copy must keep the Bcc, or a draft picked up on \
+             another client sends to fewer people than was asked: {raw}"
+        );
+    }
+
+    #[test]
+    fn a_message_with_real_recipients_is_never_given_the_placeholder() {
+        // The other half, and the one that makes the rule above safe to state:
+        // `undisclosed-recipients:;` must appear only when there is genuinely
+        // nothing to name. Adding it beside a real `To` would tell every
+        // recipient that somebody else is hidden -- which is not what Bcc
+        // means either.
+        let ada = identity("ada@example.com");
+        let mut draft = draft();
+        draft.bcc = vec![EmailAddress::new(None::<String>, "quiet@example.com")];
+
+        let built = build(&draft, &ada, &[], None);
+        let raw = String::from_utf8_lossy(&built.raw).into_owned();
+
+        assert!(
+            !raw.contains("undisclosed-recipients"),
+            "a message that names its recipients must not also announce that \
+             it has hidden ones: {raw}"
         );
     }
 

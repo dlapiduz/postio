@@ -72,17 +72,60 @@ fn editing_the_keys_section_rebinds_immediately() {
     assert_eq!(command(&mut resolver, "y").as_deref(), Some("flag"));
 }
 
+/// `/` and the go-to family resolve while the keyboard is in the folder list.
+///
+/// Reported from a live run: `g i` did nothing from the sidebar, and neither
+/// did `/`. Both were on the message surfaces only, so the resolver refused
+/// them one pane over -- indistinguishable, from the keyboard, from nothing
+/// being bound. The registry is where the contexts live, but the resolver is
+/// what enforces them, which is why this asserts here as well as in
+/// `core_suite`.
 #[test]
-fn a_rebind_reaches_a_sequence_too() {
+fn the_folder_list_reaches_search_and_the_go_to_family() {
     let directory = TempDir::new().expect("a temporary directory");
-    let path = write(directory.path(), "[keys]\nfirst_message = \"g t\"\n");
+    let path = write(directory.path(), "");
     let service = ConfigService::load(&path);
 
     let (mut resolver, problems) = Resolver::from_commands(service.keymap());
     assert!(problems.is_empty(), "{problems:?}");
 
     assert_eq!(
-        command(&mut resolver, "g t").as_deref(),
+        press(&mut resolver, "/", KeyContext::Sidebar),
+        Outcome::Command("search".to_owned()),
+        "`/` opens the box from the folder list, not only from the message list"
+    );
+    for (keys, command) in [
+        ("g i", "go_to_inbox"),
+        ("g d", "go_to_drafts"),
+        ("g t", "go_to_sent"),
+        ("g s", "go_to_flagged"),
+    ] {
+        resolver.clear_pending();
+        assert_eq!(
+            press(&mut resolver, keys, KeyContext::Sidebar),
+            Outcome::Command(command.to_owned()),
+            "`{keys}` has to reach {command} from the folder list -- standing \
+             there is the likeliest moment to want a different folder"
+        );
+    }
+}
+
+#[test]
+fn a_rebind_reaches_a_sequence_too() {
+    let directory = TempDir::new().expect("a temporary directory");
+    // Any sequence the registry does not already ship: what is under test is
+    // that a rebind reaches a two-key binding at all, not this particular
+    // pair. It was `g t` until the Gmail-shaped go-to family claimed that one
+    // for Sent, at which point the rebind was a genuine conflict and the
+    // keymap said so.
+    let path = write(directory.path(), "[keys]\nfirst_message = \"g m\"\n");
+    let service = ConfigService::load(&path);
+
+    let (mut resolver, problems) = Resolver::from_commands(service.keymap());
+    assert!(problems.is_empty(), "{problems:?}");
+
+    assert_eq!(
+        command(&mut resolver, "g m").as_deref(),
         Some("first_message")
     );
     assert_eq!(

@@ -74,13 +74,13 @@ use crate::backend::{BackendError, BackendResult, Capabilities};
 use crate::secret::Password;
 
 pub use self::backend::ImapBackend;
-pub use self::body::{PARTIAL_FETCH_WINDOW, fetch_part};
+pub use self::body::{PARTIAL_FETCH_WINDOW, fetch_part, fetch_sections};
 pub use self::dispatch::{
     Dispatch, ExpungeStrategy, ListingStrategy, MoveStrategy, ResyncStrategy, WatchStrategy,
 };
 pub use self::fetch::fetch_headers;
 pub use self::idle::idle;
-pub use self::mailboxes::list_mailboxes;
+pub use self::mailboxes::{create_mailbox, list_mailboxes};
 pub use self::mutate::{append, copy_messages, expunge, move_messages, store_flags};
 pub use self::pool::{
     ConnectionPool, DEFAULT_ACQUIRE_TIMEOUT, DEFAULT_IDLE_TIMEOUT, DEFAULT_MAX_CONNECTIONS,
@@ -123,7 +123,6 @@ pub struct ImapSession {
     capabilities: Capabilities,
     endpoint: String,
     account: String,
-    pre_authenticated: bool,
     /// The mailbox this session currently has selected, cached so a fetch
     /// loop over many chunks of the same mailbox does not re-issue `SELECT`
     /// for every one of them. See [`selection`].
@@ -254,7 +253,6 @@ impl ImapSession {
             capabilities,
             endpoint: settings.endpoint(),
             account: settings.username.clone(),
-            pre_authenticated: opened.pre_authenticated,
             selected: None,
             // A session opened outside a pool answers only to itself; the
             // pool replaces both of these when it opens one.
@@ -278,12 +276,6 @@ impl ImapSession {
     /// The account this session authenticated as.
     pub fn account(&self) -> &str {
         &self.account
-    }
-
-    /// Whether the session opened already authenticated (a `PREAUTH`
-    /// greeting, as a local socket proxy sends).
-    pub fn is_pre_authenticated(&self) -> bool {
-        self.pre_authenticated
     }
 
     /// Whether the bytes on this connection are encrypted.
@@ -500,11 +492,94 @@ fn map_client_error(command: &str, account: &str, error: ImapClientError) -> Bac
             account: account.to_owned(),
             reason: inner.to_string(),
         },
-        other => BackendError::Rejected {
-            command: command.to_owned(),
-            reason: other.to_string(),
-        },
+        other => {
+            let reason = other.to_string();
+            // **A throttle is not a refusal.** `Rejected` is not transient,
+            // so the operation queue gives up on it; `RateLimited` is, and
+            // the backoff loop retries. Told apart by what the server said,
+            // because IMAP has no status code for "slow down" -- `NO` covers
+            // both "I will not" and "not just now".
+            //
+            // Met against iCloud, which answers a sustained body backfill
+            // with `NO Service temporarily unavailable` after about two
+            // minutes. Classified as a rejection, that ended the mailbox's
+            // sync for the session and left mail missing from the list with
+            // nothing retrying for it (#1438).
+            if reads_as_throttling(&reason) {
+                return BackendError::RateLimited {
+                    // No `retry_after`: iCloud names no interval, and
+                    // inventing one would be a claim the server did not make.
+                    // The backoff loop has its own schedule for that.
+                    retry_after: None,
+                    reason,
+                };
+            }
+            // **Silence is not a refusal either.** An exchange that ended with
+            // no tagged response is a command that did not complete, and
+            // `Rejected` says the server considered it and said no — which
+            // would be a claim the server never made, printed at the user as
+            // "the server refused COPY". `Disconnected` is the honest one: the
+            // session went away underneath the command, it is transient, and
+            // the queue retries instead of losing the mutation.
+            //
+            // Retrying may duplicate a copy the server did perform and did
+            // not confirm. Within one account that is visible and reversible;
+            // the alternative, seen against iCloud, is a message archived
+            // locally that the server is never told about, which is neither.
+            if reads_as_incomplete(&reason) {
+                return BackendError::Disconnected {
+                    context: command.to_owned(),
+                    reason,
+                };
+            }
+            BackendError::Rejected {
+                command: command.to_owned(),
+                reason,
+            }
+        }
     }
+}
+
+/// Whether a server's refusal is really "not just now".
+///
+/// Matched on wording, which is unlovely and is what IMAP leaves available:
+/// there is no response code for throttling that these servers send. Kept
+/// deliberately narrow -- each phrase is one a real server sends, and a
+/// refusal that is genuinely permanent must not be retried for ever.
+fn reads_as_throttling(reason: &str) -> bool {
+    const PHRASES: &[&str] = &[
+        // iCloud, under a sustained backfill.
+        "service temporarily unavailable",
+        // Gmail, and several others.
+        "try again later",
+        "too many simultaneous connections",
+        "temporarily deferred",
+        // The RFC 5530 response code, when a server bothers to send it.
+        "[unavailable]",
+        "[inuse]",
+        "[limit]",
+    ];
+    let lowered = reason.to_ascii_lowercase();
+    PHRASES.iter().any(|phrase| lowered.contains(phrase))
+}
+
+/// Whether the exchange ended without the server completing it.
+///
+/// io-imap gives every command a `MissingTagged` variant — "the exchange
+/// ended without a tagged response from the server" — distinct from its `No`,
+/// `Bad` and `Bye` variants and from `Send`, which carries EOF, decode and
+/// framing failures. It means the command did not complete: no answer, no
+/// refusal, and no way to know whether the server acted.
+///
+/// That is a transport outcome, and grouping it with refusals is what made an
+/// archive vanish between Postio and iCloud. Matched on wording for the same
+/// reason as [`reads_as_throttling`] — the variants are per-command types
+/// behind `ImapClientError`, and every one of them renders this identical
+/// phrase.
+fn reads_as_incomplete(reason: &str) -> bool {
+    reason
+        .to_ascii_lowercase()
+        .contains("did not return a tagged response")
 }
 
 /// Whether the server said "no" to the credentials, as opposed to the
@@ -720,5 +795,133 @@ mod tests {
         );
 
         assert!(!error.is_authentication_failure());
+    }
+}
+
+#[cfg(test)]
+mod throttling_is_not_refusal {
+    use super::*;
+
+    /// iCloud's throttle is retried, not given up on (#1438).
+    ///
+    /// Taken from a real session: a sustained body backfill against
+    /// `imap.mail.me.com` ran for two minutes and then got
+    ///
+    /// ```text
+    /// the server refused FETCH: IMAP FETCH failed:
+    ///   NO Service temporarily unavailable
+    /// ```
+    ///
+    /// Classified as `Rejected`, which `is_transient` says no to, so the
+    /// mailbox's sync ended for the session and the mail it had not reached
+    /// yet simply never arrived. Nothing retried, and the list was short with
+    /// no sign of why.
+    #[test]
+    fn a_server_asking_us_to_slow_down_is_transient() {
+        for reason in [
+            "NO Service temporarily unavailable",
+            "NO [UNAVAILABLE] System busy",
+            "NO Too many simultaneous connections",
+            "NO please try again later",
+            "NO [INUSE] Mailbox in use",
+        ] {
+            assert!(
+                reads_as_throttling(reason),
+                "{reason:?} should read as throttling"
+            );
+            let error = BackendError::RateLimited {
+                retry_after: None,
+                reason: reason.to_owned(),
+            };
+            assert!(
+                error.is_transient(),
+                "{reason:?} must be retried, or the sync ends for the session"
+            );
+        }
+    }
+
+    /// The control: a real refusal is still a refusal.
+    ///
+    /// Without this the fix could be "retry everything", which burns the
+    /// user's battery against a server that will never say yes -- the exact
+    /// thing `is_transient`'s doc comment warns about.
+    #[test]
+    fn a_permanent_refusal_is_not_retried() {
+        for reason in [
+            "NO Mailbox does not exist",
+            "NO Permission denied",
+            "NO Message not found",
+            "BAD Invalid command",
+        ] {
+            assert!(
+                !reads_as_throttling(reason),
+                "{reason:?} is permanent and must not be retried for ever"
+            );
+        }
+    }
+}
+
+/// An exchange that never completed is not a refusal either.
+#[cfg(test)]
+mod silence_is_not_refusal {
+    use super::*;
+
+    /// A missing tagged response is retried, not given up on.
+    ///
+    /// Taken from a real session: archiving a message on `imap.mail.me.com`,
+    /// which advertises no `MOVE`, so the archive is `COPY` then `STORE` then
+    /// `EXPUNGE`. The `COPY` produced
+    ///
+    /// ```text
+    /// Not moved -- the server refused COPY: IMAP COPY failed:
+    ///   server did not return a tagged response
+    /// ```
+    ///
+    /// The server refused nothing. io-imap's `MissingTagged` means the
+    /// exchange ended with no `BYE` and no tagged line — the command did not
+    /// complete, which is a transport outcome and not an answer. Flattened
+    /// into `Rejected`, it was non-transient, so the queue marked the row
+    /// `failed` on the first attempt: the message was archived locally, the
+    /// server was never told, and nothing would ever try again. Local and
+    /// remote diverge permanently, which is the one thing the queue exists to
+    /// prevent.
+    ///
+    /// The same shape as #1438 one module up, and the same remedy: classify
+    /// by what actually happened rather than by where the error surfaced.
+    #[test]
+    fn an_exchange_without_a_tagged_response_is_transient() {
+        for reason in [
+            "IMAP COPY failed: server did not return a tagged response",
+            "IMAP STORE failed: server did not return a tagged response",
+            "IMAP SEARCH failed: server did not return a tagged response",
+        ] {
+            assert!(
+                reads_as_incomplete(reason),
+                "{reason:?} should read as an incomplete exchange"
+            );
+            let error = BackendError::Disconnected {
+                context: "COPY".to_owned(),
+                reason: reason.to_owned(),
+            };
+            assert!(
+                error.is_transient(),
+                "{reason:?} must be retried, or the mutation is lost silently"
+            );
+        }
+    }
+
+    /// The control: an answer the server actually gave is still an answer.
+    #[test]
+    fn a_real_answer_is_not_mistaken_for_silence() {
+        for reason in [
+            "IMAP COPY failed: NO Mailbox does not exist",
+            "IMAP COPY failed: BAD Invalid command",
+            "IMAP FETCH failed: NO Service temporarily unavailable",
+        ] {
+            assert!(
+                !reads_as_incomplete(reason),
+                "{reason:?} is an answer, not silence"
+            );
+        }
     }
 }

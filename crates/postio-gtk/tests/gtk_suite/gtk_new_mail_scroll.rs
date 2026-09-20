@@ -80,6 +80,7 @@ impl MailboxSource for Store {
             unread: self.total(),
             flagged: 0,
             snoozed: 0,
+            attention: 0,
         };
         Box::pin(async move { Ok(vec![inbox]) })
     }
@@ -109,7 +110,8 @@ impl MessageSource for Store {
                         seen: false,
                         flagged: false,
                         answered: false,
-                        draft: false,
+                        send_state: None,
+                        send_at: None,
                         has_attachments: false,
                         thread_count: 1,
                         participants: Vec::new(),
@@ -235,7 +237,7 @@ fn pump_until(done: impl Fn() -> bool) {
         if done() {
             return;
         }
-        std::thread::sleep(Duration::from_millis(5));
+        std::thread::sleep(std::time::Duration::from_millis(5));
     }
     assert!(done(), "timed out waiting for the list to catch up");
 }

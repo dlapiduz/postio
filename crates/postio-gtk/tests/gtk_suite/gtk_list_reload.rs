@@ -70,6 +70,7 @@ impl MailboxSource for Filling {
             unread: self.total.get(),
             flagged: 0,
             snoozed: 0,
+            attention: 0,
         };
         Box::pin(async move { Ok(vec![inbox]) })
     }
@@ -93,7 +94,8 @@ impl MessageSource for Filling {
                     seen: false,
                     flagged: false,
                     answered: false,
-                    draft: false,
+                    send_state: None,
+                    send_at: None,
                     has_attachments: false,
                     thread_count: 1,
                     participants: Vec::new(),
@@ -263,6 +265,7 @@ impl MailboxSource for Reordering {
             unread: total,
             flagged: 0,
             snoozed: 0,
+            attention: 0,
         };
         Box::pin(async move { Ok(vec![inbox]) })
     }
@@ -287,7 +290,8 @@ impl MessageSource for Reordering {
                     seen: false,
                     flagged: false,
                     answered: false,
-                    draft: false,
+                    send_state: None,
+                    send_at: None,
                     has_attachments: false,
                     thread_count: 1,
                     participants: Vec::new(),
@@ -568,7 +572,8 @@ pub fn switching_what_the_list_shows_does_not_carry_the_cursor_over() {
                 seen: false,
                 flagged: false,
                 answered: false,
-                draft: false,
+                send_state: None,
+                send_at: None,
                 has_attachments: false,
                 thread_count: 1,
                 participants: Vec::new(),

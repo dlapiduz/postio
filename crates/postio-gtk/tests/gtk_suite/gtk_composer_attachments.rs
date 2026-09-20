@@ -10,6 +10,15 @@
 //! `Composer::test_attach_path` calls exactly what a chosen or dropped
 //! `gio::File` reaches.
 //!
+//! That leaves the drop *targets* themselves, and those turn out to be
+//! checkable even though a drag is not: a widget's controllers can be
+//! enumerated, so whether one is installed, on which widget, accepting which
+//! type, is a question with an answer. It is also the question that goes wrong
+//! in practice -- a handler is rarely deleted, and a controller is easily lost
+//! when a widget tree is reorganised. The handler's own body stays out of
+//! reach: `DropTarget`'s `drop` signal will not accept a boxed `GValue`
+//! through `emit_by_name`, which was tried.
+//!
 //! `connect_attach`'s handler answers through a callback rather than a
 //! return value specifically so a real handler can hand a large file's bytes
 //! to a background task and call back once they land in the blob store
@@ -82,6 +91,31 @@ pub fn attaching_shows_the_row_and_removing_cleans_it_up() {
     assert_eq!(draft.attachments.len(), 1);
     assert_eq!(draft.attachments[0].filename.as_deref(), Some("report.pdf"));
     assert_eq!(draft.attachments[0].size, 2_048);
+
+    // ── The drop targets exist, where a file can be dropped on them ──────
+    //
+    // Two, deliberately. One on the composer, so a file dropped anywhere on
+    // it attaches; one on the body, which is the difference between attaching
+    // a picture and putting it *in* the message -- that handler inlines an
+    // image and attaches anything else.
+    let targets = composer.test_drop_targets();
+    assert!(
+        targets.iter().any(|(place, _)| *place == "composer"),
+        "nothing on the composer accepts a drop, so dropping a file on it \
+         does nothing at all: {targets:?}"
+    );
+    assert!(
+        targets.iter().any(|(place, _)| *place == "body"),
+        "the body has no drop target of its own, so an image dropped into \
+         the message would attach beside it instead of landing in it: \
+         {targets:?}"
+    );
+    for (place, formats) in &targets {
+        assert!(
+            formats.contains("FileList"),
+            "the {place} drop target does not accept files: {formats}"
+        );
+    }
 
     // ── A handler that answers later — the point of the callback shape ───
     // Stands in for a real handler spawning a slow blob-store write and

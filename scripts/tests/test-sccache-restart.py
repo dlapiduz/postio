@@ -90,14 +90,21 @@ def case(name: str, condition: bool, detail: str) -> None:
         FAILURES.append(f"{name}: {detail}")
 
 
+KILL_STUB = """#!/usr/bin/env bash
+printf '%s\\n' "$@" >> "$KILLED_FILE"
+"""
+
+
 def run(base: Path, *, waiting: int, moves: bool, args: list[str]) -> subprocess.CompletedProcess:
     stub_dir = base / "stubs"
     counter = base / "counter"
     counter.write_text("5351")
     process_list = base / "ps"
-    lines = ["      1 /sbin/init"]
+    # `etimes pid args`. The pid column is what `--reap` needs; counting
+    # never read it, and the awk in `stalled` keys off `$1` either way.
+    lines = ["      1       1 /sbin/init"]
     for index in range(waiting):
-        lines.append(f"   {900 + index} /usr/bin/rustc --crate-name c{index}")
+        lines.append(f"   {900 + index}    {2000 + index} sccache /usr/bin/rustc --crate-name c{index}")
     process_list.write_text("\n".join(lines) + "\n")
 
     environment = dict(os.environ)
@@ -109,6 +116,13 @@ def run(base: Path, *, waiting: int, moves: bool, args: list[str]) -> subprocess
     # So a case that reaches the two-reading path does not actually wait.
     environment["POSTIO_SCCACHE_WINDOW"] = "0"
     environment["POSTIO_SCCACHE_STALLED_AFTER"] = "300"
+    # `kill` is a shell builtin, so a PATH stub cannot shadow it; the script
+    # takes the command from here precisely so this can record instead of
+    # killing. Truncated per case so each reads only its own kills.
+    killed = base / "killed"
+    killed.write_text("")
+    environment["KILLED_FILE"] = str(killed)
+    environment["POSTIO_SCCACHE_KILL"] = str(stub_dir / "kill-recorder")
     # No explicit deadline: `patience.DEFAULT_TIMEOUT` is already long, and
     # this file's guards nothing it asserts -- the script's own waiting is
     # switched off by `POSTIO_SCCACHE_WINDOW=0` above, so every case here is a
@@ -135,7 +149,11 @@ def run_the_cases() -> int:
         base = Path(raw)
         stub_dir = base / "stubs"
         stub_dir.mkdir()
-        for name, body in (("sccache", SCCACHE_STUB), ("ps", PS_STUB)):
+        for name, body in (
+            ("sccache", SCCACHE_STUB),
+            ("ps", PS_STUB),
+            ("kill-recorder", KILL_STUB),
+        ):
             stub = stub_dir / name
             stub.write_text(body)
             stub.chmod(0o755)
@@ -177,6 +195,51 @@ def run_the_cases() -> int:
             healthy.returncode == 0 and "restarted" not in healthy.stdout,
             "restarting a working daemon throws away a warm cache for "
             f"nothing; got exit {healthy.returncode}: {healthy.stdout}",
+        )
+
+        # --- #1184's remaining gap: the restart leaves the casualties ---
+        #
+        # `--stop-server` replaces the daemon and does nothing for the clients
+        # already parked on the one it replaced. They are waiting for a reply
+        # from a process that no longer exists, so they wait for ever, and
+        # their cargo holds `target/`'s lock and `~/.cargo/.package-cache`
+        # meanwhile -- which is how one abandoned 29-hour build serialised
+        # every other session on the box (2026-09-11).
+        reaped = run(base, waiting=3, moves=False, args=["--reap"])
+        killed = (base / "killed").read_text().split()
+        case(
+            "--reap kills the compiles parked on the daemon it replaced",
+            sorted(killed) == ["2000", "2001", "2002"],
+            "a restart alone leaves them parked for ever, holding cargo's "
+            f"locks; got {killed!r}: {reaped.stdout}{reaped.stderr}",
+        )
+        case(
+            "--reap names each one it kills",
+            all(pid in reaped.stdout for pid in ("2000", "2001", "2002")),
+            "killing someone's build silently is not a thing a script should "
+            f"do; got {reaped.stdout!r}",
+        )
+
+        nothing = run(base, waiting=0, moves=False, args=["--reap"])
+        case(
+            "--reap on a clean box kills nothing",
+            (base / "killed").read_text().split() == [] and nothing.returncode == 0,
+            "there is nothing parked, and a reap that kills a healthy compile "
+            f"is worse than the wedge; got {nothing.stdout}{nothing.stderr}",
+        )
+
+        plain = run(base, waiting=3, moves=False, args=[])
+        case(
+            "a plain restart kills nothing",
+            (base / "killed").read_text().split() == [],
+            "the default must stay non-destructive: someone reaching for a "
+            f"restart is not asking for their builds to die; got {plain.stdout}",
+        )
+        case(
+            "but it says what it left behind, and how to clear it",
+            "--reap" in plain.stdout + plain.stderr,
+            "the gap is invisible otherwise -- the daemon looks fixed and the "
+            f"box is still serialised; got {plain.stdout}{plain.stderr}",
         )
 
     for failure in FAILURES:

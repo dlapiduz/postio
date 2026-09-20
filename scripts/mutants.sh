@@ -83,8 +83,34 @@ if [ ! -f "$SURVIVED" ]; then
 fi
 
 if [ -n "${MUTANTS_UPDATE_BASELINE:-}" ]; then
-    sort "$SURVIVED" > "$BASELINE"
-    echo "wrote $(wc -l < "$BASELINE") surviving mutant(s) to $BASELINE"
+    # Rewrite only the crates this run actually covered, and keep the rest.
+    #
+    # The baseline is one file for every crate, and `mutants.yml` runs one
+    # job per crate (#1458) -- so a whole-file rewrite means the last shard
+    # to finish wins and the baseline ends up describing one crate. Keeping
+    # the lines this run had nothing to say about is what makes the four
+    # jobs' updates compose instead of race.
+    #
+    # A line is a crate's when it begins `crates/<name>/`, which is the
+    # shape cargo-mutants emits. A line that matches no crate under test is
+    # kept: it is either another crate's or something this script does not
+    # recognise, and dropping what you cannot classify is how a baseline
+    # quietly becomes a record of the last run rather than of the triage.
+    KEPT=$(mktemp)
+    trap 'rm -rf "$OUTPUT_DIR" "$KEPT"' EXIT
+    if [ -f "$BASELINE" ]; then
+        cp "$BASELINE" "$KEPT"
+        for crate in "${CRATES[@]}"; do
+            grep -v "^crates/$crate/" "$KEPT" > "$KEPT.next" || true
+            mv "$KEPT.next" "$KEPT"
+        done
+    else
+        : > "$KEPT"
+    fi
+    sort -u "$KEPT" "$SURVIVED" > "$BASELINE"
+    echo "wrote $(wc -l < "$BASELINE") surviving mutant(s) to $BASELINE" \
+         "($(wc -l < "$SURVIVED") from this run over ${CRATES[*]};" \
+         "$(wc -l < "$KEPT") kept from other crates)"
     exit 0
 fi
 

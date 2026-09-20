@@ -43,6 +43,7 @@ pub mod quote;
 pub mod reader_view;
 pub mod replying;
 pub mod sanitize;
+pub mod styles;
 
 pub use document::{Block, ContentId, Document, HeadingLevel, Href, Inline, editor_image_src};
 pub use edit::{EditHistory, EditStep};
@@ -50,5 +51,7 @@ pub use narrow::{Lost, Narrowed, narrow};
 pub use outgoing::{harden, render};
 pub use parse::parse;
 pub use quote::{fold_html_quotes, text_to_html};
-pub use replying::{Placement, apply_signature, forwarded, quoted_reply};
+pub use replying::{
+    Placement, Presentation, Quoted, apply_signature, forwarded, quote_of, quoted_reply,
+};
 pub use sanitize::{CID_SCHEME, RemoteImages, Sanitized, sanitize_body};
