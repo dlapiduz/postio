@@ -400,6 +400,19 @@ impl Wiring {
         self
     }
 
+    /// Use `engine` as the slot `Refresh` reads, rather than a fresh one.
+    ///
+    /// For a frontend that has to build its command bus **before** it builds
+    /// the wiring — `postio-ffi` does, because the bridge needs a handler at
+    /// construction and the store is opened after it. `refresh::wire` and
+    /// this have to be given the same slot or the handler reads one nothing
+    /// ever fills, and `Refresh` rejects with "This account is not syncing"
+    /// forever.
+    pub fn with_engine_slot(mut self, engine: refresh::EngineSlot) -> Self {
+        self.engine = engine;
+        self
+    }
+
     /// The same wiring, backfilling under `[sync]`'s answer rather than the
     /// built-in default.
     pub fn with_backfill(mut self, backfill: postio_runtime::BackfillPolicy) -> Self {

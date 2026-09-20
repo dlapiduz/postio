@@ -240,6 +240,44 @@ impl From<&'static postio_core::registry::CommandSpec> for CommandSpecFfi {
     }
 }
 
+/// The commands the Swift frontend presents a surface for, rather than
+/// dispatching.
+///
+/// Each one *is* a window or an overlay, and a session cannot present one —
+/// so they stop at the frontend by design rather than by omission. The list
+/// is here rather than only in Swift so that two things can hold it: the
+/// coverage sweep in `ffi_suite/command_coverage.rs`, which would otherwise
+/// report every one of them as an orphan, and
+/// `PostioKit.Intercepted`, which matches them by string in a `switch` and
+/// therefore needs compile-time constants of its own.
+///
+/// Duplicated, in other words, and **checked from both sides** — which is the
+/// only kind of duplication this repository allows across the boundary. A
+/// list copied into Swift and checked from neither side is how `/` comes to
+/// open nothing, with no error anywhere to say why.
+pub const INTERCEPTED: &[postio_core::CommandId] = {
+    use postio_core::CommandId as C;
+    &[
+        C::CommandPalette,
+        C::CheatSheet,
+        C::Search,
+        C::Back,
+        C::CyclePane,
+        C::CyclePaneBack,
+        C::FocusSidebar,
+        C::Settings,
+        C::ToggleSidebar,
+        C::ExpandAll,
+        C::ToggleFold,
+        C::NextInConversation,
+        C::PrevInConversation,
+        C::Compose,
+        C::Reply,
+        C::ReplyAll,
+        C::Forward,
+    ]
+};
+
 /// Every command, in cheat-sheet order.
 pub fn commands() -> Vec<CommandSpecFfi> {
     postio_core::registry::all()

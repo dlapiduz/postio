@@ -99,6 +99,33 @@ pub struct SessionOptions {
 ///
 /// The alternative it replaces was `handler_fn(|_, _| async {})`, which
 /// received every command and dropped it.
+/// The commands the boundary answers itself, rather than sending down the bus.
+///
+/// `handle_locally` is the implementation; this is the same list as data, so
+/// that `command_coverage.rs` can sweep every registry command and say which
+/// of them reach nothing at all. `postio-gtk` has the same pair — its sweep is
+/// `app_suite/command_wiring.rs`, and its `KNOWN_ORPHANS` list is empty
+/// because that sweep has existed long enough to have emptied it.
+///
+/// They are here and not in Swift because what they move — the cursor, the
+/// selection, the row window — is here. A frontend that moved them would need
+/// its own copy of all three, which is the second model ADR 0019 exists to
+/// prevent.
+pub const HANDLED_HERE: &[postio_core::CommandId] = {
+    use postio_core::CommandId as C;
+    &[
+        C::NextMessage,
+        C::PrevMessage,
+        C::FirstMessage,
+        C::LastMessage,
+        C::ToggleSelection,
+        C::ExtendSelectionDown,
+        C::ExtendSelectionUp,
+        C::SelectAll,
+        C::Back,
+    ]
+};
+
 #[derive(Clone, Default)]
 struct DeferredBus(Arc<Mutex<Option<Arc<postio_core::dispatch::Dispatcher>>>>);
 
@@ -109,11 +136,23 @@ impl DeferredBus {
     /// each send — the actions resolve `MessageTarget::Selection` against it,
     /// so a second `SharedState` here would resolve every such verb against
     /// an empty one (#1300).
-    fn arm(&self, database: &postio_storage::Store, state: postio_core::state::SharedState) {
-        let actions = postio_session::actions::Actions::new(database.clone(), state);
-        let bus =
-            postio_session::actions::wire(postio_core::dispatch::Dispatcher::builder(), actions)
-                .build();
+    fn arm(
+        &self,
+        database: &postio_storage::Store,
+        state: postio_core::state::SharedState,
+        engine: postio_session::refresh::EngineSlot,
+    ) {
+        let actions = postio_session::actions::Actions::new(database.clone(), state.clone());
+        let builder =
+            postio_session::actions::wire(postio_core::dispatch::Dispatcher::builder(), actions);
+        // **Both halves, the way `postio-app` composes them.** Only `actions`
+        // was wired here, so `Refresh` reached no handler at all -- while it
+        // sat in the File menu, on `F5` and `R`, and in the palette. Three
+        // surfaces offering a key that did nothing, on the one platform where
+        // "check for new mail" is the gesture people reach for first because
+        // there is no push notification to beat them to it.
+        // `command_coverage.rs` is what now notices.
+        let bus = postio_session::refresh::wire(builder, engine, state).build();
         *self.0.lock().expect("deferred bus lock") = Some(Arc::new(bus));
     }
 }
@@ -1398,8 +1437,13 @@ impl Session {
             // where a `MemorySecretStore` goes.
             let config = load_config(&source);
             let sync_config = config.sync;
-            deferred.arm(&database, state.clone());
+            // One slot, shared: `refresh::wire` reads it and `Wiring` fills
+            // it, and two of them is a handler watching a slot nothing ever
+            // puts an engine into.
+            let engine_slot = postio_session::refresh::EngineSlot::default();
+            deferred.arm(&database, state.clone(), engine_slot.clone());
             let mut wiring = Wiring::new(database, blobs, runtime, sink, commands)
+                .with_engine_slot(engine_slot)
                 .with_backfill(postio_session::backfill_policy(&sync_config))
                 .with_watch(postio_session::watch_policy(&sync_config));
             // Honour `with_secrets` here too. It was read only on the real
@@ -1496,8 +1540,10 @@ impl Session {
         let sync_config = config.sync;
         let ui_config = config.ui;
 
-        deferred.arm(&database, state.clone());
+        let engine_slot = postio_session::refresh::EngineSlot::default();
+        deferred.arm(&database, state.clone(), engine_slot.clone());
         let wiring = Wiring::new(database, blobs, runtime, sink, commands)
+            .with_engine_slot(engine_slot)
             .with_secrets(secrets)
             .with_backfill(postio_session::backfill_policy(&sync_config))
             .with_watch(postio_session::watch_policy(&sync_config));
@@ -2826,6 +2872,15 @@ impl Session {
             C::Back if !self.selection_is_empty() => self.clear_selection(),
             _ => return false,
         }
+        // The list below is what `command_coverage.rs` sweeps against, and
+        // the two drift in the direction nobody notices: an arm added here
+        // and not listed there looks, to the sweep, like a command nothing
+        // answers -- and would be reported as an orphan that is not one. So
+        // the arms say so out loud.
+        debug_assert!(
+            HANDLED_HERE.contains(&id),
+            "{id} is answered by `handle_locally` and is not in `HANDLED_HERE`;              add it, or the coverage sweep will call it an orphan"
+        );
         true
     }
 

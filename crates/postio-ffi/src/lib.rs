@@ -49,7 +49,7 @@ mod notify;
 mod palette;
 mod provisioning;
 mod reader;
-mod registry;
+pub mod registry;
 mod search;
 mod session;
 mod settings;
@@ -79,7 +79,7 @@ pub use reader::{
 };
 pub use registry::{CommandSpecFfi, MenuFfi, MenuSectionFfi, UiContext, UiRecovery, menus};
 pub use search::{ChipFfi, MatchRangeFfi, OutcomeFfi, SnippetFfi, query_chips};
-pub use session::{Session, SessionError, SessionOptions};
+pub use session::{HANDLED_HERE, Session, SessionError, SessionOptions};
 pub use settings::{
     AppearanceFfi, AttachmentFetchFfi, BodyFetchFfi, CheckForMailFfi, ComposingFfi, DensityFfi,
     FilterFfi, FoundEditorFfi, GroupFfi, HandoffTargetFfi, RowActionFfi, RowHintFfi, RowMetricsFfi,
@@ -107,6 +107,18 @@ pub use sidebar::{ActivityFfi, sidebar_status};
 #[uniffi::export]
 pub fn commands() -> Vec<CommandSpecFfi> {
     registry::commands()
+}
+
+/// The ids `PostioKit.Intercepted` must hold, as the boundary knows them.
+///
+/// Crosses so the Swift copy can be checked against it rather than trusted.
+/// See [`registry::INTERCEPTED`] for why there are two copies at all.
+#[uniffi::export]
+pub fn intercepted_commands() -> Vec<String> {
+    registry::INTERCEPTED
+        .iter()
+        .map(|id| id.to_string())
+        .collect()
 }
 
 uniffi::setup_scaffolding!();
