@@ -172,6 +172,19 @@ public enum Intercepted {
     public static let openMessage = "open_message"
     public static let prevView = "prev_view"
     public static let viewOriginal = "view_original"
+    /// The parts panel. Opening it is a surface, walking it moves a cursor
+    /// this side holds, and every verb on it needs a dialog or a launcher —
+    /// so all eight stop here. `PartsPanel` is the surface and `PartsModel`
+    /// the cursor; the tree, the labels and the safe filename are all the
+    /// boundary's.
+    public static let openParts = "open_parts"
+    public static let nextPart = "next_part"
+    public static let prevPart = "prev_part"
+    public static let savePart = "save_part"
+    public static let saveAllParts = "save_all_parts"
+    public static let openPartExternally = "open_part_externally"
+    public static let openPart = "open_part"
+    public static let renderPartOnce = "render_part_once"
     public static let expandAll = "expand_all"
     public static let toggleFold = "toggle_fold"
     public static let nextInConversation = "next_in_conversation"
@@ -185,6 +198,8 @@ public enum Intercepted {
         nextFolder, prevFolder, toggleFolder,
         goToInbox, goToDrafts, goToSent, goToFlagged,
         openMessage, prevView, viewOriginal,
+        openParts, nextPart, prevPart,
+        savePart, saveAllParts, openPartExternally, openPart, renderPartOnce,
         compose, reply, replyAll, forward,
     ] + composeVerbs
 }

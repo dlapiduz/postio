@@ -53,11 +53,42 @@ public final class PartsModel {
         parts = []
         summary = ""
         cursor = 0
+        wish = nil
     }
 
     /// The row the keyboard is on.
     public var focused: PartFfi? {
         parts.indices.contains(Int(cursor)) ? parts[Int(cursor)] : nil
+    }
+
+    /// What a command has asked the panel to do.
+    ///
+    /// A request rather than a call: every verb here needs a save panel, an
+    /// open panel or a launcher, and a command has no view to present one
+    /// with. The panel watches these and grants them — the same shape the
+    /// composer's link, attachment and discard use.
+    public enum Wish: Equatable, Sendable {
+        case save
+        case saveAll
+        case openExternally
+        /// Draw it here, in a sheet — see `PartOpening`.
+        case preview
+    }
+
+    /// The wish, and a token so two of the same in a row are two wishes.
+    public private(set) var wish: Wish?
+    public private(set) var wishToken = 0
+
+    /// Ask the panel for `wish`.
+    public func ask(_ wish: Wish) {
+        self.wish = wish
+        wishToken += 1
+    }
+
+    /// Put the keyboard on a row, for a click.
+    public func put(cursor at: UInt32) {
+        guard parts.indices.contains(Int(at)) else { return }
+        cursor = at
     }
 
     /// Move the keyboard one row.

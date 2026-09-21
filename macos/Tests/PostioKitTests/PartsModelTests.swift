@@ -110,4 +110,38 @@ import Testing
         #expect(model.focused?.label == "big.zip", "it is still a row")
         #expect(model.canSaveFocused, "asking for it is what fetches it")
     }
+    @Test func aVerbIsAskedForRatherThanDone() {
+        // Saving needs a save panel and opening needs a launcher, and a
+        // command has no view to present either with. The panel grants what
+        // the model records — the same shape the composer's link, attachment
+        // and discard use.
+        let model = PartsModel()
+        model.show(parts(2))
+        #expect(model.wish == nil)
+        model.ask(.save)
+        #expect(model.wish == .save)
+    }
+
+    @Test func twoOfTheSameWishInARowAreTwoWishes() {
+        // Save, cancel the panel, press Save again. A view watching the value
+        // alone would see nothing the second time — the lesson `WindowRequest`
+        // records about `onChange`.
+        let model = PartsModel()
+        model.show(parts(2))
+        model.ask(.save)
+        let first = model.wishToken
+        model.ask(.save)
+        #expect(model.wishToken > first)
+    }
+
+    @Test func showingAnotherMessageDropsAnUngrantedWish() {
+        // A save asked for against the last message must not be granted
+        // against this one's parts.
+        let model = PartsModel()
+        model.show(parts(2))
+        model.ask(.saveAll)
+        model.clear()
+        #expect(model.wish == nil)
+    }
+
 }

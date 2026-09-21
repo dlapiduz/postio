@@ -569,6 +569,11 @@ final class Engine {
             // table catching up with where it ended.
             controller.showCursor(on: row)
             if cursorShowing != message {
+                // The panel is about *this* message's tree.
+                parts.clear()
+                showingParts = false
+                // "Once" means this view.
+                rendered.clear()
                 // A new message starts at the top. Carrying the anchor over
                 // would resume somebody else's place in it.
                 readerPage = 0
@@ -792,6 +797,34 @@ final class Engine {
             // whichever of these is open.
             showingPalette = false
             showingCheatSheet = false
+        case Intercepted.openParts:
+            guard let session, let message = target ?? cursorShowing else { return false }
+            parts.show(session.messageParts(message))
+            showingParts = true
+        case Intercepted.nextPart:
+            guard showingParts else { return false }
+            parts.step(forward: true)
+        case Intercepted.prevPart:
+            guard showingParts else { return false }
+            parts.step(forward: false)
+        case Intercepted.renderPartOnce:
+            // No grant is written and no sender is allowed: this loads the
+            // one message in front of you, for as long as it is in front of
+            // you. `allow_remote_images` is the other gesture.
+            guard let message = target ?? cursorShowing else { return false }
+            rendered.render(message)
+        case Intercepted.savePart:
+            guard showingParts else { return false }
+            parts.ask(.save)
+        case Intercepted.saveAllParts:
+            guard showingParts else { return false }
+            parts.ask(.saveAll)
+        case Intercepted.openPartExternally:
+            guard showingParts else { return false }
+            parts.ask(.openExternally)
+        case Intercepted.openPart:
+            guard showingParts else { return false }
+            parts.ask(.preview)
         case Intercepted.openMessage:
             // The row is already open — the cursor opens it as it moves — so
             // `Return` is about the *keyboard*: it goes where the message is.
@@ -847,6 +880,34 @@ final class Engine {
     /// `@State`: that is exactly why the key did nothing while the `⋯` menu
     /// item beside it worked.
     private(set) var original = OriginalView()
+
+    /// A message's parts, when the panel is open.
+    ///
+    /// The cursor inside it is the only thing this side decides; see
+    /// `PartsModel`.
+    let parts = PartsModel()
+
+    /// Whether the parts panel is showing.
+    ///
+    /// **It moves the key context with it**, like the palette and the search
+    /// field: `Context::Parts` is where `j`, `k`, `s`, `S`, `x`, `H` and
+    /// `Return` mean what the panel needs them to mean. Without this they
+    /// would keep resolving as the list underneath — and `s`, `x` and
+    /// `Return` all do something there, so pressing Save over an attachment
+    /// would have acted on a message instead.
+    var showingParts = false {
+        didSet {
+            guard showingParts != oldValue else { return }
+            paneContext = showingParts ? .parts : pane.context
+        }
+    }
+
+    /// Which messages are drawing what the reader held back.
+    ///
+    /// Per message and per view — see `RenderedOnce`. Here rather than in the
+    /// conversation view because `H` is a command, and the blocked-images
+    /// notice's own button presses the same thing.
+    private(set) var rendered = RenderedOnce()
 
     /// Show `message` as its sender wrote it, or stop.
     ///

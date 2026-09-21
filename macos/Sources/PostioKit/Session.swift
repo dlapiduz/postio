@@ -156,6 +156,19 @@ public final class PostioSession {
         inner.readerDocument(message: message, remote: remote, original: original)
     }
 
+    /// One part's bytes.
+    ///
+    /// **`nonisolated`, and deliberately so.** This is the only call in the
+    /// parts surface that can reach the network: a part nobody has
+    /// downloaded is queued and then waited on for up to thirty seconds.
+    /// Every other method here reads SQLite and answers in milliseconds.
+    /// Calling it from the main actor would freeze the window on somebody's
+    /// IMAP server, so the type system is asked to prevent that rather than a
+    /// comment.
+    public nonisolated func partBytes(_ message: Int64, partId: String) throws -> Data {
+        Data(try inner.partBytes(message: message, partId: partId))
+    }
+
     /// One inline part of `message`, by its `Content-ID`.
     ///
     /// `nil` when the bytes are not already on this machine — the privacy
@@ -253,6 +266,41 @@ public final class PostioSession {
     /// expected case, and the window has closed either way.
     @discardableResult
     public func discardDraft(_ draft: Int64) -> String? { inner.discardDraft(draft: draft) }
+
+    /// A message's parts, as a tree with the rows already laid out.
+    ///
+    /// The prefixes, the labels, what each row *says*, and above all the
+    /// filename a part is safe to be written under are all the boundary's:
+    /// a sender's `filename=` is attacker-controlled text, and two frontends
+    /// making it safe differently is two answers to a security question.
+    public func messageParts(_ message: Int64) -> MessagePartsFfi {
+        inner.messageParts(message: message)
+    }
+
+    /// Write one part to `path`, which the user chose.
+    ///
+    /// The path is exact — a save panel's answer. Asking for a part that has
+    /// not arrived is what fetches it, so this can take a moment.
+    public func savePart(_ message: Int64, partId: String, to path: String) throws {
+        try inner.savePart(message: message, partId: partId, path: path)
+    }
+
+    /// Write every savable part into `directory`, and say how it went.
+    public func saveAllParts(_ message: Int64, into directory: String) throws -> SavedPartsFfi {
+        try inner.saveAllParts(message: message, directory: directory)
+    }
+
+    /// Write one part into `directory` under a name **Postio** chooses, and
+    /// answer where it landed.
+    ///
+    /// The directory only. This is the route where bytes leave Postio's own
+    /// window — handed to another application — so the frontend does not get
+    /// to pass the sender's filename through to the filesystem.
+    public func exportPart(_ message: Int64, partId: String, into directory: String) throws
+        -> String
+    {
+        try inner.exportPart(message: message, partId: partId, directory: directory)
+    }
 
     /// The excerpt for `message`, with the match located.
     ///

@@ -44,15 +44,6 @@ const KNOWN_ORPHANS: &[(CommandId, &str)] = {
         (C::ScheduleSend, "#1571"),
         (C::DetachComposer, "#1571"),
         (C::InsertImage, "#1571"),
-        // #1572 -- no parts surface at all, so an attachment cannot be saved.
-        (C::OpenParts, "#1572"),
-        (C::NextPart, "#1572"),
-        (C::PrevPart, "#1572"),
-        (C::OpenPart, "#1572"),
-        (C::SavePart, "#1572"),
-        (C::SaveAllParts, "#1572"),
-        (C::OpenPartExternally, "#1572"),
-        (C::RenderPartOnce, "#1572"),
         // #1573 -- the sidebar's keyboard. `focus_sidebar` moves the keyboard
         // in and then nothing walks.
         (C::NextScope, "#1573"),

@@ -35,6 +35,9 @@ public struct ConversationView: View {
     /// Whether a message is drawn as its sender wrote it, and how to change
     /// it. The engine holds this so `⌘O` can reach it.
     private let showingOriginal: (Int64) -> Bool
+    /// Whether this message's held-back parts are rendered — see
+    /// `RenderedOnce`, which holds it where `H` can reach it.
+    private let showingImages: (Int64) -> Bool
     private let toggleOriginal: (Int64) -> Void
 
     public init(
@@ -42,12 +45,14 @@ public struct ConversationView: View {
         model: ConversationModel,
         run: @escaping (String, Int64?) -> Void,
         showingOriginal: @escaping (Int64) -> Bool,
+        showingImages: @escaping (Int64) -> Bool,
         toggleOriginal: @escaping (Int64) -> Void
     ) {
         self.session = session
         self.model = model
         self.run = run
         self.showingOriginal = showingOriginal
+        self.showingImages = showingImages
         self.toggleOriginal = toggleOriginal
     }
 
@@ -165,6 +170,7 @@ public struct ConversationView: View {
                 run: run,
                 openSettings: { run(Intercepted.settings, nil) },
                 showingOriginal: showingOriginal(row.id),
+                showingImages: showingImages(row.id),
                 toggleOriginal: { toggleOriginal(row.id) }
             )
         } else {
@@ -252,10 +258,10 @@ struct ExpandedMessage: View {
     let isLatest: Bool
     /// Whether this message's `Cc` list is open.
     ///
-    /// On the model rather than in `@State` here, unlike `showingImages`:
-    /// a disclosure is a thing a person opened and can be asserted, and
-    /// #1259 is what happens when a piece of the header exists only inside a
-    /// view nobody can look at from a test.
+    /// On the model rather than in `@State` here — as everything a person
+    /// turned on in this pane now is: a disclosure is a thing somebody opened
+    /// and can be asserted, and #1259 is what happens when a piece of the
+    /// header exists only inside a view nobody can look at from a test.
     let showingCc: Bool
     let collapse: () -> Void
     let toggleCc: () -> Void
@@ -264,12 +270,6 @@ struct ExpandedMessage: View {
     let openSettings: () -> Void
 
     @State private var height: CGFloat = BodyHeight.minimum
-    /// Whether this *message's* images are showing.
-    ///
-    /// Per message and reset with the pane, which is what "show once" means:
-    /// the standing grant is the popover's, and it is the only thing that
-    /// survives closing the conversation.
-    @State private var showingImages = false
     /// Whether this message is drawn as its sender wrote it.
     ///
     /// Per message and per view: reader view is on by default for bulk mail
@@ -281,6 +281,17 @@ struct ExpandedMessage: View {
     /// while the menu item below it worked. `OriginalView` holds it, per
     /// message and per view.
     let showingOriginal: Bool
+    /// Whether this *message's* images are showing.
+    ///
+    /// Per message and reset with the pane, which is what "show once" means:
+    /// the standing grant is the popover's, and it is the only thing that
+    /// survives closing the conversation.
+    ///
+    /// Held outside this view, like `showingOriginal` beside it and for the
+    /// same reason: `H` (*Render part once*) is a command, and a command
+    /// cannot reach an `@State`. While this was one, the notice's button
+    /// worked and the key did nothing.
+    let showingImages: Bool
     let toggleOriginal: () -> Void
 
     var body: some View {
@@ -297,7 +308,7 @@ struct ExpandedMessage: View {
                     BlockedImagesNotice(
                         notice: notice,
                         session: session,
-                        show: { showingImages = true },
+                        show: { run(Intercepted.renderPartOnce, row.id) },
                         openSettings: openSettings
                     )
                 }

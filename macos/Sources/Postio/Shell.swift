@@ -203,6 +203,19 @@ struct Shell: View {
         // What Postio said back. Bottom-*leading*, so it never lands under
         // the pending-chord hint at the other corner: both are transient and
         // both can be up at once — a `g` half-typed while a send fails.
+        // The parts panel: a sheet rather than a pane, because it is about
+        // one message and is opened to do one thing. `p` opens it and `Esc`
+        // closes it, which is the Done button's `.cancelAction`.
+        .sheet(isPresented: $engine.showingParts) {
+            if let session = engine.session, let message = engine.cursorShowing {
+                PartsPanel(
+                    session: session,
+                    message: message,
+                    model: engine.parts,
+                    dismiss: { engine.showingParts = false }
+                )
+            }
+        }
         .overlay(alignment: .bottomLeading) { noticeBanner }
         .overlay(alignment: .bottomTrailing) {
             if let pending = engine.pendingChord {
@@ -501,6 +514,7 @@ struct Shell: View {
                 // to the wrong message in any thread longer than one.
                 run: { engine.run($0, on: $1) },
                 showingOriginal: { engine.original.isOn($0) },
+                showingImages: { engine.rendered.isOn($0) },
                 toggleOriginal: { engine.toggleOriginal($0) }
             )
         } else if let session = engine.session, let showing {

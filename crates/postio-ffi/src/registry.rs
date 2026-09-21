@@ -283,6 +283,16 @@ pub const INTERCEPTED: &[postio_core::CommandId] = {
         C::OpenMessage,
         C::PrevView,
         C::ViewOriginal,
+        // The parts panel: a surface, a cursor this side holds, and verbs
+        // that each need a dialog or a launcher.
+        C::OpenParts,
+        C::NextPart,
+        C::PrevPart,
+        C::SavePart,
+        C::SaveAllParts,
+        C::OpenPartExternally,
+        C::RenderPartOnce,
+        C::OpenPart,
         // The composer's own verbs. The draft being written is in a window
         // this frontend owns, unsaved, and the store has not seen most of
         // it -- so a session cannot answer these and the window does.
