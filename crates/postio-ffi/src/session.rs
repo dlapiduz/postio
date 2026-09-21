@@ -1027,6 +1027,20 @@ impl Session {
         blocking(self.set_display_name(account, name))
     }
 
+    /// Switch an account's syncing on or off. See
+    /// [`set_account_enabled`](Self::set_account_enabled).
+    #[uniffi::method(name = "setAccountEnabled")]
+    pub fn set_account_enabled_ffi(&self, account: i64, enabled: bool) -> Option<String> {
+        blocking(self.set_account_enabled(account, enabled))
+    }
+
+    /// Make an account the one new mail comes from. See
+    /// [`set_default_account`](Self::set_default_account).
+    #[uniffi::method(name = "setDefaultAccount")]
+    pub fn set_default_account_ffi(&self, account: i64) -> Option<String> {
+        blocking(self.set_default_account(account))
+    }
+
     /// Take an account away — its row, and its credentials.
     #[uniffi::method(name = "removeAccount")]
     pub fn remove_account_ffi(&self, account: i64) -> Option<String> {
@@ -2570,6 +2584,62 @@ impl Session {
             Ok(_) => None,
             Err(error) => Some(format!("The index could not be rebuilt: {error}")),
         }
+    }
+
+    /// Flip whether an account is synced at all.
+    ///
+    /// A single-column write, and deliberately not routed through the
+    /// account update path: the caller is a toggle in a settings pane, not
+    /// code holding a freshly-loaded account, and `update` would rewrite the
+    /// identity list from whatever copy the pane happened to be drawing.
+    ///
+    /// The row keeps its place in the list either way. A disabled account is
+    /// configured and not syncing, which is a state to show rather than one
+    /// to hide — "where did my account go" is the worse question.
+    pub async fn set_account_enabled(&self, account: i64, enabled: bool) -> Option<String> {
+        let Some((database, _)) = self.store_and_blobs() else {
+            return Some("There is no store open.".to_owned());
+        };
+        let connection = match database.connect().await {
+            Ok(connection) => connection,
+            Err(error) => return Some(error.to_string()),
+        };
+        match postio_storage::repository::AccountRepository::new(&connection)
+            .set_enabled(postio_model::ids::AccountId::new(account), enabled)
+            .await
+        {
+            // `false` is "no row matched", which the keyboard path can
+            // genuinely produce: a row removed in one window while the
+            // command is pressed in another. A silent no-op there would look
+            // like a switch that does not work.
+            Ok(true) => None,
+            Ok(false) => Some("That account is no longer here.".to_owned()),
+            Err(error) => Some(error.to_string()),
+        }
+    }
+
+    /// Make `account` the one new messages come from when the message itself
+    /// does not say.
+    ///
+    /// And nothing else (#960). It does not order the sidebar, prioritise
+    /// sync, or decide a reply's from address, which is settled from the
+    /// message being replied to.
+    ///
+    /// There is no way to clear it: the reversal of marking an account is
+    /// marking another, which is why the command carries no undo.
+    pub async fn set_default_account(&self, account: i64) -> Option<String> {
+        let Some((database, _)) = self.store_and_blobs() else {
+            return Some("There is no store open.".to_owned());
+        };
+        let connection = match database.connect().await {
+            Ok(connection) => connection,
+            Err(error) => return Some(error.to_string()),
+        };
+        postio_storage::repository::AccountRepository::new(&connection)
+            .set_default(postio_model::ids::AccountId::new(account))
+            .await
+            .err()
+            .map(|error| error.to_string())
     }
 
     /// Remove an account. See [`remove_account_ffi`](Self::remove_account_ffi).

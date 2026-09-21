@@ -132,6 +132,17 @@ public final class AccountActions {
         failed = complaint != nil
     }
 
+    /// Report an outcome that did not come from one of the actions here.
+    ///
+    /// The switches in the pane write through the boundary directly — they
+    /// are one column and no server is consulted — but their refusals belong
+    /// in the same place every other outcome goes, or a switch that would not
+    /// flip would be silent.
+    public func said(_ outcome: String, failed: Bool) {
+        self.outcome = outcome
+        self.failed = failed
+    }
+
     /// Pretend a re-index started, so the reporting can be asserted without
     /// a session and a store behind it.
     #if DEBUG

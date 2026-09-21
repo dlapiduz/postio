@@ -35,7 +35,17 @@ public struct SettingsPaneView: View {
     private let session: PostioSession?
 
     /// Which account's form is open, if any.
-    @State private var selected: Int64?
+    /// Which account row is open, held outside this view.
+    ///
+    /// The seven verbs in `Context::Accounts` all act on it, and a command
+    /// cannot reach an `@State` — see `SettingsAccounts`, which is also why
+    /// every one of them used to resolve to nothing while the buttons here
+    /// worked.
+    private let accountCursor: SettingsAccounts
+    /// Re-read the accounts after one of them changed. Set by the
+    /// application, which owns the list: a pane that edited its own copy
+    /// would draw what it believes rather than what was written.
+    private let reloadAccounts: (() -> Void)?
     /// The add-account sheet, while it is up.
     @State private var adding: AddAccountModel?
     /// The account being signed in again, if one is.
@@ -59,16 +69,28 @@ public struct SettingsPaneView: View {
         accounts: [AccountFfi] = [],
         mailboxes: [MailboxFfi] = [],
         actions: AccountActions = AccountActions(),
+        accountCursor: SettingsAccounts = SettingsAccounts(),
+        reloadAccounts: (() -> Void)? = nil,
         session: PostioSession? = nil
     ) {
         self.store = store
         self.accounts = accounts
         self.mailboxes = mailboxes
         self.actions = actions
+        self.accountCursor = accountCursor
+        self.reloadAccounts = reloadAccounts
         self.session = session
     }
 
     public var body: some View {
+        content
+            // By token, not by value: adding two accounts in a row is two
+            // sheets, and `onChange` on the wish alone would open only the
+            // first.
+            .onChange(of: accountCursor.wishToken) { _, _ in grant(accountCursor.wish) }
+    }
+
+    private var content: some View {
         HStack(spacing: 0) {
             sidebar
             Divider()
@@ -229,13 +251,13 @@ public struct SettingsPaneView: View {
                 .help("Add an account")
                 .accessibilityLabel("Add an account")
                 Button {
-                    if let account = accounts.first(where: { $0.id == selected }) {
+                    if let account = accountCursor.focused(in: accounts) {
                         actions.askToRemove(account)
                     }
                 } label: {
                     Image(systemName: "minus")
                 }
-                .disabled(selected == nil || actions.isBusy)
+                .disabled(accountCursor.cursor == nil || actions.isBusy)
                 .help("Remove the selected account")
                 .accessibilityLabel("Remove the selected account")
                 Spacer()
@@ -282,6 +304,30 @@ public struct SettingsPaneView: View {
 
     /// Sign in to `account` again, in the browser.
     ///
+    /// Say what a settings verb refused, where the person who pressed it is
+    /// looking. The pane already has a place for an outcome; this is the
+    /// same place, so a switch that would not flip says so beside itself.
+    private func complain(_ said: String?) {
+        guard let said else { return }
+        actions.said(said, failed: true)
+    }
+
+    /// Grant whatever a command asked for.
+    ///
+    /// Two of the seven need a surface, and a command has no view to present
+    /// one with. The other five are calls the engine makes itself.
+    private func grant(_ wish: SettingsAccounts.Wish?) {
+        switch wish {
+        case .add:
+            adding = AddAccountModel()
+        case let .updateCredential(id):
+            guard let account = accounts.first(where: { $0.id == id }) else { return }
+            reconnect(account)
+        case nil:
+            break
+        }
+    }
+
     /// The sheet, pre-filled and opened at the step that asks: an expired
     /// token needs consent, and consent is the one thing this application
     /// never collects itself. Reusing the sheet rather than growing a second
@@ -296,10 +342,10 @@ public struct SettingsPaneView: View {
 
     /// One account, and its form when it is the selected one.
     @ViewBuilder private func accountRow(_ account: AccountFfi) -> some View {
-        let open = selected == account.id
+        let open = accountCursor.cursor == account.id
         VStack(alignment: .leading, spacing: 0) {
             Button {
-                selected = open ? nil : account.id
+                accountCursor.put(cursor: open ? nil : account.id)
                 renamedTo = account.displayName
             } label: {
                 HStack(alignment: .top, spacing: 12) {
@@ -372,6 +418,40 @@ public struct SettingsPaneView: View {
                         .accessibilityLabel("Display name")
                     Button("Save") { actions.rename(account, to: renamedTo, through: session) }
                         .disabled(renamedTo == account.displayName || actions.isBusy)
+                }
+            }
+            field("SYNCING") {
+                // A switch rather than a button: it is a state, it can be
+                // read at a glance, and it is the one setting here that
+                // stops mail arriving. `Return` presses it.
+                Toggle(
+                    "Check this account for new mail",
+                    isOn: Binding(
+                        get: { account.enabled },
+                        set: { wanted in
+                            complain(session?.setAccountEnabled(account.id, wanted))
+                            reloadAccounts?()
+                        }
+                    )
+                )
+                .toggleStyle(.switch)
+                .disabled(actions.isBusy)
+            }
+            field("DEFAULT ACCOUNT") {
+                // "Default", never "primary" and never "main" (#960): the
+                // other words invite the reading the decision rules out —
+                // that this account is more the user's than the other one.
+                // There is no way to clear it, because the reversal of
+                // marking an account is marking another.
+                if account.isDefault {
+                    Text("New messages come from this account.")
+                        .foregroundStyle(.secondary)
+                } else {
+                    Button("Make this the default") {
+                        complain(session?.setDefaultAccount(account.id))
+                        reloadAccounts?()
+                    }
+                    .disabled(actions.isBusy)
                 }
             }
             field("LOCAL STORE") {

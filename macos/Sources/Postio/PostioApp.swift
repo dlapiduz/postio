@@ -77,6 +77,8 @@ struct PostioApp: App {
                 accounts: engine.accounts,
                 mailboxes: engine.mailboxes,
                 actions: engine.settingsActions,
+                accountCursor: engine.settingsAccounts,
+                reloadAccounts: { engine.refreshAccounts() },
                 session: engine.session
             )
                 .preferredColorScheme(engine.colorScheme)

@@ -293,6 +293,17 @@ pub const INTERCEPTED: &[postio_core::CommandId] = {
         C::OpenPartExternally,
         C::RenderPartOnce,
         C::OpenPart,
+        // The settings window's account verbs. Each acts on the row that
+        // window's keyboard is on -- a cursor no session holds -- and adding
+        // an account, replacing a credential and opening `config.toml` all
+        // need a surface besides.
+        C::AddAccount,
+        C::EditConfig,
+        C::ToggleAccountEnabled,
+        C::RemoveAccount,
+        C::UpdateCredential,
+        C::RebuildAccountIndex,
+        C::SetDefaultAccount,
         // The composer's own verbs. The draft being written is in a window
         // this frontend owns, unsaved, and the store has not seen most of
         // it -- so a session cannot answer these and the window does.

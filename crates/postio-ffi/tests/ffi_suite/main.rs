@@ -17,6 +17,7 @@
 //! it will change what its neighbours see.
 
 mod account_repair;
+mod account_switches;
 mod aiming;
 mod command_coverage;
 mod compose;

@@ -588,6 +588,23 @@ public final class PostioSession {
         inner.reindexAccount(account: account)
     }
 
+    /// Switch an account's syncing on or off.
+    ///
+    /// The row stays in the list: a disabled account is configured and not
+    /// syncing, which is a state to show rather than one to hide.
+    public func setAccountEnabled(_ account: Int64, _ enabled: Bool) -> String? {
+        inner.setAccountEnabled(account: account, enabled: enabled)
+    }
+
+    /// Make an account the one new messages come from when the message
+    /// itself does not say — and nothing else (#960).
+    ///
+    /// There is no way to clear it: the reversal of marking an account is
+    /// marking another, which is why the command carries no undo.
+    public func setDefaultAccount(_ account: Int64) -> String? {
+        inner.setDefaultAccount(account: account)
+    }
+
     /// Take an account away — its row, and its credentials. A mail client
     /// that forgets an account and keeps its password is worse than one that
     /// does not forget it.

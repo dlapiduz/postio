@@ -23,6 +23,7 @@ import Testing
             displayName: "Ada Lovelace",
             initials: "AL",
             isDefault: isDefault,
+            enabled: true,
             facts: facts,
             // The boundary's answer, not a word scanned out of `facts`. The
             // row used to derive "needs attention" by looking for "expired"

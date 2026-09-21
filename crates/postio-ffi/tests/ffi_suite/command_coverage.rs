@@ -54,14 +54,6 @@ const KNOWN_ORPHANS: &[(CommandId, &str)] = {
         (C::MoveSavedSearchUp, "#1574"),
         (C::MoveSavedSearchDown, "#1574"),
         (C::DeleteSavedSearch, "#1574"),
-        // #1575 -- the accounts pane's verbs have buttons and no commands.
-        (C::AddAccount, "#1575"),
-        (C::EditConfig, "#1575"),
-        (C::ToggleAccountEnabled, "#1575"),
-        (C::RemoveAccount, "#1575"),
-        (C::UpdateCredential, "#1575"),
-        (C::RebuildAccountIndex, "#1575"),
-        (C::SetDefaultAccount, "#1575"),
         // #1576 -- the reading pane, including the most-used key in a mail
         // client: `space` does not turn the page.
         (C::ToggleRail, "#1576"),

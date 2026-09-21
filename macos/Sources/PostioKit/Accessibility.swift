@@ -185,6 +185,16 @@ public enum Intercepted {
     public static let openPartExternally = "open_part_externally"
     public static let openPart = "open_part"
     public static let renderPartOnce = "render_part_once"
+    /// The settings window's account verbs. Every one acts on the row the
+    /// keyboard is on, which is `SettingsAccounts`'s cursor and this side's
+    /// alone; two of them need a sheet on top of that.
+    public static let addAccount = "add_account"
+    public static let editConfig = "edit_config"
+    public static let toggleAccountEnabled = "toggle_account_enabled"
+    public static let removeAccount = "remove_account"
+    public static let updateCredential = "update_credential"
+    public static let rebuildAccountIndex = "rebuild_account_index"
+    public static let setDefaultAccount = "set_default_account"
     public static let expandAll = "expand_all"
     public static let toggleFold = "toggle_fold"
     public static let nextInConversation = "next_in_conversation"
@@ -198,6 +208,8 @@ public enum Intercepted {
         nextFolder, prevFolder, toggleFolder,
         goToInbox, goToDrafts, goToSent, goToFlagged,
         openMessage, prevView, viewOriginal,
+        addAccount, editConfig, toggleAccountEnabled, removeAccount,
+        updateCredential, rebuildAccountIndex, setDefaultAccount,
         openParts, nextPart, prevPart,
         savePart, saveAllParts, openPartExternally, openPart, renderPartOnce,
         compose, reply, replyAll, forward,

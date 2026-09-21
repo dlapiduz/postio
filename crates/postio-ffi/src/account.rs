@@ -23,6 +23,13 @@ pub struct AccountFfi {
     /// and it says what the marker *does* rather than asserting a status —
     /// #960's fence is that this account is not more the user's than another.
     pub is_default: bool,
+    /// Whether the account participates in sync.
+    ///
+    /// Separate from the `disabled` fact below, which is the same state
+    /// worded for a person to read. A switch needs the flag: a pane deriving
+    /// its toggle by searching the fact line for a word would be reading
+    /// prose as an API, and the prose is allowed to change.
+    pub enabled: bool,
     /// The `·`-joined line under the address, in the order a person reads it:
     /// what kind of account, how it signs in, and how it stands right now.
     ///
@@ -111,6 +118,7 @@ impl AccountFfi {
             display_name: account.display_name.clone(),
             initials: postio_ui::row::initials(Some(&account.address)),
             is_default: account.is_default,
+            enabled: account.enabled,
             facts,
             needs_attention: token.is_expired(),
             repair: postio_ui::account::repair(account).into(),

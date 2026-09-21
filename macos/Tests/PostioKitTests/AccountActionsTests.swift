@@ -13,6 +13,7 @@ import Testing
             displayName: "Ada Lovelace",
             initials: "AL",
             isDefault: false,
+            enabled: true,
             facts: ["imap", "password"],
             needsAttention: false,
             repair: .nothing

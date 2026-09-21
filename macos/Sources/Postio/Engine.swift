@@ -193,6 +193,10 @@ final class Engine {
     /// would have to be open at the moment one landed.
     let settingsActions = AccountActions()
 
+    /// Which account row the settings window's keyboard is on, and the two
+    /// sheets a command can ask that window for. See `SettingsAccounts`.
+    let settingsAccounts = SettingsAccounts()
+
     /// The conversation the reading pane is showing (#1263).
     ///
     /// Held by the engine rather than by the view so that an event can fill
@@ -370,6 +374,48 @@ final class Engine {
         sidebarCursor = landed.rowId
         if SidebarWalk.opens(landed) { open(landed) }
         return true
+    }
+
+    /// Say what went wrong, if anything did.
+    ///
+    /// The settings verbs answer with a sentence or with nothing, and the
+    /// sentence is the boundary's. A refusal that vanished would leave a
+    /// switch that looks broken.
+    private func complain(_ said: String?) {
+        guard let said else { return }
+        notice = Notice(kind: .refused, message: said, undoable: false)
+        noticeToken += 1
+    }
+
+    /// Re-read the accounts after one of them changed.
+    ///
+    /// The rows are the boundary's answer, not a local copy to patch: a pane
+    /// that edited its own array would be drawing what it believes rather
+    /// than what was written.
+    func refreshAccounts() {
+        guard let session else { return }
+        accounts = session.accounts()
+    }
+
+    /// Open `config.toml` in whatever edits it.
+    ///
+    /// The path is `postio-config`'s, per platform and per
+    /// `$XDG_CONFIG_HOME` — a frontend that guessed would open a file
+    /// nothing loads. Created empty if it is not there yet, because a first
+    /// run has none and `NSWorkspace` cannot open what does not exist.
+    private func openConfigFile() {
+        guard let path = try? settingsPath() else {
+            complain("Postio could not work out where its configuration file lives.")
+            return
+        }
+        if !FileManager.default.fileExists(atPath: path) {
+            FileManager.default.createFile(atPath: path, contents: Data())
+        }
+        // POSTIO-CONSENT: `⌘E` — *Edit configuration* — and nothing else.
+        // What is handed out is Postio's own settings file, to whichever
+        // application the user has told macOS edits TOML; no message, no
+        // address, and no URL from anybody's mail is involved.
+        NSWorkspace.shared.open(URL(fileURLWithPath: path))
     }
 
     /// Go to the folder for `role`, or say there is none.
@@ -797,6 +843,36 @@ final class Engine {
             // whichever of these is open.
             showingPalette = false
             showingCheatSheet = false
+        // -- the settings window's accounts pane ------------------------
+        //
+        // All seven aim at the row that window's keyboard is on, and a
+        // missing cursor is a real answer: falling back to "the first
+        // account" would remove somebody's mail on a keystroke aimed at
+        // nothing (ADR 0005 Q6c).
+        case Intercepted.addAccount:
+            settingsWindow.raise()
+            settingsAccounts.ask(.add)
+        case Intercepted.editConfig:
+            openConfigFile()
+        case Intercepted.updateCredential:
+            guard let account = settingsAccounts.focused(in: accounts) else { return false }
+            settingsAccounts.ask(.updateCredential(account.id))
+        case Intercepted.toggleAccountEnabled:
+            guard let account = settingsAccounts.focused(in: accounts) else { return false }
+            complain(session?.setAccountEnabled(account.id, !account.enabled))
+            refreshAccounts()
+        case Intercepted.setDefaultAccount:
+            guard let account = settingsAccounts.focused(in: accounts) else { return false }
+            complain(session?.setDefaultAccount(account.id))
+            refreshAccounts()
+        case Intercepted.removeAccount:
+            // Asked about, never done: it takes the account's mail with it.
+            guard let account = settingsAccounts.focused(in: accounts) else { return false }
+            settingsActions.askToRemove(account)
+        case Intercepted.rebuildAccountIndex:
+            guard let account = settingsAccounts.focused(in: accounts) else { return false }
+            let session = session
+            Task { await settingsActions.reindex(account, through: session) }
         case Intercepted.openParts:
             guard let session, let message = target ?? cursorShowing else { return false }
             parts.show(session.messageParts(message))
