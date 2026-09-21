@@ -61,6 +61,9 @@ public struct SettingsPaneView: View {
     @State private var renamedTo = ""
     /// The remote-image grants, read when the Privacy pane appears.
     @State private var grants: [GrantFfi] = []
+    /// Every unsubscribe Postio has recorded, newest first. Read when the
+    /// Privacy pane appears, like the grants above it.
+    @State private var activations: [UnsubscribeActivationFfi] = []
     /// The new filter being typed, if one is.
     @State private var newFilterKey = ""
     @State private var newFilterQuery = ""
@@ -753,9 +756,44 @@ public struct SettingsPaneView: View {
                     }
                 }
             }
+            Divider()
+            field("UNSUBSCRIBED FROM") {
+                // The same argument the grants above make: an action the
+                // user cannot see afterwards is one they cannot audit, and
+                // "only on deliberate activation" only means something if
+                // the deliberate ones are reviewable.
+                //
+                // No Revoke beside these, and that is not an omission: the
+                // request has left. What is here is a record of what Postio
+                // did on your behalf, not a switch.
+                if activations.isEmpty {
+                    Text("Nothing yet. Unsubscribing only ever happens when you ask for it.")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                } else {
+                    VStack(alignment: .leading, spacing: 0) {
+                        ForEach(activations, id: \.label) { activation in
+                            HStack {
+                                Text(activation.listIdentifier)
+                                Spacer(minLength: PostioTokens.space4)
+                                Text(activation.when)
+                                    .font(.system(.footnote, design: .monospaced))
+                                    .foregroundStyle(.secondary)
+                            }
+                            .padding(.vertical, 4)
+                            .accessibilityElement(children: .ignore)
+                            .accessibilityLabel(activation.label)
+                            if activation.label != activations.last?.label { Divider() }
+                        }
+                    }
+                }
+            }
             Spacer(minLength: 0)
         }
-        .onAppear { grants = session?.remoteImageGrants() ?? [] }
+        .onAppear {
+            grants = session?.remoteImageGrants() ?? []
+            activations = session?.unsubscribeActivations() ?? []
+        }
     }
 
     /// The promises, as `docs/PRODUCT.md` states them.
