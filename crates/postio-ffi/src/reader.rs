@@ -118,3 +118,34 @@ pub struct ReaderActionFfi {
     /// Whether it gets the primary treatment. Exactly one does.
     pub primary: bool,
 }
+
+/// Where a page turn lands, given where the reader is now.
+///
+/// The reading pane's only scroll primitive is a same-document fragment
+/// navigation to the markers the shared document lays down — JavaScript is
+/// off in that view on purpose (ADR 0003), so there is no scroll-by-amount
+/// call to make. This is which marker to jump to, and it crosses rather than
+/// being done in Swift so the two frontends page identically.
+#[uniffi::export]
+pub fn reader_page_after(current: u32, forward: bool) -> u32 {
+    postio_ui::reader::document::page_after(current, forward)
+}
+
+/// The fragment for marker `page`: `pos-7`.
+///
+/// One spelling, shared with the anchors themselves, or a page key silently
+/// does nothing and nothing anywhere says why.
+#[uniffi::export]
+pub fn reader_page_fragment(page: u32) -> String {
+    postio_ui::reader::document::page_fragment(page)
+}
+
+/// The invisible anchors a page turn jumps between.
+///
+/// Crosses only so a test can build a document with them in it and prove the
+/// key actually moves the page — the application's documents already carry
+/// them, because `postio_ui::reader::document` puts them there.
+#[uniffi::export]
+pub fn reader_scroll_markers() -> String {
+    postio_ui::reader::document::scroll_markers()
+}

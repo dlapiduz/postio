@@ -500,6 +500,12 @@ final class Engine {
             // window, the selection and `aim` all are -- and this is the
             // table catching up with where it ended.
             controller.showCursor(on: row)
+            if cursorShowing != message {
+                // A new message starts at the top. Carrying the anchor over
+                // would resume somebody else's place in it.
+                readerPage = 0
+                readerPageToken += 1
+            }
             cursorShowing = message
             openConversation(atRow: row)
         case let .reindexProgress(_, done, total):
@@ -596,7 +602,7 @@ final class Engine {
             resolve: { [weak self] reduced, context, typing in
                 self?.session?.key(reduced, in: context, typing: typing) ?? .unhandled
             },
-            run: { [weak self] id in self?.run(id) },
+            run: { [weak self] id in self?.run(id) ?? false },
             pending: { [weak self] description in self?.pendingChord = description },
             context: { [weak self] in self?.context ?? .list }
         )
@@ -611,7 +617,8 @@ final class Engine {
     /// goes to `invoke`, where the boundary decides whether it is its own or
     /// the engine's. Keeping the list to two is what stops this becoming the
     /// hand-maintained command table #657 exists to prevent.
-    func run(_ id: String, on target: Int64? = nil) {
+    @discardableResult
+    func run(_ id: String, on target: Int64? = nil) -> Bool {
         // An overlay taking over means the message is no longer in front of
         // anybody, so a clock in flight must not fire. `DwellClock.stop` is
         // idempotent, so this costs nothing when none is armed.
@@ -682,7 +689,7 @@ final class Engine {
         case Intercepted.replyAll:
             write(replyDraft(all: true, to: target))
         case Intercepted.forward:
-            guard let session, let message = target ?? cursorShowing else { return }
+            guard let session, let message = target ?? cursorShowing else { return false }
             write(session.forwardDraft(message))
         case Intercepted.expandAll:
             conversation.expandAll()
@@ -697,10 +704,41 @@ final class Engine {
             // whichever of these is open.
             showingPalette = false
             showingCheatSheet = false
+        case Intercepted.scrollReaderDown, Intercepted.scrollReaderUp:
+            // Only the single-message pane pages this way: it is one
+            // document, so the shared anchors are in it and a fragment jump
+            // lands exactly. The conversation pane is a stack of documents
+            // inside a `ScrollView`, and the honest answer there is to *not*
+            // take the key — AppKit pages a scroll view on `space` itself,
+            // and a frontend claiming the key to do nothing is the bug this
+            // return value exists for.
+            guard showingThread == nil, cursorShowing != nil else { return false }
+            readerPage = readerPageAfter(
+                current: readerPage,
+                forward: id == Intercepted.scrollReaderDown
+            )
+            readerPageToken += 1
         default:
             session?.invoke(id)
         }
+        return true
     }
+
+    /// Which of the reading pane's scroll anchors it is on.
+    ///
+    /// A hardened web view has no scroll-by-amount call, so paging is a jump
+    /// between the anchors the shared document lays down — see
+    /// `ReaderPaging`. Reset when the message changes, or `space` on a new
+    /// message would resume somebody else's place in it.
+    private(set) var readerPage: UInt32 = 0
+
+    /// Bumped whenever a page turn is asked for.
+    ///
+    /// The *number* is not enough on its own: paging down at the last anchor
+    /// leaves it where it was, and a view watching the value would not
+    /// redraw — which is fine, but paging up from 0 twice has the same shape
+    /// and the token keeps the two honest.
+    private(set) var readerPageToken = 0
 
     /// Open a compose window for `draft`, or say why there is none.
     ///

@@ -78,7 +78,7 @@ pub use provisioning::{
 };
 pub use reader::{
     GrantFfi, InlinePart, ReaderActionFfi, ReaderNoticeFfi, RecipientsFfi, RemoteImagesFfi,
-    middle_truncate,
+    middle_truncate, reader_page_after, reader_page_fragment, reader_scroll_markers,
 };
 pub use registry::{CommandSpecFfi, MenuFfi, MenuSectionFfi, UiContext, UiRecovery, menus};
 pub use search::{ChipFfi, EmptyPlateFfi, MatchRangeFfi, OutcomeFfi, SnippetFfi, query_chips};

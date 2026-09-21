@@ -489,7 +489,13 @@ struct Shell: View {
             // Remote images blocked. `PRODUCT.md`'s "nothing leaves this
             // machine that the user did not ask for" starts at the tracking
             // pixel, and per-sender allowing is its own work.
-            ReaderView(session: session, message: showing, remoteImages: .blocked)
+            ReaderView(
+                session: session,
+                message: showing,
+                remoteImages: .blocked,
+                page: engine.readerPage,
+                pageToken: engine.readerPageToken
+            )
         } else {
             ContentUnavailableView(
                 "No message selected",

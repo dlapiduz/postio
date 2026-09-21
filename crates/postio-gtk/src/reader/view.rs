@@ -1620,9 +1620,12 @@ impl Reader {
         if !self.showing() {
             return;
         }
-        let next = (self.page.get() + 1).min(SCROLL_MARKERS - 1);
+        // The arithmetic and the spelling are `postio_ui::reader::document`'s
+        // now, so both frontends page the same way and neither can drift from
+        // the anchors the shared document lays down.
+        let next = postio_ui::reader::document::page_after(self.page.get(), true);
         self.page.set(next);
-        self.scroll_to_fragment(&format!("pos-{next}"));
+        self.scroll_to_fragment(&postio_ui::reader::document::page_fragment(next));
     }
 
     /// Scroll a thread document to one of its messages.
@@ -1646,9 +1649,9 @@ impl Reader {
         if !self.showing() {
             return;
         }
-        let previous = self.page.get().saturating_sub(1);
+        let previous = postio_ui::reader::document::page_after(self.page.get(), false);
         self.page.set(previous);
-        self.scroll_to_fragment(&format!("pos-{previous}"));
+        self.scroll_to_fragment(&postio_ui::reader::document::page_fragment(previous));
     }
 }
 

@@ -19,6 +19,18 @@ public struct ReaderView: NSViewRepresentable {
     /// reduces it to.
     private let original: Bool
     private let onHeight: ((CGFloat) -> Void)?
+    /// Which scroll anchor to sit on, and a token that changes every time it
+    /// is asked for.
+    ///
+    /// A hardened web view has no scroll-by-amount call — script that arrived
+    /// in the message is off (ADR 0003) — so paging is a jump between the
+    /// anchors the shared document lays down. See `ReaderPaging`.
+    ///
+    /// The token, not the page: paging down at the last anchor leaves the
+    /// number where it was, and a view watching the value alone would not
+    /// act on the press.
+    private let page: UInt32
+    private let pageToken: Int
 
     /// `onHeight` is how a *stacked* reader is drawn: inside a conversation
     /// the pane scrolls and each body is sized to its content, so the height
@@ -29,12 +41,16 @@ public struct ReaderView: NSViewRepresentable {
         message: Int64?,
         remoteImages: RemoteImagesFfi = .blocked,
         original: Bool = false,
+        page: UInt32 = 0,
+        pageToken: Int = 0,
         onHeight: ((CGFloat) -> Void)? = nil
     ) {
         self.session = session
         self.message = message
         self.remoteImages = remoteImages
         self.original = original
+        self.page = page
+        self.pageToken = pageToken
         self.onHeight = onHeight
     }
 
@@ -73,6 +89,10 @@ public struct ReaderView: NSViewRepresentable {
 
     public func updateNSView(_ view: WKWebView, context: Context) {
         context.coordinator.load(into: view, message: message, remote: remoteImages, original: original)
+        // After the load, so a page turn that arrives with a new message
+        // lands in the document that message produced rather than in the one
+        // being replaced.
+        context.coordinator.page(view, to: page, token: pageToken)
     }
 
     /// Holds the handlers and remembers what is on screen.
@@ -85,6 +105,10 @@ public struct ReaderView: NSViewRepresentable {
     public final class Coordinator {
         let cid: CidSchemeHandler
         let closed = ClosedSchemeHandler()
+        /// The last page turn acted on, so SwiftUI's repeated `updateNSView`
+        /// calls do not re-scroll a document somebody has since moved by
+        /// hand.
+        private var pagedTo: Int?
         let policy: ReaderNavigationPolicy
         private let session: PostioSession
         private var showing: Int64?
@@ -93,6 +117,17 @@ public struct ReaderView: NSViewRepresentable {
         private let gate = RenderGate()
         private var pending: Task<Void, Never>?
         private let onHeight: ((CGFloat) -> Void)?
+
+        /// Jump to scroll anchor `page`, once per `token`.
+        func page(_ view: WKWebView, to page: UInt32, token: Int) {
+            guard pagedTo != token else { return }
+            pagedTo = token
+            // Token zero is the initial state, not a press: acting on it
+            // would scroll every message to `pos-0` on open, which is where
+            // it already is and one round trip to say so.
+            guard token != 0 else { return }
+            Task { @MainActor in await ReaderPaging.scroll(view, to: page) }
+        }
 
         init(session: PostioSession, onHeight: ((CGFloat) -> Void)? = nil) {
             self.session = session

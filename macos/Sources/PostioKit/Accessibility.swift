@@ -143,6 +143,12 @@ public enum Intercepted {
     public static let replyAll = "reply_all"
     public static let forward = "forward"
     public static let toggleSidebar = "toggle_sidebar"
+    /// Paging the reading pane. Here rather than dispatched because the
+    /// document is this frontend's — and because a hardened web view has no
+    /// scroll call, so the jump between the shared anchors happens in the
+    /// view. See `ReaderPaging`.
+    public static let scrollReaderDown = "scroll_reader_down"
+    public static let scrollReaderUp = "scroll_reader_up"
     public static let expandAll = "expand_all"
     public static let toggleFold = "toggle_fold"
     public static let nextInConversation = "next_in_conversation"
@@ -152,6 +158,7 @@ public enum Intercepted {
     public static let all = [
         palette, cheatSheet, search, back, cyclePane, cyclePaneBack, focusSidebar, settings,
         toggleSidebar, expandAll, toggleFold, nextInConversation, prevInConversation,
+        scrollReaderDown, scrollReaderUp,
         compose, reply, replyAll, forward,
     ]
 }

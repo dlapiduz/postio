@@ -141,6 +141,36 @@ pub const SCROLL_MARKERS: u32 = 60;
 /// one screen either.
 pub const SCROLL_MARKER_STEP_VH: u32 = 90;
 
+/// Where a page turn lands, given where the reader is now.
+///
+/// The markers are the only scroll primitive a hardened web view leaves —
+/// JavaScript is off, so a same-document fragment navigation is all there
+/// is — and which one to jump to is arithmetic that both frontends were
+/// doing separately. GTK had it; macOS had no paging at all, so `space` and
+/// `Page_Down` were swallowed by the key monitor and did nothing, on the key
+/// a mail client is read with.
+///
+/// Clamped at both ends rather than wrapping. Past the last marker further
+/// presses are a no-op, the same as reaching the end of any scrollable view;
+/// a `space` that jumped back to the top would lose somebody's place in a
+/// long message with no way to tell it had happened.
+pub fn page_after(current: u32, forward: bool) -> u32 {
+    if forward {
+        (current + 1).min(SCROLL_MARKERS - 1)
+    } else {
+        current.saturating_sub(1)
+    }
+}
+
+/// The fragment for marker `page`, as a frontend navigates to it.
+///
+/// One spelling, so the anchors the document lays down and the fragments the
+/// frontends ask for cannot drift apart — which would be a page key that
+/// silently does nothing, and nothing anywhere to say why.
+pub fn page_fragment(page: u32) -> String {
+    format!("pos-{page}")
+}
+
 /// Invisible anchors spaced down the document, `#pos-0`, `#pos-1`, … — the
 /// frontends' `page_down`/`page_up` jump between them.
 ///
@@ -1903,5 +1933,27 @@ mod reader_view_prefers_markup_over_its_own_flattening {
             "and does not also draw the markup: {}",
             rendered.html
         );
+    }
+    #[test]
+    fn paging_stops_at_both_ends_rather_than_wrapping() {
+        // A `space` that jumped back to the top would lose somebody's place
+        // in a long message with nothing to say it had happened.
+        assert_eq!(page_after(0, false), 0);
+        assert_eq!(page_after(SCROLL_MARKERS - 1, true), SCROLL_MARKERS - 1);
+    }
+
+    #[test]
+    fn a_page_turn_moves_one_marker() {
+        assert_eq!(page_after(0, true), 1);
+        assert_eq!(page_after(7, true), 8);
+        assert_eq!(page_after(7, false), 6);
+    }
+
+    #[test]
+    fn the_fragment_names_the_anchor_the_document_laid_down() {
+        // The two have to agree or the key does nothing and says nothing.
+        let markers = scroll_markers();
+        assert!(markers.contains(&format!("id=\"{}\"", page_fragment(0))));
+        assert!(markers.contains(&format!("id=\"{}\"", page_fragment(SCROLL_MARKERS - 1))));
     }
 }

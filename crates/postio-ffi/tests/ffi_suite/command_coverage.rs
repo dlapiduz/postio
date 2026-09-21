@@ -95,8 +95,6 @@ const KNOWN_ORPHANS: &[(CommandId, &str)] = {
         (C::PrevView, "#1576"),
         (C::ViewOriginal, "#1576"),
         (C::ToggleRail, "#1576"),
-        (C::ScrollReaderDown, "#1576"),
-        (C::ScrollReaderUp, "#1576"),
         (C::ToggleResultOrder, "#1576"),
     ]
 };

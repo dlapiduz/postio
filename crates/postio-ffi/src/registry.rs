@@ -267,6 +267,8 @@ pub const INTERCEPTED: &[postio_core::CommandId] = {
         C::FocusSidebar,
         C::Settings,
         C::ToggleSidebar,
+        C::ScrollReaderDown,
+        C::ScrollReaderUp,
         C::ExpandAll,
         C::ToggleFold,
         C::NextInConversation,
