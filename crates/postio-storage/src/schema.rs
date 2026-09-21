@@ -612,9 +612,10 @@ CREATE TABLE sync_state (
 
 CREATE TABLE thread_links (
     account_id     INTEGER NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
-    -- Normalized by `RfcMessageId`: trimmed and angle-bracketed, so a lookup
-    -- matches without further munging. Compared case-insensitively, because
-    -- the wild does not agree on case.
+    -- The *folded* key (`RfcMessageId::folded`): trimmed, angle-bracketed
+    -- and lowercased, so binary equality is the type's own case-insensitive
+    -- identity and a plain index serves it (#1587). The wire-facing columns
+    -- on `messages` keep original case; this table never reaches the wire.
     rfc_message_id TEXT    NOT NULL,
     thread_id      INTEGER NOT NULL REFERENCES threads(id) ON DELETE CASCADE,
     PRIMARY KEY (account_id, rfc_message_id)
@@ -750,8 +751,16 @@ CREATE UNIQUE INDEX idx_signatures_name ON signatures (account_id, name);
 
 CREATE INDEX idx_sync_state_account ON sync_state (account_id);
 
+-- Plain, not `COLLATE NOCASE` (#1587): Turso's planner will not bind an
+-- equality through a collated index column — it seeks to `account_id` and
+-- walks every link the account has, once per message of a sync, which is a
+-- per-row cost that grows with the store. The case-insensitive identity
+-- moved into the key itself: `ThreadingRepository` writes and looks up
+-- `RfcMessageId::folded`, so binary equality means what NOCASE meant.
+-- The sibling of the rule the `_read` indexes already record: this planner
+-- reads through neither partial nor collated indexes.
 CREATE UNIQUE INDEX idx_thread_links_lookup
-    ON thread_links (account_id, rfc_message_id COLLATE NOCASE);
+    ON thread_links (account_id, rfc_message_id);
 
 CREATE INDEX idx_thread_links_thread ON thread_links (thread_id);
 

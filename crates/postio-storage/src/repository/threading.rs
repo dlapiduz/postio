@@ -168,7 +168,7 @@ impl<'a> ThreadingRepository<'a> {
                 SET thread_id = excluded.thread_id",
             )
             .await?
-            .execute(bind![self.account_id.get(), id.as_str(), thread_id.get()])
+            .execute(bind![self.account_id.get(), id.folded(), thread_id.get()])
             .await?;
         Ok(())
     }
@@ -215,9 +215,15 @@ impl<'a> ThreadingRepository<'a> {
     pub async fn thread_of(&self, id: &RfcMessageId) -> Result<Option<ThreadId>> {
         sql::first(
             self.connection,
+            // Binary equality against the folded key, deliberately: the
+            // comparison used to be `COLLATE NOCASE`, and Turso's planner
+            // will not bind an equality through a collated index column —
+            // it seeks to `account_id` and walks every link the account
+            // has, once per message, which is #1587's linear curve. The
+            // case-insensitivity lives in `RfcMessageId::folded` now.
             "SELECT thread_id FROM thread_links
-              WHERE account_id = ?1 AND rfc_message_id = ?2 COLLATE NOCASE",
-            bind![self.account_id.get(), id.as_str()],
+              WHERE account_id = ?1 AND rfc_message_id = ?2",
+            bind![self.account_id.get(), id.folded()],
             |row| Ok(ThreadId::new(row.col(0)?)),
         )
         .await
@@ -351,34 +357,40 @@ impl LoadedIndex {
         // sequential round trips, and the 31 s `write_ms` reported against a
         // `fetch_ms` of 610.
         //
-        // `COLLATE NOCASE` still applies to the comparison and
-        // `idx_thread_links_lookup` still covers it: `threading_lookup_cost`
-        // asserts the planner seeks rather than scans, with a control proving
-        // the instrument can still see a scan when there is one.
+        // Binary equality against folded keys — see `thread_of` for the
+        // Turso planner rule that retired `COLLATE NOCASE` here. The old
+        // gate asserted the planner *seeks*, and it did: a SEARCH that binds
+        // one column of a two-column key is a scan wearing a seek's clothes,
+        // which is why the gate asserts the bound columns now.
         let links: Vec<&RfcMessageId> = cue.links().collect();
         let mut by_id = std::collections::HashMap::new();
         if !links.is_empty() {
             let mut parameters = vec![turso::Value::from(account_id.get())];
-            parameters.extend(
-                links
-                    .iter()
-                    .map(|link| turso::Value::from(link.as_str().to_owned())),
-            );
-            let found = sql::all(
-                connection,
-                &format!(
-                    "SELECT rfc_message_id, thread_id FROM thread_links
-                      WHERE account_id = ?1
-                        AND rfc_message_id COLLATE NOCASE IN ({})",
-                    super::messages::placeholders(links.len(), 2)
-                ),
-                parameters,
-                |row| Ok((row.col::<String>(0)?, ThreadId::new(row.col(1)?))),
-            )
+            parameters.extend(links.iter().map(|link| turso::Value::from(link.folded())));
+            // `UNION ALL` of point lookups, not `IN`, and the difference is
+            // the whole of #1587 in one statement: this planner binds an
+            // equality per compound arm — `(account_id=? AND
+            // rfc_message_id=?)` each — but hands an `IN` on the index's
+            // second column a one-column prefix and walks every link the
+            // account has, per message, for the whole of a sync. Still one
+            // statement per chain, which is what the statement-count gate
+            // holds this to.
+            let arms: Vec<String> = (0..links.len())
+                .map(|n| {
+                    format!(
+                        "SELECT rfc_message_id, thread_id FROM thread_links \
+                          WHERE account_id = ?1 AND rfc_message_id = ?{}",
+                        n + 2
+                    )
+                })
+                .collect();
+            let found = sql::all(connection, &arms.join(" UNION ALL "), parameters, |row| {
+                Ok((row.col::<String>(0)?, ThreadId::new(row.col(1)?)))
+            })
             .await?;
-            // Keyed by what the *cue* spelled: `assign` looks these up by the
-            // link it holds, and the stored spelling may differ in case —
-            // which is the whole reason the comparison is `NOCASE`.
+            // Keyed by what the *cue* spelled: `assign` looks these up by
+            // the link it holds, and the stored key is folded — which is why
+            // the match here stays case-insensitive.
             for (stored, thread) in found {
                 if let Some(link) = links
                     .iter()
