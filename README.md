@@ -173,8 +173,10 @@ registry, keyboard commands in both layers, compose with rich text and
 attachments, scheduled send, notifications, a settings window with every
 pane, the message-parts panel — so an attachment can be saved, saved
 alongside its siblings, previewed in place or handed to another
-application — saved searches, the account verbs, and repairing an account
-whose credential has expired.
+application — saved searches, the account verbs, one-click unsubscribe
+with its activation log in Privacy settings, and repairing an account
+whose credential has expired, by password or by browser, whichever it
+broke by.
 
 **What does not, yet.** Four commands in the registry reach nothing here,
 and each is a decision rather than a wire:
@@ -191,10 +193,12 @@ and each is a decision rather than a wire:
 - `toggle_rail` needs the conversation rail, which is not drawn here yet
   ([#1576](https://github.com/dlapiduz/postio/issues/1576)).
 
-Beyond the command sweep: the scope rail, refine chips and sort control of
-[#1157](https://github.com/dlapiduz/postio/issues/1157) are still to come,
-and the sidebar's keyboard does not walk saved searches until it walks
-folders ([#1573](https://github.com/dlapiduz/postio/issues/1573)).
+Beyond the command sweep: the search bar has its chips, hit count, timing,
+refine chips, sort control and footer hints, but not the scope rail
+([#1157](https://github.com/dlapiduz/postio/issues/1157)) — which is the
+same design question as `next_scope` above. And the sidebar's keyboard does
+not walk saved searches until it walks folders
+([#1573](https://github.com/dlapiduz/postio/issues/1573)).
 
 `crates/postio-ffi/tests/ffi_suite/command_coverage.rs` is what keeps that
 second list honest: it sweeps every command in the registry and fails if one
