@@ -368,11 +368,27 @@ struct Shell: View {
                 // Empty is a state, not a blank. A list showing nothing and a
                 // list that failed to load look identical otherwise, and only
                 // one of them is worth waiting for.
-                ContentUnavailableView(
-                    "No messages",
-                    systemImage: "tray",
-                    description: Text("This store has no mail in it yet.")
-                )
+                //
+                // **Which** empty is the boundary's to say. A search that
+                // matched nothing has a row count of zero like an empty
+                // mailbox does, and this branch drew "This store has no mail
+                // in it yet." over both — over a mailbox holding thousands, a
+                // confident false statement about somebody's own mail. That
+                // is ADR 0005 Q10's worked example: you search for an
+                // invoice, find nothing, and conclude it does not exist.
+                if let plate = engine.session?.emptyPlate {
+                    ContentUnavailableView(
+                        plate.title,
+                        systemImage: "magnifyingglass",
+                        description: Text(plate.detail)
+                    )
+                } else {
+                    ContentUnavailableView(
+                        "No messages",
+                        systemImage: "tray",
+                        description: Text("This store has no mail in it yet.")
+                    )
+                }
             } else {
                 VStack(spacing: 0) {
                     // No search strip here any more: the field lives in the

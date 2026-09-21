@@ -260,12 +260,27 @@ final class Engine {
     /// action is going to hit.
     var selectionSummary: String? { session?.selectionSummary }
 
-    /// Whether the search field is open.
+    /// Whether the search field has the keyboard.
     ///
     /// A surface, like the palette, and handled here for the same reason: a
     /// session cannot present one. What it is *over* is the boundary's, which
     /// is why this is the only search state Swift keeps.
-    var showingSearch = false
+    ///
+    /// **It moves the key context with it**, and that is the point of the
+    /// property. `/` set the context and a *click* into the field did not, so
+    /// the two ways into search left the application in two different states:
+    /// with the field click-focused, `Save search as folder` and `Toggle
+    /// result order` were drawn disabled (their registry contexts are
+    /// `Context::Search`), and the `Escape` arm below could not match. GTK
+    /// says the same thing from the other side — *"focusing the field **is**
+    /// opening the box: a user who clicks it has asked the same question `/`
+    /// asks"*.
+    var showingSearch = false {
+        didSet {
+            guard showingSearch != oldValue else { return }
+            paneContext = showingSearch ? .search : pane.context
+        }
+    }
 
     /// Whether the command palette is open.
     ///
@@ -592,12 +607,26 @@ final class Engine {
             showingCheatSheet = true
         case Intercepted.search:
             showingSearch = true
-            paneContext = .search
-        case Intercepted.back where showingSearch:
-            // Escape in search closes it; `SearchField` restores the scope on
-            // its way out, so this only has to put the keyboard back.
+        case Intercepted.back where showingSearch || session?.isSearching == true:
+            // **Escape leaves search, scope and all.** It used to close the
+            // field and nothing else, on the strength of a comment saying
+            // "`SearchField` restores the scope on its way out" — and
+            // `SearchField.leave()` was reachable only from the × button and
+            // from submitting an empty query, because the key monitor runs
+            // ahead of the responder chain and swallowed `escape` before
+            // SwiftUI's `.onKeyPress` ever saw it. So the results stayed, the
+            // query stayed, nothing labelled the list as results, and the
+            // only way back to the folder was the mouse.
+            //
+            // `isSearching` as well as `showingSearch`, because the keyboard
+            // may have moved on to the list while the results are still up —
+            // that is the case GTK's #1474 arm exists for, and `Escape` has
+            // to mean the same thing in both.
             showingSearch = false
-            paneContext = pane.context
+            if session?.isSearching == true {
+                _ = session?.clearSearch()
+                listChanged()
+            }
         case Intercepted.cyclePane:
             // The visual order — sidebar, list, reader — and it wraps. A
             // focus order that disagrees with the layout is how a

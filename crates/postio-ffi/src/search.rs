@@ -122,6 +122,21 @@ pub fn query_chips(query: String) -> Vec<ChipFfi> {
         .collect()
 }
 
+/// What to draw over a list with nothing in it.
+///
+/// Two sentences, both the core's. A frontend that composed its own would be
+/// composing the same ones again and getting them different — and this is the
+/// family of sentence where being different means being *wrong*, not merely
+/// inconsistent: "No messages" over a search that matched nothing is a claim
+/// about the user's mail that is false (ADR 0005 Q10).
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct EmptyPlateFfi {
+    /// The heading. *No matches*, not *No messages*.
+    pub title: String,
+    /// The sentence under it, including what could not be searched.
+    pub detail: String,
+}
+
 /// What one search turned out to be, as the field's right-hand end says it.
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct OutcomeFfi {

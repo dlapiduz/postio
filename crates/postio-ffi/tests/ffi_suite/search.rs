@@ -315,3 +315,55 @@ async fn a_search_reports_what_it_turned_out_to_be() {
     );
     session.shutdown();
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_query_that_matched_nothing_blames_the_query_and_not_the_mailbox() {
+    // ADR 0005 Q10's worked example: somebody searches for an invoice, finds
+    // nothing, and concludes it does not exist. The macOS list drew "This
+    // store has no mail in it yet." over a zero-hit search -- over a mailbox
+    // with three messages in it -- because the only empty-state branch it had
+    // was keyed on the row count, and a search's row count is its hit count.
+    let (session, scope) = searchable().await;
+    session.open_scope(scope);
+
+    assert!(
+        session.empty_plate().is_none(),
+        "a folder with rows in it needs no plate at all"
+    );
+
+    session.search("zzzznothingmatchesthis").await;
+    assert_eq!(session.row_count(), 0, "the fixture matched something");
+
+    let plate = session
+        .empty_plate()
+        .expect("a search that matched nothing has something to say");
+    assert_eq!(plate.title, "No matches");
+    assert!(
+        plate.detail.contains("zzzznothingmatchesthis"),
+        "the sentence has to name the query that found nothing: {}",
+        plate.detail
+    );
+    assert!(
+        !plate.detail.contains("no mail"),
+        "the mailbox is not empty -- the query is: {}",
+        plate.detail
+    );
+    session.shutdown();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn leaving_the_search_leaves_its_sentence_behind_too() {
+    // The plate is about the query, so it must not outlive it: `Escape`
+    // restores the folder, and a folder with mail in it has nothing to say.
+    let (session, scope) = searchable().await;
+    session.open_scope(scope);
+    session.search("zzzznothingmatchesthis").await;
+    assert!(session.empty_plate().is_some());
+
+    session.clear_search();
+    assert!(
+        session.empty_plate().is_none(),
+        "the folder is back and it is not empty"
+    );
+    session.shutdown();
+}

@@ -503,6 +503,13 @@ pub struct Session {
     /// Held rather than recomputed: the timing is a fact about the run that
     /// happened, and a second search to measure the first would be absurd.
     outcome: Mutex<Option<postio_ui::search::Outcome>>,
+    /// What was last asked for, verbatim.
+    ///
+    /// Kept because an empty result set has to say *which* query found
+    /// nothing — "No messages" over a mailbox holding thousands is a
+    /// confident false statement about somebody's own mail, and the sentence
+    /// that is not a lie needs the query in it (ADR 0005 Q10).
+    query: Mutex<Option<String>>,
     /// The scope to come back to when a search is cleared.
     ///
     /// Held here rather than remembered by the frontend, because a frontend
@@ -1024,6 +1031,12 @@ impl Session {
         self.search_outcome()
     }
 
+    /// What to draw over an empty list. See [`Session::empty_plate`].
+    #[uniffi::method(name = "emptyPlate")]
+    pub fn empty_plate_ffi(&self) -> Option<crate::EmptyPlateFfi> {
+        self.empty_plate()
+    }
+
     /// Whether the list is showing search results rather than a folder.
     #[uniffi::method(name = "isSearching")]
     pub fn is_searching_ffi(&self) -> bool {
@@ -1491,6 +1504,7 @@ impl Session {
                 )),
                 hits: Mutex::new(None),
                 outcome: Mutex::new(None),
+                query: Mutex::new(None),
                 resting: Mutex::new(None),
                 anchor: Mutex::new(None),
                 paging: Mutex::new(postio_ui::paging::Paging::default()),
@@ -1577,6 +1591,7 @@ impl Session {
             store_at,
             hits: Mutex::new(None),
             outcome: Mutex::new(None),
+            query: Mutex::new(None),
             resting: Mutex::new(None),
             anchor: Mutex::new(None),
             paging: Mutex::new(postio_ui::paging::Paging::default()),
@@ -3507,6 +3522,7 @@ impl Session {
             .collect();
         *self.hits.lock().expect("hits lock") = Some(hits);
         *self.outcome.lock().expect("outcome lock") = Some(outcome);
+        *self.query.lock().expect("query lock") = Some(query.to_owned());
         // The ranking is the list now; the scope is set aside, not left, and
         // `scope_in_view` says why nothing sees it until the search closes.
         let total = self
@@ -3529,6 +3545,7 @@ impl Session {
         }
         *self.hits.lock().expect("hits lock") = None;
         *self.outcome.lock().expect("outcome lock") = None;
+        *self.query.lock().expect("query lock") = None;
         let resting = self.resting.lock().expect("resting lock").take();
         match resting {
             // Opening the scope again is leaving the results.
@@ -3571,6 +3588,41 @@ impl Session {
             readout: postio_ui::search::readout(outcome),
             spoken: postio_ui::search::spoken_readout(outcome),
             hits: outcome.hits,
+        })
+    }
+
+    /// What to draw over a list with nothing in it.
+    ///
+    /// **`None` when there are rows**, and `None` when the empty list is an
+    /// empty *folder* — that plate is the frontend's own and says something
+    /// different. This answers the one case a frontend cannot work out for
+    /// itself without re-deriving the search: the query matched nothing.
+    ///
+    /// The distinction is the whole point. `postio_ui::list_state` keeps
+    /// `NoMatches` separate from `InboxZero` because *the mailbox is not
+    /// empty — the query is*, and a list that says "This store has no mail in
+    /// it yet." over a search is making a confident false statement about
+    /// somebody's own mail. ADR 0005 Q10 names this exact scenario: someone
+    /// searches for an invoice, finds nothing, and concludes it does not
+    /// exist.
+    ///
+    /// The wording is the shared one, so both frontends make the same claim
+    /// and disclose the same caveat.
+    pub fn empty_plate(&self) -> Option<crate::EmptyPlateFfi> {
+        if self.row_count() > 0 || !self.is_searching() {
+            return None;
+        }
+        let query = self.query.lock().expect("query lock").clone()?;
+        let incomplete = self
+            .outcome
+            .lock()
+            .expect("outcome lock")
+            .as_ref()
+            .map(|outcome| outcome.unreachable.clone())
+            .unwrap_or_default();
+        Some(crate::EmptyPlateFfi {
+            title: postio_ui::list_state::no_matches_title().to_owned(),
+            detail: postio_ui::list_state::no_matches_detail(&query, &incomplete),
         })
     }
 

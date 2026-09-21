@@ -93,10 +93,18 @@ struct SearchField: View {
             if wanted { focused = true }
         }
         .onChange(of: focused) { _, has in
-            // Losing the keyboard is leaving search as far as the *keyboard*
-            // is concerned; the results stay on screen until they are
-            // cleared, which is what a search field on a toolbar means.
-            if !has { wantsFocus = false }
+            // **Both directions.** Gaining the keyboard by *clicking* is
+            // asking the same question `/` asks, and until this said so the
+            // mouse path and the key path left the application in two
+            // different states: the engine went on believing the list had
+            // the keyboard, so `Save search as folder` and `Toggle result
+            // order` were drawn disabled — their registry contexts are
+            // `Context::Search` — and `Escape` found nothing to leave.
+            //
+            // Losing it is leaving search as far as the *keyboard* is
+            // concerned; the results stay on screen until they are cleared,
+            // which is what a search field on a toolbar means.
+            wantsFocus = has
         }
         // Reading `ran` here is what makes the readout above re-evaluate:
         // `searchOutcome` reads through to the boundary, which SwiftUI has no

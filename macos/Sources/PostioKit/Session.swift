@@ -236,6 +236,16 @@ public final class PostioSession {
     /// Whether the list is showing search results rather than a folder.
     public var isSearching: Bool { inner.isSearching() }
 
+    /// What to draw over a list with nothing in it, when the boundary has
+    /// something to say about *why* it is empty.
+    ///
+    /// `nil` for an empty folder — that plate is this frontend's own and says
+    /// something different. The case the boundary has to answer is a search
+    /// that matched nothing: its row count is zero exactly like an empty
+    /// mailbox's, so a list keyed on the count alone says "no mail" about a
+    /// mailbox holding thousands (ADR 0005 Q10).
+    public var emptyPlate: EmptyPlateFfi? { inner.emptyPlate() }
+
     /// The excerpt for `message`, with the match located.
     ///
     /// Text and byte ranges, never marked-up text — the same decision the

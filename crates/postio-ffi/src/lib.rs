@@ -78,7 +78,7 @@ pub use reader::{
     middle_truncate,
 };
 pub use registry::{CommandSpecFfi, MenuFfi, MenuSectionFfi, UiContext, UiRecovery, menus};
-pub use search::{ChipFfi, MatchRangeFfi, OutcomeFfi, SnippetFfi, query_chips};
+pub use search::{ChipFfi, EmptyPlateFfi, MatchRangeFfi, OutcomeFfi, SnippetFfi, query_chips};
 pub use session::{HANDLED_HERE, Session, SessionError, SessionOptions};
 pub use settings::{
     AppearanceFfi, AttachmentFetchFfi, BodyFetchFfi, CheckForMailFfi, ComposingFfi, DensityFfi,
