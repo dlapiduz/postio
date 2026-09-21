@@ -144,7 +144,7 @@ pub fn update_credential_opens_a_prefilled_dialog_without_disturbing_the_window(
              window.set_content the way onboarding::install's first-run path does"
         );
         assert!(
-            window.content().and_downcast::<Onboarding>().is_none(),
+            Onboarding::showing_in(&window).is_none(),
             "the credential dialog replaced the window's content instead of \
              floating over it"
         );

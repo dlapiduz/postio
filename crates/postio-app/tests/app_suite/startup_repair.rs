@@ -33,7 +33,6 @@
 // is the one moment it is sound. The crate's library code forbids `unsafe`.
 
 use crate::settle_until;
-use adw::prelude::*;
 use gtk::{gdk, glib};
 use postio_account::secret::MemorySecretStore;
 use postio_app::notifications;
@@ -47,7 +46,7 @@ use std::sync::Arc;
 
 /// The onboarding screen, if that is what the window is showing.
 fn screen(window: &Window) -> Option<Onboarding> {
-    window.content().and_downcast::<Onboarding>()
+    Onboarding::showing_in(window)
 }
 
 pub fn an_account_with_no_credential_lands_on_the_repair_screen() {

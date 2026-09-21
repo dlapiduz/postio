@@ -339,18 +339,53 @@ impl LoadedIndex {
         cue: &ThreadCue,
         exclude: Option<ThreadId>,
     ) -> Result<Self> {
+        // One statement for the whole chain, not one per ancestor.
+        //
+        // This asked the database once per link, in series. `cue.links()` is
+        // the `References`/`In-Reply-To` chain, so its length is the depth of
+        // the conversation — and `commit_batch` threads one message at a time,
+        // paying that for every message in every batch, inside the
+        // transaction, holding the write gate. Counted: 3 statements to thread
+        // a message with no ancestors against 43 with forty, which on a real
+        // Sent folder at two hundred messages a batch is thousands of
+        // sequential round trips, and the 31 s `write_ms` reported against a
+        // `fetch_ms` of 610.
+        //
+        // `COLLATE NOCASE` still applies to the comparison and
+        // `idx_thread_links_lookup` still covers it: `threading_lookup_cost`
+        // asserts the planner seeks rather than scans, with a control proving
+        // the instrument can still see a scan when there is one.
+        let links: Vec<&RfcMessageId> = cue.links().collect();
         let mut by_id = std::collections::HashMap::new();
-        for link in cue.links() {
-            let found: Option<i64> = sql::first(
+        if !links.is_empty() {
+            let mut parameters = vec![turso::Value::from(account_id.get())];
+            parameters.extend(
+                links
+                    .iter()
+                    .map(|link| turso::Value::from(link.as_str().to_owned())),
+            );
+            let found = sql::all(
                 connection,
-                "SELECT thread_id FROM thread_links
-                  WHERE account_id = ?1 AND rfc_message_id = ?2 COLLATE NOCASE",
-                bind![account_id.get(), link.as_str()],
-                |row| row.col(0),
+                &format!(
+                    "SELECT rfc_message_id, thread_id FROM thread_links
+                      WHERE account_id = ?1
+                        AND rfc_message_id COLLATE NOCASE IN ({})",
+                    super::messages::placeholders(links.len(), 2)
+                ),
+                parameters,
+                |row| Ok((row.col::<String>(0)?, ThreadId::new(row.col(1)?))),
             )
             .await?;
-            if let Some(thread) = found {
-                by_id.insert(link.as_str().to_owned(), ThreadId::new(thread));
+            // Keyed by what the *cue* spelled: `assign` looks these up by the
+            // link it holds, and the stored spelling may differ in case —
+            // which is the whole reason the comparison is `NOCASE`.
+            for (stored, thread) in found {
+                if let Some(link) = links
+                    .iter()
+                    .find(|link| link.as_str().eq_ignore_ascii_case(&stored))
+                {
+                    by_id.insert(link.as_str().to_owned(), thread);
+                }
             }
         }
 

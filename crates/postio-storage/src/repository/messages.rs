@@ -25,8 +25,9 @@ use std::collections::{BTreeMap, BTreeSet};
 use chrono::{DateTime, Utc};
 use postio_model::{
     AccountId, Attachment, BlobId, BodyState, Disposition, DraftState, EmailAddress, Flag, FlagSet,
-    Generation, LabelId, LocalSyncState, MailboxId, Message, MessageId, ModSeq, OperationRange,
-    RemoteId, RfcMessageId, ServerIdentifiers, ThreadId, Uid, UidValidity, normalize_subject,
+    Generation, LabelId, LocalSyncState, MailboxId, MailboxRole, Message, MessageId, ModSeq,
+    OperationRange, RemoteId, RfcMessageId, ServerIdentifiers, ThreadId, Uid, UidValidity,
+    normalize_subject,
 };
 
 /// Which messages a list shows.
@@ -584,8 +585,11 @@ pub struct BackfillCandidate {
     pub remote_id: RemoteId,
     /// `RFC822.SIZE`, as the header fetch reported it.
     pub size: u64,
-    /// When the server received it. The backlog's sort key.
+    /// When the server received it. The backlog's secondary sort key.
     pub received_at: DateTime<Utc>,
+    /// That mailbox's role, so the backlog can rank a body by the folder it
+    /// is in before it ranks it by date.
+    pub mailbox_role: MailboxRole,
 }
 
 /// What an account's mail costs, and how much of it is here.
@@ -1583,7 +1587,7 @@ impl<'a> MessageRepository<'a> {
         sql::all(
             self.connection,
             "SELECT messages.id, messages.uid, messages.size, messages.received_at,
-                    mailboxes.path, messages.remote_id
+                    mailboxes.path, messages.remote_id, mailboxes.role
                FROM messages JOIN mailboxes ON mailboxes.id = messages.mailbox_id
               WHERE messages.mailbox_id = ?1
                 AND messages.body_headers IS NULL
@@ -1595,7 +1599,7 @@ impl<'a> MessageRepository<'a> {
               ORDER BY messages.received_at DESC
               LIMIT ?2",
             bind![mailbox_id.get(), limit],
-            |row| read_backfill_candidate(row, mailbox_id),
+            |row| read_backfill_candidate(row, mailbox_id, role_at(row, 6)?),
         )
         .await
     }
@@ -1776,7 +1780,7 @@ impl<'a> MessageRepository<'a> {
         sql::all(
             self.connection,
             "SELECT messages.id, messages.uid, messages.size, messages.received_at,
-                    mailboxes.path, messages.remote_id
+                    mailboxes.path, messages.remote_id, mailboxes.role
                FROM messages JOIN mailboxes ON mailboxes.id = messages.mailbox_id
               WHERE messages.mailbox_id = ?1
                 AND messages.body_state = 'partial'
@@ -1790,7 +1794,7 @@ impl<'a> MessageRepository<'a> {
               ORDER BY messages.received_at DESC
               LIMIT ?2 OFFSET ?3",
             bind![mailbox_id.get(), limit, offset],
-            |row| read_backfill_candidate(row, mailbox_id),
+            |row| read_backfill_candidate(row, mailbox_id, role_at(row, 6)?),
         )
         .await
     }
@@ -1849,7 +1853,7 @@ impl<'a> MessageRepository<'a> {
         sql::all(
             self.connection,
             "SELECT messages.id, messages.uid, messages.size, messages.received_at,
-                    mailboxes.path, messages.remote_id
+                    mailboxes.path, messages.remote_id, mailboxes.role
                FROM messages JOIN mailboxes ON mailboxes.id = messages.mailbox_id
               WHERE messages.mailbox_id = ?1
                 AND (messages.body_state IN ('not_fetched', 'headers_only')
@@ -1866,7 +1870,7 @@ impl<'a> MessageRepository<'a> {
                 offset,
                 postio_model::mime::PARSER_VERSION
             ],
-            |row| read_backfill_candidate(row, mailbox_id),
+            |row| read_backfill_candidate(row, mailbox_id, role_at(row, 6)?),
         )
         .await
     }
@@ -1973,7 +1977,8 @@ impl<'a> MessageRepository<'a> {
             .connection
             .prepare(
                 "SELECT messages.id, messages.uid, messages.size, messages.received_at,
-                    mailboxes.path, messages.remote_id, messages.mailbox_id
+                    mailboxes.path, messages.remote_id, messages.mailbox_id,
+                    mailboxes.role
                FROM messages JOIN mailboxes ON mailboxes.id = messages.mailbox_id
               WHERE messages.id = ?1
                 AND messages.body_state <> 'full'
@@ -1984,7 +1989,7 @@ impl<'a> MessageRepository<'a> {
             .await?;
         crate::sql::first_of(&mut statement, [message_id.get()], |row| {
             let mailbox_id = MailboxId::new(row.col(6)?);
-            read_backfill_candidate(row, mailbox_id)
+            read_backfill_candidate(row, mailbox_id, role_at(row, 7)?)
         })
         .await
     }
@@ -2459,7 +2464,19 @@ async fn find_by_generation_uid(
 /// mailbox_path)`, in that order — the shared column shape of
 /// [`MessageRepository::needing_backfill`] and
 /// [`MessageRepository::backfill_candidate`].
-fn read_backfill_candidate(row: &Row, mailbox_id: MailboxId) -> Result<BackfillCandidate> {
+/// The mailbox role at `index`, for the queries that carry one.
+fn role_at(row: &Row, index: usize) -> Result<MailboxRole> {
+    let role: String = row.col(index)?;
+    MailboxRole::from_name(&role).ok_or_else(|| unknown_enum("mailboxes.role", role))
+}
+
+/// `mailbox_role` is passed rather than read from a fixed column: four
+/// queries share this reader and they do not agree on a column layout.
+fn read_backfill_candidate(
+    row: &Row,
+    mailbox_id: MailboxId,
+    mailbox_role: MailboxRole,
+) -> Result<BackfillCandidate> {
     Ok(BackfillCandidate {
         message_id: MessageId::new(row.col(0)?),
         mailbox_id,
@@ -2468,6 +2485,11 @@ fn read_backfill_candidate(row: &Row, mailbox_id: MailboxId) -> Result<BackfillC
         received_at: from_millis(row.col(3)?),
         mailbox_path: row.col(4)?,
         remote_id: RemoteId::new(row.col::<String>(5)?),
+        // Carried so the backfill queue can rank a body by the folder it is
+        // in. The queue is one heap across every mailbox, and without this it
+        // can only order by date — which hands back the newest body anywhere,
+        // so a large Archive outranks the inbox it was seeded behind.
+        mailbox_role,
     })
 }
 

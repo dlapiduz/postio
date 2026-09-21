@@ -116,7 +116,27 @@ pub async fn install(
 ) {
     let screen = Onboarding::new();
     let previous = window.content();
-    window.set_content(Some(&screen));
+    // Under the window's chrome, not instead of it.
+    //
+    // `set_content` replaces everything, and everything is where this window
+    // keeps its header bar — so the wizard had no title bar and no close
+    // button, and a first run could only be left by killing the process
+    // (there is no `quit` command either). Giving the *screen* a header
+    // instead put a title bar inside the wizard's own content, which draws as
+    // part of the wizard rather than as the window's and looks wrong.
+    //
+    // So the screen goes in an `AdwToolbarView` of its own, whose top bar is
+    // the window's title bar for as long as the wizard is up: flat and
+    // title-less, because canvas 3e draws the wizard's own heading and a
+    // second title would be two answers to "where am I", but carrying the
+    // window controls, which is the whole point.
+    let chrome = adw::ToolbarView::new();
+    let bar = adw::HeaderBar::new();
+    bar.set_show_title(false);
+    bar.add_css_class("flat");
+    chrome.add_top_bar(&bar);
+    chrome.set_content(Some(&screen));
+    window.set_content(Some(&chrome));
     match &repairing {
         Some(account) => {
             screen.set_address(&account.address.address);

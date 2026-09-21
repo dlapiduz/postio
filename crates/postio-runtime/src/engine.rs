@@ -3561,6 +3561,7 @@ mod tests {
             uid: postio_model::Uid::new(n),
             remote_id: postio_model::RemoteId::new(format!("1:{n}")),
             size: 100,
+            rank: 0,
             received_at: Utc::now(),
             want: postio_sync::Want::Text,
         }

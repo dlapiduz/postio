@@ -370,7 +370,20 @@ pub struct BodyRequest {
     /// `RFC822.SIZE`, as the header fetch reported it — what the cap is
     /// measured against.
     pub size: u64,
-    /// When the server received it. The backlog's sort key.
+    /// Where this body's mailbox sits in the sync queue, from
+    /// [`crate::order::sync_priority`]. **Lower is fetched sooner**, and it
+    /// outranks [`received_at`](Self::received_at) entirely.
+    ///
+    /// Seeding already walks mailboxes in this order — `top_up_backfill`
+    /// sorts by it and so does `queue_every_mailbox` — but seeding order is
+    /// not delivery order. The backlog is one `BinaryHeap` across every
+    /// mailbox, so whatever it holds is re-sorted on the way out; ranked by
+    /// date alone it hands back the newest body *anywhere*. On a real account
+    /// that meant a 60,934-message Archive outranking the inbox it had been
+    /// seeded behind, and the inbox stayed unreadable while the archive
+    /// filled.
+    pub rank: u8,
+    /// When the server received it. The backlog's sort key *within* a rank.
     pub received_at: DateTime<Utc>,
     /// Which bytes of it to ask the server for.
     pub want: Want,
@@ -448,6 +461,7 @@ impl From<BackfillCandidate> for BodyRequest {
             uid: candidate.uid,
             remote_id: candidate.remote_id,
             size: candidate.size,
+            rank: crate::order::sync_priority(candidate.mailbox_role),
             received_at: candidate.received_at,
             // The text axis is the default; the payload axis opts in.
             want: Want::Text,
@@ -539,9 +553,18 @@ impl Ord for Entry {
         // `BinaryHeap` is a max-heap, so "greater" must mean "fetch sooner":
         // the most recently received message, ties broken by the higher UID so
         // the order is total and a test can assert it.
-        self.0
-            .received_at
-            .cmp(&other.0.received_at)
+        //
+        // Rank comes first, and reversed, because a *lower* `sync_priority`
+        // means sooner. Without it this ordering is by date alone across every
+        // mailbox at once, which is not what seeding intended: the inbox is
+        // seeded first and then immediately outranked by anything newer in a
+        // folder behind it. A person whose archive holds this month's mail
+        // watches it fill while their inbox stays unreadable.
+        other
+            .0
+            .rank
+            .cmp(&self.0.rank)
+            .then_with(|| self.0.received_at.cmp(&other.0.received_at))
             .then_with(|| self.0.uid.get().cmp(&other.0.uid.get()))
             .then_with(|| other.0.message.get().cmp(&self.0.message.get()))
     }
@@ -1938,9 +1961,55 @@ mod tests {
             path: "INBOX".to_owned(),
             uid: Uid::new(uid),
             size,
+            rank: crate::order::sync_priority(postio_model::MailboxRole::Inbox),
             received_at: at(uid as i64),
             want: Want::Text,
         }
+    }
+
+    /// The same request, but in a folder that syncs after the inbox.
+    fn from_archive(uid: u32, received: i64) -> BodyRequest {
+        let mut request = request(uid, 1);
+        request.mailbox = MailboxId::new(2);
+        request.path = "Archive".to_owned();
+        request.rank = crate::order::sync_priority(postio_model::MailboxRole::Archive);
+        request.received_at = at(received);
+        request
+    }
+
+    #[test]
+    fn an_inbox_body_is_fetched_before_a_newer_one_from_the_archive() {
+        // The failure this is about: seeding walks mailboxes in
+        // `sync_priority` order, but the backlog is one heap across all of
+        // them and re-sorts on the way out. Ordered by date alone, an archive
+        // holding this month's mail outranks the inbox entirely — measured on
+        // a real account as 204 inbox headers landing in four seconds and not
+        // one inbox *body* arriving while 60,934 archived messages went past.
+        let mut heap = BinaryHeap::new();
+        heap.push(Entry(from_archive(9, 500))); // newer, but archived
+        heap.push(Entry(request(1, 1))); // older, but in the inbox
+
+        let first = heap.pop().expect("a body").0;
+
+        assert_eq!(
+            first.path, "INBOX",
+            "the archive outranked the inbox on date, which is how an inbox \
+             stays unreadable while a large folder backfills"
+        );
+    }
+
+    #[test]
+    fn within_one_folder_the_newest_body_still_comes_first() {
+        // Rank is the *primary* key, not the only one: two bodies from the
+        // same mailbox must still come back newest first, which is what makes
+        // a list readable from the top as it fills.
+        let mut heap = BinaryHeap::new();
+        heap.push(Entry(from_archive(1, 100)));
+        heap.push(Entry(from_archive(2, 900)));
+
+        let first = heap.pop().expect("a body").0;
+
+        assert_eq!(first.uid.get(), 2, "the older archived body came first");
     }
 
     #[test]

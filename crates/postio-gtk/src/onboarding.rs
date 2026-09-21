@@ -479,6 +479,32 @@ impl Onboarding {
         Self::default()
     }
 
+    /// The screen `window` is showing, if it is showing one.
+    ///
+    /// The caller mounts this under the window's own chrome rather than as
+    /// the window's whole content: a wizard needs a title bar with a close
+    /// button, and one drawn *inside* the wizard reads as part of the wizard
+    /// rather than as the window's — which is what it looked like when the
+    /// header lived here. So `window.content()` is the chrome, not the
+    /// screen, and everything that used to reach the screen by downcasting
+    /// the content asks here instead.
+    pub fn showing_in(window: &crate::window::Window) -> Option<Self> {
+        fn search(widget: &gtk::Widget) -> Option<Onboarding> {
+            if let Ok(found) = widget.clone().downcast::<Onboarding>() {
+                return Some(found);
+            }
+            let mut child = widget.first_child();
+            while let Some(current) = child {
+                if let Some(found) = search(&current) {
+                    return Some(found);
+                }
+                child = current.next_sibling();
+            }
+            None
+        }
+        window.content().and_then(|content| search(&content))
+    }
+
     /// The name as typed, for the `From` header and the sidebar label.
     /// Empty means the user left it blank.
     pub fn name(&self) -> String {
