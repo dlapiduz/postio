@@ -55,7 +55,11 @@ struct SearchField: View {
                     .opacity(chip.complete ? 1 : 0.6)
                     .accessibilityLabel(chip.spoken)
             }
-            TextField("Search mail", text: $query)
+            // The placeholder names the key that focuses it, from the
+            // keymap: #1260's last line is that the application teaches its
+            // own keyboard, and `/` was in `docs/keybindings.md` and nowhere
+            // anybody would see it.
+            TextField(SearchHint.placeholder(bindings: session.bindings(for: "search")), text: $query)
                 .textFieldStyle(.plain)
                 .focused($focused)
                 .onSubmit(run)
