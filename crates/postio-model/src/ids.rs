@@ -304,6 +304,25 @@ impl RfcMessageId {
     pub fn without_brackets(&self) -> &str {
         self.0.trim_start_matches('<').trim_end_matches('>')
     }
+
+    /// The case-insensitive identity, materialized: lowercased, brackets
+    /// included.
+    ///
+    /// What `thread_links` stores and looks up by (#1587). This type's
+    /// equality has always been case-insensitive — that is what makes JWZ
+    /// threading match headers rewritten in transit — but expressing that in
+    /// SQL as `COLLATE NOCASE` forced a collated index, and Turso's planner
+    /// will not bind an equality through a collated index column: every
+    /// per-message parent lookup walked the account's whole link table, which
+    /// is the linear write-cost curve the issue measured. Folding the *key*
+    /// lets a plain binary index serve the same identity.
+    ///
+    /// Only the lookup key: [`as_str`](Self::as_str) keeps the original case,
+    /// because a `References` header we emit must quote the parent's id
+    /// byte-for-byte.
+    pub fn folded(&self) -> String {
+        self.0.to_ascii_lowercase()
+    }
 }
 
 impl PartialEq for RfcMessageId {
