@@ -375,3 +375,85 @@ impl Pacer {
         self.issued += 1;
     }
 }
+
+/// The commands the search bar hints at, and the canvas's labels for them
+/// (canvas 05: `Ret open · Tab refine · C-s save as folder`).
+///
+/// Three, and each is a registry command rather than a string: a footer that
+/// taught a key nothing answers is worse than one that taught none, which is
+/// the same argument `row::hints` makes one pane over.
+const HINT_COMMANDS: [(postio_core::CommandId, &str); 3] = [
+    (postio_core::CommandId::OpenMessage, "open"),
+    (postio_core::CommandId::CyclePane, "refine"),
+    (postio_core::CommandId::SaveSearch, "save as folder"),
+];
+
+/// The key hints the search bar announces, as `(key, label)` pairs.
+///
+/// Read from the keymap, so a rebinding reaches the footer. A command with
+/// no binding in force is left out rather than drawn without one.
+pub fn hints(keymap: &postio_core::Keymap) -> Vec<(String, &'static str)> {
+    HINT_COMMANDS
+        .iter()
+        .filter_map(|(command, label)| {
+            keymap
+                .binding(*command)
+                .map(|key| (key.to_string(), *label))
+        })
+        .collect()
+}
+
+#[cfg(test)]
+mod hint_tests {
+    use super::*;
+
+    #[test]
+    fn the_footer_teaches_the_keys_in_force_rather_than_the_defaults() {
+        // The whole reason this reads the keymap: a footer promising `⌘S`
+        // to somebody who rebound it is teaching them something false, and
+        // the footer is the only place most people will ever read it.
+        // `defaults()`, not `default()`: the latter is an *empty* keymap,
+        // which is a real state (nothing bound) and not the one the footer
+        // is drawn from.
+        let keymap = postio_core::Keymap::defaults();
+        let hints = hints(keymap);
+        assert_eq!(hints.len(), HINT_COMMANDS.len());
+        assert!(
+            hints.iter().all(|(key, _)| !key.is_empty()),
+            "a hint drawn with no key on it: {hints:?}"
+        );
+    }
+
+    #[test]
+    fn a_rebinding_reaches_the_footer() {
+        // The footer is the only place most people will ever read these
+        // keys, so one that kept teaching the registry default after a
+        // rebinding would be teaching something false to exactly the person
+        // who took the trouble to change it.
+        let mut overrides = postio_config::keys::KeyBindings::default();
+        overrides
+            .overrides_mut()
+            .insert("save_search".to_owned(), "mod+shift+k".to_owned());
+        let keymap = postio_core::Keymap::resolve(&overrides);
+
+        let hints = hints(&keymap);
+        let (key, _) = hints
+            .iter()
+            .find(|(_, label)| *label == "save as folder")
+            .expect("the hint is still offered");
+        // Against the keymap's own answer rather than against the string
+        // that was written: `mod` is spelled for the platform on the way
+        // through — Command on a Mac, Control on freedesktop — so asserting
+        // the literal would pass on one machine and fail on the other.
+        assert_eq!(
+            Some(key.as_str()),
+            keymap.binding(postio_core::CommandId::SaveSearch),
+            "the footer taught something other than the binding in force"
+        );
+        assert_ne!(
+            Some(key.as_str()),
+            postio_core::Keymap::defaults().binding(postio_core::CommandId::SaveSearch),
+            "the override changed nothing, so this proves nothing"
+        );
+    }
+}

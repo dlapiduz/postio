@@ -31,6 +31,12 @@ struct SearchField: View {
     /// is a computed property over a boundary the view cannot observe.
     @State private var ran = 0
     @FocusState private var focused: Bool
+    /// The narrowings worth offering, re-measured after every run.
+    ///
+    /// Held rather than read inline because measuring them is a second pass
+    /// over the index: a run that only draws a list should not pay for it on
+    /// every redraw.
+    @State private var refinements: [RefinementFfi] = []
 
     var body: some View {
         HStack(spacing: 6) {
@@ -76,6 +82,27 @@ struct SearchField: View {
                     .foregroundStyle(.secondary)
                     .accessibilityLabel(outcome.spoken)
             }
+            if session.isSearching {
+                // "Relevance ▾" (canvas 05). The word is the boundary's, and
+                // clicking runs the same command `o` does — so the control
+                // and the key cannot drift, which is the whole reason this
+                // is a command rather than a local flip.
+                Button {
+                    session.toggleResultOrder()
+                    ran += 1
+                    reload()
+                } label: {
+                    HStack(spacing: 2) {
+                        Text(session.resultOrderLabel)
+                        Image(systemName: "chevron.down")
+                    }
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                }
+                .buttonStyle(.plain)
+                .help("Read the results the other way round")
+                .accessibilityLabel("Sorted by \(session.resultOrderLabel). Change the order.")
+            }
             if !query.isEmpty {
                 Button {
                     query = ""
@@ -92,7 +119,10 @@ struct SearchField: View {
         .padding(.vertical, 6)
         .background(.quaternary.opacity(0.5), in: .rect(cornerRadius: 6))
         .padding(.horizontal, 8)
-        .padding(.vertical, 6)
+        .padding(.top, 6)
+        .padding(.bottom, refinements.isEmpty ? 6 : 0)
+        .safeAreaInset(edge: .bottom, spacing: 0) { refineChips }
+        .safeAreaInset(edge: .bottom, spacing: 0) { footerHints }
         .onChange(of: wantsFocus) { _, wanted in
             if wanted { focused = true }
         }
@@ -116,6 +146,75 @@ struct SearchField: View {
         .id(ran)
     }
 
+    /// The discoverable half of the query language (#1157).
+    ///
+    /// Four at most, and every one of them measured against the results on
+    /// screen — `postio-search` decides which are worth offering, not this
+    /// view. Clicking appends the token to the query and runs it, which is
+    /// exactly what typing it would have done.
+    @ViewBuilder private var refineChips: some View {
+        if !refinements.isEmpty {
+            HStack(spacing: 6) {
+                ForEach(refinements, id: \.token) { refinement in
+                    Button {
+                        query = query.isEmpty
+                            ? refinement.token
+                            : "\(query) \(refinement.token)"
+                        run()
+                    } label: {
+                        HStack(spacing: 4) {
+                            Text(refinement.token)
+                                .font(.system(.caption, design: .monospaced))
+                            Text(Int(refinement.hits).formatted(.number))
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                        }
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(.quaternary.opacity(0.5), in: .rect(cornerRadius: 4))
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel(
+                        "Narrow to \(refinement.token), keeping \(refinement.hits) messages"
+                    )
+                }
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, 18)
+            .padding(.bottom, 6)
+        }
+    }
+
+    /// `Ret open · Tab refine · ⌘S save as folder` (canvas 05).
+    ///
+    /// From the keymap, like the row's own hints: this is the only place
+    /// most people will ever read these keys, which is what makes teaching
+    /// the wrong one worse than teaching none. Only while results are
+    /// showing — over a mailbox two of the three mean nothing.
+    @ViewBuilder private var footerHints: some View {
+        if session.isSearching {
+            let hints = session.searchHints()
+            if !hints.isEmpty {
+                HStack(spacing: 4) {
+                    ForEach(Array(hints.enumerated()), id: \.offset) { index, hint in
+                        if index > 0 {
+                            Text("·").foregroundStyle(.tertiary)
+                        }
+                        Text(hint.key)
+                            .font(.system(.caption2, design: .monospaced))
+                        Text(hint.label)
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                    }
+                    Spacer(minLength: 0)
+                }
+                .padding(.horizontal, 18)
+                .padding(.bottom, 6)
+                .accessibilityElement(children: .combine)
+            }
+        }
+    }
+
     /// Run what has been typed.
     ///
     /// On submit rather than on every keystroke. The budget is under 100 ms
@@ -129,6 +228,9 @@ struct SearchField: View {
         }
         session.search(query)
         ran += 1
+        // After the run, not before: they are measured against the results
+        // this query found.
+        refinements = session.refinements()
         reload()
     }
 
@@ -136,6 +238,7 @@ struct SearchField: View {
     private func leave() {
         session.clearSearch()
         ran += 1
+        refinements = []
         reload()
         dismiss()
     }

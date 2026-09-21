@@ -93,7 +93,9 @@ pub use saved_search::{
     move_saved_search, rename_saved_search, save_search, saved_search_delete_prompt,
     saved_search_rename_prompt, saved_searches,
 };
-pub use search::{ChipFfi, EmptyPlateFfi, MatchRangeFfi, OutcomeFfi, SnippetFfi, query_chips};
+pub use search::{
+    ChipFfi, EmptyPlateFfi, MatchRangeFfi, OutcomeFfi, RefinementFfi, SnippetFfi, query_chips,
+};
 pub use session::{HANDLED_HERE, Session, SessionError, SessionOptions};
 pub use settings::{
     AppearanceFfi, AttachmentFetchFfi, BodyFetchFfi, CheckForMailFfi, ComposingFfi, DensityFfi,

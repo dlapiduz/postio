@@ -1136,6 +1136,20 @@ impl Session {
         self.search_query()
     }
 
+    /// Which order the results are in, for the sort control. See
+    /// [`Session::result_order_label`].
+    #[uniffi::method(name = "resultOrderLabel")]
+    pub fn result_order_label_ffi(&self) -> String {
+        self.result_order_label()
+    }
+
+    /// The refine chips for the results on screen. See
+    /// [`Session::refinements`].
+    #[uniffi::method(name = "refinements")]
+    pub fn refinements_ffi(&self) -> Vec<crate::RefinementFfi> {
+        blocking(self.refinements())
+    }
+
     /// Read the results the other way round. See
     /// [`Session::toggle_result_order`].
     #[uniffi::method(name = "toggleResultOrder")]
@@ -1578,6 +1592,24 @@ impl Session {
     /// frontends show the same two.
     pub fn row_hints(&self) -> Vec<crate::RowHintFfi> {
         postio_ui::row::hints(&self.keymap())
+            .into_iter()
+            .map(|(key, label)| crate::RowHintFfi {
+                key,
+                label: label.to_string(),
+            })
+            .collect()
+    }
+
+    /// The key hints the search bar announces — `Ret open · Tab refine ·
+    /// C-s save as folder` (canvas 05).
+    ///
+    /// The same shape as [`row_hints`](Self::row_hints) one pane over, and
+    /// for the same reason: read from this session's keymap, so a rebinding
+    /// reaches the footer. It is the only place most people will ever read
+    /// these keys, which is what makes teaching the wrong one worse than
+    /// teaching none.
+    pub fn search_hints(&self) -> Vec<crate::RowHintFfi> {
+        postio_ui::search::hints(&self.keymap())
             .into_iter()
             .map(|(key, label)| crate::RowHintFfi {
                 key,
@@ -4350,6 +4382,72 @@ impl Session {
     /// write down a query nobody has seen the results of.
     pub fn search_query(&self) -> Option<String> {
         self.query.lock().expect("query lock").clone()
+    }
+
+    /// Which order the results are in, as the sort control says it —
+    /// "Relevance" or "Newest".
+    ///
+    /// `ResultOrder::label`'s word, so this control and GTK's own say the
+    /// same thing. Answered whatever is on screen: over a mailbox it is the
+    /// order the next search would run in, which is what the control would
+    /// be offering to change.
+    pub fn result_order_label(&self) -> String {
+        self.result_order
+            .lock()
+            .expect("result order lock")
+            .label()
+            .to_owned()
+    }
+
+    /// The refine chips for the results on screen, best first (#1157).
+    ///
+    /// Empty over a mailbox: the chips are about a *result set*, and
+    /// offering `is:unread` where there is none would be offering to search
+    /// without saying so.
+    ///
+    /// Measured against the current results rather than listed from a table,
+    /// which is the whole point — a chip that keeps none of them is a dead
+    /// end, and one that keeps all of them appears to do nothing when
+    /// clicked. Neither is offered.
+    pub async fn refinements(&self) -> Vec<crate::RefinementFfi> {
+        let Some(query) = self.query.lock().expect("query lock").clone() else {
+            return Vec::new();
+        };
+        let Some((database, _)) = self.store_and_blobs() else {
+            return Vec::new();
+        };
+        let Ok(connection) = database.connect().await else {
+            return Vec::new();
+        };
+        let parsed = postio_search::parse(&query, chrono::Utc::now().date_naive());
+        let account = *self.account_scope.lock().expect("account scope lock");
+        let order = *self.result_order.lock().expect("result order lock");
+        let total = self
+            .outcome
+            .lock()
+            .expect("outcome lock")
+            .as_ref()
+            .map(|outcome| outcome.hits)
+            .unwrap_or(0);
+        let Some(facets) = postio_session::search::facets(
+            &connection,
+            account,
+            &parsed,
+            postio_search::facets::Scope::AllMail,
+            order,
+        )
+        .await
+        else {
+            return Vec::new();
+        };
+        facets
+            .suggested(total)
+            .into_iter()
+            .map(|refinement| crate::RefinementFfi {
+                token: refinement.token.clone(),
+                hits: refinement.hits,
+            })
+            .collect()
     }
 
     /// Read the results the other way round — `o`.

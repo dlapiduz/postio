@@ -528,3 +528,55 @@ async fn the_query_on_screen_can_be_read_back_to_be_saved() {
     );
     session.shutdown();
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn the_sort_control_says_which_order_is_in_force() {
+    // "Relevance ▾" on the canvas. The word is `ResultOrder::label`'s, so the
+    // control and GTK's own say the same thing — and a control that did not
+    // change when `o` did would be a label about the previous search.
+    let (session, _) = disagreeing().await;
+    session.search("report").await;
+    assert_eq!(session.result_order_label(), "Relevance");
+
+    session.toggle_result_order().await;
+    assert_eq!(session.result_order_label(), "Newest");
+    session.shutdown();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn the_refine_chips_are_measured_against_the_results_on_screen() {
+    // The discoverable half of the query language (#1157). Not a fixed list
+    // typed into a frontend: a chip that keeps none of the current matches
+    // is a dead end, and one that keeps all of them appears to do nothing
+    // when clicked. `Facets::suggested` drops both, and the frontend draws
+    // what survives.
+    let (session, _) = disagreeing().await;
+    session.search("report").await;
+
+    let chips = session.refinements().await;
+    assert!(
+        chips.iter().all(|chip| chip.hits > 0),
+        "a chip that keeps nothing was offered: {chips:?}"
+    );
+    assert!(
+        chips.len() <= 4,
+        "the shortlist is four; a column of twenty is a thing to read \
+         rather than a thing to click: {}",
+        chips.len()
+    );
+    assert!(
+        chips.iter().all(|chip| !chip.token.is_empty()),
+        "a chip with no token to append: {chips:?}"
+    );
+    session.shutdown();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_mailbox_has_nothing_to_refine() {
+    // The chips are about a result set. Over a mailbox there is none, and
+    // offering `is:unread` there would be offering to search without saying
+    // so.
+    let (session, _) = searchable().await;
+    assert!(session.refinements().await.is_empty());
+    session.shutdown();
+}

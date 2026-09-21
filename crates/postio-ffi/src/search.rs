@@ -148,3 +148,18 @@ pub struct OutcomeFfi {
     /// How many messages matched.
     pub hits: u64,
 }
+
+/// One refine chip: the token to append, and what it would keep.
+///
+/// The measurement is the point. A chip that keeps none of the current
+/// matches is a dead end and one that keeps all of them appears to do
+/// nothing when clicked, so `Facets::suggested` drops both and the frontend
+/// draws whatever survives — it does not choose, and it certainly does not
+/// carry a fixed list of operators of its own.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct RefinementFfi {
+    /// The query token, exactly as it would be typed — `is:unread`.
+    pub token: String,
+    /// How many of the current matches it would keep.
+    pub hits: u64,
+}

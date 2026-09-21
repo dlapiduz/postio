@@ -76,6 +76,11 @@ public final class PostioSession {
     /// The verbs the focused row announces, from this session's bindings.
     public func rowHints() -> [RowHintFfi] { inner.rowHints() }
 
+    /// The key hints the search bar announces — `Ret open · Tab refine ·
+    /// C-s save as folder`. From this session's keymap, so a rebinding
+    /// reaches the footer.
+    public func searchHints() -> [RowHintFfi] { inner.searchHints() }
+
     /// Every configured account, as the settings pane lists them.
     public func accounts() -> [AccountFfi] { inner.accounts() }
 
@@ -304,6 +309,19 @@ public final class PostioSession {
     /// What *Save search as folder* keeps. Not the text in the field: that
     /// is whatever has been typed since the last run.
     public var searchQuery: String? { inner.searchQuery() }
+
+    /// Which order the results are in, as the sort control says it —
+    /// "Relevance" or "Newest". The boundary's word, so this control and
+    /// GTK's own say the same thing.
+    public var resultOrderLabel: String { inner.resultOrderLabel() }
+
+    /// The refine chips for the results on screen, best first.
+    ///
+    /// Empty over a mailbox. Measured against the current results rather
+    /// than listed from a table in Swift: a chip that keeps none of them is
+    /// a dead end and one that keeps all of them appears to do nothing when
+    /// clicked, and neither is offered.
+    public func refinements() -> [RefinementFfi] { inner.refinements() }
 
     /// Read the results the other way round — best first, or newest first.
     ///
