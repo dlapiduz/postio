@@ -2390,8 +2390,11 @@ impl Session {
         let (database, _) = self.store_and_blobs()?;
         let mut draft = self.rehydrate(&database, &edited).await?;
         let (connection, _permit) = database.interactive_write().await.ok()?;
+        // `save_and_sync`, for the reason `write_draft` gives: a local write
+        // without its queue row never reaches the server. This is the second
+        // of the two save paths and had the same omission.
         postio_storage::repository::DraftRepository::new(&connection)
-            .save(&mut draft)
+            .save_and_sync(&mut draft, chrono::Utc::now())
             .await
             .ok()?;
         Some(crate::compose::to_ffi(
@@ -2536,8 +2539,18 @@ impl Session {
                 .map_err(|error| crate::ComposeError::Refused {
                     message: format!("The store would not take a write: {error}"),
                 })?;
+        // `save_and_sync`, not `save`. **A local write without its queue row
+        // never reaches the server** -- that is the repository method's own
+        // sentence, and it is why `postio-app` has used this one since drafts
+        // existed. Every macOS save path goes through here: autosave, attach,
+        // detach, and both ends of the editor hand-off. With the plain `save`
+        // a reply begun on the Mac was in Drafts on the Mac and nowhere else.
+        //
+        // An account with no Drafts folder enqueues nothing and is not an
+        // error: that is a real state -- a server that publishes no such
+        // role -- and the local row is still the right thing to have written.
         postio_storage::repository::DraftRepository::new(&connection)
-            .save(&mut draft)
+            .save_and_sync(&mut draft, chrono::Utc::now())
             .await
             .map_err(|error| crate::ComposeError::Refused {
                 message: format!("The draft could not be saved: {error}"),

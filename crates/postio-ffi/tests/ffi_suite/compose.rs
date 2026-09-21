@@ -918,3 +918,60 @@ async fn a_plain_text_message_is_still_quoted_from_its_own_text() {
         draft.body
     );
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_draft_saved_on_this_machine_is_queued_for_the_server_too() {
+    // A local write without its queue row never reaches the server. Every
+    // macOS save path -- autosave, attach, detach, the editor hand-off both
+    // ways -- goes through one `write_draft`, and it called
+    // `DraftRepository::save`, which writes the row and stops. So a reply
+    // begun on the Mac was in Drafts on the Mac and nowhere else: not on the
+    // phone, not on the Linux client, not on the server it was written
+    // against. `postio-app` has used `save_and_sync` since drafts existed,
+    // for exactly the reason that repository method records.
+    let (session, database, message) = a_message_to_answer().await;
+
+    // The account needs a Drafts folder to enqueue against -- `save_and_sync`
+    // finds it by role, and an account with none is a real state it answers
+    // with `None` rather than by failing.
+    let account = {
+        let connection = database.connect().await.expect("a connection");
+        let accounts = postio_storage::repository::AccountRepository::new(&connection)
+            .list()
+            .await
+            .expect("a read");
+        let account = accounts.first().expect("the seeded account").clone();
+        let mut drafts = postio_model::Mailbox::new(account.id, "Drafts", Some('/'));
+        drafts.role = postio_model::MailboxRole::Drafts;
+        postio_storage::repository::MailboxRepository::new(&connection)
+            .create(&mut drafts)
+            .await
+            .expect("a Drafts folder");
+        account.id
+    };
+
+    // Built, then saved: `reply_draft` assembles it in memory and the write
+    // is `save_draft`, which is what a composer calls when it autosaves.
+    let draft = session
+        .reply_draft(message, false)
+        .await
+        .expect("a reply to save");
+    session.save_draft(draft).await.expect("the draft is saved");
+
+    let queued = {
+        let connection = database.connect().await.expect("a connection");
+        postio_storage::repository::OperationQueueRepository::new(&connection)
+            .pending(account, Utc::now())
+            .await
+            .expect("a read of the queue")
+    };
+    assert!(
+        queued.iter().any(|operation| matches!(
+            operation.operation,
+            postio_model::Operation::SaveDraft { .. }
+        )),
+        "the draft was written locally and nothing will carry it to the \
+         server: {queued:?}"
+    );
+    session.shutdown();
+}
