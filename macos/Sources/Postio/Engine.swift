@@ -705,6 +705,7 @@ final class Engine {
                 showingParts = false
                 // "Once" means this view.
                 rendered.clear()
+                ccRevealed = []
                 // A new message starts at the top. Carrying the anchor over
                 // would resume somebody else's place in it.
                 readerPage = 0
@@ -1106,6 +1107,22 @@ final class Engine {
     /// A method rather than a settable property: `original` is
     /// `private(set)` so the only ways to change it are this and the two
     /// places that clear it when the pane shows something else.
+    /// Which messages have their `Cc` list open, outside any conversation.
+    ///
+    /// `ConversationModel` holds this per conversation; the single-message
+    /// pane has no conversation to hold it, and the disclosure is still a
+    /// thing a person opened. Per message, and reset with the pane.
+    private(set) var ccRevealed: Set<Int64> = []
+
+    /// Open or close `message`'s `Cc` list in the single-message pane.
+    func toggleCc(_ message: Int64) {
+        if ccRevealed.contains(message) {
+            ccRevealed.remove(message)
+        } else {
+            ccRevealed.insert(message)
+        }
+    }
+
     func toggleOriginal(_ message: Int64) {
         original.toggle(message)
     }

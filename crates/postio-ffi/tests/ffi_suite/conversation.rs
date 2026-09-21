@@ -266,3 +266,31 @@ fn a_conversation_with_nothing_folded_has_no_dividers() {
     let rows = vec![row(1, "Ada"), row(2, "Bo")];
     assert!(postio_ffi::conversation_runs(rows, vec![true, true]).is_empty());
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_message_can_be_asked_for_as_a_row_without_a_list_position() {
+    // The single-message pane's whole problem. `rowAt` answers by *index*
+    // into whatever list is open, and a message the store has not threaded
+    // is drawn from an id with no list under it -- so the pane had a
+    // message id, no way to turn it into a row, and therefore no sender, no
+    // subject, no date and no actions.
+    let (session, _thread, ids) = a_conversation().await;
+    let message = *ids.first().expect("a message");
+
+    let row = session.row_for(message).expect("a row for the message");
+    assert_eq!(row.id, message);
+    assert!(
+        row.from.is_some(),
+        "the row carries no sender, so a header built from it would say nothing"
+    );
+    session.shutdown();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_message_that_is_gone_is_no_row_rather_than_an_empty_one() {
+    // A row full of blanks reads as a message with no sender, which is a
+    // statement about somebody's mail. Nothing is the truthful answer.
+    let (session, _thread, _ids) = a_conversation().await;
+    assert!(session.row_for(9_999).is_none());
+    session.shutdown();
+}

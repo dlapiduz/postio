@@ -165,13 +165,13 @@ public struct ConversationView: View {
                 row: row,
                 isLatest: index == model.rows.count - 1,
                 showingCc: model.isCcRevealed(index),
-                collapse: { model.toggle(index) },
-                toggleCc: { model.toggleCc(index) },
-                run: run,
-                openSettings: { run(Intercepted.settings, nil) },
                 showingOriginal: showingOriginal(row.id),
                 showingImages: showingImages(row.id),
-                toggleOriginal: { toggleOriginal(row.id) }
+                collapse: { model.toggle(index) },
+                toggleCc: { model.toggleCc(index) },
+                toggleOriginal: { toggleOriginal(row.id) },
+                run: run,
+                openSettings: { run(Intercepted.settings, nil) }
             )
         } else {
             CollapsedMessage(row: row) { model.toggle(index) }
@@ -252,22 +252,22 @@ struct FoldedRun: View {
 
 /// An open message: who it is from, when it arrived, its body, and the three
 /// things you can do about it.
-struct ExpandedMessage: View {
-    let session: PostioSession
-    let row: RowFfi
-    let isLatest: Bool
+public struct ExpandedMessage: View {
+    public let session: PostioSession
+    public let row: RowFfi
+    public let isLatest: Bool
     /// Whether this message's `Cc` list is open.
     ///
     /// On the model rather than in `@State` here — as everything a person
     /// turned on in this pane now is: a disclosure is a thing somebody opened
     /// and can be asserted, and #1259 is what happens when a piece of the
     /// header exists only inside a view nobody can look at from a test.
-    let showingCc: Bool
-    let collapse: () -> Void
-    let toggleCc: () -> Void
+    public let showingCc: Bool
+    public let collapse: () -> Void
+    public let toggleCc: () -> Void
     /// Run a command against **this** message. See `ConversationView.run`.
-    let run: (String, Int64?) -> Void
-    let openSettings: () -> Void
+    public let run: (String, Int64?) -> Void
+    public let openSettings: () -> Void
 
     @State private var height: CGFloat = BodyHeight.minimum
     /// Whether this message is drawn as its sender wrote it.
@@ -280,7 +280,7 @@ struct ExpandedMessage: View {
     /// command cannot reach view state — which is why the key did nothing
     /// while the menu item below it worked. `OriginalView` holds it, per
     /// message and per view.
-    let showingOriginal: Bool
+    public let showingOriginal: Bool
     /// Whether this *message's* images are showing.
     ///
     /// Per message and reset with the pane, which is what "show once" means:
@@ -291,10 +291,45 @@ struct ExpandedMessage: View {
     /// same reason: `H` (*Render part once*) is a command, and a command
     /// cannot reach an `@State`. While this was one, the notice's button
     /// worked and the key did nothing.
-    let showingImages: Bool
-    let toggleOriginal: () -> Void
+    public let showingImages: Bool
+    /// Whether the `⋯` menu offers to fold this message away.
+    ///
+    /// `false` in the single-message pane, where there is no conversation to
+    /// fold it into and the message would simply vanish. The rest of the
+    /// header is the same on purpose — one implementation of "who is this
+    /// from", not two that drift.
+    public var collapsible = true
+    public let toggleOriginal: () -> Void
 
-    var body: some View {
+    public init(
+        session: PostioSession,
+        row: RowFfi,
+        isLatest: Bool,
+        showingCc: Bool,
+        showingOriginal: Bool,
+        showingImages: Bool,
+        collapsible: Bool = true,
+        collapse: @escaping () -> Void,
+        toggleCc: @escaping () -> Void,
+        toggleOriginal: @escaping () -> Void,
+        run: @escaping (String, Int64?) -> Void,
+        openSettings: @escaping () -> Void
+    ) {
+        self.session = session
+        self.row = row
+        self.isLatest = isLatest
+        self.showingCc = showingCc
+        self.showingOriginal = showingOriginal
+        self.showingImages = showingImages
+        self.collapsible = collapsible
+        self.collapse = collapse
+        self.toggleCc = toggleCc
+        self.toggleOriginal = toggleOriginal
+        self.run = run
+        self.openSettings = openSettings
+    }
+
+    public var body: some View {
         HStack(alignment: .top, spacing: 0) {
             Rectangle()
                 .fill(Color(nsColor: PostioTokens.colorAccent))
@@ -311,6 +346,13 @@ struct ExpandedMessage: View {
                         show: { run(Intercepted.renderPartOnce, row.id) },
                         openSettings: openSettings
                     )
+                }
+                // Also per message: a conversation can hold eight messages
+                // from four lists. `PRODUCT.md` lists one-click unsubscribe
+                // among the privacy features, and until this existed the
+                // sentence was not true on a Mac.
+                if let offer = session.unsubscribeOffer(row.id) {
+                    UnsubscribeBanner(offer: offer, message: row.id, session: session)
                 }
                 ReaderView(
                     session: session,
@@ -376,7 +418,9 @@ struct ExpandedMessage: View {
                     .foregroundStyle(Color(nsColor: PostioTokens.colorAccent))
             }
             Menu {
-                Button("Collapse", action: collapse)
+                if collapsible {
+                    Button("Collapse", action: collapse)
+                }
                 Button("Reply") { run("reply", row.id) }
                 Button("Forward") { run("forward", row.id) }
                 Toggle(

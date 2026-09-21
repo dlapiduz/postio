@@ -1299,6 +1299,12 @@ impl Session {
         self.row_at(position)
     }
 
+    /// One message as a row, by id. See [`Session::row_for`].
+    #[uniffi::method(name = "rowFor")]
+    pub fn row_for_ffi(&self, message: i64) -> Option<crate::RowFfi> {
+        self.row_for(message)
+    }
+
     /// The whole document for a message, ready to hand a `WKWebView`.
     ///
     /// Swift's job is to build a hardened configuration, hand it this string,
@@ -4102,6 +4108,26 @@ impl Session {
             self.fetch(generation, page);
         }
         None
+    }
+
+    /// One message as a row, by id rather than by list position.
+    ///
+    /// `row_at` answers by *index* into whatever list is open, which is the
+    /// right question for a table and the wrong one for the single-message
+    /// pane: a message the store has not threaded belongs to no conversation
+    /// and is drawn from an id, with no list under it to index into.
+    ///
+    /// `None` for a message that is not there. A row full of blanks reads as
+    /// a message with no sender, which is a statement about somebody's mail;
+    /// nothing is the truthful answer.
+    ///
+    /// Blocking, and one read — the pane asks once when a message opens,
+    /// not per redraw, which is what separates this from `row_at`.
+    pub fn row_for(&self, message: i64) -> Option<crate::RowFfi> {
+        let (store, _runtime) = self.reader()?;
+        let id = postio_model::ids::MessageId::new(message);
+        let rows = blocking(async { store.message_rows(vec![id]).await.ok() })?;
+        rows.into_iter().next().map(Into::into)
     }
 
     /// Raise an event this boundary made up itself.

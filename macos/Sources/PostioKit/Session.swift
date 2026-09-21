@@ -138,6 +138,16 @@ public final class PostioSession {
     /// Whether the platform has told the engine there is no connection.
     public var isOffline: Bool { inner.isOffline() }
 
+    /// One message as a row, by id rather than by list position.
+    ///
+    /// What the single-message pane draws its header from: a message the
+    /// store has not threaded belongs to no conversation and arrives as an
+    /// id, with no list under it to index into. `nil` for a message that is
+    /// not there — a row full of blanks reads as a message with no sender.
+    public func rowFor(_ message: Int64) -> RowFfi? {
+        inner.rowFor(message: message)
+    }
+
     /// The whole document for a message, ready to hand a web view.
     ///
     /// Not fragments to assemble: the content security policy, the embedded
@@ -167,6 +177,35 @@ public final class PostioSession {
     /// comment.
     public nonisolated func partBytes(_ message: Int64, partId: String) throws -> Data {
         Data(try inner.partBytes(message: message, partId: partId))
+    }
+
+    /// What this message offers to unsubscribe from, or `nil`.
+    ///
+    /// A point read that writes nothing — reading the offer is not the
+    /// deliberate activation, and must not be mistaken for one. Safe where
+    /// the message opens.
+    public func unsubscribeOffer(_ message: Int64) -> UnsubscribeOfferFfi? {
+        inner.unsubscribeOffer(message: message)
+    }
+
+    /// Leave the list this message came from — **the deliberate activation**,
+    /// and the only call in this pair that records one.
+    ///
+    /// From a button and from nothing else. A message that offers nothing is
+    /// refused rather than logged, so this cannot unsubscribe anybody from a
+    /// message the reader never offered it on.
+    ///
+    /// **`nonisolated`**: it writes, and a write waits on the store's
+    /// machine-wide gate — behind whatever the sync engine is committing,
+    /// which on a first sync is not a few milliseconds.
+    public nonisolated func activateUnsubscribe(_ message: Int64) -> String? {
+        inner.activateUnsubscribe(message: message)
+    }
+
+    /// Every activation this store holds, newest first — the Privacy pane's
+    /// list. An action nobody can see afterwards is one nobody can audit.
+    public func unsubscribeActivations() -> [UnsubscribeActivationFfi] {
+        inner.unsubscribeActivations()
     }
 
     /// One inline part of `message`, by its `Content-ID`.

@@ -579,19 +579,32 @@ struct Shell: View {
                 showingImages: { engine.rendered.isOn($0) },
                 toggleOriginal: { engine.toggleOriginal($0) }
             )
-        } else if let session = engine.session, let showing {
+        } else if let session = engine.session, let showing, let row = session.rowFor(showing) {
             // A message that threading could not place belongs to no
-            // conversation, and the honest thing to draw is the message.
-            // Remote images blocked. `PRODUCT.md`'s "nothing leaves this
-            // machine that the user did not ask for" starts at the tracking
-            // pixel, and per-sender allowing is its own work.
-            ReaderView(
-                session: session,
-                message: showing,
-                remoteImages: .blocked,
-                page: engine.readerPage,
-                pageToken: engine.readerPageToken
-            )
+            // conversation, and the honest thing to draw is the message —
+            // with its sender, its subject, its date and its verbs, which
+            // this pane did not have (#1585). It is the conversation's own
+            // `ExpandedMessage`, so there is one answer to "who is this
+            // from" rather than two that drift; only *Collapse* goes, since
+            // there is no conversation to fold it into.
+            ScrollView {
+                ExpandedMessage(
+                    session: session,
+                    row: row,
+                    isLatest: true,
+                    showingCc: engine.ccRevealed.contains(showing),
+                    showingOriginal: engine.original.isOn(showing),
+                    showingImages: engine.rendered.isOn(showing),
+                    collapsible: false,
+                    collapse: {},
+                    toggleCc: { engine.toggleCc(showing) },
+                    toggleOriginal: { engine.toggleOriginal(showing) },
+                    run: { engine.run($0, on: $1) },
+                    openSettings: { engine.run(Intercepted.settings) }
+                )
+                .padding(.horizontal, PostioTokens.space4)
+                .padding(.vertical, PostioTokens.space4)
+            }
         } else {
             ContentUnavailableView(
                 "No message selected",
