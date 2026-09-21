@@ -35,6 +35,11 @@ struct WindowConfigurator: NSViewRepresentable {
         DispatchQueue.main.async {
             guard let window = view.window else { return }
             KeyWindowTracker.tag(window, as: role, draft: draft)
+            // Postio's own surface, on every window, rather than AppKit's.
+            // The panes paint over most of it; what this settles is the
+            // titlebar and anything a pane does not cover, so the window is
+            // one ramp edge to edge. See `AppSurface` (#1588).
+            window.backgroundColor = AppSurface.background
             // Only the main window's frame is worth restoring, and only it
             // wants an empty title bar: a compose window says who it is
             // writing to, and the settings window says "Settings".

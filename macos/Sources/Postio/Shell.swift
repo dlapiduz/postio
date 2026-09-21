@@ -103,6 +103,13 @@ struct Shell: View {
                     }
                 }
             }
+            // Postio's ramp rather than AppKit's sidebar material. The
+            // material is a blue-grey, and the reader's paper is a pure
+            // neutral — put one inside the other and the neutral reads
+            // maroon (#1588). `scrollContentBackground` is what lets the
+            // colour underneath show at all.
+            .scrollContentBackground(.hidden)
+            .background(Color(nsColor: AppSurface.sidebar))
             .safeAreaInset(edge: .bottom, spacing: 0) { footer }
             .navigationSplitViewColumnWidth(min: 180, ideal: 220, max: 320)
             .accessibilityLabel(Pane.sidebar.label)
@@ -125,9 +132,11 @@ struct Shell: View {
             .onAppear { restoreFolder() }
         } content: {
             messages
+                .background(Color(nsColor: AppSurface.background))
                 .navigationSplitViewColumnWidth(min: 280, ideal: 360, max: 560)
         } detail: {
             reader
+                .background(Color(nsColor: AppSurface.background))
                 .onTapGesture { engine.focus(.reader) }
         }
         .toolbar {
