@@ -499,7 +499,9 @@ struct Shell: View {
                 // The message the verb was drawn under travels with it: a
                 // per-message bar that answered the *list's* cursor replied
                 // to the wrong message in any thread longer than one.
-                run: { engine.run($0, on: $1) }
+                run: { engine.run($0, on: $1) },
+                showingOriginal: { engine.original.isOn($0) },
+                toggleOriginal: { engine.toggleOriginal($0) }
             )
         } else if let session = engine.session, let showing {
             // A message that threading could not place belongs to no

@@ -792,6 +792,18 @@ final class Engine {
             // whichever of these is open.
             showingPalette = false
             showingCheatSheet = false
+        case Intercepted.openMessage:
+            // The row is already open — the cursor opens it as it moves — so
+            // `Return` is about the *keyboard*: it goes where the message is.
+            guard cursorShowing != nil else { return false }
+            focus(.reader)
+        case Intercepted.prevView:
+            // And `h` comes back. Not "close the message": the pane is not a
+            // drill-in on either platform, so there is nothing to close.
+            focus(.list)
+        case Intercepted.viewOriginal:
+            guard let message = target ?? cursorShowing else { return false }
+            toggleOriginal(message)
         case Intercepted.scrollReaderDown, Intercepted.scrollReaderUp:
             // Only the single-message pane pages this way: it is one
             // document, so the shared anchors are in it and a fragment jump
@@ -828,6 +840,23 @@ final class Engine {
     /// between the anchors the shared document lays down — see
     /// `ReaderPaging`. Reset when the message changes, or `space` on a new
     /// message would resume somebody else's place in it.
+    /// Which messages are being shown as their sender wrote them.
+    ///
+    /// Per message and per view — see `OriginalView`. Here rather than in the
+    /// pane because `⌘O` is a command, and a command cannot reach an
+    /// `@State`: that is exactly why the key did nothing while the `⋯` menu
+    /// item beside it worked.
+    private(set) var original = OriginalView()
+
+    /// Show `message` as its sender wrote it, or stop.
+    ///
+    /// A method rather than a settable property: `original` is
+    /// `private(set)` so the only ways to change it are this and the two
+    /// places that clear it when the pane shows something else.
+    func toggleOriginal(_ message: Int64) {
+        original.toggle(message)
+    }
+
     private(set) var readerPage: UInt32 = 0
 
     /// Bumped whenever a page turn is asked for.
@@ -918,10 +947,14 @@ final class Engine {
             // branch beside it was unreachable from then on. Somebody else's
             // mail, under a row that is not theirs, looking like an answer.
             conversation.clear()
+            original.clear()
             return
         }
         guard thread != showingThread else { return }
         showingThread = thread
+        // A different conversation is a different view, and the grants were
+        // about the last one's messages.
+        original.clear()
         session.openConversation(thread)
     }
 

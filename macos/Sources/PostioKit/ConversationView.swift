@@ -32,15 +32,23 @@ public struct ConversationView: View {
     /// A parameter rather than a rule, so a new per-message surface cannot
     /// forget: the type will not let it.
     private let run: (String, Int64?) -> Void
+    /// Whether a message is drawn as its sender wrote it, and how to change
+    /// it. The engine holds this so `⌘O` can reach it.
+    private let showingOriginal: (Int64) -> Bool
+    private let toggleOriginal: (Int64) -> Void
 
     public init(
         session: PostioSession,
         model: ConversationModel,
-        run: @escaping (String, Int64?) -> Void
+        run: @escaping (String, Int64?) -> Void,
+        showingOriginal: @escaping (Int64) -> Bool,
+        toggleOriginal: @escaping (Int64) -> Void
     ) {
         self.session = session
         self.model = model
         self.run = run
+        self.showingOriginal = showingOriginal
+        self.toggleOriginal = toggleOriginal
     }
 
     /// What the stack draws, in order: messages, and dividers standing in for
@@ -155,7 +163,9 @@ public struct ConversationView: View {
                 collapse: { model.toggle(index) },
                 toggleCc: { model.toggleCc(index) },
                 run: run,
-                openSettings: { run(Intercepted.settings, nil) }
+                openSettings: { run(Intercepted.settings, nil) },
+                showingOriginal: showingOriginal(row.id),
+                toggleOriginal: { toggleOriginal(row.id) }
             )
         } else {
             CollapsedMessage(row: row) { model.toggle(index) }
@@ -264,7 +274,14 @@ struct ExpandedMessage: View {
     ///
     /// Per message and per view: reader view is on by default for bulk mail
     /// and leaving it is one gesture about one message, not a mode.
-    @State private var showingOriginal = false
+    /// Whether this message is drawn as its sender wrote it.
+    ///
+    /// Passed in rather than `@State`, because `⌘O` is a command and a
+    /// command cannot reach view state — which is why the key did nothing
+    /// while the menu item below it worked. `OriginalView` holds it, per
+    /// message and per view.
+    let showingOriginal: Bool
+    let toggleOriginal: () -> Void
 
     var body: some View {
         HStack(alignment: .top, spacing: 0) {
@@ -351,7 +368,10 @@ struct ExpandedMessage: View {
                 Button("Collapse", action: collapse)
                 Button("Reply") { run("reply", row.id) }
                 Button("Forward") { run("forward", row.id) }
-                Toggle("View original", isOn: $showingOriginal)
+                Toggle(
+                    "View original",
+                    isOn: Binding(get: { showingOriginal }, set: { _ in toggleOriginal() })
+                )
             } label: {
                 Image(systemName: "ellipsis")
             }

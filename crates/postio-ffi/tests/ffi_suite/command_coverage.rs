@@ -73,9 +73,6 @@ const KNOWN_ORPHANS: &[(CommandId, &str)] = {
         (C::SetDefaultAccount, "#1575"),
         // #1576 -- the reading pane, including the most-used key in a mail
         // client: `space` does not turn the page.
-        (C::OpenMessage, "#1576"),
-        (C::PrevView, "#1576"),
-        (C::ViewOriginal, "#1576"),
         (C::ToggleRail, "#1576"),
         (C::ToggleResultOrder, "#1576"),
     ]

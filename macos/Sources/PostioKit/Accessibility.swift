@@ -165,6 +165,13 @@ public enum Intercepted {
     public static let goToDrafts = "go_to_drafts"
     public static let goToSent = "go_to_sent"
     public static let goToFlagged = "go_to_flagged"
+    /// Where the keyboard is among the panes, and whether a message is drawn
+    /// as its sender wrote it. Both are this frontend's state: there is no
+    /// drill-in to close and nothing is remembered about an original past the
+    /// view it was asked for in.
+    public static let openMessage = "open_message"
+    public static let prevView = "prev_view"
+    public static let viewOriginal = "view_original"
     public static let expandAll = "expand_all"
     public static let toggleFold = "toggle_fold"
     public static let nextInConversation = "next_in_conversation"
@@ -177,6 +184,7 @@ public enum Intercepted {
         scrollReaderDown, scrollReaderUp,
         nextFolder, prevFolder, toggleFolder,
         goToInbox, goToDrafts, goToSent, goToFlagged,
+        openMessage, prevView, viewOriginal,
         compose, reply, replyAll, forward,
     ] + composeVerbs
 }

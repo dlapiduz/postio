@@ -278,6 +278,11 @@ pub const INTERCEPTED: &[postio_core::CommandId] = {
         C::GoToDrafts,
         C::GoToSent,
         C::GoToFlagged,
+        // Where the keyboard is among the panes, and whether a message is
+        // drawn as its sender wrote it.
+        C::OpenMessage,
+        C::PrevView,
+        C::ViewOriginal,
         // The composer's own verbs. The draft being written is in a window
         // this frontend owns, unsaved, and the store has not seen most of
         // it -- so a session cannot answer these and the window does.
