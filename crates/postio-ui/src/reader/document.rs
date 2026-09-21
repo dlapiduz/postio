@@ -124,6 +124,33 @@ pub fn absent_html(state: Absent) -> String {
     )
 }
 
+/// What the reader says above a body that did not fully decode (#901).
+///
+/// One line, and deliberately short of the reason. The three degradations
+/// behind it are different — base64 outside its alphabet, an unknown
+/// `Content-Transfer-Encoding`, a charset that lost octets to U+FFFD — and
+/// naming which one happened would be a sentence about MIME in the middle of
+/// somebody's mail. What a reader needs is the one fact that changes what
+/// they do with it: the words below may not be the words that were sent.
+///
+/// Here rather than in a frontend because it is the same claim on both. The
+/// GTK reader draws it in a `DecodeNotice` and the macOS reader in its own
+/// strip; what the claim *is* is not either toolkit's to decide, and a
+/// second copy is how a caveat comes to say two different things — or, as
+/// on macOS until now, nothing at all.
+pub const DECODE_CAVEAT: &str = "Parts of this message could not be decoded";
+
+/// [`DECODE_CAVEAT`] when the stored body carries `encoding_problems`, and
+/// nothing when it does not.
+///
+/// A function rather than the bare flag so that "is there a caveat" and
+/// "what does it say" are one question with one answer. A notice with
+/// nothing to report must not be on screen: it teaches people to dismiss the
+/// one that matters.
+pub fn decode_caveat(encoding_problems: bool) -> Option<&'static str> {
+    encoding_problems.then_some(DECODE_CAVEAT)
+}
+
 /// How many invisible scroll markers [`scroll_markers`] lays down.
 ///
 /// Bounds how far `page_down` can walk a message, not how long a message can
@@ -939,6 +966,21 @@ pub fn content_security_policy(remote: RemoteImages) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A body that lost a part says so, and a clean one stays silent.
+    ///
+    /// `encoding_problems` was computed and read by nothing for a long time
+    /// (#901), which is the failure this is against: "nothing rendered" and
+    /// "nothing was there" are opposite facts that look identical in a pane.
+    #[test]
+    fn a_body_that_did_not_decode_is_caveated_and_a_clean_one_is_not() {
+        assert_eq!(decode_caveat(true), Some(DECODE_CAVEAT));
+        assert_eq!(decode_caveat(false), None);
+        assert!(
+            DECODE_CAVEAT.contains("could not be decoded"),
+            "the caveat has to say what is wrong with the words below it"
+        );
+    }
 
     /// The container carries what the stylesheet's selector matches (#1326).
     ///

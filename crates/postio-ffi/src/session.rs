@@ -126,6 +126,18 @@ pub const HANDLED_HERE: &[postio_core::CommandId] = {
     ]
 };
 
+/// What a call against a session with no store answers.
+///
+/// Its own function because four calls say it, and a store that is not open
+/// is a different thing from a part that could not be fetched — a frontend
+/// showing "that part is still downloading" for a locked keyring would send
+/// the user looking in the wrong place entirely.
+fn no_store() -> crate::PartsError {
+    crate::PartsError::Refused {
+        message: "There is no open store to read that message from".to_owned(),
+    }
+}
+
 /// The next session's number within this process.
 ///
 /// See [`Session::serial`]. Monotonic and never reused: a session that has
@@ -883,6 +895,48 @@ impl Session {
         self.revoke_remote_images(subject);
     }
 
+    /// Whether the body on screen is a guess rather than what was sent, and
+    /// what to say about it. See [`Session::decode_caveat`].
+    #[uniffi::method(name = "decodeCaveat")]
+    pub fn decode_caveat_ffi(&self, message: i64) -> Option<String> {
+        blocking(self.decode_caveat(message))
+    }
+
+    /// What this message offers about the list it came from, or `None` when
+    /// it offers nothing. A **read**: see [`Session::unsubscribe_offer`].
+    #[uniffi::method(name = "unsubscribeOffer")]
+    pub fn unsubscribe_offer_ffi(&self, message: i64) -> Option<crate::UnsubscribeOfferFfi> {
+        blocking(self.unsubscribe_offer(message))
+    }
+
+    /// Leave the list this message came from — **the deliberate activation**,
+    /// and the only thing in this boundary that records one.
+    ///
+    /// Call it from a button and from nothing else. `None` when the
+    /// activation was recorded, a sentence when it was not; a message that
+    /// offers nothing is refused rather than logged, so a frontend cannot
+    /// unsubscribe anyone from a message the reader never offered it on.
+    /// See [`Session::activate_unsubscribe`].
+    ///
+    /// **Off the main actor**, unlike the offer above it. This is the only
+    /// call in the pair that writes, and a write waits on the store's
+    /// machine-wide gate — so it queues behind whatever the sync engine is
+    /// committing, which on a first sync is not a few milliseconds. The
+    /// offer, `decodeCaveat` and everything else the reading pane asks per
+    /// message are point reads and belong where the message opens; this one
+    /// belongs in a task, with the banner left as it is until it answers.
+    #[uniffi::method(name = "activateUnsubscribe")]
+    pub fn activate_unsubscribe_ffi(&self, message: i64) -> Option<String> {
+        blocking(self.activate_unsubscribe(message))
+    }
+
+    /// Every activation this store holds, newest first — the Privacy pane's
+    /// list. See [`Session::unsubscribe_activations`].
+    #[uniffi::method(name = "unsubscribeActivations")]
+    pub fn unsubscribe_activations_ffi(&self) -> Vec<crate::UnsubscribeActivationFfi> {
+        blocking(self.unsubscribe_activations())
+    }
+
     /// Add an account that signs in with a password. `None` when it was
     /// added, a sentence when it was not.
     #[uniffi::method(name = "addImapAccount")]
@@ -1221,6 +1275,125 @@ impl Session {
         blocking(self.resolve_cid(message, content_id))
     }
 
+    /// What `message` is made of: its MIME tree, flattened in walk order.
+    ///
+    /// **Reads the store and nothing else.** The rows came from
+    /// `BODYSTRUCTURE`, which the server returns without transferring a byte
+    /// of any part, so a panel drawn from this is complete and correct for a
+    /// message whose attachments are all still on the server —
+    /// `PartFfi.downloaded` is what says which of them are here. Drawing the
+    /// panel therefore cannot touch the network, which is the shape "nothing
+    /// downloads until the user asks" takes at this boundary.
+    ///
+    /// Blocks on a local read, like `mailboxes` does: a panel is drawn in
+    /// response to a keypress and the read is a few milliseconds of SQLite.
+    #[uniffi::method(name = "messageParts")]
+    pub fn message_parts_ffi(&self, message: i64) -> crate::MessagePartsFfi {
+        blocking(self.message_parts(message))
+    }
+
+    /// One part's bytes, fetched first if they are not on this machine yet.
+    ///
+    /// **A deliberate act, and the only call here that may reach the
+    /// network.** The user pressed save, or dragged this part, or chose
+    /// "Open with…" on it — they named these bytes. Never call it to fill a
+    /// preview or to find out how big something really is; the whole
+    /// arrangement above depends on this being the one door and it being
+    /// opened on purpose.
+    ///
+    /// `partId` is the MIME path from `PartFfi.partId`. An error carries the
+    /// sentence to show the person who asked; there is never an empty
+    /// success, because a zero-byte file looks like a saved attachment.
+    ///
+    /// **Never from the main actor.** This is the one call in the parts
+    /// surface that can reach the network, so it is also the one that can
+    /// take real time: a part nobody has downloaded is queued and then
+    /// *waited on*, for up to thirty seconds, before the wait gives up and
+    /// says so. Every other blocking method here reads SQLite and answers in
+    /// milliseconds; this one answers at the speed of somebody's IMAP server.
+    /// Call it from a task and publish the result.
+    #[uniffi::method(name = "partBytes")]
+    pub fn part_bytes_ffi(
+        &self,
+        message: i64,
+        part_id: String,
+    ) -> Result<Vec<u8>, crate::PartsError> {
+        blocking(self.part_bytes(message, part_id))
+    }
+
+    /// Write one part to exactly `path`.
+    ///
+    /// For the save where the *user* named the file: an `NSSavePanel` has
+    /// already run, offering `PartFfi.saveName`, and this is what happens
+    /// next. Replaces rather than appends.
+    ///
+    /// Under App Sandbox the URL the panel returns is security-scoped, so the
+    /// caller must bracket this with `startAccessingSecurityScopedResource`
+    /// — the write happens on this side, and a scope that is not open here
+    /// fails as a permission error rather than as a dialog.
+    ///
+    /// **Never from the main actor**: it fetches through `partBytes`, so it
+    /// inherits that call's wait. Saving the attachment on a message that has
+    /// only been described is exactly the ordinary case, not the rare one.
+    #[uniffi::method(name = "savePart")]
+    pub fn save_part_ffi(
+        &self,
+        message: i64,
+        part_id: String,
+        path: String,
+    ) -> Result<(), crate::PartsError> {
+        blocking(self.save_part(message, part_id, path))
+    }
+
+    /// Write one part into `directory`, under the name Postio chose, and say
+    /// where it landed.
+    ///
+    /// What "Open with…" and a drag-out are built on. The caller supplies a
+    /// directory and **never a filename**: the name is always the sanitised
+    /// `PartFfi.saveName`, so the sender cannot choose what a file handed to
+    /// another application is called. That is the whole difference from
+    /// `savePart`, and it is deliberate — this is the path where the bytes
+    /// leave Postio's own window.
+    ///
+    /// Launching is the caller's, under a `POSTIO-CONSENT:` comment. Nothing
+    /// on this side opens anything.
+    ///
+    /// **Never from the main actor**, for `savePart`'s reason: a part that is
+    /// not here yet is fetched and waited on first. A drag-out that blocked
+    /// the main actor would freeze the drag it is part of.
+    #[uniffi::method(name = "exportPart")]
+    pub fn export_part_ffi(
+        &self,
+        message: i64,
+        part_id: String,
+        directory: String,
+    ) -> Result<String, crate::PartsError> {
+        blocking(self.export_part(message, part_id, directory))
+    }
+
+    /// Write every part that holds bytes into `directory`.
+    ///
+    /// Each under its own name, including the suffix that stops two parts
+    /// both calling themselves `invoice.pdf` from becoming one file. A part
+    /// that cannot be had is counted, not thrown: a message where one
+    /// attachment is on an unreachable server should still give the user the
+    /// other four, with one sentence saying what was missed.
+    ///
+    /// **Never from the main actor, and the worst of the four.** The parts
+    /// are fetched one after another, each with its own thirty-second wait,
+    /// so a twelve-part message against a server that has stopped answering
+    /// keeps this thread for six minutes. There is no cancellation yet: a
+    /// frontend that wants one has to stop *waiting* rather than stop the
+    /// work, and should say on screen that the save is still running.
+    #[uniffi::method(name = "saveAllParts")]
+    pub fn save_all_parts_ffi(
+        &self,
+        message: i64,
+        directory: String,
+    ) -> Result<crate::SavedPartsFfi, crate::PartsError> {
+        blocking(self.save_all_parts(message, directory))
+    }
+
     /// Tell the engine whether the machine currently has a connection.
     ///
     /// Pushed down from Swift's `NWPathMonitor`: reachability is a platform
@@ -1263,9 +1436,46 @@ impl Session {
     /// Synchronous at the boundary like `mailboxes`: the settings pane reads
     /// it from a computed property, and an async crossing for a handful of
     /// rows would push a `Task` into every caller. See [`Session::accounts`].
+    ///
+    /// **Not from the main actor once an OAuth account exists.** Each one
+    /// costs a keyring read, to learn whether its token has expired, and a
+    /// Keychain that decides to ask the user about it blocks until they
+    /// answer. Read it in a task and publish the rows.
     #[uniffi::method(name = "accounts")]
     pub fn accounts_ffi(&self) -> Vec<crate::AccountFfi> {
         blocking(self.accounts())
+    }
+
+    /// Give an account a new password: the repair `AccountFfi.repair` calls
+    /// `Password`. `None` when it was stored, a sentence when it was not.
+    ///
+    /// For the two states that leave an account unable to sign in without
+    /// anything being wrong with its row — a provider that rotated its app
+    /// password, and a row whose keyring entry never arrived or was removed
+    /// (the pane's *Partial* state). Neither is repaired by adding the
+    /// account again: `addImapAccount` leaves an address the store already
+    /// knows exactly as it found it.
+    ///
+    /// Blocks on the keyring; run it off the main actor.
+    #[uniffi::method(name = "repairCredential")]
+    pub fn repair_credential_ffi(&self, account: i64, password: String) -> Option<String> {
+        blocking(self.repair_credential(account, password))
+    }
+
+    /// Sign an account in again through the system browser: the repair
+    /// `AccountFfi.repair` calls `Browser`. `None` when the grant was
+    /// renewed, a sentence when it was not.
+    ///
+    /// Takes no client id, unlike `signInWithBrowser`. The account already
+    /// carries the one it registered and the keyring carries its secret, so
+    /// Reconnect is one press rather than a form asking somebody to find a
+    /// credential again in order to fix an account that used to work.
+    ///
+    /// Returns when the flow is over, which is when a person comes back from
+    /// a browser tab: run it off the main actor.
+    #[uniffi::method(name = "reconnectAccount")]
+    pub fn reconnect_account_ffi(&self, account: i64) -> Option<String> {
+        blocking(self.reconnect_account(account))
     }
 
     /// The binding in force for a command, for drawing a native accelerator.
@@ -1324,6 +1534,23 @@ impl Session {
     }
 }
 
+/// What resuming an account's browser sign-in needs, resolved off its row.
+///
+/// Does not cross to Swift, and must not: it carries a client secret, and
+/// the frontend has nothing to do with one. `reconnectAccount` is what
+/// crosses — a button press, answered with a sentence or with nothing.
+/// This is the join behind it, public so a test can assert that the right
+/// client reaches the provider rather than an empty one (#1584).
+#[derive(Debug)]
+pub struct BrowserReconnect {
+    /// The account's own address, which is what the consent screen shows.
+    pub address: String,
+    /// The OAuth client the first sign-in registered, off the account row.
+    pub client_id: String,
+    /// Its secret, when the provider issued one, out of the keyring.
+    pub client_secret: Option<postio_account::secret::Password>,
+}
+
 // ---------------------------------------------------------------------------
 // The Rust surface. Nothing here crosses to Swift; the block above wraps what
 // should. Test-only methods belong here.
@@ -1334,6 +1561,22 @@ impl Session {
     /// Disabled ones included: a list that hid them would make "where did my
     /// account go" the next question. An empty answer means no store, which
     /// on a machine that has never signed in is exactly the claim.
+    ///
+    /// # Why this reaches the keyring
+    ///
+    /// A row has to say when a token has expired, and the expiry lives in
+    /// the keyring beside the token it is about — `config.toml` strips
+    /// anything token-shaped on the way through, which is the whole reason
+    /// it is there (#870). So the row cannot be assembled from the store
+    /// alone, and `postio-app` reaches for exactly the same value the same
+    /// way before handing it to its panel's `set_token_expiries`.
+    ///
+    /// **Only for an account that has one.** The filter is
+    /// `account.oauth.is_some()`, which is the only case anything ever
+    /// persisted an expiry under — so a machine with none of them makes no
+    /// keyring call here at all, and one with a single Gmail account makes
+    /// one. It is still a round trip that can block, which is why the
+    /// exported wrapper says to keep this off the main actor.
     pub async fn accounts(&self) -> Vec<crate::AccountFfi> {
         let Some((database, _)) = self.store_and_blobs() else {
             return Vec::new();
@@ -1341,11 +1584,156 @@ impl Session {
         let Ok(connection) = database.connect().await else {
             return Vec::new();
         };
-        postio_storage::repository::AccountRepository::new(&connection)
+        let Ok(accounts) = postio_storage::repository::AccountRepository::new(&connection)
             .list()
             .await
-            .map(|accounts| accounts.iter().map(crate::AccountFfi::of).collect())
-            .unwrap_or_default()
+        else {
+            return Vec::new();
+        };
+        drop(connection);
+
+        let secrets = self.secret_store();
+        let now = std::time::SystemTime::now();
+        let mut rows = Vec::with_capacity(accounts.len());
+        for account in &accounts {
+            // `None` all the way through for everything that is not an
+            // OAuth account of Postio's own minting, which is what
+            // `TokenStanding::Unknown` means and is a real answer rather
+            // than a failed read.
+            let expiry = match (&secrets, account.oauth.is_some()) {
+                (Some(secrets), true) => {
+                    postio_account::oauth::token_source::stored_expiry(
+                        secrets.as_ref(),
+                        &postio_account::secret::AccountKey::new(account.address.address.clone()),
+                    )
+                    .await
+                }
+                _ => None,
+            };
+            rows.push(crate::AccountFfi::of(
+                account,
+                postio_ui::account::TokenStanding::of(expiry, now),
+            ));
+        }
+        rows
+    }
+
+    /// Put a new password in the keyring for an account that is already
+    /// here. See [`repair_credential_ffi`](Self::repair_credential_ffi).
+    ///
+    /// `None` when the credential was stored, a sentence when it was not.
+    ///
+    /// The route `AccountFfi::repair` names as `Password`, and the only way
+    /// a rotated app password reaches the keyring: `add_imap_account` writes
+    /// nothing over an address the store already knows, deliberately, and
+    /// `postio_session::provision::repair`'s own docs argue why that has to
+    /// stay true of the headless helper it is shared with.
+    ///
+    /// The password goes to the OS keyring and nowhere else — never
+    /// `config.toml`, never a log (ADR 0014). It is not echoed back in the
+    /// answer either: everything below names the account, never the secret.
+    pub async fn repair_credential(&self, account: i64, password: String) -> Option<String> {
+        // Refused here rather than stored. An empty secret is worse than no
+        // secret: every later "is this account signed in?" question reads it
+        // as one, so the *Partial* state that says "put a credential in"
+        // would be unreachable for exactly the account that had been through
+        // this field.
+        if password.is_empty() {
+            return Some("Type the password this account signs in with.".to_owned());
+        }
+        let Some((database, _)) = self.store_and_blobs() else {
+            return Some("There is no store open.".to_owned());
+        };
+        let Some(secrets) = self.secret_store() else {
+            return Some("There is no keyring to store the password in.".to_owned());
+        };
+        postio_session::provision::repair(
+            &database,
+            secrets.as_ref(),
+            postio_model::ids::AccountId::new(account),
+            postio_account::secret::Password::new(password),
+        )
+        .await
+        .err()
+        .map(|error| error.to_string())
+    }
+
+    /// What reconnecting `account` in a browser would sign in with, or why
+    /// it cannot be reconnected.
+    ///
+    /// The route `AccountFfi::repair` names as `Browser`, and the same
+    /// accounts: an OAuth client on the row is what makes a reconnect
+    /// possible at all, so this refuses exactly where the row offers
+    /// nothing. Two answers that could disagree would put a button on a row
+    /// it does not work on.
+    pub async fn browser_sign_in_for(&self, account: i64) -> Result<BrowserReconnect, String> {
+        let Some((database, _)) = self.store_and_blobs() else {
+            return Err("There is no store open.".to_owned());
+        };
+        let connection = database
+            .connect()
+            .await
+            .map_err(|error| format!("Postio could not open its local store: {error}"))?;
+        let found = postio_storage::repository::AccountRepository::new(&connection)
+            .get(postio_model::ids::AccountId::new(account))
+            .await
+            .map_err(|error| format!("Postio could not read its local store: {error}"))?;
+        drop(connection);
+        let Some(found) = found else {
+            return Err("That account is not in the store.".to_owned());
+        };
+        let Some(oauth) = found
+            .oauth
+            .as_ref()
+            .filter(|oauth| !oauth.client_id.trim().is_empty())
+        else {
+            return Err(format!(
+                "{} does not sign in through your browser, so there is no \
+                 sign-in to resume.",
+                found.address.address
+            ));
+        };
+        let key = postio_account::secret::AccountKey::new(found.address.address.clone());
+        let client_secret = match self.secret_store() {
+            Some(secrets) => {
+                postio_account::oauth::token_source::stored_client_secret(secrets.as_ref(), &key)
+                    .await
+            }
+            None => None,
+        };
+        Ok(BrowserReconnect {
+            address: found.address.address.clone(),
+            client_id: oauth.client_id.clone(),
+            client_secret,
+        })
+    }
+
+    /// Sign this account in again, with the client it signed in with before.
+    /// See [`reconnect_account_ffi`](Self::reconnect_account_ffi).
+    ///
+    /// Everything about the flow is [`sign_in_with_browser`](Self::sign_in_with_browser)'s
+    /// — the consent, the loopback port, the proof that the token opens the
+    /// account's real IMAP session before anything is written. The only
+    /// difference is where the client comes from, and that is the whole
+    /// feature: a person whose grant has lapsed presses one button.
+    ///
+    /// `provision_oauth` seeds the keyring before it notices the row is
+    /// already there, which is what makes a re-consent land rather than be
+    /// thrown away (#1584's first half).
+    pub async fn reconnect_account(&self, account: i64) -> Option<String> {
+        let resumed = match self.browser_sign_in_for(account).await {
+            Ok(resumed) => resumed,
+            Err(complaint) => return Some(complaint),
+        };
+        self.sign_in_with_browser(
+            resumed.address,
+            resumed.client_id,
+            resumed
+                .client_secret
+                .as_ref()
+                .map(|secret| secret.expose().to_owned()),
+        )
+        .await
     }
 
     /// Opens a session, or says why it could not.
@@ -1797,6 +2185,158 @@ impl Session {
     /// two would mean Postio rewriting a file the user owns.
     fn allow_list_path(&self) -> std::path::PathBuf {
         self.allow_list_at.clone()
+    }
+
+    /// What the reader says above a body that did not fully decode, or
+    /// `None` when it decoded cleanly.
+    ///
+    /// The end of the road for `StoredBody::encoding_problems` on this
+    /// platform, which was carried all the way to
+    /// [`reader_document`](Self::reader_document) and then bound to `_`
+    /// (#901, #1585): a body that silently lost a part reads exactly like a
+    /// body the sender wrote that way. The GTK reader has said so since #901
+    /// and this frontend said nothing.
+    ///
+    /// A read of its own rather than a field on the document, because the
+    /// document is a string handed to a web view and this is native chrome
+    /// above it — the same split every notice in the strip has.
+    ///
+    /// See [`decode_caveat_ffi`](Self::decode_caveat_ffi).
+    pub async fn decode_caveat(&self, message: i64) -> Option<String> {
+        let (database, _) = self.store_and_blobs()?;
+        let connection = database.connect().await.ok()?;
+        let offline = self.offline.load(std::sync::atomic::Ordering::SeqCst);
+        let postio_session::reading::Body::Ready {
+            encoding_problems, ..
+        } = postio_session::reading::load_body_or_reason(&connection, message.into(), offline)
+            .await
+        else {
+            // No body at all is a state plate's business, not a caveat's:
+            // there are no words on screen for this to be a caveat about.
+            return None;
+        };
+        postio_ui::reader::document::decode_caveat(encoding_problems).map(str::to_owned)
+    }
+
+    /// What `message` offers about the list it came from, or `None`.
+    ///
+    /// **A read, and only a read.** It opens no connection to anything,
+    /// writes no row, and hands back no way to act — a sentence, an
+    /// identifier and a button label. That is what makes "only on deliberate
+    /// activation" (CLAUDE.md, privacy) a property of the boundary rather
+    /// than a habit of whoever writes the frontend: drawing a message can
+    /// reach this and cannot reach
+    /// [`activate_unsubscribe`](Self::activate_unsubscribe).
+    ///
+    /// See [`unsubscribe_offer_ffi`](Self::unsubscribe_offer_ffi).
+    pub async fn unsubscribe_offer(&self, message: i64) -> Option<crate::UnsubscribeOfferFfi> {
+        let (database, _) = self.store_and_blobs()?;
+        let connection = database.connect().await.ok()?;
+        let (_account, offer) = unsubscribe_offer_for(&connection, message.into()).await?;
+        Some(crate::UnsubscribeOfferFfi {
+            list_identifier: offer.list_identifier,
+            summary: offer.summary,
+            action: postio_ui::unsubscribe::ACTION.to_owned(),
+        })
+    }
+
+    /// Record that the user asked to leave this message's list.
+    ///
+    /// `None` when it was recorded, a sentence when it was not.
+    ///
+    /// # What this does and does not do
+    ///
+    /// It appends to the activation log and stops. Sending the real RFC 8058
+    /// request is #972 and has never been built on either platform — the GTK
+    /// banner has only ever asked, too. When it is built it belongs **here**,
+    /// inside the one function a frontend can only reach from a button,
+    /// rather than anywhere on the rendering path.
+    ///
+    /// # Why it re-derives the offer
+    ///
+    /// The caller passes a message id and nothing else: no list identifier,
+    /// no URL, nothing read off a banner and handed back. So there is no
+    /// value a frontend — or a message, through a frontend — can supply that
+    /// decides what gets recorded, and a message the reader offers nothing on
+    /// is refused rather than logged. Without that, a frontend bug over the
+    /// Outbox would record the user leaving their own account's domain
+    /// (#1525 is that bug, on the drawing side).
+    ///
+    /// See [`activate_unsubscribe_ffi`](Self::activate_unsubscribe_ffi).
+    pub async fn activate_unsubscribe(&self, message: i64) -> Option<String> {
+        let Some((database, _)) = self.store_and_blobs() else {
+            return Some("There is no open store to record the activation in.".to_owned());
+        };
+        // An interactive write, the same priority the composer's saves take:
+        // somebody is waiting on a button they just pressed.
+        let (connection, _permit) = match database.interactive_write().await {
+            Ok(held) => held,
+            Err(error) => return Some(format!("The store would not take a write: {error}")),
+        };
+        let Some((account, offer)) = unsubscribe_offer_for(&connection, message.into()).await
+        else {
+            return Some("This message offers no list to leave.".to_owned());
+        };
+
+        let mut activation = postio_model::UnsubscribeActivation::new(
+            account,
+            offer.list_identifier,
+            chrono::Utc::now(),
+        );
+        postio_storage::repository::UnsubscribeRepository::new(&connection)
+            .record(&mut activation)
+            .await
+            .err()
+            .map(|error| format!("The activation could not be recorded: {error}"))
+    }
+
+    /// Every activation this store holds, newest first.
+    ///
+    /// Across every account, like the remote-image grants beside it in the
+    /// same pane and for the same reason: the pane draws no account
+    /// distinction anywhere, and the privacy question is "what have I left",
+    /// not "what have I left from this address".
+    ///
+    /// See [`unsubscribe_activations_ffi`](Self::unsubscribe_activations_ffi).
+    pub async fn unsubscribe_activations(&self) -> Vec<crate::UnsubscribeActivationFfi> {
+        let Some((database, _)) = self.store_and_blobs() else {
+            return Vec::new();
+        };
+        let Ok(connection) = database.connect().await else {
+            return Vec::new();
+        };
+        let accounts = postio_storage::repository::AccountRepository::new(&connection)
+            .list()
+            .await
+            .unwrap_or_default();
+        let log = postio_storage::repository::UnsubscribeRepository::new(&connection);
+        let mut activations = Vec::new();
+        for account in &accounts {
+            match log.for_account(account.id).await {
+                Ok(rows) => activations.extend(rows),
+                Err(error) => {
+                    tracing::warn!(%error, "could not read the unsubscribe-activation log")
+                }
+            }
+        }
+        // The merge rule, not a `sort_by_key` written out here: each
+        // account's rows come back newest-first on their own, and joining
+        // several of those lists is a decision about what the pane shows,
+        // which `postio-app`'s privacy pane was already making with its own
+        // copy of the same line. `postio_ui::unsubscribe::newest_first` is
+        // the one answer now, tie-break included.
+        postio_ui::unsubscribe::newest_first(&mut activations);
+        activations
+            .into_iter()
+            .map(|activation| crate::UnsubscribeActivationFfi {
+                when: postio_ui::unsubscribe::activated_on(activation.activated_at),
+                label: postio_ui::unsubscribe::activation_label(
+                    &activation.list_identifier,
+                    activation.activated_at,
+                ),
+                list_identifier: activation.list_identifier,
+            })
+            .collect()
     }
 
     /// Add an account. See [`add_imap_account_ffi`](Self::add_imap_account_ffi).
@@ -3817,11 +4357,13 @@ impl Session {
         match postio_session::reading::load_body_or_reason(&connection, message.into(), offline)
             .await
         {
-            // `encoding_problems` is bound and not used here, and that is a
-            // gap rather than a decision: this frontend renders a document
-            // and has no native strip to put a caveat in, the way the GTK
-            // reader's `DecodeNotice` is (#901). Named rather than elided so
-            // whoever gives this frontend a notice surface finds it.
+            // `encoding_problems` is bound and not used *here* deliberately,
+            // and is no longer the gap it was: the caveat it carries is
+            // native chrome above the document rather than markup inside it
+            // — the same split the GTK reader's `DecodeNotice` has (#901) —
+            // so it crosses as [`decode_caveat`](Self::decode_caveat), which
+            // reads the same flag through the same load. Named rather than
+            // elided so the next reader of this arm finds the other half.
             postio_session::reading::Body::Ready {
                 body,
                 encoding_problems: _,
@@ -3936,6 +4478,123 @@ impl Session {
         postio_session::reading::resolve_cid(&database, &blobs, message.into(), &content_id)
             .await
             .map(|(bytes, mime_type)| crate::InlinePart { bytes, mime_type })
+    }
+
+    /// What `message` is made of, as the frontend sees it.
+    ///
+    /// Empty rather than an error when there is no store or the message has
+    /// gone: the caller is drawing a panel, and a panel with no rows is a
+    /// truthful blank where a thrown error would make listing a thing every
+    /// frontend has to handle failing.
+    pub async fn message_parts(&self, message: i64) -> crate::MessagePartsFfi {
+        let Some((database, _)) = self.store_and_blobs() else {
+            return crate::MessagePartsFfi::nothing();
+        };
+        match postio_session::reading::message_parts(&database, message.into()).await {
+            Ok(parts) => crate::MessagePartsFfi::from_parts(parts),
+            Err(reason) => {
+                // An id and an outcome. The sentence names no part and no
+                // sender, but it is the store's wording rather than ours and
+                // this is the one place it would otherwise vanish.
+                tracing::debug!(message, reason, "a message's parts could not be read");
+                crate::MessagePartsFfi::nothing()
+            }
+        }
+    }
+
+    /// One part's bytes, fetching them if the user's asking is what it takes.
+    ///
+    /// See `partBytes` above for why this is the only call here allowed near
+    /// the network.
+    pub async fn part_bytes(
+        &self,
+        message: i64,
+        part_id: String,
+    ) -> Result<Vec<u8>, crate::PartsError> {
+        let (database, blobs) = self.store_and_blobs().ok_or_else(no_store)?;
+        Ok(postio_session::reading::part_bytes_at(
+            &database,
+            &blobs,
+            self.engine(),
+            message.into(),
+            &part_id,
+        )
+        .await?)
+    }
+
+    /// Write one part to exactly `path`.
+    pub async fn save_part(
+        &self,
+        message: i64,
+        part_id: String,
+        path: String,
+    ) -> Result<(), crate::PartsError> {
+        let (database, blobs) = self.store_and_blobs().ok_or_else(no_store)?;
+        Ok(postio_session::reading::save_part(
+            &database,
+            &blobs,
+            self.engine(),
+            message.into(),
+            &part_id,
+            std::path::Path::new(&path),
+        )
+        .await?)
+    }
+
+    /// Write one part into `directory` under the name Postio chose for it.
+    pub async fn export_part(
+        &self,
+        message: i64,
+        part_id: String,
+        directory: String,
+    ) -> Result<String, crate::PartsError> {
+        let (database, blobs) = self.store_and_blobs().ok_or_else(no_store)?;
+        let path = postio_session::reading::export_part(
+            &database,
+            &blobs,
+            self.engine(),
+            message.into(),
+            &part_id,
+            std::path::Path::new(&directory),
+        )
+        .await?;
+        Ok(path.display().to_string())
+    }
+
+    /// Write every part that holds bytes into `directory`.
+    pub async fn save_all_parts(
+        &self,
+        message: i64,
+        directory: String,
+    ) -> Result<crate::SavedPartsFfi, crate::PartsError> {
+        let (database, blobs) = self.store_and_blobs().ok_or_else(no_store)?;
+        let outcome = postio_session::reading::save_all_parts(
+            &database,
+            &blobs,
+            self.engine(),
+            message.into(),
+            std::path::Path::new(&directory),
+        )
+        .await?;
+        Ok(crate::SavedPartsFfi {
+            saved: outcome.saved as u32,
+            failed: outcome.failed as u32,
+            failure: postio_ui::reader::parts::save_all_failure(outcome.failed),
+        })
+    }
+
+    /// The engine for this store, once one has been started.
+    ///
+    /// `None` is an ordinary state rather than a fault — a store nobody has
+    /// signed into yet — and it is what turns "fetch this part" into a
+    /// sentence saying the account is not syncing instead of a wait that
+    /// never ends.
+    fn engine(&self) -> Option<postio_runtime::Engine> {
+        self.wiring
+            .lock()
+            .expect("wiring lock")
+            .as_ref()
+            .and_then(|wiring| wiring.engine.get().cloned())
     }
 
     /// Every folder of every enabled account, for the sidebar.
@@ -4525,6 +5184,36 @@ impl Session {
 /// outright when the caller is already on one. `postio_session::blocking::now`
 /// is the whole of it, and the reason it is shared is that every crate that
 /// has needed this has got it wrong once.
+/// What the reader offers about `message`'s list, with the account that
+/// would own the activation.
+///
+/// One read serving both the offer and the activation, so the sentence a
+/// person saw and the row that gets written cannot be derived differently.
+/// Free rather than a method because it holds no session state: what it
+/// needs is a connection and an id.
+async fn unsubscribe_offer_for(
+    connection: &postio_storage::Checkout,
+    id: postio_model::ids::MessageId,
+) -> Option<(postio_model::ids::AccountId, postio_ui::unsubscribe::Offer)> {
+    let repository = postio_storage::repository::MessageRepository::new(connection);
+    let message = repository.get(id).await.ok()??;
+    // `send_state` is a column on the row rather than a field on `Message`,
+    // so it is a second point read. It is also the gate (#1525): without it
+    // the domain fallback offers to unsubscribe the user from their own
+    // account, so a read that fails is treated as "do not offer" rather than
+    // as "no send state".
+    let send_state = match repository.send_state(id).await {
+        Ok(state) => state,
+        Err(error) => {
+            tracing::warn!(message = id.get(), %error, "cannot read a message's send state");
+            return None;
+        }
+    };
+    let offer =
+        postio_ui::unsubscribe::offer(send_state, message.list_id.as_deref(), &message.from)?;
+    Some((message.account_id, offer))
+}
+
 fn blocking<T>(future: impl std::future::Future<Output = T>) -> T {
     postio_session::blocking::now(future)
 }

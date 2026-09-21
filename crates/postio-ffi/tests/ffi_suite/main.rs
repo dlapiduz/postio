@@ -16,6 +16,7 @@
 //! checked rather than assumed. A test that grows one has to move back out, or
 //! it will change what its neighbours see.
 
+mod account_repair;
 mod aiming;
 mod command_coverage;
 mod compose;
@@ -26,12 +27,15 @@ mod keys;
 mod list;
 mod notice;
 mod palette;
+mod parts;
 mod provisioning;
 mod reader;
 mod registry;
+mod saved_search;
 mod search;
 mod selection;
 mod session;
 mod settings;
 mod store_on_disk;
 mod syncing;
+mod unsubscribe;

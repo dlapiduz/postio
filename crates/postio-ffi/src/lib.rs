@@ -47,15 +47,18 @@ mod logging;
 mod mailbox;
 mod notify;
 mod palette;
+mod parts;
 mod provisioning;
 mod reader;
 pub mod registry;
+mod saved_search;
 mod search;
 mod session;
 mod settings;
 mod sidebar;
+mod unsubscribe;
 
-pub use account::{AccountFfi, ConnectionReportFfi};
+pub use account::{AccountFfi, ConnectionReportFfi, RepairRouteFfi};
 pub use compose::{
     AttachmentFfi, ComposeError, DraftFfi, DraftKindFfi, PastedFfi, outgoing_shape,
     recipient_summary,
@@ -73,6 +76,10 @@ pub use notify::{
     decide_notification,
 };
 pub use palette::{CheatRowFfi, CheatSectionFfi, PaletteEntryFfi};
+pub use parts::{
+    MessagePartsFfi, PartFfi, PartsError, SavedPartsFfi, part_cursor_after, part_held_back_note,
+    part_note,
+};
 pub use provisioning::{
     ProviderHintFfi, RouteFfi, ScopesFfi, SignInProgressFfi, provider_hint, sign_in_scopes,
 };
@@ -81,6 +88,11 @@ pub use reader::{
     middle_truncate, reader_page_after, reader_page_fragment, reader_scroll_markers,
 };
 pub use registry::{CommandSpecFfi, MenuFfi, MenuSectionFfi, UiContext, UiRecovery, menus};
+pub use saved_search::{
+    PromptFfi, ReorderFfi, SavedSearchEditFfi, SavedSearchFfi, delete_saved_search,
+    move_saved_search, rename_saved_search, save_search, saved_search_delete_prompt,
+    saved_search_rename_prompt, saved_searches,
+};
 pub use search::{ChipFfi, EmptyPlateFfi, MatchRangeFfi, OutcomeFfi, SnippetFfi, query_chips};
 pub use session::{HANDLED_HERE, Session, SessionError, SessionOptions};
 pub use settings::{
@@ -94,6 +106,7 @@ pub use settings::{
     settings_remove_filter, settings_save, settings_sections, settings_status, settings_syncing,
 };
 pub use sidebar::{ActivityFfi, sidebar_status};
+pub use unsubscribe::{UnsubscribeActivationFfi, UnsubscribeOfferFfi};
 
 /// Every command the registry knows, in cheat-sheet order.
 ///

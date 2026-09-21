@@ -1155,30 +1155,27 @@ impl SettingsPanel {
         self.redraw_accounts();
     }
 
-    /// The validity line this account's row carries under its badge, if it
-    /// has one to carry — `None` for a password account, an OAuth account
-    /// fed by an external broker, or one [`set_token_expiries`](Self::set_token_expiries)
-    /// has not been told about yet.
-    fn token_validity(&self, account: AccountId) -> Option<String> {
+    /// How this account's token stands, for the validity line under its
+    /// badge and for the warning mark and Reconnect button beside it.
+    ///
+    /// `TokenStanding::Unknown` for a password account, an OAuth account
+    /// fed by an external broker, or one
+    /// [`set_token_expiries`](Self::set_token_expiries) has not been told
+    /// about yet.
+    ///
+    /// The arithmetic and the wording both moved to `postio_ui::account`
+    /// with #1584: the macOS row needed the same two answers and had
+    /// neither, and a second copy of "when is a token expired" is exactly
+    /// the drift ADR 0019 exists to prevent.
+    fn token_standing(&self, account: AccountId) -> postio_ui::account::TokenStanding {
         let expiry = self
             .imp()
             .token_expiries
             .borrow()
             .iter()
             .find(|(id, _)| *id == account)
-            .map(|(_, expiry)| *expiry)?;
-        let at = expiry?;
-        match at.duration_since(std::time::SystemTime::now()) {
-            Ok(remaining) => {
-                let days = remaining.as_secs() / (24 * 60 * 60);
-                Some(if days == 0 {
-                    "token valid less than a day".to_owned()
-                } else {
-                    format!("token valid {days}d")
-                })
-            }
-            Err(_) => Some("token expired — re-authorization needed".to_owned()),
-        }
+            .and_then(|(_, expiry)| *expiry);
+        postio_ui::account::TokenStanding::of(expiry, std::time::SystemTime::now())
     }
 
     /// The reindex line this account's row shows while a rebuild is running
@@ -1369,7 +1366,10 @@ impl SettingsPanel {
         list.set_hexpand(true);
         list.set_ellipsize(gtk::pango::EllipsizeMode::End);
 
-        let when = activation.activated_at.format("%Y-%m-%d").to_string();
+        // Both frontends date an activation the same way, and read the same
+        // sentence out to a screen reader: `postio_ui::unsubscribe` (#1585),
+        // rather than a format string per pane.
+        let when = postio_ui::unsubscribe::activated_on(activation.activated_at);
         let when_label = gtk::Label::new(Some(&when));
         when_label.add_css_class("postio-settings-unsubscribe-when");
         when_label.set_xalign(1.0);
@@ -1382,10 +1382,12 @@ impl SettingsPanel {
         box_.append(&list);
         box_.append(&when_label);
         row.set_child(Some(&box_));
-        row.update_property(&[gtk::accessible::Property::Label(&format!(
-            "Left {} on {when}",
-            activation.list_identifier
-        ))]);
+        row.update_property(&[gtk::accessible::Property::Label(
+            &postio_ui::unsubscribe::activation_label(
+                &activation.list_identifier,
+                activation.activated_at,
+            ),
+        )]);
         row
     }
 
@@ -1566,13 +1568,11 @@ impl SettingsPanel {
         // One line, `·`-joined, in the order a person reads it: what kind of
         // account, how it signs in, how much mail, and how that stands right
         // now.
-        let validity = self.token_validity(account.id);
-        let expired = validity
-            .as_deref()
-            .is_some_and(|text| text.starts_with("token expired"));
+        let standing = self.token_standing(account.id);
+        let expired = standing.is_expired();
         let mut facts = vec![account_badge(account)];
         facts.extend(self.mail_weight(account.id));
-        facts.extend(validity.clone());
+        facts.extend(standing.line());
         facts.extend(self.reindex_status(account.id));
         if !account.enabled {
             facts.push("disabled".to_owned());

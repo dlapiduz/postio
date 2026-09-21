@@ -236,7 +236,12 @@ impl DecodeNotice {
         // One line, so the sentence is shorter than the wrapping one it
         // replaced. What a reader needs is the fact that changes what they
         // do, and the rest was elaboration.
-        notice.set_text("Parts of this message could not be decoded");
+        //
+        // The words themselves are `postio-ui`'s, not this file's: the macOS
+        // reader makes the same claim about the same flag, and a caveat that
+        // was typed out twice is a caveat that can come to say two different
+        // things (#1585).
+        notice.set_text(postio_ui::reader::document::DECODE_CAVEAT);
         DecodeNotice { notice }
     }
 
@@ -296,7 +301,7 @@ impl UnsubscribeBanner {
         label.add_css_class("postio-unsubscribe-banner-label");
         root.append(&label);
 
-        let unsubscribe = gtk::Button::with_label("Unsubscribe");
+        let unsubscribe = gtk::Button::with_label(postio_ui::unsubscribe::ACTION);
         unsubscribe.add_css_class("flat");
         root.append(&unsubscribe);
 
@@ -314,11 +319,13 @@ impl UnsubscribeBanner {
 
     /// Name the list this message belongs to and show the banner, or hide
     /// it with no list to leave.
+    ///
+    /// The sentence is `postio_ui::unsubscribe::summary`'s, so the macOS
+    /// banner says the same thing about the same message (#1585).
     pub fn set_list(&self, list: Option<&str>) {
         match list {
             Some(list) => {
-                self.label
-                    .set_label(&format!("This message is from {list}"));
+                self.label.set_label(&postio_ui::unsubscribe::summary(list));
                 self.root.set_visible(true);
             }
             None => self.root.set_visible(false),

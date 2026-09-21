@@ -185,6 +185,8 @@ fn a_part_in_the_reader_can_be_dragged_out(window: &Window) {
         downloaded: true,
         last: true,
         attachment: Some(postio_model::ids::AttachmentId::new(1)),
+        content_id: None,
+        inline: false,
     };
     let container = Node {
         part_id: String::new(),
@@ -195,6 +197,8 @@ fn a_part_in_the_reader_can_be_dragged_out(window: &Window) {
         downloaded: true,
         last: true,
         attachment: None,
+        content_id: None,
+        inline: false,
     };
 
     let offer = window.parts().drag_offer(&attachment).expect(

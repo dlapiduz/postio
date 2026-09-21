@@ -198,13 +198,44 @@ pub async fn export_part(
     message: MessageId,
     node: &postio_gtk::parts::Node,
 ) -> Result<PathBuf, String> {
+    let name = postio_gtk::parts::save_name(node);
+    export_part_as(database, blobs, engine, into, message, node, &name).await
+}
+
+/// [`export_part`], for a caller that has already worked out the name.
+///
+/// One part in isolation can be named from itself; a *batch* cannot.
+/// [`postio_gtk::parts::save_name`] answers about one node and knows nothing
+/// of the others, so a message carrying two parts that both call themselves
+/// `invoice.pdf` writes one file and leaves no sign the second ever existed
+/// — a silent loss of the user's mail, from the command whose whole promise
+/// is that it got everything.
+///
+/// [`postio_gtk::parts::save_names`] is what resolves that, over the whole
+/// set at once, and it is shared with the macOS boundary so both frontends
+/// resolve a collision the same way. This is the seam that lets the caller
+/// hand its answer down: `save_all_parts` passes the deduplicated name, the
+/// drag-out and the single save pass nothing and get `save_name` as before.
+///
+/// `name` is expected to have come from one of those two — it is joined onto
+/// `into` and written, with no further laundering, exactly as the name this
+/// used to derive was.
+pub async fn export_part_as(
+    database: &Store,
+    blobs: &BlobStore,
+    engine: Option<Engine>,
+    into: &Path,
+    message: MessageId,
+    node: &postio_gtk::parts::Node,
+    name: &str,
+) -> Result<PathBuf, String> {
     let attachment = node
         .attachment
         .ok_or("That part is not something with bytes of its own")?;
     let bytes = crate::reading::part_bytes(database, blobs, engine, message, attachment).await?;
 
     std::fs::create_dir_all(into).map_err(|error| error.to_string())?;
-    let path = into.join(postio_gtk::parts::save_name(node));
+    let path = into.join(name);
     std::fs::write(&path, &bytes).map_err(|error| error.to_string())?;
     Ok(path)
 }
@@ -482,6 +513,8 @@ one,two\r\n\
             downloaded: true,
             last: true,
             attachment: Some(attachment.id),
+            content_id: None,
+            inline: false,
         };
 
         let into = tempfile::tempdir().expect("a directory");
@@ -522,6 +555,8 @@ one,two\r\n\
             downloaded: true,
             last: true,
             attachment: None,
+            content_id: None,
+            inline: false,
         };
 
         let into = tempfile::tempdir().expect("a directory");

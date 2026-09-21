@@ -61,17 +61,23 @@ pub enum Provisioned {
     AlreadyProvisioned(AccountId),
 }
 
-/// Why an account could not be added.
+/// Why an account could not be added, or repaired.
 ///
-/// Two cases rather than a string, because they call for different answers:
-/// a keyring that will not open is something the user can fix and retry,
-/// and a store that will not take a row is not.
+/// Three cases rather than a string, because they call for different
+/// answers: a keyring that will not open is something the user can fix and
+/// retry, a store that will not take a row is not, and a credential this
+/// account would never read is a question asked of the wrong account.
 #[derive(Debug)]
 pub enum ProvisionError {
     /// The keyring would not take the password.
     Credential(SecretError),
     /// The store would not take the row.
     Store(postio_storage::Error),
+    /// There is nothing here a typed password would put right — see
+    /// [`repair`], which is the only thing that answers this. The sentence
+    /// is the whole error: it names what this account signs in with instead,
+    /// because "failed" over a row a person is looking at is a dead end.
+    Unrepairable(String),
 }
 
 impl std::fmt::Display for ProvisionError {
@@ -85,6 +91,7 @@ impl std::fmt::Display for ProvisionError {
                  Is the keyring unlocked?"
             ),
             Self::Store(error) => write!(f, "the account could not be written: {error}"),
+            Self::Unrepairable(reason) => write!(f, "{reason}"),
         }
     }
 }
@@ -94,6 +101,10 @@ impl std::error::Error for ProvisionError {
         match self {
             Self::Credential(error) => Some(error),
             Self::Store(error) => Some(error),
+            // Nothing failed underneath: this account was never going to
+            // read the credential it was offered, which is a fact about the
+            // account rather than an error something raised.
+            Self::Unrepairable(_) => None,
         }
     }
 }
@@ -224,6 +235,110 @@ pub async fn provision(
             Err(ProvisionError::Store(error))
         }
     }
+}
+
+/// Replace the password an account already in the store signs in with.
+///
+/// # Why this is beside [`provision`] rather than a flag on it
+///
+/// [`provision`] is deliberately inert about the credential of an address it
+/// already knows, and that inertness is load-bearing: `postio-provision` is
+/// run from a shell, and a re-run whose environment had drifted would
+/// otherwise overwrite a password that authenticates with one that does not,
+/// turning a healthy account into one that stopped syncing for no visible
+/// reason. Nothing there is asking a person to confirm anything.
+///
+/// A person clicking *Reconnect* on their own account row wants the exact
+/// opposite, and wants it badly: an app password the provider rotated is the
+/// ordinary end of every such account, and before this the only way through
+/// it was to remove the account and add it again — which throws away its
+/// mailbox roles, its local bodies and its identities with it (#1584).
+///
+/// The two wants cannot share a default, so they do not share a function.
+/// This one only ever replaces, and only for an account someone names by id,
+/// which is a thing a shell script cannot do by accident: `provision` takes
+/// an address out of the environment, and there is no id in the environment
+/// to take.
+///
+/// # What it refuses
+///
+/// An account that signs in with a **token**. Its credential lives under a
+/// derived key and is minted by a browser round trip, not typed; a password
+/// written under the account's own key would be read by nothing, and the
+/// caller — which reads success as "fixed" — would report a repair that
+/// changed nothing a server ever sees. That is the shape of the OAuth bug
+/// #1584 opened with, and refusing here is what stops it coming back through
+/// the other door. The same goes for a local mail store, which signs in to
+/// nothing at all.
+///
+/// # Why it turns a disabled account back on
+///
+/// Because GTK's repair does, for the reason `postio_app::onboarding`'s
+/// `configure` gives in a comment: a repair over an account somebody had
+/// disabled is still a repair, and the user just proved they want to sign in
+/// to it. Two panes that disagreed about this would describe different
+/// software (ADR 0019).
+///
+/// # Errors
+///
+/// [`ProvisionError::Unrepairable`] when there is no such account, or when
+/// the one named would never read a typed password; [`ProvisionError::Credential`]
+/// when the keyring will not take it; [`ProvisionError::Store`] when the row
+/// cannot be read or re-enabled.
+pub async fn repair(
+    database: &Store,
+    secrets: &dyn SecretStore,
+    account: AccountId,
+    password: Password,
+) -> Result<(), ProvisionError> {
+    // The row is read and the checkout dropped before the keyring is
+    // touched. A keyring call can block on a prompt the user has to answer,
+    // and a pooled connection held across that is one nothing else can have
+    // for as long as they take to find the dialog.
+    let (address, enabled) = {
+        let connection = database.connect().await.map_err(ProvisionError::Store)?;
+        let found = AccountRepository::new(&connection)
+            .get(account)
+            .await
+            .map_err(ProvisionError::Store)?;
+        let Some(found) = found else {
+            return Err(ProvisionError::Unrepairable(
+                "That account is not in the store.".to_owned(),
+            ));
+        };
+        if matches!(
+            found.backend,
+            postio_model::account::Backend::Maildir { .. }
+        ) {
+            return Err(ProvisionError::Unrepairable(format!(
+                "{} is a mail store on this machine. It signs in to nothing, \
+                 so there is no credential to replace.",
+                found.address.address
+            )));
+        }
+        if matches!(found.auth, AuthMethod::OAuth2 | AuthMethod::XOAuth2) {
+            return Err(ProvisionError::Unrepairable(format!(
+                "{} signs in through your browser, so its credential is \
+                 granted rather than typed. Sign in again to reconnect it.",
+                found.address.address
+            )));
+        }
+        (found.address.address.clone(), found.enabled)
+    };
+
+    secrets
+        .store(&AccountKey::new(address), &password)
+        .await
+        .map_err(ProvisionError::Credential)?;
+
+    if !enabled {
+        let connection = database.connect().await.map_err(ProvisionError::Store)?;
+        AccountRepository::new(&connection)
+            .set_enabled(account, true)
+            .await
+            .map_err(ProvisionError::Store)?;
+    }
+    Ok(())
 }
 
 /// Settings for `address`: the provider preset table, with the environment

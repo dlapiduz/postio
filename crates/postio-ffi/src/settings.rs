@@ -580,12 +580,22 @@ pub fn settings_add_filter(
 }
 
 /// Why a settings write could not be made.
+///
+/// Shared with the saved-search verbs in [`crate::saved_search`], which are
+/// writes to the same file for the same reasons — one error type for
+/// `config.toml`, rather than a second one a frontend would have to handle
+/// identically.
 #[derive(Debug, thiserror::Error, uniffi::Error)]
 pub enum SettingsError {
-    /// The file does not parse, so there is no table to patch.
+    /// The write did not happen, and the file is as it was.
+    ///
+    /// Usually because it does not parse, so there is no table to patch;
+    /// also a file that could not be read or replaced. One variant because
+    /// there is one thing to do about any of them — show the message and
+    /// leave what is on screen alone.
     #[error("{message}")]
     Invalid {
-        /// What the parser said, for the footer.
+        /// What the parser or the filesystem said, for the footer.
         message: String,
     },
 }

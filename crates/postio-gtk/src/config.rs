@@ -50,6 +50,13 @@
 //! what keeps a hand-edited `[filters]` and the box's own `Ctrl+S` reaching
 //! the sidebar through one path instead of two.
 //!
+//! The edit itself is [`postio_ui::saved_search`], not this module: reading
+//! the file, patching only `[filters]` and writing it back has no widget in
+//! it, and the frontend that could not reach it drew a *Save search as
+//! folder* button that was enabled and did nothing (#1574). What stays here
+//! is the half that needs a window — the finder's current query, the two
+//! dialogs, and the repaint.
+//!
 //! # `[storage]` (#929)
 //!
 //! This crate has no store to enforce a disk ceiling against, so
@@ -63,10 +70,10 @@ use std::path::Path;
 use adw::prelude::*;
 use gtk::glib;
 use postio_config::Config;
-use postio_config::filters::Reorder;
 use postio_config::validate::Checked;
 use postio_config::watch::ConfigWatcher;
 use postio_core::{CommandId, ConfigService, Event};
+use postio_ui::saved_search::{Reorder, Verb};
 
 use crate::finder::Mode;
 use crate::sidebar::{SavedSearch, SavedSearchAction};
@@ -256,20 +263,11 @@ pub fn install_at(window: &Window, path: &Path) {
 /// The pinned entries of `[filters]`, as the sidebar widget wants them --
 /// in [`Config::ordered_filter_keys`]'s order, which `Sidebar::
 /// set_saved_searches` now draws exactly as given (#292).
+///
+/// The reading moved to `postio-ui` with the four verbs below (#1574); this
+/// is the one-line wrapper the call sites in this module already had.
 fn saved_searches(config: &Config) -> Vec<SavedSearch> {
-    config
-        .ordered_filter_keys()
-        .into_iter()
-        .filter_map(|key| {
-            let filter = config.filters.get(&key)?;
-            let name = filter.name.clone().unwrap_or_else(|| key.clone());
-            Some(SavedSearch {
-                key,
-                name,
-                query: filter.query.clone(),
-            })
-        })
-        .collect()
+    postio_ui::saved_search::pinned(config)
 }
 
 /// Which [`SavedSearchAction`] a registry command id asks for, when it asks
@@ -304,32 +302,33 @@ fn save_current_search(window: &Window, path: &Path) {
     if finder.mode() != Mode::Search {
         return;
     }
+    // A blank query is `postio_ui::saved_search`'s no-op rather than an early
+    // return here, so that the macOS field, which has no finder to ask,
+    // declines for the same reason and with the same silence.
     let query = finder.query().text;
-    if query.trim().is_empty() {
-        return;
-    }
-
-    let original = std::fs::read_to_string(path).unwrap_or_default();
-    let mut config = Config::from_toml_str(&original).unwrap_or_default();
-    config.save_filter(&query);
-    if let Err(error) = write_filters(&original, &config, path) {
-        tracing::warn!(%error, "could not save the search");
-        return;
-    }
-    window
-        .sidebar()
-        .set_saved_searches(&saved_searches(&config));
+    edit_searches(
+        window,
+        path,
+        Verb::Save { query: &query },
+        "save the search",
+    );
 }
 
-/// Writes `config.filters`' current state back to `path`, touching only
-/// `[filters]` — every saved-search verb in this module (`Ctrl+S`, rename,
-/// reorder, delete) writes through this rather than through
-/// [`Config::to_toml_string`], which reserializes the whole file and would
-/// silently drop a hand-written comment or reorder every other section on
-/// someone's next search save (#885).
-fn write_filters(original: &str, config: &Config, path: &Path) -> postio_config::Result<()> {
-    let patched = postio_config::patch_filters(original, &config.filters)?;
-    Config::write_text_to_path(&patched, path)
+/// Run one saved-search verb against `path` and repaint the sidebar with
+/// whatever it left behind.
+///
+/// The whole of the verb is `postio_ui::saved_search::apply` -- read the file
+/// fresh, patch only `[filters]`, write it back -- so that the Mac runs the
+/// same four edits rather than its own four (#1574). What is left here is the
+/// half that needs a window: which list to draw, and what to say when the
+/// file could not be written.
+///
+/// `what` completes "could not ...", so it reads as a sentence in the log.
+fn edit_searches(window: &Window, path: &Path, verb: Verb<'_>, what: &str) {
+    match postio_ui::saved_search::apply(path, verb) {
+        Ok(edit) => window.sidebar().set_saved_searches(&edit.searches),
+        Err(error) => tracing::warn!(%error, "could not {what}"),
+    }
 }
 
 /// Move `key` up or down among the pinned filters, and repaint.
@@ -338,18 +337,12 @@ fn write_filters(original: &str, config: &Config, path: &Path) -> postio_config:
 /// reorder because it destroys nothing -- moving it back is the same
 /// action once more, the same as any other position swap.
 fn move_saved_search(window: &Window, path: &Path, key: &str, direction: Reorder) {
-    let original = std::fs::read_to_string(path).unwrap_or_default();
-    let mut config = Config::from_toml_str(&original).unwrap_or_default();
-    if !config.move_filter(key, direction) {
-        return;
-    }
-    if let Err(error) = write_filters(&original, &config, path) {
-        tracing::warn!(%error, "could not save the reordered searches");
-        return;
-    }
-    window
-        .sidebar()
-        .set_saved_searches(&saved_searches(&config));
+    edit_searches(
+        window,
+        path,
+        Verb::Move { key, direction },
+        "save the reordered searches",
+    );
 }
 
 /// Ask before deleting -- the one saved-search verb the registry's
@@ -363,11 +356,12 @@ fn move_saved_search(window: &Window, path: &Path, key: &str, direction: Reorder
 ///
 /// [r]: postio_core::Recovery
 fn request_delete(window: &Window, path: &Path, key: &str) {
-    let dialog = adw::AlertDialog::new(
-        Some("Delete this saved search?"),
-        Some("It can be saved again from the same query, but the query itself is gone."),
-    );
-    dialog.add_responses(&[("keep", "Keep"), ("delete", "Delete")]);
+    // The words are `postio-ui`'s, not this module's: a confirmation written
+    // once on each platform is two confirmations, and the one nobody is
+    // looking at is the one that misdescribes what is lost (#1574).
+    let prompt = postio_ui::saved_search::DELETE_PROMPT;
+    let dialog = adw::AlertDialog::new(Some(prompt.title), prompt.body);
+    dialog.add_responses(&[("keep", prompt.cancel), ("delete", prompt.confirm)]);
     dialog.set_response_appearance("delete", adw::ResponseAppearance::Destructive);
     dialog.set_default_response(Some("keep"));
     dialog.set_close_response("keep");
@@ -389,18 +383,12 @@ fn request_delete(window: &Window, path: &Path, key: &str) {
 }
 
 fn delete_saved_search(window: &Window, path: &Path, key: &str) {
-    let original = std::fs::read_to_string(path).unwrap_or_default();
-    let mut config = Config::from_toml_str(&original).unwrap_or_default();
-    if !config.delete_filter(key) {
-        return;
-    }
-    if let Err(error) = write_filters(&original, &config, path) {
-        tracing::warn!(%error, "could not save after deleting the search");
-        return;
-    }
-    window
-        .sidebar()
-        .set_saved_searches(&saved_searches(&config));
+    edit_searches(
+        window,
+        path,
+        Verb::Delete { key },
+        "save after deleting the search",
+    );
 }
 
 /// Ask for a new display name, pre-filled with the one showing now.
@@ -421,9 +409,10 @@ fn request_rename(window: &Window, path: &Path, key: &str) {
     entry.set_text(&current);
     entry.set_activates_default(true);
 
-    let dialog = adw::AlertDialog::new(Some("Rename this saved search?"), None);
+    let prompt = postio_ui::saved_search::RENAME_PROMPT;
+    let dialog = adw::AlertDialog::new(Some(prompt.title), prompt.body);
     dialog.set_extra_child(Some(&entry));
-    dialog.add_responses(&[("cancel", "Cancel"), ("rename", "Rename")]);
+    dialog.add_responses(&[("cancel", prompt.cancel), ("rename", prompt.confirm)]);
     dialog.set_response_appearance("rename", adw::ResponseAppearance::Suggested);
     dialog.set_default_response(Some("rename"));
     dialog.set_close_response("cancel");
@@ -446,18 +435,12 @@ fn request_rename(window: &Window, path: &Path, key: &str) {
 }
 
 fn rename_saved_search(window: &Window, path: &Path, key: &str, name: &str) {
-    let original = std::fs::read_to_string(path).unwrap_or_default();
-    let mut config = Config::from_toml_str(&original).unwrap_or_default();
-    if !config.rename_filter(key, name) {
-        return;
-    }
-    if let Err(error) = write_filters(&original, &config, path) {
-        tracing::warn!(%error, "could not save the renamed search");
-        return;
-    }
-    window
-        .sidebar()
-        .set_saved_searches(&saved_searches(&config));
+    edit_searches(
+        window,
+        path,
+        Verb::Rename { key, name },
+        "save the renamed search",
+    );
 }
 
 /// What the configuration file on disk got wrong.
