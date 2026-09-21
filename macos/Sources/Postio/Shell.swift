@@ -56,7 +56,11 @@ struct Shell: View {
                             // is drawn flat, children or not: the Favorites
                             // section is one row per role, and its tree is
                             // under "On My Mac".
-                            FolderRow(folder: folder, children: { _ in [] })
+                            FolderRow(
+                                folder: folder,
+                                children: { _ in [] },
+                                collapsed: expansion
+                            )
                         }
                     }
                     // Then the account's own folders, each account a group
@@ -70,7 +74,8 @@ struct Shell: View {
                                 AccountFolders(
                                     address: account.address,
                                     roots: engine.folderRoots.filter { $0.account == account.id },
-                                    children: { engine.children(of: $0) }
+                                    children: { engine.children(of: $0) },
+                                    collapsed: expansion
                                 )
                                 // The account is a heading, not a folder.
                                 // Inside a `List(selection:)` every row is
@@ -351,6 +356,19 @@ struct Shell: View {
     }
 
     /// Reopen the folder that was open, or the inbox if it is gone.
+    /// A folder's disclosure, as a binding onto the engine's own state.
+    ///
+    /// Inverted on purpose: `DisclosureGroup` asks whether it is *expanded*
+    /// and the engine records what is *collapsed*, because the walk's
+    /// question is "what can I not see" and an empty set is the ordinary
+    /// case — everything open.
+    private func expansion(_ folder: MailboxFfi) -> Binding<Bool> {
+        Binding(
+            get: { !engine.collapsedFolders.contains(folder.rowId) },
+            set: { engine.setCollapsed(folder.rowId, !$0) }
+        )
+    }
+
     private func restoreFolder() {
         guard selectedFolder == nil, !engine.mailboxes.isEmpty else { return }
         let folder = WindowState.folderToOpen(

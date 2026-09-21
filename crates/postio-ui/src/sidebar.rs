@@ -280,17 +280,37 @@ pub fn display_name(mailbox: &Mailbox, among: &[Mailbox]) -> String {
         // to exactly one row, or the sidebar reads `Sent, Sent`.
         return mailbox.name.clone();
     }
-    match mailbox.role {
-        MailboxRole::Inbox => "Inbox".to_string(),
-        MailboxRole::Flagged => "Flagged".to_string(),
-        MailboxRole::Snoozed => "Snoozed".to_string(),
-        MailboxRole::Drafts => "Drafts".to_string(),
-        MailboxRole::Outbox => "Outbox".to_string(),
-        MailboxRole::Sent => "Sent".to_string(),
-        MailboxRole::Archive => "Archive".to_string(),
-        MailboxRole::Junk => "Junk".to_string(),
-        MailboxRole::Trash => "Trash".to_string(),
-        MailboxRole::Regular => mailbox.name.clone(),
+    match role_name(mailbox.role) {
+        Some(name) => name.to_string(),
+        None => mailbox.name.clone(),
+    }
+}
+
+/// What Postio calls a role, with no folder in hand.
+///
+/// `None` for `Regular`, which has no name of its own — an ordinary folder is
+/// called what the server calls it.
+///
+/// Split out of [`display_name`] because a role needs a name in one place
+/// where there is no folder to ask: saying *"this account has no Drafts
+/// folder"* is a sentence about a role precisely when no such folder exists.
+/// A frontend writing its own list of role names is a second answer to "what
+/// is this row called", and the macOS one had exactly that — including for
+/// the twin case (#501), which it got wrong: a second folder the server
+/// reports as `Sent` is an ordinary folder called whatever the server calls
+/// it, and Swift's copy called both of them "Sent".
+pub fn role_name(role: MailboxRole) -> Option<&'static str> {
+    match role {
+        MailboxRole::Inbox => Some("Inbox"),
+        MailboxRole::Flagged => Some("Flagged"),
+        MailboxRole::Snoozed => Some("Snoozed"),
+        MailboxRole::Drafts => Some("Drafts"),
+        MailboxRole::Outbox => Some("Outbox"),
+        MailboxRole::Sent => Some("Sent"),
+        MailboxRole::Archive => Some("Archive"),
+        MailboxRole::Junk => Some("Junk"),
+        MailboxRole::Trash => Some("Trash"),
+        MailboxRole::Regular => None,
     }
 }
 

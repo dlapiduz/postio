@@ -323,6 +323,74 @@ final class Engine {
         notice = nil
     }
 
+    /// Which folders are collapsed in the sidebar.
+    ///
+    /// Held here rather than left inside SwiftUI's `DisclosureGroup`, for two
+    /// reasons that are really one: the keyboard walk must not step onto a
+    /// row nobody can see, and `toggle_folder` needs something to toggle.
+    /// State a command has to reach cannot live inside a view.
+    private(set) var collapsedFolders: Set<SidebarRowId> = []
+
+    /// Open or close `row`'s children.
+    func toggleCollapsed(_ row: SidebarRowId) {
+        if collapsedFolders.contains(row) {
+            collapsedFolders.remove(row)
+        } else {
+            collapsedFolders.insert(row)
+        }
+    }
+
+    func setCollapsed(_ row: SidebarRowId, _ collapsed: Bool) {
+        if collapsed { collapsedFolders.insert(row) } else { collapsedFolders.remove(row) }
+    }
+
+    /// Every sidebar row, in the order it is drawn.
+    var sidebarOrder: [MailboxFfi] {
+        SidebarWalk.visible(
+            special: specialFolders,
+            roots: folderRoots,
+            children: { [weak self] parent in self?.children(of: parent) ?? [] },
+            collapsed: collapsedFolders
+        )
+    }
+
+    /// Where the sidebar's keyboard is.
+    ///
+    /// Separate from the folder in view: stepping past a `\Noselect`
+    /// container moves the keyboard onto it without opening anything, so the
+    /// two answers differ for exactly as long as it takes to press `j` again.
+    private(set) var sidebarCursor: SidebarRowId?
+
+    /// Move the sidebar's keyboard by `delta`, opening what it lands on.
+    private func stepSidebar(by delta: Int) -> Bool {
+        let order = sidebarOrder
+        guard let landed = SidebarWalk.step(from: sidebarCursor, in: order, by: delta) else {
+            return false
+        }
+        sidebarCursor = landed.rowId
+        if SidebarWalk.opens(landed) { open(landed) }
+        return true
+    }
+
+    /// Go to the folder for `role`, or say there is none.
+    private func goTo(_ role: MailboxRoleFfi) -> Bool {
+        guard let found = SidebarWalk.destination(role, among: sidebarOrder) else {
+            // Said rather than swallowed. GTK announces the same thing, for
+            // the same reason: a key that silently does nothing cannot be
+            // told from one that is broken.
+            notice = Notice(
+                kind: .refused,
+                message: "This account has no \(mailboxRoleName(role: role)) folder.",
+                undoable: false
+            )
+            noticeToken += 1
+            return true
+        }
+        sidebarCursor = found.rowId
+        open(found)
+        return true
+    }
+
     /// The special-use folders, in the order the boundary put them in.
     ///
     /// Inbox first, then the canvas' order — and one row per role, however
@@ -665,6 +733,26 @@ final class Engine {
             focus(pane.next(false))
         case Intercepted.focusSidebar:
             focus(.sidebar)
+            // The keyboard starts where the folder in view is, so `j` steps
+            // on from there rather than back to the top.
+            if sidebarCursor == nil {
+                sidebarCursor = mailboxes.first { $0.id == showingMailbox }?.rowId
+            }
+        case Intercepted.nextFolder:
+            return stepSidebar(by: 1)
+        case Intercepted.prevFolder:
+            return stepSidebar(by: -1)
+        case Intercepted.toggleFolder:
+            guard let row = sidebarCursor else { return false }
+            toggleCollapsed(row)
+        case Intercepted.goToInbox:
+            return goTo(.inbox)
+        case Intercepted.goToDrafts:
+            return goTo(.drafts)
+        case Intercepted.goToSent:
+            return goTo(.sent)
+        case Intercepted.goToFlagged:
+            return goTo(.flagged)
         case Intercepted.settings:
             // A request the shell turns into `openWindow(id:)`, because only
             // a view can open a window. Not `sendAction(showSettingsWindow:)`

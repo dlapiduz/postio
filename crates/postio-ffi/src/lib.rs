@@ -67,7 +67,7 @@ pub use focus::next_pane;
 pub use keys::{KeyOutcomeFfi, ModifiersFfi};
 pub use list::{RowFfi, ScopeFfi};
 pub use logging::start_logging;
-pub use mailbox::{MailboxFfi, MailboxRoleFfi};
+pub use mailbox::{MailboxFfi, MailboxRoleFfi, mailbox_role_name};
 pub use notify::{
     MailArrivalFfi, MailNotificationFfi, NotificationDecisionFfi, SuppressedFfi,
     decide_notification,

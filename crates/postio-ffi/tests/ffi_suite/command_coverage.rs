@@ -55,13 +55,6 @@ const KNOWN_ORPHANS: &[(CommandId, &str)] = {
         (C::RenderPartOnce, "#1572"),
         // #1573 -- the sidebar's keyboard. `focus_sidebar` moves the keyboard
         // in and then nothing walks.
-        (C::GoToInbox, "#1573"),
-        (C::GoToDrafts, "#1573"),
-        (C::GoToSent, "#1573"),
-        (C::GoToFlagged, "#1573"),
-        (C::NextFolder, "#1573"),
-        (C::PrevFolder, "#1573"),
-        (C::ToggleFolder, "#1573"),
         (C::NextScope, "#1573"),
         // #1574 -- a query cannot be kept, and the affordance that says it
         // can is drawn enabled.

@@ -154,6 +154,17 @@ public enum Intercepted {
     /// and the store has not seen most of it, which is why these stop here —
     /// `ComposeCommands` is the route from the id to the model.
     public static let composeVerbs = ComposeCommands.handled
+    /// The sidebar's own keyboard. The folder tree, which rows are collapsed
+    /// and where the keyboard is inside it are all this frontend's state, so
+    /// a session has nothing to answer these with — `SidebarWalk` is the
+    /// rule and `Engine` holds the two pieces of state it needs.
+    public static let nextFolder = "next_folder"
+    public static let prevFolder = "prev_folder"
+    public static let toggleFolder = "toggle_folder"
+    public static let goToInbox = "go_to_inbox"
+    public static let goToDrafts = "go_to_drafts"
+    public static let goToSent = "go_to_sent"
+    public static let goToFlagged = "go_to_flagged"
     public static let expandAll = "expand_all"
     public static let toggleFold = "toggle_fold"
     public static let nextInConversation = "next_in_conversation"
@@ -164,6 +175,8 @@ public enum Intercepted {
         palette, cheatSheet, search, back, cyclePane, cyclePaneBack, focusSidebar, settings,
         toggleSidebar, expandAll, toggleFold, nextInConversation, prevInConversation,
         scrollReaderDown, scrollReaderUp,
+        nextFolder, prevFolder, toggleFolder,
+        goToInbox, goToDrafts, goToSent, goToFlagged,
         compose, reply, replyAll, forward,
     ] + composeVerbs
 }

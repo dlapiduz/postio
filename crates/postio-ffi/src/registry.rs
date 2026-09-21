@@ -269,6 +269,15 @@ pub const INTERCEPTED: &[postio_core::CommandId] = {
         C::ToggleSidebar,
         C::ScrollReaderDown,
         C::ScrollReaderUp,
+        // The sidebar's keyboard. The tree, which rows are collapsed and
+        // where the keyboard is inside it are this frontend's state.
+        C::NextFolder,
+        C::PrevFolder,
+        C::ToggleFolder,
+        C::GoToInbox,
+        C::GoToDrafts,
+        C::GoToSent,
+        C::GoToFlagged,
         // The composer's own verbs. The draft being written is in a window
         // this frontend owns, unsaved, and the store has not seen most of
         // it -- so a session cannot answer these and the window does.

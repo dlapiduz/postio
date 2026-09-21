@@ -48,6 +48,25 @@ impl From<MailboxRole> for MailboxRoleFfi {
     }
 }
 
+impl From<MailboxRoleFfi> for MailboxRole {
+    /// Back the other way, for the questions a frontend asks about a role
+    /// rather than about a folder.
+    fn from(role: MailboxRoleFfi) -> Self {
+        match role {
+            MailboxRoleFfi::Inbox => MailboxRole::Inbox,
+            MailboxRoleFfi::Archive => MailboxRole::Archive,
+            MailboxRoleFfi::Sent => MailboxRole::Sent,
+            MailboxRoleFfi::Drafts => MailboxRole::Drafts,
+            MailboxRoleFfi::Trash => MailboxRole::Trash,
+            MailboxRoleFfi::Junk => MailboxRole::Junk,
+            MailboxRoleFfi::Flagged => MailboxRole::Flagged,
+            MailboxRoleFfi::Snoozed => MailboxRole::Snoozed,
+            MailboxRoleFfi::Outbox => MailboxRole::Outbox,
+            MailboxRoleFfi::Regular => MailboxRole::Regular,
+        }
+    }
+}
+
 /// One folder, with what the sidebar draws beside it.
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct MailboxFfi {
@@ -121,4 +140,21 @@ impl From<Mailbox> for MailboxFfi {
             snoozed: mailbox.counts.snoozed,
         }
     }
+}
+
+/// What Postio calls a role, with no folder in hand.
+///
+/// Empty for an ordinary folder, which is called what the server calls it.
+///
+/// Crosses because one sentence needs a role's name where there is no folder
+/// to ask: *"this account has no Drafts folder"* is said exactly when no such
+/// folder exists. The names themselves are `postio_ui::sidebar`'s, which is
+/// also where `MailboxFfi.name` comes from — a frontend with its own list
+/// would be a second answer to what a row is called, and would get the twin
+/// case (#501) wrong.
+#[uniffi::export]
+pub fn mailbox_role_name(role: MailboxRoleFfi) -> String {
+    postio_ui::sidebar::role_name(role.into())
+        .unwrap_or_default()
+        .to_owned()
 }

@@ -11,6 +11,7 @@ struct AccountFolders: View {
     let address: String
     let roots: [MailboxFfi]
     let children: (Int64) -> [MailboxFfi]
+    let collapsed: (MailboxFfi) -> Binding<Bool>
 
     /// Open by default: a person who has one account should not have to
     /// click to see their own folders.
@@ -19,7 +20,7 @@ struct AccountFolders: View {
     var body: some View {
         DisclosureGroup(isExpanded: $expanded) {
             ForEach(roots, id: \.rowId) { folder in
-                FolderRow(folder: folder, children: children)
+                FolderRow(folder: folder, children: children, collapsed: collapsed)
             }
         } label: {
             Text(address)
@@ -46,6 +47,14 @@ struct FolderRow: View {
     /// either. GTK recurses the whole tree and caps only the *indent*.
     let children: (Int64) -> [MailboxFfi]
 
+    /// Whether this folder's children are hidden, and how to change it.
+    ///
+    /// Bound to the engine rather than left inside `DisclosureGroup`: the
+    /// keyboard walk must not step onto a row nobody can see, and
+    /// `toggle_folder` needs something to toggle. State a command has to
+    /// reach cannot live inside a view.
+    let collapsed: (MailboxFfi) -> Binding<Bool>
+
     var body: some View {
         let mine = children(folder.id)
         if mine.isEmpty {
@@ -54,9 +63,9 @@ struct FolderRow: View {
             // tag of a different type is a row `List` can never select.
             row.tag(folder.rowId)
         } else {
-            DisclosureGroup {
+            DisclosureGroup(isExpanded: collapsed(folder)) {
                 ForEach(mine, id: \.rowId) { child in
-                    FolderRow(folder: child, children: children)
+                    FolderRow(folder: child, children: children, collapsed: collapsed)
                 }
             } label: {
                 // A `\Noselect` container keeps its row so the hierarchy it
@@ -89,20 +98,14 @@ struct FolderRow: View {
     }
 
     /// What Postio calls this folder.
-    private var display: String {
-        switch folder.role {
-        case .inbox: "Inbox"
-        case .archive: "Archive"
-        case .sent: "Sent"
-        case .drafts: "Drafts"
-        case .trash: "Trash"
-        case .junk: "Junk"
-        case .flagged: "Flagged"
-        case .snoozed: "Snoozed"
-        case .outbox: "Outbox"
-        case .regular: folder.name
-        }
-    }
+    ///
+    /// **The boundary's answer, not a second one.** `MailboxFfi.name` is
+    /// already `postio_ui::sidebar::display_name`'s — which is why a view row
+    /// has a label at all, since it has no server name. The switch that used
+    /// to be here also got #501's twin case wrong: a *second* folder the
+    /// server reports as `Sent` is an ordinary folder called whatever the
+    /// server calls it, and a role-name lookup called both of them "Sent".
+    private var display: String { folder.name }
 
     private var symbol: String {
         switch folder.role {
