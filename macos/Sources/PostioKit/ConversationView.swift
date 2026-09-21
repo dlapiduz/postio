@@ -38,6 +38,9 @@ public struct ConversationView: View {
     /// Whether this message's held-back parts are rendered — see
     /// `RenderedOnce`, which holds it where `H` can reach it.
     private let showingImages: (Int64) -> Bool
+    /// Measured body heights, so a revisited message opens at full size
+    /// instead of popping from the minimum. See `BodyHeights`.
+    private let heights: BodyHeights
     private let toggleOriginal: (Int64) -> Void
 
     public init(
@@ -46,6 +49,7 @@ public struct ConversationView: View {
         run: @escaping (String, Int64?) -> Void,
         showingOriginal: @escaping (Int64) -> Bool,
         showingImages: @escaping (Int64) -> Bool,
+        heights: BodyHeights = BodyHeights(),
         toggleOriginal: @escaping (Int64) -> Void
     ) {
         self.session = session
@@ -53,6 +57,7 @@ public struct ConversationView: View {
         self.run = run
         self.showingOriginal = showingOriginal
         self.showingImages = showingImages
+        self.heights = heights
         self.toggleOriginal = toggleOriginal
     }
 
@@ -305,6 +310,8 @@ public struct ExpandedMessage: View {
     /// header is the same on purpose — one implementation of "who is this
     /// from", not two that drift.
     public var collapsible = true
+    /// Where measured heights are remembered across visits.
+    let heights: BodyHeights?
     public let toggleOriginal: () -> Void
 
     public init(
@@ -315,6 +322,7 @@ public struct ExpandedMessage: View {
         showingOriginal: Bool,
         showingImages: Bool,
         collapsible: Bool = true,
+        heights: BodyHeights? = nil,
         collapse: @escaping () -> Void,
         toggleCc: @escaping () -> Void,
         toggleOriginal: @escaping () -> Void,
@@ -328,6 +336,12 @@ public struct ExpandedMessage: View {
         self.showingOriginal = showingOriginal
         self.showingImages = showingImages
         self.collapsible = collapsible
+        self.heights = heights
+        // Seeded from the cache, so a revisited message draws at the size
+        // it measured last time instead of popping from the minimum. The
+        // measurement still runs and corrects a stale number — a width
+        // change makes one — so this is a starting point, never a claim.
+        _height = State(initialValue: heights?.height(for: row.id) ?? BodyHeight.minimum)
         self.collapse = collapse
         self.toggleCc = toggleCc
         self.toggleOriginal = toggleOriginal
@@ -378,10 +392,19 @@ public struct ExpandedMessage: View {
                     session: session,
                     message: row.id,
                     remoteImages: remoteImages,
-                    original: showingOriginal
-                ) { measured in
-                    height = measured
-                }
+                    original: showingOriginal,
+                    onHeight: { measured in
+                        height = measured
+                        heights?.remember(measured, for: row.id)
+                    },
+                    // The render's two by-products (#1589): what used to be
+                    // two more boundary calls, each re-loading the body this
+                    // render loads anyway.
+                    onAnswers: { rendered, flagged in
+                        notice = rendered
+                        caveat = flagged
+                    }
+                )
                 .frame(height: height)
                 actions
             }
@@ -396,13 +419,12 @@ public struct ExpandedMessage: View {
                 // inline is part of why moving between messages had a beat.
                 let session = session
                 let id = row.id
-                // One boundary call, one body load, one render (#1589) —
-                // this used to be four calls that loaded the body three
-                // times between them.
+                // The row's own facts — no body load (#1589). The notice
+                // and the caveat arrive with the document render below,
+                // which is the one body load a message open pays for.
                 let facts = await Task.detached { session.messageFacts(id) }.value
                 guard !Task.isCancelled else { return }
-                (notice, offer, caveat, addressed) =
-                    (facts.notice, facts.offer, facts.caveat, facts.recipients)
+                (offer, addressed) = (facts.offer, facts.recipients)
             }
             .padding(.horizontal, PostioTokens.space4)
             .padding(.vertical, PostioTokens.space4)

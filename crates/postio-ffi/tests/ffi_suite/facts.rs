@@ -1,12 +1,12 @@
-//! Everything the pane asks about one open message, answered in one read
-//! (#1589, first half).
+//! What one open message costs to ask about (#1589).
 //!
-//! Opening a message used to be four boundary calls — notice, caveat,
-//! unsubscribe offer, recipients — and between them they loaded and
-//! decompressed the body **three times** and ran the sanitizer twice, once
-//! purely to count blocked images. `messageFacts` is those four answers off
-//! one row read, one body load and one render, which is the shape a 16 ms
-//! interaction budget can actually afford.
+//! Opening a message used to be four boundary calls that loaded and
+//! decompressed the body **three times** between them, once purely to count
+//! blocked images. Now the split is by what each fact needs: `messageFacts`
+//! is the row's own facts (offer, recipients) with **no body load at all**,
+//! and the two body facts — the notice and the caveat — ride
+//! `readerDocument`'s answer as by-products of the render the pane pays for
+//! anyway. One load, one render, per message open.
 //!
 //! Asserted against expected values, never against the four older calls:
 //! those delegate to this now, so an equivalence test would be a tautology.
@@ -76,8 +76,11 @@ async fn a_message_with_everything() -> (std::sync::Arc<Session>, i64) {
 async fn one_call_answers_everything_the_pane_asks() {
     let (session, message) = a_message_with_everything().await;
     let facts = session.message_facts(message).await;
+    let answers = session
+        .reader_answers(message, postio_ffi::RemoteImagesFfi::Blocked, false)
+        .await;
 
-    let notice = facts.notice.expect("two remote images were held back");
+    let notice = answers.notice.expect("two remote images were held back");
     assert!(
         notice.summary.starts_with("2 remote images"),
         "the notice names the count: {}",
@@ -87,8 +90,12 @@ async fn one_call_answers_everything_the_pane_asks() {
     assert!(!notice.allowed);
 
     assert!(
-        facts.caveat.is_some(),
+        answers.caveat.is_some(),
         "the body was flagged and the caveat says nothing"
+    );
+    assert!(
+        !answers.html.is_empty(),
+        "and the document itself still came along"
     );
 
     let offer = facts.offer.expect("a List-Id is an offer to leave");
@@ -147,8 +154,11 @@ async fn a_plain_personal_message_has_almost_no_facts() {
     };
 
     let facts = session.message_facts(message).await;
-    assert!(facts.notice.is_none(), "nothing was held back");
-    assert!(facts.caveat.is_none(), "nothing went wrong decoding");
+    let answers = session
+        .reader_answers(message, postio_ffi::RemoteImagesFfi::Blocked, false)
+        .await;
+    assert!(answers.notice.is_none(), "nothing was held back");
+    assert!(answers.caveat.is_none(), "nothing went wrong decoding");
     // Not `None`: with no `List-Id` the identifier deliberately falls back
     // to the sender's domain (`postio_ui::unsubscribe::list_identifier`),
     // which is how a newsletter that never sets the header still gets a
@@ -170,9 +180,89 @@ async fn a_plain_personal_message_has_almost_no_facts() {
 async fn a_message_that_is_gone_answers_nothing_at_all() {
     let (session, _message) = a_message_with_everything().await;
     let facts = session.message_facts(9_999).await;
-    assert!(facts.notice.is_none());
-    assert!(facts.caveat.is_none());
     assert!(facts.offer.is_none());
     assert!(facts.recipients.is_none());
+    let answers = session
+        .reader_answers(9_999, postio_ffi::RemoteImagesFfi::Blocked, false)
+        .await;
+    assert!(answers.notice.is_none());
+    assert!(answers.caveat.is_none());
+    assert!(
+        !answers.html.is_empty(),
+        "a missing message is a state plate, and a plate is a document"
+    );
+    session.shutdown();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn reader_view_and_original_agree_on_what_was_held_back() {
+    // The load-bearing assumption behind folding the notice into the
+    // document: `held_back` is counted during the sanitize pass, which runs
+    // *before* reader view's reduce, so the two render modes must report
+    // the same counts. If reduce ever started dropping images from the
+    // count, the banner would understate — silently, and only in reader
+    // view — and this is the test that says so out loud instead.
+    let (session, message) = a_message_with_everything().await;
+
+    let reduced = session
+        .reader_answers(message, postio_ffi::RemoteImagesFfi::Blocked, false)
+        .await;
+    let original = session
+        .reader_answers(message, postio_ffi::RemoteImagesFfi::Blocked, true)
+        .await;
+
+    let (a, b) = (
+        reduced.notice.expect("held back in reader view"),
+        original.notice.expect("held back in the original"),
+    );
+    assert_eq!(
+        (a.remote_images, a.trackers),
+        (b.remote_images, b.trackers),
+        "the two render modes disagree about what was held back"
+    );
+    session.shutdown();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn an_allowed_render_claims_no_notice() {
+    // "What would be loaded" cannot be asked of a render that loaded it.
+    // The caller keeps the notice it already has; this answer saying `None`
+    // is what stops a grant flip from erasing the banner's numbers.
+    let (session, message) = a_message_with_everything().await;
+    let answers = session
+        .reader_answers(message, postio_ffi::RemoteImagesFfi::Allowed, false)
+        .await;
+    assert!(answers.notice.is_none());
+    assert!(
+        answers.caveat.is_some(),
+        "the caveat rides the load, not the render, so it survives the grant"
+    );
+    session.shutdown();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn one_open_is_one_body_read_counted_at_the_sql_seam() {
+    // #1589's acceptance line: counted, not timed. The row facts plus the
+    // document — everything a message open asks — inside a statement budget
+    // that a second body load or render pass cannot fit under. The budget
+    // is deliberately snug: the regression this guards added six-plus
+    // statements per extra load, so a comfortable margin would let one back
+    // in quietly.
+    let (session, message) = a_message_with_everything().await;
+    // Warm the session's own one-time work so the count is about the open.
+    let _ = session.message_facts(message).await;
+
+    postio_storage::test_support::counting::reset();
+    let _ = session.message_facts(message).await;
+    let _ = session
+        .reader_answers(message, postio_ffi::RemoteImagesFfi::Blocked, false)
+        .await;
+    let counts = postio_storage::test_support::counting::here();
+
+    assert!(
+        counts.statements <= 20,
+        "a message open issued {} statements — a second body load has crept          back into the path #1589 closed",
+        counts.statements
+    );
     session.shutdown();
 }

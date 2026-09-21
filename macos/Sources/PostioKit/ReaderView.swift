@@ -19,6 +19,10 @@ public struct ReaderView: NSViewRepresentable {
     /// reduces it to.
     private let original: Bool
     private let onHeight: ((CGFloat) -> Void)?
+    /// Called with the two facts the render already paid for — the notice
+    /// and the caveat (#1589). They used to be their own boundary calls,
+    /// each re-loading the body this render loads anyway.
+    private let onAnswers: ((ReaderNoticeFfi?, String?) -> Void)?
     /// Which scroll anchor to sit on, and a token that changes every time it
     /// is asked for.
     ///
@@ -43,7 +47,8 @@ public struct ReaderView: NSViewRepresentable {
         original: Bool = false,
         page: UInt32 = 0,
         pageToken: Int = 0,
-        onHeight: ((CGFloat) -> Void)? = nil
+        onHeight: ((CGFloat) -> Void)? = nil,
+        onAnswers: ((ReaderNoticeFfi?, String?) -> Void)? = nil
     ) {
         self.session = session
         self.message = message
@@ -52,10 +57,11 @@ public struct ReaderView: NSViewRepresentable {
         self.page = page
         self.pageToken = pageToken
         self.onHeight = onHeight
+        self.onAnswers = onAnswers
     }
 
     public func makeCoordinator() -> Coordinator {
-        Coordinator(session: session, onHeight: onHeight)
+        Coordinator(session: session, onHeight: onHeight, onAnswers: onAnswers)
     }
 
     public func makeNSView(context: Context) -> WKWebView {
@@ -113,6 +119,7 @@ public struct ReaderView: NSViewRepresentable {
         private let session: PostioSession
         private var showing: Int64?
         private var showingRemote: RemoteImagesFfi = .blocked
+        private let onAnswers: ((ReaderNoticeFfi?, String?) -> Void)?
         private var showingOriginal = false
         private let gate = RenderGate()
         private var pending: Task<Void, Never>?
@@ -129,9 +136,14 @@ public struct ReaderView: NSViewRepresentable {
             Task { @MainActor in await ReaderPaging.scroll(view, to: page) }
         }
 
-        init(session: PostioSession, onHeight: ((CGFloat) -> Void)? = nil) {
+        init(
+            session: PostioSession,
+            onHeight: ((CGFloat) -> Void)? = nil,
+            onAnswers: ((ReaderNoticeFfi?, String?) -> Void)? = nil
+        ) {
             self.session = session
             self.onHeight = onHeight
+            self.onAnswers = onAnswers
             cid = CidSchemeHandler(session: session)
             let policy = ReaderNavigationPolicy { url in
                 // POSTIO-CONSENT: only from a link the user activated inside a
@@ -194,15 +206,26 @@ public struct ReaderView: NSViewRepresentable {
 
             let session = self.session
             pending = Task { [weak self] in
-                let document = await Task.detached {
+                let answers = await Task.detached {
                     session.readerDocument(message: message, remote: remote, original: original)
                 }.value
 
                 guard let self, !Task.isCancelled, self.gate.isCurrent(token) else { return }
                 view.loadHTMLString(
-                    document,
+                    answers.html,
                     baseURL: URL(string: "\(ReaderConfiguration.baseScheme):///")
                 )
+                // The two by-products of the render (#1589). The notice only
+                // comes from a blocked render — an allowed one answers `nil`,
+                // and the caller keeps the notice it already has, which its
+                // own UI is hiding at that point anyway.
+                // Only from a blocked render. The allowed re-render after a
+                // grant flip answers no notice, and firing with `nil` would
+                // erase the numbers the caller is still holding; its caveat
+                // is the same one the blocked render already delivered.
+                if remote == .blocked {
+                    self.onAnswers?(answers.notice, answers.caveat)
+                }
             }
         }
     }

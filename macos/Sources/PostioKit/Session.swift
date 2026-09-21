@@ -186,11 +186,15 @@ public final class PostioSession {
     /// sender wrote, on their own paper-white sheet, inset from Postio's
     /// chrome. Per message and per view — nothing is remembered, so the next
     /// message opens reduced again.
+    ///
+    /// The answer carries the notice and the caveat too (#1589): both are
+    /// by-products of the render the document pays for anyway, and asking
+    /// for them separately was two more body loads.
     public func readerDocument(
         message: Int64,
         remote: RemoteImagesFfi,
         original: Bool = false
-    ) -> String {
+    ) -> ReaderDocumentFfi {
         inner.readerDocument(message: message, remote: remote, original: original)
     }
 

@@ -163,26 +163,45 @@ pub fn reader_scroll_markers() -> String {
     postio_ui::reader::document::scroll_markers()
 }
 
-/// Everything the pane asks about one open message, in one answer (#1589).
+/// The row's own facts about one open message (#1589).
 ///
-/// Opening a message used to be four calls — notice, caveat, unsubscribe
-/// offer, recipients — and between them they loaded and decompressed the
-/// body three times and ran the sanitizer twice, once purely to count
-/// blocked images. This is those four answers off one row read, one body
-/// load and one render.
+/// The offer and the recipients: everything a pane can know without the
+/// body. The two facts that need the body — the notice and the caveat —
+/// ride [`ReaderDocumentFfi`] instead, as by-products of the render the
+/// document pays for anyway.
 ///
-/// Every field is optional because every fact is: the common personal
-/// message has no pictures held back, no list to leave and nothing wrong
-/// with its body, and an absent fact must be `None` rather than an empty
-/// something — a blank banner is still a banner.
+/// Every field is optional because every fact is: an absent fact must be
+/// `None` rather than an empty something — a blank banner is still a
+/// banner.
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct MessageFactsFfi {
-    /// What the reader held back, or `None` when nothing was.
-    pub notice: Option<ReaderNoticeFfi>,
-    /// What to say about a body that lost something in decoding.
-    pub caveat: Option<String>,
     /// The list this message offers to leave, or `None` for a person.
     pub offer: Option<crate::UnsubscribeOfferFfi>,
     /// Who it was addressed to, or `None` for a message that is gone.
     pub recipients: Option<RecipientsFfi>,
+}
+
+/// The reader's whole answer for one message: the document, and the two
+/// facts that fall out of rendering it (#1589).
+///
+/// The notice and the caveat used to be their own boundary calls, each
+/// re-loading and re-rendering the body the document had already paid for.
+/// They are by-products here: `held_back` is counted during the sanitize the
+/// document needs anyway, and `encoding_problems` rides the same body load.
+/// One load, one render, three answers.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct ReaderDocumentFfi {
+    /// The whole document, ready to hand a web view. Never empty: a missing
+    /// body is a state plate, which is also a document.
+    pub html: String,
+    /// What this render held back, or `None`.
+    ///
+    /// Only a **blocked** render can answer it: the question is "what would
+    /// be loaded", and asking an allowed render answers "nothing". A caller
+    /// that re-renders with images allowed keeps the notice it already has —
+    /// which its own UI is hiding at that point anyway.
+    pub notice: Option<ReaderNoticeFfi>,
+    /// What to say about a body that lost something in decoding, or `None`.
+    /// Render-independent: it rides the load, not the render.
+    pub caveat: Option<String>,
 }

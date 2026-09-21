@@ -211,6 +211,10 @@ final class Engine {
     /// See `SavedSearches`.
     let savedSearches = SavedSearches()
 
+    /// Measured body heights, session-lived, so a revisited message opens
+    /// at full size instead of popping from the minimum.
+    let bodyHeights = BodyHeights()
+
     /// Putting a broken account back in service. Held here because
     /// `update_credential` is a command, and a command cannot reach a view.
     let accountRepair = AccountRepair()
@@ -452,7 +456,12 @@ final class Engine {
     /// appear: only the markup part can load anything, and offering to
     /// render an `image/png` once would be theatre.
     func heldBack(for message: Int64) -> (remote: UInt32, trackers: UInt32) {
-        guard let notice = session?.messageFacts(message).notice else { return (0, 0) }
+        // A full blocked render, once, when the panel opens — a
+        // user-initiated surface, not the j/k hot path. The notice rides
+        // the document's answer now (#1589), and the panel is the one
+        // caller with no render of its own to take it from.
+        guard let notice = session?.readerDocument(message: message, remote: .blocked, original: true).notice
+        else { return (0, 0) }
         return (notice.remoteImages, notice.trackers)
     }
 

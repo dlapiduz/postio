@@ -606,6 +606,7 @@ struct Shell: View {
                 run: { engine.run($0, on: $1) },
                 showingOriginal: { engine.original.isOn($0) },
                 showingImages: { engine.rendered.isOn($0) },
+                heights: engine.bodyHeights,
                 toggleOriginal: { engine.toggleOriginal($0) }
             )
         } else if let session = engine.session, let showing, let row = session.rowFor(showing) {
@@ -625,6 +626,7 @@ struct Shell: View {
                     showingOriginal: engine.original.isOn(showing),
                     showingImages: engine.rendered.isOn(showing),
                     collapsible: false,
+                    heights: engine.bodyHeights,
                     collapse: {},
                     toggleCc: { engine.toggleCc(showing) },
                     toggleOriginal: { engine.toggleOriginal(showing) },

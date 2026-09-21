@@ -1302,18 +1302,20 @@ impl Session {
         self.row_for(message)
     }
 
-    /// The whole document for a message, ready to hand a `WKWebView`.
+    /// The whole document for a message, ready to hand a `WKWebView` — plus
+    /// the notice and the caveat the render already paid for (#1589).
     ///
-    /// Swift's job is to build a hardened configuration, hand it this string,
-    /// and refuse navigations. It composes no reader HTML of its own.
+    /// Swift's job is to build a hardened configuration, hand the HTML over,
+    /// refuse navigations, and publish the two facts. It composes no reader
+    /// HTML of its own.
     #[uniffi::method(name = "readerDocument")]
     pub fn reader_document_ffi(
         &self,
         message: i64,
         remote: crate::RemoteImagesFfi,
         original: bool,
-    ) -> String {
-        blocking(self.reader_document(message, remote, original))
+    ) -> crate::ReaderDocumentFfi {
+        blocking(self.reader_answers(message, remote, original))
     }
 
     /// One inline part of `message`, by its `Content-ID`.
@@ -2142,18 +2144,13 @@ impl Session {
         self.conversation.lock().expect("conversation lock").clone()
     }
 
-    /// Everything the pane asks about one open message, in one read
-    /// (#1589).
-    ///
-    /// One connection, one row read, one `send_state` read, one body load,
-    /// one render. The four single-fact methods below delegate here — they
-    /// are kept for their tests, which are the behavioural record of what
-    /// each fact means — so there is exactly one implementation of "what a
-    /// message says about itself".
+    /// The row's own facts about one open message: the unsubscribe offer
+    /// and the recipients. One connection, one row read, one `send_state`
+    /// read — **no body load**: the two facts that need the body (the
+    /// notice and the caveat) ride the document render now, as by-products
+    /// of [`reader_answers`](Self::reader_answers) (#1589).
     pub async fn message_facts(&self, message: i64) -> crate::MessageFactsFfi {
         let nothing = crate::MessageFactsFfi {
-            notice: None,
-            caveat: None,
             offer: None,
             recipients: None,
         };
@@ -2205,64 +2202,7 @@ impl Session {
             }
         };
 
-        // The one body load, and the one render. No body is not a fault:
-        // a described-but-unfetched message has recipients and maybe an
-        // offer, and simply nothing yet for the notice or the caveat to be
-        // about.
-        let offline = self.offline.load(std::sync::atomic::Ordering::SeqCst);
-        let (notice, caveat) = match postio_session::reading::load_body_or_reason(
-            &connection,
-            row.id,
-            offline,
-        )
-        .await
-        {
-            postio_session::reading::Body::Ready {
-                body,
-                encoding_problems,
-                ..
-            } => {
-                let rendered = postio_ui::reader::document::body_html(
-                    &body,
-                    postio_body::RemoteImages::Blocked,
-                    postio_ui::reader::document::Rendering::Original,
-                );
-                let held_back = rendered.held_back;
-                let summary = held_back.summary();
-                let notice = if summary.is_empty() {
-                    None
-                } else {
-                    let sender = row
-                        .from
-                        .first()
-                        .map(|address| address.address.to_lowercase())
-                        .unwrap_or_default();
-                    let domain = sender
-                        .rsplit_once('@')
-                        .map(|(_, domain)| domain.to_owned())
-                        .unwrap_or_default();
-                    Some(crate::ReaderNoticeFfi {
-                        summary: format!("{summary} blocked"),
-                        allowed: self.allow_list().is_allowed(&sender),
-                        sender,
-                        domain,
-                        remote_images: held_back.remote_images,
-                        trackers: held_back.trackers,
-                    })
-                };
-                let caveat = postio_ui::reader::document::decode_caveat(encoding_problems)
-                    .map(str::to_owned);
-                (notice, caveat)
-            }
-            _ => (None, None),
-        };
-
-        crate::MessageFactsFfi {
-            notice,
-            caveat,
-            offer,
-            recipients,
-        }
+        crate::MessageFactsFfi { offer, recipients }
     }
 
     /// What the reader is holding back for `message`.
@@ -2274,10 +2214,12 @@ impl Session {
     /// lives in [`message_facts`](Self::message_facts) now, which this is a
     /// view over.
     pub async fn reader_notice(&self, message: i64) -> Option<crate::ReaderNoticeFfi> {
-        // A view over `message_facts`, kept for its tests: they are the
-        // behavioural record of what a notice means, and this is what stops
-        // there being two implementations of it.
-        self.message_facts(message).await.notice
+        // A view over `reader_answers`, kept for its tests: they are the
+        // behavioural record of what a notice means. Blocked and original,
+        // which were always this question's terms.
+        self.reader_answers(message, crate::RemoteImagesFfi::Blocked, true)
+            .await
+            .notice
     }
 
     /// Always allow `address`. See [`allow_sender_ffi`](Self::allow_sender_ffi).
@@ -2360,8 +2302,10 @@ impl Session {
     ///
     /// See [`decode_caveat_ffi`](Self::decode_caveat_ffi).
     pub async fn decode_caveat(&self, message: i64) -> Option<String> {
-        // A view over `message_facts` — see `reader_notice`.
-        self.message_facts(message).await.caveat
+        // A view over `reader_answers` — see `reader_notice`.
+        self.reader_answers(message, crate::RemoteImagesFfi::Blocked, true)
+            .await
+            .caveat
     }
 
     /// What `message` offers about the list it came from, or `None`.
@@ -4695,12 +4639,17 @@ impl Session {
     /// * `postio-font:` — the eight vendored faces, through
     ///   `postio_ui::reader::document::font_bytes`, which answers only for
     ///   names in its `FACES` table and `None` for everything else.
-    pub async fn reader_document(
+    pub async fn reader_answers(
         &self,
         message: i64,
         remote: crate::RemoteImagesFfi,
         original: bool,
-    ) -> String {
+    ) -> crate::ReaderDocumentFfi {
+        let plate = |html: String| crate::ReaderDocumentFfi {
+            html,
+            notice: None,
+            caveat: None,
+        };
         use postio_ui::reader::document::{
             Rendering, Sheet, absent_html, body_html, document_for, sheet_for, suits_reader_view,
             wrap_document,
@@ -4711,18 +4660,18 @@ impl Session {
         // the message's row since ADR 0020. Inline parts still come from it,
         // which is why `store_and_blobs` is the accessor either way.
         let Some((database, _blobs)) = self.store_and_blobs() else {
-            return wrap_document(
+            return plate(wrap_document(
                 &absent_html(postio_ui::reader::document::Absent::Missing),
                 postio_body::RemoteImages::Blocked,
                 Sheet::Theme,
-            );
+            ));
         };
         let Ok(connection) = database.connect().await else {
-            return wrap_document(
+            return plate(wrap_document(
                 &absent_html(postio_ui::reader::document::Absent::Missing),
                 postio_body::RemoteImages::Blocked,
                 Sheet::Theme,
-            );
+            ));
         };
         let offline = self.offline.load(std::sync::atomic::Ordering::SeqCst);
         match postio_session::reading::load_body_or_reason(&connection, message.into(), offline)
@@ -4737,7 +4686,7 @@ impl Session {
             // elided so the next reader of this arm finds the other half.
             postio_session::reading::Body::Ready {
                 body,
-                encoding_problems: _,
+                encoding_problems,
             } => {
                 // Reader view is decided per message from the message, the
                 // same rule the GTK reader uses (#1009) — unless the reader
@@ -4760,22 +4709,82 @@ impl Session {
                 // assuming, against a frontend that could not leave reader
                 // view at all; `original` above is the day it grew one, and
                 // the sheet came with it.
-                document_for(
-                    &drawn.html,
-                    &drawn.styles,
-                    remote,
-                    sheet_for(drawn.rendering, bulk),
-                )
+                // The two facts the render already paid for (#1589). The
+                // notice only from a blocked render — the question it
+                // answers is "what would be loaded" — and its counts come
+                // out of the sanitize pass, which runs before reader view's
+                // reduce, so Reader and Original renders agree on them (a
+                // test pins that).
+                let held_back = drawn.held_back;
+                let notice = if remote == postio_body::RemoteImages::Blocked {
+                    let summary = held_back.summary();
+                    if summary.is_empty() {
+                        None
+                    } else {
+                        // The sender, for the grant the notice offers. A row
+                        // read, not a body load — and only on the messages
+                        // that actually held something back.
+                        let sender =
+                            postio_storage::repository::MessageRepository::new(&connection)
+                                .get(postio_model::ids::MessageId::new(message))
+                                .await
+                                .ok()
+                                .flatten()
+                                .and_then(|row| {
+                                    row.from
+                                        .first()
+                                        .map(|address| address.address.to_lowercase())
+                                })
+                                .unwrap_or_default();
+                        let domain = sender
+                            .rsplit_once('@')
+                            .map(|(_, domain)| domain.to_owned())
+                            .unwrap_or_default();
+                        Some(crate::ReaderNoticeFfi {
+                            summary: format!("{summary} blocked"),
+                            allowed: self.allow_list().is_allowed(&sender),
+                            sender,
+                            domain,
+                            remote_images: held_back.remote_images,
+                            trackers: held_back.trackers,
+                        })
+                    }
+                } else {
+                    None
+                };
+                crate::ReaderDocumentFfi {
+                    html: document_for(
+                        &drawn.html,
+                        &drawn.styles,
+                        remote,
+                        sheet_for(drawn.rendering, bulk),
+                    ),
+                    notice,
+                    caveat: postio_ui::reader::document::decode_caveat(encoding_problems)
+                        .map(str::to_owned),
+                }
             }
             // A state plate is Postio's own words, so it is served with remote
             // images blocked whatever the caller asked for: there is nothing
             // in it a sender wrote, and nothing for them to reach through.
-            postio_session::reading::Body::Absent(state) => wrap_document(
+            postio_session::reading::Body::Absent(state) => plate(wrap_document(
                 &absent_html(state),
                 postio_body::RemoteImages::Blocked,
                 Sheet::Theme,
-            ),
+            )),
         }
+    }
+
+    /// The document alone. A view over
+    /// [`reader_answers`](Self::reader_answers), kept because a page of
+    /// tests asserts on the HTML and has no use for the facts.
+    pub async fn reader_document(
+        &self,
+        message: i64,
+        remote: crate::RemoteImagesFfi,
+        original: bool,
+    ) -> String {
+        self.reader_answers(message, remote, original).await.html
     }
 
     /// Who `message` was addressed to, already rendered.
