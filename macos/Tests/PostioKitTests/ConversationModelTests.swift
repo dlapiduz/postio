@@ -234,4 +234,50 @@ import Testing
         model.show(conversation())
         #expect(!model.isCcRevealed(0))
     }
+    // -- landing on a message with no thread (#70's shape again) -----------
+
+    @Test func aPaneWithNothingToShowShowsNothing() {
+        // `messages.thread_id` is nullable — `ON DELETE SET NULL`, and
+        // `threads.rs` sets it to NULL outright — so a row whose `thread` is
+        // `nil` is reachable, and landing on one has to *empty* the pane.
+        //
+        // There was no way to: `show(_:)` was the only writer, so the last
+        // conversation stayed drawn under the new selection. The boundary
+        // guards the other half of exactly this and says why — *"a pane still
+        // drawing the previous conversation under a new selection is worse
+        // than an empty one, because it looks like an answer"*. This side did
+        // not.
+        let model = ConversationModel()
+        model.show(conversation())
+        #expect(model.conversation != nil)
+
+        model.clear()
+
+        #expect(model.conversation == nil, "the pane is showing somebody else's mail")
+        #expect(model.rows.isEmpty)
+        #expect(model.subject.isEmpty)
+        #expect(model.meta.isEmpty)
+    }
+
+    @Test func clearingForgetsWhatWasDoneToTheLastConversation() {
+        // Everything `show` resets, `clear` has to reset too, or the next
+        // conversation opens wearing the previous one's expansions.
+        let model = ConversationModel()
+        model.show(conversation())
+        model.expandAll()
+        model.focusNext()
+
+        model.clear()
+        model.show(conversation())
+
+        #expect(model.expanded == [false, false, false, false, true, true])
+        #expect(model.focused == 4, "the fold and the focus are the boundary's, freshly")
+    }
+
+    @Test func clearingAnAlreadyEmptyPaneIsNotAnError() {
+        let model = ConversationModel()
+        model.clear()
+        #expect(model.conversation == nil)
+    }
+
 }

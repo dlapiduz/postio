@@ -589,7 +589,7 @@ final class Engine {
     /// goes to `invoke`, where the boundary decides whether it is its own or
     /// the engine's. Keeping the list to two is what stops this becoming the
     /// hand-maintained command table #657 exists to prevent.
-    func run(_ id: String) {
+    func run(_ id: String, on target: Int64? = nil) {
         // An overlay taking over means the message is no longer in front of
         // anybody, so a clock in flight must not fire. `DwellClock.stop` is
         // idempotent, so this costs nothing when none is armed.
@@ -656,11 +656,11 @@ final class Engine {
         case Intercepted.compose:
             write(session?.newDraft())
         case Intercepted.reply:
-            write(replyDraft(all: false))
+            write(replyDraft(all: false, to: target))
         case Intercepted.replyAll:
-            write(replyDraft(all: true))
+            write(replyDraft(all: true, to: target))
         case Intercepted.forward:
-            guard let session, let message = cursorShowing else { return }
+            guard let session, let message = target ?? cursorShowing else { return }
             write(session.forwardDraft(message))
         case Intercepted.expandAll:
             conversation.expandAll()
@@ -705,12 +705,18 @@ final class Engine {
         return true
     }
 
-    /// A reply to the message the cursor is on.
+    /// A reply to `target`, or to the message the cursor is on.
     ///
     /// The cursor, not the selection: `PRODUCT.md` §9 keeps them apart, and
     /// replying to twelve marked messages is not a thing.
-    private func replyDraft(all: Bool) -> DraftFfi? {
-        guard let session, let message = cursorShowing else { return nil }
+    ///
+    /// `target` is what a **per-message** surface passes — the conversation
+    /// pane draws a verb bar under every open message, and those must answer
+    /// the message they are under rather than the list's cursor. Without it,
+    /// Reply under message three of an eight-message thread composed a reply
+    /// to the thread's representative message: the wrong recipient, silently.
+    private func replyDraft(all: Bool, to target: Int64? = nil) -> DraftFfi? {
+        guard let session, let message = target ?? cursorShowing else { return nil }
         return session.replyDraft(to: message, all: all)
     }
 
@@ -747,6 +753,13 @@ final class Engine {
     private func openConversation(atRow row: UInt32?) {
         guard let session, let row, let thread = session.row(at: row)?.thread else {
             showingThread = nil
+            // **And empty the pane.** Clearing the token alone left the last
+            // conversation drawn under the new selection — and because the
+            // shell picks the conversation pane on `conversation != nil`,
+            // which latched true after the first `show`, the single-message
+            // branch beside it was unreachable from then on. Somebody else's
+            // mail, under a row that is not theirs, looking like an answer.
+            conversation.clear()
             return
         }
         guard thread != showingThread else { return }

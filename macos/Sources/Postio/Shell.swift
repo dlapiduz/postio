@@ -464,7 +464,10 @@ struct Shell: View {
             ConversationView(
                 session: session,
                 model: engine.conversation,
-                run: { engine.run($0) }
+                // The message the verb was drawn under travels with it: a
+                // per-message bar that answered the *list's* cursor replied
+                // to the wrong message in any thread longer than one.
+                run: { engine.run($0, on: $1) }
             )
         } else if let session = engine.session, let showing {
             // A message that threading could not place belongs to no

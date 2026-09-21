@@ -17,12 +17,26 @@ import SwiftUI
 public struct ConversationView: View {
     private let session: PostioSession
     private let model: ConversationModel
-    private let run: (String) -> Void
+    /// Run a command, and say which message the surface that ran it was
+    /// drawn under.
+    ///
+    /// `nil` means the conversation as a whole — *Archive conversation* is
+    /// about the thread, not about one of its messages. Everything else
+    /// **must** name one: the per-message bar and the `⋯` menu ran `reply`
+    /// and `forward` with no target at all, so they reached
+    /// `Engine.replyDraft`, which falls back to the *list* cursor. In an
+    /// eight-message thread, Reply under message three composed a reply to
+    /// the thread's representative message — a wrong-recipient bug, with
+    /// nothing on screen to say so.
+    ///
+    /// A parameter rather than a rule, so a new per-message surface cannot
+    /// forget: the type will not let it.
+    private let run: (String, Int64?) -> Void
 
     public init(
         session: PostioSession,
         model: ConversationModel,
-        run: @escaping (String) -> Void
+        run: @escaping (String, Int64?) -> Void
     ) {
         self.session = session
         self.model = model
@@ -109,9 +123,12 @@ public struct ConversationView: View {
                 }
                 .help("Open every message in this conversation")
                 Menu {
-                    Button("Archive conversation") { run("archive_thread") }
-                    Button("Mark unread") { run("mark_unread") }
-                    Button("Flag") { run("flag") }
+                    // The thread, not a message in it -- which is what
+                    // `archive_thread` means and what the other two act on
+                    // through the list's own cursor.
+                    Button("Archive conversation") { run("archive_thread", nil) }
+                    Button("Mark unread") { run("mark_unread", nil) }
+                    Button("Flag") { run("flag", nil) }
                 } label: {
                     Image(systemName: "ellipsis")
                 }
@@ -138,7 +155,7 @@ public struct ConversationView: View {
                 collapse: { model.toggle(index) },
                 toggleCc: { model.toggleCc(index) },
                 run: run,
-                openSettings: { run(Intercepted.settings) }
+                openSettings: { run(Intercepted.settings, nil) }
             )
         } else {
             CollapsedMessage(row: row) { model.toggle(index) }
@@ -232,7 +249,8 @@ struct ExpandedMessage: View {
     let showingCc: Bool
     let collapse: () -> Void
     let toggleCc: () -> Void
-    let run: (String) -> Void
+    /// Run a command against **this** message. See `ConversationView.run`.
+    let run: (String, Int64?) -> Void
     let openSettings: () -> Void
 
     @State private var height: CGFloat = BodyHeight.minimum
@@ -331,8 +349,8 @@ struct ExpandedMessage: View {
             }
             Menu {
                 Button("Collapse", action: collapse)
-                Button("Reply") { run("reply") }
-                Button("Forward") { run("forward") }
+                Button("Reply") { run("reply", row.id) }
+                Button("Forward") { run("forward", row.id) }
                 Toggle("View original", isOn: $showingOriginal)
             } label: {
                 Image(systemName: "ellipsis")
@@ -423,11 +441,11 @@ struct ExpandedMessage: View {
         // takes a concrete type, and the ceremony of hiding that behind one
         // is longer than saying it twice.
         if item.prominent {
-            Button(action: { run(item.command) }, label: { label })
+            Button(action: { run(item.command, row.id) }, label: { label })
                 .buttonStyle(.borderedProminent)
                 .disabled(!item.enabled)
         } else {
-            Button(action: { run(item.command) }, label: { label })
+            Button(action: { run(item.command, row.id) }, label: { label })
                 .buttonStyle(.bordered)
                 .disabled(!item.enabled)
         }

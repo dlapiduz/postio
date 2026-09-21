@@ -78,6 +78,27 @@ public final class ConversationModel {
         focused = Int(conversation.focus ?? 0)
     }
 
+    /// Show nothing.
+    ///
+    /// For landing on a message the store has not threaded. `messages.thread_id`
+    /// is nullable — `ON DELETE SET NULL`, and the threading code sets it to
+    /// NULL outright — so a row with no thread is reachable, and without this
+    /// the pane went on drawing the *last* conversation underneath the new
+    /// selection. The boundary guards the other half of the same thing and
+    /// says why: *"a pane still drawing the previous conversation under a new
+    /// selection is worse than an empty one, because it looks like an
+    /// answer."*
+    ///
+    /// Everything `show` resets is reset here too, or the next conversation
+    /// opens wearing the previous one's expansions.
+    public func clear() {
+        conversation = nil
+        expanded = []
+        revealed = []
+        ccRevealed = []
+        focused = 0
+    }
+
     /// Open or close the body of message `index`.
     public func toggle(_ index: Int) {
         guard expanded.indices.contains(index) else { return }
@@ -118,11 +139,6 @@ public final class ConversationModel {
             .filter { !revealed.contains(Int($0.start)) }
     }
 
-    /// Show the messages a divider is standing in for.
-    ///
-    /// They arrive as the one-line headers they already were: revealing is
-    /// about the divider, not about the bodies, so five hidden messages cost
-    /// five lines rather than five web views.
     /// Whether message `index` is showing its `Cc` addresses.
     public func isCcRevealed(_ index: Int) -> Bool { ccRevealed.contains(index) }
 
@@ -135,6 +151,11 @@ public final class ConversationModel {
         }
     }
 
+    /// Show the messages a divider is standing in for.
+    ///
+    /// They arrive as the one-line headers they already were: revealing is
+    /// about the divider, not about the bodies, so five hidden messages cost
+    /// five lines rather than five web views.
     public func reveal(_ run: RunFfi) {
         revealed.insert(Int(run.start))
     }
