@@ -197,7 +197,25 @@ pub fn sections(mailboxes: &[Mailbox]) -> (Vec<Mailbox>, Vec<Mailbox>) {
     let mut special: Vec<Mailbox> = Vec::new();
     let mut ordinary: Vec<Mailbox> = Vec::new();
 
-    for mailbox in mailboxes.iter().filter(|m| m.selectable) {
+    // An unselectable folder keeps its row **when it holds one**. A
+    // `\Noselect` container opens onto nothing, so dropping it looks right —
+    // and it takes its children with it, because they are neither roots nor
+    // children of anything still listed, and so match no predicate a frontend
+    // builds its tree from. GTK has kept them since it had a tree, in these
+    // words: the row stays "so the hierarchy it organizes can be opened even
+    // though it cannot be opened as a mailbox".
+    //
+    // `selectable` crosses to the frontend, which is what keeps the row
+    // itself from being picked.
+    let holds_a_folder = |container: &Mailbox| {
+        mailboxes
+            .iter()
+            .any(|other| other.parent_id == Some(container.id))
+    };
+    for mailbox in mailboxes
+        .iter()
+        .filter(|m| m.selectable || holds_a_folder(m))
+    {
         // One row per role (#501): an account that has passed through more
         // than one client holds two folders per role, and a special section
         // that renamed both to the role drew `Sent, Sent, Archive, Archive`.
@@ -627,8 +645,8 @@ mod tests {
     }
 
     #[test]
-    fn an_unselectable_container_gets_no_row() {
-        // A `\Noselect` folder holds a hierarchy and opens onto nothing.
+    fn an_unselectable_container_holding_nothing_gets_no_row() {
+        // A `\Noselect` folder that organizes nothing opens onto nothing.
         let mut mailboxes = two_clients();
         let mut container = folder(11, "Archives/2024", MailboxRole::Regular);
         container.selectable = false;
@@ -640,8 +658,41 @@ mod tests {
                 .iter()
                 .chain(&ordinary)
                 .any(|m| m.path == "Archives/2024"),
-            "a row that cannot be opened wastes a keystroke"
+            "a row that cannot be opened and holds nothing wastes a keystroke"
         );
+    }
+
+    #[test]
+    fn an_unselectable_container_holding_folders_keeps_its_row() {
+        // And this is why. Dropping it dropped its children too: they are
+        // neither roots (they have a parent) nor children of anything listed
+        // (their parent is not in the list), so `Archives/2024/Q1` matched no
+        // predicate and was drawn nowhere at all — unopenable by any means,
+        // since there is no folder finder either.
+        //
+        // GTK has kept these since it had a tree, in those words: the row
+        // stays "so the hierarchy it organizes can be opened even though it
+        // cannot be opened as a mailbox". `selectable` still crosses, so a
+        // frontend knows not to let the row itself be picked.
+        let mut mailboxes = two_clients();
+        let mut container = folder(11, "Archives/2024", MailboxRole::Regular);
+        container.selectable = false;
+        let mut child = folder(12, "Archives/2024/Q1", MailboxRole::Regular);
+        child.parent_id = Some(container.id);
+        mailboxes.push(container);
+        mailboxes.push(child);
+
+        let (special, ordinary) = sections(&mailboxes);
+        let paths: Vec<&str> = special
+            .iter()
+            .chain(&ordinary)
+            .map(|m| m.path.as_str())
+            .collect();
+        assert!(
+            paths.contains(&"Archives/2024"),
+            "the container went and took its children's only route with it: {paths:?}"
+        );
+        assert!(paths.contains(&"Archives/2024/Q1"), "{paths:?}");
     }
 }
 

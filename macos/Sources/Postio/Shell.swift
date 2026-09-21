@@ -52,7 +52,11 @@ struct Shell: View {
                     // role. Nothing is sorted here; see `Engine.specialFolders`.
                     Section("Favorites") {
                         ForEach(engine.specialFolders, id: \.rowId) { folder in
-                            FolderRow(folder: folder, children: [])
+                            // A special-use folder stands for its role and
+                            // is drawn flat, children or not: the Favorites
+                            // section is one row per role, and its tree is
+                            // under "On My Mac".
+                            FolderRow(folder: folder, children: { _ in [] })
                         }
                     }
                     // Then the account's own folders, each account a group

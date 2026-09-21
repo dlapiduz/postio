@@ -18,8 +18,8 @@ struct AccountFolders: View {
 
     var body: some View {
         DisclosureGroup(isExpanded: $expanded) {
-            ForEach(roots, id: \.id) { folder in
-                FolderRow(folder: folder, children: children(folder.id))
+            ForEach(roots, id: \.rowId) { folder in
+                FolderRow(folder: folder, children: children)
             }
         } label: {
             Text(address)
@@ -37,18 +37,35 @@ struct AccountFolders: View {
 /// server chose.
 struct FolderRow: View {
     let folder: MailboxFfi
-    let children: [MailboxFfi]
+    /// The children of any folder, asked for as the tree is walked.
+    ///
+    /// A **closure**, not a list. It was a list, and each recursive call
+    /// passed `[]` — so a folder's children were drawn and their children
+    /// were not. `Projects/2026/Q1` had no row anywhere in the sidebar and
+    /// could not be opened by any means, because there is no folder finder
+    /// either. GTK recurses the whole tree and caps only the *indent*.
+    let children: (Int64) -> [MailboxFfi]
 
     var body: some View {
-        if children.isEmpty {
-            row.tag(folder.id)
+        let mine = children(folder.id)
+        if mine.isEmpty {
+            // `rowId`, not `id`. The selection is a `SidebarRowId` because
+            // three sidebar rows are queries with no id of their own, and a
+            // tag of a different type is a row `List` can never select.
+            row.tag(folder.rowId)
         } else {
             DisclosureGroup {
-                ForEach(children, id: \.id) { child in
-                    FolderRow(folder: child, children: []).tag(child.id)
+                ForEach(mine, id: \.rowId) { child in
+                    FolderRow(folder: child, children: children)
                 }
             } label: {
-                row.tag(folder.id)
+                // A `\Noselect` container keeps its row so the hierarchy it
+                // organizes can be reached — and cannot itself be opened,
+                // because there is no mailbox behind it. Clicking it would
+                // otherwise highlight as though mail had been shown, the way
+                // the account heading did before `.selectionDisabled()`.
+                row.tag(folder.rowId)
+                    .selectionDisabled(!folder.selectable)
             }
         }
     }
