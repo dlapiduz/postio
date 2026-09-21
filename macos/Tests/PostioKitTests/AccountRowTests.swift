@@ -13,7 +13,9 @@ import Testing
     private func account(
         address: String = "ada@example.com",
         isDefault: Bool = false,
-        facts: [String] = ["IMAP · password"]
+        facts: [String] = ["IMAP · password"],
+        needsAttention: Bool = false,
+        repair: RepairRouteFfi = .nothing
     ) -> AccountFfi {
         AccountFfi(
             id: 1,
@@ -21,7 +23,14 @@ import Testing
             displayName: "Ada Lovelace",
             initials: "AL",
             isDefault: isDefault,
-            facts: facts
+            facts: facts,
+            // The boundary's answer, not a word scanned out of `facts`. The
+            // row used to derive "needs attention" by looking for "expired"
+            // or "reconnect" in the fact line — and no code path ever put
+            // either there, so the warning mark and the Reconnect button were
+            // dead while this fixture handed them a fact by hand and passed.
+            needsAttention: needsAttention,
+            repair: repair
         )
     }
 
@@ -54,8 +63,18 @@ import Testing
         // The canvas draws a warning and an inline Reconnect for exactly this
         // state: the account is there, the mail is there, and nothing will
         // arrive until somebody signs in again.
-        #expect(AccountRow.needsAttention(account(facts: ["outlook", "oauth2", "token expired"])))
-        #expect(!AccountRow.needsAttention(account(facts: ["imap", "password", "4291 msg"])))
+        //
+        // From the boundary. This case used to be written as
+        // `facts: ["outlook", "oauth2", "token expired"]` — a fact nothing
+        // produces — so it passed over an application in which the state
+        // could not occur, which is how the dead Reconnect button survived
+        // having a test (#1584).
+        #expect(
+            AccountRow.needsAttention(
+                account(facts: ["outlook · oauth2"], needsAttention: true, repair: .browser)
+            )
+        )
+        #expect(!AccountRow.needsAttention(account(facts: ["imap · password · 4291 msg"])))
     }
 
     @Test func theRowSaysHowMuchMailTheAccountHas() {
@@ -115,4 +134,29 @@ import Testing
             snoozed: 0
         )
     }
+    // -- the state that could not occur (#1584) ---------------------------
+
+    @Test func attentionComesFromTheBoundaryRatherThanFromAWordInTheFactLine() {
+        // It used to scan `facts` for "expired" or "reconnect", and `facts`
+        // is `postio_ui::account::badge`'s — which can only say
+        // `<backend> · <auth>`. So the warning mark and the Reconnect button
+        // were gated on a word nothing produced, and this test's own fixture
+        // used to supply it by hand.
+        #expect(!AccountRow.needsAttention(account(facts: ["outlook · oauth2"])))
+        #expect(
+            AccountRow.needsAttention(
+                account(facts: ["outlook · oauth2"], needsAttention: true, repair: .browser)
+            ),
+            "the boundary says it needs a person and the row disagrees"
+        )
+    }
+
+    @Test func aFactLineMentioningExpiryDoesNotSpeakForTheBoundary() {
+        // The other direction, which is the one that kept this alive: a fact
+        // line that happens to contain the word must not stand in for the
+        // state. A server that named a folder "expired-invoices" would have
+        // put a warning mark on the account.
+        #expect(!AccountRow.needsAttention(account(facts: ["token expired"])))
+    }
+
 }

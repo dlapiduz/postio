@@ -13,7 +13,9 @@ import Testing
             displayName: "Ada Lovelace",
             initials: "AL",
             isDefault: false,
-            facts: ["imap", "password"]
+            facts: ["imap", "password"],
+            needsAttention: false,
+            repair: .nothing
         )
     }
 

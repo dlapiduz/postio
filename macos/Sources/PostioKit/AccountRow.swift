@@ -58,13 +58,17 @@ public enum AccountRow {
     ///
     /// An expired token is the case the canvas draws: the account is there,
     /// the mail is there, and nothing will arrive until somebody signs in
-    /// again. Read off the facts the boundary already words rather than
-    /// re-derived, so "expired" means the same thing in both frontends.
+    /// again.
+    ///
+    /// **The boundary's answer, not a word scanned out of the fact line.**
+    /// This used to look for "expired" or "reconnect" in `facts` — and
+    /// `facts` came from `postio_ui::account::badge`, which can only ever
+    /// return `<backend> · <auth>`. No code path put either word there, so
+    /// the warning mark and the Reconnect button beside it were dead code,
+    /// and the test that covered them handed the fixture a fact by hand and
+    /// passed over an application where the state could not occur (#1584).
     public static func needsAttention(_ account: AccountFfi) -> Bool {
-        account.facts.contains { fact in
-            let fact = fact.lowercased()
-            return fact.contains("expired") || fact.contains("reconnect")
-        }
+        account.needsAttention
     }
 
     /// What the pane says when there are no accounts.
