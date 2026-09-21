@@ -307,9 +307,18 @@ struct Shell: View {
             HStack(spacing: PostioTokens.space2) {
                 Circle()
                     .fill(
-                        SidebarFooter.isResting(offline: engine.isOffline, syncing: engine.syncing)
+                        SidebarFooter.isResting(
+                            offline: engine.isOffline,
+                            syncing: engine.syncing,
+                            failure: engine.failure
+                        )
                             ? Color.secondary
-                            : Color(nsColor: PostioTokens.colorAccent)
+                            // An account that cannot sign in is the one thing
+                            // on this line somebody has to act on, so it is
+                            // the one colour that is not the accent.
+                            : engine.failure == nil
+                                ? Color(nsColor: PostioTokens.colorAccent)
+                                : Color.red
                     )
                     .frame(width: 7, height: 7)
                 Text(
@@ -317,11 +326,12 @@ struct Shell: View {
                         mailboxes: engine.mailboxes,
                         offline: engine.isOffline,
                         syncing: engine.syncing,
+                        failure: engine.failure,
                         now: timeline.date
                     )
                 )
                 .font(.system(.callout, design: .monospaced))
-                .foregroundStyle(.secondary)
+                .foregroundStyle(engine.failure == nil ? AnyShapeStyle(.secondary) : AnyShapeStyle(Color.red))
                 .lineLimit(1)
                 Spacer()
             }

@@ -253,6 +253,24 @@ pub enum NoticeKindFfi {
     Failed,
 }
 
+impl From<FailureReasonFfi> for postio_core::FailureReason {
+    /// Back the other way, for the wording.
+    ///
+    /// `Other` becomes `Config` rather than gaining a variant of its own:
+    /// the core's four are exhaustive, the boundary's fifth exists only
+    /// because `_ =>` above is a forward-compatibility hatch, and "check this
+    /// account's settings" is the right thing to say about a failure this
+    /// build cannot name.
+    fn from(reason: FailureReasonFfi) -> Self {
+        match reason {
+            FailureReasonFfi::Auth => Self::Auth,
+            FailureReasonFfi::Network => Self::Network,
+            FailureReasonFfi::Server => Self::Server,
+            FailureReasonFfi::Other => Self::Config,
+        }
+    }
+}
+
 impl From<postio_core::Event> for UiEvent {
     fn from(event: postio_core::Event) -> Self {
         use postio_core::Event;

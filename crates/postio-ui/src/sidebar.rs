@@ -698,16 +698,65 @@ mod tests {
 
 /// What the account is doing, for the sidebar's footer.
 ///
-/// Three states rather than a boolean pair, because they are ranked: offline
-/// outranks everything (nothing can be happening), and syncing outranks idle.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// States rather than a boolean pair, because they are ranked: offline
+/// outranks everything (nothing can be happening), a failure outranks a time
+/// from when it last worked, and syncing outranks idle.
+///
+/// Not `Copy`: [`Activity::Failing`] carries the reason, and a reason is a
+/// sentence rather than a flag.
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Activity {
     /// The machine has no connection.
     Offline,
     /// A pass is running now.
     Syncing,
+    /// The account cannot sign in, and why.
+    ///
+    /// **Not the same as offline.** Offline is the machine's; this is the
+    /// account's, and it is the one that needs a person. It was missing here
+    /// entirely, so a macOS footer had three states and an expired password
+    /// read as `idle · synced 40s` — forever, and the longer it went the more
+    /// settled it looked. `crate::status::SyncStatus`, the two-line form GTK
+    /// draws, has said the rule from the start: *the reason wins, because
+    /// "last sync 4h" is not what someone needs to read when the password has
+    /// expired.*
+    Failing {
+        /// What the server or the keyring said, phrased for the user.
+        reason: String,
+    },
     /// Nothing is running, which is the ordinary state.
     Idle,
+}
+
+/// What a failing account's footer says, by what kind of failure it is.
+///
+/// One sentence per reason, here rather than in a frontend, because this is
+/// the line somebody reads when their mail has stopped arriving — and two
+/// platforms phrasing "your password was rejected" differently is two
+/// products. `postio_core::FailureReason` is a *classification*; this is the
+/// wording for it.
+///
+/// Short, and about what to do rather than about what happened. A footer is
+/// one column wide and is glanced at: the place for the server's own text is
+/// the notice, which carries `Event::Error` verbatim.
+pub fn failing_because(reason: postio_core::FailureReason) -> &'static str {
+    use postio_core::FailureReason as Why;
+    match reason {
+        // Never phrased as "wrong password": an app-specific password, an
+        // expired OAuth grant and a revoked one all land here, and only one
+        // of those is a password anybody typed.
+        Why::Auth => "sign-in needed",
+        // Recovers on its own, so it says what is true rather than asking for
+        // anything. A footer demanding action for something the supervisor is
+        // already retrying is a footer people learn to ignore.
+        Why::Network => "cannot reach the server",
+        // The connection worked and the work was refused, which is the
+        // server's to explain — the notice carries what it said.
+        Why::Server => "the server refused",
+        // Something about how this account is set up. The settings window is
+        // where it is fixed, and saying so is more use than naming the field.
+        Why::Config => "check this account's settings",
+    }
 }
 
 /// The sidebar's footer line: `idle · synced 40s` (canvas screen 25).
@@ -743,6 +792,10 @@ pub fn status(activity: Activity, since: Option<u64>, has_mail: bool) -> String 
         // saying. "idle" here would be a claim that nothing needs doing.
         Activity::Offline => "offline".to_owned(),
         Activity::Syncing => "syncing".to_owned(),
+        // The reason, and nothing else. A time beside it would be answering
+        // the question nobody is asking: how long ago it last worked is not
+        // what somebody needs while it is not working.
+        Activity::Failing { reason } => reason.clone(),
         Activity::Idle => match (since, has_mail) {
             (Some(seconds), _) => format!("idle · synced {}", elapsed(seconds)),
             // The state a new account is in for the whole of its first pass,
@@ -836,5 +889,60 @@ mod status_tests {
     #[test]
     fn a_sync_that_has_only_just_happened_still_reads_as_seconds() {
         assert_eq!(status(Activity::Idle, Some(0), true), "idle · synced 0s");
+    }
+    // -- an account that cannot sign in (#1585) ---------------------------
+
+    #[test]
+    fn a_failing_account_says_why_and_not_when_it_last_worked() {
+        // "The reason wins": how long ago it last synced is not what somebody
+        // needs to read while the password is wrong, and a line that says
+        // `idle · synced 40s` over a failing account reads more settled the
+        // longer it goes on.
+        assert_eq!(
+            status(
+                Activity::Failing {
+                    reason: "the server rejected that password".to_owned()
+                },
+                Some(40),
+                true
+            ),
+            "the server rejected that password"
+        );
+    }
+
+    #[test]
+    fn failing_outranks_a_time_and_offline_outranks_failing() {
+        // Offline is the machine's and failing is the account's: with no
+        // connection at all, "the server rejected that password" is a claim
+        // about a conversation that did not happen.
+        assert_eq!(status(Activity::Offline, Some(40), true), "offline");
+        assert_ne!(
+            status(
+                Activity::Failing {
+                    reason: "expired".to_owned()
+                },
+                Some(40),
+                true
+            ),
+            "idle · synced 40s"
+        );
+    }
+
+    #[test]
+    fn every_failure_has_a_sentence_and_none_of_them_blames_a_password() {
+        use postio_core::FailureReason as Why;
+        for reason in [Why::Auth, Why::Network, Why::Server, Why::Config] {
+            let said = failing_because(reason);
+            assert!(!said.is_empty(), "{reason:?} says nothing");
+            // An app-specific password, an expired grant and a revoked one
+            // all classify as `Auth`, and only one of them is a password
+            // anybody typed. A footer that says "wrong password" to somebody
+            // whose OAuth grant expired sends them to change a password that
+            // is fine.
+            assert!(
+                !said.to_lowercase().contains("wrong password"),
+                "{reason:?} blames a password: {said}"
+            );
+        }
     }
 }

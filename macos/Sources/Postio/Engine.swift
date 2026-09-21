@@ -358,6 +358,14 @@ final class Engine {
     /// by reading a `last_synced_at` that only moves when a pass *completes*.
     private(set) var syncing = false
 
+    /// Why this account cannot sign in, or `nil` while it can.
+    ///
+    /// Not the same as [`isOffline`](Self.isOffline), which is the
+    /// *machine's* reachability from `NWPathMonitor`. This is the account's,
+    /// it is the one that needs a person, and it had nowhere to live: the
+    /// `ConnectionChanged` payload was dropped on the floor.
+    private(set) var failure: FailureReasonFfi?
+
     /// Whether the platform has told the engine there is no connection.
     var isOffline: Bool { session?.isOffline ?? false }
 
@@ -500,10 +508,24 @@ final class Engine {
             settingsActions.reindexProgressed(done: done, total: total)
         case let .syncProgress(_, done, total):
             syncing = done < total
-        case .connectionChanged:
+        case let .connectionChanged(_, state):
             // A connection that has gone means nothing is in flight, whatever
             // the last progress event said.
             if isOffline { syncing = false }
+            // **And the reason is kept.** The payload was discarded, so
+            // `ConnectionState::Failing`'s reason never reached anything —
+            // the footer had three states, none of them "this account cannot
+            // sign in", and an expired password read as `idle · synced 40s`
+            // for as long as you left it.
+            switch state {
+            case let .failing(reason):
+                failure = reason
+                syncing = false
+            case .online, .connecting, .offline:
+                // Connecting again is not proof it will work, but it is proof
+                // the last failure is no longer the current answer.
+                failure = nil
+            }
         case .mailboxesChanged:
             // The read is above, with the rest of the count-moving events.
             break

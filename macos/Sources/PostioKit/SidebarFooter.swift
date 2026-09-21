@@ -17,11 +17,27 @@ public enum SidebarFooter {
         mailboxes: [MailboxFfi],
         offline: Bool,
         syncing: Bool,
+        failure: FailureReasonFfi? = nil,
         now: Date = Date()
     ) -> String {
         // Ranked rather than combined: offline outranks a sync that cannot be
-        // running, and a sync in flight outranks a time from the last one.
-        let activity: ActivityFfi = offline ? .offline : (syncing ? .syncing : .idle)
+        // running, a failure outranks a time from when it last worked, and a
+        // sync in flight outranks that time too.
+        //
+        // The failure rank is the one that was missing. There were three
+        // states and `offline` was the *platform's* reachability flag, so an
+        // account whose password had expired read as `idle · synced 40s` —
+        // forever, and more settled the longer it went on.
+        let activity: ActivityFfi =
+            if offline {
+                .offline
+            } else if let failure {
+                .failing(reason: failureSentence(reason: failure))
+            } else if syncing {
+                .syncing
+            } else {
+                .idle
+            }
         return sidebarStatus(
             activity: activity,
             sinceSeconds: since(mailboxes, now),
@@ -33,8 +49,12 @@ public enum SidebarFooter {
 
     /// Whether the dot is filled — anything but idle is "something is
     /// happening or wrong", which is what a dot can say and a word cannot.
-    public static func isResting(offline: Bool, syncing: Bool) -> Bool {
-        !offline && !syncing
+    public static func isResting(
+        offline: Bool,
+        syncing: Bool,
+        failure: FailureReasonFfi? = nil
+    ) -> Bool {
+        !offline && !syncing && failure == nil
     }
 
     /// How long ago the newest completed pass was, or `nil` if there has

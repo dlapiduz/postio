@@ -93,4 +93,56 @@ import Testing
         #expect(!SidebarFooter.isResting(offline: true, syncing: false))
         #expect(!SidebarFooter.isResting(offline: false, syncing: true))
     }
+    // -- an account that cannot sign in (#1585) ---------------------------
+
+    @Test func aFailingAccountSaysWhyRatherThanHowLongAgoItWorked() {
+        // "idle · synced 40s" over an account whose password has expired, and
+        // the longer it goes the more settled it looks. The reason wins —
+        // which is what `postio_ui::status` has said from the start about the
+        // two-line form GTK draws, and what the one-line form had no way to
+        // express.
+        let line = SidebarFooter.status(
+            mailboxes: [folder(1, syncedAt: 1_770_000_000)],
+            offline: false,
+            syncing: false,
+            failure: .auth,
+            now: Date(timeIntervalSince1970: 1_770_000_040)
+        )
+        #expect(!line.contains("synced 40s"), "it told them when it last worked: \(line)")
+        #expect(!line.contains("idle"), "nothing about this is idle: \(line)")
+        #expect(line == failureSentence(reason: .auth))
+    }
+
+    @Test func offlineStillOutranksAFailure() {
+        // Offline is the machine's and a failure is the account's: with no
+        // connection at all, "the server refused" is a claim about a
+        // conversation that did not happen.
+        let line = SidebarFooter.status(
+            mailboxes: [folder(1, syncedAt: nil)],
+            offline: true,
+            syncing: false,
+            failure: .server,
+            now: Date()
+        )
+        #expect(line == "offline")
+    }
+
+    @Test func anAccountThatIsFineSaysWhatItSaidBefore() {
+        // The ordinary line is unchanged; `failure` defaults to none.
+        let line = SidebarFooter.status(
+            mailboxes: [folder(1, syncedAt: 1_770_000_000)],
+            offline: false,
+            syncing: false,
+            now: Date(timeIntervalSince1970: 1_770_000_040)
+        )
+        #expect(line == "idle · synced 40s")
+    }
+
+    @Test func theDotIsNotRestingWhileSomethingIsWrong() {
+        // The dot is the glanceable half: filled means "something is
+        // happening or wrong", and a failing account is the second.
+        #expect(!SidebarFooter.isResting(offline: false, syncing: false, failure: .auth))
+        #expect(SidebarFooter.isResting(offline: false, syncing: false, failure: nil))
+    }
+
 }
