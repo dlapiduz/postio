@@ -182,9 +182,9 @@ pub async fn export_messages(
 
 /// Write one message part into `into`, under the name the sender gave it.
 ///
-/// The bytes come from [`crate::reading::part_bytes`], so a part that was
-/// never downloaded is fetched exactly as `s` fetches it — the user named
-/// this part by dragging it.
+/// The bytes come from [`postio_session::reading::part_bytes_at`], so a part
+/// that was never downloaded is fetched exactly as `s` fetches it — the user
+/// named this part by dragging it.
 ///
 /// The filename is the panel's own [`postio_gtk::parts::save_name`], the same
 /// one the save dialog offers, so a part saved and a part dragged land under
@@ -229,10 +229,21 @@ pub async fn export_part_as(
     node: &postio_gtk::parts::Node,
     name: &str,
 ) -> Result<PathBuf, String> {
-    let attachment = node
-        .attachment
-        .ok_or("That part is not something with bytes of its own")?;
-    let bytes = crate::reading::part_bytes(database, blobs, engine, message, attachment).await?;
+    // The row id is the *leaf* test and nothing else — a container has none,
+    // and there is no file in it to write.
+    if node.attachment.is_none() {
+        return Err("That part is not something with bytes of its own".to_owned());
+    }
+    // Addressed by MIME path, never by `AttachmentId`. A whole-message fetch
+    // replaces a message's attachment rows, so the first part of a batch that
+    // had to be fetched invalidates every id held beside it — and `save_all`
+    // holds one per row. `2` is `2` in every parse of the same bytes.
+    // `postio_session::reading::part_bytes`' own doc is this paragraph from
+    // the other side, and it is why the FFI boundary never names a part by a
+    // row id either.
+    let bytes =
+        postio_session::reading::part_bytes_at(database, blobs, engine, message, &node.part_id)
+            .await?;
 
     std::fs::create_dir_all(into).map_err(|error| error.to_string())?;
     let path = into.join(name);

@@ -45,7 +45,7 @@ use postio_gtk::reader::Absent;
 use postio_gtk::sidebar::SyncStatus;
 use postio_gtk::window::Window;
 use postio_model::address::EmailAddress;
-use postio_model::ids::{AttachmentId, BlobId};
+use postio_model::ids::BlobId;
 use postio_model::{Attachment, Message, MessageId};
 use postio_runtime::Engine;
 use postio_storage::Store;
@@ -1640,6 +1640,9 @@ mod tests {
 
     use postio_account::backend::{MockBackend, MockMailbox, MockMessage};
     use postio_model::MailboxRole;
+    // Only the fixtures still speak in row ids: `export_part_as` addresses a
+    // part by its MIME path now, for the reason `part_bytes`' doc gives.
+    use postio_model::ids::AttachmentId;
     use postio_runtime::engine::{EngineParts, NetworkSource, SystemClock};
     use postio_storage::repository::{ListQuery, ListScope, MessageRepository};
     use postio_storage::seed::seed_small;
