@@ -24,6 +24,7 @@ mod compose;
 mod config;
 mod conversation;
 mod dwell;
+mod facts;
 mod keys;
 mod list;
 mod notice;

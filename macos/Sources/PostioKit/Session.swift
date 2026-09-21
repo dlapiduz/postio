@@ -153,15 +153,17 @@ public final class PostioSession {
     /// Whether the platform has told the engine there is no connection.
     public var isOffline: Bool { inner.isOffline() }
 
-    /// What to say about a message whose body could not be fully decoded,
-    /// or `nil` when there is nothing to say.
+
+    /// Everything the pane asks about one open message — the blocked-images
+    /// notice, the decode caveat, the unsubscribe offer and the recipients —
+    /// in one call, one body load and one render (#1589).
     ///
-    /// A body that silently lost a part is exactly what ADR 0005 Q10's
-    /// omission rule is about: the pane must not draw a message that is
-    /// missing something as though it were whole. The wording is the
-    /// boundary's, so both frontends say it the same way.
-    public func decodeCaveat(_ message: Int64) -> String? {
-        inner.decodeCaveat(message: message)
+    /// **`nonisolated`.** The render inside it is the same sanitizer pass the
+    /// reader runs, and the actor that draws must not pay for a render whose
+    /// only output is a number. Call it from a task and publish the answer —
+    /// which is exactly what `ExpandedMessage.task(id:)` does.
+    public nonisolated func messageFacts(_ message: Int64) -> MessageFactsFfi {
+        inner.messageFacts(message: message)
     }
 
     /// One message as a row, by id rather than by list position.
@@ -205,14 +207,6 @@ public final class PostioSession {
         Data(try inner.partBytes(message: message, partId: partId))
     }
 
-    /// What this message offers to unsubscribe from, or `nil`.
-    ///
-    /// A point read that writes nothing — reading the offer is not the
-    /// deliberate activation, and must not be mistaken for one. Safe where
-    /// the message opens.
-    public func unsubscribeOffer(_ message: Int64) -> UnsubscribeOfferFfi? {
-        inner.unsubscribeOffer(message: message)
-    }
 
     /// Leave the list this message came from — **the deliberate activation**,
     /// and the only call in this pair that records one.
@@ -578,9 +572,6 @@ public final class PostioSession {
     /// The draft `id` as the store has it, or `nil`.
     public func draft(_ id: Int64) -> DraftFfi? { inner.draft(id: id) }
 
-    public func recipients(_ message: Int64) -> RecipientsFfi? {
-        inner.recipients(message: message)
-    }
 
     /// The verbs the reading pane offers, in canvas order.
     ///
@@ -589,9 +580,6 @@ public final class PostioSession {
     /// the same on both frontends by construction.
     public func readerActions() -> [ReaderActionFfi] { inner.readerActions() }
 
-    public func readerNotice(_ message: Int64) -> ReaderNoticeFfi? {
-        inner.readerNotice(message: message)
-    }
 
     /// Always allow this address's remote images, across restarts.
     ///

@@ -396,14 +396,13 @@ public struct ExpandedMessage: View {
                 // inline is part of why moving between messages had a beat.
                 let session = session
                 let id = row.id
-                let facts = await Task.detached {
-                    (
-                        session.readerNotice(id), session.unsubscribeOffer(id),
-                        session.decodeCaveat(id), session.recipients(id)
-                    )
-                }.value
+                // One boundary call, one body load, one render (#1589) —
+                // this used to be four calls that loaded the body three
+                // times between them.
+                let facts = await Task.detached { session.messageFacts(id) }.value
                 guard !Task.isCancelled else { return }
-                (notice, offer, caveat, addressed) = facts
+                (notice, offer, caveat, addressed) =
+                    (facts.notice, facts.offer, facts.caveat, facts.recipients)
             }
             .padding(.horizontal, PostioTokens.space4)
             .padding(.vertical, PostioTokens.space4)

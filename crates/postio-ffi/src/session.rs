@@ -868,22 +868,19 @@ impl Session {
         blocking(self.send_draft_later(draft, when))
     }
 
-    /// Who this message was addressed to. See [`Session::recipients`].
-    #[uniffi::method(name = "recipients")]
-    pub fn recipients_ffi(&self, message: i64) -> Option<crate::RecipientsFfi> {
-        blocking(self.recipients(message))
+    /// Everything the pane asks about one open message — the notice, the
+    /// caveat, the unsubscribe offer and the recipients — in one call, one
+    /// body load and one render (#1589). Blocking; call it off the main
+    /// actor and publish the answer.
+    #[uniffi::method(name = "messageFacts")]
+    pub fn message_facts_ffi(&self, message: i64) -> crate::MessageFactsFfi {
+        blocking(self.message_facts(message))
     }
 
     /// The verbs the reading pane offers. See [`Session::reader_actions`].
     #[uniffi::method(name = "readerActions")]
     pub fn reader_actions_ffi(&self) -> Vec<crate::ReaderActionFfi> {
         self.reader_actions()
-    }
-
-    /// What this message's reader is holding back, or `None` when nothing is.
-    #[uniffi::method(name = "readerNotice")]
-    pub fn reader_notice_ffi(&self, message: i64) -> Option<crate::ReaderNoticeFfi> {
-        blocking(self.reader_notice(message))
     }
 
     /// Always allow this address's remote images, across restarts.
@@ -912,20 +909,6 @@ impl Session {
     #[uniffi::method(name = "revokeRemoteImages")]
     pub fn revoke_remote_images_ffi(&self, subject: String) {
         self.revoke_remote_images(subject);
-    }
-
-    /// Whether the body on screen is a guess rather than what was sent, and
-    /// what to say about it. See [`Session::decode_caveat`].
-    #[uniffi::method(name = "decodeCaveat")]
-    pub fn decode_caveat_ffi(&self, message: i64) -> Option<String> {
-        blocking(self.decode_caveat(message))
-    }
-
-    /// What this message offers about the list it came from, or `None` when
-    /// it offers nothing. A **read**: see [`Session::unsubscribe_offer`].
-    #[uniffi::method(name = "unsubscribeOffer")]
-    pub fn unsubscribe_offer_ffi(&self, message: i64) -> Option<crate::UnsubscribeOfferFfi> {
-        blocking(self.unsubscribe_offer(message))
     }
 
     /// Leave the list this message came from — **the deliberate activation**,
@@ -2159,58 +2142,142 @@ impl Session {
         self.conversation.lock().expect("conversation lock").clone()
     }
 
-    /// What the reader is holding back for `message`. See
-    /// [`reader_notice_ffi`](Self::reader_notice_ffi).
+    /// Everything the pane asks about one open message, in one read
+    /// (#1589).
+    ///
+    /// One connection, one row read, one `send_state` read, one body load,
+    /// one render. The four single-fact methods below delegate here — they
+    /// are kept for their tests, which are the behavioural record of what
+    /// each fact means — so there is exactly one implementation of "what a
+    /// message says about itself".
+    pub async fn message_facts(&self, message: i64) -> crate::MessageFactsFfi {
+        let nothing = crate::MessageFactsFfi {
+            notice: None,
+            caveat: None,
+            offer: None,
+            recipients: None,
+        };
+        let Some((database, _)) = self.store_and_blobs() else {
+            return nothing;
+        };
+        let Ok(connection) = database.connect().await else {
+            return nothing;
+        };
+        let repository = postio_storage::repository::MessageRepository::new(&connection);
+        let id = postio_model::ids::MessageId::new(message);
+        let Ok(Some(row)) = repository.get(id).await else {
+            return nothing;
+        };
+
+        // Through the shared header, which is also what GTK's own reader
+        // renders from — one answer to "how does a recipient list read".
+        let lines = postio_ui::reader::header::MessageHeader::of(
+            &row.from,
+            &row.to,
+            &row.cc,
+            row.subject.as_deref(),
+            row.date.unwrap_or(row.received_at),
+            chrono::Local::now(),
+        );
+        let recipients = Some(crate::RecipientsFfi {
+            to: lines.to_line(),
+            cc_label: lines.cc_toggle_label(),
+            cc: lines.cc,
+        });
+
+        // The send state is the offer's gate (#1525): without it the domain
+        // fallback would offer to unsubscribe the user from their own
+        // account, so a read that fails means "do not offer", never "no
+        // send state".
+        let offer = match repository.send_state(id).await {
+            Ok(send_state) => {
+                postio_ui::unsubscribe::offer(send_state, row.list_id.as_deref(), &row.from).map(
+                    |offer| crate::UnsubscribeOfferFfi {
+                        list_identifier: offer.list_identifier,
+                        summary: offer.summary,
+                        action: postio_ui::unsubscribe::ACTION.to_owned(),
+                    },
+                )
+            }
+            Err(error) => {
+                tracing::warn!(message, %error, "cannot read a message's send state");
+                None
+            }
+        };
+
+        // The one body load, and the one render. No body is not a fault:
+        // a described-but-unfetched message has recipients and maybe an
+        // offer, and simply nothing yet for the notice or the caveat to be
+        // about.
+        let offline = self.offline.load(std::sync::atomic::Ordering::SeqCst);
+        let (notice, caveat) = match postio_session::reading::load_body_or_reason(
+            &connection,
+            row.id,
+            offline,
+        )
+        .await
+        {
+            postio_session::reading::Body::Ready {
+                body,
+                encoding_problems,
+                ..
+            } => {
+                let rendered = postio_ui::reader::document::body_html(
+                    &body,
+                    postio_body::RemoteImages::Blocked,
+                    postio_ui::reader::document::Rendering::Original,
+                );
+                let held_back = rendered.held_back;
+                let summary = held_back.summary();
+                let notice = if summary.is_empty() {
+                    None
+                } else {
+                    let sender = row
+                        .from
+                        .first()
+                        .map(|address| address.address.to_lowercase())
+                        .unwrap_or_default();
+                    let domain = sender
+                        .rsplit_once('@')
+                        .map(|(_, domain)| domain.to_owned())
+                        .unwrap_or_default();
+                    Some(crate::ReaderNoticeFfi {
+                        summary: format!("{summary} blocked"),
+                        allowed: self.allow_list().is_allowed(&sender),
+                        sender,
+                        domain,
+                        remote_images: held_back.remote_images,
+                        trackers: held_back.trackers,
+                    })
+                };
+                let caveat = postio_ui::reader::document::decode_caveat(encoding_problems)
+                    .map(str::to_owned);
+                (notice, caveat)
+            }
+            _ => (None, None),
+        };
+
+        crate::MessageFactsFfi {
+            notice,
+            caveat,
+            offer,
+            recipients,
+        }
+    }
+
+    /// What the reader is holding back for `message`.
     ///
     /// Rendered with images blocked whatever the sender's standing is: the
     /// question this answers is "what would be loaded", and asking it of an
     /// already-allowed render would answer "nothing" and take the notice off
-    /// screen — which is where a person goes to take a grant back.
+    /// screen — which is where a person goes to take a grant back. That rule
+    /// lives in [`message_facts`](Self::message_facts) now, which this is a
+    /// view over.
     pub async fn reader_notice(&self, message: i64) -> Option<crate::ReaderNoticeFfi> {
-        let (database, _) = self.store_and_blobs()?;
-        let connection = database.connect().await.ok()?;
-        let source = postio_storage::repository::MessageRepository::new(&connection)
-            .get(postio_model::ids::MessageId::new(message))
-            .await
-            .ok()??;
-        let postio_session::reading::Body::Ready { body, .. } =
-            postio_session::reading::load_body_or_reason(
-                &connection,
-                source.id,
-                self.offline.load(std::sync::atomic::Ordering::SeqCst),
-            )
-            .await
-        else {
-            return None;
-        };
-
-        let rendered = postio_ui::reader::document::body_html(
-            &body,
-            postio_body::RemoteImages::Blocked,
-            postio_ui::reader::document::Rendering::Original,
-        );
-        let held_back = rendered.held_back;
-        let summary = held_back.summary();
-        if summary.is_empty() {
-            return None;
-        }
-        let sender = source
-            .from
-            .first()
-            .map(|address| address.address.to_lowercase())
-            .unwrap_or_default();
-        let domain = sender
-            .rsplit_once('@')
-            .map(|(_, domain)| domain.to_owned())
-            .unwrap_or_default();
-        Some(crate::ReaderNoticeFfi {
-            summary: format!("{summary} blocked"),
-            allowed: self.allow_list().is_allowed(&sender),
-            sender,
-            domain,
-            remote_images: held_back.remote_images,
-            trackers: held_back.trackers,
-        })
+        // A view over `message_facts`, kept for its tests: they are the
+        // behavioural record of what a notice means, and this is what stops
+        // there being two implementations of it.
+        self.message_facts(message).await.notice
     }
 
     /// Always allow `address`. See [`allow_sender_ffi`](Self::allow_sender_ffi).
@@ -2293,19 +2360,8 @@ impl Session {
     ///
     /// See [`decode_caveat_ffi`](Self::decode_caveat_ffi).
     pub async fn decode_caveat(&self, message: i64) -> Option<String> {
-        let (database, _) = self.store_and_blobs()?;
-        let connection = database.connect().await.ok()?;
-        let offline = self.offline.load(std::sync::atomic::Ordering::SeqCst);
-        let postio_session::reading::Body::Ready {
-            encoding_problems, ..
-        } = postio_session::reading::load_body_or_reason(&connection, message.into(), offline)
-            .await
-        else {
-            // No body at all is a state plate's business, not a caveat's:
-            // there are no words on screen for this to be a caveat about.
-            return None;
-        };
-        postio_ui::reader::document::decode_caveat(encoding_problems).map(str::to_owned)
+        // A view over `message_facts` — see `reader_notice`.
+        self.message_facts(message).await.caveat
     }
 
     /// What `message` offers about the list it came from, or `None`.
@@ -2320,14 +2376,8 @@ impl Session {
     ///
     /// See [`unsubscribe_offer_ffi`](Self::unsubscribe_offer_ffi).
     pub async fn unsubscribe_offer(&self, message: i64) -> Option<crate::UnsubscribeOfferFfi> {
-        let (database, _) = self.store_and_blobs()?;
-        let connection = database.connect().await.ok()?;
-        let (_account, offer) = unsubscribe_offer_for(&connection, message.into()).await?;
-        Some(crate::UnsubscribeOfferFfi {
-            list_identifier: offer.list_identifier,
-            summary: offer.summary,
-            action: postio_ui::unsubscribe::ACTION.to_owned(),
-        })
+        // A view over `message_facts` — see `reader_notice`.
+        self.message_facts(message).await.offer
     }
 
     /// Record that the user asked to leave this message's list.
@@ -4738,30 +4788,8 @@ impl Session {
     /// does not draw recipients and paying for them per row would load a
     /// mailbox's addresses to show one message's.
     pub async fn recipients(&self, message: i64) -> Option<crate::RecipientsFfi> {
-        let (database, _) = self.store_and_blobs()?;
-        let connection = database.connect().await.ok()?;
-        let message = postio_storage::repository::MessageRepository::new(&connection)
-            .get(message.into())
-            .await
-            .ok()
-            .flatten()?;
-
-        // Through the shared header, which is also what GTK's own reader
-        // renders from — one answer to "how does a recipient list read".
-        let lines = postio_ui::reader::header::MessageHeader::of(
-            &message.from,
-            &message.to,
-            &message.cc,
-            message.subject.as_deref(),
-            message.date.unwrap_or(message.received_at),
-            chrono::Local::now(),
-        );
-
-        Some(crate::RecipientsFfi {
-            to: lines.to_line(),
-            cc_label: lines.cc_toggle_label(),
-            cc: lines.cc,
-        })
+        // A view over `message_facts` — see `reader_notice`.
+        self.message_facts(message).await.recipients
     }
 
     /// The verbs the reading pane offers, in canvas order.

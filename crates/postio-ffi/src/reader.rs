@@ -162,3 +162,27 @@ pub fn reader_page_fragment(page: u32) -> String {
 pub fn reader_scroll_markers() -> String {
     postio_ui::reader::document::scroll_markers()
 }
+
+/// Everything the pane asks about one open message, in one answer (#1589).
+///
+/// Opening a message used to be four calls — notice, caveat, unsubscribe
+/// offer, recipients — and between them they loaded and decompressed the
+/// body three times and ran the sanitizer twice, once purely to count
+/// blocked images. This is those four answers off one row read, one body
+/// load and one render.
+///
+/// Every field is optional because every fact is: the common personal
+/// message has no pictures held back, no list to leave and nothing wrong
+/// with its body, and an absent fact must be `None` rather than an empty
+/// something — a blank banner is still a banner.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct MessageFactsFfi {
+    /// What the reader held back, or `None` when nothing was.
+    pub notice: Option<ReaderNoticeFfi>,
+    /// What to say about a body that lost something in decoding.
+    pub caveat: Option<String>,
+    /// The list this message offers to leave, or `None` for a person.
+    pub offer: Option<crate::UnsubscribeOfferFfi>,
+    /// Who it was addressed to, or `None` for a message that is gone.
+    pub recipients: Option<RecipientsFfi>,
+}

@@ -452,7 +452,7 @@ final class Engine {
     /// appear: only the markup part can load anything, and offering to
     /// render an `image/png` once would be theatre.
     func heldBack(for message: Int64) -> (remote: UInt32, trackers: UInt32) {
-        guard let notice = session?.readerNotice(message) else { return (0, 0) }
+        guard let notice = session?.messageFacts(message).notice else { return (0, 0) }
         return (notice.remoteImages, notice.trackers)
     }
 
