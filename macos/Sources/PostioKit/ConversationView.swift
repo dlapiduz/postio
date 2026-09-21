@@ -347,6 +347,20 @@ public struct ExpandedMessage: View {
                         openSettings: openSettings
                     )
                 }
+                // A body that silently lost a part is exactly what ADR
+                // 0005 Q10's omission rule is about: a pane drawing an
+                // incomplete message as though it were whole is making a
+                // claim about somebody's mail. The wording is the
+                // boundary's.
+                if let caveat = session.decodeCaveat(row.id) {
+                    Label(caveat, systemImage: "exclamationmark.triangle")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                        .padding(.horizontal, PostioTokens.space3)
+                        .padding(.vertical, PostioTokens.space2)
+                        .background(.quaternary.opacity(0.4), in: .rect(cornerRadius: 6))
+                        .fixedSize(horizontal: false, vertical: true)
+                }
                 // Also per message: a conversation can hold eight messages
                 // from four lists. `PRODUCT.md` lists one-click unsubscribe
                 // among the privacy features, and until this existed the

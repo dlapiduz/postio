@@ -138,6 +138,17 @@ public final class PostioSession {
     /// Whether the platform has told the engine there is no connection.
     public var isOffline: Bool { inner.isOffline() }
 
+    /// What to say about a message whose body could not be fully decoded,
+    /// or `nil` when there is nothing to say.
+    ///
+    /// A body that silently lost a part is exactly what ADR 0005 Q10's
+    /// omission rule is about: the pane must not draw a message that is
+    /// missing something as though it were whole. The wording is the
+    /// boundary's, so both frontends say it the same way.
+    public func decodeCaveat(_ message: Int64) -> String? {
+        inner.decodeCaveat(message: message)
+    }
+
     /// One message as a row, by id rather than by list position.
     ///
     /// What the single-message pane draws its header from: a message the
