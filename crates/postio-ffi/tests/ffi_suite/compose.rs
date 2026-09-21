@@ -1079,3 +1079,72 @@ async fn a_draft_can_be_thrown_away() {
     let _ = database;
     session.shutdown();
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_scheduled_send_is_queued_with_the_hour_it_is_for() {
+    // *Schedule send…* — the same queue as an immediate send, with a time on
+    // the row. `postio-sync::send` is what holds it back until then, so the
+    // composer closes on the keystroke exactly as it does for `⌘↵`.
+    let (session, database, _) = a_message_to_answer().await;
+    let mut draft = session.new_draft().await.expect("a draft");
+    draft.to = "bo@example.com".to_owned();
+    draft.subject = "The gate".to_owned();
+    draft.body = "Six is fine.".to_owned();
+
+    let when = chrono::Utc::now() + chrono::Duration::hours(3);
+    assert_eq!(
+        session
+            .send_draft_later(draft, when.timestamp_millis())
+            .await,
+        None,
+        "no complaint"
+    );
+
+    let connection = database.connect().await.expect("a connection");
+    let queued = DraftRepository::new(&connection)
+        .list_for_account(postio_model::ids::AccountId::new(1))
+        .await
+        .expect("a list");
+    assert_eq!(queued.len(), 1);
+    assert_eq!(queued[0].state, DraftState::Queued);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_scheduled_send_is_refused_now_rather_than_at_the_hour() {
+    // The whole reason this repeats `send_draft`'s checks instead of trusting
+    // them to the drain: refusing an unaddressed message at 8am tomorrow,
+    // when nobody is watching the composer, is strictly worse than refusing
+    // it while somebody is looking at it.
+    let (session, _, _) = a_message_to_answer().await;
+    let draft = session.new_draft().await.expect("a draft");
+
+    let when = chrono::Utc::now() + chrono::Duration::hours(3);
+    let complaint = session
+        .send_draft_later(draft, when.timestamp_millis())
+        .await
+        .expect("a refusal");
+    assert!(
+        complaint.to_lowercase().contains("recipient"),
+        "and it says what is missing: {complaint}"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn an_hour_already_gone_is_not_a_schedule() {
+    // A picker left open overnight, or a clock that moved. Sending it at
+    // once would be a different command than the one that was chosen, and
+    // silently is worse still.
+    let (session, _, _) = a_message_to_answer().await;
+    let mut draft = session.new_draft().await.expect("a draft");
+    draft.to = "bo@example.com".to_owned();
+
+    let past = chrono::Utc::now() - chrono::Duration::hours(1);
+    let complaint = session
+        .send_draft_later(draft, past.timestamp_millis())
+        .await
+        .expect("a refusal");
+    assert!(
+        complaint.to_lowercase().contains("past"),
+        "and it says why: {complaint}"
+    );
+}

@@ -329,3 +329,35 @@ pub struct PastedFfi {
     /// the one that mattered.
     pub dropped: Option<String>,
 }
+
+/// One thing *Schedule send…* offers: what the row says, and when it is.
+///
+/// `when` is milliseconds since the epoch, which is what goes back into
+/// `Session::sendDraftLater`. A date type on the boundary would be a second
+/// calendar for the frontend to agree with.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct SchedulePresetFfi {
+    /// What the row says — "Tomorrow morning".
+    pub label: String,
+    /// When that is, as epoch milliseconds.
+    pub when: i64,
+}
+
+/// The four times *Schedule send…* offers, computed now.
+///
+/// Recomputed every time the picker opens rather than once: "in 1 hour" on a
+/// picker opened yesterday is not "in 1 hour" today. The rule is
+/// [`postio_ui::compose::schedule_presets`]'s, because the four times *are*
+/// the feature — two frontends each deciding what "tomorrow morning" means is
+/// two products, and the one that is wrong sends somebody's mail at the wrong
+/// hour without ever saying so.
+#[uniffi::export]
+pub fn schedule_presets() -> Vec<SchedulePresetFfi> {
+    postio_ui::compose::schedule_presets(chrono::Local::now())
+        .into_iter()
+        .map(|preset| SchedulePresetFfi {
+            label: preset.label.to_owned(),
+            when: preset.when.timestamp_millis(),
+        })
+        .collect()
+}

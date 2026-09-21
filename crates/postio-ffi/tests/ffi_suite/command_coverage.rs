@@ -38,14 +38,21 @@ const INTERCEPTED: &[CommandId] = postio_ffi::registry::INTERCEPTED;
 const KNOWN_ORPHANS: &[(CommandId, &str)] = {
     use CommandId as C;
     &[
-        // #1571 -- the composer's verbs. The composer window exists and its
-        // toolbar acts; nothing subscribes it to the command stream, which is
-        // what `postio-gtk`'s `connect_command` does on the other side.
-        (C::ScheduleSend, "#1571"),
+        // #1571 -- the two composer verbs that need a surface macOS does not
+        // have. `insert_image` wants an inline attachment with a Content-ID
+        // and a `postio-cid:` handler in the *composer's* web view, which is
+        // a feature rather than a wire; `detach_composer` has nothing to
+        // detach, because compose here is already a window of its own and
+        // never takes over the reading pane the way `PRODUCT.md` describes.
+        // Both are decisions, not omissions -- see the issue.
         (C::DetachComposer, "#1571"),
         (C::InsertImage, "#1571"),
-        // #1573 -- the sidebar's keyboard. `focus_sidebar` moves the keyboard
-        // in and then nothing walks.
+        // #1573 -- `g a` cycles an account strip, and macOS's sidebar does
+        // not have one: it lists every account's folders at once under "On My
+        // Mac", where GTK's shows one account's and the strip re-roots it.
+        // The account scope here is *derived* from the open list rather than
+        // chosen, so there is nothing for this to move. Whether the Mac gets
+        // a strip is a design call (#1157), not a wiring one.
         (C::NextScope, "#1573"),
         // #1576 -- there is no conversation rail on macOS to hide or show.
         // Not a wiring gap: `postio_ui::reader::rail` decides the ladder and

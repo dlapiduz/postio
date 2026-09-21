@@ -38,7 +38,10 @@ public enum ComposeCommands {
     /// is not a command, or is a command the registry does not put in
     /// `Context::Composer`, is a menu item that does the wrong thing.
     nonisolated public static var handled: [String] {
-        marks + ["insert_link", "copy_fields", "send", "save_draft", "discard_draft", "attach_file"]
+        marks + [
+            "insert_link", "copy_fields", "send", "save_draft", "discard_draft",
+            "attach_file", "schedule_send",
+        ]
     }
 
     /// Run `id` against `composer`, and say whether it was the composer's.
@@ -77,6 +80,8 @@ public enum ComposeCommands {
             composer.wantsDiscard = true
         case "attach_file":
             composer.wantsAttachment = true
+        case "schedule_send":
+            composer.wantsSchedule = true
         default:
             return false
         }

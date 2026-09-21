@@ -25,6 +25,10 @@ public struct ComposeView: View {
     /// do anything, which is why it does not go through `markScript`.
     @State private var askingForLink = false
     @State private var confirmingDiscard = false
+    /// The times the schedule-send picker is offering, or empty when it is
+    /// closed. Held rather than computed in the dialog because they are
+    /// computed *as it opens* — see `schedulePresets`.
+    @State private var schedule: [SchedulePresetFfi] = []
     @State private var linkAddress = ""
 
     private enum Field: Hashable {
@@ -304,6 +308,28 @@ public struct ComposeView: View {
             guard wanted else { return }
             model.wantsAttachment = false
             attach()
+        }
+        .onChange(of: model.wantsSchedule) { _, wanted in
+            guard wanted else { return }
+            model.wantsSchedule = false
+            schedule = schedulePresets()
+        }
+        .confirmationDialog(
+            "Send this message later?",
+            isPresented: Binding(get: { !schedule.isEmpty }, set: { if !$0 { schedule = [] } }),
+            titleVisibility: .visible
+        ) {
+            // The four times are the boundary's, recomputed as the picker
+            // opens: "in 1 hour" on a picker opened yesterday is not "in 1
+            // hour" today, and two frontends each deciding what "tomorrow
+            // morning" means is two products.
+            ForEach(schedule, id: \.when) { preset in
+                Button(preset.label) {
+                    model.send(at: preset.when, through: session)
+                    schedule = []
+                }
+            }
+            Button("Cancel", role: .cancel) { schedule = [] }
         }
         .onChange(of: model.wantsDiscard) { _, wanted in
             guard wanted else { return }

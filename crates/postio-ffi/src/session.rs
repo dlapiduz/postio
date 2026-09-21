@@ -861,6 +861,13 @@ impl Session {
         blocking(self.send_draft(draft))
     }
 
+    /// Queue a draft to leave at `when`. See
+    /// [`Session::send_draft_later`].
+    #[uniffi::method(name = "sendDraftLater")]
+    pub fn send_draft_later_ffi(&self, draft: crate::DraftFfi, when: i64) -> Option<String> {
+        blocking(self.send_draft_later(draft, when))
+    }
+
     /// Who this message was addressed to. See [`Session::recipients`].
     #[uniffi::method(name = "recipients")]
     pub fn recipients_ffi(&self, message: i64) -> Option<crate::RecipientsFfi> {
@@ -3315,6 +3322,62 @@ impl Session {
             Err(error) => {
                 tracing::error!(%error, "could not queue the draft for sending: {error}");
                 Some("The draft could not be queued for sending.".to_owned())
+            }
+        }
+    }
+
+    /// Queue a draft to leave at `when` — *Schedule send…*.
+    ///
+    /// The same queue as an immediate send with a time on the row;
+    /// `postio-sync` is what holds it back. So the composer closes on the
+    /// keystroke exactly as it does for `⌘↵`, which is the local-first rule
+    /// applied to a send that has not happened yet.
+    ///
+    /// **Every check `send_draft` makes, made here too.** A scheduled send is
+    /// still a send, and refusing an unaddressed message at 8am tomorrow —
+    /// when nobody is watching the composer — is strictly worse than
+    /// refusing it now.
+    ///
+    /// `when` is milliseconds since the epoch, because that is what crosses
+    /// a uniffi boundary without a date type on either side of it.
+    pub async fn send_draft_later(&self, edited: crate::DraftFfi, when: i64) -> Option<String> {
+        let Some(when) = chrono::DateTime::from_timestamp_millis(when) else {
+            return Some("That is not a time this message could be sent at.".to_owned());
+        };
+        let now = chrono::Utc::now();
+        // A picker left open overnight, or a clock that moved. Sending it at
+        // once would be a different command than the one that was chosen.
+        if when <= now {
+            return Some("That time is in the past.".to_owned());
+        }
+        let Some((database, _)) = self.store_and_blobs() else {
+            return Some("There is no store open to send from.".to_owned());
+        };
+        let Some(mut draft) = self.rehydrate(&database, &edited).await else {
+            return Some("This draft is no longer in the store.".to_owned());
+        };
+        if !draft.has_recipients() {
+            return Some("This message has no recipient yet.".to_owned());
+        }
+        if !draft.is_sendable() {
+            return Some("This draft has already been queued to send.".to_owned());
+        }
+        // The footer's claim about what leaves, kept true at the one point
+        // after which the marks no longer matter. See `send_draft`.
+        if !draft.rich {
+            draft.body.html = None;
+        }
+        let Ok((connection, _permit)) = database.interactive_write().await else {
+            return Some("The store would not take a write.".to_owned());
+        };
+        match postio_storage::repository::DraftRepository::new(&connection)
+            .queue_send_at(&mut draft, now, when)
+            .await
+        {
+            Ok(_) => None,
+            Err(error) => {
+                tracing::error!(%error, "could not schedule the draft: {error}");
+                Some("The draft could not be scheduled.".to_owned())
             }
         }
     }

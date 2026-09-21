@@ -184,6 +184,13 @@ public final class ComposeModel: Identifiable {
     /// command cannot present.
     public var wantsAttachment = false
 
+    /// Whether the schedule-send picker is being asked for.
+    ///
+    /// The four times it offers are the boundary's — `schedulePresets()` —
+    /// so a Mac and a Linux desktop mean the same thing by "tomorrow
+    /// morning".
+    public var wantsSchedule = false
+
     /// Ask the surface to apply `command` to the selection.
     ///
     /// Ignored on a plain draft: the bar is disabled there, but the keyboard
@@ -325,6 +332,23 @@ public final class ComposeModel: Identifiable {
             }
         }
         status = refused.isEmpty ? nil : refused.joined(separator: "\n")
+    }
+
+    /// Queue this draft to leave at `when` — *Schedule send…*.
+    ///
+    /// The same shape as [`send`](Self::send): the window closes on the
+    /// keystroke and the queue does the rest. Every refusal `send` makes is
+    /// made here too, by the boundary, because being refused at 8am tomorrow
+    /// — when nobody is watching this window — is strictly worse than being
+    /// refused now.
+    public func send(at when: Int64, through session: PostioSession?) {
+        guard let session else { return }
+        if let complaint = session.sendDraftLater(edited, at: when) {
+            status = complaint
+            return
+        }
+        status = nil
+        sent = true
     }
 
     /// Take an attachment off again.

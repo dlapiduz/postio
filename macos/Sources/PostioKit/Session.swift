@@ -717,6 +717,15 @@ public final class PostioSession {
         inner.sendDraft(draft: draft)
     }
 
+    /// Queue a draft to leave at `when` — epoch milliseconds.
+    ///
+    /// Every check an immediate send makes, made here too: being refused at
+    /// the scheduled hour, when nobody is watching the composer, is strictly
+    /// worse than being refused now.
+    public func sendDraftLater(_ draft: DraftFfi, at when: Int64) -> String? {
+        inner.sendDraftLater(draft: draft, when: when)
+    }
+
     /// Start syncing every configured account; answers how many started.
     @discardableResult
     public func startSyncing() throws -> UInt32 { try inner.startSyncing() }

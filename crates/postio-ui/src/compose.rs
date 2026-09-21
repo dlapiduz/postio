@@ -356,3 +356,157 @@ mod recipient_tests {
         );
     }
 }
+
+/// A preset must land at least this far ahead of `now` to be offered as
+/// "today" rather than rolling to tomorrow — a picker opened one minute
+/// before 6pm must not offer "this evening" for an instant already gone.
+const MIN_SCHEDULE_LEAD: chrono::Duration = chrono::Duration::minutes(5);
+
+/// One thing *Schedule send…* offers.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SchedulePreset {
+    /// What the row says — "Tomorrow morning".
+    pub label: &'static str,
+    /// When that is, in the local zone.
+    pub when: chrono::DateTime<chrono::Local>,
+}
+
+/// `day` at the given wall-clock hour and minute, in `day`'s own local zone.
+///
+/// A DST transition can make a wall-clock time ambiguous or nonexistent;
+/// falling back to `day` itself rather than panicking keeps a schedule-send
+/// picker from crashing the composer on the two days a year this can happen,
+/// at the cost of an odd-looking preset on exactly those days.
+fn at_local_time(
+    day: chrono::DateTime<chrono::Local>,
+    hour: u32,
+    minute: u32,
+) -> chrono::DateTime<chrono::Local> {
+    use chrono::TimeZone;
+    day.date_naive()
+        .and_hms_opt(hour, minute, 0)
+        .and_then(|naive| chrono::Local.from_local_datetime(&naive).single())
+        .unwrap_or(day)
+}
+
+/// The four times *Schedule send…* offers, computed against `now`.
+///
+/// Recomputed every time the picker opens rather than once, since "in 1 hour"
+/// a picker opened yesterday is not "in 1 hour" today.
+///
+/// "This evening" rolls to tomorrow once 6pm today is behind `now`. "Monday
+/// morning" always means a Monday strictly after today: opening the picker on
+/// a Monday offers next week's, not the one already underway.
+///
+/// Shared because the four times *are* the feature. Two frontends each
+/// deciding what "tomorrow morning" means is two products, and the one that
+/// is wrong sends somebody's mail at the wrong hour without ever saying so.
+pub fn schedule_presets(now: chrono::DateTime<chrono::Local>) -> [SchedulePreset; 4] {
+    use chrono::{Datelike, Duration};
+
+    let in_one_hour = now + Duration::hours(1);
+
+    let mut evening = at_local_time(now, 18, 0);
+    if evening < now + MIN_SCHEDULE_LEAD {
+        evening = at_local_time(now + Duration::days(1), 18, 0);
+    }
+
+    let tomorrow_morning = at_local_time(now + Duration::days(1), 8, 0);
+
+    let days_from_monday = i64::from(now.weekday().num_days_from_monday());
+    let days_until_monday = if days_from_monday == 0 {
+        7
+    } else {
+        7 - days_from_monday
+    };
+    let monday_morning = at_local_time(now + Duration::days(days_until_monday), 8, 0);
+
+    [
+        SchedulePreset {
+            label: "In 1 hour",
+            when: in_one_hour,
+        },
+        SchedulePreset {
+            label: "This evening",
+            when: evening,
+        },
+        SchedulePreset {
+            label: "Tomorrow morning",
+            when: tomorrow_morning,
+        },
+        SchedulePreset {
+            label: "Monday morning",
+            when: monday_morning,
+        },
+    ]
+}
+
+#[cfg(test)]
+mod schedule_tests {
+    use super::*;
+    use chrono::{Datelike, Duration, TimeZone, Timelike};
+
+    fn local(
+        year: i32,
+        month: u32,
+        day: u32,
+        hour: u32,
+        minute: u32,
+    ) -> chrono::DateTime<chrono::Local> {
+        chrono::Local
+            .with_ymd_and_hms(year, month, day, hour, minute, 0)
+            .single()
+            .expect("an unambiguous local time")
+    }
+
+    #[test]
+    fn an_hour_from_now_is_an_hour_from_now() {
+        // The one preset that is relative rather than a wall-clock time, and
+        // the reason the whole set is recomputed when the picker opens.
+        let now = local(2026, 3, 4, 9, 30);
+        assert_eq!(schedule_presets(now)[0].when, now + Duration::hours(1));
+    }
+
+    #[test]
+    fn this_evening_rolls_to_tomorrow_once_it_has_gone() {
+        // A picker opened at 5:58pm must not offer "this evening" for an
+        // instant two minutes away — and one opened at 7pm must not offer a
+        // time already an hour behind.
+        let before = local(2026, 3, 4, 12, 0);
+        assert_eq!(schedule_presets(before)[1].when.day(), 4);
+
+        let after = local(2026, 3, 4, 19, 0);
+        let evening = schedule_presets(after)[1].when;
+        assert_eq!(evening.day(), 5, "this evening stayed in the past");
+        assert_eq!(evening.hour(), 18);
+    }
+
+    #[test]
+    fn monday_morning_is_never_today() {
+        // Opening the picker on a Monday offers next week's Monday, not the
+        // one already underway — scheduling into a morning that has started
+        // is scheduling into the past.
+        let monday = local(2026, 3, 2, 10, 0);
+        assert_eq!(monday.weekday(), chrono::Weekday::Mon);
+        let next = schedule_presets(monday)[3].when;
+        assert_eq!(next.weekday(), chrono::Weekday::Mon);
+        assert_eq!(next.day(), 9, "Monday morning meant this morning");
+    }
+
+    #[test]
+    fn every_preset_is_in_the_future() {
+        // The invariant under all four: a picker that offers a time already
+        // gone hands the send queue something it can only fire immediately,
+        // which is not what anybody chose.
+        for hour in [0, 7, 8, 12, 17, 18, 23] {
+            let now = local(2026, 3, 4, hour, 0);
+            for preset in schedule_presets(now) {
+                assert!(
+                    preset.when > now,
+                    "{} is not in the future at {hour}:00",
+                    preset.label
+                );
+            }
+        }
+    }
+}

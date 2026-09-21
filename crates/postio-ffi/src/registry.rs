@@ -295,6 +295,9 @@ pub const INTERCEPTED: &[postio_core::CommandId] = {
         C::OpenPart,
         // The list has to be told to redraw after the query is re-asked.
         C::ToggleResultOrder,
+        // The picker is a surface, and the four times it offers come from
+        // the boundary so both frontends mean the same thing by them.
+        C::ScheduleSend,
         // Saved searches: all five patch `config.toml` through the
         // frontend-facing functions rather than the bus, and two of them ask
         // a question no session can put on screen.
