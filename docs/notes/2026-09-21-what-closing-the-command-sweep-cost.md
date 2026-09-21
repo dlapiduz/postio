@@ -124,3 +124,55 @@ kept working through a three-line function. Deleting the helpers it used
 (`at_local_time`, `MIN_SCHEDULE_LEAD`) then required trimming the `chrono`
 import, because CI's clippy is `-D warnings` and an unused import is an error
 there and a warning here.
+
+## A second sweep, and what it is
+
+The command sweep only covers *commands*. Two greps cover the rest of the
+boundary, and between them they found four real defects in about twenty
+minutes:
+
+```bash
+# 1. Exported, and Swift never calls it.
+grep -oE 'uniffi::method\(name = "[a-zA-Z]+"\)' crates/postio-ffi/src/session.rs \
+  | sed 's/.*name = "//;s/")//' | sort -u \
+  | while read -r m; do
+      grep -rqE "\b$m\b" macos/Sources --include=*.swift || echo "UNCALLED: $m"
+    done
+
+# 2. GTK reaches this shared function and the boundary does not.
+grep -ohrE "postio_ui::[a-z_]+::[a-z_]+" crates/postio-gtk/src crates/postio-app/src \
+  | sort -u > /tmp/gtk
+grep -ohrE "postio_ui::[a-z_]+::[a-z_]+" crates/postio-ffi/src | sort -u > /tmp/ffi
+comm -23 /tmp/gtk /tmp/ffi
+```
+
+What they found:
+
+- **`setReachableAccounts`** was never called, and the boundary's safe
+  default is the empty set — so `⌘A` in the unified list selected *nothing*.
+  A default chosen to fail safe is a default nobody notices failing.
+- **`cheatSheetSections`** was never called, so `?` drew the flat list: every
+  key in the application in one column, where GTK draws it grouped.
+- **`part_note` and `part_held_back_note`** were never called, so a `cid:`
+  that resolved to nothing drew a broken box with no explanation — the exact
+  case #751 added the note for.
+- **`row::send_state_word`** was reachable and not reached: `RowFfi.send_state`
+  carried `DraftState::as_str`, the *database's* spelling, and the macOS row
+  did not draw it at all. A draft that failed to send looked like one still
+  being written.
+
+Both greps have false positives — a function called through a `use` alias, or
+one reached indirectly (the sidebar footer's `age` arrives inside
+`sidebarStatus`) — so each hit needs reading before it is believed. That is
+fine: the list is short, and the alternative is not checking.
+
+**The second grep is the more valuable of the two**, because "exposed but
+unused" is at least visible in the boundary's own API, while "GTK has a rule
+and the boundary has no opinion" is invisible from either side alone.
+
+One caution the `send_state` case makes concrete: a field crossing the
+boundary is not the same as the *right* field crossing it. `RowFfi.send_state`
+existed, was populated, had a doc comment saying it was "carried at all so
+macOS can draw what GTK draws" — and carried the wrong string to a frontend
+that drew none of it. Neither sweep catches that on its own; what caught it
+was reading the doc comment and checking both halves of what it claimed.
