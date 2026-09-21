@@ -239,3 +239,65 @@ async fn a_keyring_that_will_not_take_the_token_writes_no_account_row() {
         "nothing was written"
     );
 }
+
+#[tokio::test]
+async fn signing_in_again_replaces_the_token_rather_than_throwing_it_away() {
+    // The repair path, and the one that lied. An OAuth grant expires or is
+    // revoked; the settings pane offers Reconnect; the browser opens, the
+    // person approves, and `provision_oauth` returned
+    // `AlreadyProvisioned` **before** seeding the keyring -- so the fresh
+    // refresh token was discarded, the boundary mapped `Ok(_)` to "no
+    // complaint", and the sheet closed reporting success over an account
+    // that still could not sign in.
+    //
+    // Adding the same account twice staying inert is right *about the row*.
+    // It was never right about the credential: signing in again is what
+    // somebody does precisely because the credential is wrong.
+    let database = test_support::temp().await;
+    let keyring = MemorySecretStore::new();
+    let scopes = ["https://provider.example/mail".to_owned()];
+    let key = AccountKey::new(format!("{ADDRESS}#oauth-refresh"));
+
+    let first = provision_oauth(
+        &database,
+        Arc::new(keyring.reopen()),
+        &settings(),
+        &client(),
+        signed_in(),
+        &scopes,
+        None,
+    )
+    .await
+    .expect("the first sign-in");
+    assert!(matches!(first, Provisioned::Created(_)));
+
+    // The grant is revoked and re-granted: same account, a new token.
+    let mut again = signed_in();
+    again.tokens.refresh_token = Some(Password::new("a-second-refresh-token"));
+
+    let repaired = provision_oauth(
+        &database,
+        Arc::new(keyring.reopen()),
+        &settings(),
+        &client(),
+        again,
+        &scopes,
+        None,
+    )
+    .await
+    .expect("the repair");
+    assert!(
+        matches!(repaired, Provisioned::AlreadyProvisioned(_)),
+        "one account, not two: {repaired:?}"
+    );
+
+    let held = keyring
+        .retrieve(&key)
+        .await
+        .expect("a token is in the keyring");
+    assert_eq!(
+        held.expose(),
+        "a-second-refresh-token",
+        "the person approved a new grant and Postio kept the dead one"
+    );
+}

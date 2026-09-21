@@ -1011,3 +1011,37 @@ fn a_reply_all_to_a_list_does_not_look_like_a_reply() {
     };
     assert_eq!(postio_ffi::recipient_summary(alone), None);
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn two_sessions_do_not_hand_drafts_out_into_the_same_directory() {
+    // An in-memory session has no store on disk, so `handoff_dir` falls back
+    // to a temp directory -- and it fell back to *one*, shared by every
+    // process on the machine. Draft ids start at 1 in every fresh store, so
+    // two sessions handing out their first draft wrote to the same file. In
+    // the test suite that is two binaries racing: it passes alone and in its
+    // own crate, and fails when `postio-session` happens to run beside it.
+    //
+    // Which is the worst kind of red, because it is read as noise. It is not
+    // noise here either: the fallback is what a Postio with no store yet
+    // uses, and two Postios on one machine would trade drafts through it.
+    let (first, _, _) = a_message_to_answer().await;
+    let (second, _, _) = a_message_to_answer().await;
+
+    let one = first
+        .begin_handoff(first.new_draft().await.expect("a draft"))
+        .await
+        .expect("the first hands out");
+    let two = second
+        .begin_handoff(second.new_draft().await.expect("a draft"))
+        .await
+        .expect("the second hands out");
+
+    assert_ne!(
+        one, two,
+        "two sessions handed their drafts to the same file"
+    );
+    std::fs::remove_file(&one).ok();
+    std::fs::remove_file(&two).ok();
+    first.shutdown();
+    second.shutdown();
+}

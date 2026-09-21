@@ -126,6 +126,15 @@ pub const HANDLED_HERE: &[postio_core::CommandId] = {
     ]
 };
 
+/// The next session's number within this process.
+///
+/// See [`Session::serial`]. Monotonic and never reused: a session that has
+/// closed may still have a hand-off file somebody is editing.
+fn next_serial() -> u64 {
+    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+}
+
 #[derive(Clone, Default)]
 struct DeferredBus(Arc<Mutex<Option<Arc<postio_core::dispatch::Dispatcher>>>>);
 
@@ -503,6 +512,13 @@ pub struct Session {
     /// Held rather than recomputed: the timing is a fact about the run that
     /// happened, and a second search to measure the first would be absurd.
     outcome: Mutex<Option<postio_ui::search::Outcome>>,
+    /// This session's number within the process.
+    ///
+    /// Only [`handoff_dir`](Self::handoff_dir) needs it, and only on the
+    /// path where there is no store on disk to hang a directory off — but
+    /// two sessions sharing one hand-off directory is two people's drafts in
+    /// one file, so it is worth a counter.
+    serial: u64,
     /// What was last asked for, verbatim.
     ///
     /// Kept because an empty result set has to say *which* query found
@@ -1504,6 +1520,7 @@ impl Session {
                 )),
                 hits: Mutex::new(None),
                 outcome: Mutex::new(None),
+                serial: next_serial(),
                 query: Mutex::new(None),
                 resting: Mutex::new(None),
                 anchor: Mutex::new(None),
@@ -1591,6 +1608,7 @@ impl Session {
             store_at,
             hits: Mutex::new(None),
             outcome: Mutex::new(None),
+            serial: next_serial(),
             query: Mutex::new(None),
             resting: Mutex::new(None),
             anchor: Mutex::new(None),
@@ -2522,7 +2540,25 @@ impl Session {
             .parent()
             .filter(|parent| !parent.as_os_str().is_empty())
             .map(|dir| dir.join("drafts-out"))
-            .unwrap_or_else(|| std::env::temp_dir().join("postio-drafts-out"))
+            // **Per session, not one directory for the machine.** A session
+            // with no store on disk had them all writing to
+            // `$TMPDIR/postio-drafts-out`, and a draft's filename is its id
+            // -- which starts at 1 in every fresh store. So two sessions
+            // handing out their first draft wrote to the same file and each
+            // read back the other's body.
+            //
+            // In the suite that is two test binaries racing, which passes
+            // alone and fails beside `postio-session`: a red that reads as
+            // noise. It is not only a test problem. This fallback is what a
+            // Postio with no store yet uses, and two of them on one machine
+            // would trade drafts through it.
+            .unwrap_or_else(|| {
+                std::env::temp_dir().join(format!(
+                    "postio-drafts-out-{}-{}",
+                    std::process::id(),
+                    self.serial
+                ))
+            })
     }
 
     /// Save `draft` and answer it as the frontend should now hold it.

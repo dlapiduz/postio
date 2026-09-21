@@ -192,24 +192,32 @@ pub async fn provision_oauth(
     let address = settings.email.clone();
     let key = AccountKey::new(address.clone());
 
-    // Already here: adding the same account twice is inert, the same way the
-    // password path is. Somebody who signs in again after a stumble has one
-    // account, not two.
-    {
+    // Already here: adding the same account twice is inert **about the row**.
+    // Somebody who signs in again after a stumble has one account, not two.
+    //
+    // It was never inert about the *credential*, and returning here before
+    // the keyring was seeded is the bug that hid behind that sentence: an
+    // expired or revoked grant is repaired by signing in again, which is
+    // exactly the case that lands here. The person approved a fresh grant in
+    // a browser, the new refresh token was dropped on the floor, and the
+    // caller -- which reads `Ok(_)` as "no complaint" -- closed the sheet
+    // reporting success over an account that still could not sign in.
+    //
+    // So the row write is what is skipped, further down; the seeding below
+    // happens either way.
+    let existing = {
         let connection = database
             .connect()
             .await
             .map_err(|error| format!("Postio could not open its local store: {error}"))?;
-        if let Some(found) = AccountRepository::new(&connection)
+        AccountRepository::new(&connection)
             .list()
             .await
             .map_err(|error| format!("Postio could not read its local store: {error}"))?
             .into_iter()
             .find(|account| account.address.address.eq_ignore_ascii_case(&address))
-        {
-            return Ok(crate::provision::Provisioned::AlreadyProvisioned(found.id));
-        }
-    }
+            .map(|account| account.id)
+    };
 
     let source = oauth::OwnClientTokenSource::new(
         secrets.clone(),
@@ -233,6 +241,14 @@ pub async fn provision_oauth(
             .map_err(|error| {
                 format!("The OAuth client secret could not be stored in the keyring: {error}")
             })?;
+    }
+
+    // The account is already there and now has a working credential again.
+    // Answering `AlreadyProvisioned` rather than `Created` is the truth
+    // about the row, and the caller uses it to decide whether to start an
+    // engine for a new account.
+    if let Some(id) = existing {
+        return Ok(crate::provision::Provisioned::AlreadyProvisioned(id));
     }
 
     match write_row(
