@@ -54,10 +54,10 @@ const KNOWN_ORPHANS: &[(CommandId, &str)] = {
         (C::MoveSavedSearchUp, "#1574"),
         (C::MoveSavedSearchDown, "#1574"),
         (C::DeleteSavedSearch, "#1574"),
-        // #1576 -- the reading pane, including the most-used key in a mail
-        // client: `space` does not turn the page.
+        // #1576 -- there is no conversation rail on macOS to hide or show.
+        // Not a wiring gap: `postio_ui::reader::rail` decides the ladder and
+        // the rows, and nothing on this side draws them yet.
         (C::ToggleRail, "#1576"),
-        (C::ToggleResultOrder, "#1576"),
     ]
 };
 

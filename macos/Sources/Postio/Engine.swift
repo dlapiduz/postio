@@ -247,7 +247,27 @@ final class Engine {
     /// Move the keyboard to `pane`.
     func focus(_ pane: Pane) {
         self.pane = pane
-        paneContext = pane.context
+        paneContext = contextOf(pane)
+    }
+
+    /// What `pane` resolves keys as.
+    ///
+    /// The list is two contexts, not one: over a result set it is
+    /// `Context::Search`, which is where `o` and `⌘⇧S` live. See
+    /// `SearchContext` for why that cannot be read off the query field's
+    /// focus.
+    private func contextOf(_ pane: Pane) -> UiContext {
+        guard pane == .list else { return pane.context }
+        return SearchContext.list(showingResults: session?.isSearching ?? false)
+    }
+
+    /// Re-read the list's context after a search ran or was cleared.
+    ///
+    /// Running a search does not move the keyboard, so nothing else would
+    /// notice that the list is now a result set.
+    func searchChanged() {
+        guard !showingSearch, !showingParts else { return }
+        paneContext = contextOf(pane)
     }
 
     /// The message the cursor is on, for the reading pane.
@@ -282,7 +302,7 @@ final class Engine {
     var showingSearch = false {
         didSet {
             guard showingSearch != oldValue else { return }
-            paneContext = showingSearch ? .search : pane.context
+            paneContext = showingSearch ? .search : contextOf(pane)
         }
     }
 
@@ -873,6 +893,13 @@ final class Engine {
             guard let account = settingsAccounts.focused(in: accounts) else { return false }
             let session = session
             Task { await settingsActions.reindex(account, through: session) }
+        case Intercepted.toggleResultOrder:
+            // Re-asks the same query the other way round rather than
+            // re-sorting the rows on screen: the list is a window over a
+            // paged store, and sorting what is resident would order one page.
+            guard let session, session.isSearching else { return false }
+            session.toggleResultOrder()
+            listChanged()
         case Intercepted.openParts:
             guard let session, let message = target ?? cursorShowing else { return false }
             parts.show(session.messageParts(message))
@@ -974,7 +1001,7 @@ final class Engine {
     var showingParts = false {
         didSet {
             guard showingParts != oldValue else { return }
-            paneContext = showingParts ? .parts : pane.context
+            paneContext = showingParts ? .parts : contextOf(pane)
         }
     }
 
@@ -1049,7 +1076,7 @@ final class Engine {
         showingPalette = false
         showingCheatSheet = false
         showingSearch = false
-        paneContext = pane.context
+        paneContext = contextOf(pane)
     }
 
     /// Redraw the list against whatever scope the boundary is now on.

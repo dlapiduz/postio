@@ -177,6 +177,9 @@ public enum Intercepted {
     /// so all eight stop here. `PartsPanel` is the surface and `PartsModel`
     /// the cursor; the tree, the labels and the safe filename are all the
     /// boundary's.
+    /// Re-ask the query the other way round. Intercepted rather than sent,
+    /// because it is the *list* that has to be told to redraw afterwards.
+    public static let toggleResultOrder = "toggle_result_order"
     public static let openParts = "open_parts"
     public static let nextPart = "next_part"
     public static let prevPart = "prev_part"
@@ -210,7 +213,7 @@ public enum Intercepted {
         openMessage, prevView, viewOriginal,
         addAccount, editConfig, toggleAccountEnabled, removeAccount,
         updateCredential, rebuildAccountIndex, setDefaultAccount,
-        openParts, nextPart, prevPart,
+        toggleResultOrder, openParts, nextPart, prevPart,
         savePart, saveAllParts, openPartExternally, openPart, renderPartOnce,
         compose, reply, replyAll, forward,
     ] + composeVerbs

@@ -545,6 +545,18 @@ pub struct Session {
     /// differently from the GTK side. Clearing restores the previous scope
     /// rather than reloading the world.
     resting: Mutex<Option<postio_runtime::store::ListScope>>,
+    /// The order results come back in, and the query they came back for.
+    ///
+    /// Here rather than in a frontend because it is an *answer* about the
+    /// result set: `o` re-asks the same question a different way, and a
+    /// frontend that re-sorted the rows it already had would be ordering a
+    /// page of a windowed list rather than the search (#499).
+    ///
+    /// The order outlives the query on purpose. Somebody who asked for
+    /// newest-first has said how they read results, not how they read that
+    /// one result set, and a toggle that reset itself every search is a
+    /// setting you have to keep re-pressing.
+    result_order: Mutex<postio_search::ResultOrder>,
     /// How many accounts the open view is about: one, or all of them.
     ///
     /// Resolved when the scope changes rather than on every palette keystroke:
@@ -1108,6 +1120,13 @@ impl Session {
     #[uniffi::method(name = "search")]
     pub fn search_ffi(&self, query: String) -> u64 {
         blocking(self.search(&query))
+    }
+
+    /// Read the results the other way round. See
+    /// [`Session::toggle_result_order`].
+    #[uniffi::method(name = "toggleResultOrder")]
+    pub fn toggle_result_order_ffi(&self) -> u64 {
+        blocking(self.toggle_result_order())
     }
 
     /// Leave search and restore the scope that was open.
@@ -1932,6 +1951,7 @@ impl Session {
                 serial: next_serial(),
                 query: Mutex::new(None),
                 resting: Mutex::new(None),
+                result_order: Mutex::new(postio_search::ResultOrder::Relevance),
                 anchor: Mutex::new(None),
                 paging: Mutex::new(postio_ui::paging::Paging::default()),
                 in_flight: Arc::default(),
@@ -2020,6 +2040,7 @@ impl Session {
             serial: next_serial(),
             query: Mutex::new(None),
             resting: Mutex::new(None),
+            result_order: Mutex::new(postio_search::ResultOrder::Relevance),
             anchor: Mutex::new(None),
             paging: Mutex::new(postio_ui::paging::Paging::default()),
             in_flight: Arc::default(),
@@ -4161,6 +4182,7 @@ impl Session {
             }
         }
 
+        let order = *self.result_order.lock().expect("result order lock");
         let parsed = postio_search::parse(query, chrono::Utc::now().date_naive());
         let account = *self.account_scope.lock().expect("account scope lock");
         // Timed here because here is where the work happens. The field says
@@ -4175,7 +4197,7 @@ impl Session {
                 account,
                 &parsed,
                 postio_search::facets::Scope::AllMail,
-                postio_search::ResultOrder::Relevance,
+                order,
             )
             .await
         });
@@ -4223,6 +4245,29 @@ impl Session {
             .show_results(ranking);
         self.drop_selection_and_cursor();
         self.list.lock().expect("list lock").reset(total)
+    }
+
+    /// Read the results the other way round — `o`.
+    ///
+    /// Toggles the order and asks the *same query* again, rather than
+    /// re-sorting the rows already on screen: the list is a window over a
+    /// paged store, so sorting what is resident would order one page and
+    /// leave the rest where they were.
+    ///
+    /// Nothing happens over a mailbox. There is no other order to offer
+    /// there — the list is already in the one order a mailbox has — and a
+    /// key that quietly re-sorted somebody's inbox would be a different
+    /// command than the one they pressed. GTK's sort control is inert in the
+    /// same place, for the same reason.
+    pub async fn toggle_result_order(&self) -> u64 {
+        let Some(query) = self.query.lock().expect("query lock").clone() else {
+            return self.list.lock().expect("list lock").generation();
+        };
+        {
+            let mut order = self.result_order.lock().expect("result order lock");
+            *order = order.toggled();
+        }
+        self.search(&query).await
     }
 
     /// Leave search, and show what was on screen before it.

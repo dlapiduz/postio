@@ -293,6 +293,8 @@ pub const INTERCEPTED: &[postio_core::CommandId] = {
         C::OpenPartExternally,
         C::RenderPartOnce,
         C::OpenPart,
+        // The list has to be told to redraw after the query is re-asked.
+        C::ToggleResultOrder,
         // The settings window's account verbs. Each acts on the row that
         // window's keyboard is on -- a cursor no session holds -- and adding
         // an account, replacing a credential and opening `config.toml` all

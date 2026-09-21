@@ -367,3 +367,139 @@ async fn leaving_the_search_leaves_its_sentence_behind_too() {
     );
     session.shutdown();
 }
+
+/// A corpus where relevance and date genuinely disagree, and the two
+/// matching ids newest-first.
+///
+/// Built on the shape `index_suite`'s
+/// `newest_order_answers_in_date_order_however_the_ranking_disagrees`
+/// already proved, because two earlier attempts here did not disagree at
+/// all and the test passed while proving nothing. Two things make the
+/// difference, and both are properties of the ranker rather than of this
+/// test: twenty non-matching messages, because BM25's IDF term goes to zero
+/// when every document in the corpus matches; and **hours** between the two
+/// matches rather than days, because `rank_score` folds recency in with a
+/// calibrated weight and days of it outweigh any term density.
+async fn disagreeing() -> (std::sync::Arc<Session>, Vec<i64>) {
+    let database = test_support::memory().await;
+    let (dense, recent) = {
+        let connection = database.connect().await.expect("a connection");
+        let (account, inbox) = test_support::account_with_inbox(&connection).await;
+        postio_index::index::ensure_schema(&connection)
+            .await
+            .expect("the index schema");
+        let repository = MessageRepository::new(&connection);
+        let base = Utc::now() - chrono::Duration::days(1);
+
+        let write = async |subject: &str, body: &str, at: chrono::DateTime<Utc>| {
+            let mut message = Message::new(account.id, inbox, at);
+            message.subject = Some(subject.to_string());
+            message.sync.body_state = BodyState::Full;
+            repository.create(&mut message).await.expect("a message");
+            repository
+                .set_body(
+                    message.id,
+                    &StoredBody {
+                        text: Some(body.to_string()),
+                        html: None,
+                        headers: None,
+                        headers_truncated: false,
+                        encoding_problems: false,
+                    },
+                    BodyState::Full,
+                )
+                .await
+                .expect("a body");
+            postio_index::index::index_body(&connection, message.id.get(), Some(body))
+                .await
+                .expect("an indexed body");
+            message.id.get()
+        };
+
+        for i in 0..20 {
+            write(
+                &format!("Entirely unrelated subject {i}"),
+                "nothing in here says that word at all",
+                base,
+            )
+            .await;
+        }
+        // Older, and saturated with the term: the far better match.
+        let dense = write("Report", "report report report report report", base).await;
+        // Newer by five hours, and a glancing match.
+        let recent = write(
+            "One report",
+            "One report among other things entirely",
+            base + chrono::Duration::hours(5),
+        )
+        .await;
+        (dense, recent)
+    };
+
+    let session =
+        Session::open(SessionOptions::in_memory_with(database)).expect("a session over the store");
+    (session, vec![recent, dense])
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn results_can_be_read_newest_first_instead_of_best_first() {
+    // `o` over a result set — #499's "the order of what I am looking at",
+    // which is one idea and one key in both places it appears. Until now the
+    // boundary answered every search in relevance order and had no way to be
+    // asked for another, so `ToggleResultOrder` was a command macOS could
+    // resolve and not obey.
+    let (session, newest_first) = disagreeing().await;
+    session.search("report").await;
+    let by_relevance = resident(&session);
+
+    session.toggle_result_order().await;
+
+    assert_eq!(
+        resident(&session),
+        newest_first,
+        "`o` did not put the results in date order, newest first"
+    );
+    assert_ne!(
+        by_relevance, newest_first,
+        "the two orders agree, so this fixture cannot tell them apart and \
+         the assertion above proves nothing: {by_relevance:?}"
+    );
+    session.shutdown();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn the_order_survives_the_next_query() {
+    // Having asked for date order, the *next* search is answered in date
+    // order too. A toggle that reset itself on every query would be a
+    // setting somebody has to re-press to keep, which is what makes it read
+    // as broken rather than as a preference.
+    let (session, _) = disagreeing().await;
+    session.search("report").await;
+    session.toggle_result_order().await;
+    let by_date = resident(&session);
+
+    session.search("report").await;
+    assert_eq!(
+        resident(&session),
+        by_date,
+        "the second search forgot the order the first one was left in"
+    );
+    session.shutdown();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn toggling_the_order_over_a_mailbox_does_nothing() {
+    // Over a mailbox there is no other order to offer: the list is already
+    // in the one order a mailbox has. GTK's control is inert there for the
+    // same reason, and a key that quietly re-sorted somebody's inbox would
+    // be a different command than the one they pressed.
+    let (session, _) = searchable().await;
+    let before = resident(&session);
+    session.toggle_result_order().await;
+    assert_eq!(
+        resident(&session),
+        before,
+        "`o` re-sorted a mailbox, which has no result order to toggle"
+    );
+    session.shutdown();
+}

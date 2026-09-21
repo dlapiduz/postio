@@ -147,7 +147,14 @@ struct Shell: View {
                 if let session = engine.session {
                     SearchField(
                         session: session,
-                        reload: { engine.listChanged() },
+                        reload: {
+                            engine.listChanged()
+                            // A list of results resolves keys as
+                            // `Context::Search`; a list of a mailbox does
+                            // not. Running or clearing a search does not
+                            // move the keyboard, so nothing else notices.
+                            engine.searchChanged()
+                        },
                         dismiss: { engine.dismissOverlays() },
                         wantsFocus: Binding(
                             get: { engine.showingSearch },

@@ -249,6 +249,13 @@ public final class PostioSession {
     /// Whether the list is showing search results rather than a folder.
     public var isSearching: Bool { inner.isSearching() }
 
+    /// Read the results the other way round — best first, or newest first.
+    ///
+    /// Re-asks the same query rather than re-sorting what is on screen, and
+    /// does nothing over a mailbox. Answers with the list's new generation.
+    @discardableResult
+    public func toggleResultOrder() -> UInt64 { inner.toggleResultOrder() }
+
     /// What to draw over a list with nothing in it, when the boundary has
     /// something to say about *why* it is empty.
     ///
