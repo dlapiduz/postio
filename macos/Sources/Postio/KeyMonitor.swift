@@ -115,12 +115,11 @@ final class KeyMonitor {
     /// protocol a responder adopts *because* it accepts text, so a field this
     /// application has not thought of is covered by construction.
     static func isTyping() -> Bool {
-        guard let responder = NSApp.keyWindow?.firstResponder else { return false }
-        if responder is NSTextInputClient { return true }
-        // An `NSTextField` delegates its editing to a shared field editor, so
-        // the first responder while somebody types into one is the editor,
-        // not the field. Both are covered above; this is the case where the
-        // field itself is focused and the editor has not been installed yet.
-        return (responder as? NSView)?.window?.fieldEditor(false, for: responder) != nil
+        // The rule is `TypingResponder`'s, in `PostioKit` where a test can
+        // reach it. It used to be three lines here, and the third asked
+        // whether the *window* had a field editor rather than whether this
+        // responder was a text field — so once the toolbar's search box had
+        // made one, every bare-character binding was refused.
+        TypingResponder.isTyping(NSApp.keyWindow?.firstResponder)
     }
 }
