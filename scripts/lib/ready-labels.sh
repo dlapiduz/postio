@@ -28,9 +28,12 @@
 # not merge the queues; it would let a session claim work, build nothing, and
 # find out at the landing gate.
 #
-# What did go is the *branch*: `feature/macos` merged and was deleted, so
-# macOS work is ordinary work on `main` now, claimed from a second queue
-# rather than cut from a second base.
+# The *branch* is a separate question and is not settled here.
+# `feature/macos` is still open (#1306, #668) because the frontend is not at
+# parity with the GTK build yet; when it merges, macOS work becomes ordinary
+# work on `main`, claimed from this second queue rather than cut from a
+# second base. The label survives that either way, which is why it can be
+# answered now.
 #
 # Sourced, not executed: every caller shares one `set -euo pipefail`.
 READY_LABELS=(ready ready-mac)

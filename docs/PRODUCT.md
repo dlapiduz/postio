@@ -77,8 +77,9 @@ an aspiration in a document: `postio-core` must not depend on GTK, and
 `postio-gtk` must not depend on the database engine or the protocol crates
 (`ARCHITECTURE.md` §9).
 
-**A native macOS frontend has shipped into the repository**, well past the
-read-only slice it was scoped as — Swift over the same engine through the
+**A native macOS frontend is built, well past the read-only slice it was
+scoped as, and lives on `feature/macos` until it is closer to parity**
+(#1306) — Swift over the same engine through the
 UniFFI boundary in `crates/postio-ffi` and the Swift package in `macos/`,
 [ADR 0019](decisions/0019-macos-frontend.md). Sign in, sync, the three-pane
 shell, the list, the reader with its privacy behaviour, conversations,

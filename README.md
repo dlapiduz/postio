@@ -143,7 +143,10 @@ builds and runs Postio from the checkout without installing anything.
 ### macOS
 
 A native SwiftUI/AppKit application over the same engine, through a UniFFI
-boundary ([ADR 0019](docs/decisions/0019-macos-frontend.md)). Thirteen of the
+boundary ([ADR 0019](docs/decisions/0019-macos-frontend.md)). **It lives on
+the `feature/macos` branch until it is closer to parity** ([#1306](https://github.com/dlapiduz/postio/pull/1306));
+the crates under it are on `main` and are built and tested by CI on both
+platforms. Thirteen of the
 fifteen workspace crates already built and tested on macOS before any porting
 began, which is what made this cheap: the two frontends share the store, the
 protocols, the search index, the keymap and every presentation decision that
