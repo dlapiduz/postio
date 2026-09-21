@@ -618,6 +618,34 @@ public final class PostioSession {
         inner.setDefaultAccount(account: account)
     }
 
+    /// Give an account a new password — the repair `AccountFfi.repair` calls
+    /// `.password`.
+    ///
+    /// For the two states that leave an account unable to sign in with
+    /// nothing wrong with its row: a provider that rotated its app password,
+    /// and a row whose keyring entry never arrived. Neither is repaired by
+    /// adding the account again.
+    ///
+    /// **Blocks on the keyring**, and on a locked one it blocks until
+    /// somebody unlocks it. Never from the main actor.
+    public nonisolated func repairCredential(_ account: Int64, _ password: String) -> String? {
+        inner.repairCredential(account: account, password: password)
+    }
+
+    /// Sign an account in again through the system browser — the repair
+    /// `AccountFfi.repair` calls `.browser`.
+    ///
+    /// Takes no client id, unlike a first sign-in: the account already
+    /// carries the one it registered. Reconnect is one press rather than a
+    /// form asking somebody to find a credential again in order to fix an
+    /// account that used to work.
+    ///
+    /// **Returns when the flow is over**, which is when a person comes back
+    /// from a browser tab. Never from the main actor.
+    public nonisolated func reconnectAccount(_ account: Int64) -> String? {
+        inner.reconnectAccount(account: account)
+    }
+
     /// Take an account away — its row, and its credentials. A mail client
     /// that forgets an account and keeps its password is worse than one that
     /// does not forget it.

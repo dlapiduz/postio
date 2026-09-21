@@ -42,6 +42,8 @@ public struct SettingsPaneView: View {
     /// every one of them used to resolve to nothing while the buttons here
     /// worked.
     private let accountCursor: SettingsAccounts
+    /// Putting a broken account back in service. See `AccountRepair`.
+    private let repair: AccountRepair
     /// Re-read the accounts after one of them changed. Set by the
     /// application, which owns the list: a pane that edited its own copy
     /// would draw what it believes rather than what was written.
@@ -49,7 +51,6 @@ public struct SettingsPaneView: View {
     /// The add-account sheet, while it is up.
     @State private var adding: AddAccountModel?
     /// The account being signed in again, if one is.
-    @State private var reconnecting: Int64?
     /// Test, re-index and remove, and what the last one said.
     ///
     /// Owned by the application rather than by this view: a re-index reports
@@ -70,6 +71,7 @@ public struct SettingsPaneView: View {
         mailboxes: [MailboxFfi] = [],
         actions: AccountActions = AccountActions(),
         accountCursor: SettingsAccounts = SettingsAccounts(),
+        repair: AccountRepair = AccountRepair(),
         reloadAccounts: (() -> Void)? = nil,
         session: PostioSession? = nil
     ) {
@@ -78,6 +80,7 @@ public struct SettingsPaneView: View {
         self.mailboxes = mailboxes
         self.actions = actions
         self.accountCursor = accountCursor
+        self.repair = repair
         self.reloadAccounts = reloadAccounts
         self.session = session
     }
@@ -88,6 +91,34 @@ public struct SettingsPaneView: View {
             // sheets, and `onChange` on the wish alone would open only the
             // first.
             .onChange(of: accountCursor.wishToken) { _, _ in grant(accountCursor.wish) }
+            // Never pre-filled, and never with the old one: the old one is
+            // what stopped working, and Postio does not have it to offer.
+            .alert(
+                "New password",
+                isPresented: Binding(
+                    get: { repair.asking != nil },
+                    set: { if !$0 { repair.cancel() } }
+                )
+            ) {
+                SecureField("Password", text: Binding(
+                    get: { repair.typed }, set: { repair.typed = $0 }
+                ))
+                Button("Save") {
+                    guard let id = repair.asking,
+                          let account = accounts.first(where: { $0.id == id })
+                    else { return }
+                    Task { await repair.save(account, through: session) }
+                }
+                Button("Cancel", role: .cancel) { repair.cancel() }
+            } message: {
+                Text(
+                    """
+                    It goes straight into your Keychain and is never written \
+                    to a file. If your provider calls this an app password, \
+                    that is the one it wants.
+                    """
+                )
+            }
     }
 
     private var content: some View {
@@ -290,7 +321,6 @@ public struct SettingsPaneView: View {
                 // reads as an account that did not save (#1299).
                 if added { actions.added() }
                 adding = nil
-                reconnecting = nil
             }
         }
     }
@@ -321,23 +351,15 @@ public struct SettingsPaneView: View {
         case .add:
             adding = AddAccountModel()
         case let .updateCredential(id):
+            // The same route the row's own button takes, which is the whole
+            // reason it goes through `AccountRepair`: a command and a button
+            // that repaired an account two different ways would be two
+            // answers to what is wrong with it.
             guard let account = accounts.first(where: { $0.id == id }) else { return }
-            reconnect(account)
+            Task { await repair.begin(account, through: session) }
         case nil:
             break
         }
-    }
-
-    /// The sheet, pre-filled and opened at the step that asks: an expired
-    /// token needs consent, and consent is the one thing this application
-    /// never collects itself. Reusing the sheet rather than growing a second
-    /// path is the point — there is one place a browser sign-in happens.
-    private func reconnect(_ account: AccountFfi) {
-        let model = AddAccountModel()
-        model.address = account.address
-        model.next()
-        reconnecting = account.id
-        adding = model
     }
 
     /// One account, and its form when it is the selected one.
@@ -380,18 +402,30 @@ public struct SettingsPaneView: View {
                         }
                     }
                     Spacer(minLength: 0)
-                    if AccountRow.needsAttention(account) {
-                        // Inline, beside the account it is about: a token
-                        // that expired is a thing to fix here rather than a
-                        // banner somewhere else. It is the *same* sign-in the
-                        // sheet runs — the account is already configured, so
-                        // what it needs is consent again, not another row.
-                        Button(reconnecting == account.id ? "Signing in…" : "Reconnect") {
-                            reconnect(account)
+                    // Inline, beside the account it is about: a credential
+                    // that stopped working is a thing to fix here rather
+                    // than a banner somewhere else.
+                    //
+                    // **Which repair is the boundary's answer**, not a guess
+                    // from the provider's name: asking for a password where
+                    // consent is wanted asks for something no provider would
+                    // accept, and sending somebody to a browser to replace an
+                    // app password sends them somewhere with no field to type
+                    // it in.
+                    if let label = AccountRepair.label(
+                        for: account,
+                        running: repair.running == account.id
+                    ) {
+                        Button(label) {
+                            Task { await repair.begin(account, through: session) }
                         }
                         .controlSize(.small)
-                        .disabled(reconnecting != nil)
-                        .help("Sign in to this account again in your browser")
+                        .disabled(repair.running != nil)
+                        .help(
+                            account.repair == .password
+                                ? "Store a new password for this account"
+                                : "Sign in to this account again in your browser"
+                        )
                     }
                 }
                 .contentShape(Rectangle())
@@ -486,6 +520,16 @@ public struct SettingsPaneView: View {
                 Label(outcome, systemImage: actions.failed ? "xmark.circle" : "checkmark.circle")
                     .font(.callout)
                     .foregroundStyle(actions.failed ? Color.primary : Color.secondary)
+                    .textSelection(.enabled)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            if let outcome = repair.outcome {
+                // A repair that reported nothing is one you press again,
+                // because the row's warning does not clear until the next
+                // sync proves the credential works.
+                Label(outcome, systemImage: repair.failed ? "xmark.circle" : "checkmark.circle")
+                    .font(.callout)
+                    .foregroundStyle(repair.failed ? Color.primary : Color.secondary)
                     .textSelection(.enabled)
                     .fixedSize(horizontal: false, vertical: true)
             }

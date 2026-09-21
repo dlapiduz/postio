@@ -78,6 +78,7 @@ struct PostioApp: App {
                 mailboxes: engine.mailboxes,
                 actions: engine.settingsActions,
                 accountCursor: engine.settingsAccounts,
+                repair: engine.accountRepair,
                 reloadAccounts: { engine.refreshAccounts() },
                 session: engine.session
             )

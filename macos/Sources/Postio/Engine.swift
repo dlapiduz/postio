@@ -202,6 +202,10 @@ final class Engine {
     /// See `SavedSearches`.
     let savedSearches = SavedSearches()
 
+    /// Putting a broken account back in service. Held here because
+    /// `update_credential` is a command, and a command cannot reach a view.
+    let accountRepair = AccountRepair()
+
     /// The conversation the reading pane is showing (#1263).
     ///
     /// Held by the engine rather than by the view so that an event can fill
