@@ -41,20 +41,9 @@ const KNOWN_ORPHANS: &[(CommandId, &str)] = {
         // #1571 -- the composer's verbs. The composer window exists and its
         // toolbar acts; nothing subscribes it to the command stream, which is
         // what `postio-gtk`'s `connect_command` does on the other side.
-        (C::Send, "#1571"),
         (C::ScheduleSend, "#1571"),
-        (C::SaveDraft, "#1571"),
-        (C::DiscardDraft, "#1571"),
-        (C::AttachFile, "#1571"),
         (C::DetachComposer, "#1571"),
-        (C::CopyFields, "#1571"),
         (C::InsertImage, "#1571"),
-        (C::Bold, "#1571"),
-        (C::Italic, "#1571"),
-        (C::BulletList, "#1571"),
-        (C::NumberedList, "#1571"),
-        (C::InsertLink, "#1571"),
-        (C::QuoteBlock, "#1571"),
         // #1572 -- no parts surface at all, so an attachment cannot be saved.
         (C::OpenParts, "#1572"),
         (C::NextPart, "#1572"),

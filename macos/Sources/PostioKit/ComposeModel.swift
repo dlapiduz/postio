@@ -163,6 +163,27 @@ public final class ComposeModel: Identifiable {
     public private(set) var markRequest: MarkRequest?
     private var marksAsked = 0
 
+    /// Whether a link is being asked for.
+    ///
+    /// A request rather than a call: the address comes from a sheet, and a
+    /// command cannot put one up. The view watches this, asks, and calls
+    /// `applyMark("insert_link", href:)` with the answer.
+    public var wantsLink = false
+
+    /// Whether the person has asked to throw this draft away.
+    ///
+    /// `Recovery::Confirm` in the registry, so the *view* has a dialog to
+    /// show — a command that discarded on the spot would be a destructive
+    /// verb with no way back, which is precisely what the registry says this
+    /// one is not.
+    public var wantsDiscard = false
+
+    /// Whether an attachment is being asked for.
+    ///
+    /// Same shape as `wantsLink`: the file comes from an open panel, which a
+    /// command cannot present.
+    public var wantsAttachment = false
+
     /// Ask the surface to apply `command` to the selection.
     ///
     /// Ignored on a plain draft: the bar is disabled there, but the keyboard
@@ -250,6 +271,20 @@ public final class ComposeModel: Identifiable {
     public func toggleCopyFields() {
         if showsCopyFields && (!cc.isEmpty || !bcc.isEmpty) { return }
         showsCopyFields.toggle()
+    }
+
+    /// Throw this draft away.
+    ///
+    /// `sent` rather than a state of its own: both mean the window has
+    /// nothing left to write and must not autosave on its way out — which
+    /// `onDisappear` would otherwise do, putting the discarded draft straight
+    /// back.
+    public func discard(through session: PostioSession) {
+        if id != 0 || draft.id != 0 {
+            session.discardDraft(draft.id)
+        }
+        sent = true
+        status = nil
     }
 
     /// Whether anything has been typed that the store does not have.

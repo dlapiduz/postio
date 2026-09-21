@@ -149,6 +149,11 @@ public enum Intercepted {
     /// view. See `ReaderPaging`.
     public static let scrollReaderDown = "scroll_reader_down"
     public static let scrollReaderUp = "scroll_reader_up"
+    /// The composer's own verbs, answered by the compose window that has the
+    /// keyboard. The draft being written is in a window this frontend owns
+    /// and the store has not seen most of it, which is why these stop here —
+    /// `ComposeCommands` is the route from the id to the model.
+    public static let composeVerbs = ComposeCommands.handled
     public static let expandAll = "expand_all"
     public static let toggleFold = "toggle_fold"
     public static let nextInConversation = "next_in_conversation"
@@ -160,7 +165,7 @@ public enum Intercepted {
         toggleSidebar, expandAll, toggleFold, nextInConversation, prevInConversation,
         scrollReaderDown, scrollReaderUp,
         compose, reply, replyAll, forward,
-    ]
+    ] + composeVerbs
 }
 
 /// How long a transition may take.

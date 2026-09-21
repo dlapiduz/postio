@@ -21,15 +21,20 @@ struct WindowConfigurator: NSViewRepresentable {
     /// say. Tagging is how the tracker can tell, and it happens here because
     /// this is already the one place that reaches the `NSWindow`.
     var role: KeyWindow = .main
+    /// Which draft a compose window is writing, so a verb can reach the one
+    /// with the keyboard rather than "the composer", which is not a thing
+    /// when several are open.
+    var draft: Int64?
 
     func makeNSView(context _: Context) -> NSView {
         let view = NSView(frame: .zero)
         // `window` is nil until the view joins a hierarchy, which is after
         // this returns. One hop, not a poll.
         let role = role
+        let draft = draft
         DispatchQueue.main.async {
             guard let window = view.window else { return }
-            KeyWindowTracker.tag(window, as: role)
+            KeyWindowTracker.tag(window, as: role, draft: draft)
             // Only the main window's frame is worth restoring, and only it
             // wants an empty title bar: a compose window says who it is
             // writing to, and the settings window says "Settings".

@@ -269,6 +269,20 @@ pub const INTERCEPTED: &[postio_core::CommandId] = {
         C::ToggleSidebar,
         C::ScrollReaderDown,
         C::ScrollReaderUp,
+        // The composer's own verbs. The draft being written is in a window
+        // this frontend owns, unsaved, and the store has not seen most of
+        // it -- so a session cannot answer these and the window does.
+        C::Bold,
+        C::Italic,
+        C::BulletList,
+        C::NumberedList,
+        C::QuoteBlock,
+        C::InsertLink,
+        C::CopyFields,
+        C::Send,
+        C::SaveDraft,
+        C::DiscardDraft,
+        C::AttachFile,
         C::ExpandAll,
         C::ToggleFold,
         C::NextInConversation,

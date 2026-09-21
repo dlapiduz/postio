@@ -1045,3 +1045,37 @@ async fn two_sessions_do_not_hand_drafts_out_into_the_same_directory() {
     first.shutdown();
     second.shutdown();
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_draft_can_be_thrown_away() {
+    // Until #1571 there was no way to: the only exit from a macOS compose
+    // window was `onDisappear`, which *saves*. A draft written on the Mac was
+    // write-once — it landed in Drafts as an unremarkable row and nothing
+    // could open it or remove it again.
+    //
+    // `DraftRepository::discard` has existed all along and also queues the
+    // server copy's removal; what was missing was a way to reach it.
+    let (session, database, message) = a_message_to_answer().await;
+    let draft = session
+        .reply_draft(message, false)
+        .await
+        .expect("a reply to discard");
+    let saved = session.save_draft(draft).await.expect("saved");
+
+    assert!(
+        session.draft(saved.id).await.is_some(),
+        "the fixture never saved anything to discard"
+    );
+
+    assert_eq!(session.discard_draft(saved.id).await, None, "no complaint");
+    assert!(
+        session.draft(saved.id).await.is_none(),
+        "the draft is still there"
+    );
+
+    // Twice is not an error: a retried discard, or one racing a send that
+    // already cleared the row, is the expected case rather than a failure.
+    assert_eq!(session.discard_draft(saved.id).await, None);
+    let _ = database;
+    session.shutdown();
+}

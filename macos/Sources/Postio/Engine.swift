@@ -719,6 +719,16 @@ final class Engine {
             )
             readerPageToken += 1
         default:
+            // A compose window in front gets first refusal on the composer's
+            // own verbs — and only the window that has the keyboard, because
+            // several can be open and Send in one must not send another.
+            if keyWindow.current == .compose,
+               let draft = keyWindow.currentDraft,
+               let composer = compose.model(draft),
+               ComposeCommands.run(id, on: composer, through: session)
+            {
+                return true
+            }
             session?.invoke(id)
         }
         return true

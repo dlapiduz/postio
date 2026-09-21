@@ -24,6 +24,7 @@ public struct ComposeView: View {
     /// is the one entry in the bar that has to ask something before it can
     /// do anything, which is why it does not go through `markScript`.
     @State private var askingForLink = false
+    @State private var confirmingDiscard = false
     @State private var linkAddress = ""
 
     private enum Field: Hashable {
@@ -289,6 +290,42 @@ public struct ComposeView: View {
         }
         .padding(.horizontal, PostioTokens.space4)
         .padding(.vertical, PostioTokens.space2)
+        // The three things a *command* can ask for and cannot do: a sheet, an
+        // open panel and a confirmation all need a view to present them, and
+        // `ComposeCommands` runs with no view in reach. It records the wish;
+        // this is where it is granted.
+        .onChange(of: model.wantsLink) { _, wanted in
+            guard wanted else { return }
+            model.wantsLink = false
+            linkAddress = ""
+            askingForLink = true
+        }
+        .onChange(of: model.wantsAttachment) { _, wanted in
+            guard wanted else { return }
+            model.wantsAttachment = false
+            attach()
+        }
+        .onChange(of: model.wantsDiscard) { _, wanted in
+            guard wanted else { return }
+            model.wantsDiscard = false
+            confirmingDiscard = true
+        }
+        // `Recovery::Confirm` in the registry, so the verb asks. A discard
+        // that just happened would be a destructive command with no way back,
+        // which is exactly what the registry says this one is not.
+        .confirmationDialog(
+            "Discard this draft?",
+            isPresented: $confirmingDiscard,
+            titleVisibility: .visible
+        ) {
+            Button("Discard", role: .destructive) {
+                model.discard(through: session)
+                close()
+            }
+            Button("Keep writing", role: .cancel) {}
+        } message: {
+            Text("What you have written will not be kept.")
+        }
         .alert("Link to", isPresented: $askingForLink) {
             TextField("https://example.com", text: $linkAddress)
             Button("Link") { model.applyMark(ComposeFormat.link, href: linkAddress) }

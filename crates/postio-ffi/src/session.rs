@@ -818,6 +818,13 @@ impl Session {
     }
 
     /// Write the draft to the store, and answer it with its id.
+    /// Throw a draft away — the row and the server copy.
+    #[uniffi::method(name = "discardDraft")]
+    pub fn discard_draft_ffi(&self, draft: i64) -> Option<String> {
+        blocking(self.discard_draft(draft))
+    }
+
+    /// Write the draft to the store, and answer it with its id.
     #[uniffi::method(name = "saveDraft")]
     pub fn save_draft_ffi(&self, draft: crate::DraftFfi) -> Option<crate::DraftFfi> {
         blocking(self.save_draft(draft))
@@ -2420,6 +2427,31 @@ impl Session {
             edited.from.clone(),
             self.drafts_path(),
         ))
+    }
+
+    /// Throw a draft away. See
+    /// [`discard_draft_ffi`](Self::discard_draft_ffi).
+    ///
+    /// The row *and* the server copy: `DraftRepository::discard` queues an
+    /// `Operation::DiscardDraft` carrying the UID and its generation rather
+    /// than naming the draft, because by the time that drains there is no row
+    /// left to read them from.
+    ///
+    /// Discarding one that is already gone is **not an error** — a retried
+    /// discard, or one racing a send that already cleared the row, is the
+    /// expected case. The window has closed either way, and a complaint about
+    /// it would be a dialog about nothing.
+    pub async fn discard_draft(&self, draft: i64) -> Option<String> {
+        let (database, _) = self.store_and_blobs()?;
+        let (connection, _permit) = match database.interactive_write().await {
+            Ok(held) => held,
+            Err(error) => return Some(format!("The store would not take a write: {error}")),
+        };
+        postio_storage::repository::DraftRepository::new(&connection)
+            .discard(postio_model::ids::DraftId::new(draft), chrono::Utc::now())
+            .await
+            .err()
+            .map(|error| format!("The draft could not be discarded: {error}"))
     }
 
     /// Attach a file. See [`attach_to_draft_ffi`](Self::attach_to_draft_ffi).

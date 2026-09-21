@@ -98,7 +98,7 @@ struct PostioApp: App {
                 )
                 .preferredColorScheme(engine.colorScheme)
                 .navigationTitle(model.title)
-                .background(WindowConfigurator(role: .compose))
+                .background(WindowConfigurator(role: .compose, draft: draft))
             }
         }
         .defaultSize(width: 640, height: 520)

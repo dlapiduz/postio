@@ -246,6 +246,14 @@ public final class PostioSession {
     /// mailbox holding thousands (ADR 0005 Q10).
     public var emptyPlate: EmptyPlateFfi? { inner.emptyPlate() }
 
+    /// Throw a draft away — the row and the server copy.
+    ///
+    /// Discarding one that is already gone is not an error: a retried
+    /// discard, or one racing a send that already cleared the row, is the
+    /// expected case, and the window has closed either way.
+    @discardableResult
+    public func discardDraft(_ draft: Int64) -> String? { inner.discardDraft(draft: draft) }
+
     /// The excerpt for `message`, with the match located.
     ///
     /// Text and byte ranges, never marked-up text — the same decision the

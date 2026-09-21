@@ -93,4 +93,35 @@ import Testing
             "`a` in a compose window still resolves to archive"
         )
     }
+    @Test func aComposeWindowSaysWhichDraftItIsWriting() {
+        // Several can be open at once, so "the composer" is not a thing on
+        // its own: a verb has to reach the one with the keyboard, or Send in
+        // one window sends another.
+        let tracker = KeyWindowTracker()
+        let window = NSWindow(
+            contentRect: .init(x: 0, y: 0, width: 10, height: 10),
+            styleMask: [.titled], backing: .buffered, defer: true
+        )
+        KeyWindowTracker.tag(window, as: .compose, draft: 7)
+
+        NotificationCenter.default.post(
+            name: NSWindow.didBecomeKeyNotification, object: window
+        )
+        #expect(tracker.current == .compose, "the role survives the draft riding on the tag")
+        #expect(tracker.currentDraft == 7)
+
+        NotificationCenter.default.post(
+            name: NSWindow.didResignKeyNotification, object: window
+        )
+        #expect(tracker.currentDraft == nil, "no compose window in front, no draft")
+    }
+
+    @Test func aWindowWithNoDraftSaysSo() {
+        let tracker = KeyWindowTracker()
+        NotificationCenter.default.post(
+            name: NSWindow.didBecomeKeyNotification, object: window(.main)
+        )
+        #expect(tracker.currentDraft == nil)
+    }
+
 }
