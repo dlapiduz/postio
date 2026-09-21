@@ -140,6 +140,16 @@ public final class PostioSession {
     /// same answer repeatedly — `NWPathMonitor` does exactly that.
     public func setOffline(_ offline: Bool) { inner.setOffline(offline: offline) }
 
+    /// Say which accounts the unified view can vouch for right now.
+    ///
+    /// Read when a whole-view selection is *made*, not when a verb runs
+    /// (#811). The boundary's default is the empty set, which is safe and
+    /// means `⌘A` in the unified list selects nothing until this is
+    /// reported. See `VouchedFor` for what this frontend can honestly say.
+    public func setReachableAccounts(_ accounts: [Int64]) {
+        inner.setReachableAccounts(accounts: accounts)
+    }
+
     /// Whether the platform has told the engine there is no connection.
     public var isOffline: Bool { inner.isOffline() }
 
@@ -424,6 +434,19 @@ public final class PostioSession {
     /// The same list the palette reads, unfiltered — one list read two ways.
     public func cheatSheet(in context: UiContext) -> [PaletteEntryFfi] {
         inner.cheatSheet(context: context)
+    }
+
+    /// The `?` sheet, grouped the way the product groups it: Everywhere, the
+    /// box's prefixes, the reader's own surface, then one section per
+    /// extension namespace.
+    ///
+    /// The grouping is `postio_ui::cheatsheet::sections`' — the same
+    /// function the GTK overlay draws from, so the two frontends teach the
+    /// same sheet. The flat `cheatSheet` above predates it, and a `?`
+    /// overlay drawing that is an ungrouped wall of keys where the other
+    /// platform has headings.
+    public func cheatSheetSections(in context: UiContext) -> [CheatSectionFfi] {
+        inner.cheatSheetSections(context: context)
     }
 
     /// Whether `message` is *marked*.

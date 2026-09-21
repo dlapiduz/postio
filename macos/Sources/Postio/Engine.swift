@@ -108,6 +108,7 @@ final class Engine {
             // From this session's keymap, so a rebinding reaches the row.
             controller.hints = session.rowHints()
             accounts = session.accounts()
+            vouch()
             reloadSavedSearches()
             self.appearance = appearance
             state = .open(controller)
@@ -124,6 +125,7 @@ final class Engine {
             settingsActions.accountAdded = { [weak self] in
                 guard let self, let session = self.session else { return }
                 self.accounts = session.accounts()
+                self.vouch()
                 _ = try? session.startSyncing()
                 self.mailboxes = session.mailboxes
             }
@@ -155,7 +157,14 @@ final class Engine {
             // boundary absorbs that, nudging a reconnect only on a real
             // transition back, so there is nothing to debounce here.
             reachability.start { [weak self] offline in
-                Task { @MainActor in self?.session?.setOffline(offline) }
+                Task { @MainActor in
+                    self?.session?.setOffline(offline)
+                    // The same signal, said the other way: `⌘A` in the
+                    // unified list is scoped to what Postio can vouch for,
+                    // and until this was reported the boundary's safe
+                    // default meant it selected nothing at all (#811).
+                    self?.vouch()
+                }
             }
         case let .failure(error):
             // The message the boundary wrote, not one invented here: a locked
@@ -480,6 +489,17 @@ final class Engine {
     func refreshAccounts() {
         guard let session else { return }
         accounts = session.accounts()
+        // Switching an account off takes it out of what the unified view
+        // can vouch for, and the switch is right here.
+        vouch()
+    }
+
+    /// Tell the boundary which accounts the unified view can vouch for.
+    ///
+    /// Called from the two things that change the answer: the connection
+    /// moving, and the accounts list changing. See `VouchedFor`.
+    private func vouch() {
+        session?.setReachableAccounts(VouchedFor.accounts(accounts, offline: session?.isOffline ?? true))
     }
 
     /// Open `config.toml` in whatever edits it.
