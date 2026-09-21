@@ -239,3 +239,44 @@ fn the_flatpak_does_not_install_a_scalable_icon() {
          `release.yml` runs the same step."
     );
 }
+
+/// Every bundled SVG says it is one where a format sniffer looks.
+///
+/// An image loader does not trust the file extension; it reads the first
+/// bytes and asks shared-mime-info what they are. The rule for SVG is `<svg`
+/// within the first 257 bytes: `/usr/share/mime/magic` matches it at offset 0
+/// with a 256-byte range. A file whose opening tag sits behind a long comment header
+/// is, to that sniffer, not an image at all: gdk-pixbuf through glycin says
+/// "Couldn't recognize the image file format", GNOME Shell logs "Could not
+/// load a pixbuf from icon theme" and draws nothing where the app icon
+/// should be, and `appstreamcli compose` reports a `file-read-error` for the
+/// same file. The shipped app icon carried a 680-byte provenance comment
+/// before its `<svg>`, so every one of those happened at once, and each was
+/// diagnosed as something else.
+#[test]
+fn every_bundled_svg_is_recognised_where_a_sniffer_looks() {
+    const SNIFF_WINDOW: usize = 257;
+
+    let svgs: Vec<String> = resources::walk(resources::ICONS)
+        .into_iter()
+        .filter(|path| path.ends_with(".svg"))
+        .collect();
+    assert!(!svgs.is_empty(), "the bundle should carry the icon SVGs");
+
+    let unrecognised: Vec<String> = svgs
+        .iter()
+        .filter(|path| {
+            let bytes = resources::read(path).expect("the icon should be readable");
+            let head = &bytes[..bytes.len().min(SNIFF_WINDOW)];
+            !head.windows(4).any(|w| w == b"<svg")
+        })
+        .cloned()
+        .collect();
+
+    assert!(
+        unrecognised.is_empty(),
+        "`<svg` is not within the first {SNIFF_WINDOW} bytes of {unrecognised:#?}: an \
+         image loader sniffing the content will not recognise these as SVG, and \
+         the shell draws a missing icon as nothing"
+    );
+}

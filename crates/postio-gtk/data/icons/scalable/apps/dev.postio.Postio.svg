@@ -1,18 +1,24 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<!--
-  Postio's application icon.
-  The mark is the `/` search key: the accent field, the paper slash, and one
-  square dot for unread mail. Drawn, not lit — no gradient, no bevel, no
-  shadow.
-
-  This file is the shipped copy of `Design/icons/postio.svg`, with the
-  provenance metadata stripped: it is compiled into the binary through
-  `postio.gresource.xml` and installed into the user's icon theme, and the
-  metadata was twenty-five times the size of the drawing. `Design/icons/`
-  keeps the originals, and its README carries the optical-sizing rule that
-  says why 16 and 32 are separate files rather than downscales of this one.
--->
 <svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64">
+  <!--
+    Postio's application icon.
+    The mark is the `/` search key: the accent field, the paper slash, and one
+    square dot for unread mail. Drawn, not lit — no gradient, no bevel, no
+    shadow.
+
+    This file is the shipped copy of `Design/icons/postio.svg`, with the
+    provenance metadata stripped: it is compiled into the binary through
+    `postio.gresource.xml` and installed into the user's icon theme, and the
+    metadata was twenty-five times the size of the drawing. `Design/icons/`
+    keeps the originals, and its README carries the optical-sizing rule that
+    says why 16 and 32 are separate files rather than downscales of this one.
+    This comment sits inside the element, after the start tag, on purpose:
+    an image loader sniffs the first 257 bytes for `<svg` before it trusts
+    the extension, and a comment ahead of the tag pushed it out of that
+    window: the shell drew nothing where the icon should have been.
+    `desktop_entry.rs` keeps it here.
+  -->
+
   <title>Postio</title>
   <rect width="64" height="64" fill="#5980a6"/>
   <path d="M40 14 L24 50" fill="none" stroke="#f2f2f3" stroke-width="6"/>
