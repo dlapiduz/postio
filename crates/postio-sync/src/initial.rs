@@ -598,6 +598,14 @@ pub async fn commit_batch(
         // to this unit's copy of them.
         copy_back(slice, &written);
         drop(permit);
+        // And a yield with the permit down, once per unit. The gate is
+        // first-come: released and re-taken in the same poll, it never
+        // changes hands, and the one yield per *batch* above was the only
+        // point at which a body being fetched beside this pass could write
+        // (#631) -- twenty inbox bodies took as long as two thousand archive
+        // headers. A yield here lets a waiter that the release woke take its
+        // turn between units; the pass is back on the queue behind it.
+        yield_once().await;
     }
 
     Ok(report)

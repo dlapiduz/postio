@@ -746,6 +746,24 @@ impl Engine {
 /// on the wire — the same bound the backfill below this loop already accepts.
 const BODIES_BETWEEN_WAVES: usize = 8;
 
+/// How many bodies a wave keeps on the wire beside its lanes.
+///
+/// A batch this size is claimed whenever none is in flight -- when a pass
+/// finishes, when one commits a batch of headers, and when the previous
+/// batch of bodies lands -- so bodies flow for the length of the wave rather
+/// than only between waves. They are fetched concurrently and settled as one,
+/// which is what [`BODY_WINDOW`] is for the between-wave pump; the number is
+/// larger here because nothing waits on the batch: the lanes keep being
+/// polled while it is out, and a job still cancels the wave around it.
+///
+/// What this replaces is worse than slow: the pass-completion handler used to
+/// drain the *whole* backfill queue in place, with every other lane frozen
+/// until it finished, and the first version of the in-wave top-up fed that
+/// drain a thousand bodies -- a five-message folder took seventeen seconds
+/// to sync behind it. A handler is also the wrong place to take the write
+/// gate, since a frozen lane may be holding it.
+const BODIES_BESIDE_A_WAVE: usize = 8;
+
 /// How long the body backfill may hold the loop before it goes back to look
 /// for new mail.
 ///
@@ -918,6 +936,13 @@ fn run(parts: EngineParts, store: Store, inbox: async_channel::Receiver<Job>, bu
                     // Every guard the loop below uses applies here too, for
                     // the same reasons: a job, a queued operation and going
                     // offline all outrank a body nobody asked for.
+                    //
+                    // This is no longer the only place, and it is no longer
+                    // the one that matters most: a wave now lasts as long as
+                    // its largest folder, so `sync_wave` fetches bodies
+                    // beside its lanes for the whole of it (#631, the second
+                    // time). What this pump still covers is the gap between
+                    // one wave ending and the next admitting its lanes.
                     let mut fetched = 0;
                     while fetched < BODIES_BETWEEN_WAVES
                         && Instant::now() < slice_ends
@@ -1836,12 +1861,16 @@ struct Committed<'a> {
     /// never across an await.
     status: &'a RefCell<StatusTracker>,
     repaint: Repaint,
+    /// The wave's cue that a batch is down and it may look up: see
+    /// [`claim_bodies_for_the_wave`].
+    yield_point: &'a tokio::sync::Notify,
 }
 
 impl Committed<'_> {
     /// A batch reached the database.
     fn batch(&mut self, progress: Progress) {
         self.repaint.batch_committed(self.parts.clock.now());
+        self.yield_point.notify_one();
         let reported = self.status.borrow_mut().on_progress(progress, Utc::now());
         if let Some(status) = reported {
             // Counts and an outcome, which is all a log may carry about mail.
@@ -2526,10 +2555,16 @@ async fn sync_wave(
     // push the same type into `running` — and so the future owns its
     // connection outright, which is what lets a lane be admitted while its
     // wave-mates are still borrowing theirs.
+    // Every pass in the wave rings this once per committed batch, and the
+    // loop below answers by looking up from the headers: a few bodies, and a
+    // glance at the watched inbox. See [`claim_bodies_for_the_wave`] for why a wave
+    // cannot wait until it is over to do either.
+    let yield_point = tokio::sync::Notify::new();
     let make_pass = |mailbox: MailboxId, connection: Checkout| {
         let status = status.clone();
         let cancel = cancel.clone();
-        async move { sync_pass(parts, &connection, &status, mailbox, &cancel).await }
+        let yield_point = &yield_point;
+        async move { sync_pass(parts, &connection, &status, mailbox, &cancel, yield_point).await }
     };
 
     // Settling writes through its own connection: the lanes' connections
@@ -2544,6 +2579,11 @@ async fn sync_wave(
 
     let lanes = sync_lanes(postio_storage::MAX_CONCURRENT_PASSES);
     let mut admitted: Vec<MailboxId> = Vec::new();
+    // The lanes' current occupants, as opposed to `admitted`, which keeps
+    // every mailbox this wave ever ran: a folder that changed while its own
+    // pass is still running needs no second pass, one that changed after
+    // its pass finished does.
+    let mut active: Vec<MailboxId> = Vec::new();
     let mut running = FuturesUnordered::new();
     while running.len() < lanes {
         let Some(mailbox) = state.to_sync.pop_front() else {
@@ -2552,6 +2592,7 @@ async fn sync_wave(
         match store.connect().await {
             Ok(connection) => {
                 admitted.push(mailbox);
+                active.push(mailbox);
                 running.push(make_pass(mailbox, connection));
             }
             Err(error) => {
@@ -2575,17 +2616,35 @@ async fn sync_wave(
     // was not the only place that happened; it happened inside one wave too.
     let mut interrupted: Vec<MailboxId> = Vec::new();
     let mut asked_to_stop = false;
-    while !running.is_empty() {
+    let mut last_look: Option<Instant> = None;
+    // Beside the lanes, never inside a handler: a handler runs while the
+    // passes are suspended, and a pass suspends *holding the write gate*
+    // (`initial::commit_batch` takes it per unit and awaits the statements
+    // under it). A body fetch that took the gate from inside a handler would
+    // wait on a pass that is waiting to be polled -- which is a deadlock,
+    // and was, the first time this was written. So the fetches and the
+    // `STATUS` are futures of their own, polled with everything else, and
+    // the handlers only start them and settle what they return.
+    let mut bodies = FuturesUnordered::new();
+    let mut probes = FuturesUnordered::new();
+    let make_bodies = |claims: Vec<postio_sync::backfill::Claim>, inline_cap: Option<u64>| async move {
+        fetch_bodies(parts, store, inline_cap, claims).await
+    };
+    let make_probe = |mailbox: MailboxId, path: String| async move {
+        (mailbox, parts.backend.status(&path).await)
+    };
+    while !running.is_empty() || !bodies.is_empty() || !probes.is_empty() {
         tokio::select! {
             biased;
             // Completions first: a wave that is already finishing should
             // finish rather than notice the job it was about to be told
             // about and mark everything cancelled.
-            Some(outcome) = running.next() => {
+            Some(outcome) = running.next(), if !running.is_empty() => {
                 let stopped_early = outcome.was_cancelled();
                 if stopped_early {
                     interrupted.push(outcome.mailbox);
                 }
+                active.retain(|mailbox| *mailbox != outcome.mailbox);
                 // The wave is the engine acting on its own initiative, so a
                 // failed pass is reported to the user here rather than
                 // returned to a caller who asked for it. An interrupted one
@@ -2623,6 +2682,7 @@ async fn sync_wave(
                         match store.connect().await {
                             Ok(connection) => {
                                 admitted.push(mailbox);
+                                active.push(mailbox);
                                 running.push(make_pass(mailbox, connection));
                             }
                             Err(error) => {
@@ -2633,16 +2693,18 @@ async fn sync_wave(
                         }
                     }
                 }
-                // Not once a job is waiting — draining the backfill queue
-                // here is exactly the extra work a waiting job must not
-                // queue behind — and re-checked between bodies, because a
-                // job (or the shutdown's close) can land mid-drain and this
-                // queue is the whole account's backlog (#759).
-                if !asked_to_stop {
-                    while nothing_asked(inbox)
-                        && !has_queued_work(parts, store).await
-                        && pump_body(parts, store, state, inbox).await
-                    {}
+                // Its bodies start now, beside the lanes -- `settle_pass` has
+                // just seeded them -- rather than after the wave, which for
+                // INBOX beside an archive is the hour #631 is about. Not in
+                // place: an in-handler drain froze every other lane for as
+                // long as the queue was, and could take the write gate from a
+                // lane that was holding it. See [`BODIES_BESIDE_A_WAVE`].
+                if !asked_to_stop
+                    && bodies.is_empty()
+                    && let Some(claims) = claim_bodies_for_the_wave(parts, store, state, inbox).await
+                {
+                    let inline_cap = state.backfill.policy().max_inline_bytes;
+                    bodies.push(make_bodies(claims, inline_cap));
                 }
             }
             // `interruption`, not `wait_for_job`: a local mutation is not a
@@ -2654,6 +2716,93 @@ async fn sync_wave(
             _ = interruption(parts, store, inbox), if !asked_to_stop => {
                 asked_to_stop = true;
                 cancel.cancel();
+            }
+            // A batch of bodies came back. Settle it the way `pump_body`
+            // would have, and send the next one out: this is what makes the
+            // flow continuous rather than one batch per tick.
+            Some(results) = bodies.next(), if !bodies.is_empty() => {
+                settle_bodies(parts, state, results).await;
+                if !asked_to_stop
+                    && bodies.is_empty()
+                    && let Some(claims) = claim_bodies_for_the_wave(parts, store, state, inbox).await
+                {
+                    let inline_cap = state.backfill.policy().max_inline_bytes;
+                    bodies.push(make_bodies(claims, inline_cap));
+                }
+            }
+            // The `STATUS` on the watched inbox came back. A change to a
+            // folder no lane is syncing gets a lane of its own, now, beside
+            // the ones already running: not by cancelling them -- a
+            // half-done pass costs its resume, and the folders in the lanes
+            // are the big ones -- and not by queueing behind them, which is
+            // the hour this exists to avoid. A change to a folder that is
+            // mid-pass is that pass's to find, and the observation has still
+            // primed the watcher.
+            //
+            // The watcher's first look at a folder always reads as a change
+            // (there is no earlier signature), so the inbox gets one
+            // incremental pass it did not strictly need, once per start. That
+            // pass is a `SEARCH` against a folder that just synced, and it is
+            // also what catches mail that arrived while the inbox's own pass
+            // was running -- the same reason `keep_watch` re-syncs on a first
+            // observation.
+            Some((mailbox, result)) = probes.next(), if !probes.is_empty() => {
+                let now = Utc::now();
+                match result {
+                    Ok(status) => {
+                        let wake = state
+                            .watcher
+                            .as_mut()
+                            .map(|watcher| watcher.observed(mailbox, &status, now));
+                        if wake == Some(Wake::Changed)
+                            && !active.contains(&mailbox)
+                            && !asked_to_stop
+                        {
+                            state.to_sync.retain(|queued| *queued != mailbox);
+                            match store.connect().await {
+                                Ok(connection) => {
+                                    tracing::debug!(
+                                        mailbox = mailbox.get(),
+                                        "a watched folder changed during the wave; syncing it beside the lanes"
+                                    );
+                                    admitted.push(mailbox);
+                                    active.push(mailbox);
+                                    running.push(make_pass(mailbox, connection));
+                                }
+                                Err(error) => {
+                                    state.to_sync.push_front(mailbox);
+                                    tracing::warn!(%error, "no connection for a changed folder's lane");
+                                }
+                            }
+                        }
+                    }
+                    Err(error) => {
+                        if let Some(watcher) = state.watcher.as_mut() {
+                            watcher.failed(mailbox, now);
+                        }
+                        let moved = state.supervisor.observe(&error, now);
+                        announce_link(parts, state, moved);
+                    }
+                }
+            }
+            // A batch of headers is down in some lane. Look up from them:
+            // ask after the watched inbox, and start a few bodies. See
+            // [`claim_bodies_for_the_wave`] for why a wave cannot leave either until
+            // it is over.
+            _ = yield_point.notified(), if !asked_to_stop => {
+                if probes.is_empty()
+                    && last_look.is_none_or(|at| at.elapsed() >= WATCH_FLOOR)
+                    && let Some((mailbox, path)) = watched_inbox_due(state)
+                {
+                    last_look = Some(Instant::now());
+                    probes.push(make_probe(mailbox, path));
+                }
+                if bodies.is_empty()
+                    && let Some(claims) = claim_bodies_for_the_wave(parts, store, state, inbox).await
+                {
+                    let inline_cap = state.backfill.policy().max_inline_bytes;
+                    bodies.push(make_bodies(claims, inline_cap));
+                }
             }
         }
     }
@@ -2671,6 +2820,153 @@ async fn sync_wave(
             mailboxes = interrupted.len(),
             "sync wave interrupted; requeued"
         );
+    }
+}
+
+/// The next batch of bodies for a wave to fetch beside its lanes, claimed
+/// here and fetched by [`fetch_bodies`]. `None` when there is nothing to
+/// fetch or something outranks fetching it.
+///
+/// # Why a wave cannot wait until it is over
+///
+/// `6f0ba687` put a bounded body pump *between* waves, and it was enough
+/// while passes were being cut short and requeued every minute, so "between
+/// waves" came round often. Since `93537292` a slow pass is left alone, a
+/// wave refills its lanes from `to_sync` and returns only when every lane is
+/// empty — so a wave now lasts as long as its largest folder. Measured on a
+/// real account: the inbox's 240 headers were local four seconds after start,
+/// and ninety seconds into the first sync twenty-one header batches had
+/// committed and not one body had been fetched, nor would one be for the
+/// hour the archive takes. And nothing looked for new mail either, because
+/// `keep_watch` sits below the wave loop too. Both are the same fault: the
+/// wave is the whole engine while it runs.
+///
+/// So the passes ring [`Committed::batch`]'s yield point once per committed
+/// batch, and the wave answers: this, for bodies, and [`watched_inbox_due`]
+/// for new mail, under every guard the between-wave pump uses. The fetches
+/// themselves run as futures beside the lanes (see `sync_wave`), so the
+/// headers keep flowing while they are on the wire -- and the next batch is
+/// claimed as each lands, so bodies flow for the length of the wave.
+async fn claim_bodies_for_the_wave(
+    parts: &EngineParts,
+    store: &Store,
+    state: &mut State,
+    inbox: &async_channel::Receiver<Job>,
+) -> Option<Vec<postio_sync::backfill::Claim>> {
+    if !nothing_asked(inbox)
+        || !state.supervisor.link().is_online()
+        || has_queued_work(parts, store).await
+    {
+        return None;
+    }
+    if state.backfill.is_idle() && top_up_backfill(parts, store, state).await == 0 {
+        return None;
+    }
+    let mut claims = Vec::new();
+    while claims.len() < BODIES_BESIDE_A_WAVE {
+        let Some(claim) = state.backfill.next_body() else {
+            break;
+        };
+        claims.push(claim);
+    }
+    (!claims.is_empty()).then_some(claims)
+}
+
+/// The watched inbox, if the watcher says it is due a look.
+///
+/// # Only the watched inbox
+///
+/// `keep_watch`'s `next_poll` walks every folder, and every folder's first
+/// observation reads as a change (there is no earlier signature to compare
+/// against), so polling them all from inside a wave would stop the wave once
+/// per folder for nothing. The inbox is the folder a person is waiting on, so
+/// the wave asks the watcher about that one only (`next_push`), and the rest
+/// keep being watched between waves exactly as before. An `Idle` step is
+/// taken as a `Poll`, as `keep_watch` does while downloading: a wave holds
+/// its connections, and an `IDLE` would hold another for minutes.
+///
+/// A change to a folder this wave is currently syncing is not a change worth
+/// acting on — its pass will pick it up — but the observation still counts:
+/// it is what gives the watcher the signature that makes the *next*
+/// observation meaningful.
+fn watched_inbox_due(state: &mut State) -> Option<(MailboxId, String)> {
+    match state.watcher.as_mut()?.next_push(Utc::now()) {
+        Watch::Idle { mailbox, path, .. } | Watch::Poll { mailbox, path } => Some((mailbox, path)),
+        Watch::Wait { .. } => None,
+    }
+}
+
+/// Fetches a batch of claimed bodies, the way [`pump_body`] does, without
+/// touching engine state: what comes back is settled by [`settle_bodies`].
+async fn fetch_bodies(
+    parts: &EngineParts,
+    store: &Store,
+    inline_cap: Option<u64>,
+    claims: Vec<postio_sync::backfill::Claim>,
+) -> Vec<(MessageId, Result<Outcome, SyncError>)> {
+    let Some(first) = claims.first() else {
+        return Vec::new();
+    };
+    let cancel = first.cancel.clone();
+    let requests: Vec<_> = claims.iter().map(|claim| claim.request.clone()).collect();
+    let prefetched = match store.connect().await {
+        Ok(connection) => {
+            let cache = backfill::prefetch_text_sections(
+                &connection,
+                parts.backend.as_ref(),
+                &requests,
+                &cancel,
+            )
+            .await;
+            Some(Rc::new(RefCell::new(cache)))
+        }
+        Err(error) => {
+            tracing::debug!(%error, "no connection to prefetch with");
+            None
+        }
+    };
+    let mut running = FuturesUnordered::new();
+    for claim in claims {
+        running.push(fetch_one_body(
+            parts,
+            store,
+            inline_cap,
+            prefetched.clone(),
+            claim,
+        ));
+    }
+    let mut results = Vec::new();
+    while let Some(settled) = running.next().await {
+        results.push(settled);
+    }
+    results
+}
+
+/// What [`pump_body`] does with each fetched body, for a batch fetched
+/// beside a wave.
+async fn settle_bodies(
+    parts: &EngineParts,
+    state: &mut State,
+    results: Vec<(MessageId, Result<Outcome, SyncError>)>,
+) {
+    for (message, result) in results {
+        let outcome = result.unwrap_or_else(|error| {
+            if let SyncError::Backend(backend) = &error {
+                let moved = state.supervisor.observe(backend, Utc::now());
+                announce_link(parts, state, moved);
+            }
+            Outcome::Failed {
+                reason: error.to_string(),
+            }
+        });
+        if matches!(outcome, Outcome::Stored { .. }) {
+            parts.events.emit(Event::BodyLoaded {
+                account: parts.account,
+                message,
+            });
+        }
+        state.backfill.finished(message, outcome);
+        announce_backfill(parts, state, std::time::Instant::now()).await;
     }
 }
 
@@ -2731,6 +3027,7 @@ async fn sync_pass(
     status: &RefCell<StatusTracker>,
     mailbox: MailboxId,
     cancel: &postio_account::cancel::CancelToken,
+    yield_point: &tokio::sync::Notify,
 ) -> PassOutcome {
     let failed = |failure: PassFailure| PassOutcome {
         mailbox,
@@ -2762,6 +3059,7 @@ async fn sync_pass(
         parts,
         status,
         repaint: Repaint::new(parts.events.clone(), parts.account, mailbox),
+        yield_point,
     };
     // Populated only by the incremental branch below: a first sync or a
     // rebuild can insert thousands of messages that are new to *this
@@ -2986,7 +3284,18 @@ async fn sync(
         .await
         .map_err(|error| EngineError::new(error.to_string()))?;
     let cancel = postio_account::cancel::CancelToken::new();
-    let outcome = sync_pass(parts, &connection, &state.status, mailbox, &cancel).await;
+    // Nobody listens between this pass's batches: it is one mailbox, run
+    // for a job, and the job's caller is waiting on the whole of it.
+    let yield_point = tokio::sync::Notify::new();
+    let outcome = sync_pass(
+        parts,
+        &connection,
+        &state.status,
+        mailbox,
+        &cancel,
+        &yield_point,
+    )
+    .await;
     settle_pass(parts, state, &connection, outcome).await
 }
 

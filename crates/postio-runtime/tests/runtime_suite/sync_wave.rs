@@ -20,7 +20,9 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use postio_account::backend::{FetchEvent, MockBackend, MockMailbox, MockMessage};
+use postio_account::backend::{
+    AppendMessage, FetchEvent, MailBackend, MockBackend, MockMailbox, MockMessage,
+};
 use postio_core::bridge::event_channel;
 use postio_runtime::engine::{Engine, EngineParts, NetworkSource, SystemClock};
 use postio_storage::repository::{
@@ -79,6 +81,14 @@ fn folder(path: &str, attributes: &[&str], messages: u32) -> MockMailbox {
 /// running passes concurrently, but because the store underneath it was one
 /// Postio never uses. See #79, where exactly this made three lanes serialise.
 async fn engine_over(backend: Arc<MockBackend>) -> (TempStore, Engine, BlobDir) {
+    engine_over_with(backend, Default::default()).await
+}
+
+/// [`engine_over`] with a backfill policy of the test's choosing.
+async fn engine_over_with(
+    backend: Arc<MockBackend>,
+    backfill: postio_runtime::BackfillPolicy,
+) -> (TempStore, Engine, BlobDir) {
     let database = test_support::temp().await;
     let account = {
         let connection = database.connect().await.expect("a connection");
@@ -103,7 +113,7 @@ async fn engine_over(backend: Arc<MockBackend>) -> (TempStore, Engine, BlobDir) 
         ))),
         events: sink,
         retry: Default::default(),
-        backfill: Default::default(),
+        backfill,
         reconnect: Default::default(),
         watch: Default::default(),
         network: NetworkSource::Ignored,
@@ -169,6 +179,29 @@ where
 ///
 /// Per mailbox so the watcher's own post-sync INBOX polling cannot blur a
 /// count: nothing but the wave fetches the archive.
+/// How many of `path`'s messages still have no body, or `None` before the
+/// folder exists locally.
+async fn bodies_missing(database: &Store, path: &str) -> Option<usize> {
+    let connection = database.connect().await.ok()?;
+    let account = AccountRepository::new(&connection)
+        .list()
+        .await
+        .ok()?
+        .into_iter()
+        .next()?;
+    let mailbox = MailboxRepository::new(&connection)
+        .list_for_account(account.id)
+        .await
+        .ok()?
+        .into_iter()
+        .find(|mailbox| mailbox.path == path)?;
+    MessageRepository::new(&connection)
+        .needing_backfill_from(mailbox.id, u32::MAX, 0)
+        .await
+        .ok()
+        .map(|candidates| candidates.len())
+}
+
 fn archive_fetches(backend: &MockBackend) -> usize {
     backend
         .header_fetches()
@@ -405,6 +438,130 @@ async fn inbox_bodies_start_before_the_archive_s_headers_finish() {
         ),
         _ => panic!("the log never saw one of the two calls it needs: {order:?}"),
     }
+    drop(engine);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn inbox_bodies_keep_arriving_while_the_archive_s_headers_run() {
+    // #631, the second time. `6f0ba687` pumps bodies *between* waves, and
+    // `sync_wave` drains what a completed pass seeded at the moment it
+    // completes -- so INBOX's newest `seed_batch` bodies arrive early. The
+    // rest of INBOX does not: nothing tops the backfill up again until the
+    // wave returns, and a wave lasts as long as its largest folder, which on
+    // a real account is an hour. Measured live: 90 s into a first sync, 21
+    // header batches committed and not one body fetched.
+    //
+    // So INBOX here is `seed_batch` plus a few, and the property is that
+    // *every* INBOX body is local while the archive's headers are still
+    // going -- the ones past the seeded batch can only get there through a
+    // top-up during the wave. Causal, as ever: the archive must still be
+    // fetching headers after the last INBOX body lands. The seed batch is
+    // shrunk from 200 so the property is about *when* the top-up happens,
+    // not about how fast two hundred bodies can be written next to an
+    // archive's headers on the machine running the test.
+    let backend = Arc::new(
+        MockBackend::builder()
+            .mailbox(folder("INBOX", &[], 28))
+            .mailbox(folder("Archive", &["\\Archive"], 2_000))
+            .build(),
+    );
+    backend.refuse_creates("no new folders here");
+    backend.set_latency(LATENCY);
+
+    let policy = postio_runtime::BackfillPolicy {
+        seed_batch: 20,
+        ..Default::default()
+    };
+    let (database, engine, _directory) = engine_over_with(backend.clone(), policy).await;
+
+    until(
+        "INBOX's headers to land while the archive is under way",
+        async || {
+            stored(&database, "INBOX").await == Some(28)
+                && stored(&database, "Archive")
+                    .await
+                    .is_some_and(|count| count > 0)
+        },
+    )
+    .await;
+
+    until("every INBOX body to be local", async || {
+        bodies_missing(&database, "INBOX").await == Some(0)
+    })
+    .await;
+    let fetches_when_bodies_were_complete = archive_fetches(&backend);
+
+    until("the archive to finish anyway", async || {
+        stored(&database, "Archive").await == Some(2_000)
+    })
+    .await;
+    let fetches_in_the_end = archive_fetches(&backend);
+    assert!(
+        fetches_when_bodies_were_complete < fetches_in_the_end,
+        "INBOX's last body arrived only after the archive's last header fetch \
+         ({fetches_when_bodies_were_complete} of {fetches_in_the_end} archive \
+         fetches had already happened), so bodies beyond the first seeded \
+         batch waited out the whole wave"
+    );
+    drop(engine);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn new_inbox_mail_is_synced_while_the_archive_s_headers_run() {
+    // The other half of the same hour: nothing looks for new mail while a
+    // wave runs, because `keep_watch` sits below the wave loop. Mail that
+    // arrives during a first sync of a large archive is not seen until the
+    // archive is done -- "we should still get new inbox emails even if we are
+    // backfilling" (maintainer, 2026-09-21).
+    //
+    // A message is appended to INBOX once the archive is demonstrably under
+    // way, and it has to be in the store while the archive is still fetching
+    // headers. Causal: the archive's fetch count when the message lands must
+    // be below its final count.
+    let backend = Arc::new(
+        MockBackend::builder()
+            .mailbox(folder("INBOX", &[], 10))
+            .mailbox(folder("Archive", &["\\Archive"], 2_000))
+            .build(),
+    );
+    backend.refuse_creates("no new folders here");
+    backend.set_latency(LATENCY);
+
+    let (database, engine, _directory) = engine_over(backend.clone()).await;
+
+    until(
+        "INBOX's headers to land while the archive is under way",
+        async || {
+            stored(&database, "INBOX").await == Some(10)
+                && stored(&database, "Archive")
+                    .await
+                    .is_some_and(|count| count > 0)
+        },
+    )
+    .await;
+
+    backend
+        .append("INBOX", &AppendMessage::new(message(11)))
+        .await
+        .expect("the mock accepts new mail");
+
+    until("the new message to be synced", async || {
+        stored(&database, "INBOX").await == Some(11)
+    })
+    .await;
+    let fetches_when_it_landed = archive_fetches(&backend);
+
+    until("the archive to finish anyway", async || {
+        stored(&database, "Archive").await == Some(2_000)
+    })
+    .await;
+    let fetches_in_the_end = archive_fetches(&backend);
+    assert!(
+        fetches_when_it_landed < fetches_in_the_end,
+        "the new INBOX message was synced only after the archive's last header \
+         fetch ({fetches_when_it_landed} of {fetches_in_the_end} archive fetches \
+         had already happened), so new mail waited out the whole wave"
+    );
     drop(engine);
 }
 
