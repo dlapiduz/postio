@@ -270,6 +270,18 @@ public struct ExpandedMessage: View {
     public let openSettings: () -> Void
 
     @State private var height: CGFloat = BodyHeight.minimum
+    /// The three things this message says about itself, read once when it
+    /// opens rather than on every redraw.
+    ///
+    /// Each is a point read through the boundary, and SwiftUI re-evaluates a
+    /// `body` whenever anything it observes changes — so reading them inline
+    /// meant three store round trips per open message per redraw, on the
+    /// actor that draws. A conversation of eight is twenty-four. The 16 ms
+    /// interaction budget is not a thing to spend on answers that cannot
+    /// have changed since the message opened.
+    @State private var notice: ReaderNoticeFfi?
+    @State private var offer: UnsubscribeOfferFfi?
+    @State private var caveat: String?
     /// Whether this message is drawn as its sender wrote it.
     ///
     /// Per message and per view: reader view is on by default for bulk mail
@@ -339,7 +351,7 @@ public struct ExpandedMessage: View {
                 // Per message, never per pane: a conversation can hold back
                 // pictures from three senders and one notice above them all
                 // could not say whose.
-                if let notice = session.readerNotice(row.id), !notice.allowed, !showingImages {
+                if let notice, !notice.allowed, !showingImages {
                     BlockedImagesNotice(
                         notice: notice,
                         session: session,
@@ -352,7 +364,7 @@ public struct ExpandedMessage: View {
                 // incomplete message as though it were whole is making a
                 // claim about somebody's mail. The wording is the
                 // boundary's.
-                if let caveat = session.decodeCaveat(row.id) {
+                if let caveat {
                     Label(caveat, systemImage: "exclamationmark.triangle")
                         .font(.callout)
                         .foregroundStyle(.secondary)
@@ -365,7 +377,7 @@ public struct ExpandedMessage: View {
                 // from four lists. `PRODUCT.md` lists one-click unsubscribe
                 // among the privacy features, and until this existed the
                 // sentence was not true on a Mac.
-                if let offer = session.unsubscribeOffer(row.id) {
+                if let offer {
                     UnsubscribeBanner(offer: offer, message: row.id, session: session)
                 }
                 ReaderView(
@@ -378,6 +390,13 @@ public struct ExpandedMessage: View {
                 }
                 .frame(height: height)
                 actions
+            }
+            .task(id: row.id) {
+                // Keyed on the row: a pane reused for another message must
+                // not keep the last one's banner.
+                notice = session.readerNotice(row.id)
+                offer = session.unsubscribeOffer(row.id)
+                caveat = session.decodeCaveat(row.id)
             }
             .padding(.horizontal, PostioTokens.space4)
             .padding(.vertical, PostioTokens.space4)
@@ -394,7 +413,10 @@ public struct ExpandedMessage: View {
     /// and roughly where from.
     private var remoteImages: RemoteImagesFfi {
         if showingImages { return .allowed }
-        return session.readerNotice(row.id)?.allowed == true ? .allowed : .blocked
+        // The cached notice, not a fresh read: this is evaluated on every
+        // redraw, and the standing grant cannot change while the pane is
+        // drawing.
+        return notice?.allowed == true ? .allowed : .blocked
     }
 
     private var header: some View {
