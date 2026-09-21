@@ -19,6 +19,11 @@ public struct PartsPanel: View {
     private let message: Int64
     private let model: PartsModel
     private let dismiss: () -> Void
+    /// What the reader held back for this message, so the notes can say so.
+    /// Zeroes when nothing was.
+    private let held: (remote: UInt32, trackers: UInt32)
+    /// Render this message's held-back parts, once — see `RenderedOnce`.
+    private let renderOnce: () -> Void
 
     @State private var failure: String?
     /// The part being drawn in a sheet over the panel, if any.
@@ -28,11 +33,15 @@ public struct PartsPanel: View {
         session: PostioSession,
         message: Int64,
         model: PartsModel,
+        held: (remote: UInt32, trackers: UInt32) = (0, 0),
+        renderOnce: @escaping () -> Void = {},
         dismiss: @escaping () -> Void
     ) {
         self.session = session
         self.message = message
         self.model = model
+        self.held = held
+        self.renderOnce = renderOnce
         self.dismiss = dismiss
     }
 
@@ -68,6 +77,47 @@ public struct PartsPanel: View {
                     .tag(part.partId)
                     .accessibilityElement(children: .combine)
                     .accessibilityLabel(part.spoken)
+                }
+            }
+            // The sentence beside the part the cursor is on — four states
+            // with four different things to say, and this line is all a
+            // reader gets when a `cid:` resolves to nothing and the body
+            // draws a broken box (#751). A panel writing its own would be
+            // the panel where that has no explanation.
+            if let focused = model.focused {
+                Divider()
+                Text(partNote(part: focused, remoteImages: held.remote, trackers: held.trackers))
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.horizontal, PostioTokens.space3)
+                    .padding(.vertical, PostioTokens.space2)
+                // Offered only for the part that can actually load things:
+                // an `image/png` references nothing and cannot phone home,
+                // so offering to render *it* once would be theatre. The
+                // boundary decides which, and says why above the button.
+                if let reason = partHeldBackNote(
+                    mimeType: focused.mimeType,
+                    remoteImages: held.remote,
+                    trackers: held.trackers
+                ) {
+                    HStack(spacing: PostioTokens.space2) {
+                        Text(reason)
+                            .font(.callout)
+                            .foregroundStyle(.secondary)
+                        Spacer(minLength: PostioTokens.space2)
+                        // Not a grant: this asks for the document again with
+                        // images allowed for this one message, and writes no
+                        // allowlist entry — or a key meaning "just this
+                        // once" would quietly mean "from now on".
+                        Button("Render once") {
+                            renderOnce()
+                            dismiss()
+                        }
+                            .controlSize(.small)
+                    }
+                    .padding(.horizontal, PostioTokens.space3)
+                    .padding(.bottom, PostioTokens.space2)
                 }
             }
             if let failure {

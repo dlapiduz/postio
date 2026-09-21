@@ -233,6 +233,11 @@ struct Shell: View {
                     session: session,
                     message: message,
                     model: engine.parts,
+                    // What the reader held back for *this* message. The
+                    // panel's note and its "Render once" both turn on the
+                    // counts, and the counts are the notice's.
+                    held: engine.heldBack(for: message),
+                    renderOnce: { engine.run(Intercepted.renderPartOnce, on: message) },
                     dismiss: { engine.showingParts = false }
                 )
             }

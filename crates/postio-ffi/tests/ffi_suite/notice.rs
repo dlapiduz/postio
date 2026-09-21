@@ -223,3 +223,29 @@ async fn view_original_leaves_reader_view_for_this_message_and_no_further() {
         "and asking again for the ordinary rendering gets it back"
     );
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn the_notice_carries_the_counts_the_parts_panel_needs() {
+    // The summary is a sentence and the parts panel needs numbers: whether
+    // "Render once" is offered at all is `part_held_back_note`'s answer, and
+    // that takes the counts rather than the wording. Deriving them by
+    // parsing "6 remote images blocked" back apart would be a second reader
+    // of a string written for people.
+    let (session, message) = a_message_with_images("notices@relay.example.net", 6).await;
+    let notice = session
+        .reader_notice(message)
+        .await
+        .expect("the reader held something back");
+
+    assert!(
+        notice.remote_images > 0,
+        "the notice says something was blocked and reports none of it: {}",
+        notice.summary
+    );
+    assert!(
+        notice.summary.contains(&notice.remote_images.to_string()),
+        "the count and the sentence disagree: {} vs {}",
+        notice.remote_images,
+        notice.summary
+    );
+}

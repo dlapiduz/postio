@@ -2189,7 +2189,8 @@ impl Session {
             postio_body::RemoteImages::Blocked,
             postio_ui::reader::document::Rendering::Original,
         );
-        let summary = rendered.held_back.summary();
+        let held_back = rendered.held_back;
+        let summary = held_back.summary();
         if summary.is_empty() {
             return None;
         }
@@ -2207,6 +2208,8 @@ impl Session {
             allowed: self.allow_list().is_allowed(&sender),
             sender,
             domain,
+            remote_images: held_back.remote_images,
+            trackers: held_back.trackers,
         })
     }
 

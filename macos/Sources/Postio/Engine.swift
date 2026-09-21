@@ -414,6 +414,16 @@ final class Engine {
         return true
     }
 
+    /// What the reader held back for `message`, as counts.
+    ///
+    /// Zeroes when nothing was, which is what makes "Render once" not
+    /// appear: only the markup part can load anything, and offering to
+    /// render an `image/png` once would be theatre.
+    func heldBack(for message: Int64) -> (remote: UInt32, trackers: UInt32) {
+        guard let notice = session?.readerNotice(message) else { return (0, 0) }
+        return (notice.remoteImages, notice.trackers)
+    }
+
     /// Run a saved search — picking its row in the sidebar.
     ///
     /// The same call the query field makes. A saved search is a query that

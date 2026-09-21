@@ -65,6 +65,19 @@ pub struct ReaderNoticeFfi {
     /// Whether this sender is already allowed, in which case the reader has
     /// stopped asking.
     pub allowed: bool,
+    /// How many remote images were held back, and how many of those were
+    /// tracking pixels.
+    ///
+    /// The numbers as well as the sentence, because they answer a different
+    /// question: `part_held_back_note` decides whether *Render once* is
+    /// offered at all and takes counts, not wording. A frontend reading them
+    /// back out of "6 remote images blocked" would be a second reader of a
+    /// string written for people, and it would break the first time the
+    /// sentence was reworded.
+    pub remote_images: u32,
+    /// How many of them were tracking pixels — a 1x1 whose only job is to
+    /// report that the message was opened.
+    pub trackers: u32,
 }
 
 /// An address with its middle elided: `notices_at_…@relay.example.net`.
