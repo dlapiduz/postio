@@ -450,3 +450,104 @@ async fn re_indexing_reports_as_it_goes_rather_than_only_at_the_end() {
         "every report said zero: {reports:?}"
     );
 }
+
+/// A mailbox holding one message in each send state, and the states in row
+/// order.
+async fn with_send_states() -> (
+    std::sync::Arc<Session>,
+    ScopeFfi,
+    Vec<postio_model::DraftState>,
+) {
+    use postio_model::DraftState;
+
+    let states = vec![
+        DraftState::Editing,
+        DraftState::Queued,
+        DraftState::Sending,
+        DraftState::Failed,
+        DraftState::Unconfirmed,
+    ];
+    let database = test_support::memory().await;
+    let mailbox = {
+        let connection = database.connect().await.expect("a connection");
+        let (account, inbox) = test_support::account_with_inbox(&connection).await;
+        let repository = MessageRepository::new(&connection);
+        for state in &states {
+            let mut message = Message::new(account.id, inbox, Utc::now());
+            let id = repository.create(&mut message).await.expect("a message");
+            // Written straight to the column: the only writer of it is
+            // private to `postio-storage` and lives behind saving a draft,
+            // and what is under test is what the boundary does with the
+            // column rather than how it came to hold a value.
+            connection
+                .execute(
+                    "UPDATE messages SET send_state = ?2 WHERE id = ?1",
+                    (id.get(), state.as_str()),
+                )
+                .await
+                .expect("the send state is written");
+        }
+        inbox
+    };
+    let session = Session::open(SessionOptions::in_memory_with(database))
+        .expect("a session over the seeded store");
+    let scope = ScopeFfi::Mailbox {
+        mailbox: mailbox.into(),
+    };
+    session.open_scope(scope.clone());
+    (session, scope, states)
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_rows_send_state_crosses_as_the_word_a_person_reads() {
+    // The field's own doc says it is carried "so macOS can draw what GTK
+    // draws" — and it was carrying `DraftState::as_str`, which is the
+    // database's spelling: `queued`, `failed`, `unconfirmed`. Drawing those
+    // would be a second vocabulary for the same five states, which is
+    // exactly what `postio_ui::row::send_state_word` exists to prevent.
+    //
+    // The distinctions matter rather than being tidiness. "Not sent" rather
+    // than "failed", because what matters is that it did not go (#1487); and
+    // "Not confirmed" rather than either, because ADR 0021 Decision 3 says
+    // nobody can tell whether it arrived and the word has to carry that.
+    let (session, _scope, states) = with_send_states().await;
+    // The first ask misses and the page lands behind it — see
+    // `a_row_is_missing_until_its_page_arrives_and_then_it_is_not`.
+    let _ = session.row_at(0);
+    session.settle_for_test();
+
+    let drawn: Vec<String> = (0..states.len() as u32)
+        .map(|position| {
+            session
+                .row_at(position)
+                .expect("the page is resident")
+                .send_state
+                .expect("every row here has a send state")
+        })
+        .collect();
+
+    // Reversed: a mailbox lists newest first and these were written in one
+    // pass, so the last one seeded is the first one drawn.
+    let expected: Vec<String> = states
+        .iter()
+        .rev()
+        .map(|state| postio_ui::row::send_state_word(*state).to_owned())
+        .collect();
+    assert_eq!(
+        drawn, expected,
+        "the boundary handed over the state machine's words, not the reader's"
+    );
+    session.shutdown();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn an_ordinary_message_has_no_send_state_at_all() {
+    // Received mail is not a draft in some state; `None` is the answer, and
+    // a word here would put a badge on every row in the inbox.
+    let (session, scope) = seeded(1).await;
+    session.open_scope(scope);
+    let _ = session.row_at(0);
+    session.settle_for_test();
+    assert_eq!(session.row_at(0).expect("the row").send_state, None);
+    session.shutdown();
+}

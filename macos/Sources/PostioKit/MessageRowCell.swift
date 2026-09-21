@@ -13,6 +13,9 @@ public final class MessageRowCell: NSTableCellView {
     private let subject = NSTextField(labelWithString: "")
     private let preview = NSTextField(labelWithString: "")
     private let badge = NSTextField(labelWithString: "")
+    /// Where a draft has got to — `Waiting to send`, `Not sent`. Beside the
+    /// thread badge, because both answer "what *is* this row".
+    private let state = NSTextField(labelWithString: "")
     private let flag = NSImageView()
     private let time = NSTextField(labelWithString: "")
     /// The avatar chip: a tinted round square with two letters in it.
@@ -262,6 +265,8 @@ public final class MessageRowCell: NSTableCellView {
 
         badge.font = .systemFont(ofSize: 11, weight: .medium)
         badge.textColor = .secondaryLabelColor
+        state.font = .systemFont(ofSize: 11, weight: .medium)
+        state.textColor = .secondaryLabelColor
 
         flag.image = NSImage(systemSymbolName: "flag.fill", accessibilityDescription: "Flagged")
         flag.contentTintColor = .systemOrange
@@ -288,7 +293,7 @@ public final class MessageRowCell: NSTableCellView {
             avatarLabel.centerYAnchor.constraint(equalTo: avatar.centerYAnchor),
         ])
 
-        let top = NSStackView(views: [unreadDot, sender, badge, flag, actions, time])
+        let top = NSStackView(views: [unreadDot, sender, badge, state, flag, actions, time])
         top.orientation = .horizontal
         top.spacing = PostioTokens.space2
         top.alignment = .centerY
@@ -437,6 +442,9 @@ public final class MessageRowCell: NSTableCellView {
         flag.isHidden = !presentation.flagged
         badge.stringValue = presentation.threadBadge ?? ""
         badge.isHidden = presentation.threadBadge == nil
+        // The boundary's word for the state, never one composed here.
+        state.stringValue = presentation.sendState ?? ""
+        state.isHidden = presentation.sendState == nil
 
         // A row still waiting for its page is dimmed rather than blank, so
         // "not here yet" reads differently from "nothing here".
@@ -456,7 +464,7 @@ public final class MessageRowCell: NSTableCellView {
         setAccessibilityElement(true)
         setAccessibilityRole(.row)
         setAccessibilityLabel(Announcements.row(presentation))
-        for child in [unreadDot, sender, subject, preview, badge, flag] as [NSView] {
+        for child in [unreadDot, sender, subject, preview, badge, state, flag] as [NSView] {
             child.setAccessibilityElement(false)
         }
     }

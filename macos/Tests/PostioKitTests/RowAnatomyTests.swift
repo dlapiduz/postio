@@ -418,4 +418,58 @@ import Testing
             "the edge is nearer the system highlight than the accent: \(edge)"
         )
     }
+    @Test func aDraftsRowSaysWhereItGotTo() {
+        // Before this the row drew nothing for a send state, so a message
+        // that failed to send looked exactly like one still being written —
+        // which is the distinction #1487 is about. The word is the
+        // boundary's (`postio_ui::row::send_state_word`), never composed
+        // here: five states, one vocabulary, and two frontends wording them
+        // apart is what that function exists to stop.
+        let row = RowFfi(
+            id: 1,
+            thread: nil,
+            isThread: false,
+            from: "Ada Lovelace",
+            fromAddress: "ada@example.com",
+            initials: "AL",
+            subject: "The gate",
+            preview: "Six is fine",
+            receivedAt: 1_770_000_000,
+            seen: true,
+            flagged: false,
+            answered: false,
+            sendState: "Not sent",
+            hasAttachments: false,
+            threadCount: 1,
+            participants: ""
+        )
+
+        #expect(RowPresentation(row: row).sendState == "Not sent")
+    }
+
+    @Test func receivedMailSaysNothingAboutSending() {
+        // `nil`, not an empty string: a badge on every row in the inbox
+        // would be a column of nothing that still takes the width.
+        let row = RowFfi(
+            id: 1,
+            thread: nil,
+            isThread: false,
+            from: "Ada Lovelace",
+            fromAddress: "ada@example.com",
+            initials: "AL",
+            subject: "The gate",
+            preview: "Six is fine",
+            receivedAt: 1_770_000_000,
+            seen: true,
+            flagged: false,
+            answered: false,
+            sendState: nil,
+            hasAttachments: false,
+            threadCount: 1,
+            participants: ""
+        )
+
+        #expect(RowPresentation(row: row).sendState == nil)
+    }
+
 }

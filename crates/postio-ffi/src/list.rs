@@ -212,7 +212,16 @@ impl From<MessageSummary> for RowFfi {
             seen: row.seen,
             flagged: row.flagged,
             answered: row.answered,
-            send_state: row.send_state.map(|state| state.as_str().to_owned()),
+            // The reader's word, not the state machine's. `as_str` is the
+            // database's spelling — `queued`, `failed`, `unconfirmed` — and
+            // a frontend drawing those would be a second vocabulary for the
+            // same five states, which is what this function exists to
+            // prevent. "Not sent" rather than "failed" because what matters
+            // is that it did not go (#1487); "Not confirmed" because ADR
+            // 0021 Decision 3 says nobody can tell whether it arrived.
+            send_state: row
+                .send_state
+                .map(|state| postio_ui::row::send_state_word(state).to_owned()),
             has_attachments: row.has_attachments,
             thread_count: row.thread_count,
             is_thread: false,
