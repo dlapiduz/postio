@@ -47,13 +47,6 @@ const KNOWN_ORPHANS: &[(CommandId, &str)] = {
         // #1573 -- the sidebar's keyboard. `focus_sidebar` moves the keyboard
         // in and then nothing walks.
         (C::NextScope, "#1573"),
-        // #1574 -- a query cannot be kept, and the affordance that says it
-        // can is drawn enabled.
-        (C::SaveSearch, "#1574"),
-        (C::RenameSavedSearch, "#1574"),
-        (C::MoveSavedSearchUp, "#1574"),
-        (C::MoveSavedSearchDown, "#1574"),
-        (C::DeleteSavedSearch, "#1574"),
         // #1576 -- there is no conversation rail on macOS to hide or show.
         // Not a wiring gap: `postio_ui::reader::rail` decides the ladder and
         // the rows, and nothing on this side draws them yet.

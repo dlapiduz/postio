@@ -91,7 +91,6 @@ requeue_in_flight                 # crates/postio-storage/src/repository/operati
 resync_strategy                   # crates/postio-account/src/imap/dispatch.rs:144
 rethread_orphans                  # crates/postio-storage/src/repository/threading.rs:268
 root_message_id                   # crates/postio-model/src/thread.rs:86
-search_query                      # crates/postio-core/src/state.rs:413
 section_spec                      # crates/postio-account/src/backend/message.rs:585
 send_tracked                      # crates/postio-core/src/bridge.rs:212
 set_capabilities                  # crates/postio-sync/src/watch.rs:280

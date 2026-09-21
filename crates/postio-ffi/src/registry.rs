@@ -295,6 +295,14 @@ pub const INTERCEPTED: &[postio_core::CommandId] = {
         C::OpenPart,
         // The list has to be told to redraw after the query is re-asked.
         C::ToggleResultOrder,
+        // Saved searches: all five patch `config.toml` through the
+        // frontend-facing functions rather than the bus, and two of them ask
+        // a question no session can put on screen.
+        C::SaveSearch,
+        C::RenameSavedSearch,
+        C::DeleteSavedSearch,
+        C::MoveSavedSearchUp,
+        C::MoveSavedSearchDown,
         // The settings window's account verbs. Each acts on the row that
         // window's keyboard is on -- a cursor no session holds -- and adding
         // an account, replacing a credential and opening `config.toml` all

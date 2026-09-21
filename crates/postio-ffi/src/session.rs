@@ -1122,6 +1122,13 @@ impl Session {
         blocking(self.search(&query))
     }
 
+    /// The query the rows on screen came from. See
+    /// [`Session::search_query`].
+    #[uniffi::method(name = "searchQuery")]
+    pub fn search_query_ffi(&self) -> Option<String> {
+        self.search_query()
+    }
+
     /// Read the results the other way round. See
     /// [`Session::toggle_result_order`].
     #[uniffi::method(name = "toggleResultOrder")]
@@ -4245,6 +4252,15 @@ impl Session {
             .show_results(ranking);
         self.drop_selection_and_cursor();
         self.list.lock().expect("list lock").reset(total)
+    }
+
+    /// The query the rows on screen came from, or `None` over a mailbox.
+    ///
+    /// What *Save search as folder* keeps. Not the text in the field: that
+    /// is whatever has been typed since the last run, and saving it would
+    /// write down a query nobody has seen the results of.
+    pub fn search_query(&self) -> Option<String> {
+        self.query.lock().expect("query lock").clone()
     }
 
     /// Read the results the other way round — `o`.

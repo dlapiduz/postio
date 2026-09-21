@@ -180,6 +180,13 @@ public enum Intercepted {
     /// Re-ask the query the other way round. Intercepted rather than sent,
     /// because it is the *list* that has to be told to redraw afterwards.
     public static let toggleResultOrder = "toggle_result_order"
+    /// Saved searches. All five patch `config.toml`, which this side reads
+    /// at the moment it acts; two of them ask a question first.
+    public static let saveSearch = "save_search"
+    public static let renameSavedSearch = "rename_saved_search"
+    public static let deleteSavedSearch = "delete_saved_search"
+    public static let moveSavedSearchUp = "move_saved_search_up"
+    public static let moveSavedSearchDown = "move_saved_search_down"
     public static let openParts = "open_parts"
     public static let nextPart = "next_part"
     public static let prevPart = "prev_part"
@@ -213,7 +220,9 @@ public enum Intercepted {
         openMessage, prevView, viewOriginal,
         addAccount, editConfig, toggleAccountEnabled, removeAccount,
         updateCredential, rebuildAccountIndex, setDefaultAccount,
-        toggleResultOrder, openParts, nextPart, prevPart,
+        toggleResultOrder, saveSearch, renameSavedSearch, deleteSavedSearch,
+        moveSavedSearchUp, moveSavedSearchDown,
+        openParts, nextPart, prevPart,
         savePart, saveAllParts, openPartExternally, openPart, renderPartOnce,
         compose, reply, replyAll, forward,
     ] + composeVerbs

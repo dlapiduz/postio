@@ -35,6 +35,15 @@ struct Shell: View {
     /// nothing else has to know.
     @SceneStorage("openFolder") private var openFolder: Int?
 
+    /// The saved search being renamed, and the name being typed for it.
+    @State private var renamingKey: String?
+    @State private var renamedTo = ""
+    /// The saved search being deleted, and what it is called — the
+    /// confirmation names it, because a dialog that says "are you sure?" and
+    /// nothing else is one people learn to dismiss without reading.
+    @State private var deletingKey: String?
+    @State private var deletingName = ""
+
     init(engine: Engine) {
         _engine = State(initialValue: engine)
     }
@@ -62,6 +71,11 @@ struct Shell: View {
                                 collapsed: expansion
                             )
                         }
+                    }
+                    // A query somebody wrote down, beside the folders it
+                    // searches. Not selectable rows: see `SavedSearchRows`.
+                    SavedSearchRows(searches: engine.savedSearches) { search in
+                        engine.open(search)
                     }
                     // Then the account's own folders, each account a group
                     // and each folder with its children under it. The tree is
@@ -222,6 +236,47 @@ struct Shell: View {
                     dismiss: { engine.showingParts = false }
                 )
             }
+        }
+        // Two questions a command cannot ask: renaming needs a field, and
+        // deleting needs a confirmation. Both are worded by the boundary
+        // (ADR 0019 Q6) — two platforms writing their own sentence for a
+        // destructive verb is two products.
+        .onChange(of: engine.savedSearches.wishToken) { _, _ in
+            switch engine.savedSearches.wish {
+            case let .rename(key, from):
+                renamingKey = key
+                renamedTo = from
+            case let .confirmDelete(key, name):
+                deletingKey = key
+                deletingName = name
+            case nil:
+                break
+            }
+        }
+        .alert(
+            savedSearchRenamePrompt().title,
+            isPresented: Binding(get: { renamingKey != nil }, set: { if !$0 { renamingKey = nil } })
+        ) {
+            TextField("", text: $renamedTo)
+            Button(savedSearchRenamePrompt().confirm) {
+                if let key = renamingKey { engine.renameSavedSearch(key, to: renamedTo) }
+                renamingKey = nil
+            }
+            Button(savedSearchRenamePrompt().cancel, role: .cancel) { renamingKey = nil }
+        } message: {
+            if let body = savedSearchRenamePrompt().body { Text(body) }
+        }
+        .alert(
+            savedSearchDeletePrompt().title,
+            isPresented: Binding(get: { deletingKey != nil }, set: { if !$0 { deletingKey = nil } })
+        ) {
+            Button(savedSearchDeletePrompt().confirm, role: .destructive) {
+                if let key = deletingKey { engine.deleteSavedSearch(key) }
+                deletingKey = nil
+            }
+            Button(savedSearchDeletePrompt().cancel, role: .cancel) { deletingKey = nil }
+        } message: {
+            Text(savedSearchDeletePrompt().body ?? "\(deletingName) goes for good.")
         }
         .overlay(alignment: .bottomLeading) { noticeBanner }
         .overlay(alignment: .bottomTrailing) {

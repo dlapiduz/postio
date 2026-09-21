@@ -108,6 +108,7 @@ final class Engine {
             // From this session's keymap, so a rebinding reaches the row.
             controller.hints = session.rowHints()
             accounts = session.accounts()
+            reloadSavedSearches()
             self.appearance = appearance
             state = .open(controller)
             // Nothing was ever fetched before this: the store opened and
@@ -196,6 +197,10 @@ final class Engine {
     /// Which account row the settings window's keyboard is on, and the two
     /// sheets a command can ask that window for. See `SettingsAccounts`.
     let settingsAccounts = SettingsAccounts()
+
+    /// The saved searches in the sidebar, and which one the keyboard is on.
+    /// See `SavedSearches`.
+    let savedSearches = SavedSearches()
 
     /// The conversation the reading pane is showing (#1263).
     ///
@@ -394,6 +399,62 @@ final class Engine {
         sidebarCursor = landed.rowId
         if SidebarWalk.opens(landed) { open(landed) }
         return true
+    }
+
+    /// Run a saved search — picking its row in the sidebar.
+    ///
+    /// The same call the query field makes. A saved search is a query that
+    /// was written down, not a second kind of thing to open, and a separate
+    /// path here would be a second answer to what a query means.
+    func open(_ search: SavedSearchFfi) {
+        guard let session else { return }
+        session.search(search.query)
+        listChanged()
+        searchChanged()
+    }
+
+    /// Re-read `config.toml`'s saved searches.
+    ///
+    /// The file is hand-edited and watched, so this reads it rather than
+    /// trusting a copy: patching something read when the window opened would
+    /// write an hour-old `[sync]` block back over a newer one.
+    func reloadSavedSearches() {
+        guard let path = try? settingsPath() else { return }
+        savedSearches.load(from: path)
+    }
+
+    /// Run one of the saved-search verbs against the file, and take what it
+    /// answers.
+    private func editSavedSearch(_ work: (String) throws -> SavedSearchEditFfi) {
+        guard let path = try? settingsPath() else {
+            complain("Postio could not work out where its configuration file lives.")
+            return
+        }
+        do {
+            savedSearches.apply(try work(path))
+        } catch let error as SettingsError {
+            // One variant, because there is one thing to do about any of
+            // them: show what the parser or the filesystem said and leave
+            // what is on screen alone.
+            let said = switch error {
+            case let .Invalid(message): message
+            }
+            complain(said)
+        } catch {
+            complain("\(error)")
+        }
+    }
+
+    /// Call a saved search something else.
+    func renameSavedSearch(_ key: String, to name: String) {
+        editSavedSearch { try PostioFFI.renameSavedSearch(path: $0, key: key, name: name) }
+    }
+
+    /// Take a saved search out of the file, having asked.
+    func deleteSavedSearch(_ key: String) {
+        editSavedSearch { try PostioFFI.deleteSavedSearch(path: $0, key: key) }
+        // The row is gone; the keyboard must not still claim to be on it.
+        if savedSearches.focused == nil { savedSearches.put(cursor: nil) }
     }
 
     /// Say what went wrong, if anything did.
@@ -893,6 +954,30 @@ final class Engine {
             guard let account = settingsAccounts.focused(in: accounts) else { return false }
             let session = session
             Task { await settingsActions.reindex(account, through: session) }
+        // -- saved searches ----------------------------------------------
+        case Intercepted.saveSearch:
+            // The query on screen, kept. `config.toml` is read at the moment
+            // this acts rather than held, because it is hand-edited.
+            guard let session, session.isSearching,
+                  let query = session.searchQuery
+            else { return false }
+            editSavedSearch { try saveSearch(path: $0, query: query) }
+        case Intercepted.renameSavedSearch:
+            guard let row = savedSearches.focused else { return false }
+            savedSearches.ask(.rename(key: row.key, from: row.name))
+        case Intercepted.deleteSavedSearch:
+            // Asked about, never done: PRODUCT.md's rule is that a
+            // destructive operation is confirmed or undoable, and taking a
+            // `[filters]` entry out of a file nobody kept a copy of cannot
+            // be the second.
+            guard let row = savedSearches.focused else { return false }
+            savedSearches.ask(.confirmDelete(key: row.key, name: row.name))
+        case Intercepted.moveSavedSearchUp:
+            guard let row = savedSearches.focused else { return false }
+            editSavedSearch { try moveSavedSearch(path: $0, key: row.key, direction: .up) }
+        case Intercepted.moveSavedSearchDown:
+            guard let row = savedSearches.focused else { return false }
+            editSavedSearch { try moveSavedSearch(path: $0, key: row.key, direction: .down) }
         case Intercepted.toggleResultOrder:
             // Re-asks the same query the other way round rather than
             // re-sorting the rows on screen: the list is a window over a

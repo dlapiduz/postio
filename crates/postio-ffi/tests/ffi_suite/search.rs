@@ -503,3 +503,28 @@ async fn toggling_the_order_over_a_mailbox_does_nothing() {
     );
     session.shutdown();
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn the_query_on_screen_can_be_read_back_to_be_saved() {
+    // `⌘S` over results keeps *the query*, and the frontend does not hold
+    // one: the field's text is whatever has been typed since, which may not
+    // be what was run. What must be saved is the query that produced the
+    // rows on screen, and the session is what knows it.
+    let (session, _) = disagreeing().await;
+    assert_eq!(
+        session.search_query(),
+        None,
+        "a list showing a mailbox has no query to keep"
+    );
+
+    session.search("report").await;
+    assert_eq!(session.search_query().as_deref(), Some("report"));
+
+    session.clear_search();
+    assert_eq!(
+        session.search_query(),
+        None,
+        "the query outlived the search it belonged to"
+    );
+    session.shutdown();
+}

@@ -249,6 +249,12 @@ public final class PostioSession {
     /// Whether the list is showing search results rather than a folder.
     public var isSearching: Bool { inner.isSearching() }
 
+    /// The query the rows on screen came from, or `nil` over a mailbox.
+    ///
+    /// What *Save search as folder* keeps. Not the text in the field: that
+    /// is whatever has been typed since the last run.
+    public var searchQuery: String? { inner.searchQuery() }
+
     /// Read the results the other way round — best first, or newest first.
     ///
     /// Re-asks the same query rather than re-sorting what is on screen, and
