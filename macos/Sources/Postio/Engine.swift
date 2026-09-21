@@ -317,6 +317,14 @@ final class Engine {
     /// says the same thing from the other side — *"focusing the field **is**
     /// opening the box: a user who clicks it has asked the same question `/`
     /// asks"*.
+    /// How many times search has been asked for.
+    ///
+    /// A count beside the Bool, because the field is always on the toolbar:
+    /// `showingSearch` can already be true when `/` is pressed again, and a
+    /// value that does not change cannot carry the ask — the wish-token
+    /// lesson, applied to focus.
+    private(set) var searchFocusAsks = 0
+
     var showingSearch = false {
         didSet {
             guard showingSearch != oldValue else { return }
@@ -871,6 +879,7 @@ final class Engine {
             showingCheatSheet = true
         case Intercepted.search:
             showingSearch = true
+            searchFocusAsks += 1
         case Intercepted.back where showingSearch || session?.isSearching == true:
             // **Escape leaves search, scope and all.** It used to close the
             // field and nothing else, on the strength of a comment saying

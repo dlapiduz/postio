@@ -381,9 +381,19 @@ public struct ExpandedMessage: View {
             .task(id: row.id) {
                 // Keyed on the row: a pane reused for another message must
                 // not keep the last one's banner.
-                notice = session.readerNotice(row.id)
-                offer = session.unsubscribeOffer(row.id)
-                caveat = session.decodeCaveat(row.id)
+                //
+                // Off the main actor, and not as an optimisation flourish:
+                // `readerNotice` loads the body and *renders* it to count
+                // what was held back, and the actor that draws must not pay
+                // for a render whose only output is a number. Reading these
+                // inline is part of why moving between messages had a beat.
+                let session = session
+                let id = row.id
+                let facts = await Task.detached {
+                    (session.readerNotice(id), session.unsubscribeOffer(id), session.decodeCaveat(id))
+                }.value
+                guard !Task.isCancelled else { return }
+                (notice, offer, caveat) = facts
             }
             .padding(.horizontal, PostioTokens.space4)
             .padding(.vertical, PostioTokens.space4)

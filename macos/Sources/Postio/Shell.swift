@@ -179,6 +179,7 @@ struct Shell: View {
                             engine.searchChanged()
                         },
                         dismiss: { engine.dismissOverlays() },
+                        focusAsks: engine.searchFocusAsks,
                         wantsFocus: Binding(
                             get: { engine.showingSearch },
                             set: { engine.showingSearch = $0 }

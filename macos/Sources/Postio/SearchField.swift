@@ -19,6 +19,9 @@ struct SearchField: View {
     /// generation the boundary answered with.
     let reload: () -> Void
     let dismiss: () -> Void
+    /// How many times a command has asked for the keyboard — see
+    /// `ToolbarFieldFocus` for why a count and why AppKit.
+    let focusAsks: Int
     /// Whether the field should take the keyboard.
     ///
     /// Driven from the engine so that `/` and `⌥⌘F` land here: the field is
@@ -126,6 +129,14 @@ struct SearchField: View {
         .onChange(of: wantsFocus) { _, wanted in
             if wanted { focused = true }
         }
+        .onChange(of: focusAsks) { _, _ in focused = true }
+        // AppKit's push, because SwiftUI's is dropped in a toolbar: focus
+        // driven from AppKit (a click) reports into `@FocusState` fine, but
+        // `focused = true` pushed the other way never crosses into the
+        // `NSToolbar` — `/` ran its command and the keyboard went to the
+        // sidebar instead. The `focused = true` above is kept for the day
+        // that stops being true; this is what moves the keyboard today.
+        .background(ToolbarFieldFocus(asks: focusAsks, wanted: wantsFocus))
         .onChange(of: focused) { _, has in
             // **Both directions.** Gaining the keyboard by *clicking* is
             // asking the same question `/` asks, and until this said so the
