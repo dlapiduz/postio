@@ -56,36 +56,13 @@ public struct ConversationView: View {
         self.toggleOriginal = toggleOriginal
     }
 
-    /// What the stack draws, in order: messages, and dividers standing in for
-    /// the runs of collapsed ones.
-    private enum Entry: Identifiable {
-        case message(Int)
-        case folded(RunFfi)
-
-        var id: String {
-            switch self {
-            case .message(let index): "m\(index)"
-            case .folded(let run): "r\(run.start)"
-            }
-        }
-    }
 
     /// The binding in force for `command`, drawn the way macOS draws it.
     ///
-    private var entries: [Entry] {
-        let runs = model.runs
-        var entries: [Entry] = []
-        var index = 0
-        while index < model.rows.count {
-            if let run = runs.first(where: { Int($0.start) == index }) {
-                entries.append(.folded(run))
-                index += Int(run.count)
-            } else {
-                entries.append(.message(index))
-                index += 1
-            }
-        }
-        return entries
+    /// What the stack draws, in order. Identity is the *message*, never its
+    /// position — see `ConversationEntries`, and the crash it is named for.
+    private var entries: [ConversationEntries.Entry] {
+        ConversationEntries.of(rows: model.rows, runs: model.runs)
     }
 
     public var body: some View {
@@ -96,9 +73,9 @@ public struct ConversationView: View {
                 LazyVStack(spacing: 0) {
                     ForEach(entries) { entry in
                         switch entry {
-                        case .message(let index):
+                        case let .message(index, _):
                             message(at: index)
-                        case .folded(let run):
+                        case let .folded(run, _):
                             FoldedRun(run: run) { model.reveal(run) }
                         }
                     }
@@ -158,23 +135,33 @@ public struct ConversationView: View {
 
     @ViewBuilder
     private func message(at index: Int) -> some View {
-        let row = model.rows[index]
-        if model.expanded.indices.contains(index), model.expanded[index] {
-            ExpandedMessage(
-                session: session,
-                row: row,
-                isLatest: index == model.rows.count - 1,
-                showingCc: model.isCcRevealed(index),
-                showingOriginal: showingOriginal(row.id),
-                showingImages: showingImages(row.id),
-                collapse: { model.toggle(index) },
-                toggleCc: { model.toggleCc(index) },
-                toggleOriginal: { toggleOriginal(row.id) },
-                run: run,
-                openSettings: { run(Intercepted.settings, nil) }
-            )
-        } else {
-            CollapsedMessage(row: row) { model.toggle(index) }
+        // Bounds-checked, and not belt-and-braces: SwiftUI updates a
+        // retained child before it discards it, so this can be asked for a
+        // row that has just gone. It used to trap here (`rows[5]` of a
+        // conversation that now holds three), which is what
+        // `ConversationEntries` records. Identity fixes the cause; this
+        // makes the symptom an empty row rather than a dead application.
+        // A `ViewBuilder` `if` with no `else` draws nothing, which is the
+        // right thing for a row that is no longer there.
+        if model.rows.indices.contains(index) {
+            let row = model.rows[index]
+            if model.expanded.indices.contains(index), model.expanded[index] {
+                ExpandedMessage(
+                    session: session,
+                    row: row,
+                    isLatest: index == model.rows.count - 1,
+                    showingCc: model.isCcRevealed(index),
+                    showingOriginal: showingOriginal(row.id),
+                    showingImages: showingImages(row.id),
+                    collapse: { model.toggle(index) },
+                    toggleCc: { model.toggleCc(index) },
+                    toggleOriginal: { toggleOriginal(row.id) },
+                    run: run,
+                    openSettings: { run(Intercepted.settings, nil) }
+                )
+            } else {
+                CollapsedMessage(row: row) { model.toggle(index) }
+            }
         }
     }
 }
