@@ -168,24 +168,10 @@ fn the_window_says_which_application_it_is() {
 /// the application carries for its own widgets. This is the other one: what
 /// the manifest installs into `/app/share/icons/hicolor` for the session to
 /// draw in the switcher and the dash. Nothing checked it, and it shipped 16,
-/// 32 and 128 only — so GNOME, which asks for 48 and 64, had a 128 to scale
-/// and drew nothing. A blank icon in the app switcher is what that looks
-/// like from outside, with `Icon=` correct, the entry exported and resolving,
-/// and both icon caches listing the name.
-///
-/// # Why the scalable SVG is not in this list
-///
-/// It cannot be installed. `appstreamcli compose` runs over the finished
-/// tree, loads every icon through gdk-pixbuf, and **the GNOME SDK carries
-/// `librsvg` but no gdk-pixbuf SVG loader** — so an SVG under
-/// `hicolor/scalable/apps` is a `file-read-error`, the compose emits no
-/// component at all (`filters-but-no-output`), and the build fails. That is
-/// not hypothetical: installing it was tried, it broke the build, and
-/// `release.yml` runs the same step, so it would have broken the next
-/// release the way the malformed metainfo did.
-///
-/// So the vector stays in the gresource bundle, where the application renders
-/// it itself, and the session gets rasters at the sizes it actually asks for.
+/// 32 and 128 only. 16 and 32 are hand-drawn rather than downscales --
+/// `Design/icons/` carries the optical-sizing rule -- and 48, 64 and 128 are
+/// what GNOME asks for in the dash, the overview and the switcher at 1x, so
+/// each of them is a file rather than a resample of the master.
 #[test]
 fn the_flatpak_installs_the_icon_sizes_a_session_asks_for() {
     // 16 and 32 are hand-drawn rather than downscales -- `Design/icons/`
@@ -217,12 +203,19 @@ fn the_flatpak_installs_the_icon_sizes_a_session_asks_for() {
     );
 }
 
-/// The scalable icon stays out of the bundle, and this says so on purpose.
+/// The Flatpak installs the scalable icon, so every other size is a render.
 ///
-/// Without an assertion the obvious "improvement" is to install it, which
-/// builds fine locally right up until `appstreamcli` runs.
+/// The rasters above cover what GNOME asks for at 1x. At 2x it asks for
+/// twice that, and the app grid asks for 96 at either scale; with nothing
+/// scalable installed those are a resampled 128. This was briefly kept out
+/// on purpose, because `appstreamcli compose` failed to read the SVG and the
+/// failure was read as the SDK lacking an SVG loader. It was the file:
+/// `every_bundled_svg_is_recognised_where_a_sniffer_looks` above is the
+/// reason, and with the tag inside the sniff window the same compose
+/// succeeds and renders its own 48, 64 and 128 set from the vector, the @2
+/// sizes included.
 #[test]
-fn the_flatpak_does_not_install_a_scalable_icon() {
+fn the_flatpak_installs_the_scalable_icon() {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
         .and_then(|crates| crates.parent())
@@ -230,16 +223,30 @@ fn the_flatpak_does_not_install_a_scalable_icon() {
     let manifest = std::fs::read_to_string(root.join("flatpak/dev.postio.Postio.json"))
         .expect("the Flatpak manifest should be readable");
 
-    assert!(
-        !manifest.contains("icons/scalable"),
-        "the manifest installs a scalable icon. The GNOME SDK has librsvg but \
-         no gdk-pixbuf SVG loader, so `appstreamcli compose` cannot read it: \
-         the component is dropped, the compose reports \
-         `filters-but-no-output`, and the build fails -- in CI as well, since \
-         `release.yml` runs the same step."
-    );
+    for (source, installed) in [
+        (
+            "crates/postio-gtk/data/icons/scalable/apps/dev.postio.Postio.svg",
+            "/app/share/icons/hicolor/scalable/apps/dev.postio.Postio.svg",
+        ),
+        (
+            "crates/postio-gtk/data/icons/scalable/apps/dev.postio.Postio-symbolic.svg",
+            "/app/share/icons/hicolor/symbolic/apps/dev.postio.Postio-symbolic.svg",
+        ),
+    ] {
+        assert!(
+            root.join(source).exists(),
+            "{source} is not in the repository"
+        );
+        let line = manifest
+            .lines()
+            .find(|line| line.contains(source))
+            .unwrap_or_else(|| panic!("the manifest never installs {source}"));
+        assert!(
+            line.contains(installed),
+            "{source} should be installed as {installed}, but the manifest says:\n{line}"
+        );
+    }
 }
-
 /// Every bundled SVG says it is one where a format sniffer looks.
 ///
 /// An image loader does not trust the file extension; it reads the first
