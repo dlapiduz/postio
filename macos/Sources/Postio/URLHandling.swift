@@ -26,6 +26,18 @@ final class URLHandler: NSObject, NSApplicationDelegate {
         DispatchQueue.main.async { MenuBar.reassert() }
     }
 
+    /// Close the session down, orderly, on the way out.
+    ///
+    /// Set by the application, which owns it. Here rather than on a scene
+    /// phase because quitting is the only moment it is right: `⌘W` and `⌘H`
+    /// put the window away and a mail client with no window on screen is a
+    /// mail client collecting mail. `SessionLifetime` carries the reasoning.
+    var stop: (() -> Void)?
+
+    func applicationWillTerminate(_: Notification) {
+        stop?()
+    }
+
     /// Where a `mailto:` goes. Set by the application, which owns the
     /// session and the compose windows.
     var write: ((Mailto) -> Bool)?

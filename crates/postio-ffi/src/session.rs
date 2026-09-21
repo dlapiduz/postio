@@ -4335,6 +4335,21 @@ impl Session {
     /// under the cursor. A search is never reloaded: its ranking does not
     /// change because a folder did.
     fn react(&self, event: &postio_core::Event) {
+        // Rows that have left the mailbox cannot stay selected: the next
+        // action would be aimed at mail that is no longer there. `postio-app`
+        // says the same thing in the same words on the GTK side — and it is
+        // here rather than in either frontend because the selection is here,
+        // and because `Everything { except }` is a predicate a frontend
+        // cannot re-derive without enumerating the mailbox it is about.
+        //
+        // Whole, not narrowed to the ids that went. A predicate selection has
+        // no ids to subtract, and "these twelve minus the two that were
+        // archived" is a thing nobody asked for: the mark was made against a
+        // list that has since moved.
+        if matches!(event, postio_core::Event::MessagesRemoved { .. }) && !self.selection_is_empty()
+        {
+            self.clear_selection();
+        }
         let plan = self.paging.lock().expect("paging lock").plan(event);
         match plan {
             postio_ui::paging::Plan::Ignore => {}

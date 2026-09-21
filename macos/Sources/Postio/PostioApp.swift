@@ -30,13 +30,26 @@ struct PostioApp: App {
                 // it is handed a closure rather than the engine: a `mailto:`
                 // that arrives during launch finds whatever is true when it
                 // is clicked, not what was true when the delegate was built.
-                .onAppear { urls.write = { engine.write(mailto: $0) } }
+                .onAppear {
+                    urls.write = { engine.write(mailto: $0) }
+                    // Quitting is where the orderly shutdown belongs. The
+                    // delegate is the only thing that hears it.
+                    urls.stop = { engine.shutdown() }
+                }
         }
         .onChange(of: phase) { _, now in
-            // Orderly rather than at process exit: the store is SQLCipher, and
-            // dropping an engine as the process ends is exactly when
-            // libcrypto goes away underneath a thread still encrypting a page.
-            if now == .background { engine.shutdown() }
+            // **Not on `.background`.** That is what `⌘W`, `⌘H` and
+            // minimising all produce on this platform — the gesture a Mac
+            // user makes to leave a mail client *running* — and ending the
+            // session there stopped every sync, every IDLE connection and
+            // every new-mail notification. With no way back, because the
+            // session is opened once: reopening a window found a full mailbox
+            // drawing "No messages" and no keyboard.
+            //
+            // The shutdown is still orderly; it has moved to
+            // `applicationWillTerminate`, which is where quitting is.
+            // `SessionLifetime` is the rule, and carries the rest of it.
+            if SessionLifetime.shouldEnd(on: SessionPhase(now)) { engine.shutdown() }
         }
         .defaultSize(width: 1100, height: 700)
         .windowToolbarStyle(.unified)
@@ -89,5 +102,25 @@ struct PostioApp: App {
             }
         }
         .defaultSize(width: 640, height: 520)
+    }
+}
+
+/// `ScenePhase` as `SessionLifetime` asks about it.
+///
+/// The mapping is here rather than in `PostioKit` because `ScenePhase` is
+/// SwiftUI's and this is the target that has SwiftUI in it. `terminating` has
+/// no `ScenePhase` at all — it arrives from `applicationWillTerminate`, which
+/// is the whole reason `SessionPhase` is its own type.
+extension SessionPhase {
+    init(_ phase: ScenePhase) {
+        switch phase {
+        case .active: self = .active
+        case .inactive: self = .inactive
+        case .background: self = .background
+        // A phase a future macOS invents is not a reason to stop collecting
+        // mail. `inactive` is the conservative reading: the application is
+        // still running.
+        @unknown default: self = .inactive
+        }
     }
 }
