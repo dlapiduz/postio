@@ -479,6 +479,32 @@ impl Onboarding {
         Self::default()
     }
 
+    /// The screen `window` is showing, if it is showing one.
+    ///
+    /// The caller mounts this under the window's own chrome rather than as
+    /// the window's whole content: a wizard needs a title bar with a close
+    /// button, and one drawn *inside* the wizard reads as part of the wizard
+    /// rather than as the window's — which is what it looked like when the
+    /// header lived here. So `window.content()` is the chrome, not the
+    /// screen, and everything that used to reach the screen by downcasting
+    /// the content asks here instead.
+    pub fn showing_in(window: &crate::window::Window) -> Option<Self> {
+        fn search(widget: &gtk::Widget) -> Option<Onboarding> {
+            if let Ok(found) = widget.clone().downcast::<Onboarding>() {
+                return Some(found);
+            }
+            let mut child = widget.first_child();
+            while let Some(current) = child {
+                if let Some(found) = search(&current) {
+                    return Some(found);
+                }
+                child = current.next_sibling();
+            }
+            None
+        }
+        window.content().and_then(|content| search(&content))
+    }
+
     /// The name as typed, for the `From` header and the sidebar label.
     /// Empty means the user left it blank.
     pub fn name(&self) -> String {
@@ -1542,31 +1568,7 @@ impl Onboarding {
         scroller.set_focusable(false);
         scroller.set_child(Some(&body));
 
-        // The window's controls, carried by the screen itself.
-        //
-        // This screen is installed with `set_content`, which replaces the
-        // whole window content — and the content is where the window keeps
-        // its header bar. So without a header here the wizard has no close
-        // button, and since there is no `quit` command in the registry and no
-        // `Ctrl+Q`, a first run had no way out of the application but killing
-        // it. Found in the 0.4.2 Flatpak, which is where onboarding is
-        // usually met; a dev build is started from a terminal, where the
-        // absence does not bite.
-        //
-        // It belongs to the screen rather than to the caller because
-        // `window.content()` *is* this widget to the nine places that reach
-        // for it — wrapping it outside would move the chrome and break all of
-        // them to fix one thing.
-        //
-        // Flat and title-less on purpose: `header` below is the wizard's own
-        // heading, and a second title above it would be two answers to
-        // "where am I".
-        let chrome = adw::HeaderBar::new();
-        chrome.set_show_title(false);
-        chrome.add_css_class("flat");
-
         let column = gtk::Box::new(gtk::Orientation::Vertical, 0);
-        column.append(&chrome);
         column.append(&header);
         column.append(&scroller);
         self.set_child(Some(&column));

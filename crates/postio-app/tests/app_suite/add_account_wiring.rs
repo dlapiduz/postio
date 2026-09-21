@@ -232,7 +232,7 @@ pub fn the_add_account_key_opens_a_blank_form_over_the_running_window() {
              the way first run's own host does"
         );
         assert!(
-            window.content().and_downcast::<Onboarding>().is_none(),
+            Onboarding::showing_in(&window).is_none(),
             "the add-account dialog replaced the window's content instead of \
              floating over it"
         );

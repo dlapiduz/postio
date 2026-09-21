@@ -237,10 +237,7 @@ async fn onboard(
     )
     .await;
 
-    let screen = window
-        .content()
-        .and_downcast::<Onboarding>()
-        .expect("the onboarding screen");
+    let screen = Onboarding::showing_in(&window).expect("the onboarding screen");
     (window, screen, bridge, directory)
 }
 

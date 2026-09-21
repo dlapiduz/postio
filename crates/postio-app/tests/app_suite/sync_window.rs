@@ -44,7 +44,6 @@
 
 use std::sync::Arc;
 
-use adw::prelude::*;
 use async_trait::async_trait;
 use gtk::{gdk, glib};
 use postio_account::discovery::{
@@ -154,10 +153,7 @@ pub fn picking_a_sync_window_and_pressing_start_sync_writes_it_to_config_toml() 
         )
         .await;
 
-        let screen = window
-            .content()
-            .and_downcast::<Onboarding>()
-            .expect("the onboarding screen");
+        let screen = Onboarding::showing_in(&window).expect("the onboarding screen");
 
         // The account and its credential are already written by the time this
         // step shows in the real flow (`submit`/`submit_oauth`) -- this test

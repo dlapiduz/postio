@@ -51,7 +51,6 @@ use std::net::{TcpListener, TcpStream};
 use std::sync::{Arc, Mutex};
 use std::thread;
 
-use adw::prelude::*;
 use async_trait::async_trait;
 use gtk::{gdk, glib};
 use postio_account::discovery::{
@@ -345,10 +344,8 @@ sources = ["own-client"]
         Arc::new(browser.clone()),
     )
     .await;
-    let screen = window
-        .content()
-        .and_downcast::<Onboarding>()
-        .expect("the onboarding screen is the window's content");
+    let screen =
+        Onboarding::showing_in(&window).expect("the onboarding screen is the window's content");
 
     // ── the user's three actions: address, client id, one click ────────
     screen.set_address(ADDRESS);

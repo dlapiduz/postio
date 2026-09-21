@@ -44,7 +44,6 @@ use std::net::TcpListener;
 use std::sync::Arc;
 use std::thread;
 
-use adw::prelude::*;
 use async_trait::async_trait;
 use gtk::{gdk, glib};
 use postio_account::discovery::{
@@ -273,10 +272,8 @@ session_url = "http://127.0.0.1:{jmap_refusing}/jmap/session/"
         Arc::new(postio_account::oauth::browser::SystemBrowserOpener),
     )
     .await;
-    let screen = window
-        .content()
-        .and_downcast::<Onboarding>()
-        .expect("the onboarding screen is the window's content");
+    let screen =
+        Onboarding::showing_in(&window).expect("the onboarding screen is the window's content");
 
     // ── add 1: the JMAP proof works and jmap is stored ──────────────────
     screen.set_address("ada@example.test");
