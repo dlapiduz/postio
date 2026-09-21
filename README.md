@@ -170,24 +170,37 @@ the reading pane with its remote-image blocking and per-sender allow list,
 conversations, search with its query language and the chips that teach it,
 the command palette, the cheat sheet, the menu bar built from the command
 registry, keyboard commands in both layers, compose with rich text and
-attachments, notifications, and a settings window with every pane.
+attachments, scheduled send, notifications, a settings window with every
+pane, the message-parts panel — so an attachment can be saved, saved
+alongside its siblings, previewed in place or handed to another
+application — saved searches, the account verbs, and repairing an account
+whose credential has expired.
 
-**What does not, yet**, each with an issue: no message-parts surface, so an
-attachment cannot be saved ([#1572](https://github.com/dlapiduz/postio/issues/1572));
-the composer's verbs are not on the command bus
-([#1571](https://github.com/dlapiduz/postio/issues/1571)); the sidebar's
-keyboard and the `g` destinations
-([#1573](https://github.com/dlapiduz/postio/issues/1573)); saving a query as a
-folder ([#1574](https://github.com/dlapiduz/postio/issues/1574)); the account
-verbs as commands ([#1575](https://github.com/dlapiduz/postio/issues/1575));
-the conversation rail and `View original`
-([#1576](https://github.com/dlapiduz/postio/issues/1576)); and repairing an
-account whose credential has expired
-([#1584](https://github.com/dlapiduz/postio/issues/1584)).
+**What does not, yet.** Four commands in the registry reach nothing here,
+and each is a decision rather than a wire:
+
+- `insert_image` wants an inline attachment with a `Content-ID` and a
+  `postio-cid:` handler in the composer's own web view — a feature to
+  build ([#1571](https://github.com/dlapiduz/postio/issues/1571)).
+- `detach_composer` has nothing to detach: compose on macOS is already a
+  window of its own and never takes over the reading pane
+  ([#1571](https://github.com/dlapiduz/postio/issues/1571)).
+- `next_scope` cycles an account strip, and this sidebar lists every
+  account's folders at once rather than re-rooting to one
+  ([#1573](https://github.com/dlapiduz/postio/issues/1573)).
+- `toggle_rail` needs the conversation rail, which is not drawn here yet
+  ([#1576](https://github.com/dlapiduz/postio/issues/1576)).
+
+Beyond the command sweep: the scope rail, refine chips and sort control of
+[#1157](https://github.com/dlapiduz/postio/issues/1157) are still to come,
+and the sidebar's keyboard does not walk saved searches until it walks
+folders ([#1573](https://github.com/dlapiduz/postio/issues/1573)).
 
 `crates/postio-ffi/tests/ffi_suite/command_coverage.rs` is what keeps that
 second list honest: it sweeps every command in the registry and fails if one
-reaches nothing and is not listed as debt.
+reaches nothing and is not listed as debt. The list has gone from
+forty-nine to four, and it may only shrink — a command that gains a handler
+and stays listed fails the sweep just as one that loses a handler does.
 
 ## First run
 
