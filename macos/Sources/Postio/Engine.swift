@@ -284,8 +284,32 @@ final class Engine {
     /// Running a search does not move the keyboard, so nothing else would
     /// notice that the list is now a result set.
     func searchChanged() {
+        // Before the guard: the stamp is about the *result set* changing,
+        // which is true whether or not the field holds the keyboard. The
+        // refine bar and the field's readout both follow it.
+        searchStamp += 1
         guard !showingSearch, !showingParts else { return }
         paneContext = contextOf(pane)
+    }
+
+    /// How many searches have run, however they ran — typed, refined,
+    /// re-ordered, or picked from the sidebar. What the refine bar
+    /// re-measures on, and what makes the toolbar field adopt a query it
+    /// did not run itself.
+    private(set) var searchStamp = 0
+
+    /// Narrow the current search by one token — a refine chip.
+    ///
+    /// Through the session's own query, not the field's text: the field is
+    /// display here, and the query that ran is the boundary's answer. The
+    /// stamp then makes the field adopt the result, so editing it afterwards
+    /// starts from the refined query rather than silently dropping the
+    /// narrowing.
+    func refineSearch(_ token: String) {
+        guard let session, let query = session.searchQuery else { return }
+        session.search(query.isEmpty ? token : "\(query) \(token)")
+        listChanged()
+        searchChanged()
     }
 
     /// The message the cursor is on, for the reading pane.
@@ -1029,6 +1053,9 @@ final class Engine {
             guard let session, session.isSearching else { return false }
             session.toggleResultOrder()
             listChanged()
+            // The set is the same but its order is not, and the sort label
+            // in the toolbar reads through the stamp.
+            searchChanged()
         case Intercepted.openParts:
             guard let session, let message = target ?? cursorShowing else { return false }
             parts.show(session.messageParts(message))

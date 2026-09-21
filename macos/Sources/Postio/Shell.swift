@@ -139,6 +139,19 @@ struct Shell: View {
                 .background(Color(nsColor: AppSurface.background))
                 .onTapGesture { engine.focus(.reader) }
         }
+        // Under the toolbar, across the window — NOT inside the toolbar
+        // item, which is a fixed-height cell that cannot host rows below
+        // the field: attached there, the chips overflowed the toolbar and
+        // floated over the window as a detached artifact.
+        .safeAreaInset(edge: .top, spacing: 0) {
+            if let session = engine.session, session.isSearching {
+                SearchRefineBar(
+                    session: session,
+                    stamp: engine.searchStamp,
+                    refine: { engine.refineSearch($0) }
+                )
+            }
+        }
         .toolbar {
             // No sidebar-toggle item here: `NavigationSplitView` puts one at
             // the leading edge itself, and adding a second drew two identical
@@ -180,6 +193,7 @@ struct Shell: View {
                         },
                         dismiss: { engine.dismissOverlays() },
                         focusAsks: engine.searchFocusAsks,
+                        searchStamp: engine.searchStamp,
                         wantsFocus: Binding(
                             get: { engine.showingSearch },
                             set: { engine.showingSearch = $0 }

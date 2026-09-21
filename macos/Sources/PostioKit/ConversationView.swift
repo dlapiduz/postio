@@ -269,6 +269,13 @@ public struct ExpandedMessage: View {
     @State private var notice: ReaderNoticeFfi?
     @State private var offer: UnsubscribeOfferFfi?
     @State private var caveat: String?
+    /// Who the message was addressed to, read once with the rest.
+    ///
+    /// This was `session.recipients(row.id)` inside the view body — a
+    /// blocking SQL round trip on the main actor per expanded message per
+    /// redraw, and a conversation open redraws each message several times
+    /// (height, notices). Twelve-plus round trips to draw three headers.
+    @State private var addressed: RecipientsFfi?
     /// Whether this message is drawn as its sender wrote it.
     ///
     /// Per message and per view: reader view is on by default for bulk mail
@@ -390,10 +397,13 @@ public struct ExpandedMessage: View {
                 let session = session
                 let id = row.id
                 let facts = await Task.detached {
-                    (session.readerNotice(id), session.unsubscribeOffer(id), session.decodeCaveat(id))
+                    (
+                        session.readerNotice(id), session.unsubscribeOffer(id),
+                        session.decodeCaveat(id), session.recipients(id)
+                    )
                 }.value
                 guard !Task.isCancelled else { return }
-                (notice, offer, caveat) = facts
+                (notice, offer, caveat, addressed) = facts
             }
             .padding(.horizontal, PostioTokens.space4)
             .padding(.vertical, PostioTokens.space4)
@@ -482,7 +492,7 @@ public struct ExpandedMessage: View {
     /// message.
     @ViewBuilder
     private var recipients: some View {
-        if let lines = session.recipients(row.id) {
+        if let lines = addressed {
             if let to = lines.to {
                 Text(to)
                     .font(.callout)

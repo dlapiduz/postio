@@ -22,6 +22,9 @@ struct SearchField: View {
     /// How many times a command has asked for the keyboard — see
     /// `ToolbarFieldFocus` for why a count and why AppKit.
     let focusAsks: Int
+    /// Bumped by the engine whenever a search ran anywhere — a refine chip,
+    /// a saved search, `o` — so this field and the readout follow.
+    let searchStamp: Int
     /// Whether the field should take the keyboard.
     ///
     /// Driven from the engine so that `/` and `⌥⌘F` land here: the field is
@@ -34,12 +37,6 @@ struct SearchField: View {
     /// is a computed property over a boundary the view cannot observe.
     @State private var ran = 0
     @FocusState private var focused: Bool
-    /// The narrowings worth offering, re-measured after every run.
-    ///
-    /// Held rather than read inline because measuring them is a second pass
-    /// over the index: a run that only draws a list should not pay for it on
-    /// every redraw.
-    @State private var refinements: [RefinementFfi] = []
 
     var body: some View {
         HStack(spacing: 6) {
@@ -122,14 +119,25 @@ struct SearchField: View {
         .padding(.vertical, 6)
         .background(.quaternary.opacity(0.5), in: .rect(cornerRadius: 6))
         .padding(.horizontal, 8)
-        .padding(.top, 6)
-        .padding(.bottom, refinements.isEmpty ? 6 : 0)
-        .safeAreaInset(edge: .bottom, spacing: 0) { refineChips }
-        .safeAreaInset(edge: .bottom, spacing: 0) { footerHints }
+        .padding(.vertical, 6)
+        // The refine chips and the footer hints are NOT here, and may never
+        // be again: this view is hosted in an `NSToolbar` item, which cannot
+        // grow downward — a `safeAreaInset` on it overflows the toolbar and
+        // floats over the window as a detached blob. Anything below the
+        // field's own row belongs to `SearchRefineBar`, mounted under the
+        // toolbar where layout is allowed to happen.
         .onChange(of: wantsFocus) { _, wanted in
             if wanted { focused = true }
         }
         .onChange(of: focusAsks) { _, _ in focused = true }
+        // A refine chip runs the search through the engine, not through this
+        // field — so the field has to adopt the query that actually ran, or
+        // editing it and pressing Return would re-run the unrefined one and
+        // silently drop the narrowing.
+        .onChange(of: searchStamp) { _, _ in
+            query = session.searchQuery ?? ""
+            ran += 1
+        }
         // AppKit's push, because SwiftUI's is dropped in a toolbar: focus
         // driven from AppKit (a click) reports into `@FocusState` fine, but
         // `focused = true` pushed the other way never crosses into the
@@ -157,75 +165,6 @@ struct SearchField: View {
         .id(ran)
     }
 
-    /// The discoverable half of the query language (#1157).
-    ///
-    /// Four at most, and every one of them measured against the results on
-    /// screen — `postio-search` decides which are worth offering, not this
-    /// view. Clicking appends the token to the query and runs it, which is
-    /// exactly what typing it would have done.
-    @ViewBuilder private var refineChips: some View {
-        if !refinements.isEmpty {
-            HStack(spacing: 6) {
-                ForEach(refinements, id: \.token) { refinement in
-                    Button {
-                        query = query.isEmpty
-                            ? refinement.token
-                            : "\(query) \(refinement.token)"
-                        run()
-                    } label: {
-                        HStack(spacing: 4) {
-                            Text(refinement.token)
-                                .font(.system(.caption, design: .monospaced))
-                            Text(Int(refinement.hits).formatted(.number))
-                                .font(.caption2)
-                                .foregroundStyle(.secondary)
-                        }
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 2)
-                        .background(.quaternary.opacity(0.5), in: .rect(cornerRadius: 4))
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel(
-                        "Narrow to \(refinement.token), keeping \(refinement.hits) messages"
-                    )
-                }
-                Spacer(minLength: 0)
-            }
-            .padding(.horizontal, 18)
-            .padding(.bottom, 6)
-        }
-    }
-
-    /// `Ret open · Tab refine · ⌘S save as folder` (canvas 05).
-    ///
-    /// From the keymap, like the row's own hints: this is the only place
-    /// most people will ever read these keys, which is what makes teaching
-    /// the wrong one worse than teaching none. Only while results are
-    /// showing — over a mailbox two of the three mean nothing.
-    @ViewBuilder private var footerHints: some View {
-        if session.isSearching {
-            let hints = session.searchHints()
-            if !hints.isEmpty {
-                HStack(spacing: 4) {
-                    ForEach(Array(hints.enumerated()), id: \.offset) { index, hint in
-                        if index > 0 {
-                            Text("·").foregroundStyle(.tertiary)
-                        }
-                        Text(hint.key)
-                            .font(.system(.caption2, design: .monospaced))
-                        Text(hint.label)
-                            .font(.caption2)
-                            .foregroundStyle(.secondary)
-                    }
-                    Spacer(minLength: 0)
-                }
-                .padding(.horizontal, 18)
-                .padding(.bottom, 6)
-                .accessibilityElement(children: .combine)
-            }
-        }
-    }
-
     /// Run what has been typed.
     ///
     /// On submit rather than on every keystroke. The budget is under 100 ms
@@ -240,28 +179,12 @@ struct SearchField: View {
         session.search(query)
         ran += 1
         reload()
-        // After the run and off the main actor. They are measured against
-        // the results this query found — a second pass over the index — and
-        // search has 100 ms to answer in; paying for the chips inline would
-        // spend that budget twice on one keystroke. They appear a moment
-        // after the rows do, which is the right order anyway.
-        let session = session
-        let asked = ran
-        Task {
-            let measured = await Task.detached { session.refinements() }.value
-            // Another query may have run while this was measuring, and its
-            // chips are not these. Dropping them is better than drawing
-            // narrowings for a result set nobody is looking at.
-            guard asked == ran else { return }
-            refinements = measured
-        }
     }
 
     /// Leave search, restoring the scope that was open.
     private func leave() {
         session.clearSearch()
         ran += 1
-        refinements = []
         reload()
         dismiss()
     }
