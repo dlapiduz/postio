@@ -27,7 +27,7 @@ public struct ComposeView: View {
     @State private var linkAddress = ""
 
     private enum Field: Hashable {
-        case to, cc, subject, body
+        case to, cc, bcc, subject, body
     }
 
     public init(
@@ -163,7 +163,24 @@ public struct ComposeView: View {
 
     private var headers: some View {
         VStack(spacing: 0) {
-            field("To", text: Bindable(model).to, focus: .to)
+            HStack(spacing: PostioTokens.space2) {
+                field("To", text: Bindable(model).to, focus: .to)
+                // `+ Cc` is the same affordance GTK draws, and it disappears
+                // once the rows are up because it has nothing left to ask
+                // for. The rows show themselves when they hold somebody.
+                if !model.showsCopyFields {
+                    Button("+ Cc") { model.toggleCopyFields() }
+                        .buttonStyle(.link)
+                        .padding(.trailing, PostioTokens.space4)
+                        .accessibilityLabel("Show the Cc and Bcc fields")
+                }
+            }
+            if model.showsCopyFields {
+                Divider()
+                field("Cc", text: Bindable(model).cc, focus: .cc)
+                Divider()
+                field("Bcc", text: Bindable(model).bcc, focus: .bcc)
+            }
             Divider()
             field("From", value: model.draft.from)
             Divider()
@@ -301,6 +318,15 @@ public struct ComposeView: View {
 
     private var footer: some View {
         HStack {
+            // Before the path, because it is the part that changes what
+            // somebody does next: FR-023's reassurance about scale, said only
+            // when there is more than one person on the message.
+            if let recipients = model.recipientSummary {
+                Text(recipients)
+                    .font(.system(.callout, design: .monospaced))
+                    .accessibilityLabel("This message goes to \(recipients)")
+                Text("·").foregroundStyle(.secondary)
+            }
             Text(model.footer)
                 .font(.system(.callout, design: .monospaced))
                 .foregroundStyle(.secondary)

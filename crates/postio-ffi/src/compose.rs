@@ -174,6 +174,29 @@ pub(crate) fn to_ffi(draft: &Draft, from: String, path: String) -> DraftFfi {
     }
 }
 
+/// How many recipients this draft has, and on which field.
+///
+/// `None` until there is more than one person on the message: a banner that
+/// is always there is a banner nobody reads.
+///
+/// The counting is [`postio_ui::compose::recipient_summary`]'s, so both
+/// composers say the same thing — FR-023 exists because *a reply-to-all to a
+/// large list looks exactly like a reply until it is sent*, and a frontend
+/// that phrased its own reassurance would be reassuring about a different
+/// thing.
+///
+/// A free function rather than a session method: it is arithmetic over what
+/// the composer already holds, and asking a session about the window's own
+/// unsaved fields would be asking the wrong thing.
+#[uniffi::export]
+pub fn recipient_summary(draft: DraftFfi) -> Option<String> {
+    postio_ui::compose::recipient_summary(
+        parse(&draft.to).len(),
+        parse(&draft.cc).len(),
+        parse(&draft.bcc).len(),
+    )
+}
+
 /// The draft as the store takes it.
 ///
 /// `base` is what the boundary last knew about this draft — its kind, its

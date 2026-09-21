@@ -297,16 +297,11 @@ const NAMED_ADDRESSES: usize = 3;
 /// is a banner nobody reads, so this says nothing until there is more than
 /// one person on the message.
 pub fn recipient_summary(draft: &Draft) -> Option<String> {
-    let counted: Vec<String> = fields(draft)
-        .into_iter()
-        .filter(|(_, addresses)| !addresses.is_empty())
-        .map(|(name, addresses)| format!("{} {name}", addresses.len()))
-        .collect();
-
-    if draft.all_recipients().count() <= 1 {
-        return None;
-    }
-    Some(counted.join(", "))
+    // The wording and the threshold are `postio_ui::compose`'s. They were
+    // here, which is why the macOS composer had no such banner -- and it had
+    // no Bcc field either, so a reply-all there showed one address and
+    // silently addressed everybody else.
+    postio_ui::compose::recipient_summary(draft.to.len(), draft.cc.len(), draft.bcc.len())
 }
 
 /// The three recipient fields, in the order they appear on screen.

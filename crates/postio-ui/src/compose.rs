@@ -296,3 +296,63 @@ mod mark_tests {
         assert!(script.contains("a\\'b"), "unescaped quote: {script}");
     }
 }
+
+/// How many recipients this message has, and on which field.
+///
+/// FR-023, and the surprise it exists to prevent: **a reply-to-all to a large
+/// list looks exactly like a reply until it is sent.** The count says *which
+/// field* because "42 recipients" reads very differently from "1 To, 41 Cc".
+///
+/// `None` for the ordinary case, deliberately. A banner that is always there
+/// is a banner nobody reads, so this says nothing until there is more than
+/// one person on the message.
+///
+/// Shared because both composers need it and the macOS one had neither this
+/// nor the Bcc field it counts — so a reply-all there showed one address and
+/// silently addressed everybody else. Counts rather than the addresses
+/// themselves: this is a reassurance about scale, and the fields beside it
+/// are where the names are.
+pub fn recipient_summary(to: usize, cc: usize, bcc: usize) -> Option<String> {
+    if to + cc + bcc <= 1 {
+        return None;
+    }
+    let counted: Vec<String> = [("To", to), ("Cc", cc), ("Bcc", bcc)]
+        .into_iter()
+        .filter(|(_, count)| *count > 0)
+        .map(|(name, count)| format!("{count} {name}"))
+        .collect();
+    Some(counted.join(", "))
+}
+
+#[cfg(test)]
+mod recipient_tests {
+    use super::recipient_summary;
+
+    #[test]
+    fn one_person_gets_no_banner_at_all() {
+        // A banner that is always there is a banner nobody reads.
+        assert_eq!(recipient_summary(1, 0, 0), None);
+        assert_eq!(recipient_summary(0, 0, 0), None);
+    }
+
+    #[test]
+    fn a_reply_all_to_a_list_says_which_field_the_crowd_is_on() {
+        // "42 recipients" reads very differently from "1 To, 41 Cc", and the
+        // second is the one that tells somebody what they are about to do.
+        assert_eq!(recipient_summary(1, 41, 0).as_deref(), Some("1 To, 41 Cc"));
+    }
+
+    #[test]
+    fn an_empty_field_is_not_counted_at_zero() {
+        assert_eq!(recipient_summary(2, 0, 0).as_deref(), Some("2 To"));
+        assert_eq!(recipient_summary(1, 0, 3).as_deref(), Some("1 To, 3 Bcc"));
+    }
+
+    #[test]
+    fn the_fields_are_named_in_the_order_they_are_drawn() {
+        assert_eq!(
+            recipient_summary(1, 2, 3).as_deref(),
+            Some("1 To, 2 Cc, 3 Bcc")
+        );
+    }
+}

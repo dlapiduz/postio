@@ -23,6 +23,14 @@ public final class ComposeModel: Identifiable {
     /// what it is saving.
     public var to: String
     public var cc: String
+    /// The blind copies.
+    ///
+    /// **It was not here at all**, and `edited` copied the draft wholesale
+    /// and overwrote only the fields that were — so a `bcc` that arrived on
+    /// the draft (a `mailto:?bcc=…`, or anything that built it before the
+    /// window opened) rode through to the send with nothing on screen showing
+    /// it and no way to take it off.
+    public var bcc: String
     public var subject: String
     public var body: String
 
@@ -55,6 +63,13 @@ public final class ComposeModel: Identifiable {
         self.draft = draft
         to = draft.to
         cc = draft.cc
+        bcc = draft.bcc
+        // Shown from the start when they hold somebody. A recipient that is
+        // not on screen is a recipient the writer cannot remove, and
+        // `reply_all` puts every other original recipient in `cc` — so `E`
+        // opened a window showing one address and silently addressing
+        // everyone else.
+        showsCopyFields = !draft.cc.isEmpty || !draft.bcc.isEmpty
         subject = draft.subject
         body = draft.body
         bodyHtml = draft.bodyHtml
@@ -85,6 +100,18 @@ public final class ComposeModel: Identifiable {
     public var footer: String {
         "draft in \(PostioPath.abbreviated(draft.path)) · \(outgoingShape(rich: sendsRich))"
     }
+
+    /// How many recipients this message has, and on which field.
+    ///
+    /// `nil` until there is more than one person on it: a banner that is
+    /// always there is a banner nobody reads.
+    ///
+    /// The counting is the boundary's, so both composers say the same thing.
+    /// FR-023 exists because **a reply-to-all to a large list looks exactly
+    /// like a reply until it is sent** — and on this platform it looked even
+    /// more like one, because until the Cc and Bcc fields arrived there was
+    /// nothing on screen naming the crowd at all.
+    public var recipientSummary: String? { PostioFFI.recipientSummary(draft: edited) }
 
     /// Whether this draft will actually leave as rich mail.
     ///
@@ -198,11 +225,31 @@ public final class ComposeModel: Identifiable {
         var edited = draft
         edited.to = to
         edited.cc = cc
+        edited.bcc = bcc
         edited.subject = subject
         edited.body = body
         edited.bodyHtml = bodyHtml
         edited.rich = rich
         return edited
+    }
+
+    /// Whether the Cc and Bcc rows are on screen.
+    ///
+    /// Hidden by default, because most mail has neither and two empty rows
+    /// above every message is two rows of furniture. Shown the moment either
+    /// holds an address, and — see [`toggleCopyFields`](Self.toggleCopyFields)
+    /// — they will not hide again while one does.
+    public private(set) var showsCopyFields: Bool = false
+
+    /// Ask for the copy fields, or put them away.
+    ///
+    /// **They refuse to hide while they hold addresses.** That is GTK's rule
+    /// and it is the whole safeguard: hiding a field that holds somebody is
+    /// how a recipient becomes invisible, which is the state this pair of
+    /// fields exists to end.
+    public func toggleCopyFields() {
+        if showsCopyFields && (!cc.isEmpty || !bcc.isEmpty) { return }
+        showsCopyFields.toggle()
     }
 
     /// Whether anything has been typed that the store does not have.

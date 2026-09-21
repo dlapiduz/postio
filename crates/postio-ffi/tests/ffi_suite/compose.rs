@@ -975,3 +975,39 @@ async fn a_draft_saved_on_this_machine_is_queued_for_the_server_too() {
     );
     session.shutdown();
 }
+
+#[test]
+fn a_reply_all_to_a_list_does_not_look_like_a_reply() {
+    // FR-023, and the whole reason the Cc and Bcc fields had to arrive on
+    // macOS at all: `reply_all` puts every other original recipient in `cc`,
+    // so a window showing one To address is a window about to write to
+    // everybody. The counts say *which field*, because "42 recipients" reads
+    // very differently from "1 To, 41 Cc".
+    let draft = postio_ffi::DraftFfi {
+        id: 0,
+        account: 1,
+        kind: postio_ffi::DraftKindFfi::ReplyAll,
+        from: "Mara Ostwald <mara@example.com>".to_owned(),
+        to: "Ada Norwood <ada@example.com>".to_owned(),
+        cc: "Bo Ferris <bo@example.com>, Quinn Vale <quinn@example.net>".to_owned(),
+        bcc: String::new(),
+        subject: "Re: Radon reduction".to_owned(),
+        body: String::new(),
+        body_html: None,
+        rich: false,
+        in_reply_to: None,
+        path: "/tmp/mail".to_owned(),
+        attachments: Vec::new(),
+    };
+    assert_eq!(
+        postio_ffi::recipient_summary(draft.clone()).as_deref(),
+        Some("1 To, 2 Cc")
+    );
+
+    // One person is the ordinary case and says nothing.
+    let alone = postio_ffi::DraftFfi {
+        cc: String::new(),
+        ..draft
+    };
+    assert_eq!(postio_ffi::recipient_summary(alone), None);
+}

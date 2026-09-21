@@ -56,7 +56,10 @@ mod settings;
 mod sidebar;
 
 pub use account::{AccountFfi, ConnectionReportFfi};
-pub use compose::{AttachmentFfi, ComposeError, DraftFfi, DraftKindFfi, PastedFfi, outgoing_shape};
+pub use compose::{
+    AttachmentFfi, ComposeError, DraftFfi, DraftKindFfi, PastedFfi, outgoing_shape,
+    recipient_summary,
+};
 pub use conversation::{ConversationFfi, RunFfi, conversation_runs, message_when};
 pub use dwell::{DwellArmFfi, dwell_on_cursor};
 pub use event::{ConnectionStateFfi, FailureReasonFfi, NoticeKindFfi, UiEvent};

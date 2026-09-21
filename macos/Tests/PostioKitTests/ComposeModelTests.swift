@@ -251,4 +251,94 @@ import Testing
         #expect(!model.isHandedOff)
         #expect(model.status == nil)
     }
+    // -- the recipients you cannot see (#1578) ----------------------------
+
+    /// A reply-all, as `postio_model::reply::reply_all` builds one: every
+    /// other original recipient goes in `cc`.
+    private func replyAll() -> DraftFfi {
+        var draft = self.draft(subject: "Re: Radon reduction")
+        draft.to = "Ada Norwood <ada@example.com>"
+        draft.cc = "Bo Ferris <bo@example.com>, Quinn Vale <quinn@example.net>"
+        draft.bcc = "Archive <archive@example.invalid>"
+        return draft
+    }
+
+    @Test func aBccTheWriterNeverSawIsStillSent() {
+        // `edited` copied the draft wholesale and overwrote to/cc/subject/
+        // body/rich — so a `bcc`, which nothing on screen showed and nothing
+        // could remove, rode straight through to the send. A `mailto:` link
+        // carries one (`Mailto` parses it), and so does anything that built
+        // the draft before the window opened.
+        let model = ComposeModel(id: 1, draft: replyAll())
+        #expect(model.bcc == "Archive <archive@example.invalid>")
+
+        model.bcc = ""
+        #expect(model.edited.bcc.isEmpty, "the writer removed it and it went anyway")
+    }
+
+    @Test func everyRecipientFieldSurvivesARoundTrip() {
+        let model = ComposeModel(id: 1, draft: replyAll())
+        #expect(model.edited.to == "Ada Norwood <ada@example.com>")
+        #expect(model.edited.cc == "Bo Ferris <bo@example.com>, Quinn Vale <quinn@example.net>")
+        #expect(model.edited.bcc == "Archive <archive@example.invalid>")
+    }
+
+    @Test func editingBccMakesTheDraftDirty() {
+        // Autosave is driven by `isDirty`. A field the dirt check cannot see
+        // is a field whose edits are lost on the next save.
+        let model = ComposeModel(id: 1, draft: replyAll())
+        #expect(!model.isDirty)
+        model.bcc = "someone@example.test"
+        #expect(model.isDirty)
+    }
+
+    @Test func theCopyFieldsShowThemselvesWhenTheyHoldAddresses() {
+        // GTK's rule, and the reason for it: the rows refuse to hide while
+        // they hold addresses, so a reply-all cannot look like a reply.
+        let plain = ComposeModel(id: 1, draft: draft())
+        #expect(!plain.showsCopyFields, "an empty Cc and Bcc stay out of the way")
+
+        let all = ComposeModel(id: 1, draft: replyAll())
+        #expect(all.showsCopyFields, "addresses nobody can see are addresses nobody can remove")
+    }
+
+    @Test func thePersonWritingCanAskForTheCopyFields() {
+        let model = ComposeModel(id: 1, draft: draft())
+        model.toggleCopyFields()
+        #expect(model.showsCopyFields)
+        model.toggleCopyFields()
+        #expect(!model.showsCopyFields)
+    }
+
+    @Test func theCopyFieldsWillNotHideOverAnAddress() {
+        // Hiding a field that holds somebody is how a recipient becomes
+        // invisible again — the bug this whole group is about.
+        let model = ComposeModel(id: 1, draft: replyAll())
+        model.toggleCopyFields()
+        #expect(model.showsCopyFields, "they hold addresses, so they stay")
+    }
+
+    @Test func aReplyAllSaysHowManyPeopleAreOnIt() {
+        // The safeguard the fields exist for. One To address on screen and
+        // two more in Cc is exactly the shape that reads as a reply.
+        let model = ComposeModel(id: 1, draft: replyAll())
+        #expect(model.recipientSummary == "1 To, 2 Cc, 1 Bcc")
+    }
+
+    @Test func anOrdinaryMessageSaysNothingAboutItsRecipients() {
+        let model = ComposeModel(id: 1, draft: draft())
+        model.to = "Ada Norwood <ada@example.com>"
+        #expect(model.recipientSummary == nil)
+    }
+
+    @Test func theSummaryFollowsWhatIsTypedRatherThanWhatWasSaved() {
+        // It reads `edited`, not `draft`: somebody who removes the Cc has
+        // removed it, and a banner still counting it would be telling them
+        // something untrue about what they are about to send.
+        let model = ComposeModel(id: 1, draft: replyAll())
+        model.cc = ""
+        model.bcc = ""
+        #expect(model.recipientSummary == nil)
+    }
+
 }
