@@ -3107,6 +3107,7 @@ note that is not listed, and a listing that names no file.
 - 2026-09-06 — [Moving code out of a crate you cannot compile (2026-09-06, #1221)](notes/2026-09-06-moving-code-out-of-a-crate-you-cannot-compile.md)
 - 2026-09-06 — [A test keyring that was quietly the login keychain (2026-09-06, #1279)](notes/2026-09-06-a-test-keyring-that-was-quietly-the-login-keychain.md)
 - 2026-09-07 — [A POSTIO_LOG filter that hid the error it was set to find (2026-09-07, #1176)](notes/2026-09-07-a-postio-log-filter-that-hid-the-error-it-was-set-to-find.md)
+- 2026-09-21 — [What only the Mac can tell you (2026-09-21, #15, #668)](notes/2026-09-21-what-only-the-mac-can-tell-you.md) — the macOS parity pass found 49 commands answered by nobody and ~20 defects beside a green suite, and almost all of them were in `Engine.swift`/`Shell.swift`, which the test target cannot reach. Also: the key monitor runs ahead of the responder chain, so an `.onKeyPress` on a claimed key is dead code; host `evaluateJavaScript` runs with `allowsContentJavaScript` off; `ScenePhase.background` is `⌘W` rather than quitting.
 
 ## Archived
 
