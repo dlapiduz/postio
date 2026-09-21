@@ -321,7 +321,14 @@ public final class PostioSession {
     /// than listed from a table in Swift: a chip that keeps none of them is
     /// a dead end and one that keeps all of them appears to do nothing when
     /// clicked, and neither is offered.
-    public func refinements() -> [RefinementFfi] { inner.refinements() }
+    ///
+    /// **`nonisolated`.** This is a second pass over the index — one count
+    /// per scope plus the narrowings — and search is budgeted under 100 ms
+    /// (`PRODUCT.md` §1). Paying for the chips on the main actor during
+    /// submit would spend that budget twice on one keystroke, so they are
+    /// measured off it and appear a moment after the results they are
+    /// about.
+    public nonisolated func refinements() -> [RefinementFfi] { inner.refinements() }
 
     /// Read the results the other way round — best first, or newest first.
     ///

@@ -228,10 +228,22 @@ struct SearchField: View {
         }
         session.search(query)
         ran += 1
-        // After the run, not before: they are measured against the results
-        // this query found.
-        refinements = session.refinements()
         reload()
+        // After the run and off the main actor. They are measured against
+        // the results this query found — a second pass over the index — and
+        // search has 100 ms to answer in; paying for the chips inline would
+        // spend that budget twice on one keystroke. They appear a moment
+        // after the rows do, which is the right order anyway.
+        let session = session
+        let asked = ran
+        Task {
+            let measured = await Task.detached { session.refinements() }.value
+            // Another query may have run while this was measuring, and its
+            // chips are not these. Dropping them is better than drawing
+            // narrowings for a result set nobody is looking at.
+            guard asked == ran else { return }
+            refinements = measured
+        }
     }
 
     /// Leave search, restoring the scope that was open.
