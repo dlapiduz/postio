@@ -109,7 +109,65 @@ pub const DEFAULT_BATCH_SIZE: usize = 200;
 /// This does not change how much a pass fetches, how it batches its `FETCH`es,
 /// or where an interrupted pass resumes — `uids_in` counts what committed, so
 /// a finer unit resumes at a finer grain.
+///
+/// **Since #1587 this is the ceiling, not the size.** Twenty-five was chosen
+/// when a unit cost 8–9 ms; on the Turso store a row measured ~118 ms to
+/// write, which put a twenty-five-row unit at ~3 s — the guarantee's
+/// mechanism intact and its number inflated ~350x, so every mark-read,
+/// archive and draft autosave waited seconds behind the backfill. The unit
+/// is sized from what the last one actually cost now ([`unit_rows`]), and
+/// this constant is the most it may grow back to when rows are cheap again.
 pub(crate) const WRITE_UNIT: usize = 25;
+
+/// What one write unit is allowed to cost, wall-clock.
+///
+/// The number the old constant was implicitly built on: twenty-five rows at
+/// 8–9 ms, "inside CLAUDE.md's 16 ms interaction budget with room for a
+/// slower disk". Making it explicit is what lets the unit keep meaning that
+/// when the per-row cost moves under it.
+const UNIT_BUDGET: std::time::Duration = std::time::Duration::from_millis(9);
+
+/// How many rows the next write unit should cover.
+///
+/// Learned from the last unit's measured cost, machine-wide: the cost is a
+/// property of this store on this disk, not of any one pass, and fifteen
+/// folders each rediscovering it with one three-second unit apiece would be
+/// fifteen stalls. Starts at [`WRITE_UNIT`] and can only shrink below it —
+/// growing past it would loosen the #425 guarantee this exists to keep.
+pub(crate) fn unit_rows() -> usize {
+    LEARNED_UNIT.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+/// Teach the sizing what the unit just written actually cost.
+///
+/// `held` is the time the write lock was held — after the gate permit,
+/// through the commit. Never the wait for the permit: queueing time says how
+/// busy the gate is, not how expensive a row is, and feeding it back would
+/// make a busy moment shrink the unit for no reason.
+pub(crate) fn unit_wrote(rows: usize, held: std::time::Duration) {
+    LEARNED_UNIT.store(
+        next_unit_rows(rows, held),
+        std::sync::atomic::Ordering::Relaxed,
+    );
+}
+
+static LEARNED_UNIT: std::sync::atomic::AtomicUsize =
+    std::sync::atomic::AtomicUsize::new(WRITE_UNIT);
+
+/// The sizing rule, pure so it can be pinned.
+///
+/// Rows the budget affords at the measured per-row cost, floored at one —
+/// a unit is at least a row, so on a store where one row costs more than
+/// the whole budget the bound honestly becomes "one row's cost" — and
+/// ceilinged at [`WRITE_UNIT`], because past the measured sweet spot more
+/// rows buy nothing and cost latency.
+fn next_unit_rows(rows: usize, held: std::time::Duration) -> usize {
+    let per_row = held.as_secs_f64() / rows.max(1) as f64;
+    if per_row <= f64::EPSILON {
+        return WRITE_UNIT;
+    }
+    ((UNIT_BUDGET.as_secs_f64() / per_row) as usize).clamp(1, WRITE_UNIT)
+}
 
 /// What one committed batch reports, so the caller can drive a progress bar.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -538,7 +596,14 @@ pub async fn commit_batch(
 ) -> Result<Report> {
     let mut report = Report::default();
 
-    for slice in messages.chunks_mut(WRITE_UNIT) {
+    let mut rest: &mut [Message] = messages;
+    while !rest.is_empty() {
+        // Sized from what the last unit cost, not from a constant: #425's
+        // guarantee is "a person waits one unit at most", and a unit is only
+        // small if it is small *in time* on this store, today (#1587).
+        let take = unit_rows().min(rest.len());
+        let (slice, tail) = rest.split_at_mut(take);
+        rest = tail;
         // Ahead of `BEGIN IMMEDIATE`, never after: the permit is what stands
         // this aside for a keystroke's write, and standing aside after taking
         // SQLite's lock would be standing aside too late. Re-taken per unit
@@ -548,6 +613,9 @@ pub async fn commit_batch(
             .write_gate()
             .acquire(WritePriority::Background)
             .await;
+        // From here, not from before the permit: what the sizing needs is
+        // the time the lock was held, and queueing is not holding.
+        let held_from = std::time::Instant::now();
 
         // `BEGIN IMMEDIATE`, which is what `transaction` opens at the
         // outermost level, and for the reason #79 records: the first
@@ -594,6 +662,10 @@ pub async fn commit_batch(
         report.inserted += upsert.inserted;
         report.updated += upsert.updated;
         report.threaded += written.len();
+
+        // Teach the sizing what this unit cost while the numbers are in
+        // hand — the next unit, whichever pass writes it, starts right.
+        unit_wrote(slice.len(), held_from.elapsed());
         // The ids `upsert_batch` assigned belong to the caller's messages, not
         // to this unit's copy of them.
         copy_back(slice, &written);
@@ -705,6 +777,59 @@ async fn read_ahead<'a>(
     match primed {
         Poll::Ready(answer) => ReadAhead::Answered(answer),
         Poll::Pending => ReadAhead::OnTheWire(fetching),
+    }
+}
+
+#[cfg(test)]
+mod unit_sizing_tests {
+    use super::*;
+    use std::time::Duration;
+
+    #[test]
+    fn a_cheap_store_gets_the_full_unit() {
+        // The measured sweet spot: twenty-five rows in 8 ms is the world the
+        // constant was sized for, and the sizing must hand it straight back.
+        assert_eq!(next_unit_rows(25, Duration::from_millis(8)), WRITE_UNIT);
+    }
+
+    #[test]
+    fn a_slow_store_shrinks_the_unit_to_fit_the_budget() {
+        // #1587's world: ~118 ms per row. Twenty-five rows held the lock for
+        // ~3 s, which made #425's "one unit at most" guarantee mean three
+        // seconds. The budget affords no whole row, so the floor holds.
+        assert_eq!(next_unit_rows(25, Duration::from_millis(2950)), 1);
+    }
+
+    #[test]
+    fn the_floor_is_one_row_because_a_unit_is_at_least_a_row() {
+        // On a store where one row costs more than the whole budget, the
+        // bound honestly becomes "one row's cost". There is nothing finer to
+        // subdivide into.
+        assert_eq!(next_unit_rows(1, Duration::from_millis(118)), 1);
+    }
+
+    #[test]
+    fn recovery_is_immediate_once_rows_are_cheap_again() {
+        // The shrink must not be a ratchet: the moment a unit measures cheap
+        // -- the backfill ended, or #1587's root cause is fixed -- the next
+        // unit is the full twenty-five again, not a slow climb.
+        assert_eq!(next_unit_rows(1, Duration::from_micros(300)), WRITE_UNIT);
+    }
+
+    #[test]
+    fn the_unit_never_grows_past_the_measured_sweet_spot() {
+        // Past twenty-five, more rows buy nothing and cost latency -- the
+        // constant's own doc records where the curves cross. An absurdly
+        // fast measurement must not loosen the #425 guarantee.
+        assert_eq!(next_unit_rows(25, Duration::from_nanos(1)), WRITE_UNIT);
+        assert_eq!(next_unit_rows(25, Duration::ZERO), WRITE_UNIT);
+    }
+
+    #[test]
+    fn a_middling_store_lands_in_between() {
+        // 45 ms for twenty-five rows is 1.8 ms a row; a 9 ms budget affords
+        // five of those.
+        assert_eq!(next_unit_rows(25, Duration::from_millis(45)), 5);
     }
 }
 
