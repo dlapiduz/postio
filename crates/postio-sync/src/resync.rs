@@ -549,7 +549,13 @@ async fn incremental(
         // start, for every folder, so it meets the UI thread's local-first
         // writes more often than the first-sync one does — which is the
         // argument for taking the permit here, not against it.
-        for slice in batch.chunks(initial::WRITE_UNIT) {
+        let mut rest: &[postio_model::Message] = &batch;
+        while !rest.is_empty() {
+            // Sized from what the last unit cost — see `initial::unit_rows`
+            // and the #1587 story on `WRITE_UNIT`, which is the ceiling now.
+            let take = initial::unit_rows().min(rest.len());
+            let (slice, tail) = rest.split_at(take);
+            rest = tail;
             // Ahead of `BEGIN IMMEDIATE`, never after: the permit is what
             // stands this aside for a keystroke's write, and standing aside
             // after taking SQLite's lock would be standing aside too late.
@@ -557,6 +563,9 @@ async fn incremental(
                 .write_gate()
                 .acquire(WritePriority::Background)
                 .await;
+            // From here, not before the permit: the sizing wants lock-held
+            // time, and queueing is not holding.
+            let held_from = std::time::Instant::now();
 
             // IMMEDIATE for the reason `initial.rs` gives at its own
             // transaction (#79): the first statement here is a SELECT, and a
@@ -607,6 +616,7 @@ async fn incremental(
             })
             .await?;
             arrived.extend(newly);
+            initial::unit_wrote(slice.len(), held_from.elapsed());
             drop(permit);
             // One real yield per unit, for the reason `initial.rs` gives at
             // its own batch loop: an uncontended gate and a commit whose work
