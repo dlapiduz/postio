@@ -530,10 +530,12 @@ pub async fn open_store_at_reporting(
         // store belongs to another installation and is *intact*, where
         // SQLite's own wording for the same condition is "file is not a
         // database" — which would tell somebody their mail is corrupt when
-        // the only thing wrong is which key we offered.
+        // the only thing wrong is which key we offered. It carries its own
+        // opening, so nothing goes in front of it: a second one left the
+        // screen reading "…its local store. the local store will not open".
         Err(error @ postio_storage::Error::WrongStoreKey) => {
             tracing::error!(path = %path.display(), "the store will not decrypt with this key");
-            return Err(format!("Postio could not unlock its local store. {error}"));
+            return Err(error.to_string());
         }
         Err(error) => {
             tracing::error!(path = %path.display(), %error, "cannot open the store: {error}");

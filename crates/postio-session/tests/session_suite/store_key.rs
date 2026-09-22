@@ -319,3 +319,39 @@ async fn a_store_this_build_wrote_opens_again_with_its_mail() {
         .expect("the message survived the reopen");
     assert_eq!(subject, "Zarquon");
 }
+
+/// A store another key wrote is refused in one sentence, not two stacked.
+///
+/// `WrongStoreKey` writes its own opening ("the local store will not open:
+/// …"), and prefixing another in front of it put a lowercase "the" straight
+/// after a full stop on the screen that shows it (#404).
+#[tokio::test]
+async fn a_store_under_another_key_is_refused_in_one_sentence() {
+    let directory = tempfile::tempdir().expect("a directory");
+    let path = directory.path().join("postio.db");
+    let written = postio_storage::key::StoreKey::from_bytes([0x2a; 32]);
+    drop(
+        postio_session::open_store_at(&path, &written)
+            .await
+            .expect("a fresh store opens"),
+    );
+
+    let other = postio_storage::key::StoreKey::from_bytes([0x17; 32]);
+    let said = postio_session::open_store_at(&path, &other)
+        .await
+        .expect_err("a store must not open under another key");
+
+    assert!(
+        said.contains("another installation"),
+        "the refusal names the cause: {said:?}"
+    );
+    let restarts = said
+        .split(". ")
+        .skip(1)
+        .filter(|next| next.chars().next().is_some_and(char::is_lowercase))
+        .count();
+    assert_eq!(
+        restarts, 0,
+        "two openings were stacked, leaving a sentence that starts lowercase: {said:?}"
+    );
+}

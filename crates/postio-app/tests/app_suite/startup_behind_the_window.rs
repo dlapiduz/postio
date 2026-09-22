@@ -43,8 +43,8 @@ use postio_gtk::{app, fonts, style};
 use crate::settle_until;
 
 /// The sentence the opener produced, in `open_store_at`'s own words.
-const REFUSED: &str = "Postio could not unlock its local store. it belongs to \
-                       another installation";
+const REFUSED: &str = "the local store will not open: it belongs to another \
+                       installation";
 
 pub fn a_store_refused_after_the_window_is_up_says_so_and_can_be_retried() {
     crate::gtk_case(async {

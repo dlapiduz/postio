@@ -186,11 +186,7 @@ impl Unavailable {
         // The one thing that is always true and is not in `SecretError`'s
         // sentence: the mail is not gone. A store that will not open is
         // frightening in a way it does not need to be.
-        let reassurance = gtk::Label::new(Some(
-            "Your mail is still here. Postio will not open the store \
-             unencrypted, so nothing is lost by trying again once the keyring \
-             is unlocked.",
-        ));
+        let reassurance = gtk::Label::new(Some(REASSURANCE));
         reassurance.add_css_class("postio-unavailable-note");
         reassurance.set_xalign(0.0);
         reassurance.set_wrap(true);
@@ -211,7 +207,7 @@ impl Unavailable {
         retry.set_key(Some("Ret"));
         let button = retry.widget();
         button.set_halign(gtk::Align::Start);
-        button.set_tooltip_text(Some("Read the keyring again"));
+        button.set_tooltip_text(Some("Open the store again"));
         let screen = self.clone();
         retry.connect_clicked(move || screen.retry());
         let _ = imp.retry.set(retry);
@@ -230,6 +226,16 @@ impl Unavailable {
     }
 }
 
+/// The note under every refusal: the one thing that is always true and is
+/// not in the error's own sentence.
+///
+/// It sits under every refusal, so it names no cause: a locked keyring is one,
+/// a store under another installation's key is another, and unlocking the
+/// keyring does nothing for the second.
+const REASSURANCE: &str = "Your mail is still here. Postio will not open the store \
+                           unencrypted and never rewrites one it cannot read, so trying \
+                           again is always safe.";
+
 /// The same words, starting like a sentence.
 ///
 /// `SecretError`'s messages are written to be embedded — "the login keyring is
@@ -240,15 +246,25 @@ impl Unavailable {
 ///
 /// Only the first character, and only when it is lowercase: the rest is the
 /// error's own, including any address or path it names, and case-folding one
-/// of those would be showing the user something they did not type.
+/// of those would be showing the user something they did not type. For the
+/// same reason of being embeddable, most end without a full stop, so one is
+/// added when the reason ends in none.
 fn sentence(reason: &str) -> String {
     let mut characters = reason.chars();
-    match characters.next() {
+    let mut said = match characters.next() {
         Some(first) if first.is_lowercase() => {
             first.to_uppercase().collect::<String>() + characters.as_str()
         }
         _ => reason.to_owned(),
+    };
+    if said
+        .chars()
+        .last()
+        .is_some_and(|last| !matches!(last, '.' | '?' | '!' | '…'))
+    {
+        said.push('.');
     }
+    said
 }
 
 #[cfg(test)]
@@ -259,25 +275,52 @@ mod tests {
     fn a_reason_is_shown_as_a_sentence() {
         assert_eq!(
             sentence("the login keyring is locked, so Postio cannot read it"),
-            "The login keyring is locked, so Postio cannot read it"
+            "The login keyring is locked, so Postio cannot read it."
         );
     }
 
     #[test]
     fn a_reason_that_already_reads_as_one_is_left_alone() {
-        assert_eq!(sentence("Postio could not open"), "Postio could not open");
+        assert_eq!(sentence("Postio could not open."), "Postio could not open.");
         assert_eq!(sentence(""), "");
         assert_eq!(
-            sentence("~/.local/share is unreadable"),
-            "~/.local/share is unreadable"
+            sentence("~/.local/share is unreadable."),
+            "~/.local/share is unreadable."
         );
+    }
+
+    #[test]
+    fn a_reason_ends_like_a_sentence() {
+        // `WrongStoreKey`'s message has no full stop, being written to embed.
+        assert_eq!(
+            sentence("the store is intact and loses nothing the server still has"),
+            "The store is intact and loses nothing the server still has."
+        );
+        assert_eq!(
+            sentence("Unlock it and try again."),
+            "Unlock it and try again."
+        );
+        assert_eq!(sentence("Is it locked?"), "Is it locked?");
+    }
+
+    #[test]
+    fn the_reassurance_does_not_guess_the_cause() {
+        // The same note sits under every refusal, and a store under another
+        // installation's key is not a locked keyring: unlocking changes
+        // nothing, and saying so sends somebody looking for the wrong thing.
+        assert!(
+            !super::REASSURANCE.to_lowercase().contains("keyring"),
+            "the note names one cause for every refusal: {:?}",
+            super::REASSURANCE
+        );
+        assert!(super::REASSURANCE.contains("still here"));
     }
 
     #[test]
     fn only_the_first_character_moves() {
         assert_eq!(
             sentence("the keyring will not give up ada@Example.com's password"),
-            "The keyring will not give up ada@Example.com's password"
+            "The keyring will not give up ada@Example.com's password."
         );
     }
 }

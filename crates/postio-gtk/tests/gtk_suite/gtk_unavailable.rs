@@ -32,12 +32,12 @@ pub fn the_screen_shows_what_it_was_told_and_asks_to_try_again_once() {
     screen.set_reason(said);
     // The error's own words, opened as a sentence: `SecretError` writes to be
     // embedded after "failed because", and on a screen that lowercase first
-    // word reads as a fragment. Everything after it -- including the address
-    // -- is untouched.
+    // word reads as a fragment, as does a missing full stop. Everything
+    // between the two -- including the address -- is untouched.
     assert_eq!(
         screen.reason(),
         "The login keyring is locked, so Postio cannot read the password for \
-         ada@example.com. Unlock it and try again"
+         ada@example.com. Unlock it and try again."
     );
 
     let asked = Rc::new(Cell::new(0));
