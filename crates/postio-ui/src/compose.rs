@@ -214,6 +214,56 @@ pub fn link_script(href: &str) -> Option<String> {
     ))
 }
 
+/// The script that puts an inline image at the caret (#1571).
+///
+/// `content_id` is the part's `Content-ID`, as
+/// `postio_session::attaching::inline_image` minted it; the source written is
+/// the editing shell's `postio-cid:` form, which the composer's scheme handler
+/// resolves while the draft is open and the send path rewrites to the wire's
+/// `cid:`. `None` for an id [`postio_body::ContentId`] refuses -- anything that
+/// could be read as a URL -- so nothing but a part of this message can ever
+/// become an image source here.
+///
+/// The same shape as [`link_script`], and for its reason: both composers run
+/// this, so an image inserted on a Mac and one inserted on Linux are the same
+/// edit. The caret fallback is the one `postio-gtk`'s editor learned: a
+/// picture can be the first gesture into a fresh body, and `insertHTML`
+/// silently does nothing without a selection.
+pub fn image_script(content_id: &str, alt: &str) -> Option<String> {
+    let content_id = postio_body::ContentId::parse(content_id)?;
+    let mut img = String::from("<img src=\"");
+    img.push_str(&postio_body::editor_image_src(&content_id));
+    img.push_str("\" alt=\"");
+    for c in alt.chars() {
+        match c {
+            '&' => img.push_str("&amp;"),
+            '<' => img.push_str("&lt;"),
+            '>' => img.push_str("&gt;"),
+            '"' => img.push_str("&quot;"),
+            other => img.push(other),
+        }
+    }
+    img.push_str("\">");
+    // Into a single-quoted script literal: its own escapes first, then the
+    // quote, and line breaks, which a literal cannot hold.
+    let escaped = img
+        .replace('\\', "\\\\")
+        .replace('\'', "\\'")
+        .replace('\n', "\\n")
+        .replace('\r', "\\r");
+    Some(format!(
+        "(() => {{ const sel = window.getSelection(); \
+           if (sel.rangeCount === 0) {{ \
+             const range = document.createRange(); \
+             range.selectNodeContents(document.body); \
+             range.collapse(false); \
+             sel.addRange(range); \
+           }} \
+           document.execCommand('insertHTML', false, '{escaped}'); \
+           document.dispatchEvent(new Event('input')); }})()"
+    ))
+}
+
 #[cfg(test)]
 mod mark_tests {
     use super::*;
@@ -294,6 +344,53 @@ mod mark_tests {
         // `Href::parse` refuses control characters, not quotes.
         let script = link_script("https://example.com/a'b").expect("a script");
         assert!(script.contains("a\\'b"), "unescaped quote: {script}");
+    }
+
+    // -- an inline image (#1571) ---------------------------------------------
+
+    #[test]
+    fn an_image_is_inserted_in_the_editing_scheme_at_the_caret() {
+        let script = image_script("0a1b@postio.invalid", "inline-image.png").expect("a script");
+        // The editing shell's scheme, the one its handler resolves -- the
+        // wire's `cid:` is what the *sent* message says, and a composer that
+        // wrote it would draw a broken picture while the draft was open.
+        assert!(
+            script.contains("src=\"postio-cid:0a1b%40postio.invalid\""),
+            "{script}"
+        );
+        assert!(script.contains("insertHTML"), "{script}");
+        assert!(
+            script.contains("new Event('input')"),
+            "an insertion the host is not told about is lost on save: {script}"
+        );
+    }
+
+    #[test]
+    fn a_fresh_body_with_no_caret_still_takes_the_image() {
+        // A picture can be the first gesture into a new message, before any
+        // click has given the document a caret, and `insertHTML` silently
+        // does nothing without one.
+        let script = image_script("a@postio.invalid", "x").expect("a script");
+        assert!(script.contains("rangeCount === 0"), "{script}");
+    }
+
+    #[test]
+    fn an_id_that_could_be_read_as_a_url_has_no_script() {
+        // `ContentId`'s rule: a colon or a slash could make a source of it.
+        assert_eq!(image_script("//evil.example/pixel", "x"), None);
+        assert_eq!(image_script("", "x"), None);
+    }
+
+    #[test]
+    fn the_alt_text_is_markup_escaped_and_cannot_close_the_literal() {
+        let script = image_script("a@postio.invalid", "Ada's <b>\"logo\"</b>").expect("a script");
+        assert!(!script.contains("<b>"), "markup in the alt text: {script}");
+        assert!(script.contains("&lt;b&gt;"), "{script}");
+        assert!(script.contains("&quot;logo&quot;"), "{script}");
+        assert!(
+            script.contains("Ada\\'s"),
+            "an unescaped quote ends the literal: {script}"
+        );
     }
 }
 

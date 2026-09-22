@@ -330,6 +330,139 @@ async fn taking_an_attachment_off_leaves_the_rest_alone() {
     assert_eq!(left.attachments[0].filename, "two.txt");
 }
 
+// -- an image in the body (#1571) --------------------------------------------
+
+/// A few bytes that say they are a PNG; nothing here decodes them.
+const PIXELS: &[u8] = b"\x89PNG\r\n\x1a\nnot really a picture";
+
+/// The `Content-ID` an image script inserts, read back out of the script.
+fn inserted_id(script: &str) -> String {
+    let start = script.find("postio-cid:").expect("the script names a part") + "postio-cid:".len();
+    let end = start + script[start..].find('"').expect("a closing quote");
+    script[start..end].replace("%40", "@")
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn inserting_an_image_puts_a_part_on_the_draft_and_a_picture_at_the_caret() {
+    let (session, _, _) = a_message_to_answer().await;
+    let draft = session.new_draft().await.expect("a draft");
+
+    let inserted = session
+        .insert_inline_image(draft, PIXELS.to_vec(), "image/png".to_owned())
+        .await
+        .expect("it inlines");
+
+    assert_eq!(
+        inserted.draft.attachments.len(),
+        1,
+        "the picture is a part of the message"
+    );
+    assert!(
+        inserted.draft.id > 0,
+        "and the draft was saved, so the picture survives the window closing"
+    );
+    // What the editor runs: the editing shell's scheme, naming a part this
+    // draft now holds -- so the picture the window draws is the one it sends.
+    assert!(
+        inserted.script.contains("insertHTML"),
+        "{}",
+        inserted.script
+    );
+    let content_id = inserted_id(&inserted.script);
+    let part = session
+        .resolve_draft_cid(inserted.draft.id, content_id.clone())
+        .await
+        .expect("the composer can draw the picture it just inserted");
+    assert_eq!(part.bytes, PIXELS);
+    assert_eq!(part.mime_type, "image/png");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_draft_resolves_only_its_own_pictures() {
+    // A `Content-ID` means something only inside the message that declared
+    // it. A composer resolving one against the whole store would draw a
+    // picture from somebody else's draft.
+    let (session, _, _) = a_message_to_answer().await;
+    let mine = session
+        .insert_inline_image(
+            session.new_draft().await.expect("a draft"),
+            PIXELS.to_vec(),
+            "image/png".to_owned(),
+        )
+        .await
+        .expect("it inlines");
+    let other = session
+        .save_draft(session.new_draft().await.expect("another draft"))
+        .await
+        .expect("saved");
+
+    let content_id = inserted_id(&mine.script);
+    assert!(
+        session
+            .resolve_draft_cid(other.id, content_id)
+            .await
+            .is_none()
+    );
+    assert!(
+        session
+            .resolve_draft_cid(mine.draft.id, "nothing@postio.invalid".to_owned())
+            .await
+            .is_none()
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_file_that_is_not_an_image_is_refused_and_the_draft_is_untouched() {
+    let (session, _, _) = a_message_to_answer().await;
+    let draft = session.new_draft().await.expect("a draft");
+
+    let refusal = session
+        .insert_inline_image(draft, b"%PDF-1.7".to_vec(), "application/pdf".to_owned())
+        .await
+        .expect_err("not a picture");
+
+    assert!(format!("{refusal}").contains("not an image"), "{refusal}");
+    assert!(
+        session
+            .new_draft()
+            .await
+            .expect("a draft")
+            .attachments
+            .is_empty(),
+        "nothing was attached on the way to refusing"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn the_inserted_picture_survives_the_draft_being_saved() {
+    // The editor reports the body with the `<img>` in it, and the store keeps
+    // what `postio_body::parse` makes of that. A picture the dialect dropped
+    // would vanish at the first autosave, leaving a part nothing shows.
+    let (session, _, _) = a_message_to_answer().await;
+    let mut inserted = session
+        .insert_inline_image(
+            session.new_draft().await.expect("a draft"),
+            PIXELS.to_vec(),
+            "image/png".to_owned(),
+        )
+        .await
+        .expect("it inlines");
+    let content_id = inserted_id(&inserted.script);
+    let src = format!("postio-cid:{}", content_id.replace('@', "%40"));
+    inserted.draft.rich = true;
+    inserted.draft.body_html = Some(format!(
+        "<p>The gate:</p><p><img src=\"{src}\" alt=\"gate\"></p>"
+    ));
+
+    let saved = session.save_draft(inserted.draft).await.expect("saved");
+
+    let body = saved.body_html.expect("a rich body");
+    assert!(
+        body.contains(&src),
+        "the picture did not survive the save: {body}"
+    );
+}
+
 // -- handing a draft to another editor (#1270) -------------------------------
 
 #[tokio::test(flavor = "multi_thread")]

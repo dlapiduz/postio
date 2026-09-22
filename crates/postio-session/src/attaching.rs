@@ -65,3 +65,53 @@ pub fn attach_file(blobs: &BlobStore, path: &Path, mime_type: &str) -> Result<At
     attachment.blob_id = Some(blob_id);
     Ok(attachment)
 }
+
+/// What refusing a non-image says, and where it points instead.
+const NOT_AN_IMAGE: &str = "That file is not an image. Use Attach file to send it alongside.";
+
+/// Store `bytes` as a picture in the body rather than a file beside it
+/// (#1571).
+///
+/// An inline part is a blob and a row, like any attachment, plus two things
+/// that make it a picture: [`Disposition::Inline`], and a `Content-ID` the
+/// body's `<img>` references. The id is the blob's digest at
+/// `postio.invalid` — unique by construction (the store deduplicates by
+/// content, so the same picture twice is one part referenced twice) and on a
+/// reserved domain, so it cannot collide with or be mistaken for anything
+/// real. One rule, here, rather than one per frontend: a composer that minted
+/// ids its own way would be a second answer to what a sent message says its
+/// parts are called.
+///
+/// `mime_type` is the caller's, for [`attach_file`]'s reason. What is decided
+/// here is that it has to be an image: anything else belongs beside the
+/// message, and saying so beats a broken picture the recipient cannot open.
+///
+/// [`Disposition::Inline`]: postio_model::attachment::Disposition::Inline
+pub fn inline_image(
+    blobs: &BlobStore,
+    bytes: &[u8],
+    mime_type: &str,
+) -> Result<Attachment, String> {
+    if !mime_type.starts_with("image/") {
+        return Err(NOT_AN_IMAGE.to_owned());
+    }
+    let size = bytes.len() as u64;
+    if size > LARGEST_ATTACHMENT {
+        return Err(format!(
+            "That image is {} and Postio will not attach anything over {}.",
+            postio_ui::format::human_size(size),
+            postio_ui::format::human_size(LARGEST_ATTACHMENT)
+        ));
+    }
+    let blob_id = blobs
+        .put(bytes)
+        .map_err(|error| format!("The image could not be stored: {error}"))?;
+
+    let extension = mime_type.strip_prefix("image/").unwrap_or("png");
+    let mut attachment = Attachment::new(MessageId::UNASSIGNED, mime_type.to_owned(), size);
+    attachment.filename = Some(format!("inline-image.{extension}"));
+    attachment.disposition = postio_model::attachment::Disposition::Inline;
+    attachment.content_id = Some(format!("{}@postio.invalid", blob_id.as_str()));
+    attachment.blob_id = Some(blob_id);
+    Ok(attachment)
+}

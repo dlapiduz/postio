@@ -125,6 +125,21 @@ pub struct AttachmentFfi {
     pub size: String,
 }
 
+/// A picture put into a draft's body (#1571): the draft with the part on it,
+/// and the script that draws the picture at the caret.
+///
+/// Both at once because they are one edit. The part is already in the store
+/// and on the draft; the script is `postio_ui::compose::image_script` over the
+/// `Content-ID` just minted, so the frontend never sees or spells an id and
+/// the `<img>` it inserts cannot name anything but that part.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct InlineImageFfi {
+    /// The draft, saved, with the picture's part among its attachments.
+    pub draft: DraftFfi,
+    /// What the editing surface runs to put the picture at the caret.
+    pub script: String,
+}
+
 /// What will be sent, in the composer footer's words: `html + text/plain`,
 /// or `text/plain, format=flowed`.
 ///
@@ -149,7 +164,18 @@ pub(crate) fn to_ffi(draft: &Draft, from: String, path: String) -> DraftFfi {
         bcc: render(&draft.bcc),
         subject: draft.subject.clone(),
         body: draft.body.text.clone().unwrap_or_default(),
-        body_html: draft.body.html.clone(),
+        // In the editing shell's form, not the wire's (#1571): a picture the
+        // store keeps as `cid:` is `postio-cid:` to the surface that edits
+        // it, because that is the scheme its handler answers. Handed over as
+        // stored, a draft reopened with a picture in it drew a broken image,
+        // and so did a reply quoting one. GTK's editor seeds from
+        // `editor_html` for the same reason; `body_of` parses either form on
+        // the way back.
+        body_html: draft
+            .body
+            .html
+            .as_deref()
+            .map(|html| postio_body::parse(html).editor_html()),
         // The stored flag, not `html.is_some()` (#1271): a plain draft that
         // is keeping its marks in case the switch goes back on has an HTML
         // part and is not rich.

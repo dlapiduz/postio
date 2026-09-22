@@ -61,7 +61,7 @@ mod unsubscribe;
 
 pub use account::{AccountFfi, ConnectionReportFfi, RepairRouteFfi};
 pub use compose::{
-    AttachmentFfi, ComposeError, DraftFfi, DraftKindFfi, PastedFfi, outgoing_shape,
+    AttachmentFfi, ComposeError, DraftFfi, DraftKindFfi, InlineImageFfi, PastedFfi, outgoing_shape,
     recipient_summary,
 };
 pub use conversation::{ConversationFfi, RunFfi, conversation_runs, message_when};

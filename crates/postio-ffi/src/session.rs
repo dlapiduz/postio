@@ -765,6 +765,38 @@ impl Session {
         blocking(self.attach_to_draft(draft, path, mime_type))
     }
 
+    /// Put a picture into the draft's body and answer the draft with it, and
+    /// the script that draws it at the caret (#1571).
+    ///
+    /// Bytes rather than a path, because a picture arrives from a paste as
+    /// often as from a file. `mime_type` is the frontend's for
+    /// [`attach_to_draft_ffi`](Self::attach_to_draft_ffi)'s reason; that it
+    /// must be an image is decided on this side.
+    #[uniffi::method(name = "insertInlineImage")]
+    pub fn insert_inline_image_ffi(
+        &self,
+        draft: crate::DraftFfi,
+        bytes: Vec<u8>,
+        mime_type: String,
+    ) -> Result<crate::InlineImageFfi, crate::ComposeError> {
+        blocking(self.insert_inline_image(draft, bytes, mime_type))
+    }
+
+    /// One picture in draft `draft`'s own body, by its `Content-ID`.
+    ///
+    /// What the composer's `postio-cid:` handler answers with. Scoped to the
+    /// draft for the reason [`resolve_cid_ffi`](Self::resolve_cid_ffi) is
+    /// scoped to a message: an id means something only inside the message
+    /// that declared it. `nil` is a broken picture, never a fetch.
+    #[uniffi::method(name = "resolveDraftCid")]
+    pub fn resolve_draft_cid_ffi(
+        &self,
+        draft: i64,
+        content_id: String,
+    ) -> Option<crate::InlinePart> {
+        blocking(self.resolve_draft_cid(draft, content_id))
+    }
+
     /// Write the draft where another editor can open it, and answer where.
     ///
     /// The file is the user's alone — a private directory, mode 0600 — for
@@ -3162,6 +3194,78 @@ impl Session {
         })?;
         draft.attachments.push(attachment);
         self.write_draft(&database, draft, &edited).await
+    }
+
+    /// Put a picture in the body. See
+    /// [`insert_inline_image_ffi`](Self::insert_inline_image_ffi).
+    ///
+    /// The bytes first, then the row, as for a file -- and the script only
+    /// once both are written, so nothing can draw a picture whose part is not
+    /// in the store.
+    pub async fn insert_inline_image(
+        &self,
+        edited: crate::DraftFfi,
+        bytes: Vec<u8>,
+        mime_type: String,
+    ) -> Result<crate::InlineImageFfi, crate::ComposeError> {
+        let Some((database, blobs)) = self.store_and_blobs() else {
+            return Err(crate::ComposeError::Refused {
+                message: "There is no store to put a picture in.".to_owned(),
+            });
+        };
+        let attachment = postio_session::attaching::inline_image(&blobs, &bytes, &mime_type)
+            .map_err(|message| crate::ComposeError::Refused { message })?;
+        let script = attachment
+            .content_id
+            .as_deref()
+            .and_then(|id| {
+                postio_ui::compose::image_script(
+                    id,
+                    attachment.filename.as_deref().unwrap_or("image"),
+                )
+            })
+            .ok_or_else(|| crate::ComposeError::Refused {
+                message: "The picture could not be given a name the message can refer to."
+                    .to_owned(),
+            })?;
+
+        let mut draft = self.rehydrate(&database, &edited).await.ok_or_else(|| {
+            crate::ComposeError::Refused {
+                message: "This draft is no longer in the store.".to_owned(),
+            }
+        })?;
+        draft.attachments.push(attachment);
+        let draft = self.write_draft(&database, draft, &edited).await?;
+        Ok(crate::InlineImageFfi { draft, script })
+    }
+
+    /// Resolve a picture in a draft. See
+    /// [`resolve_draft_cid_ffi`](Self::resolve_draft_cid_ffi).
+    pub async fn resolve_draft_cid(
+        &self,
+        draft: i64,
+        content_id: String,
+    ) -> Option<crate::InlinePart> {
+        let (database, blobs) = self.store_and_blobs()?;
+        let wanted = postio_body::ContentId::parse(&content_id)?;
+        let connection = database.connect().await.ok()?;
+        let draft = postio_storage::repository::DraftRepository::new(&connection)
+            .get(postio_model::ids::DraftId::new(draft))
+            .await
+            .ok()??;
+        let part = draft.attachments.iter().find(|held| {
+            held.content_id
+                .as_deref()
+                .and_then(postio_body::ContentId::parse)
+                .is_some_and(|id| id == wanted)
+        })?;
+        let mut bytes = Vec::new();
+        std::io::Read::read_to_end(&mut blobs.reader(part.blob_id.as_ref()?).ok()?, &mut bytes)
+            .ok()?;
+        Some(crate::InlinePart {
+            bytes,
+            mime_type: part.mime_type.clone(),
+        })
     }
 
     /// Take one off again. See
