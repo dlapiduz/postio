@@ -11,12 +11,12 @@ import WebKit
 /// than read from ambient state, so it cannot drift from what the view is
 /// showing.
 public final class CidSchemeHandler: NSObject, WKURLSchemeHandler {
-    private let session: PostioSession
+    private let source: any ReaderSource
     /// The message this web view is showing. Set before each load.
     public var message: Int64?
 
-    public init(session: PostioSession) {
-        self.session = session
+    public init(source: any ReaderSource) {
+        self.source = source
     }
 
     public func webView(_ webView: WKWebView, start task: WKURLSchemeTask) {
@@ -24,7 +24,7 @@ public final class CidSchemeHandler: NSObject, WKURLSchemeHandler {
             let message,
             let url = task.request.url,
             let contentId = Self.contentId(from: url),
-            let part = session.resolveCid(message: message, contentId: contentId)
+            let part = source.resolveCid(message: message, contentId: contentId)
         else {
             // A miss is an error, not a stall. The `inline-image-cid` corpus
             // fixture is a `cid:` with no matching part and exists to prove

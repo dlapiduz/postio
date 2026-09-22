@@ -12,7 +12,7 @@ import WebKit
 /// the same function. The two readers do not *agree* on the policy; there is
 /// one that produces it.
 public struct ReaderView: NSViewRepresentable {
-    private let session: PostioSession
+    private let source: any ReaderSource
     private let message: Int64?
     private let remoteImages: RemoteImagesFfi
     /// Whether to draw what the sender wrote rather than what reader view
@@ -41,7 +41,7 @@ public struct ReaderView: NSViewRepresentable {
     /// has to be measured from the laid-out document. Left `nil` the view
     /// fills whatever it is given, which is what a single-message pane wants.
     public init(
-        session: PostioSession,
+        source: any ReaderSource,
         message: Int64?,
         remoteImages: RemoteImagesFfi = .blocked,
         original: Bool = false,
@@ -50,7 +50,7 @@ public struct ReaderView: NSViewRepresentable {
         onHeight: ((CGFloat) -> Void)? = nil,
         onAnswers: ((ReaderNoticeFfi?, String?) -> Void)? = nil
     ) {
-        self.session = session
+        self.source = source
         self.message = message
         self.remoteImages = remoteImages
         self.original = original
@@ -61,7 +61,7 @@ public struct ReaderView: NSViewRepresentable {
     }
 
     public func makeCoordinator() -> Coordinator {
-        Coordinator(session: session, onHeight: onHeight, onAnswers: onAnswers)
+        Coordinator(source: source, onHeight: onHeight, onAnswers: onAnswers)
     }
 
     public func makeNSView(context: Context) -> WKWebView {
@@ -116,7 +116,7 @@ public struct ReaderView: NSViewRepresentable {
         /// hand.
         private var pagedTo: Int?
         let policy: ReaderNavigationPolicy
-        private let session: PostioSession
+        private let source: any ReaderSource
         private var showing: Int64?
         private var showingRemote: RemoteImagesFfi = .blocked
         private let onAnswers: ((ReaderNoticeFfi?, String?) -> Void)?
@@ -137,14 +137,14 @@ public struct ReaderView: NSViewRepresentable {
         }
 
         init(
-            session: PostioSession,
+            source: any ReaderSource,
             onHeight: ((CGFloat) -> Void)? = nil,
             onAnswers: ((ReaderNoticeFfi?, String?) -> Void)? = nil
         ) {
-            self.session = session
+            self.source = source
             self.onHeight = onHeight
             self.onAnswers = onAnswers
-            cid = CidSchemeHandler(session: session)
+            cid = CidSchemeHandler(source: source)
             let policy = ReaderNavigationPolicy { url in
                 // POSTIO-CONSENT: only from a link the user activated inside a
                 // message they are reading. The pane does not navigate; the
@@ -204,13 +204,24 @@ public struct ReaderView: NSViewRepresentable {
             // resolves against the right message rather than the previous one.
             cid.message = message
 
-            let session = self.session
-            pending = Task { [weak self] in
+            let source = self.source
+            // `view` weakly, like `self`: a reader SwiftUI has let go of is
+            // not the render's to keep. Held strongly, a web view outlived its
+            // pane for as long as the store took to build a document nobody
+            // would see -- a content process kept alive for nothing, and on a
+            // busy machine long enough to read as a leak (#1586).
+            pending = Task { [weak self, weak view] in
                 let answers = await Task.detached {
-                    session.readerDocument(message: message, remote: remote, original: original)
+                    source.readerDocument(message: message, remote: remote, original: original)
                 }.value
 
-                guard let self, !Task.isCancelled, self.gate.isCurrent(token) else { return }
+                guard let self, let view, !Task.isCancelled, self.gate.isCurrent(token) else { return }
+                // The one load choke point, and so where a render is counted:
+                // a second path to the engine would show up here as two
+                // renders for one gesture rather than as a quiet doubling of
+                // what `j` costs. The shared counter, the one GTK's reader
+                // notes into.
+                noteReaderRender()
                 view.loadHTMLString(
                     answers.html,
                     baseURL: URL(string: "\(ReaderConfiguration.baseScheme):///")
@@ -247,7 +258,32 @@ public struct ReaderView: NSViewRepresentable {
 /// is no case where this view has scrollable content of its own to keep. If a
 /// body ever grows past `BodyHeight.maximum` and starts scrolling internally,
 /// this has to become conditional — and that clamp is where to look.
+///
+/// # It is also what gets counted
+///
+/// This is the one web view the reader creates, so its lifetime **is** the
+/// reader's surface count (#1586), noted into the counters `postio-gtk`
+/// notes into. Counted from the view's own `init` and `deinit` rather than
+/// from `makeNSView` and `dismantleNSView`: what costs is the content process
+/// behind a web view, and that can go when the view does — which is when ARC
+/// gets round to it, not when SwiftUI takes it out of the hierarchy. A
+/// render still in flight holds one past its dismantling, and a count from
+/// `dismantleNSView` would call it gone.
 final class PassingWebView: WKWebView {
+    override init(frame: CGRect, configuration: WKWebViewConfiguration) {
+        super.init(frame: frame, configuration: configuration)
+        noteReaderSurfaceCreated()
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        fatalError("the reader builds its web view in code, with a hardened configuration")
+    }
+
+    deinit {
+        noteReaderSurfaceReleased()
+    }
+
     override func scrollWheel(with event: NSEvent) {
         nextResponder?.scrollWheel(with: event)
     }

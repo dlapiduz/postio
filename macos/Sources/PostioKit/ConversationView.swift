@@ -62,29 +62,12 @@ public struct ConversationView: View {
     }
 
 
-    /// The binding in force for `command`, drawn the way macOS draws it.
-    ///
-    /// What the stack draws, in order. Identity is the *message*, never its
-    /// position — see `ConversationEntries`, and the crash it is named for.
-    private var entries: [ConversationEntries.Entry] {
-        ConversationEntries.of(rows: model.rows, runs: model.runs)
-    }
-
     public var body: some View {
         VStack(spacing: 0) {
             header
             Divider()
-            ScrollView {
-                LazyVStack(spacing: 0) {
-                    ForEach(entries) { entry in
-                        switch entry {
-                        case let .message(index, _):
-                            message(at: index)
-                        case let .folded(run, _):
-                            FoldedRun(run: run) { model.reveal(run) }
-                        }
-                    }
-                }
+            ConversationStack(model: model) { index, row in
+                expanded(row, at: index)
             }
         }
         .accessibilityLabel(Pane.reader.label)
@@ -138,6 +121,75 @@ public struct ConversationView: View {
 
     // -- one message --------------------------------------------------------
 
+    private func expanded(_ row: RowFfi, at index: Int) -> ExpandedMessage {
+        ExpandedMessage(
+            session: session,
+            row: row,
+            isLatest: index == model.rows.count - 1,
+            showingCc: model.isCcRevealed(index),
+            showingOriginal: showingOriginal(row.id),
+            showingImages: showingImages(row.id),
+            collapse: { model.toggle(index) },
+            toggleCc: { model.toggleCc(index) },
+            toggleOriginal: { toggleOriginal(row.id) },
+            run: run,
+            openSettings: { run(Intercepted.settings, nil) }
+        )
+    }
+}
+
+/// The conversation's messages, stacked: open ones, one-line collapsed ones,
+/// and the dividers standing in for runs of them.
+///
+/// Its own view so a test can host it (#1586). The number of web views a
+/// conversation holds is decided *here* — by which entries exist, by their
+/// identity, and by the stack being lazy — and SwiftUI's `makeNSView` runs
+/// whenever it decides an identity changed. That cannot be read off the code;
+/// it has to be counted, and counting needs something to host that is the
+/// real stack rather than a copy of it. The open message itself is whatever
+/// `expanded` draws — `ExpandedMessage` in the pane, a bare `ReaderView` in
+/// `ReaderSurfacesTests`.
+struct ConversationStack<Expanded: View>: View {
+    let model: ConversationModel
+    let expanded: (Int, RowFfi) -> Expanded
+
+    /// What the stack draws, in order. Identity is the *message*, never its
+    /// position — see `ConversationEntries`, and the crash it is named for.
+    private var entries: [ConversationEntries.Entry] {
+        ConversationEntries.of(rows: model.rows, runs: model.runs)
+    }
+
+    var body: some View {
+        ScrollView {
+            LazyVStack(spacing: 0) {
+                ForEach(entries) { entry in
+                    switch entry {
+                    case let .message(index, _):
+                        message(at: index)
+                    case let .folded(run, _):
+                        FoldedRun(run: run) { model.reveal(run) }
+                    }
+                }
+            }
+        }
+        // **One stack per conversation**, and this line is the whole fix for
+        // a pane that never let go of a web view. A lazy stack does not
+        // dismantle what it stops drawing: it hides the platform view and
+        // keeps it, so a message that collapses, or belongs to the
+        // conversation `j` just left, is still a `WKWebView` with a content
+        // process behind it. The pane is not rebuilt between conversations --
+        // the model is handed a new one -- so five conversations of three
+        // open messages held eighteen, and a morning's reading held all of
+        // them. A new identity is what makes SwiftUI throw the old stack
+        // away, and its pool with it.
+        //
+        // It bounds the cost to one conversation, not to one view: inside a
+        // conversation a collapsed message's reader is still held until the
+        // conversation changes. ADR 0032's one document is the answer to
+        // that, and it is not built on this platform.
+        .id(model.conversation?.thread)
+    }
+
     @ViewBuilder
     private func message(at index: Int) -> some View {
         // Bounds-checked, and not belt-and-braces: SwiftUI updates a
@@ -151,19 +203,7 @@ public struct ConversationView: View {
         if model.rows.indices.contains(index) {
             let row = model.rows[index]
             if model.expanded.indices.contains(index), model.expanded[index] {
-                ExpandedMessage(
-                    session: session,
-                    row: row,
-                    isLatest: index == model.rows.count - 1,
-                    showingCc: model.isCcRevealed(index),
-                    showingOriginal: showingOriginal(row.id),
-                    showingImages: showingImages(row.id),
-                    collapse: { model.toggle(index) },
-                    toggleCc: { model.toggleCc(index) },
-                    toggleOriginal: { toggleOriginal(row.id) },
-                    run: run,
-                    openSettings: { run(Intercepted.settings, nil) }
-                )
+                expanded(index, row)
             } else {
                 CollapsedMessage(row: row) { model.toggle(index) }
             }
@@ -389,7 +429,7 @@ public struct ExpandedMessage: View {
                     UnsubscribeBanner(offer: offer, message: row.id, session: session)
                 }
                 ReaderView(
-                    session: session,
+                    source: session,
                     message: row.id,
                     remoteImages: remoteImages,
                     original: showingOriginal,
