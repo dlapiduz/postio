@@ -38,6 +38,7 @@
 mod account;
 mod compose;
 mod conversation;
+mod cost;
 mod dwell;
 mod event;
 mod focus;
@@ -64,6 +65,10 @@ pub use compose::{
     recipient_summary,
 };
 pub use conversation::{ConversationFfi, RunFfi, conversation_runs, message_when};
+pub use cost::{
+    note_reader_render, note_reader_surface_created, note_reader_surface_released,
+    reader_renders_issued, reader_surfaces_created, reader_surfaces_held,
+};
 pub use dwell::{DwellArmFfi, dwell_on_cursor};
 pub use event::{ConnectionStateFfi, FailureReasonFfi, NoticeKindFfi, UiEvent};
 pub use focus::next_pane;

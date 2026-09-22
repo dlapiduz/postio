@@ -32,6 +32,7 @@ mod palette;
 mod parts;
 mod provisioning;
 mod reader;
+mod reader_cost;
 mod registry;
 mod saved_search;
 mod search;
