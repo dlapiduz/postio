@@ -20,13 +20,17 @@
 use std::sync::Arc;
 use std::time::Duration;
 
+use chrono::Utc;
 use postio_account::backend::{
     AppendMessage, FetchEvent, MailBackend, MockBackend, MockMailbox, MockMessage,
 };
 use postio_core::bridge::event_channel;
+use postio_model::operation::{Operation, OperationTarget};
+use postio_model::{AccountId, MessageId};
 use postio_runtime::engine::{Engine, EngineParts, NetworkSource, SystemClock};
 use postio_storage::repository::{
     AccountRepository, ListQuery, ListScope, MailboxRepository, MessageRepository,
+    OperationQueueRepository,
 };
 use postio_storage::test_support::TempStore;
 use postio_storage::{BlobStore, Store, test_support};
@@ -641,6 +645,231 @@ async fn a_slow_pass_does_not_hold_the_folders_queued_behind_the_wave() {
          {last_drafts} of {} events), so the free lane was never refilled \
          and the queue waited out the slowest pass",
         order.len()
+    );
+    drop(engine);
+}
+
+/// How many times a pass over the archive has been *started*.
+///
+/// A pass lists its mailbox's UIDs once, when it begins, so a second listing
+/// is a restart -- see [`MockBackend::uid_listings`]. Causal, like
+/// [`archive_fetches`]: the count says what the engine did, not how fast.
+fn archive_listings(backend: &MockBackend) -> usize {
+    backend
+        .uid_listings()
+        .iter()
+        .filter(|mailbox| *mailbox == "Archive")
+        .count()
+}
+
+/// The account, and the newest message under `path`.
+async fn newest_message(database: &Store, path: &str) -> (AccountId, MessageId) {
+    let connection = database.connect().await.expect("a connection");
+    let account = AccountRepository::new(&connection)
+        .list()
+        .await
+        .expect("the accounts")
+        .into_iter()
+        .next()
+        .expect("an account");
+    let mailbox = MailboxRepository::new(&connection)
+        .list_for_account(account.id)
+        .await
+        .expect("the folders")
+        .into_iter()
+        .find(|mailbox| mailbox.path == path)
+        .expect("the folder exists locally");
+    let page = MessageRepository::new(&connection)
+        .page(&ListQuery {
+            scope: ListScope::Mailbox(mailbox.id),
+            limit: 1,
+            after: None,
+        })
+        .await
+        .expect("a page");
+    (account.id, page.first().expect("the folder has mail").id)
+}
+
+/// Whether `message`'s body is in the store.
+async fn body_is_local(database: &Store, message: MessageId) -> bool {
+    let Ok(connection) = database.connect().await else {
+        return false;
+    };
+    MessageRepository::new(&connection)
+        .backfill_candidate(message)
+        .await
+        .is_ok_and(|candidate| candidate.is_none())
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_body_requested_during_the_wave_does_not_restart_its_lanes() {
+    // #1593. Opening a message with no local body sends `RequestBody`, and
+    // the wave answered every job the same way: cancel every lane, serve
+    // the job, start the lanes again. Seen live: two first-sync passes over
+    // 60,937 and 20,328 messages were started five times each in the first
+    // minute, once per message the person opened or marked read, and on
+    // that server each restart also cost a reconnect. The request is a
+    // *body*, and the wave has fetched bodies beside its lanes since #631,
+    // so it can serve this one the same way and leave the lanes alone.
+    //
+    // Causal, on the mock's call log: a pass lists its mailbox's UIDs once
+    // when it starts, so the archive being listed a second time *is* the
+    // restart, whatever the scheduler did with the clock. And the body has
+    // to land while the archive is still fetching, or the request merely
+    // waited the wave out (#944).
+    let backend = Arc::new(
+        MockBackend::builder()
+            .mailbox(folder("INBOX", &[], 10))
+            .mailbox(folder("Archive", &["\\Archive"], 2_000))
+            .build(),
+    );
+    backend.refuse_creates("no new folders here");
+    backend.set_latency(LATENCY);
+    // No background lane: the request below has to be the only reason a
+    // body is fetched, or the backfill could have fetched it first and the
+    // request would have had nothing to ask for.
+    let (database, engine, _directory) = engine_over_with(
+        backend.clone(),
+        postio_runtime::BackfillPolicy {
+            background: false,
+            ..Default::default()
+        },
+    )
+    .await;
+
+    until(
+        "INBOX's headers to land while the archive is under way",
+        async || {
+            stored(&database, "INBOX").await == Some(10)
+                && stored(&database, "Archive")
+                    .await
+                    .is_some_and(|count| count > 0)
+        },
+    )
+    .await;
+    let (_, message) = newest_message(&database, "INBOX").await;
+    assert!(
+        !body_is_local(&database, message).await,
+        "the body was already local, so nothing below would ask for anything"
+    );
+
+    let asked = engine
+        .request_body(message)
+        .await
+        .expect("the engine answers while it is syncing");
+    assert!(asked, "the engine found nothing to fetch for that message");
+
+    until("the requested body to land", async || {
+        body_is_local(&database, message).await
+    })
+    .await;
+    let fetches_when_it_landed = archive_fetches(&backend);
+    let listings_when_it_landed = archive_listings(&backend);
+
+    until("the archive to finish anyway", async || {
+        stored(&database, "Archive").await == Some(2_000)
+    })
+    .await;
+    assert!(
+        fetches_when_it_landed < archive_fetches(&backend),
+        "the body landed only after the archive's last header fetch, so the \
+         request waited out the wave"
+    );
+    assert_eq!(
+        listings_when_it_landed, 1,
+        "the archive had been listed {listings_when_it_landed} times when the \
+         body landed: its pass was cancelled and started again to serve a \
+         body request"
+    );
+    assert_eq!(
+        archive_listings(&backend),
+        1,
+        "the archive's pass was restarted after the body landed"
+    );
+    drop(engine);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_queued_write_during_the_wave_is_drained_without_restarting_its_lanes() {
+    // #1593, the other half. A mark-read is not a job -- it is a row in the
+    // operation queue -- and `interruption` watches for that too (#944), so
+    // the wave answered it exactly as it answered a job: cancel every lane,
+    // drain, start the lanes again. A drain is a few round trips on a
+    // connection of its own, so it can run beside the lanes and the person's
+    // write still reaches the server without waiting out the archive.
+    //
+    // Larger archive than the body test's: the queue is polled twice a
+    // second, where the job inbox is polled twenty times, and the wave has
+    // to still be running when the poll notices.
+    let backend = Arc::new(
+        MockBackend::builder()
+            .mailbox(folder("INBOX", &[], 10))
+            .mailbox(folder("Archive", &["\\Archive"], 4_000))
+            .build(),
+    );
+    backend.refuse_creates("no new folders here");
+    backend.set_latency(LATENCY);
+
+    let (database, engine, _directory) = engine_over(backend.clone()).await;
+
+    until(
+        "INBOX's headers to land while the archive is under way",
+        async || {
+            stored(&database, "INBOX").await == Some(10)
+                && stored(&database, "Archive")
+                    .await
+                    .is_some_and(|count| count > 0)
+        },
+    )
+    .await;
+    let (account, message) = newest_message(&database, "INBOX").await;
+    {
+        let connection = database.connect().await.expect("a connection");
+        OperationQueueRepository::new(&connection)
+            .enqueue(
+                account,
+                OperationTarget::Message(message),
+                &Operation::SetFlags {
+                    flags: postio_model::FlagSet::from_iter([postio_model::Flag::Seen]),
+                },
+                Utc::now(),
+            )
+            .await
+            .expect("the write is queued");
+    }
+
+    until("the queued write to be drained", async || {
+        let Ok(connection) = database.connect().await else {
+            return false;
+        };
+        OperationQueueRepository::new(&connection)
+            .pending(account, Utc::now())
+            .await
+            .is_ok_and(|due| due.is_empty())
+    })
+    .await;
+    let fetches_when_drained = archive_fetches(&backend);
+    let listings_when_drained = archive_listings(&backend);
+
+    until("the archive to finish anyway", async || {
+        stored(&database, "Archive").await == Some(4_000)
+    })
+    .await;
+    assert!(
+        fetches_when_drained < archive_fetches(&backend),
+        "the write was drained only after the archive's last header fetch, \
+         so it waited out the wave"
+    );
+    assert_eq!(
+        listings_when_drained, 1,
+        "the archive had been listed {listings_when_drained} times when the \
+         write was drained: its pass was cancelled and started again to \
+         drain one queued operation"
+    );
+    assert_eq!(
+        archive_listings(&backend),
+        1,
+        "the archive's pass was restarted after the drain"
     );
     drop(engine);
 }
