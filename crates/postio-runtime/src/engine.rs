@@ -287,6 +287,38 @@ enum Job {
     },
 }
 
+impl Job {
+    /// Whether a wave can answer this without stopping its lanes (#1593).
+    ///
+    /// A body request is an enqueue -- the fetch itself runs beside the
+    /// lanes, as every backfill body has since #631 -- and a query is
+    /// answered from engine state. Neither needs a connection a lane is
+    /// holding, and neither takes the store's write gate, which a suspended
+    /// pass may be holding. `Sync` and `Drain` are what the cancel exists
+    /// for: the caller is waiting on a whole pass or the whole queue.
+    /// `RetryNow` and `SetNetwork` move the link, and a wave whose link has
+    /// moved should stop and let the loop look at it.
+    fn is_answered_beside_a_wave(&self) -> bool {
+        matches!(
+            self,
+            Job::RequestBody { .. }
+                | Job::RequestPayloads { .. }
+                | Job::RequestWholeMessage { .. }
+                | Job::SeedBackfill { .. }
+                | Job::LinkState { .. }
+                | Job::BackfillProgress { .. }
+        )
+    }
+
+    /// Whether answering this queues a body the person is waiting for.
+    fn asks_for_a_body(&self) -> bool {
+        matches!(
+            self,
+            Job::RequestBody { .. } | Job::RequestPayloads { .. } | Job::RequestWholeMessage { .. }
+        )
+    }
+}
+
 /// Engines the application keeps running for the whole session.
 ///
 /// The application used to `Box::leak` each engine, on the reasoning that it
@@ -911,7 +943,14 @@ fn run(parts: EngineParts, store: Store, inbox: async_channel::Receiver<Job>, bu
                     && !state.to_sync.is_empty()
                 {
                     state.busy.set("a sync wave");
-                    sync_wave(&parts, &store, &mut state, &inbox).await;
+                    if let Some(job) = sync_wave(&parts, &store, &mut state, &inbox).await {
+                        // The wave took this off the inbox to see whether it
+                        // could answer it beside its lanes, and it could not.
+                        // Served here, exactly as the `select!` above would
+                        // have, and before anything else runs.
+                        state.busy.set(format!("serving {job:?}"));
+                        serve(job, &parts, &store, &mut state).await;
+                    }
 
                     // **Bodies between waves, not only after the last one.**
                     //
@@ -1333,6 +1372,65 @@ async fn interruption(parts: &EngineParts, store: &Store, inbox: &async_channel:
         // half, a flag set or a draft autosaved while connected would wait
         // out the whole watch before going anywhere.
         _ = wait_for_queued_work(parts, store) => {}
+    }
+}
+
+/// What a wave found when something asked for its attention.
+enum Asked {
+    /// Nothing the lanes need to stop for, and possibly nothing at all.
+    Nothing,
+    /// A body was asked for and is queued: fetch it beside the lanes, now.
+    FetchNow,
+    /// The account's queue holds something due: drain it beside the lanes.
+    DrainNow,
+    /// A job the wave cannot answer, or the inbox has closed. The lanes
+    /// stop; the job, if there is one, is the caller's to serve.
+    Stop(Option<Job>),
+}
+
+/// Answer whatever asked, if a wave can answer it without stopping (#1593).
+///
+/// The wave used to only *observe* its inbox and the queue, and answered
+/// both the same way: cancel every lane, return, let the loop serve the job
+/// or drain the queue, start the lanes again. Live, that restarted two
+/// first-sync passes over 60,937 and 20,328 messages five times in the
+/// first minute -- once per message the person opened or marked read -- and
+/// on that server each restart also cost a reconnect, because the restarted
+/// pass's `SEARCH` is the one io-imap misreads. So the wave takes the job
+/// off the inbox and looks at it: a body request is an enqueue and the
+/// fetch runs beside the lanes; a query is answered from state; a due
+/// operation is drained on a connection of its own, beside the lanes. Only
+/// a job the wave cannot answer stops it, and that job is handed back
+/// rather than put back, because a channel has no front to put it on.
+///
+/// `draining` says a drain is already running beside the lanes, so a queue
+/// that is still non-empty is not a reason to start another.
+async fn attend(
+    parts: &EngineParts,
+    store: &Store,
+    state: &mut State,
+    inbox: &async_channel::Receiver<Job>,
+    draining: bool,
+) -> Asked {
+    match inbox.try_recv() {
+        Ok(job) if job.is_answered_beside_a_wave() => {
+            let wants_a_body = job.asks_for_a_body();
+            serve(job, parts, store, state).await;
+            if wants_a_body {
+                Asked::FetchNow
+            } else {
+                Asked::Nothing
+            }
+        }
+        Ok(job) => Asked::Stop(Some(job)),
+        Err(async_channel::TryRecvError::Closed) => Asked::Stop(None),
+        Err(async_channel::TryRecvError::Empty) => {
+            if !draining && has_queued_work(parts, store).await {
+                Asked::DrainNow
+            } else {
+                Asked::Nothing
+            }
+        }
     }
 }
 
@@ -2319,8 +2417,8 @@ async fn serve(job: Job, parts: &EngineParts, store: &Store, state: &mut State) 
     }
 }
 
-/// One drain pass, with SMTP wired in so `Operation::Send` can actually send.
-#[tracing::instrument(skip_all)]
+/// One drain pass, for the loop: the link checked, the watcher told, and
+/// what happened folded into the engine's state.
 async fn drain(
     parts: &EngineParts,
     store: &Store,
@@ -2340,11 +2438,32 @@ async fn drain(
     if !state.supervisor.link().is_online() {
         return Err(EngineError::new(offline_reason(state.supervisor.link())));
     }
+    before_a_drain(state);
+    let outcome = run_drain(parts, store).await;
+    settle_drain(parts, state, outcome)
+}
 
-    let connection = store
-        .connect()
-        .await
-        .map_err(|error| EngineError::new(error.to_string()))?;
+/// What the watcher is told before a drain drives a connection.
+///
+/// A write `SELECT`s the mailbox it writes to. That answer is the server
+/// telling the client the mailbox's current state, so an `IDLE` armed
+/// afterwards reports only what happens next -- and a delivery that landed
+/// just before the write is in neither. Dropping the watcher's verification
+/// makes its next step a `STATUS`, which reconciles the gap within one poll
+/// tick instead of leaving it to the five-minute floor (#807).
+fn before_a_drain(state: &mut State) {
+    if let Some(watcher) = state.watcher.as_mut() {
+        watcher.unverified();
+    }
+}
+
+/// The drain itself, with SMTP wired in so `Operation::Send` can actually
+/// send: one connection, the queue, and nothing of the engine's state --
+/// which is what lets a wave run it beside its lanes (#1593). The caller
+/// settles what comes back with [`settle_drain`].
+#[tracing::instrument(name = "drain", skip_all)]
+async fn run_drain(parts: &EngineParts, store: &Store) -> Result<DrainSummary, SyncError> {
+    let connection = store.connect().await?;
 
     let smtp = SmtpContext {
         connector: parts.smtp.as_ref(),
@@ -2353,31 +2472,9 @@ async fn drain(
     };
     let drainer = Drainer::with_policy(parts.backend.as_ref(), parts.retry).with_smtp(smtp);
 
-    // The drain is about to drive this connection itself, and a write
-    // `SELECT`s the mailbox it writes to. That answer is the server telling
-    // the client the mailbox's current state, so an `IDLE` armed afterwards
-    // reports only what happens next -- and a delivery that landed just
-    // before the write is in neither. Dropping the watcher's verification
-    // makes its next step a `STATUS`, which reconciles the gap within one
-    // poll tick instead of leaving it to the five-minute floor (#807).
-    if let Some(watcher) = state.watcher.as_mut() {
-        watcher.unverified();
-    }
-
-    let report = match drainer.drain(&connection, parts.account, Utc::now()).await {
-        Ok(report) => report,
-        Err(error) => {
-            tracing::warn!(%error, "the drain pass failed");
-            // Noticed by the operation that hit it rather than by the next
-            // tick: a session that died mid-drain has already cost the user
-            // one action, and waiting five seconds to admit it costs another.
-            if let SyncError::Backend(backend) = &error {
-                let moved = state.supervisor.observe(backend, Utc::now());
-                announce_link(parts, state, moved);
-            }
-            return Err(EngineError::new(error.to_string()));
-        }
-    };
+    let report = drainer
+        .drain(&connection, parts.account, Utc::now())
+        .await?;
 
     tracing::debug!(
         applied = report.applied,
@@ -2403,6 +2500,28 @@ async fn drain(
             .collect(),
         needs_resync: report.needs_resync.clone(),
     })
+}
+
+/// Fold what a drain did into the engine's state, and say what it means.
+fn settle_drain(
+    parts: &EngineParts,
+    state: &mut State,
+    outcome: Result<DrainSummary, SyncError>,
+) -> Result<DrainSummary, EngineError> {
+    match outcome {
+        Ok(summary) => Ok(summary),
+        Err(error) => {
+            tracing::warn!(%error, "the drain pass failed");
+            // Noticed by the operation that hit it rather than by the next
+            // tick: a session that died mid-drain has already cost the user
+            // one action, and waiting five seconds to admit it costs another.
+            if let SyncError::Backend(backend) = &error {
+                let moved = state.supervisor.observe(backend, Utc::now());
+                announce_link(parts, state, moved);
+            }
+            Err(EngineError::new(error.to_string()))
+        }
+    }
 }
 
 /// The most mailboxes a wave will ever sync at once, whatever the store.
@@ -2455,7 +2574,16 @@ fn sync_lanes(concurrent_passes: usize) -> usize {
         .clamp(1, MAX_SYNC_LANES)
 }
 
-/// Sync several mailboxes at once, in priority order, until a job arrives.
+/// Sync several mailboxes at once, in priority order, until something the
+/// wave cannot answer arrives.
+///
+/// # What a wave answers without stopping (#1593)
+///
+/// A body request, a query, a due operation: each is served beside the
+/// lanes -- see [`attend`] -- and the lanes run on. A `Sync`, a `Drain`, a
+/// job that moves the link, or the inbox closing stops them; that job is
+/// returned for the loop to serve, and the interrupted passes go back on the
+/// front of the queue.
 ///
 /// # Why concurrently
 ///
@@ -2524,7 +2652,7 @@ async fn sync_wave(
     store: &Store,
     state: &mut State,
     inbox: &async_channel::Receiver<Job>,
-) {
+) -> Option<Job> {
     if !state.supervisor.link().is_online() {
         let moved = state
             .supervisor
@@ -2533,7 +2661,7 @@ async fn sync_wave(
         announce_link(parts, state, moved);
     }
     if !state.supervisor.link().is_online() {
-        return;
+        return None;
     }
 
     // Shared by every pass in the wave, and cancelled as one: a job the user
@@ -2573,7 +2701,7 @@ async fn sync_wave(
         Ok(connection) => connection,
         Err(error) => {
             tracing::warn!(%error, "no connection to settle a sync wave");
-            return;
+            return None;
         }
     };
 
@@ -2605,7 +2733,7 @@ async fn sync_wave(
         }
     }
     if running.is_empty() {
-        return;
+        return None;
     }
 
     // #631: settled and pumped the instant each individual pass finishes,
@@ -2616,6 +2744,9 @@ async fn sync_wave(
     // was not the only place that happened; it happened inside one wave too.
     let mut interrupted: Vec<MailboxId> = Vec::new();
     let mut asked_to_stop = false;
+    // A job taken off the inbox that the wave could not answer: the caller
+    // serves it the moment the wave returns. See [`attend`].
+    let mut handed_back: Option<Job> = None;
     let mut last_look: Option<Instant> = None;
     // Beside the lanes, never inside a handler: a handler runs while the
     // passes are suspended, and a pass suspends *holding the write gate*
@@ -2627,13 +2758,50 @@ async fn sync_wave(
     // the handlers only start them and settle what they return.
     let mut bodies = FuturesUnordered::new();
     let mut probes = FuturesUnordered::new();
+    // At most one drain at a time, beside the lanes, for a queued write the
+    // person made during the wave (#1593). See [`attend`].
+    let mut drains = FuturesUnordered::new();
+    let make_drain = || run_drain(parts, store);
     let make_bodies = |claims: Vec<postio_sync::backfill::Claim>, inline_cap: Option<u64>| async move {
         fetch_bodies(parts, store, inline_cap, claims).await
     };
     let make_probe = |mailbox: MailboxId, path: String| async move {
         (mailbox, parts.backend.status(&path).await)
     };
-    while !running.is_empty() || !bodies.is_empty() || !probes.is_empty() {
+    // What the wave does with whatever asked for its attention, at every
+    // place it is asked: a body request starts a fetch beside the lanes, a
+    // due operation starts a drain beside them, and only a job the wave
+    // cannot answer stops them. A macro rather than a closure because each
+    // arm below borrows a different one of these queues, and a closure
+    // holding all of them would hold them across the whole `select!`.
+    macro_rules! act_on {
+        ($attention:expr) => {
+            match $attention {
+                Asked::Nothing => {}
+                Asked::FetchNow => {
+                    let mut claims = Vec::new();
+                    while let Some(claim) = state.backfill.next_interactive_body() {
+                        claims.push(claim);
+                    }
+                    if !claims.is_empty() {
+                        let inline_cap = state.backfill.policy().max_inline_bytes;
+                        bodies.push(make_bodies(claims, inline_cap));
+                    }
+                }
+                Asked::DrainNow => {
+                    before_a_drain(state);
+                    drains.push(make_drain());
+                }
+                Asked::Stop(job) => {
+                    handed_back = job;
+                    asked_to_stop = true;
+                    cancel.cancel();
+                }
+            }
+        };
+    }
+
+    while !running.is_empty() || !bodies.is_empty() || !probes.is_empty() || !drains.is_empty() {
         tokio::select! {
             biased;
             // Completions first: a wave that is already finishing should
@@ -2660,16 +2828,14 @@ async fn sync_wave(
                     });
                 }
                 // The interruption conditions, checked here as well as in
-                // the arm below: `biased;` polls completions first, so
-                // completions arriving back to back could starve that arm —
+                // the arms below: `biased;` polls completions first, so
+                // completions arriving back to back could starve those arms —
                 // which is how the first refill was reverted. Checked
                 // *before* admitting anything, no pass is ever refilled past
                 // a job that has already asked.
-                if !asked_to_stop
-                    && (!nothing_asked(inbox) || has_queued_work(parts, store).await)
-                {
-                    asked_to_stop = true;
-                    cancel.cancel();
+                if !asked_to_stop {
+                    let draining = !drains.is_empty();
+                    act_on!(attend(parts, store, state, inbox, draining).await);
                 }
                 // The freed lane takes the next queued mailbox, highest
                 // priority first — one slow pass must not hold the folders
@@ -2707,15 +2873,22 @@ async fn sync_wave(
                     bodies.push(make_bodies(claims, inline_cap));
                 }
             }
-            // `interruption`, not `wait_for_job`: a local mutation is not a
-            // job -- nobody tells this thread that a row was written -- so a
-            // wave that woke only for jobs made the user's send, mark-read or
-            // move wait out every folder left in `to_sync` (#944). The idle
-            // watcher and the backfill loops have always had this half; the
-            // wave was the one place it was never applied.
-            _ = interruption(parts, store, inbox), if !asked_to_stop => {
-                asked_to_stop = true;
-                cancel.cancel();
+            // The two halves of `interruption`, as two arms, because they
+            // are answered differently now (#1593) and only one of them is
+            // quiet while a drain runs. A job: answered beside the lanes
+            // when it can be, otherwise the wave stops for it. A local
+            // mutation is not a job -- nobody tells this thread that a row
+            // was written -- so the queue is watched too, or the user's
+            // send, mark-read or move waits out every folder left in
+            // `to_sync` (#944); it is drained beside the lanes, and the arm
+            // is off while one drain is in flight so a queue that is
+            // non-empty *because* it is being drained does not start another.
+            _ = wait_for_job(inbox), if !asked_to_stop => {
+                let draining = !drains.is_empty();
+                act_on!(attend(parts, store, state, inbox, draining).await);
+            }
+            _ = wait_for_queued_work(parts, store), if !asked_to_stop && drains.is_empty() => {
+                act_on!(attend(parts, store, state, inbox, false).await);
             }
             // A batch of bodies came back. Settle it the way `pump_body`
             // would have, and send the next one out: this is what makes the
@@ -2728,6 +2901,21 @@ async fn sync_wave(
                 {
                     let inline_cap = state.backfill.policy().max_inline_bytes;
                     bodies.push(make_bodies(claims, inline_cap));
+                }
+            }
+            // The drain beside the lanes finished. Settled and announced as
+            // the loop's own drain would be. One that *failed* stops the
+            // wave rather than being tried again here: the loop's drain
+            // below the wave is the one with the link's supervision around
+            // it, and a queue that stays due would otherwise start a drain
+            // every poll for the length of the archive.
+            Some(outcome) = drains.next(), if !drains.is_empty() => {
+                let outcome = settle_drain(parts, state, outcome);
+                let failed = outcome.is_err();
+                announce_drain(parts, &outcome).await;
+                if failed && !asked_to_stop {
+                    asked_to_stop = true;
+                    cancel.cancel();
                 }
             }
             // The `STATUS` on the watched inbox came back. A change to a
@@ -2821,6 +3009,7 @@ async fn sync_wave(
             "sync wave interrupted; requeued"
         );
     }
+    handed_back
 }
 
 /// The next batch of bodies for a wave to fetch beside its lanes, claimed

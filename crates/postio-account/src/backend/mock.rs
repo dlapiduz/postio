@@ -426,6 +426,11 @@ struct State {
     /// [`State::header_fetches`]'s counterpart for `FETCH BODY` (part/text)
     /// calls. See [`MockBackend::body_fetches`].
     body_fetches: Vec<(u64, String)>,
+    /// Which mailbox each served `SEARCH` (UID listing) was for, oldest
+    /// first. A sync pass lists a mailbox's UIDs exactly once per start, so
+    /// this is how a test tells "the pass kept running" from "the pass was
+    /// cancelled and started again" (#1593). See [`MockBackend::uid_listings`].
+    uid_listings: Vec<String>,
     /// One entry per *batched* section fetch: the section asked for, and how
     /// many messages were named in the one call. See
     /// [`MockBackend::section_batches`].
@@ -707,6 +712,18 @@ impl MockBackend {
             .collect()
     }
 
+    /// Which mailbox each served UID listing (`SEARCH`) was for, oldest
+    /// first.
+    ///
+    /// A sync pass lists its mailbox once when it starts and never again, so
+    /// the count for one mailbox is the number of times a pass over it was
+    /// *started* -- which is what distinguishes a wave that kept its lanes
+    /// running from one that cancelled them and began again (#1593). Causal,
+    /// like [`Self::header_fetches`]: not a stopwatch.
+    pub fn uid_listings(&self) -> Vec<String> {
+        self.state().uid_listings.clone()
+    }
+
     /// Which mailbox each served body/part `FETCH` was for, oldest first —
     /// [`Self::header_fetches`]'s counterpart for the backfill lane, used
     /// the same way: order here is causal (#631), not a stopwatch.
@@ -976,6 +993,7 @@ impl MockBackendBuilder {
                 peak_in_flight: 0,
                 header_fetches: Vec::new(),
                 body_fetches: Vec::new(),
+                uid_listings: Vec::new(),
                 section_batches: Vec::new(),
                 chunk_size: self.chunk_size,
             })),
@@ -1357,7 +1375,9 @@ impl MailBackend for MockBackend {
         if cancel.is_cancelled() {
             return Err(BackendError::Cancelled);
         }
-        let state = self.state();
+        let mut state = self.state();
+        state.uid_listings.push(mailbox.to_owned());
+        let state = state;
         if state.refuse_uid_listing {
             return Err(BackendError::Protocol {
                 reason: "SEARCH is not available".to_owned(),
