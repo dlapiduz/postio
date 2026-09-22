@@ -65,17 +65,16 @@ rather than a downscale, and no scalable SVG can express them. Every other
 size is left to the SVG on purpose: a raster there would only override
 something sharper.
 
-That duplication exists because `flatpak-builder`'s export step validates
-every icon it installs by loading it through the host's `gdk-pixbuf`, and on
-at least one real Fedora 44 box that library has no SVG loader module
-registered (`gdk-pixbuf-query-loaders` lists none, and no package on that
-system provides `libpixbufloader-svg.so`) — so exporting the SVG directly
-fails with `is not a valid icon: Format not recognized`, even though the SVG
-itself is valid (it rasterizes correctly with ImageMagick, which does not
-go through gdk-pixbuf's loader modules). Shipping a PNG fallback is normal
-XDG Icon Theme practice independent of this bug and sidesteps it entirely.
-If your `gdk-pixbuf` does have the SVG loader, installing the scalable SVG
-instead (or in addition, at `hicolor/scalable/apps/`) works too.
+The scalable SVG is installed too, at `hicolor/scalable/apps/`, with the
+symbolic variant at `hicolor/symbolic/apps/`: it is what the shell asks for
+at 96 and at every 2x size, and `appstreamcli compose` renders the catalog's
+own icon set from it. For a while it was kept out, because the compose step
+failed to read it (`file-read-error`) and that was taken for the runtime
+lacking an SVG loader. It was the file: an image loader sniffs the first 257
+bytes for `<svg` before it trusts the extension, and the icon opened with a
+680-byte comment. `desktop_entry.rs` in `postio-gtk`'s logic suite now
+asserts the tag sits inside that window for every bundled SVG, and that the
+manifest installs both files.
 
 Regenerate the PNG if the SVG ever changes:
 
