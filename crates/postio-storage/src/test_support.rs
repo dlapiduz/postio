@@ -386,6 +386,12 @@ pub fn sorts(plan: &str) -> bool {
     plan.contains("TEMP B-TREE") || plan.contains("USE SORTER")
 }
 
+/// The error the engine returns when another connection holds the write
+/// lock past `busy_timeout`: what a caller's retry has to recognise (#1594).
+pub fn busy() -> crate::Error {
+    crate::Error::Engine(turso::Error::Busy("database is locked".to_owned()))
+}
+
 #[cfg(test)]
 mod sweep_tests {
     use std::time::{Duration, SystemTime};
