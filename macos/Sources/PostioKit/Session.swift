@@ -820,6 +820,23 @@ public final class PostioSession {
     }
 
     /// Take an attachment off a draft.
+    /// Put a picture into the draft's body (#1571): answers the draft with
+    /// the part on it, and the script that draws it at the caret.
+    ///
+    /// `bytes` rather than a file, because a picture arrives from a paste as
+    /// often as from the open panel. Blocks on the store.
+    public func insertImage(
+        _ bytes: Data, mimeType: String, into draft: DraftFfi
+    ) throws -> InlineImageFfi {
+        try inner.insertInlineImage(draft: draft, bytes: bytes, mimeType: mimeType)
+    }
+
+    /// A picture in draft `draft`'s own body, by its `Content-ID` — what the
+    /// composer's `postio-cid:` handler answers with.
+    public func resolveDraftCid(draft: Int64, contentId: String) -> InlinePart? {
+        inner.resolveDraftCid(draft: draft, contentId: contentId)
+    }
+
     public func detach(_ attachment: Int64, from draft: DraftFfi) throws -> DraftFfi {
         try inner.detachFromDraft(draft: draft, attachment: attachment)
     }

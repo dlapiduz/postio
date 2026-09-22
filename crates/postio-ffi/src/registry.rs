@@ -331,6 +331,9 @@ pub const INTERCEPTED: &[postio_core::CommandId] = {
         C::SaveDraft,
         C::DiscardDraft,
         C::AttachFile,
+        // An open panel, and a picture that has to land at the caret of a
+        // document only the window holds (#1571).
+        C::InsertImage,
         C::ExpandAll,
         C::ToggleFold,
         C::NextInConversation,

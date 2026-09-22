@@ -1,4 +1,5 @@
 import Foundation
+import ImageIO
 import UniformTypeIdentifiers
 
 /// What a file says it is (#1269).
@@ -26,4 +27,20 @@ public enum MimeType {
 
     /// What an unrecognised file is called.
     public static let fallback = "application/octet-stream"
+
+    /// What a picture's bytes say it is, or `nil` when they are not one
+    /// (#1571).
+    ///
+    /// From the bytes rather than the name, for the reason `postio-gtk`'s
+    /// composer gives: a `.png` that is really a JPEG would reach the
+    /// recipient declared wrongly, and the declaration is all their client
+    /// has to go on. `ImageIO`, not AppKit, so this goes to a phone as it is.
+    public static func ofImage(_ bytes: Data) -> String? {
+        guard !bytes.isEmpty,
+              let source = CGImageSourceCreateWithData(bytes as CFData, nil),
+              let identifier = CGImageSourceGetType(source) as String?,
+              let mime = UTType(identifier)?.preferredMIMEType
+        else { return nil }
+        return mime
+    }
 }

@@ -65,10 +65,18 @@ public struct ComposeEditor: NSViewRepresentable {
             )
         )
         configuration.userContentController = controller
+        // Pictures in the body, from the draft's own parts and nowhere else
+        // (#1571). The shell's CSP has always named `postio-cid:` as the one
+        // image source it allows; nothing answered it, so a draft reopened
+        // with a picture in it drew a broken one.
+        configuration.setURLSchemeHandler(coordinator.cid, forURLScheme: "postio-cid")
 
         let view = PastingWebView(frame: .zero, configuration: configuration)
         view.onPaste = { [weak coordinator] html in
             coordinator?.paste(html)
+        }
+        view.onPasteImage = { [weak coordinator] png in
+            coordinator?.pasteImage(png)
         }
         view.navigationDelegate = coordinator
         view.setValue(false, forKey: "drawsBackground")
@@ -85,6 +93,7 @@ public struct ComposeEditor: NSViewRepresentable {
         context.coordinator.reseedIfNeeded(view)
         context.coordinator.applyPendingMark(in: view)
         context.coordinator.insertPendingPaste(in: view)
+        context.coordinator.insertPendingImage(in: view)
     }
 
     /// The two channels the bridge reports on, named as the script names
@@ -107,15 +116,23 @@ public struct ComposeEditor: NSViewRepresentable {
         /// The last format press this surface has run, so a SwiftUI update
         /// for any other reason does not re-apply it.
         private var appliedMark = 0
+        /// The last picture this surface has drawn, for the same reason.
+        private var insertedImage = 0
+        /// Answers `postio-cid:` from the draft's own parts.
+        let cid: CidSchemeHandler
 
         init(session: PostioSession, model: ComposeModel) {
             self.session = session
             self.model = model
+            cid = CidSchemeHandler { draft, contentId in
+                session.resolveDraftCid(draft: draft, contentId: contentId)
+            }
         }
 
         /// Load the editing shell with whatever the draft already holds.
         func seed(into view: WKWebView) {
             seeded = model.id
+            cid.message = model.draft.id
             view.loadHTMLString(shell(body: model.bodyHtml ?? ""), baseURL: URL(string: Self.base))
         }
 
@@ -123,8 +140,31 @@ public struct ComposeEditor: NSViewRepresentable {
         /// draft. Reloading on every SwiftUI update would move the caret to
         /// the start of the document on every keystroke.
         func reseedIfNeeded(_ view: WKWebView) {
+            // The draft's store id changes on its first save -- which a
+            // picture forces -- and the handler has to follow it, or the
+            // picture just inserted resolves against a draft of none.
+            cid.message = model.draft.id
             guard seeded != model.id else { return }
             seed(into: view)
+        }
+
+        /// A picture pasted from the clipboard, as PNG bytes.
+        ///
+        /// The same path as the open panel: the boundary stores the part and
+        /// the surface draws it, so a pasted picture is sent the way an
+        /// inserted one is rather than as a data URL the dialect would drop.
+        func pasteImage(_ png: Data) {
+            model.insertImage(png, mimeType: "image/png", through: session)
+        }
+
+        /// Draw the picture the model is holding, if it is a new one.
+        ///
+        /// The script is the boundary's -- `postio_ui::compose::image_script`
+        /// -- so this host and WebKitGTK insert the same `<img>`.
+        func insertPendingImage(in view: WKWebView) {
+            guard let request = model.imageRequest, request.serial != insertedImage else { return }
+            insertedImage = request.serial
+            view.evaluateJavaScript(request.script)
         }
 
         /// Take a paste: narrow it, insert it, and say what that cost.
@@ -268,15 +308,20 @@ public final class PastingWebView: WKWebView {
     /// paragraph when it carries no HTML at all.
     public var onPaste: ((String) -> Void)?
 
+    /// Called with a picture from the clipboard, as PNG bytes, when it
+    /// carries neither HTML nor text (#1571).
+    public var onPasteImage: ((Data) -> Void)?
+
     /// `@objc` and not `override`: `WKWebView` implements `paste:` for the
     /// responder chain but does not expose it to Swift, so this is the same
     /// selector claimed rather than a method overridden. AppKit dispatches
     /// `⌘V` dynamically and finds this one.
     ///
     /// There is no `super` call, and nothing is lost by that: every branch
-    /// below ends in an insertion, and the only way to reach the end is a
-    /// clipboard carrying neither HTML nor text -- an image or a file
-    /// promise, which is `#341`'s attachment path and not a body edit.
+    /// below ends in an insertion. A picture is checked **last**, after the
+    /// text: a word processor's copy carries a rendered image of the
+    /// selection beside its text, and pasting that would put a picture of
+    /// somebody's paragraph where they meant the paragraph.
     @objc public func paste(_ sender: Any?) {
         let board = NSPasteboard.general
         if let html = board.string(forType: .html) {
@@ -288,7 +333,21 @@ public final class PastingWebView: WKWebView {
             // code path inserts and one sentence explains. Escaped first:
             // clipboard text is not markup and must never be read as any.
             onPaste?(escapedParagraph(text))
+            return
         }
+        if let png = Self.png(on: board) {
+            onPasteImage?(png)
+        }
+    }
+
+    /// The clipboard's picture as PNG bytes, whatever form it was put there
+    /// in — screenshots and Preview put TIFF, browsers put PNG.
+    static func png(on board: NSPasteboard) -> Data? {
+        if let png = board.data(forType: .png) { return png }
+        guard let tiff = board.data(forType: .tiff),
+              let bitmap = NSBitmapImageRep(data: tiff)
+        else { return nil }
+        return bitmap.representation(using: .png, properties: [:])
     }
 
     /// Clipboard text as a paragraph, with nothing in it that could be read

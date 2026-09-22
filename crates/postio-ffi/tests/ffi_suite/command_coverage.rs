@@ -38,15 +38,11 @@ const INTERCEPTED: &[CommandId] = postio_ffi::registry::INTERCEPTED;
 const KNOWN_ORPHANS: &[(CommandId, &str)] = {
     use CommandId as C;
     &[
-        // #1571 -- the two composer verbs that need a surface macOS does not
-        // have. `insert_image` wants an inline attachment with a Content-ID
-        // and a `postio-cid:` handler in the *composer's* web view, which is
-        // a feature rather than a wire; `detach_composer` has nothing to
-        // detach, because compose here is already a window of its own and
-        // never takes over the reading pane the way `PRODUCT.md` describes.
-        // Both are decisions, not omissions -- see the issue.
+        // #1571 -- `detach_composer` has nothing to detach, because compose
+        // here is already a window of its own and never takes over the
+        // reading pane the way `PRODUCT.md` describes. A decision, not an
+        // omission -- see the issue.
         (C::DetachComposer, "#1571"),
-        (C::InsertImage, "#1571"),
         // #1573 -- `g a` cycles an account strip, and macOS's sidebar does
         // not have one: it lists every account's folders at once under "On My
         // Mac", where GTK's shows one account's and the strip re-roots it.

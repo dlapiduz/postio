@@ -169,21 +169,19 @@ ad-hoc-signed build, which asks again after every rebuild.
 the reading pane with its remote-image blocking and per-sender allow list,
 conversations, search with its query language and the chips that teach it,
 the command palette, the cheat sheet, the menu bar built from the command
-registry, keyboard commands in both layers, compose with rich text and
-attachments, scheduled send, notifications, a settings window with every
-pane, the message-parts panel — so an attachment can be saved, saved
+registry, keyboard commands in both layers, compose with rich text,
+attachments and pictures in the body, scheduled send, notifications, a
+settings window with every pane, the message-parts panel — so an
+attachment can be saved, saved
 alongside its siblings, previewed in place or handed to another
 application — saved searches, the account verbs, one-click unsubscribe
 with its activation log in Privacy settings, and repairing an account
 whose credential has expired, by password or by browser, whichever it
 broke by.
 
-**What does not, yet.** Four commands in the registry reach nothing here,
+**What does not, yet.** Three commands in the registry reach nothing here,
 and each is a decision rather than a wire:
 
-- `insert_image` wants an inline attachment with a `Content-ID` and a
-  `postio-cid:` handler in the composer's own web view — a feature to
-  build ([#1571](https://github.com/dlapiduz/postio/issues/1571)).
 - `detach_composer` has nothing to detach: compose on macOS is already a
   window of its own and never takes over the reading pane
   ([#1571](https://github.com/dlapiduz/postio/issues/1571)).
@@ -191,7 +189,9 @@ and each is a decision rather than a wire:
   account's folders at once rather than re-rooting to one
   ([#1573](https://github.com/dlapiduz/postio/issues/1573)).
 - `toggle_rail` needs the conversation rail, which is not drawn here yet
-  ([#1576](https://github.com/dlapiduz/postio/issues/1576)).
+  ([#1576](https://github.com/dlapiduz/postio/issues/1576)) — and the rail
+  is built on ADR 0032's one-document pane, which this frontend has not
+  adopted ([#1595](https://github.com/dlapiduz/postio/issues/1595)).
 
 Beyond the command sweep: the search bar has its chips, hit count, timing,
 refine chips, sort control and footer hints, but not the scope rail
@@ -201,7 +201,7 @@ same design question as `next_scope` above.
 `crates/postio-ffi/tests/ffi_suite/command_coverage.rs` is what keeps that
 second list honest: it sweeps every command in the registry and fails if one
 reaches nothing and is not listed as debt. The list has gone from
-forty-nine to four, and it may only shrink — a command that gains a handler
+forty-nine to three, and it may only shrink — a command that gains a handler
 and stays listed fails the sweep just as one that loses a handler does.
 
 ## First run

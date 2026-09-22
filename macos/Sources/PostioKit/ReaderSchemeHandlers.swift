@@ -10,13 +10,27 @@ import WebKit
 /// colleague's attachment would render it. The message is held here rather
 /// than read from ambient state, so it cannot drift from what the view is
 /// showing.
+///
+/// The composer uses it too, over a *draft's* own parts (#1571): the same
+/// scoping argument, one message further back. There `message` is the draft
+/// being written.
 public final class CidSchemeHandler: NSObject, WKURLSchemeHandler {
-    private let source: any ReaderSource
-    /// The message this web view is showing. Set before each load.
+    private let resolve: (Int64, String) -> InlinePart?
+    /// The message this web view is showing — or the draft, in the composer.
+    /// Set before each load.
     public var message: Int64?
 
-    public init(source: any ReaderSource) {
-        self.source = source
+    /// Over a message's parts: the reader's handler.
+    public convenience init(source: any ReaderSource) {
+        self.init { message, contentId in
+            source.resolveCid(message: message, contentId: contentId)
+        }
+    }
+
+    /// Over whatever `resolve` answers from, given the scope in `message`
+    /// and the `Content-ID` asked for.
+    public init(resolve: @escaping (Int64, String) -> InlinePart?) {
+        self.resolve = resolve
     }
 
     public func webView(_ webView: WKWebView, start task: WKURLSchemeTask) {
@@ -24,7 +38,7 @@ public final class CidSchemeHandler: NSObject, WKURLSchemeHandler {
             let message,
             let url = task.request.url,
             let contentId = Self.contentId(from: url),
-            let part = source.resolveCid(message: message, contentId: contentId)
+            let part = resolve(message, contentId)
         else {
             // A miss is an error, not a stall. The `inline-image-cid` corpus
             // fixture is a `cid:` with no matching part and exists to prove

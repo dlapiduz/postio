@@ -184,6 +184,28 @@ public final class ComposeModel: Identifiable {
     /// command cannot present.
     public var wantsAttachment = false
 
+    /// Whether a picture for the body is being asked for (#1571).
+    ///
+    /// Same shape as `wantsAttachment`: the file comes from an open panel,
+    /// which a command cannot present. Set through `askForImage`, which is
+    /// where a draft that cannot take one says so instead.
+    public var wantsImage = false
+
+    /// A picture the boundary has stored, waiting for the surface to draw it.
+    ///
+    /// The part is already in the store and on the draft by the time this
+    /// exists; what is left is running `script` in the document, once.
+    public struct ImageRequest: Equatable, Sendable {
+        /// `postio_ui::compose::image_script` over the part just minted.
+        public let script: String
+        /// Which insertion this is, so the same picture twice is two.
+        public let serial: Int
+    }
+
+    /// The most recent picture, or `nil` before there has been one.
+    public private(set) var imageRequest: ImageRequest?
+    private var imagesAsked = 0
+
     /// Whether the schedule-send picker is being asked for.
     ///
     /// The four times it offers are the boundary's — `schedulePresets()` —
@@ -222,6 +244,64 @@ public final class ComposeModel: Identifiable {
         if body.isEmpty {
             body = text
         }
+    }
+
+    /// Ask for a picture to put in the body, or say why this draft cannot
+    /// take one.
+    ///
+    /// A plain draft has no document to hold a picture, and a handed-off one
+    /// may not be written from this window at all. Both are said rather than
+    /// swallowed: `insert_image` doing nothing is indistinguishable from
+    /// `insert_image` being broken.
+    public func askForImage() {
+        guard marksApply else {
+            status = isHandedOff
+                ? "This draft is open in another editor, so nothing can be added to its body here."
+                : "A picture goes in the body of a rich message. Turn on Rich to put one there."
+            return
+        }
+        wantsImage = true
+    }
+
+    /// Put `bytes` in the body as a picture.
+    ///
+    /// The boundary stores the part and saves the draft before answering, so
+    /// the picture survives the window closing the way an attachment does.
+    public func insertImage(_ bytes: Data, mimeType: String, through session: PostioSession?) {
+        guard let session, marksApply else { return }
+        do {
+            took(try session.insertImage(bytes, mimeType: mimeType, into: edited))
+        } catch {
+            status = error.localizedDescription
+        }
+    }
+
+    /// Put the picture in `file` in the body.
+    ///
+    /// Its type is read from its bytes, and falls back to its name only when
+    /// the bytes say nothing — in which case the boundary refuses it in its
+    /// own words, pointing at Attach file.
+    public func insertImage(from file: URL, through session: PostioSession?) {
+        let bytes: Data
+        do {
+            bytes = try Data(contentsOf: file)
+        } catch {
+            // The name is not in the sentence: it is the user's, and a status
+            // line is a thing people screenshot.
+            status = "That picture could not be read."
+            return
+        }
+        insertImage(bytes, mimeType: MimeType.ofImage(bytes) ?? MimeType.of(file), through: session)
+    }
+
+    /// Take a picture the boundary stored: the draft with its part on it, and
+    /// the script that draws it at the caret.
+    public func took(_ inserted: InlineImageFfi) {
+        draft = inserted.draft
+        syncFromDraft()
+        imagesAsked += 1
+        imageRequest = ImageRequest(script: inserted.script, serial: imagesAsked)
+        status = nil
     }
 
     /// Say why a link was refused, or clear the last complaint.

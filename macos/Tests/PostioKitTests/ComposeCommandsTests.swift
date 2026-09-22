@@ -55,6 +55,48 @@ import Testing
         #expect(composer.markRequest == nil)
     }
 
+    // -- a picture in the body (#1571) ----------------------------------------
+
+    @Test func insertImageAsksForAPicture() {
+        // A command cannot put up an open panel, so it says one is wanted --
+        // the same shape as Attach file and Insert link.
+        let composer = model()
+        #expect(ComposeCommands.run("insert_image", on: composer, through: nil))
+        #expect(composer.wantsImage)
+    }
+
+    @Test func insertImageOnAPlainDraftSaysWhyNot() {
+        // A plain draft has no document to put a picture in. Claimed, because
+        // the composer is what the key is for, and said rather than
+        // swallowed: a key that silently does nothing cannot be told from one
+        // that is broken.
+        let composer = model(rich: false)
+        #expect(ComposeCommands.run("insert_image", on: composer, through: nil))
+        #expect(!composer.wantsImage)
+        #expect(composer.status?.contains("Rich") == true, "\(composer.status ?? "nothing said")")
+    }
+
+    @Test func aPictureTheBoundaryStoredReachesTheDocumentOnce() {
+        // The part is in the store and on the draft by the time the model
+        // hears about it; what is left is the surface running the script,
+        // once -- a script re-run on every SwiftUI update would insert the
+        // picture again on every keystroke.
+        let composer = model()
+        var withPart = composer.draft
+        withPart.id = 9
+        withPart.attachments = [
+            AttachmentFfi(id: 3, filename: "inline-image.png", mimeType: "image/png", size: "12 B")
+        ]
+        let before = composer.imageRequest?.serial ?? 0
+
+        composer.took(InlineImageFfi(draft: withPart, script: "insert();"))
+
+        #expect(composer.draft.id == 9, "the id the store assigned is kept")
+        #expect(composer.attachments.count == 1)
+        #expect(composer.imageRequest?.script == "insert();")
+        #expect((composer.imageRequest?.serial ?? 0) == before + 1)
+    }
+
     @Test func theCopyFieldsCommandOpensThem() {
         let composer = model()
         #expect(!composer.showsCopyFields)

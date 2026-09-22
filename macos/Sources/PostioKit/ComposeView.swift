@@ -79,6 +79,17 @@ public struct ComposeView: View {
         .frame(minWidth: 520, minHeight: 420)
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
+                // Asks rather than opens: on a plain draft there is no
+                // document to hold a picture, and the model says so.
+                Button {
+                    model.askForImage()
+                } label: {
+                    Image(systemName: "photo")
+                }
+                .help(tooltip("Insert an image", "insert_image"))
+                .accessibilityLabel("Insert an image")
+            }
+            ToolbarItem(placement: .primaryAction) {
                 Button {
                     attach()
                 } label: {
@@ -309,6 +320,11 @@ public struct ComposeView: View {
             model.wantsAttachment = false
             attach()
         }
+        .onChange(of: model.wantsImage) { _, wanted in
+            guard wanted else { return }
+            model.wantsImage = false
+            insertImage()
+        }
         .onChange(of: model.wantsSchedule) { _, wanted in
             guard wanted else { return }
             model.wantsSchedule = false
@@ -435,6 +451,18 @@ public struct ComposeView: View {
         panel.canChooseDirectories = false
         guard panel.runModal() == .OK else { return }
         model.attach(panel.urls, through: session)
+    }
+
+    private func insertImage() {
+        // POSTIO-CONSENT: a picture leaves this machine only because somebody
+        // chose it in an open panel, and it leaves inside the message they
+        // are writing.
+        let panel = NSOpenPanel()
+        panel.allowsMultipleSelection = false
+        panel.canChooseDirectories = false
+        panel.allowedContentTypes = [.image]
+        guard panel.runModal() == .OK, let file = panel.url else { return }
+        model.insertImage(from: file, through: session)
     }
 
     private func scheduleSave() {
