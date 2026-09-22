@@ -2809,7 +2809,16 @@ async fn sync_wave(
             // about and mark everything cancelled.
             Some(outcome) = running.next(), if !running.is_empty() => {
                 let stopped_early = outcome.was_cancelled();
-                if stopped_early {
+                // A pass the store turned away as busy is owed another turn
+                // exactly as a cancelled one is (#1594): it stopped through
+                // no fault of its mailbox, kept what it committed, and its
+                // units had already waited out the engine's timeout several
+                // times over. Requeued at the front rather than left to the
+                // watcher's next poll, which is up to five minutes after the
+                // wave -- and not put on screen, because it is not an error
+                // the person can act on.
+                let turned_away = outcome.was_transient();
+                if stopped_early || turned_away {
                     interrupted.push(outcome.mailbox);
                 }
                 active.retain(|mailbox| *mailbox != outcome.mailbox);
@@ -2822,6 +2831,7 @@ async fn sync_wave(
                 // sync.
                 if let Err(error) = settle_pass(parts, state, &settle_connection, outcome).await
                     && !stopped_early
+                    && !turned_away
                 {
                     parts.events.emit(Event::Error {
                         message: error.message().to_string(),
@@ -3175,6 +3185,47 @@ impl PassOutcome {
                 BackendError::Cancelled
             )))
         )
+    }
+
+    /// Whether this pass ended on the store turning a write away as busy
+    /// (#1594): not its mailbox's fault, and owed another turn the way a
+    /// cancelled pass is.
+    fn was_transient(&self) -> bool {
+        matches!(
+            &self.result,
+            Err(PassFailure::Failed(SyncError::Storage(error))) if error.is_busy()
+        )
+    }
+}
+
+#[cfg(test)]
+mod pass_outcome_tests {
+    use super::*;
+
+    fn outcome(result: Result<SyncSummary, PassFailure>) -> PassOutcome {
+        PassOutcome {
+            mailbox: MailboxId::new(1),
+            result,
+        }
+    }
+
+    #[test]
+    fn a_pass_the_store_turned_away_as_busy_is_transient() {
+        let busy = outcome(Err(PassFailure::Failed(SyncError::Storage(
+            postio_storage::test_support::busy(),
+        ))));
+        assert!(busy.was_transient());
+        assert!(!busy.was_cancelled());
+    }
+
+    #[test]
+    fn a_cancelled_a_failed_and_a_finished_pass_are_not() {
+        let cancelled = outcome(Err(PassFailure::Failed(SyncError::Backend(
+            BackendError::Cancelled,
+        ))));
+        assert!(!cancelled.was_transient());
+        assert!(!outcome(Err(PassFailure::NoSuchMailbox)).was_transient());
+        assert!(!outcome(Ok(SyncSummary::default())).was_transient());
     }
 }
 

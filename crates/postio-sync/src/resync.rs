@@ -73,12 +73,12 @@ use postio_model::{
     FullResyncReason, Generation, Mailbox, MailboxId, MailboxStatus, Message, MessageId,
     ResyncPlan, Uid,
 };
+use postio_storage::Checkout;
 use postio_storage::Connection;
 use postio_storage::repository::{
     AccountRepository, MessageRepository, OperationQueueRepository, SyncStateRepository,
     ThreadingRepository,
 };
-use postio_storage::{Checkout, WritePriority};
 
 use crate::drain::SyncError;
 use crate::initial::{self, Progress};
@@ -556,68 +556,57 @@ async fn incremental(
             let take = initial::unit_rows().min(rest.len());
             let (slice, tail) = rest.split_at(take);
             rest = tail;
-            // Ahead of `BEGIN IMMEDIATE`, never after: the permit is what
-            // stands this aside for a keystroke's write, and standing aside
-            // after taking SQLite's lock would be standing aside too late.
-            let permit = connection
-                .write_gate()
-                .acquire(WritePriority::Background)
-                .await;
-            // From here, not before the permit: the sizing wants lock-held
-            // time, and queueing is not holding.
-            let held_from = std::time::Instant::now();
-
-            // IMMEDIATE for the reason `initial.rs` gives at its own
-            // transaction (#79): the first statement here is a SELECT, and a
-            // deferred transaction that has to promote a read lock to a write
-            // lock is told SQLITE_BUSY without the busy handler ever running.
-            // IMMEDIATE for the reason `initial.rs` gives at its own
-            // transaction (#79): the first statement here is a SELECT, and a
-            // deferred transaction that has to promote a read lock to a write
-            // lock is refused without the busy handler ever running.
-            //
-            // `upsert_batch` assigns the ids and takes a `Vec`, so the unit
-            // is copied in and read back out -- the same shape `initial.rs`
-            // uses at its own version of this.
-            let source: Vec<Message> = slice.to_vec();
+            // The permit, the transaction and the sizing clock, and another
+            // try when the engine says busy: see `initial::write_unit`.
             let account_id = mailbox.account_id;
             let account_ref = account.as_ref();
             let known_ref = &known_set;
-            let newly = postio_storage::transaction(connection, move |connection| async move {
-                let mut written = source;
-                MessageRepository::new(&connection)
-                    .upsert_batch(&mut written)
-                    .await?;
+            let (newly, held) = initial::write_unit(connection, || {
+                // IMMEDIATE for the reason `initial.rs` gives at its own
+                // transaction (#79): the first statement here is a SELECT,
+                // and a deferred transaction that has to promote a read lock
+                // to a write lock is refused without the busy handler ever
+                // running.
+                //
+                // `upsert_batch` assigns the ids and takes a `Vec`, so the
+                // unit is copied in and read back out -- the same shape
+                // `initial.rs` uses at its own version of this.
+                let source: Vec<Message> = slice.to_vec();
+                postio_storage::transaction(connection, move |connection| async move {
+                    let mut written = source;
+                    MessageRepository::new(&connection)
+                        .upsert_batch(&mut written)
+                        .await?;
 
-                let threading = ThreadingRepository::new(&connection, account_id);
-                for message in &written {
-                    threading.thread(message).await?;
-                }
-
-                // Only the arrivals, by the same test twice over: `known_set`
-                // was read before this fetch, so a message already in it is a
-                // flag change or similar, not a new correspondent sighting and
-                // not new mail to notify about. See `contacts::record`'s docs
-                // for the double-counting this also avoids.
-                let mut arrivals = Vec::new();
-                if let Some(account) = account_ref {
+                    let threading = ThreadingRepository::new(&connection, account_id);
                     for message in &written {
-                        let is_new = message
-                            .server
-                            .uid
-                            .is_some_and(|uid| !known_ref.contains(uid));
-                        if is_new {
-                            crate::contacts::record(&connection, account, message).await?;
-                            arrivals.push(message.id);
+                        threading.thread(message).await?;
+                    }
+
+                    // Only the arrivals, by the same test twice over: `known_set`
+                    // was read before this fetch, so a message already in it is a
+                    // flag change or similar, not a new correspondent sighting and
+                    // not new mail to notify about. See `contacts::record`'s docs
+                    // for the double-counting this also avoids.
+                    let mut arrivals = Vec::new();
+                    if let Some(account) = account_ref {
+                        for message in &written {
+                            let is_new = message
+                                .server
+                                .uid
+                                .is_some_and(|uid| !known_ref.contains(uid));
+                            if is_new {
+                                crate::contacts::record(&connection, account, message).await?;
+                                arrivals.push(message.id);
+                            }
                         }
                     }
-                }
-                Ok::<_, SyncError>(arrivals)
+                    Ok::<_, SyncError>(arrivals)
+                })
             })
             .await?;
             arrived.extend(newly);
-            initial::unit_wrote(slice.len(), held_from.elapsed());
-            drop(permit);
+            initial::unit_wrote(slice.len(), held);
             // One real yield per unit, for the reason `initial.rs` gives at
             // its own batch loop: an uncontended gate and a commit whose work
             // runs inside the poll can both come back `Ready`, and a pass
