@@ -1057,7 +1057,7 @@ fn main() -> glib::ExitCode {
              for ada@example.com. Unlock it in your keyring application — on \
              GNOME that is Passwords and Keys — and try again.",
         );
-        window.set_content(Some(&screen));
+        window.set_content(Some(&postio_gtk::widgets::under_window_chrome(&screen)));
     }
     // The list has three row heights and a design that only works at one of
     // them is unfinished, so the shot can render any of them.

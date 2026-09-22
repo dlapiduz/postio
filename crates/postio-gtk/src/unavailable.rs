@@ -91,6 +91,14 @@ impl Unavailable {
         Self::default()
     }
 
+    /// The screen `window` is showing, if it is showing this one.
+    ///
+    /// It is mounted under the window's chrome, so `window.content()` is the
+    /// chrome rather than the screen.
+    pub fn showing_in(window: &crate::window::Window) -> Option<Self> {
+        crate::widgets::screen::showing_in(window)
+    }
+
     /// The sentence explaining why the store did not open.
     ///
     /// Shown as it was given, but as a *sentence* — see [`sentence`]. The
