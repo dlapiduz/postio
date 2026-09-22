@@ -1535,7 +1535,9 @@ pub async fn present(
             .as_deref()
             .unwrap_or("Postio could not open its local store."),
     );
-    window.set_content(Some(&screen));
+    // Under the window's chrome, as onboarding is: a hard stop is exactly the
+    // screen somebody wants to close, and bare content has no close button.
+    window.set_content(Some(&postio_gtk::widgets::under_window_chrome(&screen)));
     screen.focus_retry();
 
     screen.connect_retry({

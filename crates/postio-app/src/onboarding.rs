@@ -125,18 +125,10 @@ pub async fn install(
     // instead put a title bar inside the wizard's own content, which draws as
     // part of the wizard rather than as the window's and looks wrong.
     //
-    // So the screen goes in an `AdwToolbarView` of its own, whose top bar is
-    // the window's title bar for as long as the wizard is up: flat and
-    // title-less, because canvas 3e draws the wizard's own heading and a
-    // second title would be two answers to "where am I", but carrying the
-    // window controls, which is the whole point.
-    let chrome = adw::ToolbarView::new();
-    let bar = adw::HeaderBar::new();
-    bar.set_show_title(false);
-    bar.add_css_class("flat");
-    chrome.add_top_bar(&bar);
-    chrome.set_content(Some(&screen));
-    window.set_content(Some(&chrome));
+    // So the screen goes under chrome of its own, whose top bar is the
+    // window's title bar for as long as the wizard is up —
+    // `widgets::under_window_chrome` says why it is flat and title-less.
+    window.set_content(Some(&postio_gtk::widgets::under_window_chrome(&screen)));
     match &repairing {
         Some(account) => {
             screen.set_address(&account.address.address);
