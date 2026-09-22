@@ -196,9 +196,7 @@ and each is a decision rather than a wire:
 Beyond the command sweep: the search bar has its chips, hit count, timing,
 refine chips, sort control and footer hints, but not the scope rail
 ([#1157](https://github.com/dlapiduz/postio/issues/1157)) — which is the
-same design question as `next_scope` above. And the sidebar's keyboard does
-not walk saved searches until it walks folders
-([#1573](https://github.com/dlapiduz/postio/issues/1573)).
+same design question as `next_scope` above.
 
 `crates/postio-ffi/tests/ffi_suite/command_coverage.rs` is what keeps that
 second list honest: it sweeps every command in the registry and fails if one

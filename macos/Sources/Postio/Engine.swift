@@ -292,6 +292,10 @@ final class Engine {
         // which is true whether or not the field holds the keyboard. The
         // refine bar and the field's readout both follow it.
         searchStamp += 1
+        // A saved search holds the keyboard only while its results are up.
+        // Once the list is a folder again the highlight goes back to the
+        // folder, rather than staying on a query nothing is showing.
+        if session?.isSearching != true { savedSearches.put(cursor: nil) }
         guard !showingSearch, !showingParts else { return }
         paneContext = contextOf(pane)
     }
@@ -422,31 +426,81 @@ final class Engine {
         if collapsed { collapsedFolders.insert(row) } else { collapsedFolders.remove(row) }
     }
 
-    /// Every sidebar row, in the order it is drawn.
-    var sidebarOrder: [MailboxFfi] {
+    /// Every sidebar row, in the order it is drawn — saved searches included.
+    var sidebarOrder: [SidebarWalk.Stop] {
         SidebarWalk.visible(
             special: specialFolders,
+            saved: savedSearches.rows,
             roots: folderRoots,
             children: { [weak self] parent in self?.children(of: parent) ?? [] },
             collapsed: collapsedFolders
         )
     }
 
-    /// Where the sidebar's keyboard is.
+    /// The folder half of where the sidebar's keyboard is.
     ///
     /// Separate from the folder in view: stepping past a `\Noselect`
     /// container moves the keyboard onto it without opening anything, so the
     /// two answers differ for exactly as long as it takes to press `j` again.
-    private(set) var sidebarCursor: SidebarRowId?
+    ///
+    /// **And the sidebar's highlight is drawn from it**, through
+    /// `highlightedFolder`. It used to be a `@State` in the shell that only a
+    /// click could move, so `j`, `k` and the four `g` destinations opened a
+    /// folder while the highlight stayed on the last one clicked — and a click
+    /// never reached this, so the next `j` stepped on from wherever the
+    /// keyboard had last been rather than from the row under the pointer.
+    private(set) var folderCursor: SidebarRowId?
+
+    /// Where the sidebar's keyboard is: a folder or a saved search.
+    var sidebarCursor: SidebarCursor? {
+        SidebarWalk.cursor(folder: folderCursor, savedSearch: savedSearches.cursor)
+    }
+
+    /// The folder the sidebar draws as selected, if any.
+    var highlightedFolder: SidebarRowId? {
+        SidebarWalk.highlightedFolder(folder: folderCursor, savedSearch: savedSearches.cursor)
+    }
+
+    /// A folder row was picked — by a click, a restore, or a notification.
+    ///
+    /// The one way in for everything that is not the keyboard's walk, so the
+    /// highlight, the cursor and the list cannot come to disagree.
+    func pick(_ row: SidebarRowId?) {
+        // Picking the row that is already picked changes nothing, as it did
+        // when this was a selection `onChange` watched: reopening would throw
+        // away the list's place for a click that asked for nothing new.
+        guard let row, row != highlightedFolder,
+              let folder = mailboxes.first(where: { $0.rowId == row })
+        else { return }
+        land(on: .folder(folder))
+    }
+
+    /// A saved search's row was picked.
+    func pick(_ search: SavedSearchFfi) {
+        land(on: .savedSearch(search))
+    }
+
+    /// Put the sidebar's keyboard on `stop`, and do what landing there does.
+    private func land(on stop: SidebarWalk.Stop) {
+        switch stop {
+        case let .folder(folder):
+            savedSearches.put(cursor: nil)
+            folderCursor = folder.rowId
+            if SidebarWalk.opens(folder) { open(folder) }
+        case let .savedSearch(search):
+            // The folder half stays where it was, so leaving the search puts
+            // the highlight back on the folder whose mail the list returns to.
+            savedSearches.put(cursor: search.key)
+            open(search)
+        }
+    }
 
     /// Move the sidebar's keyboard by `delta`, opening what it lands on.
     private func stepSidebar(by delta: Int) -> Bool {
-        let order = sidebarOrder
-        guard let landed = SidebarWalk.step(from: sidebarCursor, in: order, by: delta) else {
+        guard let landed = SidebarWalk.step(from: sidebarCursor, in: sidebarOrder, by: delta) else {
             return false
         }
-        sidebarCursor = landed.rowId
-        if SidebarWalk.opens(landed) { open(landed) }
+        land(on: landed)
         return true
     }
 
@@ -588,8 +642,7 @@ final class Engine {
             noticeToken += 1
             return true
         }
-        sidebarCursor = found.rowId
-        open(found)
+        land(on: .folder(found))
         return true
     }
 
@@ -932,6 +985,10 @@ final class Engine {
             if session?.isSearching == true {
                 _ = session?.clearSearch()
                 listChanged()
+                // The list is a folder again, so its context is `List`
+                // rather than `Search` -- every other way out of a search
+                // already says so.
+                searchChanged()
             }
         case Intercepted.cyclePane:
             // The visual order — sidebar, list, reader — and it wraps. A
@@ -945,14 +1002,15 @@ final class Engine {
             // The keyboard starts where the folder in view is, so `j` steps
             // on from there rather than back to the top.
             if sidebarCursor == nil {
-                sidebarCursor = mailboxes.first { $0.id == showingMailbox }?.rowId
+                folderCursor = mailboxes.first { $0.id == showingMailbox }?.rowId
             }
         case Intercepted.nextFolder:
             return stepSidebar(by: 1)
         case Intercepted.prevFolder:
             return stepSidebar(by: -1)
         case Intercepted.toggleFolder:
-            guard let row = sidebarCursor else { return false }
+            // A saved search has nothing under it to fold.
+            guard case let .folder(row) = sidebarCursor else { return false }
             toggleCollapsed(row)
         case Intercepted.goToInbox:
             return goTo(.inbox)
