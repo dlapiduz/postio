@@ -208,30 +208,6 @@ async fn a_thread_that_is_not_there_reads_as_empty_rather_than_stale() {
 
 // -- the folded run (canvas turn 8a) -----------------------------------------
 
-/// A row from `sender`, for a run's summary line.
-fn row(id: i64, sender: &str) -> postio_ffi::RowFfi {
-    postio_ffi::RowFfi {
-        id,
-        thread: Some(1),
-        is_thread: false,
-        from: Some(sender.to_owned()),
-        from_address: Some(format!("{}@example.com", sender.to_lowercase())),
-        initials: sender.chars().take(1).collect(),
-        subject: Some("Radon reduction".to_owned()),
-        preview: None,
-        received_at: 1_770_000_000 + id,
-        seen: true,
-        flagged: false,
-        answered: false,
-        // A received message, so it is in no send state at all. `draft: bool`
-        // became this when a row learned to say *which* state it is in.
-        send_state: None,
-        has_attachments: false,
-        thread_count: 6,
-        participants: String::new(),
-    }
-}
-
 #[tokio::test(flavor = "multi_thread")]
 async fn a_message_can_be_asked_for_as_a_row_without_a_list_position() {
     // The single-message pane's whole problem. `rowAt` answers by *index*

@@ -9,8 +9,6 @@
 //! These are rules, not pixels, so they live here. What the widgets keep is
 //! the drawing.
 
-use std::ops::Range;
-
 use chrono::{DateTime, Datelike, Local, Utc};
 use postio_model::address::EmailAddress;
 
@@ -231,72 +229,6 @@ pub fn message_when(at: DateTime<Local>, now: DateTime<Local>) -> String {
 /// The three-letter month, in the canvas's own casing.
 fn month(at: DateTime<Local>) -> String {
     at.format("%b").to_string()
-}
-
-/// Runs of consecutive collapsed messages long enough to fold into one
-/// divider (canvas turn 8a).
-///
-/// `collapsed[i]` says whether message `i` is drawn as a one-line header. The
-/// answer is the ranges worth replacing with `5 earlier messages · Ada, Bo`.
-///
-/// **Three, not two.** A divider hides its messages behind a click, so it has
-/// to save more lines than it costs. Two collapsed rows become one divider
-/// plus nothing — no saving, and a gesture where there was none. Three
-/// become one, which is the first point the trade is worth making.
-///
-/// # Only one frontend folds
-///
-/// ADR 0032 made the GTK pane **one document**, and `0fe0d4f2` retired the
-/// stacked pane that had these dividers in it — so this and [`run_summary`]
-/// lost their Linux caller and were deleted with it. The macOS pane still
-/// stacks, still folds, and still calls them through
-/// `postio_ffi::conversation::conversation_runs`, which is why they are here
-/// rather than rewritten in Swift: a second implementation of "three in a
-/// row, and here is who is in them" is a second thing to keep in step.
-///
-/// The two panes are a **fork, not a duplication**, and reconciling them —
-/// ADR 0032 on macOS, or the stack kept deliberately as the platform's own
-/// answer — is a decision somebody has to make rather than a merge to
-/// perform. Until then this is the stacked pane's rule, shared by the one
-/// frontend that has one.
-pub fn collapsed_runs(collapsed: &[bool], minimum: usize) -> Vec<Range<usize>> {
-    let mut runs = Vec::new();
-    let mut start = None;
-    for (index, folded) in collapsed.iter().enumerate() {
-        match (folded, start) {
-            (true, None) => start = Some(index),
-            (false, Some(from)) => {
-                if index - from >= minimum {
-                    runs.push(from..index);
-                }
-                start = None;
-            }
-            _ => {}
-        }
-    }
-    if let Some(from) = start
-        && collapsed.len() - from >= minimum
-    {
-        runs.push(from..collapsed.len());
-    }
-    runs
-}
-
-/// How many consecutive collapsed messages earn a divider.
-pub const RUN_MINIMUM: usize = 3;
-
-/// What a folded run says: `5 earlier messages · Ada, Bo`.
-///
-/// The senders are the run's own, deduped in order of first appearance and
-/// shortened the way [`participants`] shortens a thread's — one vocabulary
-/// for "who is in this", whether the "this" is a conversation or five lines
-/// of it.
-pub fn run_summary(count: usize, senders: &[EmailAddress]) -> String {
-    let who = participants(senders);
-    if who.is_empty() {
-        return format!("{count} earlier messages");
-    }
-    format!("{count} earlier messages · {who}")
 }
 
 /// What the conversation rules need to know about a message.
@@ -969,58 +901,5 @@ mod tests {
     #[test]
     fn an_empty_conversation_expands_nothing() {
         assert!(expanded_on_open::<Msg>(&[], 0, EAGER_EXPANSION_CAP).is_empty());
-    }
-    // -- folded runs (canvas turn 8a, #1005) ------------------------------
-
-    #[test]
-    fn a_run_of_three_folds_and_a_run_of_two_does_not() {
-        // Two collapsed rows become one divider plus nothing: no saving, and
-        // a gesture where there was none.
-        assert_eq!(collapsed_runs(&[true, true], RUN_MINIMUM), Vec::new());
-        assert_eq!(collapsed_runs(&[true, true, true], RUN_MINIMUM), vec![0..3]);
-    }
-
-    #[test]
-    fn the_canvas_shape_folds_only_its_middle() {
-        // 8 messages: one collapsed at the top, five collapsed in the middle,
-        // one collapsed, one expanded at the end. The top one is a run of
-        // one and stays as itself.
-        let collapsed = [true, false, true, true, true, true, true, false];
-        assert_eq!(collapsed_runs(&collapsed, RUN_MINIMUM), vec![2..7]);
-    }
-
-    #[test]
-    fn a_run_that_reaches_the_end_still_counts() {
-        // The loop has to close an open run when the slice ends, or a
-        // conversation whose tail is collapsed folds nothing.
-        assert_eq!(
-            collapsed_runs(&[false, true, true, true], RUN_MINIMUM),
-            vec![1..4]
-        );
-    }
-
-    #[test]
-    fn two_runs_are_two_dividers() {
-        let collapsed = [true, true, true, false, true, true, true, true];
-        assert_eq!(collapsed_runs(&collapsed, RUN_MINIMUM), vec![0..3, 4..8]);
-    }
-
-    #[test]
-    fn nothing_collapsed_folds_nothing() {
-        assert_eq!(
-            collapsed_runs(&[false, false, false], RUN_MINIMUM),
-            Vec::new()
-        );
-        assert_eq!(collapsed_runs(&[], RUN_MINIMUM), Vec::new());
-    }
-
-    #[test]
-    fn a_divider_names_its_count_and_who_is_in_it() {
-        let senders = people(&[
-            ("Ada Norwood", "ada@example.com"),
-            ("Bo Ferris", "bo@example.com"),
-            ("Ada Norwood", "ada@example.com"),
-        ]);
-        assert_eq!(run_summary(5, &senders), "5 earlier messages · Ada, Bo");
     }
 }
