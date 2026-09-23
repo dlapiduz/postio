@@ -2269,7 +2269,7 @@ impl Session {
             };
             // The account's own addresses: its primary one and every identity
             // it sends as. Read once per account, not per message.
-            if !own.contains_key(&stored.account_id) {
+            if let std::collections::hash_map::Entry::Vacant(slot) = own.entry(stored.account_id) {
                 let addresses = match accounts.get(stored.account_id).await {
                     Ok(Some(account)) => std::iter::once(account.address.address.to_lowercase())
                         .chain(
@@ -2281,7 +2281,7 @@ impl Session {
                         .collect(),
                     _ => Vec::new(),
                 };
-                own.insert(stored.account_id, addresses);
+                slot.insert(addresses);
             }
             let from = stored.from.first();
             let address = from.map(|from| from.address.clone()).unwrap_or_default();
