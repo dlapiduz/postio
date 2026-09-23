@@ -323,8 +323,14 @@ where
     let (sender, receiver) = async_channel::bounded(1);
     let database = database.clone();
     runtime.spawn(async move {
-        let answer = match database.connect().await {
-            Ok(connection) => work(connection).await,
+        // A turn on a warm reader rather than a connection of its own: a
+        // search run took four cold caches per keystroke (#1602).
+        let answer = match database.read().await {
+            Ok(reader) => {
+                let answer = work(reader.checkout()).await;
+                drop(reader);
+                answer
+            }
             Err(error) => {
                 tracing::warn!(%error, "no connection to read the index with");
                 None

@@ -782,7 +782,7 @@ pub async fn reclaim_orphaned_blobs(
     blobs: &BlobStore,
     min_age: Duration,
 ) -> Result<GarbageReport, Box<dyn std::error::Error>> {
-    let connection = database.connect().await?;
+    let connection = database.connect_background().await?;
     let report = blobs
         .collect_garbage(&connection, GarbageCollection { min_age })
         .await?;
@@ -846,7 +846,7 @@ pub async fn enforce_storage_ceiling(
     let Some(budget) = max_bytes else {
         return Ok(None);
     };
-    let connection = database.connect().await?;
+    let connection = database.connect_background().await?;
     let report = blobs.evict_to_fit(&connection, budget).await?;
     if report.removed > 0 {
         // Counts and bytes only: what was in those blobs is somebody's mail.
@@ -923,7 +923,7 @@ pub async fn repair_header_blocks(
     let mut repaired = 0usize;
     let mut last_batch: Vec<i64> = Vec::new();
     loop {
-        let connection = database.connect().await?;
+        let connection = database.connect_background().await?;
         let messages = postio_storage::repository::MessageRepository::new(&connection);
         let candidates = messages
             .messages_missing_headers(REPAIR_HEADERS_BATCH)
@@ -1012,7 +1012,7 @@ pub async fn prune_settled_operations(
     retention: chrono::Duration,
     now: chrono::DateTime<chrono::Utc>,
 ) -> Result<usize, Box<dyn std::error::Error>> {
-    let connection = database.connect().await?;
+    let connection = database.connect_background().await?;
     let before = now - retention;
     let accounts = postio_storage::repository::AccountRepository::new(&connection)
         .list()
@@ -1241,7 +1241,7 @@ pub async fn index_named_bodies(
     // batch holds a pooled connection and a write permit, and a burst of a
     // whole backfill's worth of arrivals should not hold either indefinitely.
     for chunk in ids.chunks(INDEX_BODY_BATCH as usize) {
-        let connection = database.connect().await?;
+        let connection = database.connect_background().await?;
         indexed += index_one_batch(&connection, chunk).await?;
         drop(connection);
         if chunk.len() == INDEX_BODY_BATCH as usize {
@@ -1301,7 +1301,7 @@ pub async fn index_local_bodies(database: &Store) -> Result<usize, Box<dyn std::
     // older than this cursor from being stranded.
     let mut cursor: Option<postio_index::index::Candidate> = None;
     loop {
-        let connection = database.connect().await?;
+        let connection = database.connect_background().await?;
         let found =
             postio_index::index::messages_missing_body_text(&connection, INDEX_BODY_BATCH, cursor)
                 .await?;
@@ -1420,7 +1420,7 @@ pub async fn index_local_headers(database: &Store) -> Result<usize, Box<dyn std:
     let mut indexed = 0usize;
     let mut last_batch: Vec<i64> = Vec::new();
     loop {
-        let connection = database.connect().await?;
+        let connection = database.connect_background().await?;
         let candidates =
             postio_index::index::messages_missing_header_rows(&connection, INDEX_HEADERS_BATCH)
                 .await?;
@@ -1556,7 +1556,7 @@ pub async fn reindex_account(
     mut on_progress: impl FnMut(u32, u32),
 ) -> Result<usize, Box<dyn std::error::Error>> {
     let account_id = account.get();
-    let connection = database.connect().await?;
+    let connection = database.connect_background().await?;
     postio_index::index::clear_account_body_index(&connection, account_id).await?;
     postio_index::index::clear_account_header_index(&connection, account_id).await?;
     let total = postio_index::index::messages_missing_body_text_for_account(
@@ -1581,7 +1581,7 @@ pub async fn reindex_account(
     // -- bodies -------------------------------------------------------------
     let mut last_batch: Vec<i64> = Vec::new();
     loop {
-        let connection = database.connect().await?;
+        let connection = database.connect_background().await?;
         let candidates = postio_index::index::messages_missing_body_text_for_account(
             &connection,
             account_id,
@@ -1649,7 +1649,7 @@ pub async fn reindex_account(
     // -- header blocks --------------------------------------------------------
     let mut last_batch: Vec<i64> = Vec::new();
     loop {
-        let connection = database.connect().await?;
+        let connection = database.connect_background().await?;
         let candidates = postio_index::index::messages_missing_header_rows_for_account(
             &connection,
             account_id,
