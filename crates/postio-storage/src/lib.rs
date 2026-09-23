@@ -68,7 +68,8 @@ pub mod test_support;
 pub use blob::{BlobStore, BlobWriter, EvictionReport};
 pub use error::{Error, Result};
 pub use store::{
-    Checkout, Connection, MAX_CONCURRENT_PASSES, Store, WriteGate, WritePermit, WritePriority,
+    Checkout, Connection, MAX_CONCURRENT_PASSES, Reader, Store, WriteGate, WritePermit,
+    WritePriority,
 };
 
 /// Run `work` inside one atomic write, committing if it succeeds and rolling

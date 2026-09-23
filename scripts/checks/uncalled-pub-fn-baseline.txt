@@ -92,6 +92,7 @@ resync_strategy                   # crates/postio-account/src/imap/dispatch.rs:1
 rethread_orphans                  # crates/postio-storage/src/repository/threading.rs:268
 root_message_id                   # crates/postio-model/src/thread.rs:86
 section_spec                      # crates/postio-account/src/backend/message.rs:585
+seed_backfill                     # crates/postio-runtime/src/engine.rs:671 -- a test lever: the runtime suite drives the body queue through it; the app seeds nothing itself since #1593
 send_tracked                      # crates/postio-core/src/bridge.rs:212
 set_capabilities                  # crates/postio-sync/src/watch.rs:280
 set_disk_full                     # crates/postio-sync/src/backfill.rs:499

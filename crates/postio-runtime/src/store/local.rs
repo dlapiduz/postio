@@ -542,8 +542,14 @@ impl LocalStore {
         F: FnOnce(Checkout) -> Fut,
         Fut: Future<Output = Result<T, StoreError>>,
     {
-        let connection = self.store.connect().await.map_err(StoreError::from)?;
-        read(connection).await
+        // A turn on a warm reader, not a connection of this read's own: the
+        // engine keeps one page cache per connection, so a read that opened
+        // its own paid a cold cache and the pragmas every time, and a list
+        // page did so twice (#1602). The turn lasts until the read is done.
+        let reader = self.store.read().await.map_err(StoreError::from)?;
+        let answer = read(reader.checkout()).await;
+        drop(reader);
+        answer
     }
 }
 

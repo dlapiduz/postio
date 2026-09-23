@@ -1272,40 +1272,57 @@ mod imp {
             // the thread is known would flash on for every one of them.
             self.rail.widget().set_visible(false);
             self.rail.connect_hide({
-                let view = view.clone();
-                move || view.toggle_rail()
+                let view = view.downgrade();
+                move || {
+                    if let Some(view) = view.upgrade() {
+                        view.toggle_rail();
+                    }
+                }
             });
             self.rail.connect_activated({
-                let view = view.clone();
+                let view = view.downgrade();
                 move |index| {
-                    view.focus_at(index);
+                    if let Some(view) = view.upgrade() {
+                        view.focus_at(index);
+                    }
                 }
             });
             self.footer.set_visible(false);
             self.footer.connect_command({
-                let view = view.clone();
-                move |command| view.emit_command(command)
+                let view = view.downgrade();
+                move |command| {
+                    if let Some(view) = view.upgrade() {
+                        view.emit_command(command);
+                    }
+                }
             });
             // The draft bar's `Continue editing` has to *name* the draft:
             // the command reaches the application, which resolves a bare
             // `OpenMessage` against whatever the list cursor is on -- and a
             // draft inside a longer thread is not that row (#1212).
             self.header.draft_actions().connect_command({
-                let view = view.clone();
-                move |command| match command {
-                    postio_core::Command::OpenMessage { .. } => {
-                        view.emit_command(postio_core::Command::OpenMessage {
-                            message: view.latest_message(),
-                        })
+                let view = view.downgrade();
+                move |command| {
+                    if let Some(view) = view.upgrade() {
+                        match command {
+                            postio_core::Command::OpenMessage { .. } => {
+                                view.emit_command(postio_core::Command::OpenMessage {
+                                    message: view.latest_message(),
+                                })
+                            }
+                            other => view.emit_command(other),
+                        }
                     }
-                    other => view.emit_command(other),
                 }
             });
             // The one-document pane's verbs live in the header (canvas screen
             // 30), so the bar is the header's and the pane only wires it.
             self.header.actions().connect_command({
-                let view = view.clone();
+                let view = view.downgrade();
                 move |command| {
+                    let Some(view) = view.upgrade() else {
+                        return;
+                    };
                     // FR-008: the conversation bar's reply, reply-all and
                     // forward act on the **most recent message**, and archive
                     // on the whole conversation. Passing the command straight
@@ -1360,8 +1377,12 @@ impl ConversationView {
         // The header's button and `O` are the same verb; wiring the button to
         // the pane rather than emitting a command keeps them one path.
         pane.imp().header.connect_expand_all({
-            let pane = pane.clone();
-            move || pane.expand_all()
+            let pane = pane.downgrade();
+            move || {
+                if let Some(pane) = pane.upgrade() {
+                    pane.expand_all();
+                }
+            }
         });
         pane
     }

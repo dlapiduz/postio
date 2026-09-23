@@ -993,8 +993,8 @@ pub async fn start_syncing(window: &Window, wiring: &Wiring) {
         }
     };
 
-    for (account, sync) in engines {
-        adopt_engine(window, wiring, account, sync).await;
+    for (_, sync) in engines {
+        adopt_engine(window, wiring, sync).await;
     }
 }
 
@@ -1024,7 +1024,7 @@ pub async fn attach_account(
     let accounts = enabled_accounts(&wiring.database).await.len();
     let started = engine::start_joining(account, accounts, wiring).await?;
     if let Some(sync) = started {
-        adopt_engine(window, wiring, account.id, sync).await;
+        adopt_engine(window, wiring, sync).await;
     }
     // The surfaces that list accounts, now that there is one more. Nothing
     // else reads the account table while the window is up; when something
@@ -1040,12 +1040,7 @@ pub async fn attach_account(
 /// so "the application started with this account" and "the application
 /// gained it" cannot drift apart in what an engine is wired to (ADR 0012
 /// Q2).
-async fn adopt_engine(
-    window: &Window,
-    wiring: &Wiring,
-    account: postio_model::AccountId,
-    sync: postio_runtime::Engine,
-) {
+async fn adopt_engine(window: &Window, wiring: &Wiring, sync: postio_runtime::Engine) {
     // Retained rather than leaked. It does live as long as the session, but
     // "dropping it at exit would stop the engine a moment before the process
     // ends anyway" -- which is what the leak was for -- stopped being safe
@@ -1057,7 +1052,10 @@ async fn adopt_engine(
     // after the bus was built. The first engine fills the slot; the
     // others are reached through their own account's work.
     wiring.engine.fill(sync.clone());
-    seed_the_backfill(account, sync.clone(), wiring).await;
+    // No seeding of the body queue from here: the engine tops it up itself,
+    // in priority order, the moment it has a connection (#1593). Fifteen
+    // `SeedBackfill` jobs sent from spawned tasks used to land during the
+    // first wave, and every one of them stopped the lanes.
     fetch_what_is_opened(window, sync, wiring.runtime.clone()).await;
 }
 
@@ -1102,64 +1100,6 @@ async fn fetch_what_is_opened(
         });
     });
 }
-
-/// Ask for the bodies worth having, one mailbox at a time.
-///
-/// At startup, because a session that ended with mail unread should not have
-/// to fetch it again on the wire when the user opens it. Seeding *again* is
-/// the engine's own business now: it tops the queue up when it drains and
-/// re-seeds a folder whose sync changed something, so this is the first batch
-/// rather than the only one (#318).
-async fn seed_the_backfill(
-    account: postio_model::AccountId,
-    sync: postio_runtime::Engine,
-    wiring: &Wiring,
-) {
-    let Ok(connection) = wiring.database.connect().await else {
-        return;
-    };
-    let mailboxes = match postio_storage::repository::MailboxRepository::new(&connection)
-        .list_for_account(account)
-        .await
-    {
-        Ok(mailboxes) => mailboxes,
-        Err(error) => {
-            tracing::error!(%error, "cannot read the account's folders: {error}");
-            return;
-        }
-    };
-    drop(connection);
-
-    let selectable = mailboxes.iter().filter(|m| m.selectable).count();
-    // Read *before* the engine has connected, so zero here is ordinary on a
-    // first run — `postio_sync::discover` fills the table on link-up. Worth
-    // saying anyway: a backfill seeded over no folders is the difference
-    // between "still starting" and "nothing works".
-    tracing::info!(known = mailboxes.len(), selectable, "folders known locally");
-
-    for mailbox in mailboxes.into_iter().filter(|mailbox| mailbox.selectable) {
-        let sync = sync.clone();
-        wiring.runtime.spawn(async move {
-            if let Err(error) = sync.seed_backfill(mailbox.id, BACKFILL_PER_MAILBOX).await {
-                tracing::warn!(mailbox = %mailbox.path, %error, "cannot seed the backfill");
-            }
-        });
-    }
-}
-
-/// How many bodies this startup pass queues per mailbox.
-///
-/// The first batch, not the horizon. The engine tops the queue up whenever it
-/// drains and seeds a folder again whenever a sync changes it, so a mailbox is
-/// covered by however many batches it takes — this only decides how much of it
-/// is on the wire before the engine's own loop takes over. It read as a
-/// horizon for the life of the project, because nothing ever seeded a second
-/// time and everything below the newest 200 messages of a folder waited to be
-/// opened (#318).
-///
-/// `postio_sync::backfill::BackfillPolicy::seed_batch` is what the engine uses
-/// for every batch after this one, and is where the size of them belongs.
-const BACKFILL_PER_MAILBOX: u32 = 200;
 
 /// The choices about *this installation* that outlive a failed start.
 ///
@@ -1535,7 +1475,9 @@ pub async fn present(
             .as_deref()
             .unwrap_or("Postio could not open its local store."),
     );
-    window.set_content(Some(&screen));
+    // Under the window's chrome, as onboarding is: a hard stop is exactly the
+    // screen somebody wants to close, and bare content has no close button.
+    window.set_content(Some(&postio_gtk::widgets::under_window_chrome(&screen)));
     screen.focus_retry();
 
     screen.connect_retry({

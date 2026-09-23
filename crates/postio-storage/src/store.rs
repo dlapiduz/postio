@@ -7,15 +7,23 @@
 //! a handle. Everything else in this crate takes a [`Connection`] borrowed
 //! from it.
 //!
-//! # What replaced the pool
+//! # What replaced the pool, and what did not
 //!
 //! There was a hand-written connection pool here, with a maximum, a checkout
-//! path, an idle list and a `Checkout` guard that returned its
-//! connection on drop. It is gone: the engine keeps its own pool behind
-//! [`turso::Database::connect`], which is why that call is cheap, infallible
-//! in practice, and not `async`. A `Connection` is `Clone`, `Send` and `Sync`,
-//! and serialises its own operations internally — so the thing the old pool
-//! was protecting is protected a layer down.
+//! path, an idle list and a `Checkout` guard that returned its connection on
+//! drop. It went with the engine swap on the belief that the engine keeps a
+//! pool of its own behind [`turso::Database::connect`]. **It does not** (#1602):
+//! that call builds a new pager with an empty page cache every time, and its
+//! shared-cache field is read only for statistics. So a connection is a cold
+//! cache over an encrypted file, capped by the `cache_size` pragma the store
+//! sets on it and held until the checkout drops -- a first sync held five at
+//! 64 MiB, and every list page opened two. What came back is smaller than
+//! the old pool and shaped by that fact: [`Store::read`] keeps a few reader
+//! connections warm and hands out turns on them; [`Store::connect_background`]
+//! gives work nobody waits on a small cache; [`Store::connect`] is for a
+//! writer, which wants a connection of its own and drops it when done. A
+//! `Connection` is still `Clone`, `Send` and `Sync`, and serialises its own
+//! operations internally, so a turn's clone is the same pager and cache.
 //!
 //! What is *not* a layer down is [`WriteGate`], and that is a different
 //! question: not "may two writes run at once" but "when a background sync and
@@ -329,6 +337,32 @@ PRAGMA cache_size = -65536;
 PRAGMA synchronous = 1;
 ";
 
+/// [`PER_CONNECTION`] for a connection that only ever writes through, or
+/// reads once and is dropped: a sync lane, a body fetch, an indexer batch.
+///
+/// The one difference is the cache. A lane writes headers across the whole
+/// file, so its cache fills to the cap with clean pages nothing reads
+/// again, and the engine keeps one cache **per connection** (#1602): a
+/// first sync held five such connections for its whole length, ~300 MB of
+/// the heap peak that bought nothing. Four mebibytes covers the working set
+/// of a unit's writes and their index pages; the interactive cache stays
+/// where a person's reads are.
+const PER_BACKGROUND_CONNECTION: &str = "\
+PRAGMA foreign_keys = ON;
+PRAGMA temp_store = 2;
+PRAGMA busy_timeout = 5000;
+PRAGMA cache_size = -4096;
+PRAGMA synchronous = 1;
+";
+
+/// How many long-lived connections [`Store::read`] keeps for reads.
+///
+/// Three: a page read, a sidebar refresh and a search can overlap, and a
+/// fourth caller waits its turn rather than paying a cold cache of its own.
+/// Each holds up to the interactive `cache_size`, so this is also the cap on
+/// what warm reads may hold: 3 x 64 MiB, filled only by what was read.
+const READERS: usize = 3;
+
 /// The least the holes must come to before a reclaim is worth blocking a
 /// writer for. See [`worth_reclaiming`].
 const RECLAIM_FLOOR: u64 = 64 * 1024 * 1024;
@@ -358,6 +392,16 @@ pub fn worth_reclaiming(free_pages: u64, total_pages: u64, page_size: u64) -> bo
     free_bytes >= RECLAIM_FLOOR && free_pages as f64 / total_pages as f64 >= RECLAIM_FRACTION
 }
 
+/// How many connections this process has opened on any store.
+///
+/// Process-wide, like `postio_runtime`'s folder-count counter and for the
+/// same reason: a checkout is made on whichever thread does the work, and a
+/// thread-local read from a test would answer zero. Each one is a fresh
+/// engine pager with an empty page cache (#1602), so this is the number a
+/// budget is written in when the question is "how many times did a page
+/// cost its own cache". Read through `test_support::counting::checkouts`.
+pub(crate) static CHECKOUTS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
 /// The store: a database handle and the path it came from.
 ///
 /// Cheap to clone — the engine's handle is an `Arc` inside — so it is passed
@@ -367,6 +411,8 @@ pub struct Store {
     database: turso::Database,
     path: Option<PathBuf>,
     gate: WriteGate,
+    /// The long-lived reader connections, taken in turns. See [`Store::read`].
+    readers: Arc<Readers>,
 }
 
 impl std::fmt::Debug for Store {
@@ -397,6 +443,7 @@ impl Store {
             database,
             path: Some(path.to_path_buf()),
             gate: WriteGate::new(),
+            readers: Arc::new(Readers::new()),
         };
 
         if fresh {
@@ -596,11 +643,18 @@ impl Store {
             .unwrap_or(0)
     }
 
-    /// A connection onto the store, with foreign keys on.
+    /// A fresh connection onto the store, with foreign keys on and the
+    /// interactive page cache.
     ///
-    /// Cheap: the engine pools these itself, and the returned handle is
-    /// `Clone + Send + Sync`. Make one per unit of work rather than holding
-    /// one open across awaits that do not touch the database.
+    /// **Not pooled, and not cheap in the way this used to say.** The engine
+    /// builds a new pager with an empty page cache for every connection
+    /// (`turso_core::Database::connect`; its shared-cache field is read only
+    /// for statistics), so each checkout starts cold over an encrypted file
+    /// and holds up to `cache_size` of what it touched until it is dropped.
+    /// A read that is one of many should take [`Store::read`], which keeps a
+    /// few connections warm; a writer takes this, because a writer wants a
+    /// connection of its own and drops it when the unit is done; anything
+    /// that only writes through takes [`Store::connect_background`].
     ///
     /// # Why this is `async` when the engine's own `connect` is not
     ///
@@ -615,11 +669,61 @@ impl Store {
     /// right trade. The alternative -- a `connect_raw` for callers who know
     /// better -- is an invitation to be wrong quietly.
     pub async fn connect(&self) -> Result<Checkout> {
+        self.connect_with(PER_CONNECTION).await
+    }
+
+    /// A fresh connection for work nobody is waiting on: a sync lane, a body
+    /// fetch, an indexer batch. The same as [`Store::connect`] with a small
+    /// page cache; see [`PER_BACKGROUND_CONNECTION`] for why.
+    pub async fn connect_background(&self) -> Result<Checkout> {
+        self.connect_with(PER_BACKGROUND_CONNECTION).await
+    }
+
+    async fn connect_with(&self, pragmas: &str) -> Result<Checkout> {
+        CHECKOUTS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let connection = self.database.connect()?;
-        connection.execute_batch(PER_CONNECTION).await?;
+        connection.execute_batch(pragmas).await?;
         Ok(Checkout {
             connection,
             gate: self.gate.clone(),
+        })
+    }
+
+    /// A turn on one of a few long-lived reader connections.
+    ///
+    /// For reads that come in numbers -- list pages, sidebar refreshes,
+    /// searches -- where a connection of their own would mean a cold page
+    /// cache each time (#1602: a list page opened two, and paid the pragmas
+    /// and every page's decrypt twice per page). At most [`READERS`] callers
+    /// hold a turn at once; the next waits, briefly, rather than opening a
+    /// cache nothing else will ever hit. The connection goes back when the
+    /// [`Reader`] is dropped, its cache intact for the next caller.
+    ///
+    /// Readers only. A writer takes [`Store::connect`] or
+    /// [`Store::interactive_write`]: a transaction left open on a shared
+    /// connection would be the next reader's problem.
+    pub async fn read(&self) -> Result<Reader> {
+        let turn = self
+            .readers
+            .turns
+            .clone()
+            .acquire_owned()
+            .await
+            .expect("the readers' semaphore is never closed");
+        let idle = self
+            .readers
+            .idle
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .pop();
+        let checkout = match idle {
+            Some(checkout) => checkout,
+            None => self.connect().await?,
+        };
+        Ok(Reader {
+            checkout: Some(checkout),
+            home: Arc::clone(&self.readers),
+            _turn: turn,
         })
     }
 
@@ -693,6 +797,75 @@ impl Store {
     /// Where the store lives, or `None` for one that is not on disk.
     pub fn path(&self) -> Option<&Path> {
         self.path.as_deref()
+    }
+}
+
+/// The reader connections a store keeps warm. See [`Store::read`].
+struct Readers {
+    /// Who may hold a reader right now: [`READERS`] turns.
+    turns: Arc<tokio::sync::Semaphore>,
+    /// Connections nobody is using, cache and all.
+    idle: Mutex<Vec<Checkout>>,
+}
+
+impl Readers {
+    fn new() -> Self {
+        Readers {
+            turns: Arc::new(tokio::sync::Semaphore::new(READERS)),
+            idle: Mutex::new(Vec::with_capacity(READERS)),
+        }
+    }
+}
+
+/// One turn on a long-lived reader connection. See [`Store::read`].
+///
+/// Dereferences to the [`Checkout`] for the length of the turn; dropping it
+/// hands the connection back. [`Reader::checkout`] gives a clone of the same
+/// connection for a caller whose closure takes one by value -- the engine's
+/// handle is an `Arc`, so a clone is the same pager and the same cache --
+/// and the turn still ends when the `Reader` is dropped, so keep it until
+/// the work on the clone is done.
+pub struct Reader {
+    checkout: Option<Checkout>,
+    home: Arc<Readers>,
+    _turn: tokio::sync::OwnedSemaphorePermit,
+}
+
+impl Reader {
+    /// The connection this turn holds, cloned. See the type's docs.
+    pub fn checkout(&self) -> Checkout {
+        self.checkout
+            .as_ref()
+            .expect("a reader holds its checkout until it is dropped")
+            .clone()
+    }
+}
+
+impl std::ops::Deref for Reader {
+    type Target = Checkout;
+
+    fn deref(&self) -> &Checkout {
+        self.checkout
+            .as_ref()
+            .expect("a reader holds its checkout until it is dropped")
+    }
+}
+
+impl Drop for Reader {
+    fn drop(&mut self) {
+        if let Some(checkout) = self.checkout.take() {
+            self.home
+                .idle
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .push(checkout);
+        }
+    }
+}
+
+impl std::fmt::Debug for Reader {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Reader").finish_non_exhaustive()
     }
 }
 

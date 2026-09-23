@@ -489,20 +489,7 @@ impl Onboarding {
     /// screen, and everything that used to reach the screen by downcasting
     /// the content asks here instead.
     pub fn showing_in(window: &crate::window::Window) -> Option<Self> {
-        fn search(widget: &gtk::Widget) -> Option<Onboarding> {
-            if let Ok(found) = widget.clone().downcast::<Onboarding>() {
-                return Some(found);
-            }
-            let mut child = widget.first_child();
-            while let Some(current) = child {
-                if let Some(found) = search(&current) {
-                    return Some(found);
-                }
-                child = current.next_sibling();
-            }
-            None
-        }
-        window.content().and_then(|content| search(&content))
+        crate::widgets::screen::showing_in(window)
     }
 
     /// The name as typed, for the `From` header and the sidebar label.

@@ -222,3 +222,37 @@ pub enum Error {
         pending: usize,
     },
 }
+
+impl Error {
+    /// Whether the engine turned a write away because another connection
+    /// held the lock past `busy_timeout` (#1594).
+    ///
+    /// The gate orders Postio's own writers and the timeout covers whatever
+    /// it does not; a writer that outlives both is not wrong, it is late,
+    /// and a caller that can try again should. Two variants because the
+    /// engine names a snapshot that went stale under a reader separately
+    /// from a lock it could not take, and both mean "not now".
+    pub fn is_busy(&self) -> bool {
+        matches!(
+            self,
+            Error::Engine(turso::Error::Busy(_) | turso::Error::BusySnapshot(_))
+        )
+    }
+}
+
+#[cfg(test)]
+mod busy_tests {
+    use super::*;
+
+    #[test]
+    fn the_engine_saying_busy_is_busy() {
+        assert!(Error::Engine(turso::Error::Busy("database is locked".to_owned())).is_busy());
+        assert!(Error::Engine(turso::Error::BusySnapshot("snapshot".to_owned())).is_busy());
+    }
+
+    #[test]
+    fn any_other_error_is_not() {
+        assert!(!Error::Engine(turso::Error::QueryReturnedNoRows).is_busy());
+        assert!(!Error::WrongStoreKey.is_busy());
+    }
+}

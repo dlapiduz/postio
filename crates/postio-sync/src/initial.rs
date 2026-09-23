@@ -604,28 +604,17 @@ pub async fn commit_batch(
         let take = unit_rows().min(rest.len());
         let (slice, tail) = rest.split_at_mut(take);
         rest = tail;
-        // Ahead of `BEGIN IMMEDIATE`, never after: the permit is what stands
-        // this aside for a keystroke's write, and standing aside after taking
-        // SQLite's lock would be standing aside too late. Re-taken per unit
-        // rather than held across the batch, so a person waits for one unit at
-        // most (#425).
-        let permit = connection
-            .write_gate()
-            .acquire(WritePriority::Background)
-            .await;
-        // From here, not from before the permit: what the sizing needs is
-        // the time the lock was held, and queueing is not holding.
-        let held_from = std::time::Instant::now();
-
-        // `BEGIN IMMEDIATE`, which is what `transaction` opens at the
-        // outermost level, and for the reason #79 records: the first
-        // statement inside is a read, and a deferred transaction that then
-        // has to promote its read lock to a write lock is refused outright
-        // rather than waiting.
-        let source: Vec<Message> = slice.to_vec();
+        // The permit, the transaction and the sizing clock, and another try
+        // when the engine says busy: see [`write_unit`].
         let account_id = mailbox.account_id;
         let known_uids = &known;
-        let (upsert, written) =
+        let ((upsert, written), held) = write_unit(connection, || {
+            // `BEGIN IMMEDIATE`, which is what `transaction` opens at the
+            // outermost level, and for the reason #79 records: the first
+            // statement inside is a read, and a deferred transaction that then
+            // has to promote its read lock to a write lock is refused outright
+            // rather than waiting.
+            let source: Vec<Message> = slice.to_vec();
             postio_storage::transaction(connection, move |connection| async move {
                 let mut written = source;
                 let upsert = MessageRepository::new(&connection)
@@ -657,7 +646,8 @@ pub async fn commit_batch(
 
                 Ok::<_, SyncError>((upsert, written))
             })
-            .await?;
+        })
+        .await?;
 
         report.inserted += upsert.inserted;
         report.updated += upsert.updated;
@@ -665,11 +655,10 @@ pub async fn commit_batch(
 
         // Teach the sizing what this unit cost while the numbers are in
         // hand — the next unit, whichever pass writes it, starts right.
-        unit_wrote(slice.len(), held_from.elapsed());
+        unit_wrote(slice.len(), held);
         // The ids `upsert_batch` assigned belong to the caller's messages, not
         // to this unit's copy of them.
         copy_back(slice, &written);
-        drop(permit);
         // And a yield with the permit down, once per unit. The gate is
         // first-come: released and re-taken in the same poll, it never
         // changes hands, and the one yield per *batch* above was the only
@@ -736,6 +725,68 @@ enum ReadAhead<'a> {
     /// The backend answered while the request was being primed — a mock, a
     /// cache, or a server that was simply quick.
     Answered(BackendResult<Vec<FetchedMessage>>),
+}
+
+/// The most times one write unit is tried when the engine reports the
+/// database busy, before the pass gives up (#1594).
+const BUSY_RETRIES: usize = 3;
+
+/// Run one write unit under the gate, and again if the engine says busy.
+///
+/// The gate orders Postio's own writers; the engine's `busy_timeout` covers
+/// whatever it does not. A unit that outlived that timeout -- two lanes, the
+/// body writer and the indexer contending, at the row costs #1587 measured
+/// -- came back as `database is locked`, and the `?` on it ended the pass: a
+/// small folder's pass died eight seconds in for exactly that (#1594), and a
+/// failed pass was not requeued the way a cancelled one is. So a busy unit is
+/// tried again, [`BUSY_RETRIES`] times. The permit is *released* between
+/// tries, so a waiter the failure woke takes its turn rather than watching
+/// this pass hold the gate while it waits on a lock the gate does not order.
+/// No sleep of its own: the wait is the engine's `busy_timeout`, so a try
+/// costs nothing when the lock frees at once, and this crate has no executor
+/// to sleep on -- one real yield, as every unit already takes.
+///
+/// Returns what the unit produced and how long the lock was held for it,
+/// timed from the permit rather than from the call: queueing is not holding,
+/// and the sizing in [`unit_wrote`] must not learn from a queue.
+pub(crate) async fn write_unit<T, Fut>(
+    connection: &Checkout,
+    unit: impl Fn() -> Fut,
+) -> Result<(T, std::time::Duration)>
+where
+    Fut: Future<Output = Result<T>>,
+{
+    let mut tries = 0;
+    loop {
+        // Ahead of `BEGIN IMMEDIATE`, never after: the permit is what stands
+        // this aside for a keystroke's write, and standing aside after taking
+        // the engine's lock would be standing aside too late. Taken per unit
+        // rather than held across a batch, so a person waits for one unit at
+        // most (#425).
+        let permit = connection
+            .write_gate()
+            .acquire(WritePriority::Background)
+            .await;
+        let held_from = std::time::Instant::now();
+        match unit().await {
+            Ok(value) => {
+                let held = held_from.elapsed();
+                drop(permit);
+                return Ok((value, held));
+            }
+            Err(SyncError::Storage(error)) if error.is_busy() && tries < BUSY_RETRIES => {
+                drop(permit);
+                tries += 1;
+                // A count, which is all a log may carry about a write.
+                tracing::debug!(
+                    tries,
+                    "the database was busy under a write unit; trying it again"
+                );
+                yield_once().await;
+            }
+            Err(error) => return Err(error),
+        }
+    }
 }
 
 /// Start a fetch and poll it once, so the request reaches the server before
@@ -902,5 +953,70 @@ mod carrying_ids_back_onto_a_shortened_batch {
         assert_eq!(slice[0].id, MessageId::new(201));
         assert_eq!(slice[1].id, MessageId::new(0), "the dropped one is left");
         assert_eq!(slice[2].id, MessageId::new(203));
+    }
+}
+
+#[cfg(test)]
+mod busy_retry_tests {
+    use std::cell::Cell;
+
+    use postio_account::backend::BackendError;
+    use postio_storage::test_support;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn a_busy_unit_is_tried_again_and_succeeds() {
+        let database = test_support::memory().await;
+        let connection = database.connect().await.expect("a connection");
+        let tries = Cell::new(0);
+        let (value, _held) = write_unit(&connection, || {
+            let n = tries.get() + 1;
+            tries.set(n);
+            async move {
+                if n <= 2 {
+                    Err(SyncError::Storage(test_support::busy()))
+                } else {
+                    Ok(n)
+                }
+            }
+        })
+        .await
+        .expect("the third try succeeds");
+        assert_eq!(value, 3);
+    }
+
+    #[tokio::test]
+    async fn a_unit_that_stays_busy_fails_after_the_last_try() {
+        let database = test_support::memory().await;
+        let connection = database.connect().await.expect("a connection");
+        let tries = Cell::new(0);
+        let error = write_unit(&connection, || {
+            tries.set(tries.get() + 1);
+            async { Err::<(), _>(SyncError::Storage(test_support::busy())) }
+        })
+        .await
+        .expect_err("a lock that never frees ends the unit");
+        assert!(matches!(error, SyncError::Storage(error) if error.is_busy()));
+        assert_eq!(tries.get(), BUSY_RETRIES + 1);
+    }
+
+    #[tokio::test]
+    async fn any_other_failure_is_not_tried_again() {
+        let database = test_support::memory().await;
+        let connection = database.connect().await.expect("a connection");
+        let tries = Cell::new(0);
+        let error = write_unit(&connection, || {
+            tries.set(tries.get() + 1);
+            async {
+                Err::<(), _>(SyncError::Backend(BackendError::Protocol {
+                    reason: "not busy".to_owned(),
+                }))
+            }
+        })
+        .await
+        .expect_err("the failure is returned as it was");
+        assert!(matches!(error, SyncError::Backend(_)));
+        assert_eq!(tries.get(), 1);
     }
 }

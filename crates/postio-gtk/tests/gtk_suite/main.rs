@@ -79,6 +79,7 @@ mod gtk_editor_format;
 mod gtk_editor_images;
 mod gtk_editor_markdown;
 mod gtk_editor_profile;
+mod gtk_editor_teardown;
 mod gtk_feeds;
 mod gtk_finder;
 mod gtk_finder_focus;
@@ -174,6 +175,10 @@ mod no_stray_prints;
 const IGNORED: &[&str] = &[]; // nothing held out; see app_suite's copy
 
 const CASES: &[(&str, fn())] = &[
+    (
+        "gtk_conversation::dropping_a_conversation_releases_its_pane",
+        gtk_conversation::dropping_a_conversation_releases_its_pane as fn(),
+    ),
     (
         "gtk_composer_resume::resuming_an_unsaved_draft_over_another_unsaved_one_replaces_it",
         gtk_composer_resume::resuming_an_unsaved_draft_over_another_unsaved_one_replaces_it as fn(),
@@ -1135,6 +1140,10 @@ const CASES: &[(&str, fn())] = &[
         gtk_editor_appearance::the_editing_surface_is_dark_in_dark_mode_and_never_white as fn(),
     ),
     (
+        "gtk_editor_teardown::closing_editors_releases_their_webviews",
+        gtk_editor_teardown::closing_editors_releases_their_webviews as fn(),
+    ),
+    (
         "gtk_editor_format::every_formatting_command_lands_as_canonical_structure",
         gtk_editor_format::every_formatting_command_lands_as_canonical_structure as fn(),
     ),
@@ -1230,6 +1239,10 @@ const CASES: &[(&str, fn())] = &[
     (
         "gtk_rail::activating_a_row_reports_the_message_it_names",
         gtk_rail::activating_a_row_reports_the_message_it_names as fn(),
+    ),
+    (
+        "gtk_rail::one_rail_report_runs_the_current_message_handlers_once",
+        gtk_rail::one_rail_report_runs_the_current_message_handlers_once as fn(),
     ),
     (
         "gtk_rail::the_rail_takes_its_step_on_the_ladder",

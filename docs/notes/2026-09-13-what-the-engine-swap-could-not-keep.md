@@ -148,6 +148,13 @@ timeout, no `spawn_blocking` bridge: the engine keeps its own pool behind a
 cheap `connect`, and the async API removed the synchronous-repository shape
 that needed the thread pool. `store.rs`'s module doc has the full account.
 
+> **Correction, 2026-09-23.** The engine keeps no pool. `Database::connect`
+> builds a new pager with an empty page cache for every connection, so
+> "cheap" was true of the call and false of what followed it: every read
+> started cold over the encrypted file, and every connection held its own
+> 64 MiB cap. See `docs/notes/2026-09-23-the-engine-keeps-no-pool-a-connection-is-a-cold-cache.md`
+> and #1602.
+
 **`PRAGMA page_size` is read-only.** The store reads it in two places for
 freelist arithmetic and can set it nowhere, so the choice
 `2026-09-04-the-page-size-has-to-be-chosen-before-300-and-8192-is-the-an.md`

@@ -43,8 +43,8 @@ use postio_gtk::{app, fonts, style};
 use crate::settle_until;
 
 /// The sentence the opener produced, in `open_store_at`'s own words.
-const REFUSED: &str = "Postio could not unlock its local store. it belongs to \
-                       another installation";
+const REFUSED: &str = "the local store will not open: it belongs to another \
+                       installation";
 
 pub fn a_store_refused_after_the_window_is_up_says_so_and_can_be_retried() {
     crate::gtk_case(async {
@@ -83,15 +83,27 @@ pub fn a_store_refused_after_the_window_is_up_says_so_and_can_be_retried() {
         present(&window, &opened, &context, Some(REFUSED.to_owned()), &fed).await;
         while gtk::glib::MainContext::default().iteration(false) {}
 
-        let screen = window
-            .content()
-            .and_downcast::<Unavailable>()
+        let screen = Unavailable::showing_in(&window)
             .expect("a refusal at a window already on screen has to replace what it is showing");
         assert!(
             screen.reason().contains("belongs to another installation"),
             "the screen composed a sentence of its own instead of showing the \
              one the opener produced: {:?}",
             screen.reason()
+        );
+
+        // The window can still be closed. `set_content` replaces the whole
+        // content, which is where this window keeps its header bar, so the
+        // refusal left a window with no controls — and a hard stop is exactly
+        // the screen somebody wants to close.
+        let controls = every_widget(&window.content().expect("the refusal's content"))
+            .into_iter()
+            .filter(|widget| widget.is::<gtk::WindowControls>())
+            .count();
+        assert!(
+            controls > 0,
+            "the store-refused screen has no window controls: it replaced the \
+             window content with a bare screen, so there is no close button"
         );
 
         // ── and the retry reaches a store ────────────────────────────────────
@@ -102,7 +114,7 @@ pub fn a_store_refused_after_the_window_is_up_says_so_and_can_be_retried() {
         // point: it is no longer the refusal.
         screen.retry();
         assert!(
-            settle_until(async || window.content().and_downcast::<Unavailable>().is_none()).await,
+            settle_until(async || Unavailable::showing_in(&window).is_none()).await,
             "the retry never got past the screen it was pressed on"
         );
         assert!(
@@ -185,4 +197,15 @@ pub fn the_store_opens_behind_a_window_that_is_already_up() {
         window.close();
         while gtk::glib::MainContext::default().iteration(false) {}
     });
+}
+
+/// Every widget in the tree, depth first.
+fn every_widget(widget: &gtk::Widget) -> Vec<gtk::Widget> {
+    let mut found = vec![widget.clone()];
+    let mut child = widget.first_child();
+    while let Some(current) = child {
+        found.extend(every_widget(&current));
+        child = current.next_sibling();
+    }
+    found
 }
