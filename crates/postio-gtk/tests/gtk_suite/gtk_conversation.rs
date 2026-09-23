@@ -25,6 +25,24 @@ use postio_gtk::{fonts, style};
 use postio_model::EmailAddress;
 use postio_model::ids::{MessageId, ThreadId};
 
+/// Child callbacks must not keep the entire pane (including cached bodies)
+/// alive after its owner releases it.
+pub fn dropping_a_conversation_releases_its_pane() {
+    if adw::init().is_err() || gdk::Display::default().is_none() {
+        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
+        return;
+    }
+
+    let weak = {
+        let pane = ConversationView::new();
+        pane.downgrade()
+    };
+    assert!(
+        weak.upgrade().is_none(),
+        "a child callback retains the conversation after its owner drops it"
+    );
+}
+
 /// A reader with nothing behind it — no blob source worth naming, since
 /// nothing here asks it to resolve a `cid:`. Good enough to stand in for the
 /// hardened one everywhere this file only cares that a reader was built, not
