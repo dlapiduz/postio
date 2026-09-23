@@ -205,3 +205,43 @@ async fn a_thread_nobody_can_read_is_an_empty_document() {
     assert!(document.messages.is_empty());
     session.shutdown();
 }
+
+#[test]
+fn a_verb_link_names_its_verb_and_its_message() {
+    // What the pane asks of every navigation before anything reaches the
+    // browser: the parse is `postio_ui::reader::thread::verb_of`'s, the same
+    // rule GTK's reader applies.
+    use postio_ffi::{ThreadVerbFfi, ThreadVerbKindFfi, thread_verb};
+    assert_eq!(
+        thread_verb("postio-reply:42".to_owned()),
+        Some(ThreadVerbFfi {
+            kind: ThreadVerbKindFfi::Reply,
+            message: 42
+        })
+    );
+    assert_eq!(
+        thread_verb("postio-allow:7".to_owned()),
+        Some(ThreadVerbFfi {
+            kind: ThreadVerbKindFfi::Allow,
+            message: 7
+        })
+    );
+    assert_eq!(thread_verb("https://example.com/".to_owned()), None);
+    assert_eq!(thread_verb("postio-reply:not-a-message".to_owned()), None);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn each_anchor_carries_the_sender_the_show_link_would_allow() {
+    // `Show` names a message; what it grants is that message's sender.
+    let (session, thread, _) = a_thread().await;
+    let document = session.thread_document(thread, Vec::new()).await;
+    assert_eq!(
+        document
+            .messages
+            .iter()
+            .map(|entry| entry.address.as_str())
+            .collect::<Vec<_>>(),
+        vec!["ada@example.com", "test@example.com", "quinn@example.org"]
+    );
+    session.shutdown();
+}

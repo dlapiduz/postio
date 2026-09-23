@@ -2334,6 +2334,7 @@ impl Session {
                 .map(|message| crate::ThreadAnchorFfi {
                     message: message.scope.parse().unwrap_or_default(),
                     anchor: postio_ui::reader::thread::message_anchor(&message.scope),
+                    address: message.address.clone(),
                 })
                 .collect(),
         }

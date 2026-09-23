@@ -77,6 +77,47 @@ pub const CONTINUE_SCHEME: &str = "postio-continue";
 /// pane (#1444).
 pub const MINE_CLASS: &str = "postio-mine";
 
+/// A verb a message offers for itself, inside a conversation document.
+///
+/// With JavaScript off, a verb in the page is a navigation, and the pane
+/// intercepts it by scheme before anything can reach the browser.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MessageVerb {
+    /// Reply to this message rather than to the latest one (FR-009).
+    Reply,
+    /// Forward this message.
+    Forward,
+    /// Resume the composer on this draft (#1212).
+    Continue,
+    /// Show this sender's remote images -- the consent the blocked notice
+    /// asks for.
+    Allow,
+}
+
+/// Which verb a navigation inside the document asks for, and for which
+/// message's scope -- or `None` when it is not a verb at all.
+///
+/// Matched on the scheme alone, and the whole prefix: a sender controls a
+/// link's text and class and neither of the schemes the sanitizer will emit,
+/// so the scheme is the only thing worth trusting. An unknown verb is refused
+/// rather than mapped to the nearest one, and a verb naming no message is not
+/// a verb.
+pub fn verb_of(uri: &str) -> Option<(MessageVerb, String)> {
+    [
+        (REPLY_SCHEME, MessageVerb::Reply),
+        (FORWARD_SCHEME, MessageVerb::Forward),
+        (CONTINUE_SCHEME, MessageVerb::Continue),
+        (ALLOW_SCHEME, MessageVerb::Allow),
+    ]
+    .into_iter()
+    .find_map(|(scheme, verb)| {
+        uri.strip_prefix(scheme)
+            .and_then(|rest| rest.strip_prefix(':'))
+            .filter(|scope| !scope.is_empty())
+            .map(|scope| (verb, scope.to_owned()))
+    })
+}
+
 /// The element id a message carries, so a pane can scroll to it.
 ///
 /// One function rather than two format strings, because the id and the
@@ -1031,6 +1072,80 @@ mod compose_tests {
                 document.contains(&format!("id=\"{}\"", message_anchor(scope))),
                 "message {scope} cannot be scrolled to"
             );
+        }
+    }
+}
+
+#[cfg(test)]
+mod verb_tests {
+    use super::*;
+
+    #[test]
+    fn each_verb_scheme_names_its_verb_and_its_message() {
+        assert_eq!(
+            verb_of("postio-reply:42"),
+            Some((MessageVerb::Reply, "42".to_owned()))
+        );
+        assert_eq!(
+            verb_of("postio-forward:42"),
+            Some((MessageVerb::Forward, "42".to_owned()))
+        );
+        assert_eq!(
+            verb_of("postio-continue:7"),
+            Some((MessageVerb::Continue, "7".to_owned()))
+        );
+        assert_eq!(
+            verb_of("postio-allow:9"),
+            Some((MessageVerb::Allow, "9".to_owned()))
+        );
+    }
+
+    #[test]
+    fn anything_else_is_not_a_verb() {
+        // A sender controls a link's text and class, never these schemes --
+        // the sanitizer will not emit them -- so the scheme is all that is
+        // matched, and a sender's own link is a link.
+        assert_eq!(verb_of("https://example.com/postio-reply:42"), None);
+        assert_eq!(verb_of("postio-reply:"), None, "a verb naming no message");
+        assert_eq!(
+            verb_of("postio-delete:42"),
+            None,
+            "an unknown verb is refused, not guessed"
+        );
+    }
+
+    #[test]
+    fn the_markup_and_the_parse_agree() {
+        // The page writes these links and the pane reads them back; if the
+        // two drifted, every per-message verb would go to the browser.
+        let entry = Entry {
+            scope: "12",
+            sender: "Ada",
+            address: "ada@example.com",
+            when: "",
+            preview: "",
+            expanded: true,
+            draft: false,
+            mine: false,
+            latest: false,
+            blocked: 2,
+            body: "",
+            recipients: "",
+            cc: "",
+            styles: "",
+        };
+        let html = entry_html(&entry);
+        for (scheme, verb) in [
+            (REPLY_SCHEME, MessageVerb::Reply),
+            (FORWARD_SCHEME, MessageVerb::Forward),
+            (ALLOW_SCHEME, MessageVerb::Allow),
+        ] {
+            let href = format!("{scheme}:12");
+            assert!(
+                html.contains(&format!("href=\"{href}\"")),
+                "{scheme} not in the page"
+            );
+            assert_eq!(verb_of(&href), Some((verb, "12".to_owned())));
         }
     }
 }

@@ -190,4 +190,51 @@ pub struct ThreadAnchorFfi {
     /// `postio_ui::reader::thread::message_anchor`, so the id and the
     /// fragment that finds it cannot disagree.
     pub anchor: String,
+    /// Its sender's address: what the in-page `Show` link grants, since the
+    /// link names the message and the decision is per sender.
+    pub address: String,
+}
+
+/// Which verb a message offers inside the document. See [`thread_verb`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
+pub enum ThreadVerbKindFfi {
+    /// Reply to this message rather than to the latest (FR-009).
+    Reply,
+    /// Forward this message.
+    Forward,
+    /// Resume the composer on this draft (#1212).
+    Continue,
+    /// Allow this message's sender's remote images.
+    Allow,
+}
+
+/// A verb and the message it is for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Record)]
+pub struct ThreadVerbFfi {
+    /// What was asked.
+    pub kind: ThreadVerbKindFfi,
+    /// Of which message.
+    pub message: i64,
+}
+
+/// What a navigation inside a conversation document asks for, if it is one
+/// of the page's own verbs (#1595).
+///
+/// `postio_ui::reader::thread::verb_of`'s parse, the rule GTK's reader
+/// applies, so the Mac never matches these schemes itself. `None` for
+/// anything else -- including a verb naming something that is not a message
+/// id, which a page this boundary wrote never contains.
+#[uniffi::export]
+pub fn thread_verb(url: String) -> Option<ThreadVerbFfi> {
+    use postio_ui::reader::thread::MessageVerb;
+    let (verb, scope) = postio_ui::reader::thread::verb_of(&url)?;
+    Some(ThreadVerbFfi {
+        kind: match verb {
+            MessageVerb::Reply => ThreadVerbKindFfi::Reply,
+            MessageVerb::Forward => ThreadVerbKindFfi::Forward,
+            MessageVerb::Continue => ThreadVerbKindFfi::Continue,
+            MessageVerb::Allow => ThreadVerbKindFfi::Allow,
+        },
+        message: scope.parse().ok()?,
+    })
 }
