@@ -552,25 +552,37 @@ pub async fn facets(connection: &Connection, request: &SearchRequest<'_>) -> Res
     // Scope counts hold the query and vary the scope: the column says what
     // *switching* would find, so it cannot be measured inside the scope the
     // user is already in.
+    //
+    // Refinements are the opposite: they narrow what is on screen, so they
+    // are measured inside the current scope -- and the current scope's own
+    // count is the same capped walk they are, so all three come out of one
+    // statement (#1612). Only the scopes the user is not in walk the match
+    // again; one walk shared across every scope would let a broad match in
+    // a large folder fill the cap and read another scope as empty.
+    let here = Plan::build(request).current_scope(connection).await?;
     let mut scopes = Vec::with_capacity(Scope::ALL.len());
     for scope in Scope::ALL {
-        let plan = Plan::build(&SearchRequest { scope, ..*request });
-        scopes.push(ScopeCount {
-            scope,
-            hits: plan.count(connection).await?,
-        });
+        let hits = if scope == request.scope {
+            here.hits
+        } else {
+            Plan::build(&SearchRequest { scope, ..*request })
+                .count(connection)
+                .await?
+        };
+        scopes.push(ScopeCount { scope, hits });
     }
-
-    // Refinements are the opposite: they narrow what is on screen, so they
-    // are measured inside the current scope.
-    let plan = Plan::build(request);
-    let mut refinements = plan.flag_refinements(connection).await?;
-    refinements.extend(plan.folder_refinements(connection).await?);
 
     Ok(Facets {
         scopes,
-        refinements,
+        refinements: here.refinements,
     })
+}
+
+/// What one walk of the current scope's match yields: its count, and the
+/// refinements measured over it. See [`Plan::current_scope`].
+struct CurrentScope {
+    hits: u64,
+    refinements: Vec<Refinement>,
 }
 
 /// The pure ranking function: `bm25` (lower is better) adjusted downward by
@@ -1054,86 +1066,84 @@ impl Plan {
         Ok(count as u64)
     }
 
-    /// The flag-shaped refinements — unread, flagged, attachments, size —
-    /// counted over the match set in one pass.
+    /// The current scope's match, walked once: its count, the flag-shaped
+    /// refinements (unread, flagged, attachments, size) and the folders the
+    /// matches are in, from one statement grouped by folder (#1612).
     ///
-    /// Conditional aggregates over a `LIMIT`ed subquery rather than four
-    /// separate counts: the expensive part of any of these is walking the
-    /// match, and walking it once for four answers is the whole point. The
-    /// inner `LIMIT` is [`TOTAL_HITS_CAP`], the same bound [`Plan::count`]
-    /// uses, so a very broad query cannot make the column expensive.
+    /// These were two walks and a third count of the same capped match in
+    /// the same scope. Grouped by folder, each row carries its folder's hits
+    /// and its flag sums: the flags are summed across the rows, the folders
+    /// are the rows ranked, and the count is their total. The inner `LIMIT`
+    /// is [`TOTAL_HITS_CAP`], the same bound [`Plan::count`] uses, so every
+    /// number is a floor past the cap exactly as [`SearchResults::total_hits`]
+    /// is -- and since [`Facets::suggested`] only compares them against that
+    /// same capped total, a capped set still ranks its refinements correctly.
     ///
-    /// The counts are therefore floors past the cap, exactly as
-    /// [`SearchResults::total_hits`] is — and since [`Facets::suggested`]
-    /// only ever compares them against that same capped total, a capped
-    /// result set still ranks its refinements against each other correctly.
-    async fn flag_refinements(&self, connection: &Connection) -> Result<Vec<Refinement>> {
+    /// The folder chips are spelled `in:` rather than canvas 2b's `list:`
+    /// because `list:` cannot yet be answered exactly -- see [`Scope::Lists`]
+    /// and `postio-0bz`. `in:` names the same folder and is exact today.
+    ///
+    /// `LARGE_BYTES` is written into the SQL rather than bound, and that is
+    /// not a shortcut: a bound `?` for it would sit before the `{from}` that
+    /// [`HITS_JOIN`] numbers `?1` and `?2`, which is how this statement once
+    /// bound five parameters into three slots. Nothing user-supplied is
+    /// interpolated; every value the caller controls is still a parameter.
+    async fn current_scope(&self, connection: &Connection) -> Result<CurrentScope> {
         let sql = format!(
-            "SELECT
-                 coalesce(sum(seen = 0), 0),
-                 coalesce(sum(flagged), 0),
-                 coalesce(sum(has_attachments), 0),
-                 coalesce(sum(size >= {LARGE_BYTES}), 0)
-             FROM (SELECT DISTINCT m.id, m.seen, m.flagged, m.has_attachments, m.size
-                     {from} WHERE {where_sql} LIMIT ?)",
+            "SELECT name, count(*) AS hits,
+                    coalesce(sum(seen = 0), 0),
+                    coalesce(sum(flagged), 0),
+                    coalesce(sum(has_attachments), 0),
+                    coalesce(sum(size >= {LARGE_BYTES}), 0)
+               FROM (SELECT DISTINCT m.id, mb.name AS name, m.seen, m.flagged,
+                            m.has_attachments, m.size
+                       {from}
+                       JOIN mailboxes mb ON mb.id = m.mailbox_id
+                      WHERE {where_sql} LIMIT ?)
+              GROUP BY name",
             from = self.source_sql(Form::Driven),
             where_sql = self.where_sql(Form::Driven),
         );
-
-        // `LARGE_BYTES` is written into the SQL rather than bound, and that
-        // is not a shortcut: it is a compile-time constant, and a bound `?`
-        // for it would sit in the outer `SELECT` -- textually *before* the
-        // `{from}` that [`HITS_JOIN`] numbers `?1` and `?2`. Mixing a bare `?`
-        // in front of explicit ones is how this statement came to bind five
-        // parameters into three slots. Nothing user-supplied is interpolated
-        // here; every value the caller controls is still a parameter.
         let mut params = self.params_for(Form::Driven);
         params.push(turso::Value::Integer(TOTAL_HITS_CAP as i64));
 
-        let counts: [i64; 4] = sql::one(connection, &sql, params.clone(), |row| {
-            Ok([row.col(0)?, row.col(1)?, row.col(2)?, row.col(3)?])
+        let mut folders: Vec<(String, u64, [i64; 4])> = sql::all(connection, &sql, params, |row| {
+            Ok((
+                row.col::<String>(0)?,
+                row.col::<i64>(1)?.max(0) as u64,
+                [row.col(2)?, row.col(3)?, row.col(4)?, row.col(5)?],
+            ))
         })
         .await?;
 
-        Ok(["is:unread", "is:flagged", "has:attach", LARGE_TOKEN]
-            .into_iter()
-            .zip(counts)
-            .map(|(token, hits)| Refinement {
-                token: token.to_string(),
-                hits: hits.max(0) as u64,
-            })
-            .collect())
-    }
+        let hits = folders.iter().map(|(_, hits, _)| hits).sum();
+        let mut flags = [0i64; 4];
+        for (_, _, counts) in &folders {
+            for (total, count) in flags.iter_mut().zip(counts) {
+                *total += count;
+            }
+        }
+        let mut refinements: Vec<Refinement> =
+            ["is:unread", "is:flagged", "has:attach", LARGE_TOKEN]
+                .into_iter()
+                .zip(flags)
+                .map(|(token, hits)| Refinement {
+                    token: token.to_string(),
+                    hits: hits.max(0) as u64,
+                })
+                .collect();
 
-    /// The folders the matches are actually in, as `in:` chips.
-    ///
-    /// Canvas 2b draws this chip as `list:lkml`; it is spelled `in:` here
-    /// because `list:` cannot yet be answered exactly — see [`Scope::Lists`]
-    /// and `postio-0bz`. `in:` names the same folder and is exact today, and
-    /// the chip is a token the user could have typed either way.
-    async fn folder_refinements(&self, connection: &Connection) -> Result<Vec<Refinement>> {
-        let sql = format!(
-            "SELECT name, count(*) AS hits FROM (
-                 SELECT DISTINCT m.id, mb.name AS name {from}
-                   JOIN mailboxes mb ON mb.id = m.mailbox_id
-                  WHERE {where_sql} LIMIT ?)
-             GROUP BY name ORDER BY hits DESC, name LIMIT ?",
-            from = self.source_sql(Form::Driven),
-            where_sql = self.where_sql(Form::Driven),
+        folders.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+        refinements.extend(
+            folders
+                .into_iter()
+                .take(REFINE_FOLDERS)
+                .map(|(name, hits, _)| Refinement {
+                    token: format!("in:{}", quote_value(&name)),
+                    hits,
+                }),
         );
-
-        let mut params = self.params_for(Form::Driven);
-        params.push(turso::Value::Integer(TOTAL_HITS_CAP as i64));
-        params.push(turso::Value::Integer(REFINE_FOLDERS as i64));
-
-        sql::all(connection, &sql, params.clone(), |row| {
-            Ok(Refinement {
-                token: format!("in:{}", quote_value(&row.col::<String>(0)?)),
-                hits: row.col::<i64>(1)?.max(0) as u64,
-            })
-        })
-        .await
-        .map_err(Into::into)
+        Ok(CurrentScope { hits, refinements })
     }
 
     /// Selects a candidate pool, then hydrates it into full [`Candidate`]s.
