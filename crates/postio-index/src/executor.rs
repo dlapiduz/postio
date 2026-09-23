@@ -423,18 +423,18 @@ async fn suggestion_for(
 /// figure would be alarming about something that needs no action and will be
 /// zero on its own. What the surface needs is the boolean.
 ///
-/// Which is also the only version that fits the `<100 ms` budget. It is a
-/// seek into `idx_messages_list` on `mailbox_id` with a `LIMIT 1`, so it stops
-/// at the first outstanding row rather than counting them.
-///
-/// This used to lean on `idx_messages_body_state`, a partial index over
-/// exactly `body_state IN ('not_fetched', 'headers_only')` — which held only
-/// the outstanding messages, so the complete case had an empty index and
-/// nothing at all to look at. This engine will not read through a partial
-/// index (`docs/notes/2026-09-12-a-partial-index-the-planner-will-not-read.md`),
-/// so that index is gone and the complete case now walks the mailbox's
-/// newest rows until it runs out. The `LIMIT 1` bounds the incomplete case,
-/// which is the common one; the complete case is the one that got worse.
+/// Which is also the only version that fits the `<100 ms` budget, and it is
+/// read off the folders (#1612). Each mailbox keeps `bodies_owed`, a count
+/// the schema's triggers maintain beside its other counts, and the scope is
+/// always a set of mailboxes, so the answer is a walk of the account's few
+/// folders. It used to be a query over `messages`: first through a partial
+/// index this engine will not read
+/// (`docs/notes/2026-09-12-a-partial-index-the-planner-will-not-read.md`),
+/// then, with that index gone, a walk of every message in the account on a
+/// store whose backfill had finished -- the steady state under ADR 0016 --
+/// reading each row for `body_state`. One statement, one row, so no count
+/// could see it; `whether_the_corpus_is_complete_is_read_off_the_folders_not_the_messages`
+/// asks the planner instead.
 ///
 /// Scoped, deliberately: the claim on screen is about the search that was
 /// just run, so "complete" has to mean complete *here* — a fully backfilled
@@ -460,30 +460,38 @@ async fn suggestion_for(
 /// launch is the right way to be wrong here — the alternative is a caveat
 /// that costs the query its budget forever.
 async fn corpus_complete(connection: &Connection, request: &SearchRequest<'_>) -> Result<bool> {
-    let mut conditions = vec![
-        "m.deleted_locally = 0".to_string(),
-        "m.body_state IN ('not_fetched', 'headers_only')".to_string(),
-    ];
+    let (sql, params) = corpus_complete_sql(request);
+    let complete = sql::one(connection, &sql, params, |row| row.col(0)).await?;
+    Ok(complete)
+}
+
+/// The statement [`corpus_complete`] runs, and its parameters, so a test can
+/// ask the planner what it reads.
+///
+/// Read off the folders, not the messages (#1612): each mailbox keeps
+/// `bodies_owed`, the count of its visible messages still waiting for a
+/// body, and the scope here is always a set of mailboxes -- an account's,
+/// narrowed by role. So the answer is one short walk of the account's
+/// folders, where it used to be a walk of every message in the account on
+/// a store whose backfill had finished, reading each row for `body_state`.
+#[doc(hidden)]
+pub fn corpus_complete_sql(request: &SearchRequest<'_>) -> (String, Vec<turso::Value>) {
+    let mut conditions = vec!["bodies_owed > 0".to_string()];
     let mut params: Vec<turso::Value> = Vec::new();
     if let Some(id) = request.account.account() {
-        conditions.push("m.account_id = ?".to_string());
+        conditions.push("account_id = ?".to_string());
         params.push(turso::Value::Integer(id.get()));
     }
-    if let Some((sql, values)) = scope_condition(
-        request.scope,
-        request.account,
-        names_a_folder(request.query),
-    ) {
-        conditions.push(sql);
-        params.extend(values);
+    if let Some(role) = scope_role(request.scope, names_a_folder(request.query)) {
+        conditions.push(role.to_string());
     }
-
-    let sql = format!(
-        "SELECT NOT EXISTS (SELECT 1 FROM messages m WHERE {})",
-        conditions.join(" AND ")
-    );
-    let complete = sql::one(connection, &sql, params.clone(), |row| row.col(0)).await?;
-    Ok(complete)
+    (
+        format!(
+            "SELECT NOT EXISTS (SELECT 1 FROM mailboxes WHERE {})",
+            conditions.join(" AND ")
+        ),
+        params,
+    )
 }
 
 /// The size `larger:` is offered at, when a result set has anything that big.
@@ -1420,19 +1428,7 @@ fn scope_condition(
     account: AccountScope,
     names_a_folder: bool,
 ) -> Option<(String, Vec<turso::Value>)> {
-    let role = match scope {
-        // "All mail" is every folder except drafts, junk and trash
-        // (maintainer's decision, #1523): a search is navigation, and what a
-        // person is navigating to is almost never a draft of what they were
-        // going to say, something they binned, or spam. Sent stays in. An
-        // `in:` anywhere in the query lifts the exclusion, because a query
-        // that names a folder is already confined to it, and the one thing
-        // the exclusion could then do is hide the folder they named.
-        Scope::AllMail if names_a_folder => return None,
-        Scope::AllMail => "role NOT IN ('drafts', 'junk', 'trash')",
-        Scope::Inbox => "role = 'inbox'",
-        Scope::Lists => "role = 'regular'",
-    };
+    let role = scope_role(scope, names_a_folder)?;
     // The role half is byte-for-byte the same in both scopes. Unified drops
     // the account conjunct and nothing else, which is what makes "every
     // account's inbox" a predicate removal rather than a redefinition of what
@@ -1446,6 +1442,26 @@ fn scope_condition(
             format!("m.mailbox_id IN (SELECT id FROM mailboxes WHERE {role})"),
             Vec::new(),
         ),
+    })
+}
+
+/// Which mailbox roles a [`Scope`] takes in, as a condition on `mailboxes`,
+/// or `None` for the scope that constrains nothing. Shared by the search's
+/// own scope and by [`corpus_complete_sql`], so the two cannot disagree
+/// about which folders a scope means.
+fn scope_role(scope: Scope, names_a_folder: bool) -> Option<&'static str> {
+    Some(match scope {
+        // "All mail" is every folder except drafts, junk and trash
+        // (maintainer's decision, #1523): a search is navigation, and what a
+        // person is navigating to is almost never a draft of what they were
+        // going to say, something they binned, or spam. Sent stays in. An
+        // `in:` anywhere in the query lifts the exclusion, because a query
+        // that names a folder is already confined to it, and the one thing
+        // the exclusion could then do is hide the folder they named.
+        Scope::AllMail if names_a_folder => return None,
+        Scope::AllMail => "role NOT IN ('drafts', 'junk', 'trash')",
+        Scope::Inbox => "role = 'inbox'",
+        Scope::Lists => "role = 'regular'",
     })
 }
 

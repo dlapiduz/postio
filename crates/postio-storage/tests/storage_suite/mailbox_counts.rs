@@ -566,3 +566,101 @@ async fn a_failed_send_keeps_the_reason_the_composer_shows() {
     );
     let _ = Operation::Send { draft: draft.id };
 }
+
+/// How many of `mailbox`'s visible messages are still owed a body, as the
+/// cached column says.
+async fn owed(connection: &Connection, mailbox: MailboxId) -> i64 {
+    postio_storage::sql::one(
+        connection,
+        "SELECT bodies_owed FROM mailboxes WHERE id = ?1",
+        [mailbox.get()],
+        |row| postio_storage::sql::RowExt::col(row, 0),
+    )
+    .await
+    .expect("the cached column")
+}
+
+#[tokio::test]
+async fn a_folder_knows_how_many_of_its_messages_are_owed_a_body() {
+    // #1612: whether a search's corpus is complete was a walk of every
+    // message in the account once backfill had finished -- the steady state
+    // under ADR 0016 -- because `body_state` is in no index. A count the
+    // triggers keep, like the four beside it, answers it by reading one row
+    // per folder. This proves the count follows every write that moves it.
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    let (account, inbox) = test_support::account_with_inbox(&connection).await;
+    let archive = test_support::mailbox(&connection, &account, "Archive")
+        .await
+        .id;
+    let ids = write(&connection, &account, inbox, &[&[], &[], &[]]).await;
+    assert_eq!(
+        owed(&connection, inbox).await,
+        3,
+        "a new message has no body yet"
+    );
+
+    connection
+        .execute(
+            "UPDATE messages SET body_state = 'full' WHERE id = ?1",
+            [ids[0].get()],
+        )
+        .await
+        .expect("a body arrives");
+    assert_eq!(
+        owed(&connection, inbox).await,
+        2,
+        "a body that arrived is not owed"
+    );
+
+    connection
+        .execute(
+            "UPDATE messages SET body_state = 'headers_only' WHERE id = ?1",
+            [ids[1].get()],
+        )
+        .await
+        .expect("headers only");
+    assert_eq!(
+        owed(&connection, inbox).await,
+        2,
+        "headers only is still owed"
+    );
+
+    MessageRepository::new(&connection)
+        .move_to(&[ids[1]], archive)
+        .await
+        .expect("moved");
+    assert_eq!(
+        owed(&connection, inbox).await,
+        1,
+        "a message that left is not owed here"
+    );
+    assert_eq!(
+        owed(&connection, archive).await,
+        1,
+        "and is owed where it went"
+    );
+
+    connection
+        .execute(
+            "UPDATE messages SET deleted_locally = 1 WHERE id = ?1",
+            [ids[2].get()],
+        )
+        .await
+        .expect("hidden pending a remote delete");
+    assert_eq!(
+        owed(&connection, inbox).await,
+        0,
+        "a hidden message is not searched"
+    );
+
+    connection
+        .execute("DELETE FROM messages WHERE id = ?1", [ids[1].get()])
+        .await
+        .expect("deleted");
+    assert_eq!(
+        owed(&connection, archive).await,
+        0,
+        "a deleted message is owed nothing"
+    );
+}
