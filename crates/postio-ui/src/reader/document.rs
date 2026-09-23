@@ -191,13 +191,21 @@ pub fn wrap_document(content: &str, remote: RemoteImages, sheet: Sheet) -> Strin
             format!(" class=\"{SENDERS_SHEET_CLASS}\"")
         }
     };
-    format!(
+    let document = format!(
         "<!DOCTYPE html>\n<html{root_class}><head>\n\
          <meta charset=\"utf-8\">\n\
          <meta http-equiv=\"Content-Security-Policy\" content=\"{csp}\">\n\
          <style>{css}</style>\n\
          </head><body>{content}</body></html>"
-    )
+    );
+    // Counted here, where every document ends -- the single message's and
+    // the thread's alike -- rather than in `document_for`, because "did
+    // this document carry bulk" is answered where the document is built and
+    // is the same answer for every frontend and every path. The thread
+    // document went uncounted while the count lived one caller up (the
+    // 2026-09-08 note recorded the gap). See `crate::reader::cost`.
+    crate::reader::cost::note_document(document.len());
+    document
 }
 
 /// The rules that turn the sender's box into their own page.
@@ -846,7 +854,7 @@ pub fn contain_body_in(content: &str, scope: Option<&str>) -> String {
 /// imitating application chrome has a harder time, and a reader missing it
 /// would look completely fine.
 pub fn document_for(content: &str, styles: &str, remote: RemoteImages, sheet: Sheet) -> String {
-    let document = wrap_document(
+    wrap_document(
         &format!(
             "{}{}{}",
             senders_stylesheet(styles),
@@ -855,12 +863,7 @@ pub fn document_for(content: &str, styles: &str, remote: RemoteImages, sheet: Sh
         ),
         remote,
         sheet,
-    );
-    // Counted here rather than at a frontend's load, because "did this
-    // document carry bulk" is answered where the document is built and is the
-    // same answer for every frontend. See `crate::reader::cost`.
-    crate::reader::cost::note_document(document.len());
-    document
+    )
 }
 
 /// A sender's scoped CSS, in Postio's own `<style>` element.
