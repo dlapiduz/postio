@@ -345,3 +345,23 @@ async fn the_header_says_what_each_verb_will_act_on() {
     assert!(archive.whole_conversation);
     session.shutdown();
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn the_rail_has_a_row_for_every_message_from_the_thread_itself() {
+    // FR-040: a row the moment the conversation is known, not when a body
+    // arrives -- the rail is for skipping a long message, and waiting for its
+    // body would make you wait for exactly what you were skipping.
+    let (session, thread, _) = a_thread().await;
+    let document = session.thread_document(thread, Vec::new()).await;
+    assert_eq!(
+        document
+            .rail
+            .iter()
+            .map(|row| row.position)
+            .collect::<Vec<_>>(),
+        vec![1, 2, 3]
+    );
+    assert_eq!(document.rail[0].sender, "ada@example.com");
+    assert!(!document.rail[0].initials.is_empty());
+    session.shutdown();
+}

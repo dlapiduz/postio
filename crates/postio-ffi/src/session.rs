@@ -2350,8 +2350,34 @@ impl Session {
             |address| allow.is_allowed(address),
             &originals,
         );
+        // The rail's rows, from the thread rather than from anything drawn
+        // (FR-040). No lengths yet -- GTK passes none either -- so no row
+        // claims one.
+        let senders: Vec<String> = messages
+            .iter()
+            .map(|message| message.sender.clone())
+            .collect();
+        let whens: Vec<String> = messages
+            .iter()
+            .map(|message| message.when.clone())
+            .collect();
+        let initials: Vec<String> = rows
+            .iter()
+            .filter(|row| {
+                messages
+                    .iter()
+                    .any(|message| message.scope == row.id.to_string())
+            })
+            .map(|row| row.initials.clone())
+            .collect();
+        let rail =
+            postio_ui::reader::rail::rows(&senders, &initials, &whens, &vec![None; senders.len()])
+                .into_iter()
+                .map(crate::RailRowFfi::from)
+                .collect();
         crate::ThreadDocumentFfi {
             html,
+            rail,
             messages: messages
                 .iter()
                 .zip(caveats)

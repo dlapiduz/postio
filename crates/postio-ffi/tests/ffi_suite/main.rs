@@ -31,6 +31,7 @@ mod notice;
 mod palette;
 mod parts;
 mod provisioning;
+mod rail;
 mod reader;
 mod reader_cost;
 mod registry;

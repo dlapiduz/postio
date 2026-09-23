@@ -50,6 +50,7 @@ mod notify;
 mod palette;
 mod parts;
 mod provisioning;
+mod rail;
 mod reader;
 pub mod registry;
 mod saved_search;
@@ -66,8 +67,8 @@ pub use compose::{
 };
 pub use conversation::{
     ConversationFfi, ThreadAnchorFfi, ThreadDocumentFfi, ThreadVerbFfi, ThreadVerbKindFfi,
-    message_when, thread_expand_all_script, thread_scroll_script, thread_toggle_script,
-    thread_verb,
+    message_when, thread_expand_all_script, thread_observer_script, thread_scroll_script,
+    thread_toggle_script, thread_verb,
 };
 pub use cost::{
     note_reader_render, note_reader_surface_created, note_reader_surface_released,
@@ -92,6 +93,7 @@ pub use parts::{
 pub use provisioning::{
     ProviderHintFfi, RouteFfi, ScopesFfi, SignInProgressFfi, provider_hint, sign_in_scopes,
 };
+pub use rail::{RailEffectFfi, RailFfi, RailPresentationFfi, RailRowFfi, rail_presentation};
 pub use reader::{
     ConversationActionFfi, GrantFfi, InlinePart, MessageFactsFfi, ReaderActionFfi,
     ReaderDocumentFfi, ReaderNoticeFfi, RecipientsFfi, RemoteImagesFfi, middle_truncate,

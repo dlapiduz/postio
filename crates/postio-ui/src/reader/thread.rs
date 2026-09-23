@@ -234,6 +234,49 @@ pub fn expand_all_script() -> String {
         .to_owned()
 }
 
+/// A host script that reports which message fills the pane, to
+/// `window.webkit.messageHandlers.<handler>` -- the rail's observer.
+///
+/// **Greatest visible area**, the rail's rule: what a person is reading is
+/// what fills the screen, not the shortest message that happens to be whole.
+/// Debounced rather than continuous -- "jitter during a flick-scroll is worse
+/// than lag" -- and reported once at once, so a freshly loaded page says
+/// where it is. What is posted is the message's scope, the anchor with its
+/// prefix off; a frontend checks it against the thread it drew, because the
+/// report arrives from a page holding several senders' markup.
+///
+/// `handler` is Postio's own name for the channel, reduced to the characters
+/// a JavaScript identifier may hold, so nothing passed here can become
+/// script. The script GTK's reader has run since it had a rail.
+pub fn observer_script(handler: &str) -> String {
+    let handler: String = handler
+        .chars()
+        .take_while(|character| character.is_ascii_alphanumeric() || *character == '_')
+        .collect();
+    format!(
+        "(() => {{\
+           const post = () => {{\
+             const view = document.documentElement.clientHeight;\
+             let best = null, most = 0;\
+             for (const el of document.querySelectorAll('.postio-message')) {{\
+               const box = el.getBoundingClientRect();\
+               const visible = Math.max(0, Math.min(box.bottom, view) - Math.max(box.top, 0));\
+               if (visible > most) {{ most = visible; best = el.id; }}\
+             }}\
+             if (best) {{\
+               window.webkit.messageHandlers.{handler}.postMessage(best.replace(/^m-/, ''));\
+             }}\
+           }};\
+           let pending = null;\
+           addEventListener('scroll', () => {{\
+             clearTimeout(pending);\
+             pending = setTimeout(post, 100);\
+           }}, {{ passive: true }});\
+           post();\
+         }})()"
+    )
+}
+
 /// `text` inside a double-quoted script literal: its escapes and its quote
 /// escaped, line breaks dropped -- a literal cannot hold one.
 fn quoted(text: &str) -> String {
@@ -1238,5 +1281,45 @@ mod script_tests {
             all.contains("querySelectorAll") && all.contains(".open = true"),
             "{all}"
         );
+    }
+}
+
+#[cfg(test)]
+mod observer_tests {
+    use super::*;
+
+    #[test]
+    fn the_observer_reports_to_the_handler_it_is_given() {
+        let script = observer_script("postioRail");
+        assert!(
+            script.contains("window.webkit.messageHandlers.postioRail.postMessage"),
+            "{script}"
+        );
+    }
+
+    #[test]
+    fn it_settles_rather_than_tracking_every_frame() {
+        // "Jitter during a flick-scroll is worse than lag."
+        let script = observer_script("postioRail");
+        assert!(
+            script.contains("setTimeout") && script.contains("clearTimeout"),
+            "{script}"
+        );
+    }
+
+    #[test]
+    fn it_reports_the_message_by_the_scope_the_page_named_it_with() {
+        // The anchor is `message_anchor(scope)`, so taking the prefix off is
+        // the scope back -- and a frontend checks it against the thread it
+        // drew rather than trusting a page holding several senders' markup.
+        let script = observer_script("postioRail");
+        assert!(script.contains(".postio-message"), "{script}");
+        assert!(script.contains("replace(/^m-/, '')"), "{script}");
+    }
+
+    #[test]
+    fn a_handler_name_cannot_become_script() {
+        let script = observer_script("rail.postMessage('x'); evil");
+        assert!(!script.contains("evil"), "{script}");
     }
 }

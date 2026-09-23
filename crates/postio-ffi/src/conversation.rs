@@ -131,6 +131,8 @@ pub struct ThreadDocumentFfi {
     pub html: String,
     /// The messages in the order the page stacks them, oldest first.
     pub messages: Vec<ThreadAnchorFfi>,
+    /// The rail's rows, one per message, from the thread itself (FR-040).
+    pub rail: Vec<crate::RailRowFfi>,
 }
 
 /// One message's place in a [`ThreadDocumentFfi`].
@@ -213,4 +215,12 @@ pub fn thread_toggle_script(anchor: String) -> String {
 #[uniffi::export]
 pub fn thread_expand_all_script() -> String {
     postio_ui::reader::thread::expand_all_script()
+}
+
+/// The host script that reports which message fills the pane to
+/// `window.webkit.messageHandlers.<handler>` -- the rail's observer.
+/// `postio_ui::reader::thread::observer_script`, the one GTK's reader runs.
+#[uniffi::export]
+pub fn thread_observer_script(handler: String) -> String {
+    postio_ui::reader::thread::observer_script(&handler)
 }
