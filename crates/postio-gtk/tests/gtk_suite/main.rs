@@ -596,6 +596,10 @@ const CASES: &[(&str, fn())] = &[
         gtk_list_mark_read::marking_a_message_read_does_not_rebuild_the_list as fn(),
     ),
     (
+        "gtk_list_mark_read::a_removal_is_told_to_the_source_before_the_list_reloads",
+        gtk_list_mark_read::a_removal_is_told_to_the_source_before_the_list_reloads as fn(),
+    ),
+    (
         "gtk_list_mark_read::filling_a_folder_announces_structure_and_not_every_page",
         gtk_list_mark_read::filling_a_folder_announces_structure_and_not_every_page as fn(),
     ),

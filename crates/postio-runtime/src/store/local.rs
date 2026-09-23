@@ -29,6 +29,10 @@ impl From<postio_storage::Error> for StoreError {
     }
 }
 
+/// Removals told to the store and not yet settled by a read: which folder,
+/// which messages. See [`MailStore::note_removed`].
+type Removals = Mutex<Vec<(MailboxId, Vec<MessageId>)>>;
+
 /// The local store, read directly.
 #[derive(Debug, Clone)]
 pub struct LocalStore {
@@ -54,7 +58,7 @@ pub struct LocalStore {
     /// which folder, which messages. Drained by [`counted_total`] before it
     /// compares its witness, so the count it holds is adjusted rather than
     /// discarded (#1607). See [`MailStore::note_removed`].
-    removals: Arc<Mutex<Vec<(MailboxId, Vec<MessageId>)>>>,
+    removals: Arc<Removals>,
 }
 
 /// A folder's thread count, and how to tell whether it still holds.
@@ -139,7 +143,7 @@ pub fn folders_counted() -> u64 {
 async fn counted_total(
     connection: &Checkout,
     cache: &Mutex<HashMap<MailboxId, CountedFolder>>,
-    removals: &Mutex<Vec<(MailboxId, Vec<MessageId>)>>,
+    removals: &Removals,
     scope: ListScope,
     threads: &ThreadRepository<'_>,
     query: &ThreadListQuery,

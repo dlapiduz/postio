@@ -42,12 +42,16 @@ const TOTAL: u32 = 120;
 /// A mailbox where exactly one message can become read.
 struct Mailbox120 {
     read: Cell<Option<i64>>,
+    /// What the feed asked of this source, in order: `told ...` for a
+    /// removal it was told about, `fetch <page>` for a page it read.
+    asked: std::cell::RefCell<Vec<String>>,
 }
 
 impl Mailbox120 {
     fn new() -> Rc<Self> {
         Rc::new(Mailbox120 {
             read: Cell::new(None),
+            asked: std::cell::RefCell::new(Vec::new()),
         })
     }
 
@@ -104,7 +108,16 @@ impl MessageSource for Mailbox120 {
         })
     }
 
+    fn note_removed(&self, mailbox: MailboxId, messages: Vec<MessageId>) {
+        self.asked
+            .borrow_mut()
+            .push(format!("told {} left {}", messages.len(), mailbox.get()));
+    }
+
     fn fetch(&self, request: PageRequest) -> PageFuture {
+        self.asked
+            .borrow_mut()
+            .push(format!("fetch {}", request.page));
         let read = self.read.get();
         Box::pin(async move {
             let end = (request.offset + request.limit).min(TOTAL);
@@ -235,6 +248,57 @@ pub fn marking_a_message_read_does_not_rebuild_the_list() {
 /// So the placeholders are the rows: `item` hands out one object per position
 /// and keeps handing out that same object, a page delivery fills it in, and it
 /// says so for itself. Counted, not timed. Skips without a display.
+pub fn a_removal_is_told_to_the_source_before_the_list_reloads() {
+    // #1607: an archive reloads the list, and the first page's read paid the
+    // folder's whole conversation count again because the count's witness
+    // had moved. The source keeps its count if it hears what left before it
+    // is asked for the page; the order is the whole point.
+    if adw::init().is_err() || gdk::Display::default().is_none() {
+        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
+        return;
+    }
+    let display = gdk::Display::default().unwrap();
+    fonts::install().expect("the embedded fonts should install");
+    style::install(&display);
+
+    let store = Mailbox120::new();
+    let window = Window::default();
+    window.set_default_size(1280, 800);
+    window.present();
+    pump();
+    let feeds = window.install_feeds(
+        AccountId::new(ACCOUNT),
+        "ada@example.com",
+        store.clone(),
+        store.clone(),
+    );
+    pump();
+    let list = window.list();
+    pump_until(|| list.model().n_items() == TOTAL);
+
+    store.asked.borrow_mut().clear();
+    feeds.apply(&Event::MessagesRemoved {
+        account: AccountId::new(ACCOUNT),
+        mailbox: MailboxId::new(INBOX),
+        messages: vec![MessageId::new(3)],
+    });
+    pump_until(|| {
+        store
+            .asked
+            .borrow()
+            .iter()
+            .any(|ask| ask.starts_with("fetch"))
+    });
+
+    let asked = store.asked.borrow().clone();
+    assert_eq!(
+        asked.first().map(String::as_str),
+        Some("told 1 left 1"),
+        "the source was asked for a page before, or without, being told what \
+         left: {asked:?}"
+    );
+}
+
 pub fn filling_a_folder_announces_structure_and_not_every_page() {
     if adw::init().is_err() || gdk::Display::default().is_none() {
         eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
