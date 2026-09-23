@@ -111,29 +111,6 @@ pub fn run() -> glib::ExitCode {
         .map(notifications::config_at)
         .unwrap_or_default();
 
-    if adw::init().is_err() {
-        tracing::error!("no display; the UI needs a Wayland or X11 session");
-        return glib::ExitCode::FAILURE;
-    }
-    timeline.mark(Phase::Init);
-
-    // Fonts first, before any widget: see the module docs.
-    if let Err(error) = fonts::install() {
-        // Recoverable: the design degrades to system fallbacks, which is ugly
-        // but usable, and refusing to start over a font would be worse.
-        tracing::warn!(%error, "the embedded fonts did not install");
-    }
-    timeline.mark(Phase::Fonts);
-
-    if let Some(display) = gdk::Display::default() {
-        style::install(&display);
-        app::install_icons(&display);
-    }
-    timeline.mark(Phase::Styles);
-
-    // What the user is looking at, as the handlers see it. `commands::mirror`
-    // brings it into step with the window in the instant before a command is
-    // sent; nothing else writes it.
     let state = SharedState::default();
 
     // An installation has exactly one keyring, and every credential read goes
@@ -164,7 +141,36 @@ pub fn run() -> glib::ExitCode {
         mailbox_roles,
         sync_config: sync_config.clone(),
         storage_ceiling,
+        early: std::cell::RefCell::new(None),
     });
+    // The store starts opening now, before GTK does anything (#1604): the
+    // keyring and the engine's open of an encrypted file need nothing from
+    // the window, and used to wait until it was built and presented. The
+    // first `open_the_store`, from `activate`, takes this open over.
+    context.start_opening();
+    if adw::init().is_err() {
+        tracing::error!("no display; the UI needs a Wayland or X11 session");
+        return glib::ExitCode::FAILURE;
+    }
+    timeline.mark(Phase::Init);
+
+    // Fonts first, before any widget: see the module docs.
+    if let Err(error) = fonts::install() {
+        // Recoverable: the design degrades to system fallbacks, which is ugly
+        // but usable, and refusing to start over a font would be worse.
+        tracing::warn!(%error, "the embedded fonts did not install");
+    }
+    timeline.mark(Phase::Fonts);
+
+    if let Some(display) = gdk::Display::default() {
+        style::install(&display);
+        app::install_icons(&display);
+    }
+    timeline.mark(Phase::Styles);
+
+    // What the user is looking at, as the handlers see it. `commands::mirror`
+    // brings it into step with the window in the instant before a command is
+    // sent; nothing else writes it.
 
     // **The window first, and the store behind it.** Until #1114 this read
     // the keyring and opened the store here, before `app::build_with` was
@@ -1123,9 +1129,29 @@ pub struct Installation {
     /// reason: the sweep that reads it runs before there is anywhere else to
     /// have put it.
     pub storage_ceiling: Option<u64>,
+    /// An open of the store started before there was a window to report
+    /// to, waiting for the first [`open_the_store`] to take it (#1604). See
+    /// [`Installation::start_opening`].
+    early: std::cell::RefCell<Option<async_channel::Receiver<Progress>>>,
 }
 
 impl Installation {
+    /// Start opening the store now, before any window exists.
+    ///
+    /// The open -- the keyring over D-Bus, then the engine's open of an
+    /// encrypted file, then the search index -- needs nothing from the
+    /// window, and waited for it anyway because it was started from
+    /// `activate`, after the window was built and presented. Started here it
+    /// overlaps the whole GTK start-up; the first [`open_the_store`] takes it
+    /// over and drives it exactly as it would its own. A second call does
+    /// nothing, and a retry after a refusal opens afresh as it always did.
+    pub fn start_opening(&self) {
+        let mut early = self.early.borrow_mut();
+        if early.is_none() {
+            *early = Some(open_the_store_on_a_thread(self.secrets.clone()));
+        }
+    }
+
     /// An installation with `secrets` and this build's defaults for
     /// everything `config.toml` would otherwise supply.
     ///
@@ -1140,6 +1166,7 @@ impl Installation {
             mailbox_roles: Default::default(),
             sync_config: Default::default(),
             storage_ceiling: None,
+            early: std::cell::RefCell::new(None),
         }
     }
 }
@@ -1267,7 +1294,10 @@ pub fn open_the_store(
     fed: &Rc<std::cell::Cell<bool>>,
     timeline: &Timeline,
 ) {
-    let progress = open_the_store_on_a_thread(context.secrets.clone());
+    // The open `run` started before the window existed, if it did; one of
+    // our own otherwise (#1604).
+    let early = context.early.borrow_mut().take();
+    let progress = early.unwrap_or_else(|| open_the_store_on_a_thread(context.secrets.clone()));
     glib::spawn_future_local({
         let window = window.clone();
         let opened = Rc::clone(opened);

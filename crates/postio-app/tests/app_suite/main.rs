@@ -161,6 +161,10 @@ const CASES: &[(&str, fn())] = &[
         bulk_keystroke::ctrl_a_then_shift_u_marks_the_whole_folder_read as fn(),
     ),
     (
+        "startup_behind_the_window::the_store_starts_opening_before_there_is_a_window",
+        startup_behind_the_window::the_store_starts_opening_before_there_is_a_window as fn(),
+    ),
+    (
         "startup_behind_the_window::the_store_opens_behind_a_window_that_is_already_up",
         startup_behind_the_window::the_store_opens_behind_a_window_that_is_already_up as fn(),
     ),
