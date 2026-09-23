@@ -93,9 +93,9 @@ pub use provisioning::{
     ProviderHintFfi, RouteFfi, ScopesFfi, SignInProgressFfi, provider_hint, sign_in_scopes,
 };
 pub use reader::{
-    GrantFfi, InlinePart, MessageFactsFfi, ReaderActionFfi, ReaderDocumentFfi, ReaderNoticeFfi,
-    RecipientsFfi, RemoteImagesFfi, middle_truncate, reader_page_after, reader_page_fragment,
-    reader_scroll_markers,
+    ConversationActionFfi, GrantFfi, InlinePart, MessageFactsFfi, ReaderActionFfi,
+    ReaderDocumentFfi, ReaderNoticeFfi, RecipientsFfi, RemoteImagesFfi, middle_truncate,
+    reader_page_after, reader_page_fragment, reader_scroll_markers,
 };
 pub use registry::{CommandSpecFfi, MenuFfi, MenuSectionFfi, UiContext, UiRecovery, menus};
 pub use saved_search::{

@@ -944,6 +944,13 @@ impl Session {
         self.reader_actions()
     }
 
+    /// The header bar of a conversation of `messages`, each verb saying
+    /// what it will act on. See [`Session::conversation_actions`].
+    #[uniffi::method(name = "conversationActions")]
+    pub fn conversation_actions_ffi(&self, messages: u32) -> Vec<crate::ConversationActionFfi> {
+        self.conversation_actions(messages)
+    }
+
     /// Always allow this address's remote images, across restarts.
     #[uniffi::method(name = "allowSender")]
     pub fn allow_sender_ffi(&self, address: String) {
@@ -5165,6 +5172,27 @@ impl Session {
                 command: action.command().as_str().to_string(),
                 title: action.title().to_string(),
                 primary: action.primary(),
+            })
+            .collect()
+    }
+
+    /// The header bar of a conversation of `messages` (FR-008, FR-008a).
+    ///
+    /// The same four verbs as [`reader_actions`](Self::reader_actions), each
+    /// with what it will act on in words and whether that is the whole
+    /// thread. The four are the reader's verbs; which message each acts on is
+    /// `ReaderAction::scope`'s, and the frontend passes the latest message or
+    /// none accordingly rather than deciding.
+    pub fn conversation_actions(&self, messages: u32) -> Vec<crate::ConversationActionFfi> {
+        use postio_ui::reader::header::{ActionScope, ReaderAction};
+        ReaderAction::ALL
+            .iter()
+            .map(|action| crate::ConversationActionFfi {
+                command: action.command().as_str().to_string(),
+                title: action.title().to_string(),
+                primary: action.primary(),
+                description: action.describe(messages as usize),
+                whole_conversation: matches!(action.scope(), ActionScope::WholeConversation),
             })
             .collect()
     }

@@ -323,3 +323,25 @@ async fn a_message_that_lost_a_part_says_so_on_its_anchor() {
     );
     session.shutdown();
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn the_header_says_what_each_verb_will_act_on() {
+    // FR-008 and FR-008a: the header's Reply goes to the latest message and
+    // its Archive takes the whole thread, and the interface has to say so
+    // before either is pressed. The words are `ReaderAction::describe`'s.
+    let (session, _, _) = a_thread().await;
+    let actions = session.conversation_actions(6);
+    let reply = actions
+        .iter()
+        .find(|action| action.command == "reply")
+        .expect("Reply");
+    assert_eq!(reply.description, "Reply to the latest message");
+    assert!(!reply.whole_conversation);
+    let archive = actions
+        .iter()
+        .find(|action| action.command == "archive")
+        .expect("Archive");
+    assert_eq!(archive.description, "Archive all 6 messages");
+    assert!(archive.whole_conversation);
+    session.shutdown();
+}

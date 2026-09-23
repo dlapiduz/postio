@@ -132,6 +132,30 @@ pub struct ReaderActionFfi {
     pub primary: bool,
 }
 
+/// One verb of a conversation's header bar, and what it will act on
+/// (#1595).
+///
+/// The bar under a conversation's subject answers FR-008: Reply, Reply all
+/// and Forward go to the **latest** message, and Archive takes the **whole**
+/// thread. That split is not self-evident, so FR-008a requires the interface
+/// to say it before either is pressed -- which is what `description` is for:
+/// the button's tooltip and its accessible name, in
+/// `postio_ui::reader::header::ReaderAction::describe`'s words.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct ConversationActionFfi {
+    /// The registry command it runs.
+    pub command: String,
+    /// What the button is labelled.
+    pub title: String,
+    /// Whether it gets the primary treatment. Exactly one does.
+    pub primary: bool,
+    /// What it will do, in words -- "Reply to the latest message".
+    pub description: String,
+    /// Whether it acts on the whole conversation rather than its latest
+    /// message.
+    pub whole_conversation: bool,
+}
+
 /// Where a page turn lands, given where the reader is now.
 ///
 /// The reading pane's only scroll primitive is a same-document fragment
