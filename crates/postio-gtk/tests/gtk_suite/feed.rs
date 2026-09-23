@@ -306,6 +306,10 @@ pub fn the_message_list_is_fed_from_the_runtime() {
         account: postio_model::AccountId::new(1),
         messages: vec![changed, MessageId::new(404_404)],
     });
+    // The feed asks the source for the changed rows by id first (#1607);
+    // this fake reads pages only, so its answer is an error and the feed
+    // falls back to the page one main-loop turn later.
+    settle();
 
     let asked: Vec<u32> = source.drain().iter().map(|request| request.page).collect();
     assert_eq!(
