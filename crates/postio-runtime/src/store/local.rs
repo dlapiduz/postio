@@ -19,8 +19,8 @@ use postio_storage::repository::{
 use postio_storage::{Checkout, Store};
 
 use crate::store::{
-    ListPage, ListScope, MailStore, MessagePage, MessageSummary, PageRequest, Read, StoreError,
-    ThreadPage, ThreadSummary,
+    ListPage, ListRows, ListScope, MailStore, MessagePage, MessageSummary, PageRequest, Read,
+    StoreError, ThreadPage, ThreadSummary,
 };
 
 impl From<postio_storage::Error> for StoreError {
@@ -490,6 +490,37 @@ impl LocalStore {
     /// No seek marks and no count: an explicit id list is not a window into
     /// anything, so there is no position to remember and nothing to be
     /// consistent with.
+    /// [`MailStore::rows_in`]: the same scope decision a page makes, then
+    /// the same query, with the ids in place of a window. A unified list
+    /// pages every account through its own query and has no by-id read
+    /// yet; it answers with an error and the list re-reads the page, as it
+    /// always did.
+    async fn read_rows_in(
+        &self,
+        scope: ListScope,
+        ids: Vec<MessageId>,
+    ) -> Result<ListRows, StoreError> {
+        if !self.lists_conversations(scope).await? {
+            return self.read_rows(ids).await.map(ListRows::Messages);
+        }
+        if !matches!(scope, ListScope::Mailbox(_) | ListScope::Account(_)) {
+            return Err(StoreError::new(
+                "a unified list re-reads its page rather than its rows",
+            ));
+        }
+        self.read(move |connection| async move {
+            let query = thread_query(&connection, scope, 0).await?;
+            ThreadRepository::new(&connection)
+                .rows_for(&query, &ids)
+                .await?
+                .into_iter()
+                .map(summarise_thread)
+                .collect::<Result<Vec<_>, _>>()
+                .map(ListRows::Threads)
+        })
+        .await
+    }
+
     async fn read_rows(&self, ids: Vec<MessageId>) -> Result<Vec<MessageSummary>, StoreError> {
         self.read(move |connection| async move {
             let rows = MessageRepository::new(&connection).rows_for(&ids).await?;
@@ -752,6 +783,10 @@ impl MailStore for LocalStore {
 
     fn list_count(&self, scope: ListScope) -> Read<'_, u32> {
         Box::pin(self.read_list_count(scope))
+    }
+
+    fn rows_in(&self, scope: ListScope, ids: Vec<MessageId>) -> Read<'_, ListRows> {
+        Box::pin(self.read_rows_in(scope, ids))
     }
 
     fn message_rows(&self, ids: Vec<MessageId>) -> Read<'_, Vec<MessageSummary>> {
