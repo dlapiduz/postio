@@ -232,6 +232,10 @@ const CASES: &[(&str, fn())] = &[
         gtk_reader_styles::a_page_key_moves_the_document_itself as fn(),
     ),
     (
+        "gtk_reader_styles::a_redraw_of_an_unchanged_thread_sanitises_nothing",
+        gtk_reader_styles::a_redraw_of_an_unchanged_thread_sanitises_nothing as fn(),
+    ),
+    (
         "gtk_reader_styles::a_page_key_actually_turns_the_page_of_a_thread",
         gtk_reader_styles::a_page_key_actually_turns_the_page_of_a_thread as fn(),
     ),

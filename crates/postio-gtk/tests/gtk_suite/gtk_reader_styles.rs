@@ -649,3 +649,79 @@ pub fn a_body_that_has_not_arrived_says_so_in_the_thread() {
         "sanity: the words come from `absent_html`, not from this test"
     );
 }
+
+/// A redraw of an unchanged thread sanitises nothing and loads nothing
+/// (#1605).
+///
+/// `ConversationView`'s redraw asked `would_render_thread` -- which composed
+/// the whole document to compare it -- and then `render_thread`, which
+/// composed it again; each compose put every body through the sanitiser, on
+/// the main thread, every time anything queued a redraw.
+pub fn a_redraw_of_an_unchanged_thread_sanitises_nothing() {
+    if adw::init().is_err() || gtk::gdk::Display::default().is_none() {
+        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
+        return;
+    }
+
+    let reader = postio_gtk::reader::Reader::new(std::rc::Rc::new(|_id: &str| None));
+    let message = |scope: &str| postio_gtk::reader::view::ThreadMessage {
+        scope: scope.to_owned(),
+        sender: "Ada Norwood".to_owned(),
+        address: "ada@example.com".to_owned(),
+        when: "09:14".to_owned(),
+        recipients: String::new(),
+        cc: String::new(),
+        preview: "the first line".to_owned(),
+        expanded: true,
+        absent: false,
+        latest: false,
+        draft: false,
+        mine: false,
+        body: postio_model::message::MessageBody {
+            text: None,
+            html: Some(format!("<p>message {scope}</p>")),
+        },
+    };
+    let thread = [message("1"), message("2"), message("3")];
+
+    let before = postio_ui::test_support::bodies_sanitised();
+    assert!(
+        reader.render_thread_if_changed(&thread),
+        "the first draw draws"
+    );
+    assert_eq!(
+        postio_ui::test_support::bodies_sanitised() - before,
+        3,
+        "the first draw sanitises each body once, not once to decide and once to draw"
+    );
+
+    let loads = reader.loads();
+    let before = postio_ui::test_support::bodies_sanitised();
+    assert!(
+        !reader.render_thread_if_changed(&thread),
+        "an unchanged thread is not drawn again"
+    );
+    assert_eq!(
+        postio_ui::test_support::bodies_sanitised() - before,
+        0,
+        "a redraw of an unchanged thread re-sanitised its bodies"
+    );
+    assert_eq!(
+        reader.loads(),
+        loads,
+        "an unchanged thread reloaded the view"
+    );
+
+    let mut edited = thread.clone();
+    edited[1].body.html = Some("<p>message 2, arrived whole</p>".to_owned());
+    let before = postio_ui::test_support::bodies_sanitised();
+    assert!(
+        reader.render_thread_if_changed(&edited),
+        "a changed body draws"
+    );
+    assert_eq!(
+        postio_ui::test_support::bodies_sanitised() - before,
+        1,
+        "one body changed, and only it is sanitised again"
+    );
+}
