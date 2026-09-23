@@ -85,6 +85,7 @@ mod startup_reads;
 mod startup_repair;
 mod storage_ceiling_wiring;
 mod sync_window;
+mod thread_bodies_in_one_crossing;
 mod thread_bulk_keystroke;
 mod thread_dwell;
 mod thread_keystroke;
@@ -477,6 +478,10 @@ const CASES: &[(&str, fn())] = &[
     (
         "startup_repair::an_account_with_no_credential_lands_on_the_repair_screen",
         startup_repair::an_account_with_no_credential_lands_on_the_repair_screen as fn(),
+    ),
+    (
+        "thread_bodies_in_one_crossing::a_conversation_is_read_in_one_crossing",
+        thread_bodies_in_one_crossing::a_conversation_is_read_in_one_crossing as fn(),
     ),
     (
         "thread_dwell::resting_inside_a_conversation_reads_each_message_as_focus_reaches_it",
