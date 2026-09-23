@@ -464,7 +464,9 @@ async fn conversations_gone_from_a_folder_are_the_ones_with_no_member_left() {
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
     let (account, inbox) = test_support::account_with_inbox(&connection).await;
-    let archive = test_support::mailbox(&connection, &account, "Archive").await.id;
+    let archive = test_support::mailbox(&connection, &account, "Archive")
+        .await
+        .id;
     let thread = a_thread(&connection, account.id).await;
     let mut members = Vec::new();
     for reply in 0..3 {
@@ -476,14 +478,22 @@ async fn conversations_gone_from_a_folder_are_the_ones_with_no_member_left() {
             .expect("add");
         members.push(message.id);
     }
-    let lone = message(&connection, account.id, inbox, "ada", 9_000).await.id;
+    let lone = message(&connection, account.id, inbox, "ada", 9_000)
+        .await
+        .id;
     let messages = MessageRepository::new(&connection);
     let threads = ThreadRepository::new(&connection);
 
     // One member archived: the conversation is still in the folder.
-    messages.move_to(&[members[0]], archive).await.expect("moved");
+    messages
+        .move_to(&[members[0]], archive)
+        .await
+        .expect("moved");
     assert_eq!(
-        threads.conversations_gone_from(inbox, &[members[0]]).await.expect("counted"),
+        threads
+            .conversations_gone_from(inbox, &[members[0]])
+            .await
+            .expect("counted"),
         0,
         "a conversation with members left is still a row"
     );
@@ -499,7 +509,10 @@ async fn conversations_gone_from_a_folder_are_the_ones_with_no_member_left() {
         .await
         .expect("counted");
     let statements = postio_storage::test_support::counting::here().statements;
-    assert_eq!(gone, 2, "the conversation and the lone message each were a row");
+    assert_eq!(
+        gone, 2,
+        "the conversation and the lone message each were a row"
+    );
     assert!(
         statements <= 2,
         "counting what left took {statements} statements; it must not scale with the folder"

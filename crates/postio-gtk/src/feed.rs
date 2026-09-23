@@ -107,6 +107,15 @@ pub trait MessageSource {
         let _ = (scope, ids);
         Box::pin(async { Err("this source reads pages, not rows".to_owned()) })
     }
+
+    /// These messages left `mailbox`, and the list is about to react. Said
+    /// before the reaction, so a source that keeps a count for the folder
+    /// can adjust it by what left rather than pay it again in front of the
+    /// first row (#1607). A source with nothing to keep does nothing, which
+    /// is this default.
+    fn note_removed(&self, mailbox: MailboxId, messages: Vec<MessageId>) {
+        let _ = (mailbox, messages);
+    }
 }
 
 /// The answer to a request for a result set's rows.
@@ -492,6 +501,19 @@ impl Feed {
             self.show_results(messages.clone());
             return;
         }
+        // A removal from the folder on screen is told to the source before the
+        // list reacts, so the read that follows can keep the folder's count
+        // by subtracting what left instead of paying it again in front of the
+        // first row (#1607). Only the folder on screen: a removal elsewhere
+        // is learnt by that folder's own witness when it is next opened, and
+        // telling the source about it would queue a fact nothing reads.
+        if let Event::MessagesRemoved {
+            mailbox, messages, ..
+        } = event
+            && inner.paging.borrow().scope() == Some(postio_model::ListScope::Mailbox(*mailbox))
+        {
+            inner.source.note_removed(*mailbox, messages.clone());
+        }
         let plan = inner.paging.borrow().plan(event);
         match plan {
             Plan::Ignore => {}
@@ -527,6 +549,10 @@ impl Feed {
         let generation = list.generation();
         let feed = self.clone();
         glib::spawn_future_local(async move {
+            // POSTIO-GLIB-SAFE: `MessageSource::rows_in` is a trait method
+            // under the same contract as `fetch`: what it returns is pollable
+            // on the main context -- `postio-app` spawns the runtime work and
+            // hands back a channel receive, and the default is a ready error.
             let outcome = future.await;
             let Some(list) = feed.0.list.upgrade() else {
                 return;

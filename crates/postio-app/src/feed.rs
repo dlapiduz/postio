@@ -28,7 +28,7 @@ use postio_gtk::feed::{
 };
 use postio_gtk::list::Row;
 use postio_model::ListScope;
-use postio_model::ids::{AccountId, MessageId};
+use postio_model::ids::{AccountId, MailboxId, MessageId};
 use postio_runtime::store::{ListPage, ListRows, MailStore, PageRequest as StoreRequest};
 
 /// The frontend's two sources, over one store.
@@ -70,6 +70,12 @@ type SendRead<T> = std::pin::Pin<
 >;
 
 impl MessageSource for Sources {
+    fn note_removed(&self, mailbox: MailboxId, messages: Vec<MessageId>) {
+        // Synchronous by design: it records a fact for the store's next read
+        // to act on, and the read that follows this event is spawned after.
+        self.store.note_removed(mailbox, messages);
+    }
+
     fn rows_in(&self, scope: postio_model::ListScope, ids: Vec<MessageId>) -> RowsFuture {
         let wanted = ids.len();
         let answer =
