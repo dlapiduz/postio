@@ -411,7 +411,11 @@ impl<'a> MailboxRepository<'a> {
                                                    WHERE mailbox_id = mailboxes.id AND {VISIBLE}
                                                      AND flagged = 1), 0),
                         snoozed_count = coalesce((SELECT count(*) FROM messages
-                                                   WHERE mailbox_id = mailboxes.id AND {SNOOZED}), 0)
+                                                   WHERE mailbox_id = mailboxes.id AND {SNOOZED}), 0),
+                        bodies_owed = coalesce((SELECT count(*) FROM messages
+                                                 WHERE mailbox_id = mailboxes.id
+                                                   AND deleted_locally = 0
+                                                   AND body_state IN ('not_fetched', 'headers_only')), 0)
                   WHERE account_id = ?1"
             ),
             [account_id.get()],

@@ -340,6 +340,12 @@ CREATE TABLE mailboxes (
     unread_count       INTEGER NOT NULL DEFAULT 0,
     flagged_count      INTEGER NOT NULL DEFAULT 0,
     snoozed_count      INTEGER NOT NULL DEFAULT 0,
+    -- Visible messages whose body is not here yet (`body_state` not_fetched
+    -- or headers_only). What a search asks to say whether its corpus is
+    -- complete: `body_state` is in no index, so the question was a walk of
+    -- every message once backfill had finished (#1612). Snoozing does not
+    -- matter to it: a snoozed message is still searched.
+    bodies_owed        INTEGER NOT NULL DEFAULT 0,
     -- A mailbox the user has told the backfill to leave alone (ADR 0016).
     backfill_excluded  INTEGER NOT NULL DEFAULT 0,
     signature_id       INTEGER REFERENCES signatures(id) ON DELETE SET NULL,
@@ -813,7 +819,8 @@ BEGIN
                ((OLD.snoozed_until IS NULL OR OLD.snoozed_until <= (strftime('%s','now') * 1000))
                 AND OLD.flagged = 1), 0),
            snoozed_count = max(snoozed_count -
-               (OLD.snoozed_until IS NOT NULL AND OLD.snoozed_until > (strftime('%s','now') * 1000)), 0)
+               (OLD.snoozed_until IS NOT NULL AND OLD.snoozed_until > (strftime('%s','now') * 1000)), 0),
+           bodies_owed = max(bodies_owed - (OLD.body_state IN ('not_fetched', 'headers_only')), 0)
      WHERE id = OLD.mailbox_id;
 END;
 
@@ -830,7 +837,28 @@ BEGIN
                ((NEW.snoozed_until IS NULL OR NEW.snoozed_until <= (strftime('%s','now') * 1000))
                 AND NEW.flagged = 1),
            snoozed_count = snoozed_count +
-               (NEW.snoozed_until IS NOT NULL AND NEW.snoozed_until > (strftime('%s','now') * 1000))
+               (NEW.snoozed_until IS NOT NULL AND NEW.snoozed_until > (strftime('%s','now') * 1000)),
+           bodies_owed = bodies_owed + (NEW.body_state IN ('not_fetched', 'headers_only'))
+     WHERE id = NEW.mailbox_id;
+END;
+
+-- `bodies_owed` has a trigger of its own rather than joining the one below:
+-- a body arriving is the backfill's every write, and the four counts below
+-- would be rewritten for nothing each time. This one fires only when the
+-- owed answer or the folder actually changed.
+CREATE TRIGGER messages_bodies_owed_update
+AFTER UPDATE OF mailbox_id, deleted_locally, body_state ON messages
+WHEN OLD.mailbox_id <> NEW.mailbox_id
+  OR (OLD.deleted_locally = 0 AND OLD.body_state IN ('not_fetched', 'headers_only'))
+  <> (NEW.deleted_locally = 0 AND NEW.body_state IN ('not_fetched', 'headers_only'))
+BEGIN
+    UPDATE mailboxes
+       SET bodies_owed = max(bodies_owed - (OLD.deleted_locally = 0
+               AND OLD.body_state IN ('not_fetched', 'headers_only')), 0)
+     WHERE id = OLD.mailbox_id;
+    UPDATE mailboxes
+       SET bodies_owed = bodies_owed + (NEW.deleted_locally = 0
+               AND NEW.body_state IN ('not_fetched', 'headers_only'))
      WHERE id = NEW.mailbox_id;
 END;
 
@@ -975,7 +1003,8 @@ mod tests {
         "idx_threads_last_at",
         "idx_threads_subject",
         "idx_unsubscribe_activations_account",
-        // 3 triggers
+        // 4 triggers
+        "messages_bodies_owed_update",
         "messages_count_delete",
         "messages_count_insert",
         "messages_count_update",
