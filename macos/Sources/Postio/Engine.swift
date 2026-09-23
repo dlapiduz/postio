@@ -1101,6 +1101,8 @@ final class Engine {
             conversation.expandAll()
         case Intercepted.toggleFold:
             conversation.toggleFocused()
+        case Intercepted.toggleRail:
+            railHidden.toggle()
         case Intercepted.nextInConversation:
             conversation.focusNext()
         case Intercepted.prevInConversation:
@@ -1312,6 +1314,15 @@ final class Engine {
     }
 
     private(set) var readerPage: UInt32 = 0
+
+    /// How wide the main window is, for the rail's ladder -- whose steps are
+    /// window widths, not a pane's.
+    var windowWidth: CGFloat = 0
+
+    /// The reader's own `⇧I`: whether this window shows no rail (FR-047).
+    /// The window's choice, not the conversation's, so it outlives the
+    /// thread it was pressed over.
+    private(set) var railHidden = false
 
     /// Bumped when what the conversation document is made of may have
     /// changed -- the thread re-read, a body arrived, a sender allowed. See

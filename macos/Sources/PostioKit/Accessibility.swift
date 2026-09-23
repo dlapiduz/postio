@@ -143,6 +143,9 @@ public enum Intercepted {
     public static let replyAll = "reply_all"
     public static let forward = "forward"
     public static let toggleSidebar = "toggle_sidebar"
+    /// The conversation rail, hidden or shown -- `⇧I`, the reader's choice
+    /// for this window (FR-047). The rail is this frontend's to draw.
+    public static let toggleRail = "toggle_rail"
     /// Paging the reading pane. Here rather than dispatched because the
     /// document is this frontend's — and because a hardened web view has no
     /// scroll call, so the jump between the shared anchors happens in the
@@ -224,7 +227,7 @@ public enum Intercepted {
         moveSavedSearchUp, moveSavedSearchDown,
         openParts, nextPart, prevPart,
         savePart, saveAllParts, openPartExternally, openPart, renderPartOnce,
-        compose, reply, replyAll, forward,
+        compose, reply, replyAll, forward, toggleRail,
     ] + composeVerbs
 }
 

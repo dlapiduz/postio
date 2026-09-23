@@ -43,8 +43,10 @@ public final class ConversationModel {
     /// change a model the page is drawn from; they ask the page, and the
     /// request is what can be asserted.
     public enum DocumentAction: Equatable, Sendable {
-        /// Bring this message to the top of the pane -- `J`, `K`.
-        case scrollTo(message: Int64)
+        /// Bring this message to the top of the pane -- `J`, `K`, a rail
+        /// row. `settle` is the rail's token for the scroll, handed back
+        /// through `settled` once the page is there.
+        case scrollTo(message: Int64, settle: UInt64?)
         /// Fold or unfold this message -- `z`.
         case toggle(message: Int64)
         /// Open every message -- *Expand all*.
@@ -55,7 +57,39 @@ public final class ConversationModel {
     public struct DocumentRequest: Equatable, Sendable {
         public let action: DocumentAction
         public let serial: Int
+
+        public init(action: DocumentAction, serial: Int) {
+            self.action = action
+            self.serial = serial
+        }
+
+        /// The message it is about, if it is about one.
+        public var message: Int64? {
+            switch action {
+            case let .scrollTo(message, _), let .toggle(message): message
+            case .expandAll: nil
+            }
+        }
+
+        /// Whether it takes the pane somewhere.
+        public var isScroll: Bool {
+            if case .scrollTo = action { true } else { false }
+        }
+
+        /// The rail's token for a scroll, if this is one it is waiting on.
+        public var settle: UInt64? {
+            if case let .scrollTo(_, settle) = action { settle } else { nil }
+        }
     }
+
+    /// The rail's state: which message is marked, and whether the observer
+    /// is being listened to (#1576). `postio_ui::reader::rail::Rail`, held
+    /// behind the boundary, so a chosen row, `J`/`K` and the observer all
+    /// move the mark through one place and can never disagree.
+    private let rail = RailFfi(count: 0)
+
+    /// Which message the rail has marked -- the one the reader is on.
+    public private(set) var marked: Int?
 
     /// The most recent request, or `nil` since the conversation opened.
     public private(set) var documentRequest: DocumentRequest?
@@ -93,6 +127,13 @@ public final class ConversationModel {
         focused = Int(conversation.focus ?? 0)
         // A request is about the page it was made of.
         documentRequest = nil
+        // The rail starts where the pane lands, marked without asking the
+        // page to go anywhere it is not already going.
+        rail.setConversation(count: UInt32(conversation.rows.count))
+        if let focus = conversation.focus {
+            _ = rail.observed(index: focus)
+        }
+        marked = rail.marked().map(Int.init)
     }
 
     /// Show nothing.
@@ -113,6 +154,8 @@ public final class ConversationModel {
         expanded = []
         focused = 0
         documentRequest = nil
+        rail.setConversation(count: 0)
+        marked = nil
     }
 
     /// Open or close the body of message `index`.
@@ -133,16 +176,45 @@ public final class ConversationModel {
     /// message, and arriving back at the top having pressed `J` once too
     /// often is a small lie about where you are.
     public func focusNext() {
-        guard !rows.isEmpty else { return }
-        focused = min(focused + 1, rows.count - 1)
-        if let message = focusedMessage { ask(.scrollTo(message: message)) }
+        follow(rail.nextMessage())
     }
 
     /// Move the keyboard to the previous message.
     public func focusPrevious() {
-        guard !rows.isEmpty else { return }
-        focused = max(focused - 1, 0)
-        if let message = focusedMessage { ask(.scrollTo(message: message)) }
+        follow(rail.previousMessage())
+    }
+
+    /// A rail row was chosen: mark it, and take the pane there.
+    public func choose(_ index: Int) {
+        guard rows.indices.contains(index) else { return }
+        follow(rail.activate(index: UInt32(index)))
+    }
+
+    /// The page reports which message fills the pane. The mark follows it;
+    /// the pane is already there. Ignored while a chosen scroll is still
+    /// under way -- the rail's rule.
+    public func observed(message: Int64) {
+        guard let index = rows.firstIndex(where: { $0.id == message }) else { return }
+        if rail.observed(index: UInt32(index)).markMoved { adoptMark() }
+    }
+
+    /// The page finished a scroll the rail asked for; it may listen again.
+    public func settled(_ settle: UInt64) {
+        rail.settled(scroll: settle)
+    }
+
+    /// Take the rail's answer: move the mark, and the pane when it must go.
+    private func follow(_ effect: RailEffectFfi) {
+        guard effect.markMoved else { return }
+        adoptMark()
+        guard let message = focusedMessage else { return }
+        ask(.scrollTo(message: message, settle: effect.scroll))
+    }
+
+    /// The marked message is the one the keyboard is on.
+    private func adoptMark() {
+        marked = rail.marked().map(Int.init)
+        if let marked { focused = marked }
     }
 
     /// Fold or unfold the message the keyboard is on — `Space`.

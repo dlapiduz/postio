@@ -338,6 +338,8 @@ pub const INTERCEPTED: &[postio_core::CommandId] = {
         C::ToggleFold,
         C::NextInConversation,
         C::PrevInConversation,
+        // The conversation rail, hidden or shown for this window (FR-047).
+        C::ToggleRail,
         C::Compose,
         C::Reply,
         C::ReplyAll,

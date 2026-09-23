@@ -167,7 +167,8 @@ ad-hoc-signed build, which asks again after every rebuild.
 
 **What works:** the three-pane shell, the message list over the paged store,
 the reading pane with its remote-image blocking and per-sender allow list,
-conversations as one document in one web view (ADR 0032, as GTK draws them),
+conversations as one document in one web view with the rail beside them
+(ADR 0032, as GTK draws them),
 search with its query language and the chips that teach it
 — its hit count, refine chips, sort and scope rail included —
 the command palette, the cheat sheet, the menu bar built from the command
@@ -181,12 +182,8 @@ with its activation log in Privacy settings, and repairing an account
 whose credential has expired, by password or by browser, whichever it
 broke by.
 
-**What does not, yet.** One command in the registry reaches nothing here:
-`toggle_rail`, because the conversation rail is built on ADR 0032's
-one-document pane, which is being ported to this frontend
-([#1595](https://github.com/dlapiduz/postio/issues/1595)). Two more are
-deliberately not offered on the Mac, because its design has no surface for
-them: `detach_composer` (compose is already a window of its own) and
+**Deliberately not on the Mac:** two commands whose surface its design does
+not have — `detach_composer` (compose is already a window of its own) and
 `next_scope` (the sidebar lists every account at once, so there is no account
 strip to cycle). They are absent from its menus, palette and cheat sheet
 rather than drawn and dead.
@@ -194,7 +191,7 @@ rather than drawn and dead.
 `crates/postio-ffi/tests/ffi_suite/command_coverage.rs` is what keeps that
 list honest: it sweeps every command in the registry and fails if one
 reaches nothing, is not listed as debt, and is not scoped away from the Mac. The list has gone from
-forty-nine to one, and it may only shrink — a command that gains a handler
+forty-nine to none, and it may only shrink — a command that gains a handler
 and stays listed fails the sweep just as one that loses a handler does.
 
 ## First run

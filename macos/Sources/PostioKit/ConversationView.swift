@@ -42,6 +42,10 @@ public struct ConversationView: View {
     private let showing: Int64?
     /// A verb a message offered inside the page.
     private let onVerb: (ThreadVerbFfi, ThreadAnchorFfi?) -> Void
+    /// How wide the window is -- the rail's ladder is window widths.
+    private let windowWidth: CGFloat
+    /// The reader's own `⇧I`: no rail in this window (FR-047).
+    private let railHidden: Bool
 
     /// Where each message is in the page on screen, and what it says about
     /// itself -- the decode caveat rides here.
@@ -49,6 +53,10 @@ public struct ConversationView: View {
     /// The unsubscribe offer for the message the list is on, read once when
     /// it changes rather than per redraw.
     @State private var offer: UnsubscribeOfferFfi?
+    /// The rail's rows, from the page that was drawn.
+    @State private var railRows: [RailRowFfi] = []
+    /// Whether the narrow window's index is open.
+    @State private var showingIndex = false
 
     public init(
         session: PostioSession,
@@ -59,6 +67,8 @@ public struct ConversationView: View {
         page: UInt32 = 0,
         pageToken: Int = 0,
         showing: Int64? = nil,
+        windowWidth: CGFloat = 0,
+        railHidden: Bool = false,
         onVerb: @escaping (ThreadVerbFfi, ThreadAnchorFfi?) -> Void
     ) {
         self.session = session
@@ -69,7 +79,16 @@ public struct ConversationView: View {
         self.page = page
         self.pageToken = pageToken
         self.showing = showing
+        self.windowWidth = windowWidth
+        self.railHidden = railHidden
         self.onVerb = onVerb
+    }
+
+    /// Which presentation the rail gets in this window, or none.
+    private var rail: RailPresentationFfi? {
+        railPresentation(
+            width: Int32(windowWidth), messages: UInt32(model.rows.count), hidden: railHidden
+        )
     }
 
     /// The message the pane lands on when the conversation opens (FR-015).
@@ -87,18 +106,35 @@ public struct ConversationView: View {
             header
             Divider()
             notices
-            ThreadDocumentView(
-                source: session,
-                thread: model.conversation?.thread ?? 0,
-                originals: originals,
-                revision: revision,
-                focus: focusMessage,
-                request: model.documentRequest,
-                page: page,
-                pageToken: pageToken,
-                onVerb: onVerb,
-                onAnchors: { anchors = $0 }
-            )
+            HStack(spacing: 0) {
+                ThreadDocumentView(
+                    source: session,
+                    thread: model.conversation?.thread ?? 0,
+                    originals: originals,
+                    revision: revision,
+                    focus: focusMessage,
+                    request: model.documentRequest,
+                    page: page,
+                    pageToken: pageToken,
+                    onVerb: onVerb,
+                    onAnchors: { anchors = $0 },
+                    onRail: { railRows = $0 },
+                    onObserved: { model.observed(message: $0) },
+                    onSettled: { model.settled($0) }
+                )
+                // After the body, as GTK's is. The reading measure never
+                // gives up width to fund it (FR-043): below the ladder's
+                // bottom step the column goes and the header's counter opens
+                // the same index instead.
+                if let rail, rail != .popover {
+                    Divider()
+                    ConversationRail(
+                        rows: railRows, marked: model.marked, narrow: rail == .narrow,
+                        choose: { model.choose($0) }
+                    )
+                    .frame(width: ConversationRail.width(narrow: rail == .narrow))
+                }
+            }
         }
         .accessibilityLabel(Pane.reader.label)
         .task(id: showing) {
@@ -153,6 +189,9 @@ public struct ConversationView: View {
                     .lineLimit(1)
                     .truncationMode(.middle)
                 Spacer(minLength: PostioTokens.space4)
+                if rail == .popover {
+                    counter
+                }
                 Button {
                     model.expandAll()
                 } label: {
@@ -183,6 +222,27 @@ public struct ConversationView: View {
         }
         .padding(.horizontal, PostioTokens.space6)
         .padding(.vertical, PostioTokens.space4)
+    }
+
+    /// Where the reader is, as `3/6` -- and the way to the index in a window
+    /// too narrow for the column.
+    private var counter: some View {
+        let total = model.rows.count
+        let at = (model.marked ?? model.focused) + 1
+        return Button("\(at)/\(total)") { showingIndex.toggle() }
+            .font(.system(.callout, design: .monospaced))
+            .help("Message \(at) of \(total) — open the index")
+            .accessibilityLabel("Message \(at) of \(total), open the index")
+            .popover(isPresented: $showingIndex, arrowEdge: .bottom) {
+                ConversationRail(
+                    rows: railRows, marked: model.marked, narrow: false,
+                    choose: { index in
+                        model.choose(index)
+                        showingIndex = false
+                    }
+                )
+                .frame(width: ConversationRail.width(narrow: false), height: 320)
+            }
     }
 
     /// Reply, Reply all, Forward and Archive, each saying what it will act on

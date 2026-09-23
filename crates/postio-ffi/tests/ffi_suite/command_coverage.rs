@@ -40,15 +40,12 @@ const INTERCEPTED: &[CommandId] = postio_ffi::registry::INTERCEPTED;
 /// a command that loses one fails the first. That is what stops this becoming
 /// a place orphans go to be forgotten — which is exactly what happened
 /// without a sweep at all.
-const KNOWN_ORPHANS: &[(CommandId, &str)] = {
-    use CommandId as C;
-    &[
-        // #1576 -- there is no conversation rail on macOS to hide or show.
-        // Not a wiring gap: `postio_ui::reader::rail` decides the ladder and
-        // the rows, and nothing on this side draws them yet.
-        (C::ToggleRail, "#1576"),
-    ]
-};
+///
+/// **Empty since 2026-09-23**, as `app_suite/command_wiring.rs`'s is: every
+/// command reaches a handler, a window or this boundary, or is scoped away
+/// from the Mac by `postio_core::registry::offered_on`. A new entry here is a
+/// regression with an issue number, not a place to park one.
+const KNOWN_ORPHANS: &[(CommandId, &str)] = &[];
 
 /// The bus the FFI session builds, asked what it answers.
 ///

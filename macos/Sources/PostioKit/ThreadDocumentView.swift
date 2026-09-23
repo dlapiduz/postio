@@ -44,6 +44,12 @@ public struct ThreadDocumentView: NSViewRepresentable {
     private let pageToken: Int
     private let onVerb: (ThreadVerbFfi, ThreadAnchorFfi?) -> Void
     private let onAnchors: ([ThreadAnchorFfi]) -> Void
+    /// The rail's rows, from the page that was drawn.
+    private let onRail: ([RailRowFfi]) -> Void
+    /// The page reports which message fills the pane -- the rail's observer.
+    private let onObserved: (Int64) -> Void
+    /// A scroll the rail asked for has arrived; its token goes back.
+    private let onSettled: (UInt64) -> Void
 
     public init(
         source: any ReaderSource,
@@ -55,7 +61,10 @@ public struct ThreadDocumentView: NSViewRepresentable {
         page: UInt32 = 0,
         pageToken: Int = 0,
         onVerb: @escaping (ThreadVerbFfi, ThreadAnchorFfi?) -> Void,
-        onAnchors: @escaping ([ThreadAnchorFfi]) -> Void = { _ in }
+        onAnchors: @escaping ([ThreadAnchorFfi]) -> Void = { _ in },
+        onRail: @escaping ([RailRowFfi]) -> Void = { _ in },
+        onObserved: @escaping (Int64) -> Void = { _ in },
+        onSettled: @escaping (UInt64) -> Void = { _ in }
     ) {
         self.source = source
         self.thread = thread
@@ -67,6 +76,9 @@ public struct ThreadDocumentView: NSViewRepresentable {
         self.pageToken = pageToken
         self.onVerb = onVerb
         self.onAnchors = onAnchors
+        self.onRail = onRail
+        self.onObserved = onObserved
+        self.onSettled = onSettled
     }
 
     public func makeCoordinator() -> Coordinator {
@@ -77,9 +89,18 @@ public struct ThreadDocumentView: NSViewRepresentable {
         let coordinator = context.coordinator
         coordinator.onVerb = onVerb
         coordinator.onAnchors = onAnchors
+        coordinator.onRail = onRail
+        coordinator.onObserved = onObserved
+        coordinator.onSettled = onSettled
         let configuration = ReaderConfiguration.hardened(
             cidHandler: coordinator.cid,
             baseHandler: coordinator.closed
+        )
+        // The rail's observer reports in Postio's own content world, where
+        // the page's script -- off -- does not reach and the sender's markup
+        // cannot post to it.
+        configuration.userContentController.add(
+            coordinator.reports, contentWorld: .defaultClient, name: Coordinator.railHandler
         )
         // Not `PassingWebView`: this page scrolls itself. It is the pane.
         let view = ReaderSurface(frame: .zero, configuration: configuration)
@@ -102,6 +123,9 @@ public struct ThreadDocumentView: NSViewRepresentable {
         let coordinator = context.coordinator
         coordinator.onVerb = onVerb
         coordinator.onAnchors = onAnchors
+        coordinator.onRail = onRail
+        coordinator.onObserved = onObserved
+        coordinator.onSettled = onSettled
         coordinator.load(
             into: view, thread: thread, originals: originals, revision: revision, focus: focus
         )
@@ -117,6 +141,13 @@ public struct ThreadDocumentView: NSViewRepresentable {
         let policy: ReaderNavigationPolicy
         var onVerb: (ThreadVerbFfi, ThreadAnchorFfi?) -> Void = { _, _ in }
         var onAnchors: ([ThreadAnchorFfi]) -> Void = { _ in }
+        var onRail: ([RailRowFfi]) -> Void = { _ in }
+        var onObserved: (Int64) -> Void = { _ in }
+        var onSettled: (UInt64) -> Void = { _ in }
+        /// Where the observer's reports arrive.
+        let reports = RailReports()
+        /// The channel's name, as the observer script is told it.
+        static let railHandler = "postioRail"
         /// The last request carried out, so SwiftUI's repeated updates do not
         /// fold a message back and forth.
         var performed = 0
@@ -158,10 +189,31 @@ public struct ThreadDocumentView: NSViewRepresentable {
                 self.onVerb(verb, self.anchors.first { $0.message == verb.message })
             }
             policy.didFinish = { [weak self] view in
-                guard let self, let anchor = self.landing else { return }
-                self.landing = nil
-                view.evaluateJavaScript(threadScrollScript(anchor: anchor))
+                guard let self else { return }
+                if let anchor = self.landing {
+                    self.landing = nil
+                    view.evaluateJavaScript(threadScrollScript(anchor: anchor))
+                }
+                // Every load is a new page with no listener on it. Installed
+                // after the landing scroll, so its first report is where the
+                // pane landed.
+                if self.anchors.count > 1 {
+                    view.evaluateJavaScript(
+                        threadObserverScript(handler: Self.railHandler), in: nil, in: .defaultClient
+                    )
+                }
             }
+            reports.coordinator = self
+        }
+
+        /// A report from the observer, as a message id.
+        ///
+        /// Untrusted input even though Postio wrote the script: it arrives
+        /// from a page holding several senders' markup. Only a message this
+        /// page drew is passed on.
+        fileprivate func observedMessage(_ message: Int64) {
+            guard anchors.contains(where: { $0.message == message }) else { return }
+            onObserved(message)
         }
 
         /// Ask for the page, off the main actor, and load it if it changed.
@@ -199,6 +251,7 @@ public struct ThreadDocumentView: NSViewRepresentable {
                 // resolved through it.
                 self.cid.scopes = Set(document.messages.map(\.message))
                 self.onAnchors(document.messages)
+                self.onRail(document.rail)
                 if opening {
                     self.landing = document.messages.first { $0.message == focus }?.anchor
                 }
@@ -222,7 +275,13 @@ public struct ThreadDocumentView: NSViewRepresentable {
             guard let request, request.serial != performed else { return }
             performed = request.serial
             guard let script = script(for: request.action) else { return }
-            view.evaluateJavaScript(script)
+            let settle = request.settle
+            // The scroll is instant, so its completion is its arrival -- the
+            // moment the rail may listen to the observer again.
+            view.evaluateJavaScript(script) { [weak self] _, _ in
+                guard let self, let settle else { return }
+                self.onSettled(settle)
+            }
         }
 
         /// The boundary's script for `action`, against the page on screen.
@@ -231,7 +290,7 @@ public struct ThreadDocumentView: NSViewRepresentable {
         /// arrived for the last conversation: there is nothing here for it.
         private func script(for action: ConversationModel.DocumentAction) -> String? {
             switch action {
-            case let .scrollTo(message):
+            case let .scrollTo(message, _):
                 return anchor(of: message).map { threadScrollScript(anchor: $0) }
             case let .toggle(message):
                 return anchor(of: message).map { threadToggleScript(anchor: $0) }
@@ -251,5 +310,21 @@ public struct ThreadDocumentView: NSViewRepresentable {
             guard token != 0 else { return }
             Task { @MainActor in await ReaderPaging.scroll(view, to: page) }
         }
+    }
+}
+
+/// Receives the rail observer's reports and hands them to the pane's
+/// coordinator, weakly: a content controller keeps its handlers alive, and a
+/// strong one here would keep the coordinator alive with it.
+@MainActor
+public final class RailReports: NSObject, WKScriptMessageHandler {
+    weak var coordinator: ThreadDocumentView.Coordinator?
+
+    public func userContentController(
+        _ controller: WKUserContentController,
+        didReceive message: WKScriptMessage
+    ) {
+        guard let scope = message.body as? String, let id = Int64(scope) else { return }
+        coordinator?.observedMessage(id)
     }
 }

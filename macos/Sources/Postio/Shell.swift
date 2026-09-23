@@ -93,6 +93,16 @@ struct Shell: View {
                 .background(Color(nsColor: AppSurface.background))
                 .onTapGesture { engine.focus(.reader) }
         }
+        // How wide the window is, for the conversation rail's ladder -- whose
+        // steps are window widths, so the pane must not measure itself
+        // (#1576). A background reader lays nothing out of its own.
+        .background {
+            GeometryReader { proxy in
+                Color.clear
+                    .onAppear { engine.windowWidth = proxy.size.width }
+                    .onChange(of: proxy.size.width) { _, width in engine.windowWidth = width }
+            }
+        }
         // Under the toolbar, across the window — NOT inside the toolbar
         // item, which is a fixed-height cell that cannot host rows below
         // the field: attached there, the chips overflowed the toolbar and
@@ -641,6 +651,8 @@ struct Shell: View {
                 page: engine.readerPage,
                 pageToken: engine.readerPageToken,
                 showing: engine.cursorShowing,
+                windowWidth: engine.windowWidth,
+                railHidden: engine.railHidden,
                 onVerb: { engine.handle($0, of: $1) }
             )
         } else if let session = engine.session, let showing, let row = session.rowFor(showing) {

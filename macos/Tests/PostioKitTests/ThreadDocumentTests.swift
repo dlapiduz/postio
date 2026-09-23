@@ -46,7 +46,7 @@ extension ReaderWebViews {
                 let sections = ids.map { id in
                     """
                     <details class="postio-message" id="m-\(id)" open><summary>Message \(id) \
-                    <a href="postio-reply:\(id)">Reply</a></summary><p>Body \(id)</p></details>
+                    <a href="postio-reply:\(id)">Reply</a></summary><p style="height: 900px">Body \(id)</p></details>
                     """
                 }.joined()
                 return ThreadDocumentFfi(
@@ -56,7 +56,8 @@ extension ReaderWebViews {
                             message: $0, anchor: "m-\($0)", address: "sender\($0)@example.com",
                             caveat: nil
                         )
-                    }
+                    },
+                    rail: []
                 )
             }
         }
@@ -72,6 +73,7 @@ extension ReaderWebViews {
         @MainActor final class Heard {
             var verbs: [(ThreadVerbFfi, ThreadAnchorFfi?)] = []
             var anchors: [ThreadAnchorFfi] = []
+            var observed: [Int64] = []
         }
 
         struct Host: View {
@@ -86,7 +88,8 @@ extension ReaderWebViews {
                     revision: inputs.revision,
                     request: inputs.request,
                     onVerb: { verb, anchor in heard.verbs.append((verb, anchor)) },
-                    onAnchors: { heard.anchors = $0 }
+                    onAnchors: { heard.anchors = $0 },
+                    onObserved: { heard.observed.append($0) }
                 )
             }
         }
@@ -257,5 +260,27 @@ extension ReaderWebViews {
             #expect(readerRendersIssued() == renders, "the same page was loaded twice")
             await close(window, back: held)
         }
+
+        @Test func thePageSaysWhichMessageFillsThePane() async throws {
+            // The rail's observer: it speaks once when the page loads, and
+            // again when the page settles somewhere else -- from Postio's own
+            // content world, since the page's script is off.
+            let held = readerSurfacesHeld()
+            let heard = Heard()
+            let window = host(Pages(count: 4), Inputs(), heard)
+            try #require(await eventually { heard.anchors.count == 4 })
+            #expect(await eventually { heard.observed.first == 101 }, "\(heard.observed)")
+
+            do {
+                let view = try #require(surface(in: window))
+                _ = await evaluate(
+                    "window.scrollTo(0, document.getElementById('m-103').offsetTop); true", in: view
+                )
+            }
+
+            #expect(await eventually { heard.observed.last == 103 }, "\(heard.observed)")
+            await close(window, back: held)
+        }
     }
 }
+

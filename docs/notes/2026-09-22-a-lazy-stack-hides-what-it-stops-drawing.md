@@ -64,10 +64,10 @@ is suspended lands in its delta. Both such suites sit under one `.serialized`
 parent, `ReaderWebViews`. A new suite that builds a `PassingWebView` belongs
 there too.
 
-## What is still open
+## What happened next
 
-A collapsed message's reader is held until the conversation changes, and a
-long conversation read to the end holds one reader per message. The lazy stack
-defers the cost; it does not bound it. That is ADR 0032's question — one
-document, one view — asked on a platform where it has not been answered, and
-it is not a wiring fix.
+The same day the maintainer chose ADR 0032 for the Mac too (#1595), and the
+pane is one document in one web view now -- `ThreadDocumentView`, measured by
+`ThreadDocumentTests` at one surface for a thread of thirty. What this note
+says about `LazyVStack` still holds for any other platform view someone puts
+in one; the conversation pane just no longer is one.

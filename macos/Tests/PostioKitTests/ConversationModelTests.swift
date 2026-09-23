@@ -201,9 +201,10 @@ import Testing
         let model = ConversationModel()
         model.show(conversation())
         model.focusPrevious()
-        #expect(model.documentRequest?.action == .scrollTo(message: 4))
+        #expect(model.documentRequest?.message == 4)
+        #expect(model.documentRequest?.isScroll == true)
         model.focusNext()
-        #expect(model.documentRequest?.action == .scrollTo(message: 5))
+        #expect(model.documentRequest?.message == 5)
     }
 
     @Test func foldingActsOnTheFocusedMessageInTheDocument() {
@@ -237,6 +238,59 @@ import Testing
         model.toggleFocused()
         model.show(conversation())
         #expect(model.documentRequest == nil)
+    }
+
+    // -- the rail (#1576, #1595) --------------------------------------------
+
+    @Test func theRailStartsMarkedWhereThePaneOpens() {
+        // The pane lands on the boundary's focus; the rail says so without
+        // asking the page to go anywhere it is not already going.
+        let model = ConversationModel()
+        model.show(conversation())
+        #expect(model.marked == 4)
+        #expect(model.documentRequest == nil)
+    }
+
+    @Test func choosingARowMarksItAndTakesThePaneThere() {
+        let model = ConversationModel()
+        model.show(conversation())
+        model.choose(1)
+        #expect(model.marked == 1)
+        #expect(model.focus == 4, "the boundary's opening focus is not what moved")
+        #expect(model.documentRequest?.message == 2)
+        #expect(model.documentRequest?.settle != nil, "the page must say when it got there")
+    }
+
+    @Test func theObserverMovesTheMarkAndNotThePane() {
+        let model = ConversationModel()
+        model.show(conversation())
+        model.observed(message: 2)
+        #expect(model.marked == 1)
+        #expect(model.documentRequest == nil, "the pane is already there")
+    }
+
+    @Test func theObserverWaitsWhileThePaneIsBeingTakenSomewhere() {
+        // Mid-scroll it sees the messages the pane passes over; listened to,
+        // the mark would land short of the one the reader chose.
+        let model = ConversationModel()
+        model.show(conversation())
+        model.choose(0)
+        let settle = try? #require(model.documentRequest?.settle)
+        model.observed(message: 3)
+        #expect(model.marked == 0)
+        if let settle { model.settled(settle) }
+        model.observed(message: 3)
+        #expect(model.marked == 2)
+    }
+
+    @Test func foldingActsOnTheMarkedMessage() {
+        // `z` means the message the reader is on -- which the observer keeps
+        // current as they scroll, not only the keys.
+        let model = ConversationModel()
+        model.show(conversation())
+        model.observed(message: 2)
+        model.toggleFocused()
+        #expect(model.documentRequest?.action == .toggle(message: 2))
     }
 }
 
