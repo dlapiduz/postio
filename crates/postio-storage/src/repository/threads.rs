@@ -985,6 +985,56 @@ impl<'a> ThreadRepository<'a> {
         self.rows_from(&sql, arguments, scoped).await
     }
 
+    /// How many rows a folder lost when these messages left it (#1607).
+    ///
+    /// An archive moves `mailboxes.total_count`, which is the folder count's
+    /// witness, so the next page used to pay the whole conversation count
+    /// again: 786 ms on a real folder, in front of the first row. What the
+    /// count lost is knowable from the removed ids alone -- the conversations
+    /// none of whose members are still in the folder, plus every lone
+    /// message, each of which was its own row -- in two statements bounded
+    /// by the ids, not the folder. The removed rows still exist, elsewhere
+    /// or hidden pending a remote delete, so their conversations can be read
+    /// off them.
+    pub async fn conversations_gone_from(
+        &self,
+        mailbox: MailboxId,
+        removed: &[MessageId],
+    ) -> Result<u32> {
+        if removed.is_empty() {
+            return Ok(0);
+        }
+        let mut statement = self
+            .connection
+            .prepare(&format!(
+                "SELECT thread_id FROM messages WHERE id IN ({})",
+                placeholders(removed.len(), 1)
+            ))
+            .await?;
+        let ids: Vec<i64> = removed.iter().map(|id| id.get()).collect();
+        let threads_of: Vec<Option<i64>> =
+            sql::mapped(&mut statement, ids, |row| row.col(0)).await?;
+        drop(statement);
+        let lone = threads_of.iter().filter(|thread| thread.is_none()).count() as u32;
+        let mut threads: Vec<i64> = threads_of.into_iter().flatten().collect();
+        threads.sort_unstable();
+        threads.dedup();
+        if threads.is_empty() {
+            return Ok(lone);
+        }
+        let sql = format!(
+            "SELECT count(*) FROM threads t
+              WHERE t.id IN ({})
+                AND NOT EXISTS (SELECT 1 FROM messages m
+                                 WHERE m.thread_id = t.id AND m.mailbox_id = ?1 AND m.{MEMBER})",
+            placeholders(threads.len(), 2)
+        );
+        let mut arguments = vec![mailbox.get()];
+        arguments.extend(threads);
+        let emptied: i64 = sql::one(self.connection, &sql, arguments, |row| row.col(0)).await?;
+        Ok(lone + emptied as u32)
+    }
+
     /// The SQL [`Self::rows_for`] reads representatives with, for `threads`
     /// conversation ids and `lone` message ids, so a test can ask the
     /// planner about it the way [`Self::explain`] lets it ask about a page.
