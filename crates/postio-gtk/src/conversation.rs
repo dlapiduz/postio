@@ -34,14 +34,11 @@
 //! callers and tests name `Row`; collapsing the pair onto the generic
 //! versions is a refactor, and a refactor is not a merge's to make.
 //!
-//! What has **not** crossed is ADR 0032. The GTK pane draws a conversation as
-//! one document, which is why `expanded_in_document` is here and has no
-//! counterpart in the shared crate; the macOS pane still stacks it, one web
-//! view per expanded message, which is the design `expanded_on_open` and
-//! `EAGER_EXPANSION_CAP` exist to bound. So the shared rules are the *stacked*
-//! pane's rules, everything below about a document is GTK's alone, and making
-//! both frontends draw a conversation the same way is outstanding work rather
-//! than something a merge could decide.
+//! ADR 0032 has crossed too: both panes draw a conversation as one document,
+//! composed by `postio_ui::reader::thread::compose` (#1595). What still
+//! differs is only this crate's own copy of the ordering and focus rules
+//! above; `expanded_on_open` and its cap were written to bound a stacked pane
+//! that neither frontend draws any more.
 
 use gtk::glib;
 use gtk::prelude::*;

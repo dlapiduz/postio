@@ -1,11 +1,11 @@
-//! A conversation, folded, as the pane draws it (ADR 0015 Q4, #1263).
+//! A conversation, as the pane draws it (ADR 0015 Q4, ADR 0032, #1263, #1595).
 //!
-//! The macOS reading pane stacks a whole thread: read messages as one line,
-//! the latest and the unread ones open. **Which** ones open is not a drawing
-//! decision — it is what an opened conversation costs, one web view per
-//! expanded message — so it is decided in `postio_ui::conversation` and
-//! crosses the boundary already made. Swift draws the answer; it does not
-//! compute it.
+//! Two answers cross from here. [`ConversationFfi`] is the thread's rows and
+//! where it opens, decided in `postio_ui::conversation`, which the header and
+//! the keys read. [`ThreadDocumentFfi`] is the thread as one page -- the
+//! document GTK's pane draws, from the same `postio_ui::reader::thread` -- in
+//! the one web view the Mac shows it in. Swift draws both answers; it computes
+//! neither.
 
 use chrono::{DateTime, Local, TimeZone, Utc};
 
