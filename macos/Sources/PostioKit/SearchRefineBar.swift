@@ -19,23 +19,23 @@ import SwiftUI
 /// appears to do nothing when clicked, and neither is offered. Four at most.
 public struct SearchRefineBar: View {
     private let session: PostioSession
-    /// Bumped by the engine whenever a search ran, however it ran — typed,
-    /// refined, re-ordered, or picked from the sidebar. The chips are about
-    /// *this* result set, so they re-measure on it.
-    private let stamp: Int
+    /// The chips, measured off the main actor with the scope rail's counts —
+    /// see `SearchFacets`, which both surfaces read so the second pass over
+    /// the index is paid once per result set.
+    private let refinements: [RefinementFfi]
     /// Narrow the current query by one token. Routed through the engine
     /// rather than run here, because the field in the toolbar has to adopt
     /// the query that actually ran — two surfaces running searches
     /// independently is two ideas of what the query is.
     private let refine: (String) -> Void
 
-    /// Measured off the main actor — a second pass over the index that a
-    /// run drawing a list must not pay for inline.
-    @State private var refinements: [RefinementFfi] = []
-
-    public init(session: PostioSession, stamp: Int, refine: @escaping (String) -> Void) {
+    public init(
+        session: PostioSession,
+        refinements: [RefinementFfi],
+        refine: @escaping (String) -> Void
+    ) {
         self.session = session
-        self.stamp = stamp
+        self.refinements = refinements
         self.refine = refine
     }
 
@@ -85,11 +85,5 @@ public struct SearchRefineBar: View {
         .padding(.vertical, 5)
         .background(Color(nsColor: AppSurface.background))
         .overlay(alignment: .bottom) { Divider() }
-        .task(id: stamp) {
-            let session = session
-            let measured = await Task.detached { session.refinements() }.value
-            guard !Task.isCancelled else { return }
-            refinements = measured
-        }
     }
 }

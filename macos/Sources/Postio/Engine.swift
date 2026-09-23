@@ -292,6 +292,7 @@ final class Engine {
         // which is true whether or not the field holds the keyboard. The
         // refine bar and the field's readout both follow it.
         searchStamp += 1
+        searchFacets.resultsChanged(searching: session?.isSearching == true)
         // A saved search holds the keyboard only while its results are up.
         // Once the list is a folder again the highlight goes back to the
         // folder, rather than staying on a query nothing is showing.
@@ -305,6 +306,50 @@ final class Engine {
     /// re-measures on, and what makes the toolbar field adopt a query it
     /// did not run itself.
     private(set) var searchStamp = 0
+
+    /// The scope rail's rows and the refine chips — see `SearchFacets`.
+    let searchFacets = SearchFacets()
+
+    /// Whether the list is a result set rather than a folder.
+    ///
+    /// Reads the stamp so SwiftUI asks again after a search runs or clears:
+    /// `isSearching` is the boundary's answer, and a computed property over
+    /// it is not something SwiftUI can observe on its own.
+    var showingResults: Bool {
+        _ = searchStamp
+        return session?.isSearching ?? false
+    }
+
+    /// Which scope the search is looking in, for the rail to mark.
+    var searchScope: SearchScopeFfi {
+        _ = searchStamp
+        return session?.searchScope ?? .allMail
+    }
+
+    /// Look in `scope` — a row of the rail. The same query, asked again.
+    func setSearchScope(_ scope: SearchScopeFfi) {
+        guard let session, session.isSearching else { return }
+        session.setSearchScope(scope)
+        listChanged()
+        searchChanged()
+    }
+
+    /// Walk the rail from the keyboard: the sidebar is showing it, not the
+    /// folders. See `SearchFacets.step`.
+    private func stepScope(by delta: Int) -> Bool {
+        guard let next = searchFacets.step(from: searchScope, by: delta) else { return false }
+        if next != searchScope { setSearchScope(next) }
+        return true
+    }
+
+    /// Measure the rail's counts and the chips for the results on screen.
+    func measureFacets() async {
+        guard let session, session.isSearching else { return }
+        let measured = await Task.detached { session.searchFacets() }.value
+        // A search cleared while this was measuring has nothing to draw it on.
+        guard !Task.isCancelled, session.isSearching else { return }
+        searchFacets.take(measured)
+    }
 
     /// Narrow the current search by one token — a refine chip.
     ///
@@ -1005,9 +1050,9 @@ final class Engine {
                 folderCursor = mailboxes.first { $0.id == showingMailbox }?.rowId
             }
         case Intercepted.nextFolder:
-            return stepSidebar(by: 1)
+            return showingResults ? stepScope(by: 1) : stepSidebar(by: 1)
         case Intercepted.prevFolder:
-            return stepSidebar(by: -1)
+            return showingResults ? stepScope(by: -1) : stepSidebar(by: -1)
         case Intercepted.toggleFolder:
             // A saved search has nothing under it to fold.
             guard case let .folder(row) = sidebarCursor else { return false }

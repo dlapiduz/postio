@@ -167,7 +167,8 @@ ad-hoc-signed build, which asks again after every rebuild.
 
 **What works:** the three-pane shell, the message list over the paged store,
 the reading pane with its remote-image blocking and per-sender allow list,
-conversations, search with its query language and the chips that teach it,
+conversations, search with its query language and the chips that teach it
+— its hit count, refine chips, sort and scope rail included —
 the command palette, the cheat sheet, the menu bar built from the command
 registry, keyboard commands in both layers, compose with rich text,
 attachments and pictures in the body, scheduled send, notifications, a
@@ -188,11 +189,6 @@ them: `detach_composer` (compose is already a window of its own) and
 `next_scope` (the sidebar lists every account at once, so there is no account
 strip to cycle). They are absent from its menus, palette and cheat sheet
 rather than drawn and dead.
-
-Beyond the command sweep: the search bar has its chips, hit count, timing,
-refine chips, sort control and footer hints, but not yet the scope rail
-([#1157](https://github.com/dlapiduz/postio/issues/1157)), which is being
-built.
 
 `crates/postio-ffi/tests/ffi_suite/command_coverage.rs` is what keeps that
 list honest: it sweeps every command in the registry and fails if one

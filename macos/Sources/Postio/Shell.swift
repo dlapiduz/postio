@@ -44,57 +44,17 @@ struct Shell: View {
 
     var body: some View {
         NavigationSplitView {
-            List(selection: selectedFolder) {
-                if engine.mailboxes.isEmpty {
-                    Text("No folders yet")
-                        .foregroundStyle(.secondary)
-                        .font(.callout)
+            // While the list is a result set the sidebar answers "how much
+            // of the mailbox", not "which folder" (canvas 5, #1157).
+            Group {
+                if engine.showingResults {
+                    SearchScopeRail(
+                        rows: engine.searchFacets.rows(current: engine.searchScope),
+                        backKey: engine.session?.accelerator(for: Intercepted.back),
+                        pick: { engine.setSearchScope($0) }
+                    )
                 } else {
-                    // The special-use folders first, in the order the
-                    // boundary gave them — Inbox at the top, one row per
-                    // role. Nothing is sorted here; see `Engine.specialFolders`.
-                    Section("Favorites") {
-                        ForEach(engine.specialFolders, id: \.rowId) { folder in
-                            // A special-use folder stands for its role and
-                            // is drawn flat, children or not: the Favorites
-                            // section is one row per role, and its tree is
-                            // under "On My Mac".
-                            FolderRow(
-                                folder: folder,
-                                children: { _ in [] },
-                                collapsed: expansion
-                            )
-                        }
-                    }
-                    // A query somebody wrote down, beside the folders it
-                    // searches. Not selectable rows: see `SavedSearchRows`.
-                    SavedSearchRows(searches: engine.savedSearches) { search in
-                        engine.pick(search)
-                    }
-                    // Then the account's own folders, each account a group
-                    // and each folder with its children under it. The tree is
-                    // rebuilt here from the flat list's parent ids —
-                    // flattening it for display would turn a tidy account
-                    // into slash-separated strings.
-                    if !engine.folderRoots.isEmpty {
-                        Section("On My Mac") {
-                            ForEach(engine.accountsWithFolders, id: \.id) { account in
-                                AccountFolders(
-                                    address: account.address,
-                                    roots: engine.folderRoots.filter { $0.account == account.id },
-                                    children: { engine.children(of: $0) },
-                                    collapsed: expansion
-                                )
-                                // The account is a heading, not a folder.
-                                // Inside a `List(selection:)` every row is
-                                // selectable unless it says otherwise, so
-                                // clicking the address highlighted it as
-                                // though mail had been opened, and nothing
-                                // was.
-                                .selectionDisabled()
-                            }
-                        }
-                    }
+                    folders
                 }
             }
             // Postio's ramp rather than AppKit's sidebar material. The
@@ -138,14 +98,18 @@ struct Shell: View {
         // the field: attached there, the chips overflowed the toolbar and
         // floated over the window as a detached artifact.
         .safeAreaInset(edge: .top, spacing: 0) {
-            if let session = engine.session, session.isSearching {
+            if let session = engine.session, engine.showingResults {
                 SearchRefineBar(
                     session: session,
-                    stamp: engine.searchStamp,
+                    refinements: engine.searchFacets.refinements,
                     refine: { engine.refineSearch($0) }
                 )
             }
         }
+        // The rail's counts and the chips, measured once per result set and
+        // off the main actor -- a second pass over the index that drawing the
+        // list must not pay for inline.
+        .task(id: engine.searchStamp) { await engine.measureFacets() }
         .toolbar {
             // No sidebar-toggle item here: `NavigationSplitView` puts one at
             // the leading edge itself, and adding a second drew two identical
@@ -465,6 +429,63 @@ struct Shell: View {
             get: { !engine.collapsedFolders.contains(folder.rowId) },
             set: { engine.setCollapsed(folder.rowId, !$0) }
         )
+    }
+
+    /// Every account's folders, the favourites and the saved searches.
+    private var folders: some View {
+        List(selection: selectedFolder) {
+            if engine.mailboxes.isEmpty {
+                Text("No folders yet")
+                    .foregroundStyle(.secondary)
+                    .font(.callout)
+            } else {
+                // The special-use folders first, in the order the
+                // boundary gave them — Inbox at the top, one row per
+                // role. Nothing is sorted here; see `Engine.specialFolders`.
+                Section("Favorites") {
+                    ForEach(engine.specialFolders, id: \.rowId) { folder in
+                        // A special-use folder stands for its role and
+                        // is drawn flat, children or not: the Favorites
+                        // section is one row per role, and its tree is
+                        // under "On My Mac".
+                        FolderRow(
+                            folder: folder,
+                            children: { _ in [] },
+                            collapsed: expansion
+                        )
+                    }
+                }
+                // A query somebody wrote down, beside the folders it
+                // searches. Not selectable rows: see `SavedSearchRows`.
+                SavedSearchRows(searches: engine.savedSearches) { search in
+                    engine.pick(search)
+                }
+                // Then the account's own folders, each account a group
+                // and each folder with its children under it. The tree is
+                // rebuilt here from the flat list's parent ids —
+                // flattening it for display would turn a tidy account
+                // into slash-separated strings.
+                if !engine.folderRoots.isEmpty {
+                    Section("On My Mac") {
+                        ForEach(engine.accountsWithFolders, id: \.id) { account in
+                            AccountFolders(
+                                address: account.address,
+                                roots: engine.folderRoots.filter { $0.account == account.id },
+                                children: { engine.children(of: $0) },
+                                collapsed: expansion
+                            )
+                            // The account is a heading, not a folder.
+                            // Inside a `List(selection:)` every row is
+                            // selectable unless it says otherwise, so
+                            // clicking the address highlighted it as
+                            // though mail had been opened, and nothing
+                            // was.
+                            .selectionDisabled()
+                        }
+                    }
+                }
+            }
+        }
     }
 
     private func restoreFolder() {

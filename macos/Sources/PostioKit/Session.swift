@@ -323,20 +323,22 @@ public final class PostioSession {
     /// GTK's own say the same thing.
     public var resultOrderLabel: String { inner.resultOrderLabel() }
 
-    /// The refine chips for the results on screen, best first.
-    ///
-    /// Empty over a mailbox. Measured against the current results rather
-    /// than listed from a table in Swift: a chip that keeps none of them is
-    /// a dead end and one that keeps all of them appears to do nothing when
-    /// clicked, and neither is offered.
-    ///
-    /// **`nonisolated`.** This is a second pass over the index — one count
-    /// per scope plus the narrowings — and search is budgeted under 100 ms
-    /// (`PRODUCT.md` §1). Paying for the chips on the main actor during
-    /// submit would spend that budget twice on one keystroke, so they are
-    /// measured off it and appear a moment after the results they are
-    /// about.
-    public nonisolated func refinements() -> [RefinementFfi] { inner.refinements() }
+    /// The scope rail's counts and the refine chips for the results on
+    /// screen, from one pass over the index (#1157). A second pass, so off
+    /// the main actor: search is budgeted under 100 ms and paying for this
+    /// inline spent that budget twice on one keystroke.
+    public nonisolated func searchFacets() -> SearchFacetsFfi { inner.searchFacets() }
+
+    /// Which scope the search is looking in — All mail unless the rail said
+    /// otherwise, and All mail again for every new search.
+    public var searchScope: SearchScopeFfi { inner.searchScope() }
+
+    /// Look in `scope` and ask the same query again there. The scope is not
+    /// written into the query, so what was typed stays what was typed.
+    @discardableResult
+    public func setSearchScope(_ scope: SearchScopeFfi) -> UInt64 {
+        inner.setSearchScope(scope: scope)
+    }
 
     /// Read the results the other way round — best first, or newest first.
     ///
