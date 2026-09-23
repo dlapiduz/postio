@@ -8,7 +8,7 @@
 
 use postio_model::mailbox::MailboxRole;
 use postio_model::{AccountId, MailboxId};
-use postio_runtime::store::{ListScope, LocalStore, PageRequest};
+use postio_runtime::store::{ListScope, LocalStore, MailStore, PageRequest};
 use postio_storage::seed::{seed_large, thread_seeded_messages};
 use postio_storage::test_support;
 
@@ -295,6 +295,56 @@ async fn paging_a_folder_opens_one_connection_rather_than_one_per_page() {
         "five pages of one folder opened {opened} more connections, each a \
          fresh page cache over the file; the first page's connection should \
          have served them all"
+    );
+}
+
+#[tokio::test]
+async fn the_rows_for_a_changed_message_are_the_page_row_they_replace() {
+    // #1607: a mark-read re-read the whole page to learn one conversation's
+    // new state. `rows_in` answers the same ids with the same row shape the
+    // page uses, so the list can patch the row in place.
+    let database = test_support::temp().await;
+    let report = seed_large(&database, 7, 600).await;
+    let inbox = report.mailbox(MailboxRole::Inbox).expect("an inbox").id;
+    thread_seeded_messages(&database, report.account.id, 4).await;
+    let store = LocalStore::new(&database);
+
+    let page = store
+        .thread_page(request(ListScope::Mailbox(inbox), 0, 50))
+        .await
+        .expect("the first page");
+    let shown = page.rows.first().expect("a row").clone();
+
+    // The representative goes unread.
+    {
+        let connection = database.connect().await.expect("a connection");
+        postio_storage::repository::MessageRepository::new(&connection)
+            .set_flags(
+                shown.representative.id,
+                &postio_model::FlagSet::from_iter(std::iter::empty::<postio_model::Flag>()),
+                postio_storage::repository::FlagSource::Local,
+            )
+            .await
+            .expect("unread");
+    }
+
+    let rows = store
+        .rows_in(ListScope::Mailbox(inbox), vec![shown.representative.id])
+        .await
+        .expect("the rows for one id");
+    let postio_runtime::store::ListRows::Threads(rows) = rows else {
+        panic!("a folder lists conversations, so its rows are conversations");
+    };
+    assert_eq!(rows.len(), 1, "one id, one conversation: {rows:?}");
+    let fresh = &rows[0];
+    assert_eq!(fresh.id, shown.id);
+    assert_eq!(fresh.representative.id, shown.representative.id);
+    assert_eq!(fresh.message_count, shown.message_count);
+    assert_eq!(fresh.participants, shown.participants);
+    assert_eq!(
+        fresh.unread_count,
+        shown.unread_count + u32::from(shown.representative.seen),
+        "the row carries the flag that moved"
     );
 }
 

@@ -171,6 +171,19 @@ pub enum ListPage {
     Threads(ThreadPage),
 }
 
+/// The rows a list would show for particular messages, in the shape the
+/// scope's pages use: conversations for a folder or an account, messages
+/// for a drafts folder. What [`MailStore::rows_in`] answers (#1607).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ListRows {
+    /// The scope lists messages, and these are the ones asked for.
+    Messages(Vec<MessageSummary>),
+    /// The scope lists conversations, and these are the ones the messages
+    /// asked for belong to -- one row per conversation, however many of its
+    /// messages were named.
+    Threads(Vec<ThreadSummary>),
+}
+
 impl ListPage {
     /// How many rows the scope matches, as of this read.
     pub fn total(&self) -> u32 {
@@ -269,6 +282,18 @@ pub trait MailStore: Send + Sync {
     /// of the id list it holds. Ids the store no longer knows about are
     /// dropped, so the answer may be shorter than the request.
     fn message_rows(&self, ids: Vec<MessageId>) -> Read<'_, Vec<MessageSummary>>;
+
+    /// The rows `scope`'s list shows for these messages, in the shape its
+    /// pages use, so a change that names ids can be patched into the rows
+    /// on screen rather than answered by re-reading their page (#1607).
+    ///
+    /// A store that can only read pages answers with an error, and the list
+    /// falls back to the page; that is what this default is, so a fake in a
+    /// test does not have to say so.
+    fn rows_in(&self, scope: ListScope, ids: Vec<MessageId>) -> Read<'_, ListRows> {
+        let _ = (scope, ids);
+        Box::pin(async { Err(StoreError::new("this store reads pages, not rows")) })
+    }
 
     /// An account's folders, with their counts as of now.
     fn mailboxes(&self, account: AccountId) -> Read<'_, Vec<Mailbox>>;
