@@ -198,6 +198,9 @@ const ID_PENALTY: i32 = 40;
 pub fn entries(keymap: &Keymap, context: Context, state: Availability, query: &str) -> Vec<Entry> {
     let query = query.trim();
     let mut found: Vec<Entry> = registry::reachable_in(context, state)
+        // Not what this platform has no surface for: see
+        // `postio_core::registry::offered_on`.
+        .filter(|spec| keymap.offers(spec.id))
         .filter_map(|spec| {
             let by_title = score(query, spec.title);
             let by_id = score(query, spec.id.as_str());
@@ -241,6 +244,27 @@ mod tests {
 
     fn defaults() -> Keymap {
         Keymap::resolve(&postio_config::KeyBindings::default())
+    }
+
+    #[test]
+    fn a_command_the_platform_does_not_offer_is_not_in_its_palette() {
+        // Offering Detach composer on a Mac, where compose is already a window,
+        // is a row the user picks and nothing happens (#1571).
+        use postio_config::paths::Platform;
+        for platform in [Platform::Freedesktop, Platform::Apple] {
+            let keymap = Keymap::resolve_on(&postio_config::KeyBindings::default(), platform);
+            let offered = entries(&keymap, Context::Composer, an_account(), "detach")
+                .iter()
+                .any(|entry| entry.id == ActionId::Builtin(CommandId::DetachComposer));
+            assert_eq!(
+                offered,
+                postio_core::registry::offered_on(
+                    ActionId::Builtin(CommandId::DetachComposer),
+                    platform
+                ),
+                "{platform:?}"
+            );
+        }
     }
 
     // -- matching ---------------------------------------------------------
@@ -306,9 +330,11 @@ mod tests {
 
     #[test]
     fn an_empty_query_lists_everything_reachable_in_registry_order() {
-        let listed = entries(&defaults(), Context::List, an_account(), "");
+        let keymap = defaults();
+        let listed = entries(&keymap, Context::List, an_account(), "");
         let expected: Vec<ActionId> = registry::reachable(Context::List)
             .map(|spec| spec.id)
+            .filter(|id| keymap.offers(*id))
             .collect();
 
         assert_eq!(
@@ -319,9 +345,10 @@ mod tests {
 
     #[test]
     fn every_registry_command_is_reachable_from_some_context() {
-        for spec in registry::all() {
+        let keymap = defaults();
+        for spec in registry::all().filter(|spec| keymap.offers(spec.id)) {
             let reachable = Context::ALL.iter().any(|context| {
-                entries(&defaults(), *context, an_account(), spec.title)
+                entries(&keymap, *context, an_account(), spec.title)
                     .iter()
                     .any(|entry| entry.id == spec.id.into())
             });

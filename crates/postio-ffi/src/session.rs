@@ -3881,6 +3881,11 @@ impl Session {
         let Ok(id) = id.parse::<postio_core::ActionId>() else {
             return false;
         };
+        // A command this platform does not offer is never available on it,
+        // whatever the context: see `postio_core::registry::offered_on`.
+        if !postio_core::registry::offered_on(id, postio_config::paths::Platform::host()) {
+            return false;
+        }
         postio_core::registry::reachable_in(
             postio_core::Context::from(context),
             self.availability(),

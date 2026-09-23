@@ -41,16 +41,52 @@ fn the_freedesktop_table_is_byte_identical_to_before() {
     );
 }
 
+/// `table`'s rows for the commands the Mac offers.
+///
+/// Those are the one deliberate difference besides the modifier: a command a
+/// platform has no surface for has no key there (`registry::offered_on`), so
+/// comparing the tables means setting those rows aside -- and asserting them
+/// on their own, below.
+fn offered_on_the_mac(table: &str) -> String {
+    table
+        .lines()
+        .filter(|row| {
+            let id = row.split('\t').next().unwrap_or_default();
+            id.parse::<postio_core::ActionId>()
+                .map(|id| registry::offered_on(id, Platform::Apple))
+                .unwrap_or(true)
+        })
+        .map(|row| format!("{row}\n"))
+        .collect()
+}
+
 #[test]
 fn apple_gets_command_wherever_freedesktop_gets_control() {
     let linux = table(Platform::Freedesktop);
     let apple = table(Platform::Apple);
     assert_ne!(linux, apple, "nothing was translated at all");
     assert_eq!(
-        linux.replace("ctrl+", "cmd+"),
-        apple,
+        offered_on_the_mac(&linux).replace("ctrl+", "cmd+"),
+        offered_on_the_mac(&apple),
         "the two tables differ somewhere other than the primary modifier"
     );
+}
+
+#[test]
+fn a_command_the_mac_does_not_offer_is_unbound_there_and_nowhere_else() {
+    let apple = table(Platform::Apple);
+    for row in apple.lines() {
+        let (id, bindings) = row.split_once('\t').unwrap_or((row, ""));
+        let Ok(action) = id.parse::<postio_core::ActionId>() else {
+            continue;
+        };
+        if !registry::offered_on(action, Platform::Apple) {
+            assert!(
+                bindings.is_empty(),
+                "`{id}` is not offered on the Mac and holds `{bindings}`"
+            );
+        }
+    }
 }
 
 #[test]

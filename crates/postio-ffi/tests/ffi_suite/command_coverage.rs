@@ -21,6 +21,11 @@
 //!    it — [`INTERCEPTED`], which is `PostioKit`'s `Intercepted.all`. A
 //!    session cannot open a window, so those stop here by design.
 //!
+//! Or it is not offered on the Mac at all — `postio_core::registry::offered_on`
+//! — because the Mac's design has no surface for it. Settled rather than
+//! answered: no menu item, no key, no palette row, so nothing is drawn that
+//! does nothing. That is a decision recorded in the registry, not debt.
+//!
 //! Anything else is an orphan.
 
 use postio_core::CommandId;
@@ -38,18 +43,6 @@ const INTERCEPTED: &[CommandId] = postio_ffi::registry::INTERCEPTED;
 const KNOWN_ORPHANS: &[(CommandId, &str)] = {
     use CommandId as C;
     &[
-        // #1571 -- `detach_composer` has nothing to detach, because compose
-        // here is already a window of its own and never takes over the
-        // reading pane the way `PRODUCT.md` describes. A decision, not an
-        // omission -- see the issue.
-        (C::DetachComposer, "#1571"),
-        // #1573 -- `g a` cycles an account strip, and macOS's sidebar does
-        // not have one: it lists every account's folders at once under "On My
-        // Mac", where GTK's shows one account's and the strip re-roots it.
-        // The account scope here is *derived* from the open list rather than
-        // chosen, so there is nothing for this to move. Whether the Mac gets
-        // a strip is a design call (#1157), not a wiring one.
-        (C::NextScope, "#1573"),
         // #1576 -- there is no conversation rail on macOS to hide or show.
         // Not a wiring gap: `postio_ui::reader::rail` decides the ladder and
         // the rows, and nothing on this side draws them yet.
@@ -62,6 +55,11 @@ const KNOWN_ORPHANS: &[(CommandId, &str)] = {
 /// Composed exactly as `DeferredBus::arm` composes it, so this is the same
 /// list a running Postio would check a command against rather than a second
 /// opinion about one.
+/// Whether the Mac offers `id` at all. See the module note.
+fn offered_on_the_mac(id: CommandId) -> bool {
+    postio_core::registry::offered_on(id.into(), postio_config::paths::Platform::Apple)
+}
+
 async fn wired() -> Vec<CommandId> {
     let database = postio_storage::test_support::memory().await;
     let state = postio_core::state::SharedState::default();
@@ -89,6 +87,7 @@ async fn every_command_reaches_a_handler_a_window_or_this_boundary() {
                 && !postio_ffi::HANDLED_HERE.contains(id)
                 && !INTERCEPTED.contains(id)
                 && !known.contains(id)
+                && offered_on_the_mac(*id)
         })
         .collect();
 
@@ -113,7 +112,8 @@ async fn a_command_that_gained_a_handler_leaves_the_orphan_list() {
     for &(id, issue) in KNOWN_ORPHANS {
         let answered = wired.contains(&id)
             || postio_ffi::HANDLED_HERE.contains(&id)
-            || INTERCEPTED.contains(&id);
+            || INTERCEPTED.contains(&id)
+            || !offered_on_the_mac(id);
         assert!(
             !answered,
             "{id} is in KNOWN_ORPHANS citing {issue}, and it is answered now \
@@ -138,4 +138,22 @@ async fn nothing_is_answered_twice_by_the_boundary_and_the_bus() {
         "the boundary answers these before the bus can, so the bus's handler \
          is unreachable: {both:?}"
     );
+}
+
+#[test]
+fn nothing_the_mac_does_not_offer_is_also_answered_on_it() {
+    // A command scoped away from the Mac and then given a handler or a
+    // surface there is one of the two decisions being wrong: either the Mac
+    // has the surface after all, or somebody built something nothing can
+    // reach. Either way the registry line should go.
+    for id in CommandId::ALL
+        .iter()
+        .copied()
+        .filter(|id| !offered_on_the_mac(*id))
+    {
+        assert!(
+            !INTERCEPTED.contains(&id) && !postio_ffi::HANDLED_HERE.contains(&id),
+            "`{id}` is not offered on the Mac and is answered there anyway"
+        );
+    }
 }

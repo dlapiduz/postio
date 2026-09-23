@@ -212,12 +212,18 @@ pub fn section_for(command: CommandId) -> Option<MenuSection> {
     }
 }
 
-/// [`section_for`], folded for a platform that has no application menu.
+/// [`section_for`], folded for a platform that has no application menu, and
+/// empty for a command the platform does not offer.
 ///
 /// Freedesktop has none, so its three commands appear under Edit — which is
 /// where they were before this variant existed, and where the GTK menu still
 /// draws them.
 pub fn section_on(command: CommandId, platform: Platform) -> Option<MenuSection> {
+    // Not a menu item where the platform does not offer it at all: see
+    // [`crate::registry::offered_on`].
+    if !crate::registry::offered_on(crate::ActionId::Builtin(command), platform) {
+        return None;
+    }
     match section_for(command) {
         Some(MenuSection::App) if platform != Platform::Apple => Some(MenuSection::Edit),
         other => other,
@@ -227,6 +233,24 @@ pub fn section_on(command: CommandId, platform: Platform) -> Option<MenuSection>
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_command_a_platform_does_not_offer_is_no_menu_item_there() {
+        // A menu item for a surface the platform does not have is a key that
+        // does nothing, drawn where everybody looks.
+        for platform in [Platform::Freedesktop, Platform::Apple] {
+            for command in [CommandId::DetachComposer, CommandId::NextScope] {
+                let offered =
+                    crate::registry::offered_on(crate::ActionId::Builtin(command), platform);
+                assert_eq!(
+                    section_on(command, platform).is_some(),
+                    offered && section_for(command).is_some(),
+                    "`{command}` on {platform:?}"
+                );
+            }
+        }
+        assert_eq!(section_on(CommandId::DetachComposer, Platform::Apple), None);
+    }
 
     #[test]
     fn every_section_holds_something() {

@@ -135,17 +135,31 @@ fn the_mod_defaults_are_control_on_linux_and_command_on_apple() {
 
 #[test]
 fn without_a_file_the_registry_defaults_are_the_keymap() {
-    let keymap = Keymap::resolve(&KeyBindings::default());
+    // Both platforms, from either host: a command a platform does not offer
+    // has no key there by design, and every other command keeps its default.
+    for platform in [
+        postio_config::paths::Platform::Freedesktop,
+        postio_config::paths::Platform::Apple,
+    ] {
+        let keymap = Keymap::resolve_on(&KeyBindings::default(), platform);
 
-    assert_eq!(keymap.binding(CommandId::Archive), Some("a"));
-    assert_eq!(keymap.binding(CommandId::Undo), Some("u"));
-    assert!(keymap.problems().is_empty());
-
-    for command in CommandId::ALL {
+        assert_eq!(keymap.binding(CommandId::Archive), Some("a"));
+        assert_eq!(keymap.binding(CommandId::Undo), Some("u"));
         assert!(
-            keymap.binding(*command).is_some(),
-            "`{command}` lost its binding"
+            keymap.problems().is_empty(),
+            "{platform:?}: {:?}",
+            keymap.problems()
         );
+
+        for command in CommandId::ALL {
+            let offered = postio_core::registry::offered_on((*command).into(), platform);
+            assert_eq!(
+                keymap.binding(*command).is_some(),
+                offered,
+                "`{command}` on {platform:?}: bound {}, offered {offered}",
+                keymap.binding(*command).is_some()
+            );
+        }
     }
 }
 

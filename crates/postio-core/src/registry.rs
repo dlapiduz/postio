@@ -1922,6 +1922,37 @@ pub fn reachable(context: Context) -> impl Iterator<Item = ActionSpec> {
     for_context(context).map(ActionSpec::from).chain(extensions)
 }
 
+/// Whether `action` is offered on `platform` at all (#1571, #1573).
+///
+/// Almost everything is offered everywhere: one vocabulary, one table, and a
+/// frontend that has not built a surface yet lists the command as debt rather
+/// than pretending it does not exist. This is for the other case -- a command
+/// whose surface a platform's **design** does not have, so there is nothing
+/// to build and a menu item for it would be a key that does nothing, drawn
+/// where everybody looks.
+///
+/// Asked by everything that shows a command: the menu placement
+/// ([`crate::menu::section_on`]), the keymap ([`crate::Keymap::resolve_on`],
+/// which gives such a command no key there), and through it the palette, the
+/// cheat sheet and the key resolver. So a platform answers "not here" once and
+/// every surface agrees. Extensions are offered everywhere; they bring their
+/// own surfaces.
+///
+/// A parameter, not a `cfg`, so either host can assert both answers.
+pub fn offered_on(action: ActionId, platform: Platform) -> bool {
+    use CommandId as C;
+    !matches!(
+        (action, platform),
+        // Compose on the Mac is a window of its own (canvas 26) and never
+        // takes over the reading pane, so there is nothing to detach.
+        (ActionId::Builtin(C::DetachComposer), Platform::Apple)
+            // The Mac's sidebar lists every account's folders at once, under
+            // "On My Mac" (canvas 25): there is no account strip for `g a` to
+            // cycle.
+            | (ActionId::Builtin(C::NextScope), Platform::Apple)
+    )
+}
+
 /// Every command reachable in `context` for a window in `state`.
 ///
 /// What the palette, the cheat sheet and the key hints iterate. [`reachable`]
@@ -1959,6 +1990,42 @@ pub fn spec(id: ActionId) -> Option<ActionSpec> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // -- what a platform offers ------------------------------------------------
+
+    /// The two commands the Mac's design has no surface for (#1571, #1573).
+    const NOT_ON_THE_MAC: [CommandId; 2] = [CommandId::DetachComposer, CommandId::NextScope];
+
+    #[test]
+    fn every_command_is_offered_on_freedesktop() {
+        // GTK draws every surface these commands name, so nothing is scoped
+        // away there -- this is the half that guards the GTK build against a
+        // Mac decision leaking into it.
+        for id in CommandId::ALL {
+            assert!(
+                offered_on(ActionId::Builtin(*id), Platform::Freedesktop),
+                "`{id}` stopped being offered on Linux"
+            );
+        }
+    }
+
+    #[test]
+    fn the_mac_is_not_offered_what_its_design_has_no_surface_for() {
+        for id in NOT_ON_THE_MAC {
+            assert!(
+                !offered_on(ActionId::Builtin(id), Platform::Apple),
+                "`{id}`"
+            );
+        }
+        // And nothing else: a list that grew quietly would be commands
+        // vanishing from the Mac's menus with nobody deciding it.
+        let scoped: Vec<CommandId> = CommandId::ALL
+            .iter()
+            .copied()
+            .filter(|id| !offered_on(ActionId::Builtin(*id), Platform::Apple))
+            .collect();
+        assert_eq!(scoped, NOT_ON_THE_MAC);
+    }
 
     #[test]
     fn the_table_is_ordered_like_command_id_all() {

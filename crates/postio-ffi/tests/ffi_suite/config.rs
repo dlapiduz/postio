@@ -139,6 +139,13 @@ fn every_command_with_a_default_key_reports_it() {
     let silent: Vec<String> = postio_ffi::commands()
         .into_iter()
         .filter(|spec| !spec.default_binding.is_empty())
+        // A command this platform does not offer has no key on it by design
+        // (`postio_core::registry::offered_on`); that is not a lost key.
+        .filter(|spec| {
+            spec.id.parse::<postio_core::ActionId>().is_ok_and(|id| {
+                postio_core::registry::offered_on(id, postio_config::paths::Platform::host())
+            })
+        })
         .filter(|spec| session.binding_for(spec.id.clone()).is_none())
         .map(|spec| spec.id)
         .collect();

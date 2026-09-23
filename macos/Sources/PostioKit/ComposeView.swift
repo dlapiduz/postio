@@ -431,7 +431,11 @@ public struct ComposeView: View {
                 }
             }
             .buttonStyle(.link)
-            .help(tooltip("Edit this draft in your text editor", "detach_composer"))
+            // No chord: the hand-off has no command of its own, and the one
+            // this used to borrow -- `detach_composer` -- is a different verb
+            // the Mac does not offer, so the tooltip taught a key that did
+            // nothing.
+            .help("Edit this draft in your text editor")
         }
         .padding(.horizontal, PostioTokens.space4)
         .padding(.vertical, PostioTokens.space2)
