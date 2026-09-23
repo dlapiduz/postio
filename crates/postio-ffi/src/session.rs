@@ -715,6 +715,20 @@ impl Session {
         self.open_conversation(thread);
     }
 
+    /// `thread` as one document, with each message's anchor. See
+    /// [`Session::thread_document`].
+    ///
+    /// Blocks on the store -- one body load per message -- so off the main
+    /// actor.
+    #[uniffi::method(name = "threadDocument")]
+    pub fn thread_document_ffi(
+        &self,
+        thread: i64,
+        originals: Vec<i64>,
+    ) -> crate::ThreadDocumentFfi {
+        blocking(self.thread_document(thread, originals))
+    }
+
     /// The conversation the pane is showing, folded — `None` until one has
     /// been asked for.
     #[uniffi::method(name = "conversation")]
@@ -2191,6 +2205,138 @@ impl Session {
             let _ = local.try_send(UiEvent::ConversationReady { thread });
             in_flight.fetch_sub(1, ordering);
         });
+    }
+
+    /// `thread`, drawn as one document (ADR 0032, #1595).
+    ///
+    /// Gathered from the store the way GTK's pane gathers it: every message
+    /// in the thread in the order the stacked pane used (`fold`'s), each body
+    /// loaded or said to be coming, recipients through the shared header, the
+    /// per-sender image decision made against the allow list the Privacy
+    /// pane edits, and the user's own messages marked. `originals` are the
+    /// messages the reader asked to see as sent (`⌃O`).
+    ///
+    /// Every message opens (FR-013) -- except one whose body has not arrived,
+    /// which stays its one line unless it is the newest: the newest opens
+    /// anyway so the "still coming" plate has somewhere to appear, and one
+    /// such plate is an explanation where thirty would be noise.
+    ///
+    /// Reads the store and nothing else; a body that is not here is not
+    /// fetched from here.
+    pub async fn thread_document(
+        &self,
+        thread: i64,
+        originals: Vec<i64>,
+    ) -> crate::ThreadDocumentFfi {
+        let empty = crate::ThreadDocumentFfi::default();
+        let Some((store, _runtime)) = self.reader() else {
+            return empty;
+        };
+        let Some((database, _)) = self.store_and_blobs() else {
+            return empty;
+        };
+        let request = postio_runtime::store::PageRequest {
+            scope: postio_runtime::store::ListScope::Thread(thread.into()),
+            offset: 0,
+            limit: THREAD_LIMIT,
+        };
+        let Ok(page) = store.list_page(request).await else {
+            return empty;
+        };
+        let now = chrono::Local::now();
+        // The stacked pane's order, from the same fold, so moving to one
+        // document does not reorder anybody's conversation.
+        let rows = crate::conversation::fold(thread, crate::list::page_of(page).rows, now).rows;
+        if rows.is_empty() {
+            return empty;
+        }
+        let Ok(connection) = database.connect().await else {
+            return empty;
+        };
+        let repository = postio_storage::repository::MessageRepository::new(&connection);
+        let accounts = postio_storage::repository::AccountRepository::new(&connection);
+        let offline = self.offline.load(std::sync::atomic::Ordering::SeqCst);
+        let mut own: std::collections::HashMap<postio_model::ids::AccountId, Vec<String>> =
+            std::collections::HashMap::new();
+        let newest = rows.last().map(|row| row.id);
+        let many = rows.len() > 1;
+
+        let mut messages = Vec::with_capacity(rows.len());
+        for row in &rows {
+            let id = postio_model::ids::MessageId::new(row.id);
+            let Ok(Some(stored)) = repository.get(id).await else {
+                continue;
+            };
+            // The account's own addresses: its primary one and every identity
+            // it sends as. Read once per account, not per message.
+            if !own.contains_key(&stored.account_id) {
+                let addresses = match accounts.get(stored.account_id).await {
+                    Ok(Some(account)) => std::iter::once(account.address.address.to_lowercase())
+                        .chain(
+                            account
+                                .identities
+                                .iter()
+                                .map(|identity| identity.address.address.to_lowercase()),
+                        )
+                        .collect(),
+                    _ => Vec::new(),
+                };
+                own.insert(stored.account_id, addresses);
+            }
+            let from = stored.from.first();
+            let address = from.map(|from| from.address.clone()).unwrap_or_default();
+            let mine = own
+                .get(&stored.account_id)
+                .is_some_and(|own| own.contains(&address.to_lowercase()));
+            let body = match postio_session::reading::load_body_or_reason(&connection, id, offline)
+                .await
+            {
+                postio_session::reading::Body::Ready { body, .. } => Some(body),
+                _ => None,
+            };
+            let absent = body.is_none();
+            let latest = newest == Some(row.id);
+            messages.push(postio_ui::reader::thread::ThreadMessage {
+                scope: row.id.to_string(),
+                sender: from.and_then(|from| from.name.clone()).unwrap_or_else(|| {
+                    if address.is_empty() {
+                        "Unknown sender".to_owned()
+                    } else {
+                        address.clone()
+                    }
+                }),
+                address,
+                when: postio_ui::row::timestamp(stored.received_at, now),
+                recipients: postio_ui::reader::header::recipient_line(&stored.to),
+                cc: postio_ui::reader::header::recipient_line(&stored.cc),
+                preview: stored.preview.clone().unwrap_or_default(),
+                expanded: !absent || latest,
+                absent,
+                latest: latest && many,
+                draft: row.send_state.is_some(),
+                mine,
+                body: body.unwrap_or_default(),
+            });
+        }
+
+        let originals: std::collections::HashSet<String> =
+            originals.iter().map(|id| id.to_string()).collect();
+        let allow = self.allow_list();
+        let html = postio_ui::reader::thread::compose(
+            &messages,
+            |address| allow.is_allowed(address),
+            &originals,
+        );
+        crate::ThreadDocumentFfi {
+            html,
+            messages: messages
+                .iter()
+                .map(|message| crate::ThreadAnchorFfi {
+                    message: message.scope.parse().unwrap_or_default(),
+                    anchor: postio_ui::reader::thread::message_anchor(&message.scope),
+                })
+                .collect(),
+        }
     }
 
     /// What the pane should draw. See

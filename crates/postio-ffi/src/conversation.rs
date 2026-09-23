@@ -167,3 +167,27 @@ pub fn conversation_runs(rows: Vec<RowFfi>, expanded: Vec<bool>) -> Vec<RunFfi> 
 pub fn message_when(received_at: i64) -> String {
     postio_ui::conversation::message_when(local(received_at), Local::now())
 }
+
+/// A conversation drawn as one document (ADR 0032, #1595): the page, and
+/// where each message is in it.
+///
+/// The page is `postio_ui::reader::thread::compose`'s, the same function
+/// GTK's pane calls, so a conversation reads the same on either platform.
+#[derive(Debug, Clone, PartialEq, Eq, Default, uniffi::Record)]
+pub struct ThreadDocumentFfi {
+    /// The whole hardened document.
+    pub html: String,
+    /// The messages in the order the page stacks them, oldest first.
+    pub messages: Vec<ThreadAnchorFfi>,
+}
+
+/// One message's place in a [`ThreadDocumentFfi`].
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct ThreadAnchorFfi {
+    /// The message.
+    pub message: i64,
+    /// The element id it carries, which `J`, `K` and the rail scroll to --
+    /// `postio_ui::reader::thread::message_anchor`, so the id and the
+    /// fragment that finds it cannot disagree.
+    pub anchor: String,
+}

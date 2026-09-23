@@ -41,4 +41,5 @@ mod session;
 mod settings;
 mod store_on_disk;
 mod syncing;
+mod thread_document;
 mod unsubscribe;

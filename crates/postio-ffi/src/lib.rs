@@ -64,7 +64,9 @@ pub use compose::{
     AttachmentFfi, ComposeError, DraftFfi, DraftKindFfi, InlineImageFfi, PastedFfi, outgoing_shape,
     recipient_summary,
 };
-pub use conversation::{ConversationFfi, RunFfi, conversation_runs, message_when};
+pub use conversation::{
+    ConversationFfi, RunFfi, ThreadAnchorFfi, ThreadDocumentFfi, conversation_runs, message_when,
+};
 pub use cost::{
     note_reader_render, note_reader_surface_created, note_reader_surface_released,
     reader_renders_issued, reader_surfaces_created, reader_surfaces_held,
