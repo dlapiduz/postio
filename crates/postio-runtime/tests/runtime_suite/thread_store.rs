@@ -349,6 +349,64 @@ async fn the_rows_for_a_changed_message_are_the_page_row_they_replace() {
 }
 
 #[tokio::test]
+async fn a_folder_told_about_an_archive_is_not_counted_again() {
+    // #1607: an archive moved the folder's `total_count`, which is the
+    // count's witness, so the next page paid the whole conversation count
+    // again -- 786 ms on a real 60k folder, in front of the first row. Told
+    // which messages left, the store adjusts the count it holds by the
+    // conversations that actually left and keeps serving it.
+    let database = test_support::temp().await;
+    let report = seed_large(&database, 7, 300).await;
+    let inbox = report.mailbox(MailboxRole::Inbox).expect("an inbox").id;
+    let elsewhere = report
+        .mailboxes
+        .iter()
+        .find(|mailbox| mailbox.id != inbox)
+        .expect("another folder")
+        .id;
+    // Conversations of one, so archiving any row's message removes the row.
+    thread_seeded_messages(&database, report.account.id, 1).await;
+    let store = LocalStore::new(&database);
+    let first = store
+        .thread_page(request(ListScope::Mailbox(inbox), 0, 50))
+        .await
+        .expect("a page");
+    let alone = first
+        .rows
+        .iter()
+        .find(|row| row.message_count == 1)
+        .expect("a conversation of one on the first page")
+        .representative
+        .id;
+    {
+        let connection = database.connect().await.expect("a connection");
+        postio_storage::repository::MessageRepository::new(&connection)
+            .move_to(&[alone], elsewhere)
+            .await
+            .expect("archived");
+    }
+    store.note_removed(inbox, vec![alone]);
+
+    let before = postio_runtime::store::folders_counted();
+    let after = store
+        .thread_page(request(ListScope::Mailbox(inbox), 0, 50))
+        .await
+        .expect("a page after the archive");
+    assert_eq!(
+        postio_runtime::store::folders_counted() - before,
+        0,
+        "the folder was told what left and counted itself again anyway"
+    );
+    assert_eq!(
+        after.total,
+        first.total - 1,
+        "the archived row is still counted: {} then {}",
+        first.total,
+        after.total
+    );
+}
+
+#[tokio::test]
 async fn a_folder_that_gains_a_message_is_counted_again() {
     // The other half of caching the count: it has to stop being used the
     // moment it is wrong. A cached total that outlived its folder would make
