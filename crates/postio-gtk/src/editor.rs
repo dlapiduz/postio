@@ -154,9 +154,17 @@ fn view_with(
     // The scheme can change while a draft is open, and the only right answer
     // is a new sheet rather than a new document: reloading would take the
     // caret and the undo history with it (FR-075).
-    adw::StyleManager::default().connect_dark_notify({
-        let view = view.clone();
+    let manager = adw::StyleManager::default();
+    let dark = manager.connect_dark_notify(glib::clone!(
+        #[weak]
+        view,
         move |_| restyle(&view)
+    ));
+    let handler = RefCell::new(Some(dark));
+    view.connect_destroy(move |_| {
+        if let Some(dark) = handler.borrow_mut().take() {
+            adw::StyleManager::default().disconnect(dark);
+        }
     });
     view
 }

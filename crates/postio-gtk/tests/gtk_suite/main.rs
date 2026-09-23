@@ -79,6 +79,7 @@ mod gtk_editor_format;
 mod gtk_editor_images;
 mod gtk_editor_markdown;
 mod gtk_editor_profile;
+mod gtk_editor_teardown;
 mod gtk_feeds;
 mod gtk_finder;
 mod gtk_finder_focus;
@@ -1137,6 +1138,10 @@ const CASES: &[(&str, fn())] = &[
     (
         "gtk_editor_appearance::the_editing_surface_is_dark_in_dark_mode_and_never_white",
         gtk_editor_appearance::the_editing_surface_is_dark_in_dark_mode_and_never_white as fn(),
+    ),
+    (
+        "gtk_editor_teardown::closing_editors_releases_their_webviews",
+        gtk_editor_teardown::closing_editors_releases_their_webviews as fn(),
     ),
     (
         "gtk_editor_format::every_formatting_command_lands_as_canonical_structure",
