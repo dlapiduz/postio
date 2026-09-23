@@ -457,3 +457,31 @@ mod hint_tests {
         );
     }
 }
+
+/// What a screen reader says for one row of the scope rail — `Inbox only,
+/// 2 matches` (#1157).
+///
+/// A sentence rather than a label beside a number, because the number is the
+/// point: the rail says what switching *would* find before anybody switches.
+/// A zero is said too, for the reason the rail draws one — an empty scope is
+/// worth knowing about before choosing it. Shared, so both rails say it the
+/// same way.
+pub fn scope_spoken(scope: postio_search::facets::Scope, hits: u64) -> String {
+    match hits {
+        1 => format!("{}, 1 match", scope.label()),
+        hits => format!("{}, {hits} matches", scope.label()),
+    }
+}
+
+#[cfg(test)]
+mod scope_tests {
+    use super::*;
+    use postio_search::facets::Scope;
+
+    #[test]
+    fn a_scope_row_says_its_count_in_words() {
+        assert_eq!(scope_spoken(Scope::Inbox, 2), "Inbox only, 2 matches");
+        assert_eq!(scope_spoken(Scope::AllMail, 1), "All mail, 1 match", "one is not plural");
+        assert_eq!(scope_spoken(Scope::Lists, 0), "Lists, 0 matches", "a zero is said, not hidden");
+    }
+}

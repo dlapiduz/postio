@@ -9,7 +9,7 @@
 //! gets results, never the job of producing them.
 
 use chrono::Utc;
-use postio_ffi::{ScopeFfi, Session, SessionOptions};
+use postio_ffi::{ScopeFfi, SearchScopeFfi, Session, SessionOptions};
 use postio_model::{BodyState, Message};
 use postio_storage::repository::{MessageRepository, StoredBody};
 use postio_storage::test_support;
@@ -553,7 +553,7 @@ async fn the_refine_chips_are_measured_against_the_results_on_screen() {
     let (session, _) = disagreeing().await;
     session.search("report").await;
 
-    let chips = session.refinements().await;
+    let chips = session.search_facets().await.refinements;
     assert!(
         chips.iter().all(|chip| chip.hits > 0),
         "a chip that keeps nothing was offered: {chips:?}"
@@ -577,6 +577,164 @@ async fn a_mailbox_has_nothing_to_refine() {
     // offering `is:unread` there would be offering to search without saying
     // so.
     let (session, _) = searchable().await;
-    assert!(session.refinements().await.is_empty());
+    let facets = session.search_facets().await;
+    assert!(facets.refinements.is_empty());
+    assert!(
+        facets.scopes.is_empty(),
+        "a scope rail over a mailbox is a rail about a search nobody ran"
+    );
+    session.shutdown();
+}
+
+// -- the scope rail (#1157) ---------------------------------------------------
+
+/// Two matches in the inbox and one filed into a list folder, beside a
+/// message that matches nothing.
+async fn filed() -> (std::sync::Arc<Session>, ScopeFfi) {
+    let database = test_support::memory().await;
+    let inbox = {
+        let connection = database.connect().await.expect("a connection");
+        let (account, inbox) = test_support::account_with_inbox(&connection).await;
+        let lists = test_support::mailbox(&connection, &account, "Lists/rust").await;
+        postio_index::index::ensure_schema(&connection)
+            .await
+            .expect("the index schema");
+        let repository = MessageRepository::new(&connection);
+        for (folder, subject, body) in [
+            (
+                inbox,
+                "Quarterly figures",
+                "the quarterly numbers we discussed",
+            ),
+            (
+                inbox,
+                "Lunch",
+                "quarterly is not what this is about, lunch is",
+            ),
+            (inbox, "Roadmap", "nothing in here says that word"),
+            (lists.id, "Rust digest", "quarterly release notes, part two"),
+        ] {
+            let mut message = Message::new(account.id, folder, Utc::now());
+            message.subject = Some(subject.to_string());
+            message.sync.body_state = BodyState::Full;
+            repository.create(&mut message).await.expect("a message");
+            repository
+                .set_body(
+                    message.id,
+                    &StoredBody {
+                        text: Some(body.to_string()),
+                        html: None,
+                        headers: None,
+                        headers_truncated: false,
+                        encoding_problems: false,
+                    },
+                    BodyState::Full,
+                )
+                .await
+                .expect("a body");
+            postio_index::index::index_body(&connection, message.id.get(), Some(body))
+                .await
+                .expect("an indexed body");
+        }
+        inbox
+    };
+    let session =
+        Session::open(SessionOptions::in_memory_with(database)).expect("a session over the store");
+    let scope = ScopeFfi::Mailbox {
+        mailbox: inbox.into(),
+    };
+    session.open_scope(scope.clone());
+    (session, scope)
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn the_scope_rail_counts_what_switching_would_find() {
+    // Canvas 5's column: what each scope holds of *this* query, so a person
+    // can see before switching whether the switch is worth it. A zero is
+    // drawn -- an empty scope is a fact worth knowing.
+    let (session, _) = filed().await;
+    session.search("quarterly").await;
+
+    let scopes = session.search_facets().await.scopes;
+
+    assert_eq!(
+        scopes.iter().map(|count| count.scope).collect::<Vec<_>>(),
+        vec![
+            SearchScopeFfi::AllMail,
+            SearchScopeFfi::Inbox,
+            SearchScopeFfi::Lists
+        ],
+        "the canvas' order, All mail first"
+    );
+    assert_eq!(
+        scopes
+            .iter()
+            .map(|count| count.label.as_str())
+            .collect::<Vec<_>>(),
+        vec!["All mail", "Inbox only", "Lists"]
+    );
+    assert_eq!(
+        scopes.iter().map(|count| count.hits).collect::<Vec<_>>(),
+        vec![3, 2, 1]
+    );
+    assert_eq!(
+        scopes[1].spoken, "Inbox only, 2 matches",
+        "what a screen reader hears is the count, not a number beside a word"
+    );
+    session.shutdown();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn switching_scope_asks_the_same_query_again_inside_it() {
+    // The scope is not written into the query -- switching it must not mean
+    // editing what was typed -- so the same query is asked again.
+    let (session, _) = filed().await;
+    session.search("quarterly").await;
+    assert_eq!(session.row_count(), 3);
+    assert_eq!(session.search_scope(), SearchScopeFfi::AllMail);
+
+    session.set_search_scope(SearchScopeFfi::Inbox).await;
+
+    assert_eq!(session.search_scope(), SearchScopeFfi::Inbox);
+    assert_eq!(session.row_count(), 2, "only what is still in the inbox");
+    assert_eq!(
+        session.search_query().as_deref(),
+        Some("quarterly"),
+        "the query is what was typed, whatever the scope"
+    );
+
+    session.set_search_scope(SearchScopeFfi::Lists).await;
+    assert_eq!(session.row_count(), 1);
+    session.shutdown();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_new_search_starts_from_all_mail() {
+    // All mail is the default for a reason (`facets::Scope`'s doc): search
+    // is how you find what you filed and forgot. A narrowing chosen for one
+    // search that silently carried into the next would hide exactly that.
+    let (session, _) = filed().await;
+    session.search("quarterly").await;
+    session.set_search_scope(SearchScopeFfi::Inbox).await;
+
+    session.clear_search();
+
+    assert_eq!(session.search_scope(), SearchScopeFfi::AllMail);
+    session.search("quarterly").await;
+    assert_eq!(session.row_count(), 3);
+    session.shutdown();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn leaving_search_by_opening_a_folder_also_starts_the_next_from_all_mail() {
+    // Picking a folder leaves the results without `Escape` -- a different
+    // road out of the same search, and it has to end in the same place.
+    let (session, inbox) = filed().await;
+    session.search("quarterly").await;
+    session.set_search_scope(SearchScopeFfi::Lists).await;
+
+    session.open_scope(inbox);
+
+    assert_eq!(session.search_scope(), SearchScopeFfi::AllMail);
     session.shutdown();
 }

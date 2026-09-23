@@ -149,6 +149,68 @@ pub struct OutcomeFfi {
     pub hits: u64,
 }
 
+/// Which slice of the mailbox a search looks at: the scope rail's three
+/// rows (#1157). `postio_search::facets::Scope`, crossed as it is.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
+pub enum SearchScopeFfi {
+    /// Every folder but drafts, junk and trash — the default.
+    AllMail,
+    /// Only what is still in the inbox.
+    Inbox,
+    /// The folders list mail is filed into.
+    Lists,
+}
+
+impl From<postio_search::facets::Scope> for SearchScopeFfi {
+    fn from(scope: postio_search::facets::Scope) -> Self {
+        use postio_search::facets::Scope;
+        match scope {
+            Scope::AllMail => SearchScopeFfi::AllMail,
+            Scope::Inbox => SearchScopeFfi::Inbox,
+            Scope::Lists => SearchScopeFfi::Lists,
+        }
+    }
+}
+
+impl From<SearchScopeFfi> for postio_search::facets::Scope {
+    fn from(scope: SearchScopeFfi) -> Self {
+        use postio_search::facets::Scope;
+        match scope {
+            SearchScopeFfi::AllMail => Scope::AllMail,
+            SearchScopeFfi::Inbox => Scope::Inbox,
+            SearchScopeFfi::Lists => Scope::Lists,
+        }
+    }
+}
+
+/// One row of the scope rail: a scope, what it is called, and how many of
+/// the query's matches switching to it would find.
+///
+/// The word and the sentence are the boundary's — `Scope::label` and
+/// `postio_ui::search::scope_spoken` — so both rails say the same thing.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct ScopeCountFfi {
+    /// Which scope.
+    pub scope: SearchScopeFfi,
+    /// What the row says — `Inbox only`.
+    pub label: String,
+    /// Matches inside it, zero included.
+    pub hits: u64,
+    /// What a screen reader hears — `Inbox only, 2 matches`.
+    pub spoken: String,
+}
+
+/// What the result set on screen is made of: the scope rail's counts and the
+/// refine chips, from one pass over the index rather than two.
+#[derive(Debug, Clone, PartialEq, Eq, Default, uniffi::Record)]
+pub struct SearchFacetsFfi {
+    /// Every scope, in the canvas' order, with its count. Empty over a
+    /// mailbox.
+    pub scopes: Vec<ScopeCountFfi>,
+    /// The refine chips worth offering, best first. Empty over a mailbox.
+    pub refinements: Vec<RefinementFfi>,
+}
+
 /// One refine chip: the token to append, and what it would keep.
 ///
 /// The measurement is the point. A chip that keeps none of the current

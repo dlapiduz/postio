@@ -557,6 +557,14 @@ pub struct Session {
     /// one result set, and a toggle that reset itself every search is a
     /// setting you have to keep re-pressing.
     result_order: Mutex<postio_search::ResultOrder>,
+    /// Which slice of the mailbox a search looks at: the scope rail (#1157).
+    ///
+    /// Unlike the order, this does *not* outlive the search: a new search
+    /// starts from All mail, because search is how you find what you filed
+    /// and forgot, and a narrowing that silently carried into the next query
+    /// would hide exactly that. [`clear_search`](Self::clear_search) resets
+    /// it.
+    search_scope: Mutex<postio_search::facets::Scope>,
     /// How many accounts the open view is about: one, or all of them.
     ///
     /// Resolved when the scope changes rather than on every palette keystroke:
@@ -1158,11 +1166,24 @@ impl Session {
         self.result_order_label()
     }
 
-    /// The refine chips for the results on screen. See
-    /// [`Session::refinements`].
-    #[uniffi::method(name = "refinements")]
-    pub fn refinements_ffi(&self) -> Vec<crate::RefinementFfi> {
-        blocking(self.refinements())
+    /// The scope counts and refine chips for the results on screen. See
+    /// [`Session::search_facets`].
+    #[uniffi::method(name = "searchFacets")]
+    pub fn search_facets_ffi(&self) -> crate::SearchFacetsFfi {
+        blocking(self.search_facets())
+    }
+
+    /// Which scope the search is looking in. See [`Session::search_scope`].
+    #[uniffi::method(name = "searchScope")]
+    pub fn search_scope_ffi(&self) -> crate::SearchScopeFfi {
+        self.search_scope()
+    }
+
+    /// Look in `scope` and ask the query again. See
+    /// [`Session::set_search_scope`].
+    #[uniffi::method(name = "setSearchScope")]
+    pub fn set_search_scope_ffi(&self, scope: crate::SearchScopeFfi) -> u64 {
+        blocking(self.set_search_scope(scope))
     }
 
     /// Read the results the other way round. See
@@ -2021,6 +2042,7 @@ impl Session {
                 query: Mutex::new(None),
                 resting: Mutex::new(None),
                 result_order: Mutex::new(postio_search::ResultOrder::Relevance),
+                search_scope: Mutex::new(postio_search::facets::Scope::AllMail),
                 anchor: Mutex::new(None),
                 paging: Mutex::new(postio_ui::paging::Paging::default()),
                 in_flight: Arc::default(),
@@ -2110,6 +2132,7 @@ impl Session {
             query: Mutex::new(None),
             resting: Mutex::new(None),
             result_order: Mutex::new(postio_search::ResultOrder::Relevance),
+            search_scope: Mutex::new(postio_search::facets::Scope::AllMail),
             anchor: Mutex::new(None),
             paging: Mutex::new(postio_ui::paging::Paging::default()),
             in_flight: Arc::default(),
@@ -3594,6 +3617,10 @@ impl Session {
         // to: the user chose this scope rather than dismissing the query.
         *self.hits.lock().expect("hits lock") = None;
         *self.resting.lock().expect("resting lock") = None;
+        // And the next search starts from All mail, as it does after
+        // `Escape`: a different road out of the same search.
+        *self.search_scope.lock().expect("search scope lock") =
+            postio_search::facets::Scope::AllMail;
         *self.account_scope.lock().expect("account scope lock") =
             blocking(self.resolve_account_scope(listed));
         self.list.lock().expect("list lock").reset(total)
@@ -4417,6 +4444,7 @@ impl Session {
         }
 
         let order = *self.result_order.lock().expect("result order lock");
+        let scope = *self.search_scope.lock().expect("search scope lock");
         let parsed = postio_search::parse(query, chrono::Utc::now().date_naive());
         let account = *self.account_scope.lock().expect("account scope lock");
         // Timed here because here is where the work happens. The field says
@@ -4426,14 +4454,7 @@ impl Session {
         let started = std::time::Instant::now();
         let found = blocking(async {
             let connection = database.connect().await.ok()?;
-            postio_session::search::execute(
-                &connection,
-                account,
-                &parsed,
-                postio_search::facets::Scope::AllMail,
-                order,
-            )
-            .await
+            postio_session::search::execute(&connection, account, &parsed, scope, order).await
         });
 
         let elapsed = started.elapsed();
@@ -4505,29 +4526,32 @@ impl Session {
             .to_owned()
     }
 
-    /// The refine chips for the results on screen, best first (#1157).
+    /// What the results on screen are made of: the scope rail's counts and
+    /// the refine chips, from one pass over the index (#1157).
     ///
-    /// Empty over a mailbox: the chips are about a *result set*, and
-    /// offering `is:unread` where there is none would be offering to search
-    /// without saying so.
+    /// Empty over a mailbox: both are about a *result set*, and offering
+    /// `is:unread` or "Inbox only, 3" where there is none would be offering
+    /// to search without saying so.
     ///
-    /// Measured against the current results rather than listed from a table,
-    /// which is the whole point — a chip that keeps none of them is a dead
-    /// end, and one that keeps all of them appears to do nothing when
-    /// clicked. Neither is offered.
-    pub async fn refinements(&self) -> Vec<crate::RefinementFfi> {
+    /// The chips are measured against the current results rather than listed
+    /// from a table, which is the whole point — a chip that keeps none of
+    /// them is a dead end, and one that keeps all of them appears to do
+    /// nothing when clicked. Neither is offered. The scope counts ask what
+    /// *switching* would find, zeros included.
+    pub async fn search_facets(&self) -> crate::SearchFacetsFfi {
         let Some(query) = self.query.lock().expect("query lock").clone() else {
-            return Vec::new();
+            return crate::SearchFacetsFfi::default();
         };
         let Some((database, _)) = self.store_and_blobs() else {
-            return Vec::new();
+            return crate::SearchFacetsFfi::default();
         };
         let Ok(connection) = database.connect().await else {
-            return Vec::new();
+            return crate::SearchFacetsFfi::default();
         };
         let parsed = postio_search::parse(&query, chrono::Utc::now().date_naive());
         let account = *self.account_scope.lock().expect("account scope lock");
         let order = *self.result_order.lock().expect("result order lock");
+        let scope = *self.search_scope.lock().expect("search scope lock");
         let total = self
             .outcome
             .lock()
@@ -4535,25 +4559,52 @@ impl Session {
             .as_ref()
             .map(|outcome| outcome.hits)
             .unwrap_or(0);
-        let Some(facets) = postio_session::search::facets(
-            &connection,
-            account,
-            &parsed,
-            postio_search::facets::Scope::AllMail,
-            order,
-        )
-        .await
+        let Some(facets) =
+            postio_session::search::facets(&connection, account, &parsed, scope, order).await
         else {
-            return Vec::new();
+            return crate::SearchFacetsFfi::default();
         };
-        facets
-            .suggested(total)
-            .into_iter()
-            .map(|refinement| crate::RefinementFfi {
-                token: refinement.token.clone(),
-                hits: refinement.hits,
-            })
-            .collect()
+        crate::SearchFacetsFfi {
+            scopes: postio_search::facets::Scope::ALL
+                .iter()
+                .map(|scope| {
+                    let hits = facets.hits(*scope);
+                    crate::ScopeCountFfi {
+                        scope: (*scope).into(),
+                        label: scope.label().to_owned(),
+                        hits,
+                        spoken: postio_ui::search::scope_spoken(*scope, hits),
+                    }
+                })
+                .collect(),
+            refinements: facets
+                .suggested(total)
+                .into_iter()
+                .map(|refinement| crate::RefinementFfi {
+                    token: refinement.token.clone(),
+                    hits: refinement.hits,
+                })
+                .collect(),
+        }
+    }
+
+    /// Which scope the search is looking in.
+    pub fn search_scope(&self) -> crate::SearchScopeFfi {
+        (*self.search_scope.lock().expect("search scope lock")).into()
+    }
+
+    /// Look in `scope` instead, and ask the same query again there.
+    ///
+    /// The scope is not written into the query -- switching it must not mean
+    /// editing what was typed -- which is GTK's reasoning for its own rail.
+    /// Over a mailbox this only records the choice; the rail is not drawn
+    /// there, and the next search starts from All mail regardless.
+    pub async fn set_search_scope(&self, scope: crate::SearchScopeFfi) -> u64 {
+        *self.search_scope.lock().expect("search scope lock") = scope.into();
+        let Some(query) = self.query.lock().expect("query lock").clone() else {
+            return self.list.lock().expect("list lock").generation();
+        };
+        self.search(&query).await
     }
 
     /// Read the results the other way round — `o`.
@@ -4591,6 +4642,9 @@ impl Session {
         *self.hits.lock().expect("hits lock") = None;
         *self.outcome.lock().expect("outcome lock") = None;
         *self.query.lock().expect("query lock") = None;
+        // The next search starts from All mail: see `search_scope`.
+        *self.search_scope.lock().expect("search scope lock") =
+            postio_search::facets::Scope::AllMail;
         let resting = self.resting.lock().expect("resting lock").take();
         match resting {
             // Opening the scope again is leaving the results.

@@ -100,7 +100,8 @@ pub use saved_search::{
     saved_search_rename_prompt, saved_searches,
 };
 pub use search::{
-    ChipFfi, EmptyPlateFfi, MatchRangeFfi, OutcomeFfi, RefinementFfi, SnippetFfi, query_chips,
+    ChipFfi, EmptyPlateFfi, MatchRangeFfi, OutcomeFfi, RefinementFfi, ScopeCountFfi,
+    SearchFacetsFfi, SearchScopeFfi, SnippetFfi, query_chips,
 };
 pub use session::{HANDLED_HERE, Session, SessionError, SessionOptions};
 pub use settings::{
