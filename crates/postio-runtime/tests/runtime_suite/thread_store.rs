@@ -265,6 +265,40 @@ async fn paging_a_folder_counts_it_once_rather_than_once_per_page() {
 }
 
 #[tokio::test]
+async fn paging_a_folder_opens_one_connection_rather_than_one_per_page() {
+    // #1602: the engine keeps no pool, so a read that opens its own
+    // connection pays a fresh pager, an empty page cache and the pragmas,
+    // and a list page opened two. Counted, not timed, like the folder count
+    // above: five pages of one folder should not cost five caches.
+    let database = test_support::temp().await;
+    let report = seed_large(&database, 7, 600).await;
+    let inbox = report.mailbox(MailboxRole::Inbox).expect("an inbox").id;
+    thread_seeded_messages(&database, report.account.id, 4).await;
+    let store = LocalStore::new(&database);
+
+    let first = store
+        .thread_page(request(ListScope::Mailbox(inbox), 0, 50))
+        .await
+        .expect("the first page");
+    assert!(first.total > 0, "the fixture has to have rows");
+
+    let before = test_support::counting::checkouts();
+    for page in 1..6u32 {
+        store
+            .thread_page(request(ListScope::Mailbox(inbox), page * 50, 50))
+            .await
+            .expect("a later page");
+    }
+    let opened = test_support::counting::checkouts() - before;
+    assert_eq!(
+        opened, 0,
+        "five pages of one folder opened {opened} more connections, each a \
+         fresh page cache over the file; the first page's connection should \
+         have served them all"
+    );
+}
+
+#[tokio::test]
 async fn a_folder_that_gains_a_message_is_counted_again() {
     // The other half of caching the count: it has to stop being used the
     // moment it is wrong. A cached total that outlived its folder would make

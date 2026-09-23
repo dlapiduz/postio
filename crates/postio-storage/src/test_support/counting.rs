@@ -154,3 +154,14 @@ pub async fn scans(connection: &crate::Connection, sql: &str) -> Vec<String> {
         .filter(|step| step.starts_with("SCAN"))
         .collect()
 }
+
+/// How many store connections this process has opened so far.
+///
+/// Process-wide and monotonic; take a reading before and after, as
+/// [`crate::test_support::counting::counted`] does for statements but across
+/// threads. A page that costs its own connection costs its own page cache
+/// (#1602), so "opening a folder and paging it makes one connection" is a
+/// budget in exactly the way "a page is N statements" is.
+pub fn checkouts() -> u64 {
+    crate::store::CHECKOUTS.load(std::sync::atomic::Ordering::Relaxed)
+}

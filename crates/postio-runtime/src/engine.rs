@@ -1170,7 +1170,7 @@ struct State {
 /// already being reported by whatever else wanted one, and a drain skipped for
 /// a tick costs five seconds.
 async fn has_queued_work(parts: &EngineParts, store: &Store) -> bool {
-    let Ok(connection) = store.connect().await else {
+    let Ok(connection) = store.connect_background().await else {
         return false;
     };
     OperationQueueRepository::new(&connection)
@@ -1191,7 +1191,7 @@ async fn has_queued_work(parts: &EngineParts, store: &Store) -> bool {
 /// this cannot check out is already being reported elsewhere, and a sweep
 /// skipped for one tick costs five seconds, not a wrong answer.
 async fn wake_due_snoozes(parts: &EngineParts, store: &Store) {
-    let Ok(connection) = store.connect().await else {
+    let Ok(connection) = store.connect_background().await else {
         return;
     };
     let Ok(woken) = MessageRepository::new(&connection)
@@ -1331,7 +1331,7 @@ async fn start_watching(parts: &EngineParts, store: &Store, state: &mut State) {
     );
     let mut watcher = Watcher::new(parts.watch, &capabilities);
 
-    let Ok(connection) = store.connect().await else {
+    let Ok(connection) = store.connect_background().await else {
         tracing::warn!("no connection to read folders with; not watching");
         return;
     };
@@ -1607,7 +1607,7 @@ fn step_mailbox(step: &Watch) -> Option<MailboxId> {
 /// A brand-new account with no folders yet is simply empty for another
 /// reconnection, which is what it already looks like.
 async fn discover(parts: &EngineParts, store: &Store) {
-    let connection = match store.connect().await {
+    let connection = match store.connect_background().await {
         Ok(connection) => connection,
         Err(error) => {
             parts.events.emit(Event::Error {
@@ -1680,7 +1680,7 @@ async fn top_up_backfill(parts: &EngineParts, store: &Store, state: &mut State) 
     if state.backfill_covered {
         return 0;
     }
-    let Ok(connection) = store.connect().await else {
+    let Ok(connection) = store.connect_background().await else {
         // Nothing to read folders with. Not latched: the next pass will have
         // a connection, and latching here would stop the backfill for the
         // life of the process over one busy moment.
@@ -1799,7 +1799,7 @@ async fn top_up_backfill(parts: &EngineParts, store: &Store, state: &mut State) 
 /// first here is also what keeps it readable while everything behind it is
 /// still syncing.
 async fn queue_every_mailbox(parts: &EngineParts, store: &Store, state: &mut State) {
-    let Ok(connection) = store.connect().await else {
+    let Ok(connection) = store.connect_background().await else {
         tracing::warn!("no connection to read folders with; syncing nothing this pass");
         return;
     };
@@ -2056,7 +2056,7 @@ async fn pump_body(
     // Best-effort by construction: whatever it does not bring back,
     // `fetch_body` fetches the way it always did.
     let requests: Vec<_> = claims.iter().map(|claim| claim.request.clone()).collect();
-    let prefetched = match store.connect().await {
+    let prefetched = match store.connect_background().await {
         Ok(connection) => {
             let cache = backfill::prefetch_text_sections(
                 &connection,
@@ -2163,7 +2163,7 @@ async fn fetch_one_body(
     claim: postio_sync::backfill::Claim,
 ) -> (MessageId, Result<Outcome, SyncError>) {
     let message = claim.request.message;
-    let connection = match store.connect().await {
+    let connection = match store.connect_background().await {
         Ok(connection) => connection,
         // Reported settled rather than left in flight for ever: a claim
         // nobody finishes is a queue that never drains.
@@ -2335,7 +2335,7 @@ async fn serve(job: Job, parts: &EngineParts, store: &Store, state: &mut State) 
             limit,
             reply,
         } => {
-            let outcome = match store.connect().await {
+            let outcome = match store.connect_background().await {
                 Ok(connection) => backfill::seed(&connection, &mut state.backfill, mailbox, limit)
                     .await
                     .map_err(|error| EngineError::new(error.to_string())),
@@ -2349,7 +2349,7 @@ async fn serve(job: Job, parts: &EngineParts, store: &Store, state: &mut State) 
             let _ = reply.send(outcome);
         }
         Job::RequestBody { message, reply } => {
-            let outcome = match store.connect().await {
+            let outcome = match store.connect_background().await {
                 Ok(connection) => backfill::request_body(&connection, &mut state.backfill, message)
                     .await
                     .map_err(|error| EngineError::new(error.to_string())),
@@ -2365,7 +2365,7 @@ async fn serve(job: Job, parts: &EngineParts, store: &Store, state: &mut State) 
             parts: sections,
             reply,
         } => {
-            let outcome = match store.connect().await {
+            let outcome = match store.connect_background().await {
                 Ok(connection) => {
                     backfill::request_payloads(&connection, &mut state.backfill, message, &sections)
                         .await
@@ -2379,7 +2379,7 @@ async fn serve(job: Job, parts: &EngineParts, store: &Store, state: &mut State) 
             let _ = reply.send(outcome);
         }
         Job::RequestWholeMessage { message, reply } => {
-            let outcome = match store.connect().await {
+            let outcome = match store.connect_background().await {
                 Ok(connection) => {
                     backfill::request_whole(&connection, &mut state.backfill, message)
                         .await
@@ -2463,7 +2463,7 @@ fn before_a_drain(state: &mut State) {
 /// settles what comes back with [`settle_drain`].
 #[tracing::instrument(name = "drain", skip_all)]
 async fn run_drain(parts: &EngineParts, store: &Store) -> Result<DrainSummary, SyncError> {
-    let connection = store.connect().await?;
+    let connection = store.connect_background().await?;
 
     let smtp = SmtpContext {
         connector: parts.smtp.as_ref(),
@@ -2697,7 +2697,7 @@ async fn sync_wave(
 
     // Settling writes through its own connection: the lanes' connections
     // live inside their futures now.
-    let settle_connection = match store.connect().await {
+    let settle_connection = match store.connect_background().await {
         Ok(connection) => connection,
         Err(error) => {
             tracing::warn!(%error, "no connection to settle a sync wave");
@@ -2717,7 +2717,7 @@ async fn sync_wave(
         let Some(mailbox) = state.to_sync.pop_front() else {
             break;
         };
-        match store.connect().await {
+        match store.connect_background().await {
             Ok(connection) => {
                 admitted.push(mailbox);
                 active.push(mailbox);
@@ -2855,7 +2855,7 @@ async fn sync_wave(
                         let Some(mailbox) = state.to_sync.pop_front() else {
                             break;
                         };
-                        match store.connect().await {
+                        match store.connect_background().await {
                             Ok(connection) => {
                                 admitted.push(mailbox);
                                 active.push(mailbox);
@@ -2957,7 +2957,7 @@ async fn sync_wave(
                             && !asked_to_stop
                         {
                             state.to_sync.retain(|queued| *queued != mailbox);
-                            match store.connect().await {
+                            match store.connect_background().await {
                                 Ok(connection) => {
                                     tracing::debug!(
                                         mailbox = mailbox.get(),
@@ -3108,7 +3108,7 @@ async fn fetch_bodies(
     };
     let cancel = first.cancel.clone();
     let requests: Vec<_> = claims.iter().map(|claim| claim.request.clone()).collect();
-    let prefetched = match store.connect().await {
+    let prefetched = match store.connect_background().await {
         Ok(connection) => {
             let cache = backfill::prefetch_text_sections(
                 &connection,

@@ -23,6 +23,7 @@ mod blob_encryption;
 mod bulk;
 mod cold_jump_cost;
 mod concurrent_open;
+mod connections;
 mod contact_groups;
 mod contact_rank_index;
 mod contacts;
