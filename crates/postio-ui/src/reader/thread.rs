@@ -512,6 +512,33 @@ mod tests {
     }
 
     #[test]
+    fn a_thread_document_is_counted_like_a_single_one() {
+        // The document-size guard (`cost::note_document`: documents built,
+        // bytes, largest) is what catches #749's bulk regression, and the
+        // one-document conversation is the document the app actually ships
+        // for a thread. It was invisible to the guard: `note_document` ran
+        // only in `document_for`, and this path went to `wrap_document`
+        // directly. The 2026-09-08 note recorded the gap.
+        let built_before = crate::test_support::documents_built();
+        let bytes_before = crate::test_support::document_bytes();
+        let document = conversation_document(
+            &[entry("1", "Ada Lovelace", "<p>first</p>", true)],
+            postio_body::RemoteImages::Blocked,
+            crate::reader::document::Sheet::Theme,
+        );
+        assert_eq!(
+            crate::test_support::documents_built() - built_before,
+            1,
+            "a thread document was built and the guard did not count it"
+        );
+        assert_eq!(
+            crate::test_support::document_bytes() - bytes_before,
+            document.len() as u64,
+            "the guard counted something other than the document's bytes"
+        );
+    }
+
+    #[test]
     fn a_thread_is_one_document_holding_every_message() {
         let entries = [
             entry("1", "Ada Lovelace", "<p>first</p>", true),
