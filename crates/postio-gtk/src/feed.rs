@@ -97,6 +97,16 @@ pub type PageFuture = Pin<Box<dyn Future<Output = Result<Page, String>>>>;
 pub trait MessageSource {
     /// Start reading `request`, and answer when the rows are in hand.
     fn fetch(&self, request: PageRequest) -> PageFuture;
+
+    /// The rows this scope's list shows for these messages, in the shape
+    /// its pages use, so a change that names ids can be patched into the
+    /// rows on screen rather than answered by re-reading their page
+    /// (#1607). A source that reads pages only answers with an error and
+    /// the feed re-reads the page, which is what this default says.
+    fn rows_in(&self, scope: postio_model::ListScope, ids: Vec<MessageId>) -> RowsFuture {
+        let _ = (scope, ids);
+        Box::pin(async { Err("this source reads pages, not rows".to_owned()) })
+    }
 }
 
 /// The answer to a request for a result set's rows.
@@ -206,6 +216,11 @@ impl Inner {
         let Some(list) = self.list.upgrade() else {
             return;
         };
+        // Remembered whichever way it was asked for, so a second ask in the
+        // same turn -- a change and a reload landing together -- finds it
+        // pending and reads it once (#1607). A scroll's ask remembered it
+        // already; this is idempotent for that one.
+        list.note_pending(page);
         let generation = list.generation();
         match fetch {
             Fetch::Scope(request) => {
@@ -481,12 +496,79 @@ impl Feed {
         match plan {
             Plan::Ignore => {}
             Plan::InsertAtTop(count) => list.inserted_at_top(count),
-            Plan::Refetch(messages) => {
-                for page in list.pages_holding(messages) {
-                    inner.clone().request(page);
+            Plan::Refetch(messages) => self.refetch(messages),
+            Plan::Reload => self.reload(),
+        }
+    }
+
+    /// A change named these messages. Their rows are patched in place from
+    /// a by-id read, and only a row that read could not describe costs its
+    /// page again (#1607). Ids no resident row carries cost nothing now: a
+    /// change to a message off screen is learnt when its page is next read,
+    /// which is what re-reading its page would have done anyway.
+    fn refetch(&self, messages: &[MessageId]) {
+        let inner = &self.0;
+        let Some(list) = inner.list.upgrade() else {
+            return;
+        };
+        let resident: Vec<MessageId> = messages
+            .iter()
+            .copied()
+            .filter(|id| !list.pages_holding(&[*id]).is_empty())
+            .collect();
+        if resident.is_empty() {
+            return;
+        }
+        let Some(scope) = inner.paging.borrow().scope() else {
+            self.refetch_pages(&resident);
+            return;
+        };
+        let future = inner.source.rows_in(scope, resident.clone());
+        let generation = list.generation();
+        let feed = self.clone();
+        glib::spawn_future_local(async move {
+            let outcome = future.await;
+            let Some(list) = feed.0.list.upgrade() else {
+                return;
+            };
+            if generation != list.generation() {
+                // The list moved on to another scope or was reloaded whole;
+                // whatever it shows now was read after the change.
+                return;
+            }
+            let mut answered = std::collections::HashSet::new();
+            match outcome {
+                Ok(rows) => {
+                    for row in rows {
+                        let id = row.id;
+                        if list.update_row(row) {
+                            answered.insert(id);
+                        }
+                    }
+                }
+                Err(reason) => {
+                    tracing::debug!(%reason, "no rows by id; re-reading their pages");
                 }
             }
-            Plan::Reload => self.reload(),
+            let unanswered: Vec<MessageId> = resident
+                .into_iter()
+                .filter(|id| !answered.contains(id))
+                .collect();
+            feed.refetch_pages(&unanswered);
+        });
+    }
+
+    /// Re-read the pages holding these messages, once each, skipping a page
+    /// already on its way.
+    fn refetch_pages(&self, messages: &[MessageId]) {
+        let inner = &self.0;
+        let Some(list) = inner.list.upgrade() else {
+            return;
+        };
+        for page in list.pages_holding(messages) {
+            if !list.is_pending(page) {
+                inner.clone().request(page);
+            }
         }
     }
 
