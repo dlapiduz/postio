@@ -35,7 +35,7 @@ use std::pin::Pin;
 
 use chrono::{DateTime, Utc};
 use postio_model::address::EmailAddress;
-use postio_model::ids::{AccountId, MessageId, ThreadId};
+use postio_model::ids::{AccountId, MailboxId, MessageId, ThreadId};
 use postio_model::mailbox::Mailbox;
 
 /// Which messages the list is showing.
@@ -293,6 +293,16 @@ pub trait MailStore: Send + Sync {
     fn rows_in(&self, scope: ListScope, ids: Vec<MessageId>) -> Read<'_, ListRows> {
         let _ = (scope, ids);
         Box::pin(async { Err(StoreError::new("this store reads pages, not rows")) })
+    }
+
+    /// These messages left `mailbox`: archived, deleted or moved. Said
+    /// before the list re-reads, so a count the store holds for the folder
+    /// can be kept by subtracting what left rather than paid again in front
+    /// of the first row (#1607). Synchronous on purpose: it records a fact
+    /// for the next read to act on, and a store with nothing to keep does
+    /// nothing, which is this default.
+    fn note_removed(&self, mailbox: MailboxId, messages: Vec<MessageId>) {
+        let _ = (mailbox, messages);
     }
 
     /// An account's folders, with their counts as of now.
