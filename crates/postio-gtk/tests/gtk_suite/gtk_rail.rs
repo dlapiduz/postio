@@ -23,6 +23,7 @@ use postio_gtk::{fonts, style};
 use postio_model::EmailAddress;
 use postio_model::ids::{MessageId, ThreadId};
 use postio_ui::reader::rail::{LENGTH_THRESHOLD, rows};
+use webkit6::prelude::*;
 
 /// A realized rail, or `None` with no display.
 fn rail() -> Option<(gtk::Window, RailColumn)> {
@@ -550,6 +551,63 @@ pub fn a_conversation_opens_on_its_most_recent_message() {
         Some(5),
         "reopening a conversation lands on the most recent message again -- \
          the pane does not restore where the reader stopped"
+    );
+
+    window.close();
+}
+
+pub fn one_rail_report_runs_the_current_message_handlers_once() {
+    // The handler that turns the injected observer's scroll reports into
+    // `connect_current_message` calls was connected twice, byte for byte,
+    // in the reader's constructor, so every report ran the conversation's
+    // focus bookkeeping twice: the focus change, the dwell timer, the rail
+    // mark, the header. Found by the 2026-09-22 felt-speed review. This
+    // posts one report through the channel the observer uses and counts
+    // what reaches the handlers; both connections fire on the one signal
+    // emission, so the count is settled the moment the first arrives.
+    let Some((window, pane)) = pane() else {
+        return;
+    };
+    pane.set_window_width(1400);
+    pane.set_one_document(true);
+    pane.open((1..=3).map(message).collect());
+    crate::pump();
+    let reader = pane
+        .document_reader()
+        .expect("the one-document pane draws through a reader");
+
+    let fired = Rc::new(std::cell::Cell::new(0u32));
+    reader.connect_current_message({
+        let fired = Rc::clone(&fired);
+        move |_scope| fired.set(fired.get() + 1)
+    });
+
+    // The pane draws on a timer, and the handler drops a report naming a
+    // scope the document has not rendered, so wait for the first paint and
+    // for WebKit to have the document before posting.
+    assert!(
+        crate::wait_until(|| reader.paints() > 0 && !reader.view().is_loading()),
+        "the conversation document was never drawn"
+    );
+    // A report names a scope the document rendered -- the rows opened above
+    // are scopes "1" to "3" -- and anything else is dropped before the
+    // handlers run.
+    reader.view().evaluate_javascript(
+        "window.webkit.messageHandlers.postioRail.postMessage('2')",
+        None,
+        None,
+        None::<&gtk::gio::Cancellable>,
+        |_| {},
+    );
+    assert!(
+        crate::wait_until(|| fired.get() > 0),
+        "the report never reached a current-message handler"
+    );
+    assert_eq!(
+        fired.get(),
+        1,
+        "one rail report ran the current-message handlers {} times",
+        fired.get()
     );
 
     window.close();

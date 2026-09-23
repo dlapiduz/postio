@@ -1236,6 +1236,10 @@ const CASES: &[(&str, fn())] = &[
         gtk_rail::activating_a_row_reports_the_message_it_names as fn(),
     ),
     (
+        "gtk_rail::one_rail_report_runs_the_current_message_handlers_once",
+        gtk_rail::one_rail_report_runs_the_current_message_handlers_once as fn(),
+    ),
+    (
         "gtk_rail::the_rail_takes_its_step_on_the_ladder",
         gtk_rail::the_rail_takes_its_step_on_the_ladder as fn(),
     ),

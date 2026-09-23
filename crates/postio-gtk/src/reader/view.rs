@@ -679,22 +679,6 @@ impl Reader {
                 // senders' markup, and a panic here would take the
                 // application down from inside a message. An unparseable or
                 // unknown payload is dropped.
-                let on_current_message = Rc::clone(&reader.on_current_message);
-                let thread = Rc::clone(&reader.thread);
-                content.connect_script_message_received(Some(RAIL_HANDLER), move |_, value| {
-                    let Some(scope) = value.to_str().split('\n').next().map(str::to_owned) else {
-                        return;
-                    };
-                    // Only a scope this document actually rendered. A message
-                    // naming something else is not a message the rail can act
-                    // on, whoever sent it.
-                    if !thread.borrow().iter().any(|message| message.scope == scope) {
-                        return;
-                    }
-                    for handler in on_current_message.borrow().iter() {
-                        handler(&scope);
-                    }
-                });
             }
 
             let open = Rc::clone(&reader.open);
