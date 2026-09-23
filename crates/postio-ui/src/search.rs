@@ -481,7 +481,15 @@ mod scope_tests {
     #[test]
     fn a_scope_row_says_its_count_in_words() {
         assert_eq!(scope_spoken(Scope::Inbox, 2), "Inbox only, 2 matches");
-        assert_eq!(scope_spoken(Scope::AllMail, 1), "All mail, 1 match", "one is not plural");
-        assert_eq!(scope_spoken(Scope::Lists, 0), "Lists, 0 matches", "a zero is said, not hidden");
+        assert_eq!(
+            scope_spoken(Scope::AllMail, 1),
+            "All mail, 1 match",
+            "one is not plural"
+        );
+        assert_eq!(
+            scope_spoken(Scope::Lists, 0),
+            "Lists, 0 matches",
+            "a zero is said, not hidden"
+        );
     }
 }
