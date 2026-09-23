@@ -1281,3 +1281,43 @@ async fn an_hour_already_gone_is_not_a_schedule() {
         "and it says why: {complaint}"
     );
 }
+
+// -- a draft in a conversation (#1212, #1595) --------------------------------
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_drafts_message_row_leads_back_to_the_draft() {
+    // `Continue editing` in a conversation names a message row; what resumes
+    // the composer is the draft behind it. The row is the draft's server
+    // copy, linked the way sync links it.
+    let (session, database, message) = a_message_to_answer().await;
+    let saved = session
+        .save_draft(session.reply_draft(message, false).await.expect("a reply"))
+        .await
+        .expect("saved");
+    let row = {
+        let connection = database.connect().await.expect("a connection");
+        let replied = MessageRepository::new(&connection)
+            .get(postio_model::ids::MessageId::new(message))
+            .await
+            .expect("a read")
+            .expect("the message");
+        let mut copy = Message::new(replied.account_id, replied.mailbox_id, Utc::now());
+        MessageRepository::new(&connection)
+            .create(&mut copy)
+            .await
+            .expect("the draft's server copy");
+        postio_storage::repository::DraftRepository::new(&connection)
+            .set_synced_message(postio_model::ids::DraftId::new(saved.id), copy.id)
+            .await
+            .expect("linked");
+        copy.id.get()
+    };
+
+    let resumed = session.draft_for_message(row).await;
+
+    assert_eq!(resumed.map(|draft| draft.id), Some(saved.id));
+    assert!(
+        session.draft_for_message(message).await.is_none(),
+        "a message somebody sent is not a draft to resume"
+    );
+}

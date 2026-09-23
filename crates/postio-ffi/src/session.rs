@@ -858,6 +858,13 @@ impl Session {
         blocking(self.draft(id))
     }
 
+    /// The draft behind message `message`, for a `Continue editing` link in
+    /// a conversation (#1212). See [`Session::draft_for_message`].
+    #[uniffi::method(name = "draftForMessage")]
+    pub fn draft_for_message_ffi(&self, message: i64) -> Option<crate::DraftFfi> {
+        blocking(self.draft_for_message(message))
+    }
+
     /// Narrow pasted markup to the dialect. See [`Session::narrow_paste`].
     #[uniffi::method(name = "narrowPaste")]
     pub fn narrow_paste_ffi(&self, html: String) -> crate::PastedFfi {
@@ -2262,6 +2269,7 @@ impl Session {
         let many = rows.len() > 1;
 
         let mut messages = Vec::with_capacity(rows.len());
+        let mut caveats: Vec<Option<String>> = Vec::with_capacity(rows.len());
         for row in &rows {
             let id = postio_model::ids::MessageId::new(row.id);
             let Ok(Some(stored)) = repository.get(id).await else {
@@ -2288,12 +2296,20 @@ impl Session {
             let mine = own
                 .get(&stored.account_id)
                 .is_some_and(|own| own.contains(&address.to_lowercase()));
-            let body = match postio_session::reading::load_body_or_reason(&connection, id, offline)
-                .await
+            let (body, broken) = match postio_session::reading::load_body_or_reason(
+                &connection,
+                id,
+                offline,
+            )
+            .await
             {
-                postio_session::reading::Body::Ready { body, .. } => Some(body),
-                _ => None,
+                postio_session::reading::Body::Ready {
+                    body,
+                    encoding_problems,
+                } => (Some(body), encoding_problems),
+                _ => (None, false),
             };
+            caveats.push(postio_ui::reader::document::decode_caveat(broken).map(str::to_owned));
             let absent = body.is_none();
             let latest = newest == Some(row.id);
             messages.push(postio_ui::reader::thread::ThreadMessage {
@@ -2331,10 +2347,12 @@ impl Session {
             html,
             messages: messages
                 .iter()
-                .map(|message| crate::ThreadAnchorFfi {
+                .zip(caveats)
+                .map(|(message, caveat)| crate::ThreadAnchorFfi {
                     message: message.scope.parse().unwrap_or_default(),
                     anchor: postio_ui::reader::thread::message_anchor(&message.scope),
                     address: message.address.clone(),
+                    caveat,
                 })
                 .collect(),
         }
@@ -3196,6 +3214,28 @@ impl Session {
         let connection = database.connect().await.ok()?;
         let draft = postio_storage::repository::DraftRepository::new(&connection)
             .get(postio_model::ids::DraftId::new(id))
+            .await
+            .ok()??;
+        let from = self
+            .writing_account(&database)
+            .await
+            .map(|account| account.address.to_string())
+            .unwrap_or_default();
+        Some(crate::compose::to_ffi(&draft, from, self.drafts_path()))
+    }
+
+    /// The draft whose message row is `message`, or `None` when it is not a
+    /// draft this machine holds.
+    ///
+    /// A draft in a conversation is a message row; what resumes the composer
+    /// is the draft behind it. `None` covers another client's draft too --
+    /// there is nothing here to edit, which is #175's dead end said honestly
+    /// rather than papered over with a blank composer.
+    pub async fn draft_for_message(&self, message: i64) -> Option<crate::DraftFfi> {
+        let (database, _) = self.store_and_blobs()?;
+        let connection = database.connect().await.ok()?;
+        let draft = postio_storage::repository::DraftRepository::new(&connection)
+            .by_message(postio_model::ids::MessageId::new(message))
             .await
             .ok()??;
         let from = self

@@ -193,6 +193,11 @@ pub struct ThreadAnchorFfi {
     /// Its sender's address: what the in-page `Show` link grants, since the
     /// link names the message and the decision is per sender.
     pub address: String,
+    /// "Parts of this message could not be decoded", when that is true of
+    /// it. Native chrome above the page, like GTK's `DecodeNotice`, so it
+    /// crosses beside the page rather than inside it -- from the body load
+    /// the page already paid for (#1589).
+    pub caveat: Option<String>,
 }
 
 /// Which verb a message offers inside the document. See [`thread_verb`].

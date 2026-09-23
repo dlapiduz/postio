@@ -263,3 +263,63 @@ fn the_document_scripts_are_the_shared_ones() {
         thread::expand_all_script()
     );
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_message_that_lost_a_part_says_so_on_its_anchor() {
+    // The caveat is native chrome above the page, the way GTK's
+    // `DecodeNotice` is -- so it crosses beside the page, per message, from
+    // the body load the document already paid for (#1589).
+    let database = test_support::memory().await;
+    let thread = {
+        let connection = database.connect().await.expect("a connection");
+        let (account, inbox) = test_support::account_with_inbox(&connection).await;
+        let mut thread = Thread::new(account.id);
+        let threads = ThreadRepository::new(&connection);
+        threads.create(&mut thread).await.expect("a thread");
+        let broken = message(&connection, account.id, inbox, "ada@example.com", 100, None).await;
+        MessageRepository::new(&connection)
+            .set_body(
+                broken.id,
+                &StoredBody {
+                    text: Some("most of it".to_owned()),
+                    html: None,
+                    headers: None,
+                    headers_truncated: false,
+                    encoding_problems: true,
+                },
+                BodyState::Full,
+            )
+            .await
+            .expect("a body");
+        let fine = message(
+            &connection,
+            account.id,
+            inbox,
+            "bo@example.org",
+            200,
+            Some("<p>ok</p>"),
+        )
+        .await;
+        for message in [&broken, &fine] {
+            threads
+                .add_message(thread.id, message.id)
+                .await
+                .expect("add");
+        }
+        thread.id.get()
+    };
+    let session =
+        Session::open(SessionOptions::in_memory_with(database)).expect("a session over the store");
+
+    let document = session.thread_document(thread, Vec::new()).await;
+
+    assert_eq!(
+        document.messages[0].caveat.as_deref(),
+        postio_ui::reader::document::decode_caveat(true)
+    );
+    assert_eq!(
+        document.messages[1].caveat, None,
+        "a whole message says nothing"
+    );
+    session.shutdown();
+}
