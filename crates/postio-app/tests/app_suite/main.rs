@@ -43,6 +43,7 @@ mod list_contract;
 mod mailto_uri;
 mod manual_sync;
 mod navigation_cost;
+mod notify_off_the_main_thread;
 mod onboarding_probe;
 mod one_document_conversation;
 mod opens_from_storage;
@@ -166,6 +167,11 @@ const CASES: &[(&str, fn())] = &[
     (
         "startup_behind_the_window::a_store_refused_after_the_window_is_up_says_so_and_can_be_retried",
         startup_behind_the_window::a_store_refused_after_the_window_is_up_says_so_and_can_be_retried
+            as fn(),
+    ),
+    (
+        "notify_off_the_main_thread::a_new_mail_notification_reads_nothing_on_the_main_thread",
+        notify_off_the_main_thread::a_new_mail_notification_reads_nothing_on_the_main_thread
             as fn(),
     ),
     (
