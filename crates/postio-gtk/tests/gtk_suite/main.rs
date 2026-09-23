@@ -232,6 +232,10 @@ const CASES: &[(&str, fn())] = &[
         gtk_reader_styles::a_page_key_moves_the_document_itself as fn(),
     ),
     (
+        "gtk_reader_styles::a_redraw_of_an_unchanged_thread_sanitises_nothing",
+        gtk_reader_styles::a_redraw_of_an_unchanged_thread_sanitises_nothing as fn(),
+    ),
+    (
         "gtk_reader_styles::a_page_key_actually_turns_the_page_of_a_thread",
         gtk_reader_styles::a_page_key_actually_turns_the_page_of_a_thread as fn(),
     ),
@@ -594,6 +598,10 @@ const CASES: &[(&str, fn())] = &[
     (
         "gtk_list_mark_read::marking_a_message_read_does_not_rebuild_the_list",
         gtk_list_mark_read::marking_a_message_read_does_not_rebuild_the_list as fn(),
+    ),
+    (
+        "gtk_list_mark_read::a_removal_is_told_to_the_source_before_the_list_reloads",
+        gtk_list_mark_read::a_removal_is_told_to_the_source_before_the_list_reloads as fn(),
     ),
     (
         "gtk_list_mark_read::filling_a_folder_announces_structure_and_not_every_page",

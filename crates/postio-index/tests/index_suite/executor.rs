@@ -1684,3 +1684,39 @@ async fn all_mail_leaves_out_drafts_junk_and_trash_unless_in_names_one() {
         "\"All mail 4\" over a list of one row is a number nobody can act on"
     );
 }
+
+#[tokio::test]
+async fn whether_the_corpus_is_complete_is_read_off_the_folders_not_the_messages() {
+    // #1612: on a store whose backfill had finished -- the steady state --
+    // the completeness check walked every message in the account, reading
+    // each row for `body_state`, which is in no index. One statement, one
+    // row, so a statement count cannot see it; the plan can.
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    postio_index::index::ensure_schema(&connection)
+        .await
+        .expect("schema");
+    let (account, _) = test_support::account_with_inbox(&connection).await;
+    let parsed = parse("quarterly", at(12).date_naive());
+    let request = SearchRequest {
+        account: postio_model::AccountScope::Account(account.id),
+        query: &parsed,
+        scope: Scope::AllMail,
+        order: postio_search::ResultOrder::Relevance,
+        limit: 10,
+    };
+    let (sql, params) = postio_index::executor::corpus_complete_sql(&request);
+    let plan: Vec<String> = postio_storage::sql::all(
+        &connection,
+        &format!("EXPLAIN QUERY PLAN {sql}"),
+        params,
+        |row| postio_storage::sql::RowExt::col(row, 3),
+    )
+    .await
+    .expect("a plan");
+    assert!(
+        !plan.iter().any(|step| step.contains("messages")),
+        "the completeness check reads the messages table:\n{}",
+        plan.join("\n")
+    );
+}

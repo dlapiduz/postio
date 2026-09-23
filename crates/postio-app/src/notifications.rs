@@ -136,29 +136,34 @@ impl Notifier {
         if messages.is_empty() {
             return;
         }
-        let Some((role, account)) = mailbox_info(&self.database, mailbox).await else {
-            return;
-        };
-        if !notify::watched(&self.config, role) {
-            return;
-        }
-        // Read before the spawn, not inside it: the future borrows the
-        // store, and a `'static` task cannot carry that borrow.
-        let account_name = account_label(&self.database, account).await;
+        // Every read on the runtime, in one task (#1608). The mailbox's role
+        // and the account's label used to be awaited here, and `notify` runs
+        // inside the single event drain, so every event queued behind a
+        // `NewMail` waited on the GTK thread for two fresh store connections.
+        // The store is cloned in -- it is an `Arc` inside -- which is what
+        // lets a `'static` task carry it.
+        let ids: Vec<MessageId> = messages.to_vec();
+        let store = self.store.clone();
+        let database = self.database.clone();
+        let config = self.config.clone();
+        let (sender, receiver) = async_channel::bounded(1);
+        self.runtime.spawn(async move {
+            let Some((role, account)) = mailbox_info(&database, mailbox).await else {
+                return;
+            };
+            if !notify::watched(&config, role) {
+                return;
+            }
+            let account_name = account_label(&database, account).await;
+            let rows = store.message_rows(ids).await;
+            let _ = sender.send((rows, account_name)).await;
+        });
 
         let Some(application) = window.application() else {
             return;
         };
-        let ids: Vec<MessageId> = messages.to_vec();
-        let store = self.store.clone();
-        let (sender, receiver) = async_channel::bounded(1);
-        self.runtime.spawn(async move {
-            let rows = store.message_rows(ids).await;
-            let _ = sender.send(rows).await;
-        });
-
         glib::spawn_future_local(async move {
-            let Ok(Ok(rows)) = receiver.recv().await else {
+            let Ok((Ok(rows), account_name)) = receiver.recv().await else {
                 return;
             };
             let Decision::Deliver(notification) =

@@ -346,14 +346,16 @@ pub struct ThreadMessage {
 ///
 /// `allowed` answers whether a sender's remote images are allowed, and
 /// `originals` holds the scopes the reader asked to see as sent (`⌃O`,
-/// #1398). Both frontends call this, so a conversation reads the same on
-/// either (#1595).
+/// #1398). `renders` is the caller's cache of each message's drawn body, so
+/// a redraw -- a body arriving, a grant -- sanitises only what changed. Both
+/// frontends call this, so a conversation reads the same on either (#1595).
 pub fn compose(
     messages: &[ThreadMessage],
     allowed: impl Fn(&str) -> bool,
     originals: &std::collections::HashSet<String>,
+    renders: &mut super::document::RenderCache,
 ) -> String {
-    use super::document::{Absent, Rendered, Rendering, absent_html, body_html_in};
+    use super::document::{Absent, Rendered, Rendering, absent_html};
 
     // Rendered first, and held, because `Entry` borrows the markup. Reader
     // view is decided per message, from the message: bulk mail opens reduced,
@@ -387,9 +389,10 @@ pub fn compose(
                     ..Rendered::default()
                 };
             }
-            body_html_in(&message.body, remote, rendering, Some(&message.scope))
+            renders.render(&message.scope, &message.body, remote, rendering)
         })
         .collect();
+    renders.keep_only(messages.iter().map(|message| message.scope.as_str()));
     let entries: Vec<Entry<'_>> = messages
         .iter()
         .zip(&rendered)
@@ -1085,6 +1088,7 @@ mod tests {
 #[cfg(test)]
 mod compose_tests {
     use super::*;
+    use crate::reader::document::RenderCache;
     use postio_model::MessageBody;
     use std::collections::HashSet;
 
@@ -1116,6 +1120,7 @@ mod compose_tests {
             &messages,
             |address| address == "ada@example.com",
             &HashSet::new(),
+            &mut RenderCache::default(),
         );
         assert!(
             document.contains("images.example.com/1.png"),
@@ -1133,12 +1138,22 @@ mod compose_tests {
         // blocked sender out -- and the policy is still the only refusal for
         // the ordinary thread, where nobody is allowed.
         let messages = [from("1", "ada@example.com")];
-        let nobody = compose(&messages, |_| false, &HashSet::new());
+        let nobody = compose(
+            &messages,
+            |_| false,
+            &HashSet::new(),
+            &mut RenderCache::default(),
+        );
         assert!(
             !nobody.contains("img-src postio-cid: data: http: https:"),
             "{nobody}"
         );
-        let someone = compose(&messages, |_| true, &HashSet::new());
+        let someone = compose(
+            &messages,
+            |_| true,
+            &HashSet::new(),
+            &mut RenderCache::default(),
+        );
         assert!(someone.contains("img-src postio-cid: data: http: https:"));
     }
 
@@ -1150,14 +1165,24 @@ mod compose_tests {
         let mut shut = from("2", "bo@example.org");
         shut.absent = true;
         shut.expanded = false;
-        let document = compose(&[open, shut], |_| false, &HashSet::new());
+        let document = compose(
+            &[open, shut],
+            |_| false,
+            &HashSet::new(),
+            &mut RenderCache::default(),
+        );
         assert_eq!(document.matches("role=\"status\"").count(), 1, "{document}");
     }
 
     #[test]
     fn every_message_has_the_anchor_the_pane_scrolls_to() {
         let messages = [from("1", "ada@example.com"), from("2", "bo@example.org")];
-        let document = compose(&messages, |_| false, &HashSet::new());
+        let document = compose(
+            &messages,
+            |_| false,
+            &HashSet::new(),
+            &mut RenderCache::default(),
+        );
         for scope in ["1", "2"] {
             assert!(
                 document.contains(&format!("id=\"{}\"", message_anchor(scope))),

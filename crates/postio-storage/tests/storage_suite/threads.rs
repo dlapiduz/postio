@@ -12,7 +12,7 @@ use postio_model::{
     AccountId, EmailAddress, Flag, MailboxId, Message, MessageId, Thread, ThreadId,
 };
 use postio_storage::repository::{
-    MessageRepository, ThreadListQuery, ThreadOrder, ThreadRepository,
+    FlagSource, MessageRepository, ThreadListQuery, ThreadOrder, ThreadRepository,
 };
 use postio_storage::test_support;
 
@@ -368,6 +368,156 @@ async fn reading_a_thread_in_either_direction_never_sorts() {
 // ---------------------------------------------------------------------------
 // Acceptance: the list row, count and participants, without an N+1
 // ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn the_rows_for_changed_messages_are_their_conversations_and_nothing_else() {
+    // #1607: a flag change names message ids, and the list re-read a whole
+    // 50-row page -- four correlated subqueries per row -- to learn one
+    // conversation's new state. This reads the rows those ids touch, in the
+    // page's own shape, and nothing else, in a bounded number of statements.
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    let (account, inbox) = test_support::account_with_inbox(&connection).await;
+    let mut members = Vec::new();
+    for index in 0..5 {
+        let thread = a_thread(&connection, account.id).await;
+        for reply in 0..3 {
+            let sender = ["ada", "quinn", "tove"][reply as usize];
+            let message = message(
+                &connection,
+                account.id,
+                inbox,
+                sender,
+                index * 1_000 + reply * 10,
+            )
+            .await;
+            ThreadRepository::new(&connection)
+                .add_message(thread.id, message.id)
+                .await
+                .expect("add");
+            members.push((thread.id, message.id));
+        }
+    }
+    let lone = message(&connection, account.id, inbox, "ada", 9_000).await;
+    // The middle message of the third conversation goes unread.
+    let (changed_thread, changed) = members[2 * 3 + 1];
+    MessageRepository::new(&connection)
+        .set_flags(
+            changed,
+            &postio_model::FlagSet::from_iter(std::iter::empty::<Flag>()),
+            FlagSource::Local,
+        )
+        .await
+        .expect("unread");
+
+    let query = ThreadListQuery::in_mailbox(account.id, inbox);
+    postio_storage::test_support::counting::reset();
+    let rows = ThreadRepository::new(&connection)
+        .rows_for(&query, &[changed, lone.id])
+        .await
+        .expect("rows");
+    let statements = postio_storage::test_support::counting::here().statements;
+
+    assert_eq!(
+        rows.len(),
+        2,
+        "one row per conversation the ids touch: {rows:?}"
+    );
+    let touched = rows
+        .iter()
+        .find(|row| row.id == Some(changed_thread))
+        .expect("the changed conversation's row");
+    assert_eq!(touched.unread_count, 1, "the aggregate the flag moved");
+    assert_eq!(touched.message_count, 3);
+    assert!(
+        touched.latest.is_some() && !touched.participants.is_empty(),
+        "the row is the page's shape, representative and participants included"
+    );
+    let alone = rows
+        .iter()
+        .find(|row| row.id.is_none())
+        .expect("a message with no conversation is its own row");
+    assert_eq!(alone.latest.as_ref().map(|latest| latest.id), Some(lone.id));
+    assert!(
+        statements <= 4,
+        "the rows for two ids took {statements} statements; a page of fifty \
+         takes four, and this must not scale with the ids"
+    );
+
+    // The representative read seeks the conversations by index and walks
+    // nothing: a folder of sixty thousand must not be read for one flag.
+    let plan = ThreadRepository::new(&connection).explain_rows_for(&query, 1, 1);
+    let scans = postio_storage::test_support::counting::scans(&connection, &plan).await;
+    assert!(
+        scans.is_empty(),
+        "the rows-for read scans: {scans:?}\n{plan}"
+    );
+}
+
+#[tokio::test]
+async fn conversations_gone_from_a_folder_are_the_ones_with_no_member_left() {
+    // #1607: an archive moved `total_count`, the folder count's witness, so
+    // the next page paid the whole count again -- 786 ms on a real folder.
+    // What the count lost is knowable from the removed ids alone: the
+    // conversations none of whose members are still in the folder, and
+    // every lone message, each of which was its own row.
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    let (account, inbox) = test_support::account_with_inbox(&connection).await;
+    let archive = test_support::mailbox(&connection, &account, "Archive")
+        .await
+        .id;
+    let thread = a_thread(&connection, account.id).await;
+    let mut members = Vec::new();
+    for reply in 0..3 {
+        let sender = ["ada", "quinn", "tove"][reply as usize];
+        let message = message(&connection, account.id, inbox, sender, reply * 10).await;
+        ThreadRepository::new(&connection)
+            .add_message(thread.id, message.id)
+            .await
+            .expect("add");
+        members.push(message.id);
+    }
+    let lone = message(&connection, account.id, inbox, "ada", 9_000)
+        .await
+        .id;
+    let messages = MessageRepository::new(&connection);
+    let threads = ThreadRepository::new(&connection);
+
+    // One member archived: the conversation is still in the folder.
+    messages
+        .move_to(&[members[0]], archive)
+        .await
+        .expect("moved");
+    assert_eq!(
+        threads
+            .conversations_gone_from(inbox, &[members[0]])
+            .await
+            .expect("counted"),
+        0,
+        "a conversation with members left is still a row"
+    );
+
+    // The rest of it archived, and the lone message with it: two rows gone.
+    messages
+        .move_to(&[members[1], members[2], lone], archive)
+        .await
+        .expect("moved");
+    postio_storage::test_support::counting::reset();
+    let gone = threads
+        .conversations_gone_from(inbox, &[members[1], members[2], lone])
+        .await
+        .expect("counted");
+    let statements = postio_storage::test_support::counting::here().statements;
+    assert_eq!(
+        gone, 2,
+        "the conversation and the lone message each were a row"
+    );
+    assert!(
+        statements <= 2,
+        "counting what left took {statements} statements; it must not scale with the folder"
+    );
+}
 
 #[tokio::test]
 async fn a_page_of_threads_costs_a_fixed_number_of_queries() {

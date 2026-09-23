@@ -3733,6 +3733,7 @@ dependencies = [
  "tempfile",
  "thiserror",
  "tracing",
+ "tracing-subscriber",
  "webkit6",
 ]
 

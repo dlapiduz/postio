@@ -565,6 +565,11 @@ pub struct Session {
     /// would hide exactly that. [`clear_search`](Self::clear_search) resets
     /// it.
     search_scope: Mutex<postio_search::facets::Scope>,
+    /// Each message's drawn body in the conversation document, so a redraw
+    /// -- a body arriving, a grant -- sanitises only what changed (#1595).
+    /// The cache GTK's reader keeps, held here because the Mac's page is
+    /// composed on this side.
+    thread_renders: Mutex<postio_ui::reader::document::RenderCache>,
     /// How many accounts the open view is about: one, or all of them.
     ///
     /// Resolved when the scope changes rather than on every palette keystroke:
@@ -2071,6 +2076,7 @@ impl Session {
                 resting: Mutex::new(None),
                 result_order: Mutex::new(postio_search::ResultOrder::Relevance),
                 search_scope: Mutex::new(postio_search::facets::Scope::AllMail),
+                thread_renders: Mutex::new(postio_ui::reader::document::RenderCache::default()),
                 anchor: Mutex::new(None),
                 paging: Mutex::new(postio_ui::paging::Paging::default()),
                 in_flight: Arc::default(),
@@ -2161,6 +2167,7 @@ impl Session {
             resting: Mutex::new(None),
             result_order: Mutex::new(postio_search::ResultOrder::Relevance),
             search_scope: Mutex::new(postio_search::facets::Scope::AllMail),
+            thread_renders: Mutex::new(postio_ui::reader::document::RenderCache::default()),
             anchor: Mutex::new(None),
             paging: Mutex::new(postio_ui::paging::Paging::default()),
             in_flight: Arc::default(),
@@ -2349,6 +2356,7 @@ impl Session {
             &messages,
             |address| allow.is_allowed(address),
             &originals,
+            &mut self.thread_renders.lock().expect("thread renders lock"),
         );
         // The rail's rows, from the thread rather than from anything drawn
         // (FR-040). No lengths yet -- GTK passes none either -- so no row

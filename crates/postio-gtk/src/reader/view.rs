@@ -141,6 +141,9 @@ pub struct Reader {
     /// thread rather than inside `Open`, which only the single-message path
     /// fills — reading `Open` is what made `⌃O` a no-op here (#1398).
     originals: Rc<RefCell<std::collections::HashSet<String>>>,
+    /// What the sanitiser made of each message of the thread on screen, so a
+    /// redraw re-sanitises only what changed (#1605).
+    renders: Rc<RefCell<postio_ui::reader::document::RenderCache>>,
     /// Who to tell when a message's own verb is activated.
     on_message_action: Rc<RefCell<Vec<MessageActionHandler>>>,
     /// Who to tell when the message filling the pane changes.
@@ -275,6 +278,51 @@ type PartsRequestedHandler = Box<dyn Fn()>;
 /// [`postio_ui::reader::thread::compose`] and ADR 0032.
 pub use postio_ui::reader::thread::ThreadMessage;
 
+thread_local! {
+    /// The reader view every later reader is related to, while it lives
+    /// (#1603). See [`shared_reader_view`].
+    static ANCHOR: RefCell<Option<glib::WeakRef<webkit6::WebView>>> = const { RefCell::new(None) };
+}
+
+/// Build a reader's view so that every reader shares one web process.
+///
+/// WebKitGTK gives each view with a context and a session of its own a web
+/// process of its own, and every reader was built that way: three processes
+/// before the first frame, ~150 MB of resident memory each (#1603). A view
+/// built with `related-view` shares the related view's context, session and
+/// process. So the first reader makes a context -- its schemes registered
+/// for sharing, `postio-cid` answered per view -- and an ephemeral session,
+/// and every reader after it is related to that one while it lives. If it
+/// goes, the next reader starts afresh. Settings and user content stay per
+/// view: the rail's script channel is registered on each reader's own.
+fn shared_reader_view(
+    settings: &webkit6::Settings,
+    content: &webkit6::UserContentManager,
+) -> webkit6::WebView {
+    let builder = || {
+        webkit6::WebView::builder()
+            .settings(settings)
+            .user_content_manager(content)
+            .hexpand(true)
+            .vexpand(true)
+    };
+    if let Some(anchor) =
+        ANCHOR.with(|anchor| anchor.borrow().as_ref().and_then(|weak| weak.upgrade()))
+    {
+        return builder().related_view(&anchor).build();
+    }
+    let network_session = webkit6::NetworkSession::new_ephemeral();
+    network_session.set_persistent_credential_storage_enabled(false);
+    let context = webkit6::WebContext::new();
+    scheme::register_shared(&context);
+    let view = builder()
+        .web_context(&context)
+        .network_session(&network_session)
+        .build();
+    ANCHOR.with(|anchor| *anchor.borrow_mut() = Some(view.downgrade()));
+    view
+}
+
 impl Reader {
     /// Build a reader that resolves inline (`cid:`) images through `source`.
     ///
@@ -304,12 +352,6 @@ impl Reader {
         // thread, so it is counted from the moment one is built.
         postio_ui::reader::cost::note_surface_created();
 
-        let network_session = webkit6::NetworkSession::new_ephemeral();
-        network_session.set_persistent_credential_storage_enabled(false);
-
-        let context = webkit6::WebContext::new();
-        scheme::register(&context, source);
-
         // The channel the rail's observer reports through (#1370). Registered
         // on the view rather than on the context, because the context is per
         // reader and a handler on a shared one would deliver another reader's
@@ -317,14 +359,8 @@ impl Reader {
         let content = webkit6::UserContentManager::new();
         content.register_script_message_handler(RAIL_HANDLER, None);
 
-        let view = webkit6::WebView::builder()
-            .web_context(&context)
-            .network_session(&network_session)
-            .settings(&hardened_settings())
-            .user_content_manager(&content)
-            .hexpand(true)
-            .vexpand(true)
-            .build();
+        let view = shared_reader_view(&hardened_settings(), &content);
+        scheme::attach(&view, source);
         view.add_css_class("postio-reader-view");
         view.set_accessible_role(gtk::AccessibleRole::Article);
         view.connect_decide_policy(handle_decide_policy);
@@ -403,6 +439,9 @@ impl Reader {
             allowlist: Rc::new(RefCell::new(allowlist)),
             thread: Rc::new(RefCell::new(Vec::new())),
             originals: Rc::new(RefCell::new(std::collections::HashSet::new())),
+            renders: Rc::new(RefCell::new(
+                postio_ui::reader::document::RenderCache::default(),
+            )),
             on_message_action: Rc::new(RefCell::new(Vec::new())),
             on_current_message: Rc::new(RefCell::new(Vec::new())),
             open: Rc::new(RefCell::new(None)),
@@ -443,6 +482,7 @@ impl Reader {
                 // be told apart from a link the sender wrote before that happens.
                 let allowlist = Rc::clone(&reader.allowlist);
                 let originals = Rc::clone(&reader.originals);
+                let renders = Rc::clone(&reader.renders);
                 let thread = Rc::clone(&reader.thread);
                 let document = Rc::clone(&reader.document);
                 let page = Rc::clone(&reader.page);
@@ -490,7 +530,12 @@ impl Reader {
                                 page: &page,
                                 loads: &loads,
                             },
-                            &compose_thread_document(&messages, &allowlist, &originals.borrow()),
+                            &compose_thread_document(
+                                &messages,
+                                &allowlist,
+                                &originals.borrow(),
+                                &renders,
+                            ),
                         );
                         decision.ignore();
                         return true;
@@ -1032,7 +1077,12 @@ impl Reader {
     }
 
     fn compose_thread(&self, messages: &[ThreadMessage]) -> String {
-        compose_thread_document(messages, &self.allowlist, &self.originals.borrow())
+        compose_thread_document(
+            messages,
+            &self.allowlist,
+            &self.originals.borrow(),
+            &self.renders,
+        )
     }
 
     /// Whether [`render_thread`](Self::render_thread) would change anything.
@@ -1042,6 +1092,21 @@ impl Reader {
     /// caller that cannot easily tell whether its redraw is needed can ask.
     pub fn would_render_thread(&self, messages: &[ThreadMessage]) -> bool {
         self.compose_thread(messages) != *self.document.borrow()
+    }
+
+    /// Draw `messages` if the document they make differs from the one on
+    /// screen, and say whether it did.
+    ///
+    /// One compose, where the pair `would_render_thread` then `render_thread`
+    /// was two (#1605): the answer to "would it change" is the document, and
+    /// the document is what gets loaded.
+    pub fn render_thread_if_changed(&self, messages: &[ThreadMessage]) -> bool {
+        let document = self.compose_thread(messages);
+        if document == *self.document.borrow() {
+            return false;
+        }
+        self.load_thread(messages, &document);
+        true
     }
 
     /// Draw a whole conversation into this one view (ADR 0032, #1316).
@@ -1066,6 +1131,12 @@ impl Reader {
     /// itself and `⌃O` overrules one at a time. This comment said the whole
     /// document was `Blocked` long after it had stopped being true.
     pub fn render_thread(&self, messages: &[ThreadMessage]) {
+        let document = self.compose_thread(messages);
+        self.load_thread(messages, &document);
+    }
+
+    /// Load a composed thread document, and reset what a new document resets.
+    fn load_thread(&self, messages: &[ThreadMessage], document: &str) {
         self.thread.replace(messages.to_vec());
         self.paints.set(self.paints.get() + 1);
         self.absent.set(None);
@@ -1075,9 +1146,7 @@ impl Reader {
         // was being sent must not inherit its bar.
         self.set_send_state(None);
         self.banner.set_visible(false);
-
-        let document = self.compose_thread(messages);
-        load_document(&self.canvas(), &document);
+        load_document(&self.canvas(), document);
         self.watch_for_the_current_message();
     }
 
@@ -1674,16 +1743,19 @@ fn load_document(canvas: &Canvas<'_>, document: &str) {
 /// The decisions -- reader view or original, images per sender, the absence
 /// plate, when the page's policy opens -- are
 /// [`postio_ui::reader::thread::compose`]'s, which the macOS pane calls too
-/// (#1595). What is left here is this reader's allow list.
+/// (#1595). What is left here is this reader's allow list and its cache of
+/// drawn bodies.
 fn compose_thread_document(
     messages: &[ThreadMessage],
     allowlist: &RefCell<RemoteImageAllowList>,
     originals: &std::collections::HashSet<String>,
+    renders: &RefCell<postio_ui::reader::document::RenderCache>,
 ) -> String {
     postio_ui::reader::thread::compose(
         messages,
         |address| allowlist.borrow().is_allowed(address),
         originals,
+        &mut renders.borrow_mut(),
     )
 }
 

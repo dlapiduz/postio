@@ -746,6 +746,17 @@ impl MessageList {
     /// The bulk form of [`page_of`](Self::page_of), for a burst of changes
     /// that land together, so the caller issues one request per affected
     /// page rather than one per message.
+    /// A page the feed is about to read: remembered as pending, and whether
+    /// it already was (#1607). See `ListWindow::note_pending`.
+    pub fn note_pending(&self, page: u32) -> bool {
+        self.imp().window.borrow_mut().note_pending(page)
+    }
+
+    /// Whether `page` is on its way, from a scroll's ask or the feed's.
+    pub fn is_pending(&self, page: u32) -> bool {
+        self.imp().window.borrow().is_pending(page)
+    }
+
     pub fn pages_holding(&self, messages: &[MessageId]) -> Vec<u32> {
         self.imp().window.borrow().pages_holding(messages)
     }

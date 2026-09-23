@@ -28,8 +28,8 @@ use postio_gtk::feed::{
 };
 use postio_gtk::list::Row;
 use postio_model::ListScope;
-use postio_model::ids::{AccountId, MessageId};
-use postio_runtime::store::{ListPage, MailStore, PageRequest as StoreRequest};
+use postio_model::ids::{AccountId, MailboxId, MessageId};
+use postio_runtime::store::{ListPage, ListRows, MailStore, PageRequest as StoreRequest};
 
 /// The frontend's two sources, over one store.
 pub struct Sources {
@@ -70,6 +70,32 @@ type SendRead<T> = std::pin::Pin<
 >;
 
 impl MessageSource for Sources {
+    fn note_removed(&self, mailbox: MailboxId, messages: Vec<MessageId>) {
+        // Synchronous by design: it records a fact for the store's next read
+        // to act on, and the read that follows this event is spawned after.
+        self.store.note_removed(mailbox, messages);
+    }
+
+    fn rows_in(&self, scope: postio_model::ListScope, ids: Vec<MessageId>) -> RowsFuture {
+        let wanted = ids.len();
+        let answer =
+            self.ask(move |store| Box::pin(async move { store.rows_in(scope, ids).await }));
+        Box::pin(async move {
+            match answer.recv().await {
+                Ok(Ok(rows)) => {
+                    let rows: Vec<Row> = match rows {
+                        ListRows::Threads(rows) => rows.into_iter().map(thread_row).collect(),
+                        ListRows::Messages(rows) => rows.into_iter().map(row).collect(),
+                    };
+                    tracing::debug!(wanted, rows = rows.len(), "changed rows read");
+                    Ok(rows)
+                }
+                Ok(Err(reason)) => Err(reason),
+                Err(_) => Err("the runtime stopped before the rows arrived".to_string()),
+            }
+        })
+    }
+
     fn fetch(&self, request: PageRequest) -> PageFuture {
         let wanted = StoreRequest {
             scope: request.scope,

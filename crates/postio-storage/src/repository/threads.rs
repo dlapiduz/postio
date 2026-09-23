@@ -909,10 +909,6 @@ impl<'a> ThreadRepository<'a> {
 
     /// [`ThreadRepository::page`] with `tail` appended to the statement.
     async fn page_with(&self, query: &ThreadListQuery, tail: &str) -> Result<Vec<ThreadListRow>> {
-        let mut statement = self
-            .connection
-            .prepare(&format!("{}{tail}", self.explain(query)))
-            .await?;
         let mut arguments = vec![query.account_id.get()];
         // `?2` when the query is folder-scoped, so the cursor follows at ?3/?4
         // rather than ?2/?3 — `explain` numbers them the same way.
@@ -923,7 +919,185 @@ impl<'a> ThreadRepository<'a> {
             arguments.push(to_millis(cursor.last_at));
             arguments.push(cursor.id);
         }
+        let sql = format!("{}{tail}", self.explain(query));
+        self.rows_from(&sql, arguments, query.mailbox.is_some())
+            .await
+    }
+
+    /// The rows the list shows for the conversations these messages belong
+    /// to, in the page's own shape -- one row per touched conversation,
+    /// aggregates, representative and participants included -- and nothing
+    /// else (#1607).
+    ///
+    /// A flag change names message ids, and the list used to re-read a whole
+    /// fifty-row page, four correlated subqueries per row, to learn one
+    /// conversation's new unread count. Two statements here before the
+    /// page's own two: which conversations the ids touch (a point read per
+    /// id), then the representatives of exactly those conversations, sought
+    /// through the thread index rather than walked through the folder. A
+    /// message with no conversation is its own row, as it is on the page.
+    /// In an account-wide list only conversations are rows, so a lone
+    /// message contributes nothing there.
+    pub async fn rows_for(
+        &self,
+        query: &ThreadListQuery,
+        messages: &[MessageId],
+    ) -> Result<Vec<ThreadListRow>> {
+        if messages.is_empty() {
+            return Ok(Vec::new());
+        }
+        let mut statement = self
+            .connection
+            .prepare(&format!(
+                "SELECT id, thread_id FROM messages WHERE id IN ({})",
+                placeholders(messages.len(), 1)
+            ))
+            .await?;
+        let ids: Vec<i64> = messages.iter().map(|id| id.get()).collect();
+        let touched: Vec<(i64, Option<i64>)> =
+            sql::mapped(&mut statement, ids, |row| Ok((row.col(0)?, row.col(1)?))).await?;
+        drop(statement);
+
         let scoped = query.mailbox.is_some();
+        let mut threads: Vec<i64> = touched.iter().filter_map(|(_, thread)| *thread).collect();
+        threads.sort_unstable();
+        threads.dedup();
+        let lone: Vec<i64> = if scoped {
+            touched
+                .iter()
+                .filter(|(_, thread)| thread.is_none())
+                .map(|(id, _)| *id)
+                .collect()
+        } else {
+            Vec::new()
+        };
+        if threads.is_empty() && lone.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let sql = self.explain_rows_for(query, threads.len(), lone.len());
+        let mut arguments = vec![query.account_id.get()];
+        if let Some(mailbox) = query.mailbox {
+            arguments.push(mailbox.get());
+        }
+        arguments.extend(threads);
+        arguments.extend(lone);
+        self.rows_from(&sql, arguments, scoped).await
+    }
+
+    /// How many rows a folder lost when these messages left it (#1607).
+    ///
+    /// An archive moves `mailboxes.total_count`, which is the folder count's
+    /// witness, so the next page used to pay the whole conversation count
+    /// again: 786 ms on a real folder, in front of the first row. What the
+    /// count lost is knowable from the removed ids alone -- the conversations
+    /// none of whose members are still in the folder, plus every lone
+    /// message, each of which was its own row -- in two statements bounded
+    /// by the ids, not the folder. The removed rows still exist, elsewhere
+    /// or hidden pending a remote delete, so their conversations can be read
+    /// off them.
+    pub async fn conversations_gone_from(
+        &self,
+        mailbox: MailboxId,
+        removed: &[MessageId],
+    ) -> Result<u32> {
+        if removed.is_empty() {
+            return Ok(0);
+        }
+        let mut statement = self
+            .connection
+            .prepare(&format!(
+                "SELECT thread_id FROM messages WHERE id IN ({})",
+                placeholders(removed.len(), 1)
+            ))
+            .await?;
+        let ids: Vec<i64> = removed.iter().map(|id| id.get()).collect();
+        let threads_of: Vec<Option<i64>> =
+            sql::mapped(&mut statement, ids, |row| row.col(0)).await?;
+        drop(statement);
+        let lone = threads_of.iter().filter(|thread| thread.is_none()).count() as u32;
+        let mut threads: Vec<i64> = threads_of.into_iter().flatten().collect();
+        threads.sort_unstable();
+        threads.dedup();
+        if threads.is_empty() {
+            return Ok(lone);
+        }
+        let sql = format!(
+            "SELECT count(*) FROM threads t
+              WHERE t.id IN ({})
+                AND NOT EXISTS (SELECT 1 FROM messages m
+                                 WHERE m.thread_id = t.id AND m.mailbox_id = ?1 AND m.{MEMBER})",
+            placeholders(threads.len(), 2)
+        );
+        let mut arguments = vec![mailbox.get()];
+        arguments.extend(threads);
+        let emptied: i64 = sql::one(self.connection, &sql, arguments, |row| row.col(0)).await?;
+        Ok(lone + emptied as u32)
+    }
+
+    /// The SQL [`Self::rows_for`] reads representatives with, for `threads`
+    /// conversation ids and `lone` message ids, so a test can ask the
+    /// planner about it the way [`Self::explain`] lets it ask about a page.
+    pub fn explain_rows_for(&self, query: &ThreadListQuery, threads: usize, lone: usize) -> String {
+        let Some(_) = query.mailbox else {
+            return format!(
+                "SELECT {THREAD_COLUMNS} FROM threads
+                  WHERE account_id = ?1 AND message_count > 0
+                    AND id IN ({})",
+                placeholders(threads, 2)
+            );
+        };
+        let slice = format!(
+            "FROM messages m
+              WHERE m.thread_id = rep.thread_id AND m.mailbox_id = ?2 AND m.{MEMBER}"
+        );
+        let representatives = |filter: String| {
+            format!(
+                "SELECT coalesce(rep.thread_id, 0), ?1, rep.subject,
+                        coalesce((SELECT t.message_count FROM threads t
+                                   WHERE t.id = rep.thread_id), 1),
+                        coalesce((SELECT count(*) {slice} AND m.seen = 0),
+                                 CASE WHEN rep.seen = 0 THEN 1 ELSE 0 END),
+                        coalesce((SELECT max(m.has_attachments) {slice}), rep.has_attachments),
+                        coalesce((SELECT max(m.flagged) {slice}), rep.flagged),
+                        rep.received_at, rep.received_at, rep.id
+                   FROM messages rep
+                  WHERE rep.mailbox_id = ?2 AND rep.{MEMBER} AND {filter}
+                    AND NOT EXISTS (
+                            SELECT 1 FROM messages newer
+                             WHERE newer.mailbox_id = ?2 AND newer.{MEMBER}
+                               AND newer.thread_id IS NOT NULL
+                               AND newer.thread_id = rep.thread_id
+                               AND (newer.received_at, newer.id) > (rep.received_at, rep.id)
+                        )"
+            )
+        };
+        let mut arms = Vec::new();
+        if threads > 0 {
+            arms.push(representatives(format!(
+                "rep.thread_id IN ({})",
+                placeholders(threads, 3)
+            )));
+        }
+        if lone > 0 {
+            arms.push(representatives(format!(
+                "rep.thread_id IS NULL AND rep.id IN ({})",
+                placeholders(lone, 3 + threads)
+            )));
+        }
+        arms.join("\n UNION ALL\n")
+    }
+
+    /// One conversation row per result of `sql`, filled out the way a page
+    /// is: participants, and for a folder-scoped read the representative
+    /// message. `arguments` are the statement's, in placeholder order.
+    async fn rows_from(
+        &self,
+        sql: &str,
+        arguments: Vec<i64>,
+        scoped: bool,
+    ) -> Result<Vec<ThreadListRow>> {
+        let mut statement = self.connection.prepare(sql).await?;
         let rows = sql::mapped(&mut statement, arguments, |row| {
             let thread = row.col::<i64>(0)?;
             Ok((

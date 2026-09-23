@@ -19,8 +19,8 @@ use postio_storage::repository::{
 use postio_storage::{Checkout, Store};
 
 use crate::store::{
-    ListPage, ListScope, MailStore, MessagePage, MessageSummary, PageRequest, Read, StoreError,
-    ThreadPage, ThreadSummary,
+    ListPage, ListRows, ListScope, MailStore, MessagePage, MessageSummary, PageRequest, Read,
+    StoreError, ThreadPage, ThreadSummary,
 };
 
 impl From<postio_storage::Error> for StoreError {
@@ -28,6 +28,10 @@ impl From<postio_storage::Error> for StoreError {
         StoreError::new(error.to_string())
     }
 }
+
+/// Removals told to the store and not yet settled by a read: which folder,
+/// which messages. See [`MailStore::note_removed`].
+type Removals = Mutex<Vec<(MailboxId, Vec<MessageId>)>>;
 
 /// The local store, read directly.
 #[derive(Debug, Clone)]
@@ -50,6 +54,11 @@ pub struct LocalStore {
     /// The last threaded count of a folder, and the cheap number it was taken
     /// against. See [`CountedFolder`].
     folder_counts: Arc<Mutex<HashMap<MailboxId, CountedFolder>>>,
+    /// Removals the app has told us about and no read has settled yet:
+    /// which folder, which messages. Drained by [`counted_total`] before it
+    /// compares its witness, so the count it holds is adjusted rather than
+    /// discarded (#1607). See [`MailStore::note_removed`].
+    removals: Arc<Removals>,
 }
 
 /// A folder's thread count, and how to tell whether it still holds.
@@ -134,6 +143,7 @@ pub fn folders_counted() -> u64 {
 async fn counted_total(
     connection: &Checkout,
     cache: &Mutex<HashMap<MailboxId, CountedFolder>>,
+    removals: &Removals,
     scope: ListScope,
     threads: &ThreadRepository<'_>,
     query: &ThreadListQuery,
@@ -148,6 +158,34 @@ async fn counted_total(
         .await?
         .as_ref()
         .map(witness_of);
+
+    // What the app said left this folder since the count was taken. An
+    // archive moved the witness, and the count would be paid again in
+    // front of the first row; instead the rows that left are subtracted
+    // -- the conversations with no member left here, and the lone messages
+    // -- and the held count moves to the new witness (#1607). Taken out of
+    // the queue before any await, and the lock never held across one.
+    let pending: Vec<Vec<MessageId>> = {
+        let mut removals = removals.lock().expect("not poisoned");
+        let (ours, others): (Vec<_>, Vec<_>) = removals
+            .drain(..)
+            .partition(|(folder, _)| *folder == mailbox);
+        *removals = others;
+        ours.into_iter().map(|(_, ids)| ids).collect()
+    };
+    if !pending.is_empty()
+        && let Some(witness) = witness
+        && cache.lock().expect("not poisoned").contains_key(&mailbox)
+    {
+        let mut gone = 0u32;
+        for ids in &pending {
+            gone += threads.conversations_gone_from(mailbox, ids).await?;
+        }
+        if let Some(held) = cache.lock().expect("not poisoned").get_mut(&mailbox) {
+            held.threads = held.threads.saturating_sub(gone);
+            held.witness = witness;
+        }
+    }
     if let Some(witness) = witness
         && let Some(held) = cache.lock().expect("not poisoned").get(&mailbox).copied()
         && held.witness == witness
@@ -258,6 +296,7 @@ impl LocalStore {
             thread_marks: Arc::new(Mutex::new(Marks::default())),
             unified_marks: Arc::new(Mutex::new(Marks::default())),
             folder_counts: Arc::new(Mutex::new(HashMap::new())),
+            removals: Arc::new(Mutex::new(Vec::new())),
         }
     }
 
@@ -363,11 +402,19 @@ impl LocalStore {
         }
         let marks = self.thread_marks.clone();
         let counts = self.folder_counts.clone();
+        let removals = self.removals.clone();
         self.read(move |connection| async move {
             let query = thread_query(&connection, request.scope, request.limit).await?;
             let threads = ThreadRepository::new(&connection);
-            let total =
-                counted_total(&connection, &counts, request.scope, &threads, &query).await?;
+            let total = counted_total(
+                &connection,
+                &counts,
+                &removals,
+                request.scope,
+                &threads,
+                &query,
+            )
+            .await?;
 
             let start = {
                 let mut marks = marks.lock().expect("not poisoned");
@@ -490,6 +537,37 @@ impl LocalStore {
     /// No seek marks and no count: an explicit id list is not a window into
     /// anything, so there is no position to remember and nothing to be
     /// consistent with.
+    /// [`MailStore::rows_in`]: the same scope decision a page makes, then
+    /// the same query, with the ids in place of a window. A unified list
+    /// pages every account through its own query and has no by-id read
+    /// yet; it answers with an error and the list re-reads the page, as it
+    /// always did.
+    async fn read_rows_in(
+        &self,
+        scope: ListScope,
+        ids: Vec<MessageId>,
+    ) -> Result<ListRows, StoreError> {
+        if !self.lists_conversations(scope).await? {
+            return self.read_rows(ids).await.map(ListRows::Messages);
+        }
+        if !matches!(scope, ListScope::Mailbox(_) | ListScope::Account(_)) {
+            return Err(StoreError::new(
+                "a unified list re-reads its page rather than its rows",
+            ));
+        }
+        self.read(move |connection| async move {
+            let query = thread_query(&connection, scope, 0).await?;
+            ThreadRepository::new(&connection)
+                .rows_for(&query, &ids)
+                .await?
+                .into_iter()
+                .map(summarise_thread)
+                .collect::<Result<Vec<_>, _>>()
+                .map(ListRows::Threads)
+        })
+        .await
+    }
+
     async fn read_rows(&self, ids: Vec<MessageId>) -> Result<Vec<MessageSummary>, StoreError> {
         self.read(move |connection| async move {
             let rows = MessageRepository::new(&connection).rows_for(&ids).await?;
@@ -752,6 +830,17 @@ impl MailStore for LocalStore {
 
     fn list_count(&self, scope: ListScope) -> Read<'_, u32> {
         Box::pin(self.read_list_count(scope))
+    }
+
+    fn rows_in(&self, scope: ListScope, ids: Vec<MessageId>) -> Read<'_, ListRows> {
+        Box::pin(self.read_rows_in(scope, ids))
+    }
+
+    fn note_removed(&self, mailbox: MailboxId, messages: Vec<MessageId>) {
+        self.removals
+            .lock()
+            .expect("not poisoned")
+            .push((mailbox, messages));
     }
 
     fn message_rows(&self, ids: Vec<MessageId>) -> Read<'_, Vec<MessageSummary>> {

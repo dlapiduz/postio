@@ -43,6 +43,7 @@ mod list_contract;
 mod mailto_uri;
 mod manual_sync;
 mod navigation_cost;
+mod notify_off_the_main_thread;
 mod onboarding_probe;
 mod one_document_conversation;
 mod opens_from_storage;
@@ -84,6 +85,7 @@ mod startup_reads;
 mod startup_repair;
 mod storage_ceiling_wiring;
 mod sync_window;
+mod thread_bodies_in_one_crossing;
 mod thread_bulk_keystroke;
 mod thread_dwell;
 mod thread_keystroke;
@@ -160,12 +162,21 @@ const CASES: &[(&str, fn())] = &[
         bulk_keystroke::ctrl_a_then_shift_u_marks_the_whole_folder_read as fn(),
     ),
     (
+        "startup_behind_the_window::the_store_starts_opening_before_there_is_a_window",
+        startup_behind_the_window::the_store_starts_opening_before_there_is_a_window as fn(),
+    ),
+    (
         "startup_behind_the_window::the_store_opens_behind_a_window_that_is_already_up",
         startup_behind_the_window::the_store_opens_behind_a_window_that_is_already_up as fn(),
     ),
     (
         "startup_behind_the_window::a_store_refused_after_the_window_is_up_says_so_and_can_be_retried",
         startup_behind_the_window::a_store_refused_after_the_window_is_up_says_so_and_can_be_retried
+            as fn(),
+    ),
+    (
+        "notify_off_the_main_thread::a_new_mail_notification_reads_nothing_on_the_main_thread",
+        notify_off_the_main_thread::a_new_mail_notification_reads_nothing_on_the_main_thread
             as fn(),
     ),
     (
@@ -467,6 +478,10 @@ const CASES: &[(&str, fn())] = &[
     (
         "startup_repair::an_account_with_no_credential_lands_on_the_repair_screen",
         startup_repair::an_account_with_no_credential_lands_on_the_repair_screen as fn(),
+    ),
+    (
+        "thread_bodies_in_one_crossing::a_conversation_is_read_in_one_crossing",
+        thread_bodies_in_one_crossing::a_conversation_is_read_in_one_crossing as fn(),
     ),
     (
         "thread_dwell::resting_inside_a_conversation_reads_each_message_as_focus_reaches_it",

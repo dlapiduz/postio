@@ -209,3 +209,92 @@ fn every_widget(widget: &gtk::Widget) -> Vec<gtk::Widget> {
     }
     found
 }
+
+/// A secret store that counts how often it is asked for anything.
+#[derive(Debug, Default)]
+struct Counting {
+    inner: MemorySecretStore,
+    asked: std::sync::atomic::AtomicUsize,
+}
+
+#[async_trait::async_trait]
+impl postio_account::secret::SecretStore for Counting {
+    fn describe(&self) -> &'static str {
+        "counting"
+    }
+    async fn store(
+        &self,
+        key: &postio_account::secret::AccountKey,
+        password: &postio_account::secret::Password,
+    ) -> Result<(), postio_account::secret::SecretError> {
+        self.inner.store(key, password).await
+    }
+    async fn retrieve(
+        &self,
+        key: &postio_account::secret::AccountKey,
+    ) -> Result<postio_account::secret::Password, postio_account::secret::SecretError> {
+        self.asked.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        self.inner.retrieve(key).await
+    }
+    async fn delete(
+        &self,
+        key: &postio_account::secret::AccountKey,
+    ) -> Result<(), postio_account::secret::SecretError> {
+        self.inner.delete(key).await
+    }
+}
+
+pub fn the_store_starts_opening_before_there_is_a_window() {
+    // #1604: the store open -- the keyring over D-Bus, then the engine's open
+    // of an encrypted file -- waited for the window to be built and
+    // presented, because it was started from `activate`. The two chains need
+    // nothing from each other, so the open starts first and the window takes
+    // it over when it exists. What must not happen is a second open: the
+    // window taking the early one is the whole point, and a second would
+    // read the keyring and open the file again.
+    crate::gtk_case(async {
+        let state_dir = tempfile::tempdir().expect("a state directory");
+        let store_dir = tempfile::tempdir().expect("a store directory");
+        // SAFETY: first statements of a single-threaded test.
+        unsafe {
+            std::env::set_var("XDG_STATE_HOME", state_dir.path());
+            std::env::set_var("POSTIO_STORE", store_dir.path().join("postio.db"));
+        }
+        if adw::init().is_err() || gdk::Display::default().is_none() {
+            eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
+            return;
+        }
+        let secrets = Arc::new(Counting::default());
+        let context = Rc::new(Installation::new(secrets.clone()));
+        context.start_opening();
+        assert!(
+            settle_until(async || secrets.asked.load(std::sync::atomic::Ordering::SeqCst) > 0)
+                .await,
+            "starting the open before any window never reached the keyring"
+        );
+        let asked_before_the_window = secrets.asked.load(std::sync::atomic::Ordering::SeqCst);
+
+        let display = gdk::Display::default().unwrap();
+        fonts::install().expect("the embedded fonts should install");
+        style::install(&display);
+        app::install_icons(&display);
+        let timeline = postio_gtk::startup::Timeline::start();
+        let window = Window::default();
+        window.present();
+        let opened = Rc::new(std::cell::RefCell::new(None));
+        let fed = Rc::new(std::cell::Cell::new(false));
+        postio_app::open_the_store(&window, &opened, &context, &fed, &timeline);
+        assert!(
+            settle_until(async || opened.borrow().is_some()).await,
+            "the window never received the store the early open was making"
+        );
+        assert_eq!(
+            secrets.asked.load(std::sync::atomic::Ordering::SeqCst),
+            asked_before_the_window,
+            "the window opened the store a second time instead of taking the \
+             open that had already started"
+        );
+        window.close();
+        while gtk::glib::MainContext::default().iteration(false) {}
+    });
+}

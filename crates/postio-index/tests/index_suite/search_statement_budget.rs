@@ -226,3 +226,83 @@ async fn a_search_costs_the_same_queries_however_much_it_matches() {
         wide.statements, broad.statements
     );
 }
+
+#[tokio::test]
+async fn the_facets_walk_the_match_once_per_scope() {
+    // #1612: facets walked the match set five times -- three scope counts,
+    // then the flag refinements and the folder refinements, each its own
+    // capped walk of the same match in the same scope. The two refinements
+    // and the current scope's count are one walk grouped by folder; only
+    // the scopes the user is *not* in need walks of their own.
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    postio_index::index::ensure_schema(&connection)
+        .await
+        .expect("schema");
+    let (account, inbox) = test_support::account_with_inbox(&connection).await;
+    let archive = test_support::mailbox(&connection, &account, "Archive")
+        .await
+        .id;
+    let messages = MessageRepository::new(&connection);
+    for nth in 0..30 {
+        let received = Utc.with_ymd_and_hms(2026, 8, 20, 9, 0, 0).unwrap()
+            + chrono::Duration::seconds(nth as i64);
+        let folder = if nth % 3 == 0 { archive } else { inbox };
+        let mut message = Message::new(account.id, folder, received);
+        message.from = vec![EmailAddress::new(Some("ada"), "ada@example.com")];
+        message.subject = Some(format!("quarterly report {nth}"));
+        if nth % 5 == 0 {
+            message.flags = [postio_model::Flag::Flagged].into_iter().collect();
+        }
+        messages.create(&mut message).await.expect("create message");
+    }
+    let query = parse("quarterly", today().await);
+    let request = SearchRequest {
+        account: AccountScope::Account(account.id),
+        query: &query,
+        scope: Scope::AllMail,
+        limit: 25,
+        order: postio_search::ResultOrder::Relevance,
+    };
+    install(&connection);
+    let mut facets = None;
+    let counts: Counts = counted_async(async || {
+        facets = Some(
+            postio_index::executor::facets(&connection, &request)
+                .await
+                .expect("facets"),
+        );
+    })
+    .await;
+    let facets = facets.expect("facets ran");
+
+    let hits = |scope: Scope| {
+        facets
+            .scopes
+            .iter()
+            .find(|count| count.scope == scope)
+            .map(|count| count.hits)
+    };
+    assert_eq!(hits(Scope::AllMail), Some(30), "every message matched");
+    assert_eq!(
+        hits(Scope::Inbox),
+        Some(20),
+        "two in three are in the inbox"
+    );
+    let refinement = |token: &str| {
+        facets
+            .refinements
+            .iter()
+            .find(|refinement| refinement.token == token)
+            .map(|refinement| refinement.hits)
+    };
+    assert_eq!(refinement("is:flagged"), Some(6));
+    assert_eq!(refinement("in:INBOX"), Some(20));
+    assert_eq!(refinement("in:Archive"), Some(10));
+    assert!(
+        counts.statements <= 3,
+        "the facets took {} statements; the match is walked once per scope and \
+         the refinements share the current scope's walk",
+        counts.statements
+    );
+}

@@ -161,12 +161,27 @@ impl Timeline {
     /// The first mark for a phase wins, so a retried activation — GTK will
     /// activate a running application again when it is launched a second
     /// time — does not overwrite the startup that was actually measured.
+    ///
+    /// And it is logged, at info, every launch (#1604): a mark used to record
+    /// an instant and say nothing, so the journal of a slow start held two
+    /// lines for its first second and the time could not be attributed after
+    /// the fact. Numbers and a phase name only, which is all a log may carry.
     pub fn mark(&self, phase: Phase) {
         let elapsed = self.0.origin.elapsed();
-        let slot = &mut self.0.marks.borrow_mut()[phase.index()];
-        if slot.is_none() {
+        {
+            let slot = &mut self.0.marks.borrow_mut()[phase.index()];
+            if slot.is_some() {
+                return;
+            }
             *slot = Some(elapsed);
         }
+        let cost = self.cost(phase).unwrap_or_default();
+        tracing::info!(
+            phase = phase.label(),
+            at_ms = elapsed.as_millis() as u64,
+            cost_ms = cost.as_millis() as u64,
+            "startup phase"
+        );
     }
 
     /// How long after the start `phase` was reached, if it has been.
@@ -397,6 +412,65 @@ mod tests {
         assert!(init <= fonts, "marks measure from the same origin");
         assert!(fonts <= frame);
         assert_eq!(timeline.at(Phase::Styles), None, "styles was never marked");
+    }
+
+    /// Log lines written while `body` runs, as text.
+    fn logged(body: impl FnOnce()) -> String {
+        #[derive(Clone, Default)]
+        struct Captured(std::sync::Arc<std::sync::Mutex<Vec<u8>>>);
+        impl std::io::Write for Captured {
+            fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+                self.0.lock().expect("not poisoned").extend_from_slice(buf);
+                Ok(buf.len())
+            }
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+        impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for Captured {
+            type Writer = Captured;
+            fn make_writer(&'a self) -> Self::Writer {
+                self.clone()
+            }
+        }
+        let captured = Captured::default();
+        let subscriber = tracing_subscriber::fmt()
+            .with_writer(captured.clone())
+            .with_max_level(tracing::Level::INFO)
+            .with_ansi(false)
+            .finish();
+        tracing::subscriber::with_default(subscriber, body);
+        let bytes = captured.0.lock().expect("not poisoned").clone();
+        String::from_utf8(bytes).expect("utf-8")
+    }
+
+    #[test]
+    fn every_phase_reaches_the_log_with_its_cost() {
+        // #1604: the journal of a real launch had two lines in its first
+        // second, because a mark recorded an instant and said nothing, and the
+        // report was printed only under a debugging switch. A slow start could
+        // not be attributed after the fact. Every mark now says which phase,
+        // when, and what it cost -- once, the first time, like the mark.
+        let timeline = Timeline::start();
+        let log = logged(|| {
+            timeline.mark(Phase::Init);
+            timeline.mark(Phase::Window);
+            timeline.mark(Phase::Window);
+        });
+        let lines: Vec<&str> = log
+            .lines()
+            .filter(|line| line.contains("startup phase"))
+            .collect();
+        assert_eq!(
+            lines.len(),
+            2,
+            "one line per phase reached, and a second mark says nothing: {log}"
+        );
+        assert!(
+            lines[1].contains(Phase::Window.label()) && lines[1].contains("cost_ms="),
+            "the line names the phase and its cost: {}",
+            lines[1]
+        );
     }
 
     #[test]

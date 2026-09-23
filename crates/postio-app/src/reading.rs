@@ -700,6 +700,16 @@ impl Painter {
     }
 }
 
+/// How many times a conversation's messages have crossed to the runtime to
+/// be read (#1609). Process-wide; for tests.
+static THREAD_CROSSINGS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// See [`THREAD_CROSSINGS`].
+#[doc(hidden)]
+pub fn thread_crossings() -> u64 {
+    THREAD_CROSSINGS.load(std::sync::atomic::Ordering::Relaxed)
+}
+
 /// Everything filling the reading pane needs, so the cursor and activation
 /// can share one implementation rather than two that drift.
 struct Fill {
@@ -800,41 +810,42 @@ impl Fill {
     /// can drift on what a message is.
     fn read(&self, message: MessageId) -> async_channel::Receiver<Option<Loaded>> {
         let offline = self.offline.get();
-        crate::search::ask(&self.database, &self.runtime, {
-            move |connection| async move {
-                // One crossing for all of it. The parts are metadata the sync
-                // already stored -- `BODYSTRUCTURE`, not bytes -- so asking
-                // for them costs a row read and never a fetch.
-                let body = crate::compose::load_body_or_reason(&connection, message, offline).await;
-                let fetched = MessageRepository::new(&connection)
-                    .get(message)
-                    .await
-                    .ok()
-                    .flatten();
-                let (content_type, parts) = fetched
-                    .as_ref()
-                    .map(|message| (message.content_type.clone(), message.attachments.clone()))
-                    .unwrap_or_default();
-                let sender = fetched
-                    .as_ref()
-                    .and_then(|message| message.from.first().map(|from| from.address.clone()));
-                let list_identifier = fetched.as_ref().and_then(list_identifier);
-                let send_state = MessageRepository::new(&connection)
-                    .send_state(message)
-                    .await
-                    .unwrap_or_default();
-                let envelope = fetched.map(Envelope::from);
-                Some(Loaded {
-                    body,
-                    content_type,
-                    parts,
-                    envelope,
-                    sender,
-                    send_state,
-                    list_identifier,
-                })
+        crate::search::ask(
+            &self.database,
+            &self.runtime,
+            move |connection| async move { Some(load(&connection, message, offline).await) },
+        )
+    }
+
+    /// Read every one of `messages` on one reader turn, handing each back as
+    /// it is loaded (#1609).
+    ///
+    /// One crossing to the runtime for a whole conversation, where a crossing
+    /// per message was a runtime task, a store turn and a main-context
+    /// wake-up each. Streamed rather than collected, so the first message
+    /// paints without waiting for the thirtieth.
+    fn read_each(&self, messages: Vec<MessageId>) -> async_channel::Receiver<(MessageId, Loaded)> {
+        THREAD_CROSSINGS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let offline = self.offline.get();
+        let (sender, receiver) = async_channel::unbounded();
+        let database = self.database.clone();
+        self.runtime.spawn(async move {
+            let reader = match database.read().await {
+                Ok(reader) => reader,
+                Err(error) => {
+                    tracing::warn!(%error, "no connection to read a conversation with");
+                    return;
+                }
+            };
+            for message in messages {
+                let loaded = load(&reader, message, offline).await;
+                if sender.send((message, loaded)).await.is_err() {
+                    // Nobody is listening: the pane moved on. Stop reading.
+                    return;
+                }
             }
-        })
+        });
+        receiver
     }
 
     /// Read `message` and, when the answer lands back on the main loop, hand
@@ -891,10 +902,19 @@ impl Fill {
         pane: &postio_gtk::conversation::ConversationView,
         rows: Vec<postio_gtk::list::Row>,
     ) {
-        for row in rows {
-            let pane = pane.clone();
-            let fetch = self.fetcher();
-            self.read_then(row.id, move |loaded| {
+        let ids: Vec<MessageId> = rows.iter().map(|row| row.id).collect();
+        let rows: std::collections::HashMap<MessageId, postio_gtk::list::Row> =
+            rows.into_iter().map(|row| (row.id, row)).collect();
+        let answers = self.read_each(ids);
+        let pane = pane.clone();
+        let fetch = self.fetcher();
+        glib::spawn_future_local(async move {
+            // POSTIO-GLIB-SAFE: a channel receive; the reads run on the
+            // runtime in `read_each`.
+            while let Ok((id, loaded)) = answers.recv().await {
+                let Some(row) = rows.get(&id) else {
+                    continue;
+                };
                 // Not here yet. Fetch it, so a conversation the backfill
                 // has not reached fills in as it is opened rather than
                 // staying a stack of empty headers -- `body_arrived`
@@ -920,8 +940,8 @@ impl Fill {
                 if let crate::compose::Body::Ready { body, .. } = loaded.body {
                     pane.set_thread_body(row.id, body);
                 }
-            });
-        }
+            }
+        });
     }
 
     fn fill_reader(&self, reader: &postio_gtk::reader::Reader, message: MessageId) {
@@ -1154,6 +1174,41 @@ impl Fill {
         }
         drop(opened);
         window.show_absent(reason);
+    }
+}
+
+/// Everything a pane needs to draw one message, read on one connection.
+///
+/// The parts are metadata the sync already stored -- `BODYSTRUCTURE`, not
+/// bytes -- so asking for them costs a row read and never a fetch.
+async fn load(connection: &postio_storage::Checkout, message: MessageId, offline: bool) -> Loaded {
+    let body = crate::compose::load_body_or_reason(connection, message, offline).await;
+    let fetched = MessageRepository::new(connection)
+        .get(message)
+        .await
+        .ok()
+        .flatten();
+    let (content_type, parts) = fetched
+        .as_ref()
+        .map(|message| (message.content_type.clone(), message.attachments.clone()))
+        .unwrap_or_default();
+    let sender = fetched
+        .as_ref()
+        .and_then(|message| message.from.first().map(|from| from.address.clone()));
+    let list_identifier = fetched.as_ref().and_then(list_identifier);
+    let send_state = MessageRepository::new(connection)
+        .send_state(message)
+        .await
+        .unwrap_or_default();
+    let envelope = fetched.map(Envelope::from);
+    Loaded {
+        body,
+        content_type,
+        parts,
+        envelope,
+        sender,
+        send_state,
+        list_identifier,
     }
 }
 

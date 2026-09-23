@@ -8,7 +8,7 @@
 
 use postio_model::mailbox::MailboxRole;
 use postio_model::{AccountId, MailboxId};
-use postio_runtime::store::{ListScope, LocalStore, PageRequest};
+use postio_runtime::store::{ListScope, LocalStore, MailStore, PageRequest};
 use postio_storage::seed::{seed_large, thread_seeded_messages};
 use postio_storage::test_support;
 
@@ -295,6 +295,114 @@ async fn paging_a_folder_opens_one_connection_rather_than_one_per_page() {
         "five pages of one folder opened {opened} more connections, each a \
          fresh page cache over the file; the first page's connection should \
          have served them all"
+    );
+}
+
+#[tokio::test]
+async fn the_rows_for_a_changed_message_are_the_page_row_they_replace() {
+    // #1607: a mark-read re-read the whole page to learn one conversation's
+    // new state. `rows_in` answers the same ids with the same row shape the
+    // page uses, so the list can patch the row in place.
+    let database = test_support::temp().await;
+    let report = seed_large(&database, 7, 600).await;
+    let inbox = report.mailbox(MailboxRole::Inbox).expect("an inbox").id;
+    thread_seeded_messages(&database, report.account.id, 4).await;
+    let store = LocalStore::new(&database);
+
+    let page = store
+        .thread_page(request(ListScope::Mailbox(inbox), 0, 50))
+        .await
+        .expect("the first page");
+    let shown = page.rows.first().expect("a row").clone();
+
+    // The representative goes unread.
+    {
+        let connection = database.connect().await.expect("a connection");
+        postio_storage::repository::MessageRepository::new(&connection)
+            .set_flags(
+                shown.representative.id,
+                &postio_model::FlagSet::from_iter(std::iter::empty::<postio_model::Flag>()),
+                postio_storage::repository::FlagSource::Local,
+            )
+            .await
+            .expect("unread");
+    }
+
+    let rows = store
+        .rows_in(ListScope::Mailbox(inbox), vec![shown.representative.id])
+        .await
+        .expect("the rows for one id");
+    let postio_runtime::store::ListRows::Threads(rows) = rows else {
+        panic!("a folder lists conversations, so its rows are conversations");
+    };
+    assert_eq!(rows.len(), 1, "one id, one conversation: {rows:?}");
+    let fresh = &rows[0];
+    assert_eq!(fresh.id, shown.id);
+    assert_eq!(fresh.representative.id, shown.representative.id);
+    assert_eq!(fresh.message_count, shown.message_count);
+    assert_eq!(fresh.participants, shown.participants);
+    assert_eq!(
+        fresh.unread_count,
+        shown.unread_count + u32::from(shown.representative.seen),
+        "the row carries the flag that moved"
+    );
+}
+
+#[tokio::test]
+async fn a_folder_told_about_an_archive_is_not_counted_again() {
+    // #1607: an archive moved the folder's `total_count`, which is the
+    // count's witness, so the next page paid the whole conversation count
+    // again -- 786 ms on a real 60k folder, in front of the first row. Told
+    // which messages left, the store adjusts the count it holds by the
+    // conversations that actually left and keeps serving it.
+    let database = test_support::temp().await;
+    let report = seed_large(&database, 7, 300).await;
+    let inbox = report.mailbox(MailboxRole::Inbox).expect("an inbox").id;
+    let elsewhere = report
+        .mailboxes
+        .iter()
+        .find(|mailbox| mailbox.id != inbox)
+        .expect("another folder")
+        .id;
+    // Conversations of one, so archiving any row's message removes the row.
+    thread_seeded_messages(&database, report.account.id, 1).await;
+    let store = LocalStore::new(&database);
+    let first = store
+        .thread_page(request(ListScope::Mailbox(inbox), 0, 50))
+        .await
+        .expect("a page");
+    let alone = first
+        .rows
+        .iter()
+        .find(|row| row.message_count == 1)
+        .expect("a conversation of one on the first page")
+        .representative
+        .id;
+    {
+        let connection = database.connect().await.expect("a connection");
+        postio_storage::repository::MessageRepository::new(&connection)
+            .move_to(&[alone], elsewhere)
+            .await
+            .expect("archived");
+    }
+    store.note_removed(inbox, vec![alone]);
+
+    let before = postio_runtime::store::folders_counted();
+    let after = store
+        .thread_page(request(ListScope::Mailbox(inbox), 0, 50))
+        .await
+        .expect("a page after the archive");
+    assert_eq!(
+        postio_runtime::store::folders_counted() - before,
+        0,
+        "the folder was told what left and counted itself again anyway"
+    );
+    assert_eq!(
+        after.total,
+        first.total - 1,
+        "the archived row is still counted: {} then {}",
+        first.total,
+        after.total
     );
 }
 
