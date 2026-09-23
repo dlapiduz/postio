@@ -352,6 +352,19 @@ impl<T: ListRow> ListWindow<T> {
         into.push(page);
     }
 
+    /// A page an event asked for is on its way: remember it, and say
+    /// whether it was already (#1607). A scroll's asks go through
+    /// [`Self::row_at`], which remembers its own; this is for the feed's,
+    /// so a change and a reload in one turn cost one read of the page.
+    pub fn note_pending(&mut self, page: u32) -> bool {
+        self.pending.insert(page)
+    }
+
+    /// Whether `page` is on its way, from whichever ask.
+    pub fn is_pending(&self, page: u32) -> bool {
+        self.pending.contains(&page)
+    }
+
     /// Give up on a page whose fetch failed, so it can be asked for again.
     ///
     /// [`want`](Self::want) refuses to ask twice for a page already on its
@@ -601,6 +614,22 @@ mod tests {
     /// delivery, for a test that does not care about staleness.
     fn deliver_fresh(window: &mut ListWindow<Fixture>, page: u32, total: u32) -> Delivered {
         window.deliver(window.generation(), page, page_rows(page, total))
+    }
+
+    #[test]
+    fn a_page_asked_for_by_an_event_stays_pending_until_it_lands() {
+        // #1607: a change and a reload in one main-loop turn both asked for
+        // the same page, and nothing remembered the first ask. A page an
+        // event asks for is pending like one a scroll asks for, and asking
+        // again while it is on its way is answered no.
+        let mut window: ListWindow<Fixture> = ListWindow::new();
+        window.reset(120);
+        assert!(!window.is_pending(1));
+        assert!(window.note_pending(1), "the first ask is new");
+        assert!(!window.note_pending(1), "the second ask is not");
+        assert!(window.is_pending(1));
+        deliver_fresh(&mut window, 1, 120);
+        assert!(!window.is_pending(1), "delivery settles it");
     }
 
     #[test]

@@ -27,7 +27,7 @@ use gtk::gdk;
 use gtk::prelude::*;
 use postio_core::Event;
 use postio_gtk::feed::{
-    MailboxFuture, MailboxSource, MessageSource, Page, PageFuture, PageRequest,
+    MailboxFuture, MailboxSource, MessageSource, Page, PageFuture, PageRequest, RowsFuture,
 };
 use postio_gtk::list::Row;
 use postio_gtk::window::Window;
@@ -75,6 +75,35 @@ impl MailboxSource for Mailbox120 {
 }
 
 impl MessageSource for Mailbox120 {
+    fn rows_in(&self, _scope: postio_model::ListScope, ids: Vec<MessageId>) -> RowsFuture {
+        let read = self.read.get();
+        Box::pin(async move {
+            Ok(ids
+                .into_iter()
+                .filter(|id| (1..=i64::from(TOTAL)).contains(&id.get()))
+                .map(|id| {
+                    let position = id.get() - 1;
+                    Row {
+                        id,
+                        thread: None,
+                        from: None,
+                        subject: Some(format!("message {position}")),
+                        preview: None,
+                        received_at: Utc.timestamp_opt(1_700_000_000 - position, 0).unwrap(),
+                        seen: read == Some(id.get()),
+                        flagged: false,
+                        answered: false,
+                        send_state: None,
+                        send_at: None,
+                        has_attachments: false,
+                        thread_count: 1,
+                        participants: Vec::new(),
+                    }
+                })
+                .collect())
+        })
+    }
+
     fn fetch(&self, request: PageRequest) -> PageFuture {
         let read = self.read.get();
         Box::pin(async move {
@@ -150,6 +179,7 @@ pub fn marking_a_message_read_does_not_rebuild_the_list() {
     }
     let emissions = postio_gtk::list::emissions();
     let widgets = postio_gtk::row::rows_built();
+    let fetches = postio_gtk::feed::fetches();
 
     // The user opens the third message.
     let opened = MessageId::new(3);
@@ -179,6 +209,14 @@ pub fn marking_a_message_read_does_not_rebuild_the_list() {
         0,
         "reading one message rebuilt row widgets; the rows were already there \
          and only their contents changed"
+    );
+    // #1607: the flag came with an id, and the source can answer an id with
+    // a row; re-reading the whole page to learn one row is the cost this
+    // guards against.
+    assert_eq!(
+        postio_gtk::feed::fetches() - fetches,
+        0,
+        "reading one message re-read a page of rows to learn one flag"
     );
 }
 
