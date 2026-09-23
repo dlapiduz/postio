@@ -197,7 +197,25 @@ pub fn sections(mailboxes: &[Mailbox]) -> (Vec<Mailbox>, Vec<Mailbox>) {
     let mut special: Vec<Mailbox> = Vec::new();
     let mut ordinary: Vec<Mailbox> = Vec::new();
 
-    for mailbox in mailboxes.iter().filter(|m| m.selectable) {
+    // An unselectable folder keeps its row **when it holds one**. A
+    // `\Noselect` container opens onto nothing, so dropping it looks right —
+    // and it takes its children with it, because they are neither roots nor
+    // children of anything still listed, and so match no predicate a frontend
+    // builds its tree from. GTK has kept them since it had a tree, in these
+    // words: the row stays "so the hierarchy it organizes can be opened even
+    // though it cannot be opened as a mailbox".
+    //
+    // `selectable` crosses to the frontend, which is what keeps the row
+    // itself from being picked.
+    let holds_a_folder = |container: &Mailbox| {
+        mailboxes
+            .iter()
+            .any(|other| other.parent_id == Some(container.id))
+    };
+    for mailbox in mailboxes
+        .iter()
+        .filter(|m| m.selectable || holds_a_folder(m))
+    {
         // One row per role (#501): an account that has passed through more
         // than one client holds two folders per role, and a special section
         // that renamed both to the role drew `Sent, Sent, Archive, Archive`.
@@ -262,17 +280,37 @@ pub fn display_name(mailbox: &Mailbox, among: &[Mailbox]) -> String {
         // to exactly one row, or the sidebar reads `Sent, Sent`.
         return mailbox.name.clone();
     }
-    match mailbox.role {
-        MailboxRole::Inbox => "Inbox".to_string(),
-        MailboxRole::Flagged => "Flagged".to_string(),
-        MailboxRole::Snoozed => "Snoozed".to_string(),
-        MailboxRole::Drafts => "Drafts".to_string(),
-        MailboxRole::Outbox => "Outbox".to_string(),
-        MailboxRole::Sent => "Sent".to_string(),
-        MailboxRole::Archive => "Archive".to_string(),
-        MailboxRole::Junk => "Junk".to_string(),
-        MailboxRole::Trash => "Trash".to_string(),
-        MailboxRole::Regular => mailbox.name.clone(),
+    match role_name(mailbox.role) {
+        Some(name) => name.to_string(),
+        None => mailbox.name.clone(),
+    }
+}
+
+/// What Postio calls a role, with no folder in hand.
+///
+/// `None` for `Regular`, which has no name of its own — an ordinary folder is
+/// called what the server calls it.
+///
+/// Split out of [`display_name`] because a role needs a name in one place
+/// where there is no folder to ask: saying *"this account has no Drafts
+/// folder"* is a sentence about a role precisely when no such folder exists.
+/// A frontend writing its own list of role names is a second answer to "what
+/// is this row called", and the macOS one had exactly that — including for
+/// the twin case (#501), which it got wrong: a second folder the server
+/// reports as `Sent` is an ordinary folder called whatever the server calls
+/// it, and Swift's copy called both of them "Sent".
+pub fn role_name(role: MailboxRole) -> Option<&'static str> {
+    match role {
+        MailboxRole::Inbox => Some("Inbox"),
+        MailboxRole::Flagged => Some("Flagged"),
+        MailboxRole::Snoozed => Some("Snoozed"),
+        MailboxRole::Drafts => Some("Drafts"),
+        MailboxRole::Outbox => Some("Outbox"),
+        MailboxRole::Sent => Some("Sent"),
+        MailboxRole::Archive => Some("Archive"),
+        MailboxRole::Junk => Some("Junk"),
+        MailboxRole::Trash => Some("Trash"),
+        MailboxRole::Regular => None,
     }
 }
 
@@ -627,8 +665,8 @@ mod tests {
     }
 
     #[test]
-    fn an_unselectable_container_gets_no_row() {
-        // A `\Noselect` folder holds a hierarchy and opens onto nothing.
+    fn an_unselectable_container_holding_nothing_gets_no_row() {
+        // A `\Noselect` folder that organizes nothing opens onto nothing.
         let mut mailboxes = two_clients();
         let mut container = folder(11, "Archives/2024", MailboxRole::Regular);
         container.selectable = false;
@@ -640,7 +678,291 @@ mod tests {
                 .iter()
                 .chain(&ordinary)
                 .any(|m| m.path == "Archives/2024"),
-            "a row that cannot be opened wastes a keystroke"
+            "a row that cannot be opened and holds nothing wastes a keystroke"
         );
+    }
+
+    #[test]
+    fn an_unselectable_container_holding_folders_keeps_its_row() {
+        // And this is why. Dropping it dropped its children too: they are
+        // neither roots (they have a parent) nor children of anything listed
+        // (their parent is not in the list), so `Archives/2024/Q1` matched no
+        // predicate and was drawn nowhere at all — unopenable by any means,
+        // since there is no folder finder either.
+        //
+        // GTK has kept these since it had a tree, in those words: the row
+        // stays "so the hierarchy it organizes can be opened even though it
+        // cannot be opened as a mailbox". `selectable` still crosses, so a
+        // frontend knows not to let the row itself be picked.
+        let mut mailboxes = two_clients();
+        let mut container = folder(11, "Archives/2024", MailboxRole::Regular);
+        container.selectable = false;
+        let mut child = folder(12, "Archives/2024/Q1", MailboxRole::Regular);
+        child.parent_id = Some(container.id);
+        mailboxes.push(container);
+        mailboxes.push(child);
+
+        let (special, ordinary) = sections(&mailboxes);
+        let paths: Vec<&str> = special
+            .iter()
+            .chain(&ordinary)
+            .map(|m| m.path.as_str())
+            .collect();
+        assert!(
+            paths.contains(&"Archives/2024"),
+            "the container went and took its children's only route with it: {paths:?}"
+        );
+        assert!(paths.contains(&"Archives/2024/Q1"), "{paths:?}");
+    }
+}
+
+/// What the account is doing, for the sidebar's footer.
+///
+/// States rather than a boolean pair, because they are ranked: offline
+/// outranks everything (nothing can be happening), a failure outranks a time
+/// from when it last worked, and syncing outranks idle.
+///
+/// Not `Copy`: [`Activity::Failing`] carries the reason, and a reason is a
+/// sentence rather than a flag.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Activity {
+    /// The machine has no connection.
+    Offline,
+    /// A pass is running now.
+    Syncing,
+    /// The account cannot sign in, and why.
+    ///
+    /// **Not the same as offline.** Offline is the machine's; this is the
+    /// account's, and it is the one that needs a person. It was missing here
+    /// entirely, so a macOS footer had three states and an expired password
+    /// read as `idle · synced 40s` — forever, and the longer it went the more
+    /// settled it looked. `crate::status::SyncStatus`, the two-line form GTK
+    /// draws, has said the rule from the start: *the reason wins, because
+    /// "last sync 4h" is not what someone needs to read when the password has
+    /// expired.*
+    Failing {
+        /// What the server or the keyring said, phrased for the user.
+        reason: String,
+    },
+    /// Nothing is running, which is the ordinary state.
+    Idle,
+}
+
+/// What a failing account's footer says, by what kind of failure it is.
+///
+/// One sentence per reason, here rather than in a frontend, because this is
+/// the line somebody reads when their mail has stopped arriving — and two
+/// platforms phrasing "your password was rejected" differently is two
+/// products. `postio_core::FailureReason` is a *classification*; this is the
+/// wording for it.
+///
+/// Short, and about what to do rather than about what happened. A footer is
+/// one column wide and is glanced at: the place for the server's own text is
+/// the notice, which carries `Event::Error` verbatim.
+pub fn failing_because(reason: postio_core::FailureReason) -> &'static str {
+    use postio_core::FailureReason as Why;
+    match reason {
+        // Never phrased as "wrong password": an app-specific password, an
+        // expired OAuth grant and a revoked one all land here, and only one
+        // of those is a password anybody typed.
+        Why::Auth => "sign-in needed",
+        // Recovers on its own, so it says what is true rather than asking for
+        // anything. A footer demanding action for something the supervisor is
+        // already retrying is a footer people learn to ignore.
+        Why::Network => "cannot reach the server",
+        // The connection worked and the work was refused, which is the
+        // server's to explain — the notice carries what it said.
+        Why::Server => "the server refused",
+        // Something about how this account is set up. The settings window is
+        // where it is fixed, and saying so is more use than naming the field.
+        Why::Config => "check this account's settings",
+    }
+}
+
+/// The sidebar's footer line: `idle · synced 40s` (canvas screen 25).
+///
+/// `since` is how many seconds ago the last pass *completed*, or `None` for a
+/// store that has never finished one — or, today, for one whose passes were
+/// never recorded. `has_mail` is what tells those two apart.
+///
+/// Two facts, and the order matters. The state comes first because it is what
+/// a glance is for — is anything wrong — and the time second because it is
+/// what answers the follow-up. While a pass is running there is no time at
+/// all: "synced 40s ago" during a sync is a report on the previous pass being
+/// read as a report on this one, which is the shape of the bug that made the
+/// GTK footer say "0% synced" and "never synced" at once.
+///
+/// This is the one-line form, and it is the one that crosses the FFI: the
+/// frontend already holds both facts and hands them over as an [`Activity`]
+/// and a count of seconds, which is what a boundary can carry.
+/// [`crate::status::SyncStatus`] — the two-line footer GTK draws, with the
+/// byte clause the column has no room for — holds an `Instant` and a whole
+/// `ConnectionState`, and neither of those crosses.
+///
+/// So there are two renderings of the same two facts in this crate, and that
+/// is the half of #1266 still open: the words each one chooses agree because
+/// they are both here, but nothing makes them agree. The footer that says
+/// `idle · synced 40s` and the one that says `idle · imap` are still two
+/// answers to "what is this account doing", which is the drift ADR 0019 Q6 is
+/// about. Collapsing them is design work — the shapes do not line up — and
+/// wants an issue rather than a merge.
+pub fn status(activity: Activity, since: Option<u64>, has_mail: bool) -> String {
+    match activity {
+        // Nothing can be happening, so nothing else on the line is worth
+        // saying. "idle" here would be a claim that nothing needs doing.
+        Activity::Offline => "offline".to_owned(),
+        Activity::Syncing => "syncing".to_owned(),
+        // The reason, and nothing else. A time beside it would be answering
+        // the question nobody is asking: how long ago it last worked is not
+        // what somebody needs while it is not working.
+        Activity::Failing { reason } => reason.clone(),
+        Activity::Idle => match (since, has_mail) {
+            (Some(seconds), _) => format!("idle · synced {}", elapsed(seconds)),
+            // The state a new account is in for the whole of its first pass,
+            // and the one most likely to be read as broken if the line just
+            // said "idle".
+            (None, false) => "idle · never synced".to_owned(),
+            // A store full of mail and no recorded time. "Never synced"
+            // beside five thousand archived messages is a claim the store
+            // itself contradicts, so the line says only what is true: nothing
+            // is happening.
+            //
+            // This was the *normal* case until #1281 — nothing in production
+            // wrote `last_synced_at` at all — and is now the narrow one: a
+            // store whose passes all happened before the engine started
+            // recording them. One completed sync moves it to the ordinary
+            // branch above.
+            (None, true) => "idle".to_owned(),
+        },
+    }
+}
+
+/// How long ago, in the shortest unit that is still true: `40s`, `12m`, `3h`,
+/// `2d`.
+///
+/// Truncating rather than rounding. A footer is glanced at, and "synced 1h"
+/// three minutes after a pass would be a small lie told every time the window
+/// is looked at.
+fn elapsed(seconds: u64) -> String {
+    match seconds {
+        s if s < 60 => format!("{s}s"),
+        s if s < 3600 => format!("{}m", s / 60),
+        s if s < 86_400 => format!("{}h", s / 3600),
+        s => format!("{}d", s / 86_400),
+    }
+}
+
+#[cfg(test)]
+mod status_tests {
+    use super::*;
+
+    #[test]
+    fn an_idle_account_says_how_long_ago_it_synced() {
+        // The canvas' footer: a state, then the last time anything happened.
+        assert_eq!(status(Activity::Idle, Some(40), true), "idle · synced 40s");
+        assert_eq!(
+            status(Activity::Idle, Some(12 * 60), true),
+            "idle · synced 12m"
+        );
+        assert_eq!(
+            status(Activity::Idle, Some(3 * 3600), true),
+            "idle · synced 3h"
+        );
+        assert_eq!(
+            status(Activity::Idle, Some(2 * 86_400), true),
+            "idle · synced 2d"
+        );
+    }
+
+    #[test]
+    fn a_store_that_has_never_synced_says_so_rather_than_saying_nothing() {
+        // The state a new account is in for its whole first pass, and the one
+        // most likely to be read as "broken" if the line just says "idle".
+        assert_eq!(status(Activity::Idle, None, false), "idle · never synced");
+    }
+
+    #[test]
+    fn a_store_full_of_mail_never_claims_it_has_never_synced() {
+        // Read off the running application: five thousand archived messages
+        // under a footer reading "never synced", because nothing wrote
+        // `last_synced_at` (#1281). The engine records it now; this stays for
+        // a store whose passes all predate that, and says only the half that
+        // is true rather than the claim the store itself contradicts.
+        assert_eq!(status(Activity::Idle, None, true), "idle");
+    }
+
+    #[test]
+    fn syncing_says_syncing_and_does_not_claim_a_time() {
+        // While a pass is running, "synced 40s ago" is about the *previous*
+        // pass and reads as a report on this one.
+        assert_eq!(status(Activity::Syncing, Some(40), true), "syncing");
+    }
+
+    #[test]
+    fn offline_is_the_state_that_outranks_the_others() {
+        // "idle" while the machine has no connection is a claim that nothing
+        // needs doing, which is the opposite of what is true.
+        assert_eq!(status(Activity::Offline, Some(40), true), "offline");
+        assert_eq!(status(Activity::Offline, None, false), "offline");
+    }
+
+    #[test]
+    fn a_sync_that_has_only_just_happened_still_reads_as_seconds() {
+        assert_eq!(status(Activity::Idle, Some(0), true), "idle · synced 0s");
+    }
+    // -- an account that cannot sign in (#1585) ---------------------------
+
+    #[test]
+    fn a_failing_account_says_why_and_not_when_it_last_worked() {
+        // "The reason wins": how long ago it last synced is not what somebody
+        // needs to read while the password is wrong, and a line that says
+        // `idle · synced 40s` over a failing account reads more settled the
+        // longer it goes on.
+        assert_eq!(
+            status(
+                Activity::Failing {
+                    reason: "the server rejected that password".to_owned()
+                },
+                Some(40),
+                true
+            ),
+            "the server rejected that password"
+        );
+    }
+
+    #[test]
+    fn failing_outranks_a_time_and_offline_outranks_failing() {
+        // Offline is the machine's and failing is the account's: with no
+        // connection at all, "the server rejected that password" is a claim
+        // about a conversation that did not happen.
+        assert_eq!(status(Activity::Offline, Some(40), true), "offline");
+        assert_ne!(
+            status(
+                Activity::Failing {
+                    reason: "expired".to_owned()
+                },
+                Some(40),
+                true
+            ),
+            "idle · synced 40s"
+        );
+    }
+
+    #[test]
+    fn every_failure_has_a_sentence_and_none_of_them_blames_a_password() {
+        use postio_core::FailureReason as Why;
+        for reason in [Why::Auth, Why::Network, Why::Server, Why::Config] {
+            let said = failing_because(reason);
+            assert!(!said.is_empty(), "{reason:?} says nothing");
+            // An app-specific password, an expired grant and a revoked one
+            // all classify as `Auth`, and only one of them is a password
+            // anybody typed. A footer that says "wrong password" to somebody
+            // whose OAuth grant expired sends them to change a password that
+            // is fine.
+            assert!(
+                !said.to_lowercase().contains("wrong password"),
+                "{reason:?} blames a password: {said}"
+            );
+        }
     }
 }

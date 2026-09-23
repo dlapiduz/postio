@@ -39,7 +39,7 @@ use crate::document::{Block, ContentId, Document, HeadingLevel, Href, Inline};
 /// Elements whose *contents* go with them.
 ///
 /// Everything else unknown is unwrapped, keeping its text.
-const DROPPED: [&str; 10] = [
+pub(crate) const DROPPED: [&str; 10] = [
     "script", "style", "iframe", "object", "embed", "svg", "math", "noscript", "template",
     // Not a hazard like the rest of this list — chrome. A reply's quote is
     // wrapped in `<details><summary>Quoted message</summary>` by
@@ -89,7 +89,7 @@ fn flush(blocks: &mut Vec<Block>, loose: &mut Vec<Inline>) {
     }
 }
 
-fn name_of(handle: &Handle) -> Option<String> {
+pub(crate) fn name_of(handle: &Handle) -> Option<String> {
     match &handle.data {
         NodeData::Element { name, .. } => Some(name.local.to_string()),
         _ => None,
@@ -205,7 +205,7 @@ fn ends_with_space(loose: &[Inline]) -> bool {
 }
 
 /// The block this element is, if it is one.
-fn block_for(handle: &Handle, name: &str) -> Option<Block> {
+pub(crate) fn block_for(handle: &Handle, name: &str) -> Option<Block> {
     match name {
         "p" => Some(Block::Paragraph(inlines_of(handle))),
         "h1" | "h2" | "h3" | "h4" | "h5" | "h6" => {
@@ -312,7 +312,7 @@ fn quoted_halves(handle: &Handle) -> (String, String) {
 }
 
 /// The inline this element is, if it is one.
-fn inline_for(handle: &Handle, name: &str) -> Option<Inline> {
+pub(crate) fn inline_for(handle: &Handle, name: &str) -> Option<Inline> {
     match name {
         "strong" | "b" => Some(Inline::Strong(inlines_of(handle))),
         "em" | "i" => Some(Inline::Emphasis(inlines_of(handle))),

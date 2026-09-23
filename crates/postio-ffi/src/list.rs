@@ -40,6 +40,25 @@ pub enum ScopeFfi {
         /// The account.
         account: i64,
     },
+    /// The sidebar's "Outbox" view: drafts whose send is under way.
+    ///
+    /// Here because this enum is the ABI mirror of `ListScope` and a variant
+    /// missing from it is a view the second frontend cannot select at all —
+    /// which was true of this one, so a macOS user had no way to see mail
+    /// that was on its way or had failed to leave.
+    Outbox {
+        /// The account.
+        account: i64,
+    },
+    /// One conversation, wherever its messages are filed.
+    ///
+    /// Not a narrowing of a mailbox: a thread routinely spans folders, and a
+    /// pane that filtered the list's own resident rows would show only the
+    /// part of the conversation that happened to be paged in.
+    Thread {
+        /// The conversation.
+        thread: i64,
+    },
 }
 
 impl From<ScopeFfi> for ListScope {
@@ -50,6 +69,8 @@ impl From<ScopeFfi> for ListScope {
             ScopeFfi::Unified => ListScope::Unified,
             ScopeFfi::Flagged { account } => ListScope::Flagged(account.into()),
             ScopeFfi::Snoozed { account } => ListScope::Snoozed(account.into()),
+            ScopeFfi::Outbox { account } => ListScope::Outbox(account.into()),
+            ScopeFfi::Thread { thread } => ListScope::Thread(thread.into()),
         }
     }
 }
@@ -85,6 +106,13 @@ pub struct RowFfi {
     pub is_thread: bool,
     /// Who it is from, already rendered for display.
     pub from: Option<String>,
+    /// The sender's address, unrendered: `hello@pinepoint-radon.example`.
+    ///
+    /// Beside [`from`](Self::from) rather than folded into it, because the
+    /// two are drawn in different weights on different lines — and because a
+    /// per-sender privacy decision ("always allow this address") is made
+    /// about *this*, never about a display name that anyone can choose.
+    pub from_address: Option<String>,
     /// The two letters the avatar chip shows for the sender.
     ///
     /// Derived here rather than in the frontend, from
@@ -118,6 +146,16 @@ pub struct RowFfi {
     pub has_attachments: bool,
     /// How many messages the conversation holds; the badge appears above one.
     pub thread_count: u32,
+    /// Who is in the conversation, elided: `Tessa, Mara, Pinepoint`.
+    ///
+    /// Empty on a message row, and that is how the two are told apart — the
+    /// same rule `postio_gtk::list::Row` states about its own participants.
+    /// Already shortened here rather than crossing as a list of addresses,
+    /// because how a crowd of names is shortened is a decision both frontends
+    /// have to make the same way (`postio_ui::conversation::participants`),
+    /// and the row is the only thing that knows how much room there is for
+    /// what is left.
+    pub participants: String,
 }
 
 impl ListRow for RowFfi {
@@ -136,6 +174,23 @@ impl ListRow for RowFfi {
     }
 }
 
+impl postio_ui::conversation::ConversationMessage for RowFfi {
+    fn seen(&self) -> bool {
+        self.seen
+    }
+
+    fn received_at(&self) -> chrono::DateTime<chrono::Utc> {
+        // A row carries seconds because that is what crosses a C ABI; the
+        // rules want a time. An unrepresentable stamp sorts as the epoch
+        // rather than panicking a frontend's redraw.
+        chrono::DateTime::from_timestamp(self.received_at, 0).unwrap_or_default()
+    }
+
+    fn ordinal(&self) -> i64 {
+        self.id
+    }
+}
+
 impl From<MessageSummary> for RowFfi {
     fn from(row: MessageSummary) -> Self {
         RowFfi {
@@ -149,6 +204,7 @@ impl From<MessageSummary> for RowFfi {
             // same message (#1150) -- on a field whose doc comment says
             // "already rendered for display".
             initials: postio_ui::row::initials(row.from.as_ref()),
+            from_address: row.from.as_ref().map(|address| address.address.clone()),
             from: row.from.map(|address| address.display().to_string()),
             subject: row.subject,
             preview: row.preview,
@@ -156,10 +212,20 @@ impl From<MessageSummary> for RowFfi {
             seen: row.seen,
             flagged: row.flagged,
             answered: row.answered,
-            send_state: row.send_state.map(|state| state.as_str().to_owned()),
+            // The reader's word, not the state machine's. `as_str` is the
+            // database's spelling — `queued`, `failed`, `unconfirmed` — and
+            // a frontend drawing those would be a second vocabulary for the
+            // same five states, which is what this function exists to
+            // prevent. "Not sent" rather than "failed" because what matters
+            // is that it did not go (#1487); "Not confirmed" because ADR
+            // 0021 Decision 3 says nobody can tell whether it arrived.
+            send_state: row
+                .send_state
+                .map(|state| postio_ui::row::send_state_word(state).to_owned()),
             has_attachments: row.has_attachments,
             thread_count: row.thread_count,
             is_thread: false,
+            participants: String::new(),
         }
     }
 }
@@ -183,6 +249,7 @@ impl From<ThreadSummary> for RowFfi {
         base.seen = row.unread_count == 0;
         base.thread_count = row.message_count;
         base.is_thread = true;
+        base.participants = postio_ui::conversation::participants(&row.participants);
         base
     }
 }

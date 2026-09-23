@@ -169,13 +169,29 @@ import Testing
         }
     }
 
-    @Test func turningHintsOffGivesTheListTheSpaceBack() {
+    @Test func theHintsCostTheListNoHeightAtAll() {
+        // They used to cost a whole line of *every* row so that one row could
+        // use it — a third of the height of the mail on screen, empty
+        // everywhere the cursor was not. Seen by running the application and
+        // holding it beside the canvas; every test passed, because they only
+        // ever compared the densities to each other.
         for density in [DensityFfi.airy, .comfortable, .compact] {
             #expect(
                 MessageRowCell.preferredHeight(for: density, reservingHints: false)
-                    < MessageRowCell.preferredHeight(for: density, reservingHints: true)
+                    == MessageRowCell.preferredHeight(for: density, reservingHints: true),
+                "\(density) still pays for a line it draws once"
             )
         }
+    }
+
+    @Test func aRowIsThreeLinesAndItsPaddingAndNothingElse() {
+        // The absolute check the relative ones could not make. A row is the
+        // sender, the subject, the snippet, the gaps between them and the
+        // padding — and at 13pt that is under 80pt, not the 97 it was.
+        #expect(MessageRowCell.preferredHeight(for: .airy) < 80)
+        #expect(MessageRowCell.preferredHeight(for: .comfortable) < 72)
+        // Compact drops the snippet, so it is two lines.
+        #expect(MessageRowCell.preferredHeight(for: .compact) < 50)
     }
 }
 
@@ -211,4 +227,249 @@ import Testing
         controller.showCursor(on: 2)
         #expect(controller.repaintedForHintsForTesting == [2])
     }
+
+    // -- a conversation row names the people in it (#1265) -----------------
+
+    @Test func aThreadRowNamesTheConversationRatherThanItsNewestSender() {
+        // Every row in a folder stands for a conversation (ADR 0015), and the
+        // canvas draws `Tessa Vaughn, Mara, Pinepoint` where a message row
+        // draws one name. Drawing only the representative's sender loses the
+        // one fact that tells two threads on the same subject apart.
+        let row = RowFfi(
+            id: 1,
+            thread: 7,
+            isThread: true,
+            from: "Pinepoint Radon",
+            fromAddress: "hello@pinepoint-radon.example",
+            initials: "TV",
+            subject: "Radon reduction",
+            preview: "I am following up",
+            receivedAt: 1_770_000_000,
+            seen: false,
+            flagged: false,
+            answered: false,
+            // A received message is in no send state. `draft: Bool` became
+            // `sendState: String?` when a row learned to say *which* state a
+            // message it is sending is in.
+            sendState: nil,
+            hasAttachments: false,
+            threadCount: 8,
+            participants: "Tessa, Mara, Pinepoint"
+        )
+
+        let presentation = RowPresentation(row: row)
+
+        #expect(presentation.sender == "Tessa, Mara, Pinepoint")
+        #expect(presentation.threadBadge == "8")
+    }
+
+    @Test func aMessageRowStillNamesItsSender() {
+        // A query view lists messages, not conversations, and a message row
+        // carries no participants — the discriminator, not an empty field to
+        // fall through.
+        let row = RowFfi(
+            id: 1,
+            thread: 7,
+            isThread: false,
+            from: "Pinepoint Radon",
+            fromAddress: "hello@pinepoint-radon.example",
+            initials: "PR",
+            subject: "Radon reduction",
+            preview: "I am following up",
+            receivedAt: 1_770_000_000,
+            seen: true,
+            flagged: false,
+            answered: false,
+            // A received message is in no send state. `draft: Bool` became
+            // `sendState: String?` when a row learned to say *which* state a
+            // message it is sending is in.
+            sendState: nil,
+            hasAttachments: false,
+            threadCount: 8,
+            participants: ""
+        )
+
+        #expect(RowPresentation(row: row).sender == "Pinepoint Radon")
+    }
+}
+
+/// The selected row is Postio's, not AppKit's (user report: "selecting a
+/// message looks off").
+///
+/// The design system says *"airy rows, a 3px steel edge when selected"*, and
+/// GTK has drawn that since it had rows. macOS drew `NSTableView`'s
+/// system-blue fill, because `generate_swift` emitted no selection colour at
+/// all — the row-state tokens are *derived* from `:root` rather than declared
+/// in it, so the emitter's loop never saw them and there was nothing to draw
+/// with.
+@MainActor
+@Suite struct SelectedRowTests {
+    @Test func theSelectionTokensReachedSwift() {
+        // The gap itself. Before this they did not exist on this platform,
+        // and no amount of correct drawing code could have helped.
+        #expect(PostioTokens.colorSelectedBg.alphaComponent > 0)
+        #expect(PostioTokens.colorSelectedStrongBg.alphaComponent > 0)
+    }
+
+    @Test func theSelectedTintIsNotTheSystemHighlight() {
+        // The point of the report: what was drawn was macOS's blue, which is
+        // not the canvas's steel and never will be.
+        let ours = PostioTokens.colorSelectedBg.usingColorSpace(.sRGB)
+        let system = NSColor.selectedContentBackgroundColor.usingColorSpace(.sRGB)
+
+        #expect(ours != system)
+    }
+
+    @Test func theEdgeIsTheThreePixelsTheCanvasNames() {
+        #expect(MessageRowView.edge == 3)
+    }
+
+    /// The same measurement in both appearances.
+    ///
+    /// `colorSelectedBg` is a different colour in each — a 12% tint of the
+    /// accent in light, the accent's deep step in dark — so an edge that is
+    /// visible in one and not the other is a real defect, not a test detail.
+    private func edgeIsVisible(in appearance: NSAppearance.Name) -> Bool {
+        let view = MessageRowView(frame: NSRect(x: 0, y: 0, width: 200, height: 40))
+        view.selectionHighlightStyle = .regular
+        view.isSelected = true
+
+        let image = NSImage(size: view.bounds.size)
+        image.lockFocus()
+        NSAppearance(named: appearance)?.performAsCurrentDrawingAppearance {
+            // An opaque backdrop first, because that is what a person sees:
+            // in the light appearance the tint is a **12% alpha** accent, so
+            // its RGB is identical to the edge's and only its alpha differs.
+            // Measured against transparency the two look the same colour and
+            // the edge vanishes — which is a fact about reading a bitmap, not
+            // about the row.
+            PostioTokens.colorSurface.setFill()
+            view.bounds.fill()
+            view.drawSelection(in: view.bounds)
+        }
+        image.unlockFocus()
+
+        guard let bitmap = NSBitmapImageRep(data: image.tiffRepresentation!),
+            let edge = bitmap.colorAt(x: 1, y: 20)?.usingColorSpace(.sRGB),
+            let body = bitmap.colorAt(x: 100, y: 20)?.usingColorSpace(.sRGB)
+        else { return false }
+        let dr = edge.redComponent - body.redComponent
+        let dg = edge.greenComponent - body.greenComponent
+        let db = edge.blueComponent - body.blueComponent
+        return (dr * dr + dg * dg + db * db).squareRoot() > 0.1
+    }
+
+    @Test func theEdgeIsVisibleInBothAppearances() {
+        #expect(edgeIsVisible(in: .darkAqua), "no edge in dark")
+        #expect(edgeIsVisible(in: .aqua), "no edge in light")
+    }
+
+    @Test func aRowDrawsItsOwnSelectionRatherThanInheritingOne() {
+        // `drawSelection` is overridden, so AppKit's fill never runs. Asserted
+        // by drawing into a bitmap and finding the accent edge down the
+        // leading side — the thing a person actually sees.
+        let view = MessageRowView(frame: NSRect(x: 0, y: 0, width: 200, height: 40))
+        view.selectionHighlightStyle = .regular
+        view.isSelected = true
+
+        // Pinned, and this is the whole reason the test flaked on CI: the
+        // selection tint is an `NSColor` with a dynamic provider, so it
+        // resolves against whatever drawing appearance happens to be current.
+        // On a desktop that is the app's; in a headless test process it is
+        // whatever AppKit defaults to, and the tint and the accent can land
+        // close enough together that no edge is measurable. Naming the
+        // appearance makes the composite the same on any machine.
+        let image = NSImage(size: view.bounds.size)
+        image.lockFocus()
+        NSAppearance(named: .darkAqua)?.performAsCurrentDrawingAppearance {
+            PostioTokens.colorSurface.setFill()
+            view.bounds.fill()
+            view.drawSelection(in: view.bounds)
+        }
+        image.unlockFocus()
+
+        let bitmap = NSBitmapImageRep(data: image.tiffRepresentation!)!
+        let edge = bitmap.colorAt(x: 1, y: 20)!.usingColorSpace(.sRGB)!
+        let body = bitmap.colorAt(x: 100, y: 20)!.usingColorSpace(.sRGB)!
+
+        // Two things, and neither pins an exact pixel: the edge composites
+        // over the tint beneath it, and an assertion on the resulting value
+        // would break the next time either colour is retuned — which is
+        // precisely what the canvas is *for*.
+        //
+        // What must be true is that there is an edge at all, and that it is
+        // the accent rather than the system's. Distance is measured against
+        // both candidates and the nearer one has to be ours.
+        func distance(_ a: NSColor, _ b: NSColor) -> CGFloat {
+            let dr = a.redComponent - b.redComponent
+            let dg = a.greenComponent - b.greenComponent
+            let db = a.blueComponent - b.blueComponent
+            return (dr * dr + dg * dg + db * db).squareRoot()
+        }
+        let accent = PostioTokens.colorAccent.usingColorSpace(.sRGB)!
+        let system = NSColor.selectedContentBackgroundColor.usingColorSpace(.sRGB)!
+
+        #expect(
+            distance(edge, body) > 0.1,
+            "there is no edge: the leading pixels match the row's fill"
+        )
+        #expect(
+            distance(edge, accent) < distance(edge, system),
+            "the edge is nearer the system highlight than the accent: \(edge)"
+        )
+    }
+    @Test func aDraftsRowSaysWhereItGotTo() {
+        // Before this the row drew nothing for a send state, so a message
+        // that failed to send looked exactly like one still being written —
+        // which is the distinction #1487 is about. The word is the
+        // boundary's (`postio_ui::row::send_state_word`), never composed
+        // here: five states, one vocabulary, and two frontends wording them
+        // apart is what that function exists to stop.
+        let row = RowFfi(
+            id: 1,
+            thread: nil,
+            isThread: false,
+            from: "Ada Lovelace",
+            fromAddress: "ada@example.com",
+            initials: "AL",
+            subject: "The gate",
+            preview: "Six is fine",
+            receivedAt: 1_770_000_000,
+            seen: true,
+            flagged: false,
+            answered: false,
+            sendState: "Not sent",
+            hasAttachments: false,
+            threadCount: 1,
+            participants: ""
+        )
+
+        #expect(RowPresentation(row: row).sendState == "Not sent")
+    }
+
+    @Test func receivedMailSaysNothingAboutSending() {
+        // `nil`, not an empty string: a badge on every row in the inbox
+        // would be a column of nothing that still takes the width.
+        let row = RowFfi(
+            id: 1,
+            thread: nil,
+            isThread: false,
+            from: "Ada Lovelace",
+            fromAddress: "ada@example.com",
+            initials: "AL",
+            subject: "The gate",
+            preview: "Six is fine",
+            receivedAt: 1_770_000_000,
+            seen: true,
+            flagged: false,
+            answered: false,
+            sendState: nil,
+            hasAttachments: false,
+            threadCount: 1,
+            participants: ""
+        )
+
+        #expect(RowPresentation(row: row).sendState == nil)
+    }
+
 }

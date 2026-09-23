@@ -74,6 +74,44 @@ pub async fn execute(
     Some(results)
 }
 
+/// What the result set on screen is made of — the refine chips and the scope
+/// counts (#1157).
+///
+/// Beside [`execute`] and for the same reason its module doc gives: which
+/// narrowings are worth offering is a *product* decision, and two frontends
+/// each choosing four chips out of the same measurements would be offering
+/// two different query languages the first time either copy was edited.
+///
+/// A second pass over the index rather than a field on [`SearchResults`],
+/// because it is a different question — the scope counts ask what
+/// *switching* would find, which cannot be measured inside the scope you are
+/// already in — and because a run that only draws a list should not pay for
+/// it.
+///
+/// `None` when the counts could not be taken. The chips are an offer, and an
+/// offer that cannot be made is simply not made.
+pub async fn facets(
+    connection: &Checkout,
+    account: AccountScope,
+    query: &ParsedQuery,
+    scope: Scope,
+    order: ResultOrder,
+) -> Option<postio_search::facets::Facets> {
+    postio_index::executor::facets(
+        connection,
+        &SearchRequest {
+            account,
+            query,
+            scope,
+            limit: HIT_LIMIT,
+            order,
+        },
+    )
+    .await
+    .map_err(|error| tracing::warn!(%error, "the facets could not be measured"))
+    .ok()
+}
+
 /// Cuts each hit's excerpt out of its own body text.
 ///
 /// # Why this is here and not in the executor

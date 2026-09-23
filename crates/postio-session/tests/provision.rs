@@ -24,7 +24,7 @@
 use postio_account::discovery::{AccountSettings, Encryption, ServerSettings, SettingsSource};
 use postio_account::secret::{AccountKey, MemorySecretStore, Password, SecretStore};
 use postio_model::account::{AuthMethod, TransportSecurity};
-use postio_session::provision::{Provisioned, account_from, provision};
+use postio_session::provision::{ProvisionError, Provisioned, account_from, provision, repair};
 use postio_storage::repository::AccountRepository;
 use postio_storage::test_support;
 
@@ -229,4 +229,192 @@ fn a_login_that_differs_from_the_address_is_what_both_servers_are_told() {
     );
     assert_eq!(account.incoming.username, "ada@icloud.example");
     assert_eq!(account.outgoing.username, "ada@icloud.example");
+}
+
+// --- a local maildir (#1278) ------------------------------------------------
+
+#[tokio::test]
+async fn a_local_account_is_one_write_and_no_credential() {
+    // A maildir account signs in to nothing. Writing an empty credential
+    // under the user's address would put a secret-shaped nothing in the
+    // keyring that every later "is this signed in?" has to interpret.
+    let database = test_support::memory().await;
+    let keyring = MemorySecretStore::new();
+
+    let provisioned = postio_session::provision::provision_local(&database, ADDRESS, "/srv/mail")
+        .await
+        .expect("a local account needs nothing but a directory");
+
+    let Provisioned::Created(id) = provisioned else {
+        panic!("the first account is created, not already there");
+    };
+    let connection = database.connect().await.expect("checkout");
+    let account = AccountRepository::new(&connection)
+        .get(id)
+        .await
+        .expect("read")
+        .expect("the account");
+    assert_eq!(
+        account.backend,
+        postio_model::account::Backend::Maildir {
+            root: "/srv/mail".to_owned()
+        }
+    );
+    assert!(
+        keyring.is_empty(),
+        "nothing was put in the keyring, because there is no credential"
+    );
+}
+
+#[tokio::test]
+async fn adding_the_same_local_store_twice_changes_nothing() {
+    let database = test_support::memory().await;
+
+    let first = postio_session::provision::provision_local(&database, ADDRESS, "/srv/mail")
+        .await
+        .expect("first");
+    let again = postio_session::provision::provision_local(&database, ADDRESS, "/srv/other")
+        .await
+        .expect("second");
+
+    let Provisioned::Created(id) = first else {
+        panic!("created");
+    };
+    assert!(
+        matches!(again, Provisioned::AlreadyProvisioned(found) if found == id),
+        "a second run reports the account that is there rather than moving it"
+    );
+}
+
+#[test]
+fn a_home_relative_path_is_stored_as_the_directory_it_names() {
+    // The row is read by whatever process opens the store next, and `~/mail`
+    // means whatever that process's home is. The account *is* the directory,
+    // so the directory is what gets written down.
+    let home = std::env::var("HOME").expect("a home directory");
+
+    assert_eq!(
+        postio_session::provision::absolute("~/mail"),
+        std::path::PathBuf::from(&home).join("mail")
+    );
+    assert_eq!(
+        postio_session::provision::absolute("/srv/mail"),
+        std::path::PathBuf::from("/srv/mail")
+    );
+    assert_eq!(
+        postio_session::provision::absolute("~ada/mail"),
+        std::path::PathBuf::from("~ada/mail"),
+        "another user's home is not Postio's to guess the layout of"
+    );
+}
+
+#[tokio::test]
+async fn the_helper_is_inert_where_the_repair_route_is_not() {
+    // The whole of #1584's second half, stated as a contrast: the same
+    // store, the same address, the same new password — and two different
+    // answers, because the *route* is what decides, not a default somebody
+    // could flip.
+    //
+    // `provision` is what a shell runs, possibly from a cron entry, possibly
+    // with a stale variable in its environment; it may never overwrite a
+    // credential that works. `repair` is what a person clicking Reconnect on
+    // their own account row runs; overwriting is the entire point of it.
+    // Anything that made the helper "just do the right thing" would break
+    // the first of those to fix the second.
+    let database = test_support::temp().await;
+    let keyring = MemorySecretStore::new();
+
+    provision(
+        &database,
+        &keyring,
+        account_from(&settings()),
+        Password::new("the one that works"),
+    )
+    .await
+    .expect("first run");
+
+    let again = provision(
+        &database,
+        &keyring,
+        account_from(&settings()),
+        Password::new("a drifted environment"),
+    )
+    .await
+    .expect("second run");
+    assert!(
+        matches!(again, Provisioned::AlreadyProvisioned(_)),
+        "the helper claimed to have written something, got {again:?}"
+    );
+    assert_eq!(
+        keyring
+            .retrieve(&AccountKey::new(ADDRESS))
+            .await
+            .expect("the credential")
+            .expose(),
+        "the one that works",
+        "a re-run of the headless helper overwrote a working password, which \
+         is the failure its inertness exists to prevent"
+    );
+
+    let connection = database.connect().await.expect("checkout");
+    let id = AccountRepository::new(&connection)
+        .list()
+        .await
+        .expect("read the accounts")
+        .first()
+        .expect("the account the first run wrote")
+        .id;
+    drop(connection);
+
+    repair(&database, &keyring, id, Password::new("the rotated one"))
+        .await
+        .expect("a person repairing their own account");
+    assert_eq!(
+        keyring
+            .retrieve(&AccountKey::new(ADDRESS))
+            .await
+            .expect("the credential")
+            .expose(),
+        "the rotated one",
+        "the repair route left the retired password in place, so an account \
+         whose provider rotated its app password has no way back"
+    );
+}
+
+#[tokio::test]
+async fn a_repair_names_an_account_that_would_never_read_a_typed_password() {
+    // An OAuth account's keyring entry under its own address is read by
+    // nothing — its credential lives under a derived key and is minted by a
+    // browser round trip. Storing one here would report success and change
+    // nothing a server ever sees, which is precisely the shape of the bug
+    // #1584 opened with on the other route.
+    let database = test_support::temp().await;
+    let keyring = MemorySecretStore::new();
+
+    let mut account = account_from(&settings());
+    account.auth = AuthMethod::XOAuth2;
+    let id = {
+        let connection = database.connect().await.expect("checkout");
+        AccountRepository::new(&connection)
+            .create(&mut account)
+            .await
+            .expect("the account row")
+    };
+
+    let error = repair(&database, &keyring, id, Password::new("not a token"))
+        .await
+        .expect_err("a token account refuses a typed password");
+    assert!(
+        matches!(error, ProvisionError::Unrepairable(_)),
+        "the refusal came back as something a caller would retry, got {error:?}"
+    );
+    assert!(
+        format!("{error}").to_lowercase().contains("browser"),
+        "the refusal has to name the route that does work, got: {error}"
+    );
+    assert!(
+        keyring.retrieve(&AccountKey::new(ADDRESS)).await.is_err(),
+        "a password was written under the address of an account that signs \
+         in with a token"
+    );
 }

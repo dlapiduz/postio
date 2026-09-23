@@ -12,13 +12,16 @@
 //! and `check-crate-boundaries.py` enforces it, dev-dependencies included.
 
 pub mod account;
+pub mod allowlist;
 pub mod cheatsheet;
+pub mod compose;
 pub mod conversation;
 pub mod dwell;
 pub mod editor;
 pub mod finder;
 pub mod focus;
 pub mod format;
+pub mod handoff;
 pub mod keymap;
 pub mod list;
 pub mod list_state;
@@ -27,6 +30,7 @@ pub mod paging;
 pub mod palette;
 pub mod reader;
 pub mod row;
+pub mod saved_search;
 pub mod search;
 pub mod selection;
 pub mod settings;
@@ -34,3 +38,4 @@ pub mod sidebar;
 pub mod status;
 pub mod test_support;
 pub mod tokens;
+pub mod unsubscribe;

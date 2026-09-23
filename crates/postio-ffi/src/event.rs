@@ -122,6 +122,17 @@ pub enum UiEvent {
         /// The newly delivered messages.
         messages: Vec<i64>,
     },
+    /// The conversation asked for has been read and can now be drawn.
+    ///
+    /// Boundary-local, for the same reason [`UiEvent::PageReady`] is: the
+    /// reading pane's read is this frontend's, and the engine has no event
+    /// for it. Carries the thread so a pane that has moved on can drop a
+    /// read that arrived late rather than drawing the wrong conversation
+    /// under someone's cursor.
+    ConversationReady {
+        /// The conversation that was read.
+        thread: i64,
+    },
     /// A page of list rows arrived and its rows can now be drawn.
     ///
     /// Boundary-local: `postio-core` has no such event and should not gain
@@ -155,6 +166,21 @@ pub enum UiEvent {
         /// What it is doing now.
         state: ConnectionStateFfi,
     },
+    /// How far a re-index has got.
+    ///
+    /// Boundary-local, like `PageReady`: re-indexing is something a person
+    /// asked this window for, not something the engine does on its own. A
+    /// pass over five thousand messages takes long enough that a button with
+    /// no progress is indistinguishable from a button that does nothing
+    /// (#1284).
+    ReindexProgress {
+        /// The account being re-indexed.
+        account: i64,
+        /// Messages indexed so far.
+        done: u32,
+        /// Messages to index in total.
+        total: u32,
+    },
     /// How far a synchronisation has got.
     ///
     /// The only thing a first run has to show that something is happening: a
@@ -167,6 +193,31 @@ pub enum UiEvent {
         /// Units expected.
         total: u32,
     },
+    /// The outcome of something the user asked for.
+    ///
+    /// Four core events with one shape: each is a sentence, already phrased
+    /// for a person by the layer that knows what happened, and the frontend's
+    /// job is to show it rather than to compose it. They crossed as
+    /// [`UiEvent::Other`] until #1577, which meant that on macOS **nothing an
+    /// action reported ever reached anybody**: a send that failed, a verb
+    /// refused because nothing was selected, an archive that could be taken
+    /// back — all of it arrived, was named, and was dropped.
+    ///
+    /// The rejected command's id does not cross. A frontend that branched on
+    /// it would be re-deciding what the core already decided, and the whole
+    /// point of the sentence is that the decision was made once.
+    Notice {
+        /// Which of the four it is, for how it should be drawn.
+        kind: NoticeKindFfi,
+        /// What to say, phrased for the user by the core.
+        message: String,
+        /// Whether the undo stack can take it back — draw an Undo affordance.
+        ///
+        /// Only ever true for [`NoticeKindFfi::Completed`]. A refusal changed
+        /// nothing and a failure did not finish, so there is nothing to
+        /// return to.
+        undoable: bool,
+    },
     /// Something happened that this boundary does not model yet.
     ///
     /// Deliberately not a silent drop. The core's event vocabulary is larger
@@ -178,6 +229,46 @@ pub enum UiEvent {
         /// The core variant's name, for a log line on the far side.
         kind: String,
     },
+}
+
+/// What an outcome was.
+///
+/// The four are drawn differently and mean different things: a completion may
+/// offer to be taken back, a refusal is a quiet hint rather than an alarm,
+/// and a failure is the one that has to be hard to miss. `postio-gtk` draws
+/// each with its own toast, which is the shape this is named after.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
+pub enum NoticeKindFfi {
+    /// A verb ran. *Archived 12 messages.*
+    Completed,
+    /// An undo was applied. *Archived 12 messages, undone.*
+    Undone,
+    /// A verb could not run — nothing selected, nothing to undo, offline.
+    ///
+    /// **Not an error.** The answer is a quiet hint, not a dialog: the user
+    /// asked for something that does not apply, which is an ordinary thing to
+    /// do with a keyboard.
+    Refused,
+    /// Something failed and the user should know.
+    Failed,
+}
+
+impl From<FailureReasonFfi> for postio_core::FailureReason {
+    /// Back the other way, for the wording.
+    ///
+    /// `Other` becomes `Config` rather than gaining a variant of its own:
+    /// the core's four are exhaustive, the boundary's fifth exists only
+    /// because `_ =>` above is a forward-compatibility hatch, and "check this
+    /// account's settings" is the right thing to say about a failure this
+    /// build cannot name.
+    fn from(reason: FailureReasonFfi) -> Self {
+        match reason {
+            FailureReasonFfi::Auth => Self::Auth,
+            FailureReasonFfi::Network => Self::Network,
+            FailureReasonFfi::Server => Self::Server,
+            FailureReasonFfi::Other => Self::Config,
+        }
+    }
 }
 
 impl From<postio_core::Event> for UiEvent {
@@ -226,6 +317,33 @@ impl From<postio_core::Event> for UiEvent {
                 done,
                 total,
             },
+            // The four outcomes. Their payload is already a sentence written
+            // for a person, so rule 3 does not apply to it the way it applies
+            // to an id or a subject line: this *is* what the user is meant to
+            // read.
+            Event::ActionCompleted {
+                description,
+                undoable,
+            } => UiEvent::Notice {
+                kind: NoticeKindFfi::Completed,
+                message: description,
+                undoable,
+            },
+            Event::UndoPerformed { description } => UiEvent::Notice {
+                kind: NoticeKindFfi::Undone,
+                message: description,
+                undoable: false,
+            },
+            Event::CommandRejected { reason, .. } => UiEvent::Notice {
+                kind: NoticeKindFfi::Refused,
+                message: reason,
+                undoable: false,
+            },
+            Event::Error { message } => UiEvent::Notice {
+                kind: NoticeKindFfi::Failed,
+                message,
+                undoable: false,
+            },
             // Rule 2 in practice: everything the boundary has not modelled yet
             // still arrives, named. `{:?}` would carry the payload, and rule 3
             // forbids that, so only the variant name crosses.
@@ -269,6 +387,81 @@ mod tests {
                 messages: vec![11, 12],
             }
         );
+    }
+
+    /// The four events that are the *outcome* of something the user did.
+    ///
+    /// They all fell to `Other`, so on macOS nothing an action reported ever
+    /// reached anybody: a send that failed, a verb refused because nothing
+    /// was selected, an archive that could be taken back. GTK answers each
+    /// with a toast, and `u` and the toast's own button reach the same undo.
+    #[test]
+    fn an_outcome_crosses_with_its_sentence() {
+        assert_eq!(
+            UiEvent::from(postio_core::Event::ActionCompleted {
+                description: "Archived 12 messages".to_owned(),
+                undoable: true,
+            }),
+            UiEvent::Notice {
+                kind: NoticeKindFfi::Completed,
+                message: "Archived 12 messages".to_owned(),
+                undoable: true,
+            }
+        );
+        assert_eq!(
+            UiEvent::from(postio_core::Event::UndoPerformed {
+                description: "Archived 12 messages, undone".to_owned(),
+            }),
+            UiEvent::Notice {
+                kind: NoticeKindFfi::Undone,
+                message: "Archived 12 messages, undone".to_owned(),
+                undoable: false,
+            }
+        );
+        assert_eq!(
+            UiEvent::from(postio_core::Event::CommandRejected {
+                command: postio_core::CommandId::Archive.into(),
+                reason: "Nothing is selected".to_owned(),
+            }),
+            UiEvent::Notice {
+                kind: NoticeKindFfi::Refused,
+                message: "Nothing is selected".to_owned(),
+                undoable: false,
+            }
+        );
+        assert_eq!(
+            UiEvent::from(postio_core::Event::Error {
+                message: "The server refused the password".to_owned(),
+            }),
+            UiEvent::Notice {
+                kind: NoticeKindFfi::Failed,
+                message: "The server refused the password".to_owned(),
+                undoable: false,
+            }
+        );
+    }
+
+    /// An outcome's sentence is the core's, phrased for a person, and it is
+    /// the *only* thing that crosses — the rejected command's id does not,
+    /// because a frontend that branched on it would be re-deciding what the
+    /// core already decided.
+    #[test]
+    fn a_refusal_carries_why_and_not_which() {
+        let crossed = UiEvent::from(postio_core::Event::CommandRejected {
+            command: postio_core::CommandId::Undo.into(),
+            reason: "There is nothing to undo".to_owned(),
+        });
+        match crossed {
+            UiEvent::Notice { message, kind, .. } => {
+                assert_eq!(kind, NoticeKindFfi::Refused);
+                assert_eq!(message, "There is nothing to undo");
+                assert!(
+                    !message.contains("undo_"),
+                    "the id leaked into the sentence"
+                );
+            }
+            other => panic!("expected Notice, got {other:?}"),
+        }
     }
 
     #[test]

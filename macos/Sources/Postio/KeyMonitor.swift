@@ -18,8 +18,12 @@ import PostioKit
 final class KeyMonitor {
     /// Ask the boundary what a press means.
     private let resolve: (KeyEvent.Reduced, UiContext, Bool) -> KeyOutcomeFfi
-    /// Run a command the boundary named.
-    private let run: (String) -> Void
+    /// Run a command the boundary named, and say whether anything acted.
+    ///
+    /// The answer decides whether the key is swallowed. See `KeyDisposition`:
+    /// this monitor runs ahead of the responder chain, so a key it takes for
+    /// a command nothing handled is a key the view underneath never sees.
+    private let run: (String) -> Bool
     /// Show, or clear, a half-typed sequence.
     private let pending: (String?) -> Void
     /// Which surface has focus, as the application understands it.
@@ -29,7 +33,7 @@ final class KeyMonitor {
 
     init(
         resolve: @escaping (KeyEvent.Reduced, UiContext, Bool) -> KeyOutcomeFfi,
-        run: @escaping (String) -> Void,
+        run: @escaping (String) -> Bool,
         pending: @escaping (String?) -> Void,
         context: @escaping () -> UiContext
     ) {
@@ -72,21 +76,22 @@ final class KeyMonitor {
         guard let reduced = KeyEvent.reduce(event) else { return false }
 
         let typing = Self.isTyping()
-        switch resolve(reduced, context(), typing) {
+        let outcome = resolve(reduced, context(), typing)
+        var acted = false
+        switch outcome {
         case let .command(id):
             pending(nil)
-            run(id)
-            return true
+            acted = run(id)
         case let .pending(description):
-            // Swallowed, so the first chord of a sequence does not also reach
-            // the widget underneath, and shown, so a half-typed `g` is never
-            // invisible.
+            // Shown, so a half-typed `g` is never invisible.
             pending(description)
-            return true
         case .unhandled:
             pending(nil)
-            return false
         }
+        // `KeyDisposition` decides, and it is in `PostioKit` where it can be
+        // tested: this file is in the executable target and nothing can
+        // reach it.
+        return KeyDisposition.swallows(outcome: outcome, acted: acted)
     }
 
     /// Whether an input method is part-way through composing a character.
@@ -110,12 +115,11 @@ final class KeyMonitor {
     /// protocol a responder adopts *because* it accepts text, so a field this
     /// application has not thought of is covered by construction.
     static func isTyping() -> Bool {
-        guard let responder = NSApp.keyWindow?.firstResponder else { return false }
-        if responder is NSTextInputClient { return true }
-        // An `NSTextField` delegates its editing to a shared field editor, so
-        // the first responder while somebody types into one is the editor,
-        // not the field. Both are covered above; this is the case where the
-        // field itself is focused and the editor has not been installed yet.
-        return (responder as? NSView)?.window?.fieldEditor(false, for: responder) != nil
+        // The rule is `TypingResponder`'s, in `PostioKit` where a test can
+        // reach it. It used to be three lines here, and the third asked
+        // whether the *window* had a field editor rather than whether this
+        // responder was a text field — so once the toolbar's search box had
+        // made one, every bare-character binding was refused.
+        TypingResponder.isTyping(NSApp.keyWindow?.firstResponder)
     }
 }

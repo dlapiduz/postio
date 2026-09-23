@@ -137,32 +137,19 @@ fn describe(state: &State, now: Instant) -> Content {
         // change is the thing the user cannot see from here: the box holds
         // chips, and the operators they stand for are what actually ran.
         //
-        // Quoted, and that is not decoration. Unquoted it renders as
-        // "Nothing in the local store matches from:ada invoice." -- prose
-        // and query in one face with nothing between them, which wraps
-        // mid-query and reads as a sentence. Quotes rather than a mono span,
-        // because a query is user-typed and a Pango markup span would mean
-        // escaping it; a label that renders `&` wrong is a worse bug than a
-        // face that is not quite the token.
+        // The wording is `postio_ui::list_state`'s, not this file's. It was
+        // written here, which meant the macOS list had no way to reach it and
+        // drew "This store has no mail in it yet." over a search that matched
+        // nothing -- a confident false statement about somebody's own mail,
+        // and the exact scenario ADR 0005 Q10 names. Quotes rather than a
+        // mono span, because a query is user-typed and a Pango markup span
+        // would mean escaping it; a label that renders `&` wrong is a worse
+        // bug than a face that is not quite the token.
         State::NoMatches { query, incomplete } => Content {
             icon: "system-search-symbolic",
             icon_class: "no-matches",
-            title: "No matches".to_string(),
-            // The caveat goes *after* the query, not instead of it: what was
-            // searched for is still the thing to change. But "nothing
-            // matches" reads as proof the mail does not exist, so an
-            // unreachable account has to be named here or the sentence is a
-            // lie by omission (ADR 0005 Q10).
-            detail: match incomplete.as_slice() {
-                [] => format!("Nothing in the local store matches \u{201c}{query}\u{201d}."),
-                absent => format!(
-                    "Nothing in the local store matches \u{201c}{query}\u{201d}. {} \
-                     not reachable, so {} mail was searched only as far as it \
-                     had already synced.",
-                    naming(absent),
-                    if absent.len() == 1 { "its" } else { "their" },
-                ),
-            },
+            title: postio_ui::list_state::no_matches_title().to_string(),
+            detail: postio_ui::list_state::no_matches_detail(query, incomplete),
             hints: vec![("Back to the folder", "Esc")],
         },
         // The one plate in the family that offers no verb, and that is

@@ -41,9 +41,12 @@
 //! left once that line is drawn, and it is smaller than it looks.
 
 pub mod actions;
+pub mod attaching;
 pub mod blocking;
+pub mod checkup;
 pub mod egress;
 pub mod engine;
+pub mod handoff;
 pub mod logging;
 pub mod paths;
 pub mod provision;
@@ -51,6 +54,7 @@ pub mod reachability;
 pub mod reading;
 pub mod refresh;
 pub mod search;
+pub mod signin;
 
 use std::path::Path;
 use std::sync::Arc;
@@ -393,6 +397,19 @@ impl Wiring {
     /// worth on its own.
     pub fn with_mailbox_roles(mut self, roles: postio_model::RoleOverrides) -> Self {
         self.mailbox_roles = roles;
+        self
+    }
+
+    /// Use `engine` as the slot `Refresh` reads, rather than a fresh one.
+    ///
+    /// For a frontend that has to build its command bus **before** it builds
+    /// the wiring — `postio-ffi` does, because the bridge needs a handler at
+    /// construction and the store is opened after it. `refresh::wire` and
+    /// this have to be given the same slot or the handler reads one nothing
+    /// ever fills, and `Refresh` rejects with "This account is not syncing"
+    /// forever.
+    pub fn with_engine_slot(mut self, engine: refresh::EngineSlot) -> Self {
+        self.engine = engine;
         self
     }
 

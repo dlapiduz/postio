@@ -58,6 +58,9 @@ pub(crate) static RESOLUTIONS: AtomicU64 = AtomicU64::new(0);
 pub struct Keymap {
     bindings: BTreeMap<ActionId, Vec<String>>,
     problems: Vec<String>,
+    /// The platform this was resolved for, so [`offers`](Self::offers) can
+    /// answer for it. `None` for an empty keymap, which offers everything.
+    platform: Option<Platform>,
 }
 
 impl Keymap {
@@ -105,7 +108,10 @@ impl Keymap {
     /// resolution uses.
     pub fn resolve_on(overrides: &KeyBindings, platform: Platform) -> Self {
         RESOLUTIONS.fetch_add(1, Ordering::Relaxed);
-        let mut keymap = Keymap::default();
+        let mut keymap = Keymap {
+            platform: Some(platform),
+            ..Keymap::default()
+        };
         for spec in registry::every_action() {
             keymap.bindings.insert(spec.id, Vec::new());
         }
@@ -132,6 +138,14 @@ impl Keymap {
             let Some(binding) = overrides.overrides().get(spec.as_str()).cloned() else {
                 continue;
             };
+            if !registry::offered_on(spec, platform) {
+                // Said rather than dropped: a `[keys]` line that does nothing
+                // on this platform is one the user will press and be ignored by.
+                keymap.problems.push(format!(
+                    "`{spec}` is not offered on this platform, so `{binding}` does nothing here"
+                ));
+                continue;
+            }
             let binding = keys::expand_mod(&binding, platform);
             let binding = binding.as_str();
             let contexts = keymap.contexts_of(spec);
@@ -152,7 +166,10 @@ impl Keymap {
         }
 
         for spec in registry::every_action() {
-            if keymap.binding(spec.id).is_some() {
+            // A command this platform does not offer gets no key on it: `g a`
+            // bound to an account strip that is not there would still claim
+            // the key, and hold `g` open as a prefix for nothing.
+            if keymap.binding(spec.id).is_some() || !registry::offered_on(spec.id, platform) {
                 continue;
             }
             let Some(default) = spec
@@ -255,6 +272,17 @@ impl Keymap {
                     .any(|candidate| candidate == binding)
             })
             .map(|spec| spec.id)
+    }
+
+    /// Whether the platform this was resolved for offers `action` at all.
+    ///
+    /// What the palette and the cheat sheet filter on, so a command with no
+    /// surface on this platform is not listed there either -- see
+    /// [`registry::offered_on`].
+    pub fn offers(&self, action: impl Into<ActionId>) -> bool {
+        let action = action.into();
+        self.platform
+            .is_none_or(|platform| registry::offered_on(action, platform))
     }
 
     /// What could not be honoured, phrased for the settings validity line.
@@ -465,10 +493,59 @@ impl SharedConfig {
 mod tests {
     use super::*;
 
+    use crate::CommandId;
+
+    #[test]
+    fn a_command_the_platform_does_not_offer_has_no_key_there() {
+        // `g a` cycles an account strip the Mac's sidebar does not have. Left
+        // bound, it would still claim the key -- and hold `g` open as a prefix
+        // for a command nothing answers.
+        for platform in [Platform::Freedesktop, Platform::Apple] {
+            let keymap = Keymap::resolve_on(&KeyBindings::default(), platform);
+            let offered = registry::offered_on(ActionId::Builtin(CommandId::NextScope), platform);
+            assert_eq!(
+                keymap.binding(CommandId::NextScope).is_some(),
+                offered,
+                "{platform:?}"
+            );
+            assert_eq!(
+                keymap.offers(ActionId::Builtin(CommandId::NextScope)),
+                offered
+            );
+        }
+        let mac = Keymap::resolve_on(&KeyBindings::default(), Platform::Apple);
+        assert_eq!(mac.binding(CommandId::DetachComposer), None);
+        assert!(
+            mac.offers(ActionId::Builtin(CommandId::Archive)),
+            "the rest are untouched"
+        );
+    }
+
+    #[test]
+    fn an_override_for_a_command_the_platform_does_not_offer_says_so() {
+        let mut keys = KeyBindings::default();
+        keys.overrides_mut()
+            .insert("next_scope".to_owned(), "g x".to_owned());
+        let mac = Keymap::resolve_on(&keys, Platform::Apple);
+        assert_eq!(mac.binding(CommandId::NextScope), None);
+        assert!(
+            mac.problems()
+                .iter()
+                .any(|problem| problem.contains("next_scope")),
+            "a `[keys]` entry that does nothing is said, not swallowed: {:?}",
+            mac.problems()
+        );
+    }
+
     #[test]
     fn the_keymap_covers_every_command_in_the_registry() {
         let keymap = Keymap::resolve(&KeyBindings::default());
         for spec in registry::all() {
+            if !registry::offered_on(ActionId::Builtin(spec.id), Platform::host()) {
+                // Not offered here, so deliberately unbound; see
+                // `a_command_the_platform_does_not_offer_has_no_key_there`.
+                continue;
+            }
             assert_eq!(
                 keymap.binding(spec.id),
                 Some(keys::expand_mod(spec.default_binding, Platform::host()).as_str()),

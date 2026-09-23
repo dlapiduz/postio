@@ -144,4 +144,42 @@ import Testing
         #expect(store.status.valid)
         #expect(store.appearance?.theme == .light)
     }
+
+    @Test func theAccountsPaneDoesNotClaimToWriteConfigToml() {
+        // It said `[accounts] in config.toml` about accounts that have lived
+        // in the encrypted store since #470 — a footer pointing somebody at a
+        // file that does not describe their account. Seen by opening the pane.
+        let store = SettingsStore(path: tempPath("accounts-footer"))
+        store.selected = "accounts"
+
+        #expect(!store.footer.contains("[accounts]"), "\(store.footer)")
+        #expect(store.footer.contains("encrypted store"), "\(store.footer)")
+    }
+}
+
+/// Every one of canvas 3f's panes is drawn (#1156).
+///
+/// The nav comes from `postio_ui::settings`, so a section the frontend has no
+/// pane for still appears in the sidebar and opens an empty apology. That was
+/// five of the eight for a long time; this is what stops it silently becoming
+/// five again when a section is added to the core.
+@MainActor
+@Suite struct EveryPaneIsDrawnTests {
+    @Test func noSectionFallsThroughToTheUnbuiltPane() {
+        // The keys `SettingsPaneView` switches on, kept beside the switch
+        // rather than inferred: the point is to fail when the core grows a
+        // section and this frontend has not caught up.
+        let drawn: Set<String> = ["accounts", "filters", "compose", "ui", "keys", "sync", "privacy", ""]
+
+        let sections = Set(settingsSections().map(\.key))
+
+        #expect(
+            sections.subtracting(drawn).isEmpty,
+            "sections with no pane: \(sections.subtracting(drawn).sorted())"
+        )
+        #expect(
+            drawn.subtracting(sections).isEmpty,
+            "panes for sections that no longer exist: \(drawn.subtracting(sections).sorted())"
+        )
+    }
 }

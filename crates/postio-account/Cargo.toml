@@ -27,6 +27,11 @@ imap = [
     "dep:tokio-rustls",
 ]
 
+# The maildir-backed implementation (#1278): mail already on this machine,
+# behind the same seam as a server. Off by default — a build that never
+# opens one should not carry `io-maildir` or its parser.
+maildir = ["dep:io-maildir"]
+
 # Test-only: lets `MockMailbox::corpus` seed mailboxes from the shared `.eml`
 # fixtures. Off by default so nothing in a normal build carries them; the
 # self dev-dependency below turns it on for this crate's own test suite.
@@ -99,6 +104,10 @@ toml = { workspace = true }
 tracing = { workspace = true }
 url = { workspace = true }
 zeroize = { workspace = true }
+# Only this crate reads a maildir, so it stays a direct dependency rather
+# than a workspace one: the shared table is for versions two or more members
+# have to agree on.
+io-maildir = { version = "0.3.1", default-features = false, features = ["client", "parser"], optional = true }
 
 
 # `providers_toml.rs` is compiled a second time by build.rs (`#[path]`), the
@@ -116,7 +125,7 @@ tempfile = { workspace = true }
 # drives against the in-process server directly. Same exact pin as above, so
 # cargo resolves one copy and the types match.
 io-imap = { version = "=0.6.0", default-features = false, features = ["client"] }
-postio-account = { path = ".", features = ["test-corpus", "test-server"] }
+postio-account = { path = ".", features = ["maildir", "test-corpus", "test-server"] }
 postio-model = { path = "../postio-model", features = ["test-corpus"] }
 # The shared deadline dial: every wall-clock wait in a test answers to
 # `POSTIO_TEST_PATIENCE` (#842, #957).

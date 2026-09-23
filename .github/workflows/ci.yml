@@ -801,10 +801,17 @@ jobs:
           key: ${{ runner.os }}-cargo-nextest-${{ hashFiles('scripts/install-nextest.sh') }}
       - name: Install cargo-nextest
         run: scripts/install-nextest.sh
+      # Through the flake-retry script, for the reason `release.yml` already
+      # gives: this repository's GTK editor cases flake on a shared runner
+      # often enough to matter. A failing test is retried *alone* and only
+      # counts if it fails again, so nothing is weakened -- what goes is a
+      # merge blocked because WebKit never delivered a message on a runner
+      # with no GPU, which happened twice in one day with 657 of 658 tests
+      # passing each time.
       - name: cargo nextest run -p postio-gtk
         env:
           POSTIO_TEST_PATIENCE: "3"
-        run: dbus-run-session -- cargo nextest run -p postio-gtk --profile ci
+        run: dbus-run-session -- scripts/test-with-flake-retry.sh ci postio-gtk
 
   test-app:
     name: Tests (application)

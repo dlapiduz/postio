@@ -240,6 +240,113 @@ impl From<&'static postio_core::registry::CommandSpec> for CommandSpecFfi {
     }
 }
 
+/// The commands the Swift frontend presents a surface for, rather than
+/// dispatching.
+///
+/// Each one *is* a window or an overlay, and a session cannot present one —
+/// so they stop at the frontend by design rather than by omission. The list
+/// is here rather than only in Swift so that two things can hold it: the
+/// coverage sweep in `ffi_suite/command_coverage.rs`, which would otherwise
+/// report every one of them as an orphan, and
+/// `PostioKit.Intercepted`, which matches them by string in a `switch` and
+/// therefore needs compile-time constants of its own.
+///
+/// Duplicated, in other words, and **checked from both sides** — which is the
+/// only kind of duplication this repository allows across the boundary. A
+/// list copied into Swift and checked from neither side is how `/` comes to
+/// open nothing, with no error anywhere to say why.
+pub const INTERCEPTED: &[postio_core::CommandId] = {
+    use postio_core::CommandId as C;
+    &[
+        C::CommandPalette,
+        C::CheatSheet,
+        C::Search,
+        C::Back,
+        C::CyclePane,
+        C::CyclePaneBack,
+        C::FocusSidebar,
+        C::Settings,
+        C::ToggleSidebar,
+        C::ScrollReaderDown,
+        C::ScrollReaderUp,
+        // The sidebar's keyboard. The tree, which rows are collapsed and
+        // where the keyboard is inside it are this frontend's state.
+        C::NextFolder,
+        C::PrevFolder,
+        C::ToggleFolder,
+        C::GoToInbox,
+        C::GoToDrafts,
+        C::GoToSent,
+        C::GoToFlagged,
+        // Where the keyboard is among the panes, and whether a message is
+        // drawn as its sender wrote it.
+        C::OpenMessage,
+        C::PrevView,
+        C::ViewOriginal,
+        // The parts panel: a surface, a cursor this side holds, and verbs
+        // that each need a dialog or a launcher.
+        C::OpenParts,
+        C::NextPart,
+        C::PrevPart,
+        C::SavePart,
+        C::SaveAllParts,
+        C::OpenPartExternally,
+        C::RenderPartOnce,
+        C::OpenPart,
+        // The list has to be told to redraw after the query is re-asked.
+        C::ToggleResultOrder,
+        // The picker is a surface, and the four times it offers come from
+        // the boundary so both frontends mean the same thing by them.
+        C::ScheduleSend,
+        // Saved searches: all five patch `config.toml` through the
+        // frontend-facing functions rather than the bus, and two of them ask
+        // a question no session can put on screen.
+        C::SaveSearch,
+        C::RenameSavedSearch,
+        C::DeleteSavedSearch,
+        C::MoveSavedSearchUp,
+        C::MoveSavedSearchDown,
+        // The settings window's account verbs. Each acts on the row that
+        // window's keyboard is on -- a cursor no session holds -- and adding
+        // an account, replacing a credential and opening `config.toml` all
+        // need a surface besides.
+        C::AddAccount,
+        C::EditConfig,
+        C::ToggleAccountEnabled,
+        C::RemoveAccount,
+        C::UpdateCredential,
+        C::RebuildAccountIndex,
+        C::SetDefaultAccount,
+        // The composer's own verbs. The draft being written is in a window
+        // this frontend owns, unsaved, and the store has not seen most of
+        // it -- so a session cannot answer these and the window does.
+        C::Bold,
+        C::Italic,
+        C::BulletList,
+        C::NumberedList,
+        C::QuoteBlock,
+        C::InsertLink,
+        C::CopyFields,
+        C::Send,
+        C::SaveDraft,
+        C::DiscardDraft,
+        C::AttachFile,
+        // An open panel, and a picture that has to land at the caret of a
+        // document only the window holds (#1571).
+        C::InsertImage,
+        C::ExpandAll,
+        C::ToggleFold,
+        C::NextInConversation,
+        C::PrevInConversation,
+        // The conversation rail, hidden or shown for this window (FR-047).
+        C::ToggleRail,
+        C::Compose,
+        C::Reply,
+        C::ReplyAll,
+        C::Forward,
+    ]
+};
+
 /// Every command, in cheat-sheet order.
 pub fn commands() -> Vec<CommandSpecFfi> {
     postio_core::registry::all()

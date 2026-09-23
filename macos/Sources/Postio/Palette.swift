@@ -124,6 +124,12 @@ struct CheatSheet: View {
     let context: UiContext
     let dismiss: () -> Void
 
+    /// Read when the sheet opens, not per redraw: building it walks the
+    /// registry and the keymap for every command, and nothing it depends on
+    /// can change while the sheet is up. A computed property here would
+    /// rebuild the whole sheet on every `body` evaluation.
+    @State private var sections: [CheatSectionFfi] = []
+
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack {
@@ -135,24 +141,49 @@ struct CheatSheet: View {
             Divider()
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 0) {
-                    ForEach(session.cheatSheet(in: context), id: \.id) { entry in
-                        HStack(alignment: .firstTextBaseline) {
-                            Text(entry.title)
-                            Spacer()
-                            // The binding as written, not as glyphs: this is
-                            // the one surface that has to be able to print
-                            // `g g`, which no accelerator spelling can hold.
-                            Text(entry.binding ?? "—")
-                                .font(.system(.body, design: .monospaced))
-                                .foregroundStyle(entry.binding == nil ? .tertiary : .secondary)
+                    // Grouped, and the grouping is the boundary's — the same
+                    // `postio_ui::cheatsheet::sections` the GTK overlay draws
+                    // from, so the two platforms teach the same sheet. The
+                    // flat list this used to draw was every key in the
+                    // application in one column: a thing to scroll rather
+                    // than a thing to learn from.
+                    ForEach(sections, id: \.title) { section in
+                        Text(section.title)
+                            .font(.callout.weight(.semibold))
+                            .foregroundStyle(.secondary)
+                            .padding(.horizontal, 16)
+                            .padding(.top, 14)
+                            .padding(.bottom, 4)
+                            .accessibilityAddTraits(.isHeader)
+                        ForEach(Array(section.rows.enumerated()), id: \.offset) { _, row in
+                            HStack(alignment: .firstTextBaseline) {
+                                Text(row.title)
+                                Spacer()
+                                // The binding as written, not as glyphs: this
+                                // is the one surface that has to be able to
+                                // print `g g`, which no accelerator spelling
+                                // can hold.
+                                Text(row.binding ?? "—")
+                                    .font(.system(.body, design: .monospaced))
+                                    .foregroundStyle(row.binding == nil ? .tertiary : .secondary)
+                            }
+                            .padding(.horizontal, 16)
+                            .padding(.vertical, 5)
+                            .accessibilityElement(children: .ignore)
+                            // A sentence, not "Archive a" — the boundary
+                            // writes it so a screen reader hears a fact
+                            // rather than two columns.
+                            .accessibilityLabel(row.spoken)
                         }
-                        .padding(.horizontal, 16)
-                        .padding(.vertical, 5)
                     }
                 }
             }
         }
         .frame(width: 520, height: 560)
+        // Keyed on the context: `?` in the composer teaches a different
+        // sheet than `?` in the list, and a sheet that kept the last one's
+        // rows would be teaching keys that do not resolve here.
+        .task(id: context) { sections = session.cheatSheetSections(in: context) }
     }
 }
 

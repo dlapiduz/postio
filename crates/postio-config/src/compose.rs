@@ -1,9 +1,10 @@
-//! `[compose]` — where a signature goes when there is a quote under it.
+//! `[compose]` — where a signature goes, and which editor a draft hands off to.
 //!
 //! ```toml
 //! [compose]
 //! signature_on_reply = "above_quote"    # above_quote | below_quote
 //! signature_on_forward = "above_quote"
+//! editor = "BBEdit"                     # empty: whatever the platform opens a text file with
 //! ```
 //!
 //! # Why this is a setting and not a house style
@@ -68,6 +69,24 @@ pub struct ComposeConfig {
     /// people who bottom-post replies often still top-post forwards.
     #[serde(default)]
     pub signature_on_forward: SignaturePlacement,
+    /// Which editor `⌃⌘E` hands the draft to. Empty means the platform's own
+    /// idea of what opens a text file.
+    ///
+    /// # Why a setting and not `$EDITOR` (#1288)
+    ///
+    /// `$EDITOR` is the right answer on freedesktop, where an application is
+    /// usually started from a shell that has one. It is the wrong answer on
+    /// macOS, where an application launched from Finder has **no shell
+    /// environment at all** — so `$EDITOR` is simply absent for most people,
+    /// and a button promising it would promise nothing.
+    ///
+    /// A name rather than a command line: what goes here is an application on
+    /// macOS (`BBEdit`, `Visual Studio Code`) or a program on freedesktop. A
+    /// program that needs a terminal to run in cannot be opened by either
+    /// frontend, and `postio_ui::handoff` is where that is said out loud
+    /// rather than failing silently.
+    #[serde(default)]
+    pub editor: String,
     /// Keys this version of Postio does not know, preserved verbatim.
     #[serde(flatten)]
     pub extra: Extras,

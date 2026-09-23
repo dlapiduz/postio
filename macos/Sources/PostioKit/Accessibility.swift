@@ -132,11 +132,103 @@ public enum Intercepted {
     /// The Settings window. Both frontends put settings in a window; ADR 0031
     /// is why, and why the model behind it is shared.
     public static let settings = "settings"
+    /// The conversation pane's own four. They are commands like any other —
+    /// bound, rebindable, in the menu — but what they act on is a fold this
+    /// frontend is holding, so the boundary has nothing to do with them.
+    /// Writing mail: the four verbs that open a compose window (#1272). The
+    /// draft is the boundary's; the *window* is this frontend's, which is why
+    /// these are handled here rather than dispatched.
+    public static let compose = "compose"
+    public static let reply = "reply"
+    public static let replyAll = "reply_all"
+    public static let forward = "forward"
+    public static let toggleSidebar = "toggle_sidebar"
+    /// The conversation rail, hidden or shown -- `⇧I`, the reader's choice
+    /// for this window (FR-047). The rail is this frontend's to draw.
+    public static let toggleRail = "toggle_rail"
+    /// Paging the reading pane. Here rather than dispatched because the
+    /// document is this frontend's — and because a hardened web view has no
+    /// scroll call, so the jump between the shared anchors happens in the
+    /// view. See `ReaderPaging`.
+    public static let scrollReaderDown = "scroll_reader_down"
+    public static let scrollReaderUp = "scroll_reader_up"
+    /// The composer's own verbs, answered by the compose window that has the
+    /// keyboard. The draft being written is in a window this frontend owns
+    /// and the store has not seen most of it, which is why these stop here —
+    /// `ComposeCommands` is the route from the id to the model.
+    public static let composeVerbs = ComposeCommands.handled
+    /// The sidebar's own keyboard. The folder tree, which rows are collapsed
+    /// and where the keyboard is inside it are all this frontend's state, so
+    /// a session has nothing to answer these with — `SidebarWalk` is the
+    /// rule and `Engine` holds the two pieces of state it needs.
+    public static let nextFolder = "next_folder"
+    public static let prevFolder = "prev_folder"
+    public static let toggleFolder = "toggle_folder"
+    public static let goToInbox = "go_to_inbox"
+    public static let goToDrafts = "go_to_drafts"
+    public static let goToSent = "go_to_sent"
+    public static let goToFlagged = "go_to_flagged"
+    /// Where the keyboard is among the panes, and whether a message is drawn
+    /// as its sender wrote it. Both are this frontend's state: there is no
+    /// drill-in to close and nothing is remembered about an original past the
+    /// view it was asked for in.
+    public static let openMessage = "open_message"
+    public static let prevView = "prev_view"
+    public static let viewOriginal = "view_original"
+    /// The parts panel. Opening it is a surface, walking it moves a cursor
+    /// this side holds, and every verb on it needs a dialog or a launcher —
+    /// so all eight stop here. `PartsPanel` is the surface and `PartsModel`
+    /// the cursor; the tree, the labels and the safe filename are all the
+    /// boundary's.
+    /// Re-ask the query the other way round. Intercepted rather than sent,
+    /// because it is the *list* that has to be told to redraw afterwards.
+    public static let toggleResultOrder = "toggle_result_order"
+    /// Saved searches. All five patch `config.toml`, which this side reads
+    /// at the moment it acts; two of them ask a question first.
+    public static let saveSearch = "save_search"
+    public static let renameSavedSearch = "rename_saved_search"
+    public static let deleteSavedSearch = "delete_saved_search"
+    public static let moveSavedSearchUp = "move_saved_search_up"
+    public static let moveSavedSearchDown = "move_saved_search_down"
+    public static let openParts = "open_parts"
+    public static let nextPart = "next_part"
+    public static let prevPart = "prev_part"
+    public static let savePart = "save_part"
+    public static let saveAllParts = "save_all_parts"
+    public static let openPartExternally = "open_part_externally"
+    public static let openPart = "open_part"
+    public static let renderPartOnce = "render_part_once"
+    /// The settings window's account verbs. Every one acts on the row the
+    /// keyboard is on, which is `SettingsAccounts`'s cursor and this side's
+    /// alone; two of them need a sheet on top of that.
+    public static let addAccount = "add_account"
+    public static let editConfig = "edit_config"
+    public static let toggleAccountEnabled = "toggle_account_enabled"
+    public static let removeAccount = "remove_account"
+    public static let updateCredential = "update_credential"
+    public static let rebuildAccountIndex = "rebuild_account_index"
+    public static let setDefaultAccount = "set_default_account"
+    public static let expandAll = "expand_all"
+    public static let toggleFold = "toggle_fold"
+    public static let nextInConversation = "next_in_conversation"
+    public static let prevInConversation = "prev_in_conversation"
 
     /// Every id above, for the test that checks they still exist.
     public static let all = [
         palette, cheatSheet, search, back, cyclePane, cyclePaneBack, focusSidebar, settings,
-    ]
+        toggleSidebar, expandAll, toggleFold, nextInConversation, prevInConversation,
+        scrollReaderDown, scrollReaderUp,
+        nextFolder, prevFolder, toggleFolder,
+        goToInbox, goToDrafts, goToSent, goToFlagged,
+        openMessage, prevView, viewOriginal,
+        addAccount, editConfig, toggleAccountEnabled, removeAccount,
+        updateCredential, rebuildAccountIndex, setDefaultAccount,
+        toggleResultOrder, saveSearch, renameSavedSearch, deleteSavedSearch,
+        moveSavedSearchUp, moveSavedSearchDown,
+        openParts, nextPart, prevPart,
+        savePart, saveAllParts, openPartExternally, openPart, renderPartOnce,
+        compose, reply, replyAll, forward, toggleRail,
+    ] + composeVerbs
 }
 
 /// How long a transition may take.

@@ -44,7 +44,11 @@ FAILURES: list[str] = []
 CARGO_STUB = """#!/usr/bin/env bash
 printf '%s\\n' "$*" >> "$STUB_DIR/calls"
 
-if printf '%s' "$*" | grep -q -- "nextest run" && printf '%s' "$*" | grep -q -- "--workspace"; then
+# The first run, whichever scope it asked for: the whole workspace for a
+# release, or one crate for the pull-request job that runs the widget
+# suite. The retry below is scoped by filter expression either way.
+if printf '%s' "$*" | grep -q -- "nextest run" \
+   && printf '%s' "$*" | grep -qE -- "--workspace|-p [a-z-]+"; then
     if [ -f "$STUB_DIR/workspace-passes" ]; then
         echo "Summary [   0.010s] 400 tests run: 400 passed, 0 skipped"
         exit 0
@@ -81,12 +85,12 @@ exit 1
 """
 
 
-def run(stub_dir: Path) -> subprocess.CompletedProcess[str]:
+def run(stub_dir: Path, *args: str) -> subprocess.CompletedProcess[str]:
     environment = dict(os.environ)
     environment["PATH"] = f"{stub_dir / 'bin'}:{environment['PATH']}"
     environment["STUB_DIR"] = str(stub_dir)
     return patience.run(
-        ["bash", str(SCRIPT)],
+        ["bash", str(SCRIPT), *args],
         env=environment,
         capture_output=True,
         text=True,
@@ -128,6 +132,38 @@ def main() -> int:
             "a green suite never retries anything",
             calls.strip().count("\n") == 0,
             f"expected exactly one cargo invocation, got:\n{calls}",
+        )
+
+    # ── a package narrows the first run and nothing else ─────────────
+    with tempfile.TemporaryDirectory() as directory:
+        stub_dir = stub(Path(directory), flags=("workspace-passes",))
+        result = run(stub_dir, "ci", "postio-gtk")
+        calls = (stub_dir / "calls").read_text(encoding="utf-8")
+        case(
+            "a package scopes the first run to that crate",
+            "-p postio-gtk" in calls,
+            f"expected `-p postio-gtk` in the invocation:\n{calls}",
+        )
+        case(
+            "a package run does not also ask for the whole workspace",
+            "--workspace" not in calls,
+            f"both scopes were passed:\n{calls}",
+        )
+        case(
+            "a package run still exits 0 on a green suite",
+            result.returncode == 0,
+            f"exit {result.returncode}; output:\n{result.stdout}{result.stderr}",
+        )
+
+    # ── no package is still the whole workspace ──────────────────────
+    with tempfile.TemporaryDirectory() as directory:
+        stub_dir = stub(Path(directory), flags=("workspace-passes",))
+        run(stub_dir)
+        calls = (stub_dir / "calls").read_text(encoding="utf-8")
+        case(
+            "no package means the whole workspace, which is what a release wants",
+            "--workspace" in calls,
+            f"the default scope was not the workspace:\n{calls}",
         )
 
     # ── both failures are flakes: pass ───────────────────────────────

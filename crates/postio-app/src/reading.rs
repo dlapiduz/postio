@@ -45,7 +45,7 @@ use postio_gtk::reader::Absent;
 use postio_gtk::sidebar::SyncStatus;
 use postio_gtk::window::Window;
 use postio_model::address::EmailAddress;
-use postio_model::ids::{AttachmentId, BlobId};
+use postio_model::ids::BlobId;
 use postio_model::{Attachment, Message, MessageId};
 use postio_runtime::Engine;
 use postio_storage::Store;
@@ -335,16 +335,18 @@ pub async fn install(window: &Window, wiring: &Wiring, feeds: &Feeds, showing: S
                 // Every part failed is the safe fallback if the runtime
                 // vanished mid-batch -- see `write_part`'s analogous case.
                 let failed = receiver.recv().await.unwrap_or(leaves_len);
-                if failed > 0 {
-                    // One toast for the whole batch rather than one per part:
-                    // `S` can easily name a dozen parts, and a save that is
-                    // mostly working does not need a dozen interruptions.
-                    events.emit(postio_core::Event::Error {
-                        message: format!(
-                            "{failed} part{} could not be saved",
-                            if failed == 1 { "" } else { "s" }
-                        ),
-                    });
+                // One toast for the whole batch rather than one per part:
+                // `S` can easily name a dozen parts, and a save that is
+                // mostly working does not need a dozen interruptions.
+                //
+                // The sentence is `postio_ui::reader::parts::save_all_failure`'s
+                // rather than this closure's, because the macOS boundary
+                // reports the same partial save and two frontends phrasing it
+                // separately is how they come to disagree about it. `None` is
+                // what "nothing failed" looks like, so the test for it is the
+                // same expression as the wording.
+                if let Some(sentence) = postio_gtk::parts::save_all_failure(failed) {
+                    events.emit(postio_core::Event::Error { message: sentence });
                 }
             });
         }
@@ -1242,14 +1244,13 @@ struct Loaded {
 /// What [`postio_gtk::reader::Reader::set_unsubscribe`] shows for `message`,
 /// per #971's own doc comment: the `List-Id` header when there is one, the
 /// sender's domain otherwise.
+///
+/// The rule moved to `postio_ui::unsubscribe` (#1585), where the macOS reader
+/// can reach it — it decides which list an activation gets recorded against,
+/// which is not a thing two frontends may answer separately. This is the
+/// shape the store hands over, and nothing else.
 fn list_identifier(message: &Message) -> Option<String> {
-    message.list_id.clone().or_else(|| {
-        message
-            .from
-            .first()
-            .and_then(|from| from.domain())
-            .map(str::to_owned)
-    })
+    postio_ui::unsubscribe::list_identifier(message.list_id.as_deref(), &message.from)
 }
 
 /// Draw `loaded` into the window's single reading pane.
@@ -1455,155 +1456,11 @@ impl From<Message> for Envelope {
     }
 }
 
-/// The message's own content type — the row the parts tree hangs off.
-///
-/// # Read when it is there, derived otherwise
-///
-/// `BODYSTRUCTURE` says what it is and `postio-account` records it in
-/// [`Message::content_type`] at fetch time (`postio-roj4`), so `stored` is
-/// the honest answer whenever a sync has actually filled it in. `stored` is
-/// `None` for a row synced before that column existed and never refetched
-/// since — the composer's own in-progress drafts too — and for those this
-/// falls back to reconstructing a plausible shape from what *is* recorded: a
-/// message with parts is `multipart/mixed`, one with two bodies is
-/// `multipart/alternative`, and one with neither is whichever body it has.
-///
-/// The fallback can be wrong in exactly the case the real value fixes: a
-/// `multipart/related` with inline images has parts, so it reads as
-/// `multipart/mixed` here. That is a label on one row rather than a wrong
-/// tree, which is why it was P3 rather than a bug.
-///
-/// [`Message::content_type`]: postio_model::Message::content_type
-fn root_type(
-    stored: Option<&str>,
-    body: &postio_model::MessageBody,
-    parts: &[Attachment],
-) -> String {
-    if let Some(content_type) = stored {
-        return content_type.to_owned();
-    }
-    match (parts.is_empty(), body.text.is_some(), body.html.is_some()) {
-        (false, _, _) => "multipart/mixed".to_owned(),
-        (true, true, true) => "multipart/alternative".to_owned(),
-        (true, false, true) => "text/html".to_owned(),
-        _ => "text/plain".to_owned(),
-    }
-}
-
 /// How long a save waits for a body it had to ask for.
 ///
 /// Long enough for a slow server on a bad link, short enough that a save that
 /// is never going to work says so while the user is still looking at it.
 const BODY_WAIT: std::time::Duration = std::time::Duration::from_secs(30);
-
-/// Where one part's bytes are, when they are on this machine at all.
-enum PartSource {
-    /// The part's own blob — what ADR 0017's payload axis writes into
-    /// `attachments.blob_id` when somebody opens an attachment.
-    Payload(BlobId),
-    /// The whole raw message, from which the part is cut.
-    ///
-    /// Two rows still land here: one fetched before the payload axis existed,
-    /// and one whose `BODYSTRUCTURE` was never recorded, so no section could
-    /// be named and every byte was the only answer.
-    Raw(BlobId),
-}
-
-/// One part's bytes, fetched first if they are not on this machine yet.
-///
-/// # Why this is the seam rather than the save handler
-///
-/// `PartsPanel::save_part` runs the portal dialog itself and hands back the
-/// file the user chose, so the only part worth testing is what happens next —
-/// and that half is nothing to do with GTK. Keeping it here, taking store
-/// handles and returning bytes, makes "saves a part that was never
-/// downloaded, fetching it first" an ordinary async test over a mock server
-/// instead of something that needs a display and a file chooser.
-///
-/// # Where a received part's bytes are
-///
-/// In `Attachment::blob_id`, once somebody has opened it. That column was
-/// filled only on the way *out* for the whole life of this project — a
-/// composer attaching a file — and the receive path stored the whole raw
-/// message instead, so a part had to be cut back out of it with `mime::parse`
-/// on every open. ADR 0017 ended that: the text axis stores no raw source at
-/// all, and the payload axis fetches `BODY.PEEK[<part_id>]` on demand.
-///
-/// So the fetch to wait for is the *part's*, and asking twice costs nothing:
-/// the second open reads the blob and never reaches the network.
-///
-/// Returns `Err` rather than an empty file when the bytes cannot be had. A
-/// zero-byte attachment on disk looks like a saved file and is not one.
-pub(crate) async fn part_bytes(
-    database: &Store,
-    blobs: &BlobStore,
-    engine: Option<Engine>,
-    message: MessageId,
-    attachment: AttachmentId,
-) -> Result<Vec<u8>, String> {
-    // Resolved once, before anything is fetched, and deliberately.
-    //
-    // A whole-message fetch REPLACES the message's attachment rows -- the
-    // parser re-reads the structure and `MessageRepository::update` writes the
-    // new set -- so the `AttachmentId` the panel is holding does not survive
-    // it. The MIME path does: `2` is `2` in every parse of the same bytes. So
-    // the id is turned into a path here, while it still means something, and
-    // the path is what is used on the far side.
-    let part_id = part_path(database, message, attachment)
-        .await?
-        .ok_or("That part has no place in the message to read it from")?;
-
-    let source = match locate_part(database, message, &part_id).await? {
-        Some(source) => source,
-        // Never downloaded. This is the one place in the reading pane allowed
-        // to reach the network, and only because the user asked for these
-        // bytes by name.
-        None => {
-            let engine =
-                engine.ok_or("This account is not syncing, so that part cannot be fetched")?;
-            // `request_payloads` puts the section at the front of the backfill
-            // and returns as soon as it is queued -- `true` means "there was
-            // something to fetch", not "here it is". The bytes land when the
-            // engine's own loop claims the job, so the wait is ours.
-            if engine
-                .request_payloads(message, vec![part_id.clone()])
-                .await
-                .map_err(|error| error.message().to_string())?
-            {
-                wait_for_part(database, message, &part_id).await?
-            } else {
-                // "Nothing to fetch" has two readings, and the queue cannot
-                // tell them apart: there is truly nothing (the message is
-                // gone, or AttachmentPolicy::Never), or the background lane
-                // fetched this very message between the look above and the
-                // queue's answer -- ADR 0016 backfills every mailbox, so
-                // both lanes chase the same messages, and the open that
-                // races the backfill is an ordinary open, not a corner
-                // (#109, four observed failures; a5735a3 is the same race
-                // in the runtime's own test). One re-read settles it: a
-                // committed write that made the answer `false` is visible
-                // to this read, so no wait is needed -- absent here means
-                // absent, and the sentence below is then the truth.
-                locate_part(database, message, &part_id)
-                    .await?
-                    .ok_or("There is nothing to fetch for that part")?
-            }
-        }
-    };
-
-    match source {
-        PartSource::Payload(blob) => blobs.get(&blob).map_err(|error| error.to_string()),
-        PartSource::Raw(blob) => {
-            let bytes = blobs.get(&blob).map_err(|error| error.to_string())?;
-            postio_model::mime::parse(&bytes)
-                .parts
-                .into_iter()
-                .find(|part| part.attachment.part_id.as_deref() == Some(part_id.as_str()))
-                .map(|part| part.content)
-                .ok_or_else(|| "That part is not in the message the server sent".into())
-        }
-    }
-}
 
 /// Put one part's bytes where the user asked for them.
 ///
@@ -1692,6 +1549,22 @@ impl PartOpener {
 /// main-context work, for the reason [`part_bytes`]'s own doc comment gives:
 /// a part not yet downloaded waits on `tokio::time::sleep`, which panics off
 /// the runtime.
+///
+/// # Every part gets a name of its own
+///
+/// The names come from [`postio_gtk::parts::save_names`], over the whole set
+/// at once, and not from asking each node what it is called. Nothing stops a
+/// message carrying two parts that both say `invoice.pdf`, and naming them
+/// one at a time writes the second over the first: a directory with one
+/// invoice in it, no error, and no sign that a second ever arrived. That is a
+/// silent loss of the user's mail from the one command whose whole promise is
+/// that it got everything.
+///
+/// The rule is shared with the macOS boundary rather than written twice —
+/// `postio_session::reading::save_all_parts` resolves the same collision from
+/// the same function — so a repeat lands as `invoice-2.pdf` on both
+/// frontends, compared without case because the filesystem under one of them
+/// is.
 pub(crate) async fn save_all_parts(
     database: &Store,
     blobs: &BlobStore,
@@ -1700,9 +1573,10 @@ pub(crate) async fn save_all_parts(
     message: MessageId,
     nodes: &[postio_gtk::parts::Node],
 ) -> usize {
+    let names = postio_gtk::parts::save_names(nodes);
     let mut failed = 0;
-    for node in nodes {
-        if crate::export::export_part(database, blobs, engine.clone(), into, message, node)
+    for (node, name) in nodes.iter().zip(&names) {
+        if crate::export::export_part_as(database, blobs, engine.clone(), into, message, node, name)
             .await
             .is_err()
         {
@@ -1762,74 +1636,6 @@ pub(crate) async fn wait_for_body(database: &Store, message: MessageId) -> Resul
     }
 }
 
-/// Wait for a queued part to land, or give up saying so.
-///
-/// [`wait_for_body`]'s sibling, and the same polling for the same reason. It
-/// watches for either shape the bytes can arrive in: the part's own blob,
-/// which is what a payload fetch writes, and the raw message, which is what
-/// the whole-message fallback writes for a row whose section could not be
-/// named.
-async fn wait_for_part(
-    database: &Store,
-    message: MessageId,
-    part_id: &str,
-) -> Result<PartSource, String> {
-    let deadline = std::time::Instant::now() + BODY_WAIT;
-    loop {
-        // A read that fails here is usually the writer we are waiting for
-        // holding the table, so contention is a reason to look again rather
-        // than to give up. Only the deadline ends this.
-        match locate_part(database, message, part_id).await {
-            Ok(Some(source)) => return Ok(source),
-            Ok(None) => {}
-            Err(error) if std::time::Instant::now() >= deadline => return Err(error),
-            Err(_) => {}
-        }
-        if std::time::Instant::now() >= deadline {
-            return Err("That part did not arrive in time — it is still \
-                        downloading, so try again in a moment"
-                .into());
-        }
-        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
-    }
-}
-
-/// The MIME path of one attachment row, while the row id still means
-/// something.
-async fn part_path(
-    database: &Store,
-    message: MessageId,
-    attachment: AttachmentId,
-) -> Result<Option<String>, String> {
-    Ok(read_message(database, message)
-        .await?
-        .attachments
-        .iter()
-        .find(|part| part.id == attachment)
-        .and_then(|part| part.part_id.clone()))
-}
-
-/// Whether `part_id`'s bytes are on this machine, and in which shape.
-///
-/// The part's own blob first: it is the exact bytes, and reading it costs a
-/// file open where the raw message costs a parse of the whole thing.
-async fn locate_part(
-    database: &Store,
-    message: MessageId,
-    part_id: &str,
-) -> Result<Option<PartSource>, String> {
-    let row = read_message(database, message).await?;
-    if let Some(blob) = row
-        .attachments
-        .iter()
-        .find(|part| part.part_id.as_deref() == Some(part_id))
-        .and_then(|part| part.blob_id.clone())
-    {
-        return Ok(Some(PartSource::Payload(blob)));
-    }
-    Ok(row.raw_blob_id.map(PartSource::Raw))
-}
-
 /// Just the raw-message blob key. What the wait watches for.
 pub(crate) async fn raw_blob(
     database: &Store,
@@ -1858,6 +1664,23 @@ pub(crate) async fn read_message(
 // a fact about this one.
 pub(crate) use postio_session::reading::cid_source;
 
+// `part_bytes` went the same way, for the same reason and with more at stake
+// (#1572). Getting one part's bytes is not glue: it is ADR 0017's payload
+// axis, the `AttachmentId` that does not survive a whole-message refetch, and
+// the #109 race between an open and the backfill chasing the same message.
+// None of that is about GTK, and the macOS boundary needs every line of it --
+// so there is one implementation and this crate calls it, rather than two
+// that would have reproduced the bugs instead of the behaviour.
+//
+// `PartSource`, `locate_part`, `part_path` and `wait_for_part` went with it:
+// they were only ever how this worked.
+pub(crate) use postio_session::reading::part_bytes;
+
+// `root_type` is `postio_ui::reader::parts`' now. A message's own content
+// type is what the parts tree hangs off, and the macOS panel hangs its tree
+// off the same answer.
+use postio_ui::reader::parts::root_type;
+
 #[cfg(test)]
 mod tests {
     //! The one thing about saving a part that is not GTK's problem: getting
@@ -1872,6 +1695,9 @@ mod tests {
 
     use postio_account::backend::{MockBackend, MockMailbox, MockMessage};
     use postio_model::MailboxRole;
+    // Only the fixtures still speak in row ids: `export_part_as` addresses a
+    // part by its MIME path now, for the reason `part_bytes`' doc gives.
+    use postio_model::ids::AttachmentId;
     use postio_runtime::engine::{EngineParts, NetworkSource, SystemClock};
     use postio_storage::repository::{ListQuery, ListScope, MessageRepository};
     use postio_storage::seed::seed_small;
@@ -1879,41 +1705,6 @@ mod tests {
     use postio_storage::{BlobStore, Store, test_support};
 
     use super::*;
-
-    #[test]
-    fn root_type_reads_the_stored_content_type_when_there_is_one() {
-        // The case the derivation below gets wrong: a `multipart/related`
-        // carrying inline images has parts, so the old heuristic always read
-        // it as `multipart/mixed`. A stored value settles it outright.
-        assert_eq!(
-            root_type(
-                Some("multipart/related"),
-                &postio_model::MessageBody::default(),
-                &[]
-            ),
-            "multipart/related"
-        );
-    }
-
-    #[test]
-    fn root_type_falls_back_to_derivation_when_nothing_is_stored() {
-        // A row synced before `content_type` existed, or resynced and not
-        // yet refetched -- the reconstruction `postio-roj4` describes.
-        let with_html = postio_model::MessageBody {
-            text: Some("plain".to_owned()),
-            html: Some("<p>html</p>".to_owned()),
-        };
-        assert_eq!(
-            root_type(None, &with_html, &[]),
-            "multipart/alternative",
-            "two bodies and no parts is the alternative case"
-        );
-        assert_eq!(
-            root_type(None, &postio_model::MessageBody::default(), &[]),
-            "text/plain",
-            "neither body present falls back to plain"
-        );
-    }
 
     const BODY: &str = "the bytes that had to travel to get here";
     const ATTACHED: &str = "not a pdf";
@@ -2201,6 +1992,8 @@ mod tests {
             downloaded: false,
             last: true,
             attachment: Some(attachment),
+            content_id: None,
+            inline: false,
         };
         let into = tempfile::tempdir().expect("a save directory");
 
@@ -2239,6 +2032,8 @@ mod tests {
             downloaded: true,
             last: false,
             attachment: None,
+            content_id: None,
+            inline: false,
         };
         let leaf = postio_gtk::parts::Node {
             part_id: "2".to_owned(),
@@ -2249,6 +2044,8 @@ mod tests {
             downloaded: false,
             last: true,
             attachment: Some(attachment),
+            content_id: None,
+            inline: false,
         };
         let into = tempfile::tempdir().expect("a save directory");
 
@@ -2266,6 +2063,55 @@ mod tests {
         assert!(
             into.path().join("report.pdf").exists(),
             "the leaf after the failure must still be saved"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn save_all_parts_does_not_write_one_part_over_another() {
+        // Two rows in the panel that both say `report.pdf`, which is an
+        // ordinary message rather than a corner: a sender forwarding two
+        // statements, or a scanner naming everything after itself. Named one
+        // at a time, the second lands on top of the first and `S` reports a
+        // clean save of a directory holding half the mail it promised.
+        //
+        // The collision is resolved by `postio_gtk::parts::save_names` over
+        // the whole set, which is `postio_ui`'s function and the same one the
+        // macOS boundary uses -- so what this is really asserting is that
+        // this side calls it at all.
+        let (database, blobs, engine, message, _directory) = world().await;
+        let attachment = a_part_not_here(&database, message).await;
+        let node = postio_gtk::parts::Node {
+            part_id: "2".to_owned(),
+            depth: 1,
+            mime: "application/pdf".to_owned(),
+            filename: Some("report.pdf".to_owned()),
+            size: 9,
+            downloaded: false,
+            last: false,
+            attachment: Some(attachment),
+            content_id: None,
+            inline: false,
+        };
+        let into = tempfile::tempdir().expect("a save directory");
+
+        let failed = save_all_parts(
+            &database,
+            &blobs,
+            Some(engine),
+            into.path(),
+            message,
+            &[node.clone(), node],
+        )
+        .await;
+
+        assert_eq!(failed, 0, "both parts had bytes to save");
+        let written = std::fs::read_dir(into.path())
+            .expect("the save directory")
+            .count();
+        assert_eq!(
+            written, 2,
+            "two parts claiming one name overwrote each other: `S` promised \
+             everything and wrote {written} file(s)"
         );
     }
 

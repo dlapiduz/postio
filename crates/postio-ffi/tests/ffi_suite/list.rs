@@ -307,3 +307,247 @@ async fn a_sender_crosses_as_the_name_a_person_reads() {
     );
     session.shutdown();
 }
+
+// -- who is in a conversation (#1265) ----------------------------------------
+
+/// A thread row names everyone in the conversation, not its newest sender.
+///
+/// The list's row stands for a whole conversation (ADR 0015), and the canvas
+/// draws `Tessa Vaughn, Mara, Pinepoint` where a message row draws one name.
+/// The boundary carried only the representative's sender, so the macOS list
+/// drew one name per conversation and no second frontend could have done
+/// better.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_thread_row_names_the_people_in_the_conversation() {
+    use chrono::TimeZone;
+    use postio_model::{EmailAddress, Thread};
+    use postio_storage::repository::ThreadRepository;
+
+    let database = test_support::memory().await;
+    let mailbox = {
+        let connection = database.connect().await.expect("a connection");
+        let (account, inbox) = test_support::account_with_inbox(&connection).await;
+
+        let mut thread = Thread::new(account.id);
+        thread.subject = Some("radon reduction".to_owned());
+        let threads = ThreadRepository::new(&connection);
+        threads.create(&mut thread).await.expect("a thread");
+
+        let messages = MessageRepository::new(&connection);
+        for (index, sender) in ["Tessa Vaughn", "Mara Ostwald", "Pinepoint Radon"]
+            .into_iter()
+            .enumerate()
+        {
+            let mut message = Message::new(
+                account.id,
+                inbox,
+                Utc.timestamp_opt(1_770_000_000 + index as i64, 0)
+                    .single()
+                    .expect("a real time"),
+            );
+            message.subject = Some("Radon reduction".to_owned());
+            message.from = vec![EmailAddress::new(
+                Some(sender),
+                format!("{index}@example.com"),
+            )];
+            messages.create(&mut message).await.expect("a message");
+            threads
+                .add_message(thread.id, message.id)
+                .await
+                .expect("add");
+        }
+        inbox
+    };
+
+    let session = Session::open(SessionOptions::in_memory_with(database))
+        .expect("a session over the seeded store");
+    session.open_scope(ScopeFfi::Mailbox {
+        mailbox: mailbox.into(),
+    });
+    let _ = session.row_at(0);
+    session.settle_for_test();
+
+    let row = session.row_at(0).expect("the conversation row");
+    assert_eq!(
+        session.row_count(),
+        1,
+        "a folder lists one row per conversation"
+    );
+    assert!(row.is_thread);
+    assert_eq!(
+        row.participants, "Tessa, Mara, Pinepoint",
+        "the row says who is in the conversation, shortened the way the \
+         conversation header shortens them"
+    );
+    assert_eq!(row.thread_count, 3);
+    session.shutdown();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn re_indexing_reports_as_it_goes_rather_than_only_at_the_end() {
+    // A pass over five thousand messages takes long enough that a button
+    // with no progress is indistinguishable from a button that does nothing.
+    // The events have to arrive *while* it runs, which here means: by the
+    // time the call returns, several have been queued rather than one.
+    let database = test_support::memory().await;
+    let account = {
+        let connection = database.connect().await.expect("a connection");
+        let (account, inbox) = test_support::account_with_inbox(&connection).await;
+        let repository = MessageRepository::new(&connection);
+        for n in 0..40 {
+            let mut message = Message::new(account.id, inbox, Utc::now());
+            message.subject = Some(format!("message {n}"));
+            let id = repository.create(&mut message).await.expect("a message");
+            repository
+                .set_body(
+                    id,
+                    &postio_storage::repository::StoredBody {
+                        text: Some(format!("the body of message {n}")),
+                        html: None,
+                        headers: None,
+                        headers_truncated: false,
+                        encoding_problems: false,
+                    },
+                    postio_model::message::BodyState::Full,
+                )
+                .await
+                .expect("a body");
+        }
+        account.id.get()
+    };
+
+    // The FTS tables a real store gets when it is opened. An in-memory one
+    // built by `test_support` has the schema and not the index.
+    postio_session::ensure_search_index(&database)
+        .await
+        .expect("a search index");
+
+    let session =
+        Session::open(SessionOptions::in_memory_with(database)).expect("a session over the store");
+    // Whatever opening produced, so what is counted below is the re-index's.
+    while session.try_next_event().is_some() {}
+
+    assert_eq!(session.reindex_account(account).await, None, "no complaint");
+
+    let mut reports = Vec::new();
+    while let Some(event) = session.try_next_event() {
+        if let postio_ffi::UiEvent::ReindexProgress { done, total, .. } = event {
+            reports.push((done, total));
+        }
+    }
+
+    assert!(
+        !reports.is_empty(),
+        "nothing was reported at all, so the window has nothing to draw"
+    );
+    let (_, total) = reports[0];
+    assert!(
+        total > 0,
+        "a total of zero is a progress bar with no meaning"
+    );
+    assert!(
+        reports.iter().any(|(done, _)| *done > 0),
+        "every report said zero: {reports:?}"
+    );
+}
+
+/// A mailbox holding one message in each send state, and the states in row
+/// order.
+async fn with_send_states() -> (
+    std::sync::Arc<Session>,
+    ScopeFfi,
+    Vec<postio_model::DraftState>,
+) {
+    use postio_model::DraftState;
+
+    let states = vec![
+        DraftState::Editing,
+        DraftState::Queued,
+        DraftState::Sending,
+        DraftState::Failed,
+        DraftState::Unconfirmed,
+    ];
+    let database = test_support::memory().await;
+    let mailbox = {
+        let connection = database.connect().await.expect("a connection");
+        let (account, inbox) = test_support::account_with_inbox(&connection).await;
+        let repository = MessageRepository::new(&connection);
+        for state in &states {
+            let mut message = Message::new(account.id, inbox, Utc::now());
+            let id = repository.create(&mut message).await.expect("a message");
+            // Written straight to the column: the only writer of it is
+            // private to `postio-storage` and lives behind saving a draft,
+            // and what is under test is what the boundary does with the
+            // column rather than how it came to hold a value.
+            connection
+                .execute(
+                    "UPDATE messages SET send_state = ?2 WHERE id = ?1",
+                    (id.get(), state.as_str()),
+                )
+                .await
+                .expect("the send state is written");
+        }
+        inbox
+    };
+    let session = Session::open(SessionOptions::in_memory_with(database))
+        .expect("a session over the seeded store");
+    let scope = ScopeFfi::Mailbox {
+        mailbox: mailbox.into(),
+    };
+    session.open_scope(scope.clone());
+    (session, scope, states)
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_rows_send_state_crosses_as_the_word_a_person_reads() {
+    // The field's own doc says it is carried "so macOS can draw what GTK
+    // draws" — and it was carrying `DraftState::as_str`, which is the
+    // database's spelling: `queued`, `failed`, `unconfirmed`. Drawing those
+    // would be a second vocabulary for the same five states, which is
+    // exactly what `postio_ui::row::send_state_word` exists to prevent.
+    //
+    // The distinctions matter rather than being tidiness. "Not sent" rather
+    // than "failed", because what matters is that it did not go (#1487); and
+    // "Not confirmed" rather than either, because ADR 0021 Decision 3 says
+    // nobody can tell whether it arrived and the word has to carry that.
+    let (session, _scope, states) = with_send_states().await;
+    // The first ask misses and the page lands behind it — see
+    // `a_row_is_missing_until_its_page_arrives_and_then_it_is_not`.
+    let _ = session.row_at(0);
+    session.settle_for_test();
+
+    let drawn: Vec<String> = (0..states.len() as u32)
+        .map(|position| {
+            session
+                .row_at(position)
+                .expect("the page is resident")
+                .send_state
+                .expect("every row here has a send state")
+        })
+        .collect();
+
+    // Reversed: a mailbox lists newest first and these were written in one
+    // pass, so the last one seeded is the first one drawn.
+    let expected: Vec<String> = states
+        .iter()
+        .rev()
+        .map(|state| postio_ui::row::send_state_word(*state).to_owned())
+        .collect();
+    assert_eq!(
+        drawn, expected,
+        "the boundary handed over the state machine's words, not the reader's"
+    );
+    session.shutdown();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn an_ordinary_message_has_no_send_state_at_all() {
+    // Received mail is not a draft in some state; `None` is the answer, and
+    // a word here would put a badge on every row in the inbox.
+    let (session, scope) = seeded(1).await;
+    session.open_scope(scope);
+    let _ = session.row_at(0);
+    session.settle_for_test();
+    assert_eq!(session.row_at(0).expect("the row").send_state, None);
+    session.shutdown();
+}

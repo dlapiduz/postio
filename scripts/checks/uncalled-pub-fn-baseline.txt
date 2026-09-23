@@ -35,6 +35,7 @@ extensions_to_enable              # crates/postio-account/src/imap/dispatch.rs:1
 failing_tls                       # crates/postio-account/src/imap/transport.rs:618
 fts_match                         # crates/postio-search/src/query.rs:417
 get_all                           # crates/postio-model/src/headers.rs:52
+handler_fn                        # crates/postio-core/src/bridge.rs:144 -- the closure form of `CommandHandler`. `postio-ffi` used it for the no-op bus that dropped every verb, and now builds a real one; the callers left are `postio-app/examples/shot.rs` and the app suite's integration tests, neither of which this check scans
 has_name                          # crates/postio-account/src/backend/capability.rs:180
 has_pending                       # crates/postio-storage/src/repository/operations.rs:435
 idles                             # crates/postio-sync/src/watch.rs:290
@@ -75,8 +76,6 @@ open_composer                     # crates/postio-core/src/state.rs:620
 open_flagged                      # crates/postio-core/src/state.rs:522
 open_search                       # crates/postio-core/src/state.rs:607
 partials                          # crates/postio-search/src/query.rs:369
-plain_forward                     # crates/postio-model/src/reply.rs:221
-plain_quote                       # crates/postio-model/src/reply.rs:213
 preset_for                        # crates/postio-account/src/imap/settings.rs:74
 record_seen                       # crates/postio-model/src/contact.rs:95
 recount                           # crates/postio-storage/src/repository/mailboxes.rs:276
@@ -92,7 +91,6 @@ requeue_in_flight                 # crates/postio-storage/src/repository/operati
 resync_strategy                   # crates/postio-account/src/imap/dispatch.rs:144
 rethread_orphans                  # crates/postio-storage/src/repository/threading.rs:268
 root_message_id                   # crates/postio-model/src/thread.rs:86
-search_query                      # crates/postio-core/src/state.rs:413
 section_spec                      # crates/postio-account/src/backend/message.rs:585
 seed_backfill                     # crates/postio-runtime/src/engine.rs:671 -- a test lever: the runtime suite drives the body queue through it; the app seeds nothing itself since #1593
 send_tracked                      # crates/postio-core/src/bridge.rs:212
@@ -108,7 +106,6 @@ temporary_directory               # crates/postio-storage/src/blob.rs:145
 text_bytes                        # crates/postio-storage/src/repository/messages.rs:547
 thread_page                       # crates/postio-runtime/src/store/local.rs -- the threaded window under MailStore::list_page; for runtime_suite/thread_store, which measures it on purpose
 timing_out_after_the_payload      # crates/postio-smtp/src/transport.rs:594
-try_next                          # crates/postio-core/src/bridge.rs:328
 untracked                         # crates/postio-core/src/invocation.rs:155
 vanishing_after_the_payload       # crates/postio-smtp/src/transport.rs:583
 vanishing_at                      # crates/postio-smtp/src/transport.rs:572

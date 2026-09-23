@@ -11,13 +11,16 @@ import Testing
 @Suite struct MenuPlanTests {
     /// A binding lookup that answers the registry's defaults, expanded the
     /// way the boundary expands them on this platform.
-    private func defaults(_ command: String) -> String? {
-        PostioRegistry.commands.first { $0.id == command }?.defaultBinding
-            .replacingOccurrences(of: "mod+", with: "cmd+")
+    private func defaults(_ command: String) -> [String] {
+        guard let spec = PostioRegistry.commands.first(where: { $0.id == command }) else {
+            return []
+        }
+        return ([spec.defaultBinding] + spec.alternateBindings)
+            .map { $0.replacingOccurrences(of: "mod+", with: "cmd+") }
     }
 
     @Test func theMenuBarIsBuiltFromTheRegistry() {
-        let bar = MenuPlan.build(binding: defaults)
+        let bar = MenuPlan.build(bindings: defaults)
         #expect(!bar.isEmpty, "no menus at all")
 
         // Every item names a command the registry knows. The failure this
@@ -33,7 +36,7 @@ import Testing
     }
 
     @Test func aCommandGoesUnderTheMenuTheCoreChose() {
-        let bar = MenuPlan.build(binding: defaults)
+        let bar = MenuPlan.build(bindings: defaults)
         let message = bar.first { $0.title == "Message" }
         #expect(message?.items.contains { $0.command == "archive" } == true)
         // ...and not under some other one, or the grouping is not a grouping.
@@ -44,7 +47,7 @@ import Testing
     @Test func noMenuIsDrawnEmpty() {
         // A section with nothing under it is a pane that opens onto nothing,
         // which reads as a broken application rather than an empty section.
-        for menu in MenuPlan.build(binding: { _ in nil }) {
+        for menu in MenuPlan.build(bindings: { _ in [] }) {
             #expect(!menu.items.isEmpty, "\(menu.title) is empty")
         }
     }
@@ -53,7 +56,7 @@ import Testing
         // The whole reason `binding(for:)` exists. A menu drawing the default
         // for a command somebody rebound is confidently wrong, which is worse
         // than showing no key at all.
-        let bar = MenuPlan.build(binding: { $0 == "archive" ? "ctrl+shift+e" : nil })
+        let bar = MenuPlan.build(bindings: { $0 == "archive" ? ["ctrl+shift+e"] : [] })
         let archive = bar.flatMap(\.items).first { $0.command == "archive" }
         #expect(archive?.shortcut == "⌃⇧E")
     }
@@ -130,7 +133,7 @@ import Testing
         // is also why the cheat sheet is in the Help menu: it is the only
         // surface that can describe a sequence.
         #expect(MenuPlan.accelerator(from: "g g") == nil)
-        let bar = MenuPlan.build(binding: defaults)
+        let bar = MenuPlan.build(bindings: defaults)
         let first = bar.flatMap(\.items).first { $0.command == "first_message" }
         #expect(first != nil, "first_message never reached a menu")
         #expect(first?.shortcut == nil)
@@ -145,7 +148,7 @@ import Testing
         // placement comes from `postio_core::menu`, so it is one table's
         // answer rather than a list of command ids kept here by hand — which
         // is what #1158 existed to remove.
-        let plan = MenuPlan.build(binding: { _ in "⌘," })
+        let plan = MenuPlan.build(bindings: { _ in ["⌘,"] })
         let app = plan.first { $0.section == .app }
         #expect(app != nil, "no application menu was planned")
         #expect(app?.items.contains { $0.command == "settings" } == true)
@@ -155,7 +158,7 @@ import Testing
     @Test func nothingInTheApplicationMenuIsAlsoInEdit() {
         // The failure this guards is a fold that adds rather than moves,
         // leaving Settings in two menus at once.
-        let plan = MenuPlan.build(binding: { _ in nil })
+        let plan = MenuPlan.build(bindings: { _ in [] })
         let app = Set(plan.first { $0.section == .app }?.items.map(\.command) ?? [])
         let edit = Set(plan.first { $0.section == .edit }?.items.map(\.command) ?? [])
         #expect(app.isDisjoint(with: edit), "\(app.intersection(edit)) is in both menus")

@@ -110,8 +110,15 @@ CREATE TABLE accounts (
     -- Which protocol family talks to this account. This names a backend, never
     -- a provider: providers are data, in the preset table.
     backend              TEXT    NOT NULL DEFAULT 'imap',
-    -- JMAP's session resource, for `backend = 'jmap'`.
-    jmap_session_url     TEXT,
+    -- Where this backend lives, whatever kind it is (#1278): JMAP's session
+    -- resource for `backend = 'jmap'`, the tree on disk for
+    -- `backend = 'maildir'`, and NULL for the backends that have neither.
+    --
+    -- One column rather than one per backend. A maildir account is nothing
+    -- but a place -- the tree *is* the account -- and a maildir root stored
+    -- in a field called `jmap_session_url` would be a lie every future
+    -- reader has to work around.
+    backend_location     TEXT,
 
     -- OAuth endpoints, from the provider preset table rather than from a
     -- constant in the code. Tokens themselves are in the keyring, never here.
@@ -260,7 +267,16 @@ CREATE TABLE "drafts" (
     created_at              INTEGER NOT NULL,
     updated_at              INTEGER NOT NULL,
     -- 0003's column. Named here so the rebuild carries it; see above.
-    rfc_message_id          TEXT
+    rfc_message_id          TEXT,
+
+    -- Whether this draft is being written as rich text (#1271).
+    --
+    -- Not derived from `body_html`. `rich` used to mean "has an HTML part",
+    -- which reads correctly right up to the moment somebody turns the switch
+    -- off: the switch is on the *document*, so turning it off changes what
+    -- will be built and must not throw the marks away in case it is turned
+    -- back on. A derived flag cannot express "has marks, sending plain".
+    rich                    INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE TABLE egress_log (

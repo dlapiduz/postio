@@ -86,11 +86,33 @@ pub async fn authorize(
     opener: &dyn BrowserOpener,
     cancel: &CancelToken,
 ) -> Result<TokenResponse, OAuthError> {
+    authorize_watching(request, opener, cancel, &|_| {}).await
+}
+
+/// [`authorize`], telling `bound` which port the redirect is listening on.
+///
+/// A frontend that is about to send somebody to their browser has something
+/// to say while they are gone: which port the answer will come back on, and
+/// that the wait is bounded. It cannot know either without being told, and
+/// the port is chosen inside this function — the listener binds `:0` because
+/// a fixed port is a port something else may already hold.
+///
+/// A callback rather than a returned port, because the port exists for the
+/// span of the wait and there is nothing sensible to return it *before*: the
+/// call that would hand it back is the one that blocks until the flow is
+/// over.
+pub async fn authorize_watching(
+    request: AuthorizeRequest,
+    opener: &dyn BrowserOpener,
+    cancel: &CancelToken,
+    bound: &(dyn Fn(u16) + Sync),
+) -> Result<TokenResponse, OAuthError> {
     let pkce = Pkce::generate();
     let state = State::generate();
 
     let listener = LoopbackRedirect::bind().await?;
     let redirect_uri = listener.redirect_uri();
+    bound(listener.port());
 
     let authorize_url = authorization_url(&request, &pkce, &state, &redirect_uri);
     opener.open(&authorize_url).map_err(OAuthError::Browser)?;

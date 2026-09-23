@@ -682,3 +682,86 @@ async fn every_reserved_role_still_stores() {
             .unwrap_or_else(|error| panic!("{role:?} is a folder and must store: {error}"));
     }
 }
+
+// -- when a folder last synced (#1281) ---------------------------------------
+
+#[tokio::test]
+async fn recording_a_sync_sets_the_time_and_leaves_the_counts_alone() {
+    // The counts are maintained by the schema's `messages_count_*` triggers.
+    // Writing the whole row back from a `Mailbox` read minutes ago would
+    // overwrite them with whatever was true then, which is why this is a
+    // narrow UPDATE.
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    let (account, inbox) = test_support::account_with_inbox(&connection).await;
+    let repository = MailboxRepository::new(&connection);
+
+    repository
+        .set_counts(
+            inbox,
+            MailboxCounts {
+                total: 4_985,
+                unread: 37,
+                flagged: 2,
+                snoozed: 0,
+                // Not a message count: the sidebar's feed fills it in before
+                // a row is drawn, and a STATUS-shaped write has nothing to
+                // say about it.
+                attention: 0,
+            },
+        )
+        .await
+        .expect("counts");
+
+    let at = Utc.with_ymd_and_hms(2026, 9, 6, 18, 51, 0).unwrap();
+    repository
+        .record_sync(inbox, at)
+        .await
+        .expect("the time is recorded");
+
+    let stored = repository
+        .get(inbox)
+        .await
+        .expect("a read")
+        .expect("the mailbox");
+    assert_eq!(stored.last_synced_at, Some(at));
+    assert_eq!(stored.counts.total, 4_985, "the counts are untouched");
+    assert_eq!(stored.counts.unread, 37);
+    let _ = account;
+}
+
+#[tokio::test]
+async fn a_second_pass_moves_the_time_forward() {
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    let (_, inbox) = test_support::account_with_inbox(&connection).await;
+    let repository = MailboxRepository::new(&connection);
+
+    let first = Utc.with_ymd_and_hms(2026, 9, 6, 9, 0, 0).unwrap();
+    let second = Utc.with_ymd_and_hms(2026, 9, 6, 18, 0, 0).unwrap();
+    repository.record_sync(inbox, first).await.expect("first");
+    repository.record_sync(inbox, second).await.expect("second");
+
+    assert_eq!(
+        repository
+            .get(inbox)
+            .await
+            .expect("a read")
+            .expect("it")
+            .last_synced_at,
+        Some(second)
+    );
+}
+
+#[tokio::test]
+async fn recording_a_sync_for_a_folder_that_is_gone_says_so() {
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    let repository = MailboxRepository::new(&connection);
+
+    let error = repository
+        .record_sync(MailboxId::new(404), Utc::now())
+        .await
+        .expect_err("there is no such folder");
+    assert!(matches!(error, postio_storage::Error::NotFound { .. }));
+}

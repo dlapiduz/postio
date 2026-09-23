@@ -30,5 +30,7 @@ mod imap_oauth_session;
 mod imap_pool;
 mod imap_session;
 mod keychain;
+#[cfg(feature = "maildir")]
+mod maildir;
 mod oauth_flow;
 mod secret;

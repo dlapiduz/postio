@@ -9,7 +9,7 @@
 //! gets results, never the job of producing them.
 
 use chrono::Utc;
-use postio_ffi::{ScopeFfi, Session, SessionOptions};
+use postio_ffi::{ScopeFfi, SearchScopeFfi, Session, SessionOptions};
 use postio_model::{BodyState, Message};
 use postio_storage::repository::{MessageRepository, StoredBody};
 use postio_storage::test_support;
@@ -313,5 +313,428 @@ async fn a_search_reports_what_it_turned_out_to_be() {
         None,
         "leaving search left a readout about a query nobody is running"
     );
+    session.shutdown();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_query_that_matched_nothing_blames_the_query_and_not_the_mailbox() {
+    // ADR 0005 Q10's worked example: somebody searches for an invoice, finds
+    // nothing, and concludes it does not exist. The macOS list drew "This
+    // store has no mail in it yet." over a zero-hit search -- over a mailbox
+    // with three messages in it -- because the only empty-state branch it had
+    // was keyed on the row count, and a search's row count is its hit count.
+    let (session, scope) = searchable().await;
+    session.open_scope(scope);
+
+    assert!(
+        session.empty_plate().is_none(),
+        "a folder with rows in it needs no plate at all"
+    );
+
+    session.search("zzzznothingmatchesthis").await;
+    assert_eq!(session.row_count(), 0, "the fixture matched something");
+
+    let plate = session
+        .empty_plate()
+        .expect("a search that matched nothing has something to say");
+    assert_eq!(plate.title, "No matches");
+    assert!(
+        plate.detail.contains("zzzznothingmatchesthis"),
+        "the sentence has to name the query that found nothing: {}",
+        plate.detail
+    );
+    assert!(
+        !plate.detail.contains("no mail"),
+        "the mailbox is not empty -- the query is: {}",
+        plate.detail
+    );
+    session.shutdown();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn leaving_the_search_leaves_its_sentence_behind_too() {
+    // The plate is about the query, so it must not outlive it: `Escape`
+    // restores the folder, and a folder with mail in it has nothing to say.
+    let (session, scope) = searchable().await;
+    session.open_scope(scope);
+    session.search("zzzznothingmatchesthis").await;
+    assert!(session.empty_plate().is_some());
+
+    session.clear_search();
+    assert!(
+        session.empty_plate().is_none(),
+        "the folder is back and it is not empty"
+    );
+    session.shutdown();
+}
+
+/// A corpus where relevance and date genuinely disagree, and the two
+/// matching ids newest-first.
+///
+/// Built on the shape `index_suite`'s
+/// `newest_order_answers_in_date_order_however_the_ranking_disagrees`
+/// already proved, because two earlier attempts here did not disagree at
+/// all and the test passed while proving nothing. Two things make the
+/// difference, and both are properties of the ranker rather than of this
+/// test: twenty non-matching messages, because BM25's IDF term goes to zero
+/// when every document in the corpus matches; and **hours** between the two
+/// matches rather than days, because `rank_score` folds recency in with a
+/// calibrated weight and days of it outweigh any term density.
+async fn disagreeing() -> (std::sync::Arc<Session>, Vec<i64>) {
+    let database = test_support::memory().await;
+    let (dense, recent) = {
+        let connection = database.connect().await.expect("a connection");
+        let (account, inbox) = test_support::account_with_inbox(&connection).await;
+        postio_index::index::ensure_schema(&connection)
+            .await
+            .expect("the index schema");
+        let repository = MessageRepository::new(&connection);
+        let base = Utc::now() - chrono::Duration::days(1);
+
+        let write = async |subject: &str, body: &str, at: chrono::DateTime<Utc>| {
+            let mut message = Message::new(account.id, inbox, at);
+            message.subject = Some(subject.to_string());
+            message.sync.body_state = BodyState::Full;
+            repository.create(&mut message).await.expect("a message");
+            repository
+                .set_body(
+                    message.id,
+                    &StoredBody {
+                        text: Some(body.to_string()),
+                        html: None,
+                        headers: None,
+                        headers_truncated: false,
+                        encoding_problems: false,
+                    },
+                    BodyState::Full,
+                )
+                .await
+                .expect("a body");
+            postio_index::index::index_body(&connection, message.id.get(), Some(body))
+                .await
+                .expect("an indexed body");
+            message.id.get()
+        };
+
+        for i in 0..20 {
+            write(
+                &format!("Entirely unrelated subject {i}"),
+                "nothing in here says that word at all",
+                base,
+            )
+            .await;
+        }
+        // Older, and saturated with the term: the far better match.
+        let dense = write("Report", "report report report report report", base).await;
+        // Newer by five hours, and a glancing match.
+        let recent = write(
+            "One report",
+            "One report among other things entirely",
+            base + chrono::Duration::hours(5),
+        )
+        .await;
+        (dense, recent)
+    };
+
+    let session =
+        Session::open(SessionOptions::in_memory_with(database)).expect("a session over the store");
+    (session, vec![recent, dense])
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn results_can_be_read_newest_first_instead_of_best_first() {
+    // `o` over a result set — #499's "the order of what I am looking at",
+    // which is one idea and one key in both places it appears. Until now the
+    // boundary answered every search in relevance order and had no way to be
+    // asked for another, so `ToggleResultOrder` was a command macOS could
+    // resolve and not obey.
+    let (session, newest_first) = disagreeing().await;
+    session.search("report").await;
+    let by_relevance = resident(&session);
+
+    session.toggle_result_order().await;
+
+    assert_eq!(
+        resident(&session),
+        newest_first,
+        "`o` did not put the results in date order, newest first"
+    );
+    assert_ne!(
+        by_relevance, newest_first,
+        "the two orders agree, so this fixture cannot tell them apart and \
+         the assertion above proves nothing: {by_relevance:?}"
+    );
+    session.shutdown();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn the_order_survives_the_next_query() {
+    // Having asked for date order, the *next* search is answered in date
+    // order too. A toggle that reset itself on every query would be a
+    // setting somebody has to re-press to keep, which is what makes it read
+    // as broken rather than as a preference.
+    let (session, _) = disagreeing().await;
+    session.search("report").await;
+    session.toggle_result_order().await;
+    let by_date = resident(&session);
+
+    session.search("report").await;
+    assert_eq!(
+        resident(&session),
+        by_date,
+        "the second search forgot the order the first one was left in"
+    );
+    session.shutdown();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn toggling_the_order_over_a_mailbox_does_nothing() {
+    // Over a mailbox there is no other order to offer: the list is already
+    // in the one order a mailbox has. GTK's control is inert there for the
+    // same reason, and a key that quietly re-sorted somebody's inbox would
+    // be a different command than the one they pressed.
+    let (session, _) = searchable().await;
+    let before = resident(&session);
+    session.toggle_result_order().await;
+    assert_eq!(
+        resident(&session),
+        before,
+        "`o` re-sorted a mailbox, which has no result order to toggle"
+    );
+    session.shutdown();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn the_query_on_screen_can_be_read_back_to_be_saved() {
+    // `⌘S` over results keeps *the query*, and the frontend does not hold
+    // one: the field's text is whatever has been typed since, which may not
+    // be what was run. What must be saved is the query that produced the
+    // rows on screen, and the session is what knows it.
+    let (session, _) = disagreeing().await;
+    assert_eq!(
+        session.search_query(),
+        None,
+        "a list showing a mailbox has no query to keep"
+    );
+
+    session.search("report").await;
+    assert_eq!(session.search_query().as_deref(), Some("report"));
+
+    session.clear_search();
+    assert_eq!(
+        session.search_query(),
+        None,
+        "the query outlived the search it belonged to"
+    );
+    session.shutdown();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn the_sort_control_says_which_order_is_in_force() {
+    // "Relevance ▾" on the canvas. The word is `ResultOrder::label`'s, so the
+    // control and GTK's own say the same thing — and a control that did not
+    // change when `o` did would be a label about the previous search.
+    let (session, _) = disagreeing().await;
+    session.search("report").await;
+    assert_eq!(session.result_order_label(), "Relevance");
+
+    session.toggle_result_order().await;
+    assert_eq!(session.result_order_label(), "Newest");
+    session.shutdown();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn the_refine_chips_are_measured_against_the_results_on_screen() {
+    // The discoverable half of the query language (#1157). Not a fixed list
+    // typed into a frontend: a chip that keeps none of the current matches
+    // is a dead end, and one that keeps all of them appears to do nothing
+    // when clicked. `Facets::suggested` drops both, and the frontend draws
+    // what survives.
+    let (session, _) = disagreeing().await;
+    session.search("report").await;
+
+    let chips = session.search_facets().await.refinements;
+    assert!(
+        chips.iter().all(|chip| chip.hits > 0),
+        "a chip that keeps nothing was offered: {chips:?}"
+    );
+    assert!(
+        chips.len() <= 4,
+        "the shortlist is four; a column of twenty is a thing to read \
+         rather than a thing to click: {}",
+        chips.len()
+    );
+    assert!(
+        chips.iter().all(|chip| !chip.token.is_empty()),
+        "a chip with no token to append: {chips:?}"
+    );
+    session.shutdown();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_mailbox_has_nothing_to_refine() {
+    // The chips are about a result set. Over a mailbox there is none, and
+    // offering `is:unread` there would be offering to search without saying
+    // so.
+    let (session, _) = searchable().await;
+    let facets = session.search_facets().await;
+    assert!(facets.refinements.is_empty());
+    assert!(
+        facets.scopes.is_empty(),
+        "a scope rail over a mailbox is a rail about a search nobody ran"
+    );
+    session.shutdown();
+}
+
+// -- the scope rail (#1157) ---------------------------------------------------
+
+/// Two matches in the inbox and one filed into a list folder, beside a
+/// message that matches nothing.
+async fn filed() -> (std::sync::Arc<Session>, ScopeFfi) {
+    let database = test_support::memory().await;
+    let inbox = {
+        let connection = database.connect().await.expect("a connection");
+        let (account, inbox) = test_support::account_with_inbox(&connection).await;
+        let lists = test_support::mailbox(&connection, &account, "Lists/rust").await;
+        postio_index::index::ensure_schema(&connection)
+            .await
+            .expect("the index schema");
+        let repository = MessageRepository::new(&connection);
+        for (folder, subject, body) in [
+            (
+                inbox,
+                "Quarterly figures",
+                "the quarterly numbers we discussed",
+            ),
+            (
+                inbox,
+                "Lunch",
+                "quarterly is not what this is about, lunch is",
+            ),
+            (inbox, "Roadmap", "nothing in here says that word"),
+            (lists.id, "Rust digest", "quarterly release notes, part two"),
+        ] {
+            let mut message = Message::new(account.id, folder, Utc::now());
+            message.subject = Some(subject.to_string());
+            message.sync.body_state = BodyState::Full;
+            repository.create(&mut message).await.expect("a message");
+            repository
+                .set_body(
+                    message.id,
+                    &StoredBody {
+                        text: Some(body.to_string()),
+                        html: None,
+                        headers: None,
+                        headers_truncated: false,
+                        encoding_problems: false,
+                    },
+                    BodyState::Full,
+                )
+                .await
+                .expect("a body");
+            postio_index::index::index_body(&connection, message.id.get(), Some(body))
+                .await
+                .expect("an indexed body");
+        }
+        inbox
+    };
+    let session =
+        Session::open(SessionOptions::in_memory_with(database)).expect("a session over the store");
+    let scope = ScopeFfi::Mailbox {
+        mailbox: inbox.into(),
+    };
+    session.open_scope(scope.clone());
+    (session, scope)
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn the_scope_rail_counts_what_switching_would_find() {
+    // Canvas 5's column: what each scope holds of *this* query, so a person
+    // can see before switching whether the switch is worth it. A zero is
+    // drawn -- an empty scope is a fact worth knowing.
+    let (session, _) = filed().await;
+    session.search("quarterly").await;
+
+    let scopes = session.search_facets().await.scopes;
+
+    assert_eq!(
+        scopes.iter().map(|count| count.scope).collect::<Vec<_>>(),
+        vec![
+            SearchScopeFfi::AllMail,
+            SearchScopeFfi::Inbox,
+            SearchScopeFfi::Lists
+        ],
+        "the canvas' order, All mail first"
+    );
+    assert_eq!(
+        scopes
+            .iter()
+            .map(|count| count.label.as_str())
+            .collect::<Vec<_>>(),
+        vec!["All mail", "Inbox only", "Lists"]
+    );
+    assert_eq!(
+        scopes.iter().map(|count| count.hits).collect::<Vec<_>>(),
+        vec![3, 2, 1]
+    );
+    assert_eq!(
+        scopes[1].spoken, "Inbox only, 2 matches",
+        "what a screen reader hears is the count, not a number beside a word"
+    );
+    session.shutdown();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn switching_scope_asks_the_same_query_again_inside_it() {
+    // The scope is not written into the query -- switching it must not mean
+    // editing what was typed -- so the same query is asked again.
+    let (session, _) = filed().await;
+    session.search("quarterly").await;
+    assert_eq!(session.row_count(), 3);
+    assert_eq!(session.search_scope(), SearchScopeFfi::AllMail);
+
+    session.set_search_scope(SearchScopeFfi::Inbox).await;
+
+    assert_eq!(session.search_scope(), SearchScopeFfi::Inbox);
+    assert_eq!(session.row_count(), 2, "only what is still in the inbox");
+    assert_eq!(
+        session.search_query().as_deref(),
+        Some("quarterly"),
+        "the query is what was typed, whatever the scope"
+    );
+
+    session.set_search_scope(SearchScopeFfi::Lists).await;
+    assert_eq!(session.row_count(), 1);
+    session.shutdown();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_new_search_starts_from_all_mail() {
+    // All mail is the default for a reason (`facets::Scope`'s doc): search
+    // is how you find what you filed and forgot. A narrowing chosen for one
+    // search that silently carried into the next would hide exactly that.
+    let (session, _) = filed().await;
+    session.search("quarterly").await;
+    session.set_search_scope(SearchScopeFfi::Inbox).await;
+
+    session.clear_search();
+
+    assert_eq!(session.search_scope(), SearchScopeFfi::AllMail);
+    session.search("quarterly").await;
+    assert_eq!(session.row_count(), 3);
+    session.shutdown();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn leaving_search_by_opening_a_folder_also_starts_the_next_from_all_mail() {
+    // Picking a folder leaves the results without `Escape` -- a different
+    // road out of the same search, and it has to end in the same place.
+    let (session, inbox) = filed().await;
+    session.search("quarterly").await;
+    session.set_search_scope(SearchScopeFfi::Lists).await;
+
+    session.open_scope(inbox);
+
+    assert_eq!(session.search_scope(), SearchScopeFfi::AllMail);
     session.shutdown();
 }

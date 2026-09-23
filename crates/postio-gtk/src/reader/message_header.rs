@@ -13,13 +13,6 @@ use chrono::{DateTime, Local, Utc};
 use postio_model::address::EmailAddress;
 use postio_ui::reader::header::MessageHeader as HeaderLines;
 
-/// Above the remote-image banner and the body: who this is from, who it was
-/// addressed to, what it is about, and when it arrived.
-///
-/// Independent of whether a body is on screen — [`MessageHeader::set_message`] takes
-/// only the envelope, so a header-only message (backfill still pending, or
-/// genuinely bodyless) gets exactly the same header a message with a body
-/// does.
 /// One of the header's field names -- `From`, `To`, `Cc`.
 ///
 /// A fixed width, which is the whole point: the three of them form a column
@@ -34,6 +27,13 @@ fn field_label(text: &str) -> gtk::Label {
     label
 }
 
+/// Above the remote-image banner and the body: who this is from, who it was
+/// addressed to, what it is about, and when it arrived.
+///
+/// Independent of whether a body is on screen — [`MessageHeader::set_message`] takes
+/// only the envelope, so a header-only message (backfill still pending, or
+/// genuinely bodyless) gets exactly the same header a message with a body
+/// does.
 pub struct MessageHeader {
     root: gtk::Box,
     /// Subject and the sender/date row, grouped so they can be hidden
@@ -190,8 +190,6 @@ impl MessageHeader {
         }
     }
 
-    /// The widget to place above the banner, per [`super::view::Reader`]'s
-    /// container.
     /// Mount the reader's action bar at the end of the subject line.
     ///
     /// The single-message reader used to append its bar last, under the
@@ -210,6 +208,8 @@ impl MessageHeader {
         self.verbs.append(widget);
     }
 
+    /// The widget to place above the banner, per [`super::view::Reader`]'s
+    /// container.
     pub fn widget(&self) -> gtk::Widget {
         self.root.clone().upcast()
     }
@@ -231,12 +231,14 @@ impl MessageHeader {
 
     /// Fills in every field from a message's envelope.
     ///
-    /// Every string here comes from [`HeaderLines`], including the `To:`
-    /// label and the `Cc (n)` disclosure title. Those two read like
+    /// Every string here comes from [`HeaderLines`], including the shortened
+    /// recipient line and the `Cc (n)` disclosure title. Those two read like
     /// formatting a widget may as well do itself, which is exactly why they
     /// are not: the macOS header has to write the same two, and a label
     /// composed in each frontend is how the two come to disagree (#1259,
-    /// #1285).
+    /// #1285). The field *names* are the exception, and only because #1437
+    /// gave `From`, `To` and `Cc` one shared label column: `field_label`
+    /// draws each word once, in `new`, so the value beside it is bare.
     pub fn set_message(
         &self,
         from: &[EmailAddress],
@@ -392,3 +394,9 @@ impl Default for MessageHeader {
         Self::new()
     }
 }
+
+// The header's wording is tested where it now lives: `postio_ui::reader::
+// header` carries those seven cases under the same names, because they moved
+// with the functions they were written for (#1259, #1285). A second copy here
+// would be this crate asserting another crate's rules — green whatever this
+// widget does with them, which is the half that is actually this file's.

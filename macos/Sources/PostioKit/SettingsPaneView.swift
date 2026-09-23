@@ -24,12 +24,107 @@ public struct SettingsPaneView: View {
     /// `config.toml`: the store is the truth about which accounts exist.
     private let accounts: [AccountFfi]
 
-    public init(store: SettingsStore, accounts: [AccountFfi] = []) {
+    /// Every folder, so an account row can say how much mail it has without
+    /// asking the store to count it again.
+    private let mailboxes: [MailboxFfi]
+
+    /// The session, for the things the accounts pane can actually *do* —
+    /// adding one, mostly. `nil` when the store never opened, in which case
+    /// the pane still draws: settings are a file, and being unable to read
+    /// mail is not being unable to configure it.
+    private let session: PostioSession?
+
+    /// Which account's form is open, if any.
+    /// Which account row is open, held outside this view.
+    ///
+    /// The seven verbs in `Context::Accounts` all act on it, and a command
+    /// cannot reach an `@State` — see `SettingsAccounts`, which is also why
+    /// every one of them used to resolve to nothing while the buttons here
+    /// worked.
+    private let accountCursor: SettingsAccounts
+    /// Putting a broken account back in service. See `AccountRepair`.
+    private let repair: AccountRepair
+    /// Re-read the accounts after one of them changed. Set by the
+    /// application, which owns the list: a pane that edited its own copy
+    /// would draw what it believes rather than what was written.
+    private let reloadAccounts: (() -> Void)?
+    /// The add-account sheet, while it is up.
+    @State private var adding: AddAccountModel?
+    /// The account being signed in again, if one is.
+    /// Test, re-index and remove, and what the last one said.
+    ///
+    /// Owned by the application rather than by this view: a re-index reports
+    /// through the event stream, and a window that owned it would have to be
+    /// open at the moment each report landed.
+    private let actions: AccountActions
+    /// What the display-name field currently holds.
+    @State private var renamedTo = ""
+    /// The remote-image grants, read when the Privacy pane appears.
+    @State private var grants: [GrantFfi] = []
+    /// Every unsubscribe Postio has recorded, newest first. Read when the
+    /// Privacy pane appears, like the grants above it.
+    @State private var activations: [UnsubscribeActivationFfi] = []
+    /// The new filter being typed, if one is.
+    @State private var newFilterKey = ""
+    @State private var newFilterQuery = ""
+
+    public init(
+        store: SettingsStore,
+        accounts: [AccountFfi] = [],
+        mailboxes: [MailboxFfi] = [],
+        actions: AccountActions = AccountActions(),
+        accountCursor: SettingsAccounts = SettingsAccounts(),
+        repair: AccountRepair = AccountRepair(),
+        reloadAccounts: (() -> Void)? = nil,
+        session: PostioSession? = nil
+    ) {
         self.store = store
         self.accounts = accounts
+        self.mailboxes = mailboxes
+        self.actions = actions
+        self.accountCursor = accountCursor
+        self.repair = repair
+        self.reloadAccounts = reloadAccounts
+        self.session = session
     }
 
     public var body: some View {
+        content
+            // By token, not by value: adding two accounts in a row is two
+            // sheets, and `onChange` on the wish alone would open only the
+            // first.
+            .onChange(of: accountCursor.wishToken) { _, _ in grant(accountCursor.wish) }
+            // Never pre-filled, and never with the old one: the old one is
+            // what stopped working, and Postio does not have it to offer.
+            .alert(
+                "New password",
+                isPresented: Binding(
+                    get: { repair.asking != nil },
+                    set: { if !$0 { repair.cancel() } }
+                )
+            ) {
+                SecureField("Password", text: Binding(
+                    get: { repair.typed }, set: { repair.typed = $0 }
+                ))
+                Button("Save") {
+                    guard let id = repair.asking,
+                          let account = accounts.first(where: { $0.id == id })
+                    else { return }
+                    Task { await repair.save(account, through: session) }
+                }
+                Button("Cancel", role: .cancel) { repair.cancel() }
+            } message: {
+                Text(
+                    """
+                    It goes straight into your Keychain and is never written \
+                    to a file. If your provider calls this an app password, \
+                    that is the one it wants.
+                    """
+                )
+            }
+    }
+
+    private var content: some View {
         HStack(spacing: 0) {
             sidebar
             Divider()
@@ -144,7 +239,13 @@ public struct SettingsPaneView: View {
     @ViewBuilder private var pane: some View {
         switch store.selected {
         case "ui": appearance
+        case "compose": composing
         case "accounts": accountsPane
+        case "sync": syncing
+        case "keys": keyboard
+        case "privacy": privacy
+        case "filters": filters
+        case "": configFile
         default: unbuilt
         }
     }
@@ -153,41 +254,291 @@ public struct SettingsPaneView: View {
     /// list first, because a pane that cannot even show what is configured is
     /// the part that makes the rest unverifiable.
     @ViewBuilder private var accountsPane: some View {
-        if accounts.isEmpty {
-            ContentUnavailableView {
-                Label("No accounts", systemImage: "person.crop.circle.badge.questionmark")
-            } description: {
-                Text(AccountRow.emptyMessage)
+        VStack(alignment: .leading, spacing: 0) {
+            if accounts.isEmpty {
+                ContentUnavailableView {
+                    Label("No accounts", systemImage: "person.crop.circle.badge.questionmark")
+                } description: {
+                    Text(AccountRow.emptyMessage)
+                }
+                .frame(maxHeight: .infinity)
+            } else {
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 0) {
+                        ForEach(accounts, id: \.id) { account in
+                            accountRow(account)
+                            if account.id != accounts.last?.id { Divider() }
+                        }
+                    }
+                }
             }
-        } else {
-            VStack(alignment: .leading, spacing: 0) {
-                ForEach(accounts, id: \.id) { account in
-                    HStack(alignment: .top, spacing: 12) {
-                        Text(account.initials)
-                            .font(.system(size: 12, weight: .medium))
-                            .frame(width: 30, height: 30)
-                            .background(Color.accentColor.opacity(0.22))
-                            .clipShape(Circle())
-                        VStack(alignment: .leading, spacing: 3) {
-                            HStack(spacing: 8) {
-                                Text(account.address).font(.body)
-                                if let tag = AccountRow.tag(account) {
-                                    Text(tag)
-                                        .font(.system(.caption, design: .monospaced))
-                                        .foregroundStyle(.secondary)
-                                }
+            Divider()
+            // Under the list, not in the sidebar: the buttons act on *this*
+            // list, and a `+` in the section nav would read as "add a section"
+            // (canvas 27).
+            HStack(spacing: 6) {
+                Button {
+                    adding = AddAccountModel()
+                } label: {
+                    Image(systemName: "plus")
+                }
+                .help("Add an account")
+                .accessibilityLabel("Add an account")
+                Button {
+                    if let account = accountCursor.focused(in: accounts) {
+                        actions.askToRemove(account)
+                    }
+                } label: {
+                    Image(systemName: "minus")
+                }
+                .disabled(accountCursor.cursor == nil || actions.isBusy)
+                .help("Remove the selected account")
+                .accessibilityLabel("Remove the selected account")
+                Spacer()
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+        }
+        // Removing takes the account's mail with it, so it is asked about
+        // and the question names what goes.
+        .alert(
+            "Remove this account?",
+            isPresented: Binding(
+                get: { actions.confirmingRemoval != nil },
+                set: { if !$0 { actions.cancelRemoval() } }
+            ),
+            presenting: actions.confirmingRemoval
+        ) { _ in
+            Button("Remove", role: .destructive) {
+                Task { await actions.confirmRemoval(through: session) }
+            }
+            Button("Cancel", role: .cancel) { actions.cancelRemoval() }
+        } message: { account in
+            Text(actions.removalWarning(for: account))
+        }
+        .sheet(item: $adding) { model in
+            AddAccountSheet(session: session, model: model) { added in
+                // Only when the sheet actually wrote one: cancelling must not
+                // announce an account that is not there. Without this the row
+                // exists and nothing syncs it until the next launch, which
+                // reads as an account that did not save (#1299).
+                if added { actions.added() }
+                adding = nil
+            }
+        }
+    }
+
+    /// What the re-index button says, including how far it has got.
+    private var reindexTitle: String {
+        guard actions.running == .reindexing else { return "Re-index store" }
+        guard let progress = actions.progressLabel else { return "Re-indexing…" }
+        return "Re-indexing… \(progress)"
+    }
+
+    /// Sign in to `account` again, in the browser.
+    ///
+    /// Say what a settings verb refused, where the person who pressed it is
+    /// looking. The pane already has a place for an outcome; this is the
+    /// same place, so a switch that would not flip says so beside itself.
+    private func complain(_ said: String?) {
+        guard let said else { return }
+        actions.said(said, failed: true)
+    }
+
+    /// Grant whatever a command asked for.
+    ///
+    /// Two of the seven need a surface, and a command has no view to present
+    /// one with. The other five are calls the engine makes itself.
+    private func grant(_ wish: SettingsAccounts.Wish?) {
+        switch wish {
+        case .add:
+            adding = AddAccountModel()
+        case let .updateCredential(id):
+            // The same route the row's own button takes, which is the whole
+            // reason it goes through `AccountRepair`: a command and a button
+            // that repaired an account two different ways would be two
+            // answers to what is wrong with it.
+            guard let account = accounts.first(where: { $0.id == id }) else { return }
+            Task { await repair.begin(account, through: session) }
+        case nil:
+            break
+        }
+    }
+
+    /// One account, and its form when it is the selected one.
+    @ViewBuilder private func accountRow(_ account: AccountFfi) -> some View {
+        let open = accountCursor.cursor == account.id
+        VStack(alignment: .leading, spacing: 0) {
+            Button {
+                accountCursor.put(cursor: open ? nil : account.id)
+                renamedTo = account.displayName
+            } label: {
+                HStack(alignment: .top, spacing: 12) {
+                    Text(account.initials)
+                        .font(.system(size: 12, weight: .medium))
+                        .frame(width: 30, height: 30)
+                        .background(Color.accentColor.opacity(0.22))
+                        .clipShape(Circle())
+                    VStack(alignment: .leading, spacing: 3) {
+                        HStack(spacing: 8) {
+                            Text(account.address).font(.body)
+                            if let tag = AccountRow.tag(account) {
+                                Text(tag)
+                                    .font(.system(.caption, design: .monospaced))
+                                    .foregroundStyle(.secondary)
                             }
-                            Text(AccountRow.line(account))
+                        }
+                        HStack(spacing: 6) {
+                            if AccountRow.needsAttention(account) {
+                                Image(systemName: "exclamationmark.triangle")
+                                    .foregroundStyle(.secondary)
+                            }
+                            Text(
+                                AccountRow.line(
+                                    account,
+                                    mailboxes: mailboxes,
+                                    weight: session?.weight(of: account.id)
+                                )
+                            )
                                 .font(.system(.caption, design: .monospaced))
                                 .foregroundStyle(.secondary)
                         }
-                        Spacer(minLength: 0)
                     }
-                    .padding(.vertical, 10)
-                    if account.id != accounts.last?.id { Divider() }
+                    Spacer(minLength: 0)
+                    // Inline, beside the account it is about: a credential
+                    // that stopped working is a thing to fix here rather
+                    // than a banner somewhere else.
+                    //
+                    // **Which repair is the boundary's answer**, not a guess
+                    // from the provider's name: asking for a password where
+                    // consent is wanted asks for something no provider would
+                    // accept, and sending somebody to a browser to replace an
+                    // app password sends them somewhere with no field to type
+                    // it in.
+                    if let label = AccountRepair.label(
+                        for: account,
+                        running: repair.running == account.id
+                    ) {
+                        Button(label) {
+                            Task { await repair.begin(account, through: session) }
+                        }
+                        .controlSize(.small)
+                        .disabled(repair.running != nil)
+                        .help(
+                            account.repair == .password
+                                ? "Store a new password for this account"
+                                : "Sign in to this account again in your browser"
+                        )
+                    }
                 }
+                .contentShape(Rectangle())
+                .padding(.vertical, 10)
+            }
+            .buttonStyle(.plain)
+            .accessibilityAddTraits(open ? [.isSelected] : [])
+
+            if open {
+                accountForm(account)
             }
         }
+    }
+
+    /// What selecting an account reveals.
+    private func accountForm(_ account: AccountFfi) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            field("DISPLAY NAME") {
+                HStack(spacing: 8) {
+                    TextField("", text: $renamedTo)
+                        .textFieldStyle(.roundedBorder)
+                        .frame(maxWidth: 260)
+                        .onSubmit { actions.rename(account, to: renamedTo, through: session) }
+                        .accessibilityLabel("Display name")
+                    Button("Save") { actions.rename(account, to: renamedTo, through: session) }
+                        .disabled(renamedTo == account.displayName || actions.isBusy)
+                }
+            }
+            field("SYNCING") {
+                // A switch rather than a button: it is a state, it can be
+                // read at a glance, and it is the one setting here that
+                // stops mail arriving. `Return` presses it.
+                Toggle(
+                    "Check this account for new mail",
+                    isOn: Binding(
+                        get: { account.enabled },
+                        set: { wanted in
+                            complain(session?.setAccountEnabled(account.id, wanted))
+                            reloadAccounts?()
+                        }
+                    )
+                )
+                .toggleStyle(.switch)
+                .disabled(actions.isBusy)
+            }
+            field("DEFAULT ACCOUNT") {
+                // "Default", never "primary" and never "main" (#960): the
+                // other words invite the reading the decision rules out —
+                // that this account is more the user's than the other one.
+                // There is no way to clear it, because the reversal of
+                // marking an account is marking another.
+                if account.isDefault {
+                    Text("New messages come from this account.")
+                        .foregroundStyle(.secondary)
+                } else {
+                    Button("Make this the default") {
+                        complain(session?.setDefaultAccount(account.id))
+                        reloadAccounts?()
+                    }
+                    .disabled(actions.isBusy)
+                }
+            }
+            field("LOCAL STORE") {
+                Text(store.path)
+                    .font(.system(.callout, design: .monospaced))
+                    .textSelection(.enabled)
+            }
+            HStack(spacing: 8) {
+                Button(actions.running == .testing ? "Testing…" : "Test connection") {
+                    Task { await actions.test(account, through: session) }
+                }
+                Button(reindexTitle) {
+                    Task { await actions.reindex(account, through: session) }
+                }
+                Button("Remove account…") { actions.askToRemove(account) }
+            }
+            .disabled(actions.isBusy)
+            if actions.missingCredential {
+                // The Partial state: a row that exists with nothing in the
+                // keyring to sign in with. It asks for a password rather
+                // than a retry, which is a different offer from "the server
+                // said no".
+                Label(
+                    "This account has no password in your Keychain yet.",
+                    systemImage: "key.slash"
+                )
+                .font(.callout)
+            }
+            if let outcome = actions.outcome {
+                // What happened, where it was asked for. A connection test
+                // whose answer appears somewhere else is a test nobody reads.
+                Label(outcome, systemImage: actions.failed ? "xmark.circle" : "checkmark.circle")
+                    .font(.callout)
+                    .foregroundStyle(actions.failed ? Color.primary : Color.secondary)
+                    .textSelection(.enabled)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            if let outcome = repair.outcome {
+                // A repair that reported nothing is one you press again,
+                // because the row's warning does not clear until the next
+                // sync proves the credential works.
+                Label(outcome, systemImage: repair.failed ? "xmark.circle" : "checkmark.circle")
+                    .font(.callout)
+                    .foregroundStyle(repair.failed ? Color.primary : Color.secondary)
+                    .textSelection(.enabled)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .padding(.leading, 42)
+        .padding(.bottom, 14)
     }
 
     @ViewBuilder private var appearance: some View {
@@ -245,6 +596,457 @@ public struct SettingsPaneView: View {
         }
     }
 
+    // -- Filters (#1156) ----------------------------------------------------
+
+    /// The saved searches, and what each one runs.
+    ///
+    /// The key is the identity (#292) and is deliberately not editable here:
+    /// renaming writes `name`, so a filter cannot be orphaned by being moved
+    /// to a new key. What the row shows is the name; what it edits is the
+    /// query, the label, and whether the sidebar carries it.
+    @ViewBuilder private var filters: some View {
+        if let current = store.filters {
+            VStack(alignment: .leading, spacing: 0) {
+                if current.isEmpty {
+                    ContentUnavailableView {
+                        Label("No filters", systemImage: "line.3.horizontal.decrease.circle")
+                    } description: {
+                        Text(
+                            "A filter is a saved search. Add one below, or write "
+                                + "`[filters.<name>]` in the config file."
+                        )
+                    }
+                    .frame(maxHeight: .infinity)
+                } else {
+                    ScrollView {
+                        VStack(alignment: .leading, spacing: 0) {
+                            ForEach(current, id: \.key) { filter in
+                                filterRow(filter)
+                                if filter.key != current.last?.key { Divider() }
+                            }
+                        }
+                    }
+                }
+                Divider()
+                HStack(spacing: PostioTokens.space2) {
+                    TextField("Name", text: $newFilterKey)
+                        .textFieldStyle(.roundedBorder)
+                        .frame(width: 140)
+                    TextField("is:unread", text: $newFilterQuery)
+                        .textFieldStyle(.roundedBorder)
+                    Button("Add") {
+                        store.addFilter(key: newFilterKey, query: newFilterQuery)
+                        if store.failure == nil {
+                            newFilterKey = ""
+                            newFilterQuery = ""
+                        }
+                    }
+                    .disabled(
+                        newFilterKey.trimmingCharacters(in: .whitespaces).isEmpty
+                            || newFilterQuery.trimmingCharacters(in: .whitespaces).isEmpty
+                    )
+                }
+                .padding(.vertical, PostioTokens.space2)
+            }
+        } else {
+            unreadable
+        }
+    }
+
+    @ViewBuilder private func filterRow(_ filter: FilterFfi) -> some View {
+        VStack(alignment: .leading, spacing: PostioTokens.space2) {
+            HStack {
+                TextField(
+                    filter.key,
+                    text: Binding(
+                        get: { filter.name },
+                        set: { value in
+                            var next = filter
+                            next.name = value
+                            store.applyFilter(next)
+                        })
+                )
+                .textFieldStyle(.plain)
+                .font(.body.weight(.medium))
+                Spacer()
+                Toggle(
+                    "In the sidebar",
+                    isOn: Binding(
+                        get: { filter.pinned },
+                        set: { value in
+                            var next = filter
+                            next.pinned = value
+                            store.applyFilter(next)
+                        })
+                )
+                .toggleStyle(.checkbox)
+                Button("Remove") { store.removeFilter(filter.key) }
+                    .buttonStyle(.link)
+            }
+            TextField(
+                "is:unread",
+                text: Binding(
+                    get: { filter.query },
+                    set: { value in
+                        var next = filter
+                        next.query = value
+                        store.applyFilter(next)
+                    })
+            )
+            .textFieldStyle(.roundedBorder)
+            .font(.system(.callout, design: .monospaced))
+        }
+        .padding(.vertical, PostioTokens.space3)
+    }
+
+    // -- Privacy (#1156) ----------------------------------------------------
+
+    /// What Postio will not do without being asked, and what it has been
+    /// asked.
+    ///
+    /// The promises are stated rather than configurable, because they are not
+    /// settings: remote images blocked, read receipts never sent
+    /// automatically, no telemetry, JavaScript and network off in the reader.
+    /// A switch for any of them would be a switch for turning the product's
+    /// own claims off.
+    ///
+    /// What *is* here is the list of grants, because a permission the user
+    /// cannot see is one they cannot withdraw.
+    @ViewBuilder private var privacy: some View {
+        VStack(alignment: .leading, spacing: PostioTokens.space6) {
+            field("POSTIO WILL NOT") {
+                VStack(alignment: .leading, spacing: PostioTokens.space2) {
+                    ForEach(Self.promises, id: \.self) { promise in
+                        Label(promise, systemImage: "checkmark.shield")
+                            .font(.callout)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+            }
+            Divider()
+            field("REMOTE IMAGES ALLOWED FROM") {
+                if grants.isEmpty {
+                    Text("Nothing yet. Images stay blocked until you allow a sender.")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                } else {
+                    VStack(alignment: .leading, spacing: 0) {
+                        ForEach(grants, id: \.subject) { grant in
+                            HStack {
+                                Text(grant.subject)
+                                if grant.wholeDomain {
+                                    // Two very different amounts of trust; a
+                                    // list that drew them alike would
+                                    // understate one of them.
+                                    Text("everyone at this domain")
+                                        .font(.footnote)
+                                        .foregroundStyle(.secondary)
+                                }
+                                Spacer(minLength: PostioTokens.space4)
+                                Button("Revoke") {
+                                    session?.revokeRemoteImages(grant.subject)
+                                    grants = session?.remoteImageGrants() ?? []
+                                }
+                                .buttonStyle(.link)
+                            }
+                            .padding(.vertical, 4)
+                            .accessibilityElement(children: .combine)
+                            if grant.subject != grants.last?.subject { Divider() }
+                        }
+                    }
+                }
+            }
+            Divider()
+            field("UNSUBSCRIBED FROM") {
+                // The same argument the grants above make: an action the
+                // user cannot see afterwards is one they cannot audit, and
+                // "only on deliberate activation" only means something if
+                // the deliberate ones are reviewable.
+                //
+                // No Revoke beside these, and that is not an omission: the
+                // request has left. What is here is a record of what Postio
+                // did on your behalf, not a switch.
+                if activations.isEmpty {
+                    Text("Nothing yet. Unsubscribing only ever happens when you ask for it.")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                } else {
+                    VStack(alignment: .leading, spacing: 0) {
+                        ForEach(activations, id: \.label) { activation in
+                            HStack {
+                                Text(activation.listIdentifier)
+                                Spacer(minLength: PostioTokens.space4)
+                                Text(activation.when)
+                                    .font(.system(.footnote, design: .monospaced))
+                                    .foregroundStyle(.secondary)
+                            }
+                            .padding(.vertical, 4)
+                            .accessibilityElement(children: .ignore)
+                            .accessibilityLabel(activation.label)
+                            if activation.label != activations.last?.label { Divider() }
+                        }
+                    }
+                }
+            }
+            Spacer(minLength: 0)
+        }
+        .onAppear {
+            grants = session?.remoteImageGrants() ?? []
+            activations = session?.unsubscribeActivations() ?? []
+        }
+    }
+
+    /// The promises, as `docs/PRODUCT.md` states them.
+    private static let promises = [
+        "Load remote images until you allow the sender",
+        "Send a read receipt automatically",
+        "Run JavaScript or reach the network in the reading pane",
+        "Fetch anything speculatively, or send any telemetry",
+    ]
+
+    // -- Keyboard (#1156) ---------------------------------------------------
+
+    /// Every command and the key in force for it, grouped as the menus are.
+    ///
+    /// Read-only for now, and honestly so: rebinding is `[keys]`, the pane
+    /// says where, and the Config file pane is one click away. A picker that
+    /// *looked* editable and wrote nothing would be worse than a table that
+    /// admits what it is — canvas 3d's rule that a state names its reason.
+    ///
+    /// The bindings come from the session rather than from `defaultBinding`,
+    /// so a rebound key shows the key the user actually has. With no session
+    /// the defaults stand in, because settings are a file and being unable to
+    /// read mail is not being unable to read your own keyboard.
+    @ViewBuilder private var keyboard: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: PostioTokens.space6) {
+                ForEach(MenuPlan.build(bindings: bindingsInForce), id: \.title) { menu in
+                    VStack(alignment: .leading, spacing: PostioTokens.space2) {
+                        Text(menu.title.uppercased())
+                            .font(.system(size: 10, weight: .semibold))
+                            .kerning(0.6)
+                            .foregroundStyle(.secondary)
+                        ForEach(menu.items, id: \.command) { item in
+                            HStack(alignment: .firstTextBaseline) {
+                                Text(item.title)
+                                Spacer(minLength: PostioTokens.space4)
+                                Text(item.shortcut ?? "—")
+                                    .font(.system(.callout, design: .monospaced))
+                                    .foregroundStyle(item.shortcut == nil ? .tertiary : .secondary)
+                            }
+                            .accessibilityElement(children: .combine)
+                        }
+                    }
+                }
+            }
+            .padding(.trailing, PostioTokens.space4)
+        }
+    }
+
+    /// What each command is bound to now.
+    private func bindingsInForce(_ command: String) -> [String] {
+        session?.bindings(for: command) ?? []
+    }
+
+    // -- Sync & storage (#1156) ---------------------------------------------
+
+    @ViewBuilder private var syncing: some View {
+        if let current = store.syncing {
+            VStack(alignment: .leading, spacing: 20) {
+                HStack(alignment: .top, spacing: 32) {
+                    field("CHECK FOR MAIL") {
+                        VStack(alignment: .leading, spacing: PostioTokens.space2) {
+                            Picker("", selection: syncBinding(current, \.checkForMail)) {
+                                Text("Push").tag(CheckForMailFfi.idle)
+                                Text("Poll").tag(CheckForMailFfi.poll)
+                                Text("Manual").tag(CheckForMailFfi.manual)
+                            }
+                            .pickerStyle(.segmented)
+                            .labelsHidden()
+                            .fixedSize()
+                            // What the choice costs, in the unit being chosen
+                            // between — the sentence is the boundary's, so
+                            // GTK says the same one.
+                            Text(
+                                current.checkForMail == .poll
+                                    ? "Every \(settingsHumanizeInterval(seconds: current.pollIntervalSecs))"
+                                    : "Folders without push still poll every "
+                                        + settingsHumanizeInterval(seconds: current.pollIntervalSecs)
+                            )
+                            .font(.system(.footnote, design: .monospaced))
+                            .foregroundStyle(.secondary)
+                        }
+                    }
+                    field("POLL EVERY") {
+                        Picker("", selection: syncBinding(current, \.pollIntervalSecs)) {
+                            Text("1 min").tag(UInt64(60))
+                            Text("5 min").tag(UInt64(300))
+                            Text("15 min").tag(UInt64(900))
+                            Text("1 hour").tag(UInt64(3600))
+                        }
+                        .pickerStyle(.segmented)
+                        .labelsHidden()
+                        .fixedSize()
+                    }
+                    Spacer(minLength: 0)
+                }
+                Divider()
+                HStack(alignment: .top, spacing: 32) {
+                    field("DOWNLOAD BODIES") {
+                        Picker("", selection: syncBinding(current, \.bodyFetch)) {
+                            Text("When opened").tag(BodyFetchFfi.lazy)
+                            Text("Ahead of time").tag(BodyFetchFfi.eager)
+                        }
+                        .pickerStyle(.segmented)
+                        .labelsHidden()
+                        .fixedSize()
+                    }
+                    field("DOWNLOAD ATTACHMENTS") {
+                        Picker("", selection: syncBinding(current, \.attachmentFetch)) {
+                            Text("When opened").tag(AttachmentFetchFfi.onOpen)
+                            Text("Ahead of time").tag(AttachmentFetchFfi.eager)
+                            Text("Never").tag(AttachmentFetchFfi.never)
+                        }
+                        .pickerStyle(.segmented)
+                        .labelsHidden()
+                        .fixedSize()
+                    }
+                    Spacer(minLength: 0)
+                }
+                Divider()
+                field("ON STARTUP") {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Toggle("Sync as soon as Postio opens", isOn: syncBinding(current, \.syncOnStartup))
+                        Toggle("Notify me about new mail", isOn: syncBinding(current, \.notify))
+                    }
+                    .toggleStyle(.checkbox)
+                }
+                Spacer(minLength: 0)
+            }
+        } else {
+            unreadable
+        }
+    }
+
+    private func syncBinding<T>(
+        _ current: SyncingFfi,
+        _ field: WritableKeyPath<SyncingFfi, T>
+    ) -> Binding<T> {
+        Binding(
+            get: { current[keyPath: field] },
+            set: { value in store.applySyncing { $0[keyPath: field] = value } }
+        )
+    }
+
+    // -- Config file: the whole thing, as text (#1156) ----------------------
+
+    /// The raw editor, and the escape hatch every unbuilt pane depends on.
+    ///
+    /// Canvas 3f: *"Settings is still the config file — no second store, no
+    /// OK/Cancel"*. So there is no Save here either. What there is instead is
+    /// the footer, which already says whether the file parses and where it
+    /// stopped — the only thing that could tell you a keystroke went wrong.
+    ///
+    /// Monospaced and not proportional, because it is TOML and alignment
+    /// carries meaning in it. `autocorrection` and the smart-quote
+    /// substitutions are off for the reason every code editor turns them
+    /// off: a curly quote in a TOML string is a parse error somebody did not
+    /// type.
+    @ViewBuilder private var configFile: some View {
+        TextEditor(text: configBinding)
+            .font(.system(.body, design: .monospaced))
+            .autocorrectionDisabled()
+            .textEditorStyle(.plain)
+            .scrollContentBackground(.hidden)
+            .background(Color(nsColor: .textBackgroundColor))
+            .overlay(
+                RoundedRectangle(cornerRadius: PostioTokens.radiusMd)
+                    .stroke(Color.secondary.opacity(0.25), lineWidth: 1)
+            )
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .accessibilityLabel("The configuration file")
+    }
+
+    /// Writes on every keystroke, like every other control in this window.
+    ///
+    /// Invalid TOML is written too: this is a text editor over a file
+    /// somebody is part-way through fixing, and refusing to save until it
+    /// parses would make it useless for its one job. The footer says what is
+    /// wrong, and a running Postio keeps the last good configuration.
+    private var configBinding: Binding<String> {
+        Binding(
+            get: { store.text },
+            set: { store.write(text: $0) }
+        )
+    }
+
+    // -- Composing (#1288) --------------------------------------------------
+
+    @ViewBuilder private var composing: some View {
+        if let current = store.composing {
+            VStack(alignment: .leading, spacing: 20) {
+                HStack(alignment: .top, spacing: 32) {
+                    field("SIGNATURE ON A REPLY") {
+                        Picker("", selection: composeBinding(current, \.signatureOnReply)) {
+                            Text("Above the quote").tag(SignaturePlacementFfi.aboveQuote)
+                            Text("Below it").tag(SignaturePlacementFfi.belowQuote)
+                        }
+                        .pickerStyle(.segmented)
+                        .labelsHidden()
+                        .fixedSize()
+                    }
+                    field("SIGNATURE ON A FORWARD") {
+                        Picker("", selection: composeBinding(current, \.signatureOnForward)) {
+                            Text("Above the quote").tag(SignaturePlacementFfi.aboveQuote)
+                            Text("Below it").tag(SignaturePlacementFfi.belowQuote)
+                        }
+                        .pickerStyle(.segmented)
+                        .labelsHidden()
+                        .fixedSize()
+                    }
+                    Spacer(minLength: 0)
+                }
+                Divider()
+                field("EDIT ELSEWHERE") {
+                    VStack(alignment: .leading, spacing: 8) {
+                        // A text field rather than a picker: the list of
+                        // applications that can edit text is open, which is
+                        // exactly the case ADR 0029 reserves a free field for.
+                        TextField("", text: editorBinding(current))
+                            .textFieldStyle(.roundedBorder)
+                            .frame(width: 260)
+                        Text(editorAdvice(current.editor))
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+                Spacer(minLength: 0)
+            }
+        } else {
+            unreadable
+        }
+    }
+
+    /// What to say under the editor field: which application will open the
+    /// draft, or why the one named cannot.
+    ///
+    /// The judgement is the boundary's, not this view's — `postio_ui::handoff`
+    /// decides, so GTK says the same thing about the same name.
+    private func editorAdvice(_ configured: String) -> String {
+        switch settingsHandoffTarget(
+            configured: configured,
+            found: ComposeHandoff.found(configured)
+        ) {
+        case .platformDefault:
+            "Empty: the draft opens in whatever this Mac opens a text file with."
+        case .application(let name):
+            "Drafts open in \(name)."
+        case .needsTerminal(_, let advice), .missing(_, let advice):
+            advice
+        }
+    }
+
     private func field<Content: View>(
         _ kicker: String,
         @ViewBuilder _ content: () -> Content
@@ -269,13 +1071,19 @@ public struct SettingsPaneView: View {
         }
     }
 
+    /// For a section this build does not know.
+    ///
+    /// All eight of canvas 3f's panes are drawn now, so nothing reaches this
+    /// from the shipped nav. It stays because the nav is `postio_ui`'s and a
+    /// newer core can name a section this build has never heard of — which
+    /// should say so rather than draw an empty pane.
     private var unbuilt: some View {
         ContentUnavailableView {
-            Label("Not on macOS yet", systemImage: "gearshape")
+            Label("Not in this build", systemImage: "gearshape")
         } description: {
             Text(
-                "This section is only editable in the file for now — ⌘E opens it in your editor. "
-                    + "The panes are shipping one at a time (#1156)."
+                "This section is newer than this build of Postio. It is still "
+                    + "editable in the file — the Config file pane has all of it."
             )
         }
     }
@@ -288,7 +1096,7 @@ public struct SettingsPaneView: View {
                 .font(.system(.footnote, design: .monospaced))
                 .foregroundStyle(store.status.valid ? Color.secondary : Color.red)
             Spacer()
-            Text(store.path)
+            Text(PostioPath.abbreviated(store.path))
                 .font(.footnote)
                 .foregroundStyle(.tertiary)
                 .truncationMode(.head)
@@ -311,6 +1119,26 @@ public struct SettingsPaneView: View {
             // One field, applied to whatever the file says at the moment of
             // the click -- never to the copy this view was drawn from.
             set: { value in store.apply { $0[keyPath: field] = value } }
+        )
+    }
+
+    /// The same binding, over the `[compose]` table.
+    private func composeBinding<T>(
+        _ current: ComposingFfi,
+        _ field: WritableKeyPath<ComposingFfi, T>
+    ) -> Binding<T> {
+        Binding(
+            get: { current[keyPath: field] },
+            set: { value in store.applyComposing { $0[keyPath: field] = value } }
+        )
+    }
+
+    /// The editor field, which writes on every keystroke like every other
+    /// control here — there is no Save in this window (canvas 3f).
+    private func editorBinding(_ current: ComposingFfi) -> Binding<String> {
+        Binding(
+            get: { current.editor },
+            set: { value in store.applyComposing { $0.editor = value } }
         )
     }
 }

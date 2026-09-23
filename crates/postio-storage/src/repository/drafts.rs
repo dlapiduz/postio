@@ -67,7 +67,7 @@ pub struct DraftRepository<'a> {
 
 const DRAFT_COLUMNS: &str = "\
 id, account_id, identity_id, kind, in_reply_to_message_id, thread_id, subject, body_text,
-body_html, state, uid, uid_validity, mod_seq, remote_id, created_at, updated_at,
+body_html, rich, state, uid, uid_validity, mod_seq, remote_id, created_at, updated_at,
 rfc_message_id";
 
 impl<'a> DraftRepository<'a> {
@@ -100,13 +100,13 @@ impl<'a> DraftRepository<'a> {
                         "UPDATE drafts
                         SET account_id = ?2, identity_id = ?3, kind = ?4,
                             in_reply_to_message_id = ?5, thread_id = ?6, subject = ?7,
-                            body_text = ?8, body_html = ?9, state = ?10,
-                            uid = coalesce(?11, uid),
-                            uid_validity = coalesce(?12, uid_validity),
-                            mod_seq = coalesce(?13, mod_seq),
-                            remote_id = coalesce(?14, remote_id),
-                            updated_at = ?15,
-                            rfc_message_id = ?16
+                            body_text = ?8, body_html = ?9, rich = ?10, state = ?11,
+                            uid = coalesce(?12, uid),
+                            uid_validity = coalesce(?13, uid_validity),
+                            mod_seq = coalesce(?14, mod_seq),
+                            remote_id = coalesce(?15, remote_id),
+                            updated_at = ?16,
+                            rfc_message_id = ?17
                       WHERE id = ?1",
                         bind![
                             draft.id.get(),
@@ -118,6 +118,7 @@ impl<'a> DraftRepository<'a> {
                             draft.subject,
                             draft.body.text,
                             draft.body.html,
+                            draft.rich,
                             draft.state.as_str(),
                             draft.server.uid.map(|uid| i64::from(uid.get())),
                             draft
@@ -146,11 +147,11 @@ impl<'a> DraftRepository<'a> {
                 transaction
                     .execute(
                         "INSERT INTO drafts (account_id, identity_id, kind, in_reply_to_message_id,
-                                         thread_id, subject, body_text, body_html, state, uid,
-                                         uid_validity, mod_seq, remote_id, created_at, updated_at,
-                                         rfc_message_id)
+                                         thread_id, subject, body_text, body_html, rich, state,
+                                         uid, uid_validity, mod_seq, remote_id, created_at,
+                                         updated_at, rfc_message_id)
                      VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15,
-                             ?16)",
+                             ?16, ?17)",
                         bind![
                             account_id,
                             optional_identity(draft.identity_id),
@@ -160,6 +161,7 @@ impl<'a> DraftRepository<'a> {
                             draft.subject,
                             draft.body.text,
                             draft.body.html,
+                            draft.rich,
                             draft.state.as_str(),
                             draft.server.uid.map(|uid| i64::from(uid.get())),
                             draft
@@ -1139,7 +1141,9 @@ async fn write_attachments(connection: &Connection, draft: &mut Draft) -> Result
 
 fn read_draft(row: &Row) -> Result<Draft> {
     let kind: String = row.col(3)?;
-    let state: String = row.col(9)?;
+    // 10, not 9: `rich` sits after `body_html` in `DRAFT_COLUMNS` (#1271),
+    // and every column after it moved along one.
+    let state: String = row.col(10)?;
 
     Ok(Draft {
         id: DraftId::new(row.col(0)?),
@@ -1156,21 +1160,22 @@ fn read_draft(row: &Row) -> Result<Draft> {
             text: row.col(7)?,
             html: row.col(8)?,
         },
+        rich: row.col(9)?,
         attachments: Vec::new(),
         state: DraftState::from_name(&state).ok_or_else(|| unknown_enum("drafts.state", state))?,
         server: ServerIdentifiers {
-            uid: row.col::<Option<i64>>(10)?.map(|uid| Uid::new(uid as u32)),
+            uid: row.col::<Option<i64>>(11)?.map(|uid| Uid::new(uid as u32)),
             uid_validity: row
-                .col::<Option<i64>>(11)?
+                .col::<Option<i64>>(12)?
                 .map(|validity| UidValidity::new(validity as u32)),
             mod_seq: row
-                .col::<Option<i64>>(12)?
+                .col::<Option<i64>>(13)?
                 .map(|seq| ModSeq::new(seq as u64)),
-            remote_id: row.col::<Option<String>>(13)?.map(RemoteId::new),
+            remote_id: row.col::<Option<String>>(14)?.map(RemoteId::new),
         },
-        rfc_message_id: row.col::<Option<String>>(16)?.map(RfcMessageId::new),
-        created_at: from_millis(row.col(14)?),
-        updated_at: from_millis(row.col(15)?),
+        rfc_message_id: row.col::<Option<String>>(17)?.map(RfcMessageId::new),
+        created_at: from_millis(row.col(15)?),
+        updated_at: from_millis(row.col(16)?),
     })
 }
 

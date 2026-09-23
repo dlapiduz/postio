@@ -372,6 +372,43 @@ pub fn derive_aggregate(
     None
 }
 
+/// What an empty result set is titled.
+///
+/// **Not "No messages".** The mailbox is not empty — the query is, and a list
+/// that says otherwise makes a confident false statement about somebody's own
+/// mail. [`State::NoMatches`] exists to keep the two apart; this is the
+/// wording, shared so that both frontends make the same claim.
+pub fn no_matches_title() -> &'static str {
+    "No matches"
+}
+
+/// What an empty result set says, and what it admits it could not search.
+///
+/// The query is quoted, and that is not decoration: unquoted it renders as
+/// *Nothing in the local store matches from:ada invoice.* — prose and query
+/// in one face with nothing between them, which wraps mid-query and reads as
+/// a sentence.
+///
+/// The caveat goes **after** the query rather than instead of it: what was
+/// searched for is still the thing to change. But "nothing matches" reads as
+/// proof the mail does not exist, so an unreachable account has to be named
+/// here or the sentence is a lie by omission (ADR 0005 Q10).
+pub fn no_matches_detail(query: &str, incomplete: &[String]) -> String {
+    let matched = format!("Nothing in the local store matches \u{201c}{query}\u{201d}.");
+    match incomplete {
+        [] => matched,
+        absent => {
+            let verb = if absent.len() == 1 { "is" } else { "are" };
+            let whose = if absent.len() == 1 { "its" } else { "their" };
+            format!(
+                "{matched} {} {verb} not reachable, so {whose} mail was searched \
+                 only as far as it had already synced.",
+                crate::format::names(absent),
+            )
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::time::Duration;
@@ -846,5 +883,53 @@ mod aggregate_tests {
         // caller passing only enabled accounts -- an empty list is a view
         // with nothing to disclose rather than one that is degraded.
         assert_eq!(derive_aggregate(&[], 0, 0, None, None), None);
+    }
+
+    // -- what an empty result set says (#1577) ----------------------------
+
+    #[test]
+    fn nothing_matched_quotes_the_query_and_blames_the_query() {
+        // "No messages" over a mailbox holding thousands is a confident false
+        // statement about somebody's own mail. The mailbox is not empty --
+        // the query is, and the sentence has to say which.
+        assert_eq!(no_matches_title(), "No matches");
+        assert_eq!(
+            no_matches_detail("from:ada invoice", &[]),
+            "Nothing in the local store matches \u{201c}from:ada invoice\u{201d}."
+        );
+    }
+
+    #[test]
+    fn an_account_that_could_not_be_searched_is_named_after_the_query() {
+        // ADR 0005 Q10: "nothing matches" reads as proof the mail does not
+        // exist, so an unreachable account has to be named or the sentence is
+        // a lie by omission. After the query, because what was searched for
+        // is still the thing to change.
+        let detail = no_matches_detail("invoice", &["work@example.com".to_owned()]);
+        assert!(
+            detail.starts_with("Nothing in the local store matches \u{201c}invoice\u{201d}."),
+            "{detail}"
+        );
+        assert!(
+            detail.contains("work@example.com is not reachable"),
+            "{detail}"
+        );
+        assert!(
+            detail.contains("its mail was searched only as far as"),
+            "{detail}"
+        );
+    }
+
+    #[test]
+    fn two_unreachable_accounts_are_named_together_and_take_their_plural() {
+        let detail = no_matches_detail(
+            "invoice",
+            &["a@example.com".to_owned(), "b@example.net".to_owned()],
+        );
+        assert!(
+            detail.contains("a@example.com and b@example.net are not reachable"),
+            "{detail}"
+        );
+        assert!(detail.contains("their mail was searched"), "{detail}");
     }
 }

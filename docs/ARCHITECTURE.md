@@ -15,11 +15,14 @@ in [`docs/archive/`](archive/); every finding it raised has since landed.
 
 ```mermaid
 graph TD
-    app["<b>postio-app</b><br/><i>GTK binary</i><br/>a window, and the presenters that join the two halves"]
+    app["<b>postio-app</b><br/><i>GTK binary — Linux</i><br/>a window, and the presenters that join the two halves"]
+    mac["<b>macos/</b><br/><i>Swift package — macOS</i><br/>SwiftUI · AppKit · WKWebView"]
     session["<b>postio-session</b><br/><i>composition root — no toolkit</i><br/>store · runtime · engines · the verb vocabulary<br/><i>no GTK — CI enforced</i>"]
 
-    subgraph view ["frontend"]
+    subgraph view ["frontends"]
         gtk["<b>postio-gtk</b><br/>GTK4 · libadwaita · WebKitGTK<br/><i>no SQL · no protocol</i>"]
+        ffi["<b>postio-ffi</b><br/>the UniFFI boundary<br/><i>ADR 0019 · what crosses to Swift</i>"]
+        ui["<b>postio-ui</b><br/>presentation with no toolkit in it<br/>keymap · list window · reader document · tokens<br/><i>called by both — no GTK, no SQL</i>"]
     end
 
     subgraph engine ["the database half"]
@@ -44,12 +47,21 @@ graph TD
 
     app --> session
     app --> gtk
+    mac --> ffi
+    ffi --> session
+    ffi --> ui
+    ffi --> core
     session --> runtime
     session --> core
+    gtk --> ui
     gtk --> core
     gtk --> search
     gtk --> body
     gtk --> config
+    ui --> core
+    ui --> search
+    ui --> body
+    ui --> model
     runtime --> sync
     runtime --> index
     runtime --> core
@@ -311,7 +323,19 @@ dependencies at all.**
 [ADR 0019](decisions/0019-macos-frontend.md)) — a native Swift frontend in
 `macos/` over the same engine, through a UniFFI boundary in `postio-ffi`, with
 the toolkit-free presentation logic extracted into `postio-ui`. It reads,
-searches and pages mail; compose is deferred, and it is not yet released.
+searches, threads and writes mail. Compose was deferred in the original scope
+and is not deferred any more; it is not at parity with the GTK build and is
+not released.
+
+**How far along it is, is a test rather than a claim.**
+`crates/postio-ffi/tests/ffi_suite/command_coverage.rs` sweeps every command in
+the registry and fails if one reaches neither the boundary, the bus, nor a
+window this frontend presents — unless it is listed as debt with the issue
+that will build it. `postio-app`'s `app_suite/command_wiring.rs` is the same
+sweep on the GTK side and its list is empty. A frontend without such a sweep
+accumulates commands that are drawn in a menu, bound to a key, offered in the
+palette, and answered by nobody; the macOS one had **forty-nine** when the
+sweep was first written.
 
 The invariant is what made that possible, and it was not a theory: measured on
 2026-08-27, when the workspace had fifteen crates, **thirteen of them built and

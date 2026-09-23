@@ -149,20 +149,14 @@ async fn install_inline_image(
 }
 
 /// Blocking half of [`install_inline_image`].
+///
+/// The part itself is `postio_session::attaching::inline_image`'s, which the
+/// macOS composer calls too: one rule for what an inline picture's
+/// `Content-ID` is, rather than one per frontend.
 fn inline_attachment(blobs: &BlobStore, bytes: Vec<u8>, mime_type: &str) -> Option<Attachment> {
-    let size = bytes.len() as u64;
-    let blob_id = blobs
-        .put(&bytes)
+    postio_session::attaching::inline_image(blobs, &bytes, mime_type)
         .map_err(|error| tracing::warn!(%error, "could not store the pasted image"))
-        .ok()?;
-
-    let extension = mime_type.strip_prefix("image/").unwrap_or("png");
-    let mut attachment = Attachment::new(MessageId::UNASSIGNED, mime_type, size);
-    attachment.filename = Some(format!("inline-image.{extension}"));
-    attachment.disposition = postio_model::attachment::Disposition::Inline;
-    attachment.content_id = Some(format!("{}@postio.invalid", blob_id.as_str()));
-    attachment.blob_id = Some(blob_id);
-    Some(attachment)
+        .ok()
 }
 
 /// Resolves an attachment's bytes for the composer's inline-image display.

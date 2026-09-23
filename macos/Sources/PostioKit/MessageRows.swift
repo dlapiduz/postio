@@ -80,6 +80,15 @@ public struct RowPresentation: Equatable, Sendable {
     public let flagged: Bool
     /// The conversation-size badge, or `nil` when there is nothing to say.
     public let threadBadge: String?
+    /// What a draft's row says about where it has got to — `Waiting to
+    /// send`, `Not sent` — or `nil` for ordinary received mail.
+    ///
+    /// The **boundary's** word, never one composed here: five states, one
+    /// vocabulary, and two frontends wording them apart is what
+    /// `postio_ui::row::send_state_word` exists to stop. Without this a
+    /// message that failed to send looked exactly like one still being
+    /// written, which is #1487's whole point.
+    public let sendState: String?
     /// Whether this row is still waiting for its page.
     public let isPlaceholder: Bool
     /// The two letters the avatar chip shows, from
@@ -112,6 +121,7 @@ public struct RowPresentation: Equatable, Sendable {
         unread: false,
         flagged: false,
         threadBadge: nil,
+        sendState: nil,
         isPlaceholder: true,
         selected: false,
         snippet: nil
@@ -124,6 +134,7 @@ public struct RowPresentation: Equatable, Sendable {
         unread: Bool,
         flagged: Bool,
         threadBadge: String?,
+        sendState: String? = nil,
         isPlaceholder: Bool,
         selected: Bool = false,
         snippet: SnippetFfi? = nil,
@@ -136,6 +147,7 @@ public struct RowPresentation: Equatable, Sendable {
         self.unread = unread
         self.flagged = flagged
         self.threadBadge = threadBadge
+        self.sendState = sendState
         self.isPlaceholder = isPlaceholder
         self.selected = selected
         self.snippet = snippet
@@ -154,7 +166,15 @@ public struct RowPresentation: Equatable, Sendable {
         // `LK` on either platform, and the time so `Thu` means the same week.
         initials = row.initials
         time = rowTimestamp(receivedAt: row.receivedAt)
-        sender = row.from?.nonEmpty ?? "(no sender)"
+        // A conversation row names the people in it; a message row names its
+        // sender. Which one this is comes from `isThread`, not from whether
+        // the participants happen to be empty — a thread whose senders all
+        // failed to parse is still a thread, and falling through to the
+        // representative would make it look like a message row (ADR 0015).
+        sender =
+            row.isThread
+            ? (row.participants.nonEmpty ?? row.from?.nonEmpty ?? "(no sender)")
+            : (row.from?.nonEmpty ?? "(no sender)")
         subject = row.subject?.nonEmpty ?? "(no subject)"
         preview = row.preview ?? ""
         unread = !row.seen
@@ -162,6 +182,7 @@ public struct RowPresentation: Equatable, Sendable {
         // A conversation of one is not a conversation. The badge means "there
         // is more here than this", so at one it says nothing (ADR 0015).
         threadBadge = row.threadCount > 1 ? String(row.threadCount) : nil
+        sendState = row.sendState
         isPlaceholder = false
     }
 }

@@ -298,6 +298,22 @@ extension MessageTableController: NSTableViewDelegate {
     }
 
 
+    /// The row view, so the selection is Postio's rather than AppKit's.
+    ///
+    /// See `MessageRowView`: the canvas draws a tint and a 3px accent edge,
+    /// and the system draws a blue fill.
+    public func tableView(_ tableView: NSTableView, rowViewForRow row: Int) -> NSTableRowView? {
+        let identifier = NSUserInterfaceItemIdentifier("postio-row")
+        if let existing = tableView.makeView(withIdentifier: identifier, owner: self)
+            as? MessageRowView
+        {
+            return existing
+        }
+        let view = MessageRowView()
+        view.identifier = identifier
+        return view
+    }
+
     public func tableView(
         _ tableView: NSTableView,
         viewFor tableColumn: NSTableColumn?,

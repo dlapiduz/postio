@@ -69,7 +69,7 @@ use std::rc::Rc;
 
 use adw::prelude::*;
 use adw::subclass::prelude::*;
-use chrono::{DateTime, Datelike, Duration, Local, Utc};
+use chrono::{DateTime, Local, Utc};
 use gtk::{gdk, gio, glib};
 use postio_body::Placement;
 use postio_core::{CommandId, Context, Keymap};
@@ -297,16 +297,11 @@ const NAMED_ADDRESSES: usize = 3;
 /// is a banner nobody reads, so this says nothing until there is more than
 /// one person on the message.
 pub fn recipient_summary(draft: &Draft) -> Option<String> {
-    let counted: Vec<String> = fields(draft)
-        .into_iter()
-        .filter(|(_, addresses)| !addresses.is_empty())
-        .map(|(name, addresses)| format!("{} {name}", addresses.len()))
-        .collect();
-
-    if draft.all_recipients().count() <= 1 {
-        return None;
-    }
-    Some(counted.join(", "))
+    // The wording and the threshold are `postio_ui::compose`'s. They were
+    // here, which is why the macOS composer had no such banner -- and it had
+    // no Bcc field either, so a reply-all there showed one address and
+    // silently addressed everybody else.
+    postio_ui::compose::recipient_summary(draft.to.len(), draft.cc.len(), draft.bcc.len())
 }
 
 /// The three recipient fields, in the order they appear on screen.
@@ -3746,55 +3741,18 @@ fn format_size(bytes: u64) -> String {
     }
 }
 
-/// A preset must land at least this far ahead of `now` to be offered as
-/// "today" rather than rolling to tomorrow — a picker opened one minute
-/// before 6pm must not offer "this evening" for an instant already gone.
-const MIN_SCHEDULE_LEAD: Duration = Duration::minutes(5);
-
-/// `day` at the given wall-clock hour and minute, in `day`'s own local zone.
-///
-/// A DST transition can make a wall-clock time ambiguous or nonexistent;
-/// falling back to `day` itself rather than panicking keeps a schedule-send
-/// picker from crashing the composer on the two days a year this can happen,
-/// at the cost of an odd-looking preset on exactly those days.
-fn at_local_time(day: DateTime<Local>, hour: u32, minute: u32) -> DateTime<Local> {
-    day.date_naive()
-        .and_hms_opt(hour, minute, 0)
-        .and_then(|naive| naive.and_local_timezone(Local).single())
-        .unwrap_or(day)
-}
-
 /// The fixed times [`CommandId::ScheduleSend`]'s picker offers, computed
-/// against `now` — recomputed every time the picker opens rather than once,
-/// since "in 1 hour" a picker opened yesterday is not "in 1 hour" today.
+/// against `now`.
 ///
-/// "This evening" rolls to tomorrow once 6pm today is behind `now`.
-/// "Monday morning" always means a Monday strictly after today: opening the
-/// picker on a Monday offers next week's, not the one already underway.
+/// **The rule is `postio_ui::compose::schedule_presets`'s**, and this is the
+/// tuple shape the popover and its tests read it in. It used to be decided
+/// here, with `at_local_time` and a five-minute lead constant beside it —
+/// which meant two frontends each deciding what "tomorrow morning" means, and
+/// the one that is wrong sends somebody's mail at the wrong hour without ever
+/// saying so. The four times *are* the feature, so they are shared.
 fn schedule_presets(now: DateTime<Local>) -> [(&'static str, DateTime<Local>); 4] {
-    let in_one_hour = now + Duration::hours(1);
-
-    let mut evening = at_local_time(now, 18, 0);
-    if evening < now + MIN_SCHEDULE_LEAD {
-        evening = at_local_time(now + Duration::days(1), 18, 0);
-    }
-
-    let tomorrow_morning = at_local_time(now + Duration::days(1), 8, 0);
-
-    let days_from_monday = now.weekday().num_days_from_monday() as i64;
-    let days_until_monday = if days_from_monday == 0 {
-        7
-    } else {
-        7 - days_from_monday
-    };
-    let monday_morning = at_local_time(now + Duration::days(days_until_monday), 8, 0);
-
-    [
-        ("In 1 hour", in_one_hour),
-        ("This evening", evening),
-        ("Tomorrow morning", tomorrow_morning),
-        ("Monday morning", monday_morning),
-    ]
+    let shared = postio_ui::compose::schedule_presets(now);
+    std::array::from_fn(|i| (shared[i].label, shared[i].when))
 }
 
 /// A button label with the key that reaches it, as the header bar does it.
@@ -4821,7 +4779,11 @@ mod tests {
         assert_eq!(
             keys_of(&Keymap::resolve(&Default::default())),
             vec![
-                Some("ctrl+Return".to_string()),
+                // Send's primary moved to `mod+shift+d` when the second
+                // keyboard layer landed; `mod+Return` is its alternate now.
+                // A hint shows the *primary*, which is what a person is
+                // being taught.
+                Some("ctrl+shift+d".to_string()),
                 Some("ctrl+shift+Return".to_string()),
                 Some("ctrl+s".to_string()),
             ],
@@ -4852,24 +4814,33 @@ mod tests {
 
     #[test]
     fn a_command_with_no_key_left_shows_no_hint_rather_than_a_blank_one() {
-        // Giving `save_draft` the key `send` has by default leaves one of the
-        // two without a binding -- an explicit `[keys]` entry outranks a
-        // default, so it is `send` that loses it. It must drop its hint
-        // rather than render an empty one, which is the rule
-        // `reader::actions` already follows. All three of these live in the
-        // composer context, so this really is a collision rather than two
-        // surfaces harmlessly sharing a key.
+        // Taking a command's only key leaves it with nothing to show, and it
+        // must drop the hint rather than render an empty one — the rule
+        // `reader::actions` follows too.
+        //
+        // It has to be `save_draft` that loses it, and that is the point of
+        // the fixture: since the second keyboard layer landed, most verbs
+        // carry an alternate and *cannot* be left with nothing. Send keeps
+        // `mod+shift+d` when `mod+Return` is taken from it, which is the
+        // honest answer and no longer this case. `save_draft` has one key and
+        // no alternate, so it is the one that can still be emptied.
+        //
+        // An explicit `[keys]` entry outranks a default, so `send` wins the
+        // contested key and `save_draft` is what loses it.
         let mut overrides = postio_config::KeyBindings::default();
         overrides
             .overrides_mut()
-            .insert("save_draft".to_string(), "mod+Return".to_string());
+            .insert("send".to_string(), "mod+s".to_string());
 
         let keys = keys_of(&Keymap::resolve(&overrides));
         assert_eq!(
-            keys[2],
-            Some("ctrl+Return".to_string()),
+            keys[0],
+            Some("ctrl+s".to_string()),
             "the override wins the key"
         );
-        assert_eq!(keys[0], None, "and Send shows no hint at all: {keys:?}");
+        assert_eq!(
+            keys[2], None,
+            "and Save draft shows no hint at all: {keys:?}"
+        );
     }
 }

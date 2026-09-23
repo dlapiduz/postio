@@ -8,9 +8,12 @@
 //! been rewritten.
 
 use postio_ffi::{
-    AppearanceFfi, DensityFfi, GroupFfi, ThemeFfi, row_metrics, settings_appearance,
-    settings_group_label, settings_humanize_interval, settings_load, settings_patch_appearance,
-    settings_path, settings_save, settings_sections, settings_status,
+    AppearanceFfi, DensityFfi, GroupFfi, ThemeFfi, row_metrics, settings_add_filter,
+    settings_appearance, settings_composing, settings_filters, settings_group_label,
+    settings_handoff_label, settings_handoff_target, settings_humanize_interval, settings_load,
+    settings_patch_appearance, settings_patch_composing, settings_patch_filter,
+    settings_patch_syncing, settings_path, settings_remove_filter, settings_save,
+    settings_sections, settings_status, settings_syncing,
 };
 
 /// A file with things in it that a naive form would destroy: a comment, a key
@@ -333,4 +336,301 @@ fn a_rows_actions_are_registry_commands_the_keyboard_also_runs() {
         assert!(!action.title.is_empty());
     }
     session.shutdown();
+}
+
+// --- the Composing pane, and which editor a draft goes to (#1288) ----------
+
+/// A file with a `[compose]` table and things around it worth preserving.
+const COMPOSING: &str = "\
+# hand-written, and it should stay that way
+[sync]
+idle = true
+
+[compose]
+signature_on_reply = \"below_quote\"
+editor = \"Some Editor\"
+a_key_this_build_does_not_know = true
+
+[ui]
+density = \"compact\"
+";
+
+#[test]
+fn the_composing_pane_reads_the_compose_table() {
+    let composing = settings_composing(COMPOSING.to_owned()).expect("the sample parses");
+
+    assert_eq!(
+        composing.signature_on_reply,
+        postio_ffi::SignaturePlacementFfi::BelowQuote
+    );
+    assert_eq!(
+        composing.signature_on_forward,
+        postio_ffi::SignaturePlacementFfi::AboveQuote,
+        "a key that is not in the file is its default, not an error"
+    );
+    assert_eq!(composing.editor, "Some Editor");
+}
+
+#[test]
+fn choosing_an_editor_leaves_every_other_section_and_the_unknown_key_alone() {
+    // The clause this whole module is about, applied to the pane #1288 adds:
+    // a form that wrote the file itself would reorder it and drop both the
+    // comment and the key it does not understand.
+    let mut composing = settings_composing(COMPOSING.to_owned()).expect("parses");
+    composing.editor = "Another Editor".to_owned();
+
+    let written = settings_patch_composing(COMPOSING.to_owned(), composing).expect("patch");
+
+    assert!(written.contains("editor = \"Another Editor\""));
+    assert!(
+        written.contains("# hand-written, and it should stay that way"),
+        "the comment survived: {written}"
+    );
+    assert!(
+        written.contains("a_key_this_build_does_not_know = true"),
+        "a key this build does not know survived: {written}"
+    );
+    assert!(written.contains("density = \"compact\""), "{written}");
+}
+
+#[test]
+fn an_editor_typed_with_a_space_on_the_end_is_stored_without_one() {
+    // The difference is invisible in a text field and fatal to the lookup:
+    // no platform finds an application called "Some Editor ".
+    let mut composing = settings_composing(COMPOSING.to_owned()).expect("parses");
+    composing.editor = "  Some Editor  ".to_owned();
+
+    let written = settings_patch_composing(COMPOSING.to_owned(), composing).expect("patch");
+
+    assert!(written.contains("editor = \"Some Editor\""), "{written}");
+}
+
+#[test]
+fn clearing_the_editor_hands_the_choice_back_to_the_platform() {
+    let mut composing = settings_composing(COMPOSING.to_owned()).expect("parses");
+    composing.editor = String::new();
+    let written = settings_patch_composing(COMPOSING.to_owned(), composing).expect("patch");
+
+    let read_back = settings_composing(written).expect("parses");
+    assert_eq!(read_back.editor, "");
+    assert_eq!(
+        settings_handoff_target(read_back.editor, postio_ffi::FoundEditorFfi::Nothing),
+        postio_ffi::HandoffTargetFfi::PlatformDefault
+    );
+}
+
+#[test]
+fn an_editor_that_is_not_an_application_says_it_needs_a_terminal() {
+    // The case the setting exists for, and the one that would otherwise be a
+    // button doing nothing: somebody types the name of the editor they use.
+    let target = settings_handoff_target(
+        "vim".to_owned(),
+        postio_ffi::FoundEditorFfi::TerminalProgram,
+    );
+
+    let postio_ffi::HandoffTargetFfi::NeedsTerminal { name, advice } = target else {
+        panic!("expected a terminal program, got {target:?}");
+    };
+    assert_eq!(name, "vim");
+    assert!(advice.contains("vim"), "{advice}");
+    assert!(advice.contains("terminal"), "{advice}");
+}
+
+#[test]
+fn the_button_names_the_editor_when_there_is_one_to_name() {
+    // `Open in $EDITOR` is canvas 26's label and it names an environment
+    // variable an application launched from Finder does not have (#1288).
+    assert_eq!(
+        settings_handoff_label("Some Editor".to_owned()),
+        "Open in Some Editor"
+    );
+    assert_eq!(settings_handoff_label(String::new()), "Edit elsewhere");
+}
+
+// --- the Sync & storage pane (#1156) ---------------------------------------
+
+/// The comment sits above `[ui]`, not above `[sync]`.
+///
+/// Deliberate: a `patch_*` regenerates the table it owns, so a comment
+/// attached to *that* table's own header does not survive — `patch_compose`
+/// documents the same trade, and two settings chosen from a segmented control
+/// are not the kind of TOML anybody hand-annotates. What must survive is
+/// everything the pane does not own, which is what this asserts.
+const SYNCING: &str = "\
+[sync]
+check_for_mail = \"poll\"
+poll_interval_secs = 900
+notify = false
+a_key_this_build_does_not_know = 1
+
+# hand-written, and it should stay that way
+[ui]
+density = \"compact\"
+";
+
+#[test]
+fn the_sync_pane_reads_the_sync_table() {
+    let syncing = settings_syncing(SYNCING.to_owned()).expect("the sample parses");
+
+    assert_eq!(syncing.check_for_mail, postio_ffi::CheckForMailFfi::Poll);
+    assert_eq!(syncing.poll_interval_secs, 900);
+    assert!(!syncing.notify);
+    assert!(
+        syncing.sync_on_startup,
+        "a key that is not in the file is its default, not an error"
+    );
+}
+
+#[test]
+fn changing_how_mail_is_checked_leaves_the_rest_of_the_file_alone() {
+    let mut syncing = settings_syncing(SYNCING.to_owned()).expect("parses");
+    syncing.check_for_mail = postio_ffi::CheckForMailFfi::Idle;
+
+    let written = settings_patch_syncing(SYNCING.to_owned(), syncing).expect("patch");
+
+    assert!(written.contains("check_for_mail = \"idle\""), "{written}");
+    assert!(
+        written.contains("# hand-written, and it should stay that way"),
+        "the comment survived: {written}"
+    );
+    assert!(
+        written.contains("a_key_this_build_does_not_know = 1"),
+        "a key this build does not know survived: {written}"
+    );
+    assert!(written.contains("density = \"compact\""), "{written}");
+}
+
+#[test]
+fn every_sync_field_survives_a_round_trip() {
+    // A pane with eight controls has eight chances to write one field and
+    // silently reset the other seven — which is what a form over a whole
+    // table does when one `patch` forgets a line.
+    let mut syncing = settings_syncing(SYNCING.to_owned()).expect("parses");
+    syncing.check_for_mail = postio_ffi::CheckForMailFfi::Manual;
+    syncing.poll_interval_secs = 60;
+    syncing.max_connections = 3;
+    syncing.sync_on_startup = false;
+    syncing.body_fetch = postio_ffi::BodyFetchFfi::Eager;
+    syncing.attachment_fetch = postio_ffi::AttachmentFetchFfi::Never;
+    syncing.initial_sync_messages = 250;
+    syncing.notify = true;
+
+    let written = settings_patch_syncing(SYNCING.to_owned(), syncing.clone()).expect("patch");
+    let read_back = settings_syncing(written).expect("the patched file parses");
+
+    assert_eq!(read_back, syncing);
+}
+
+// --- the Filters pane (#1156) ----------------------------------------------
+
+const FILTERS: &str = "\
+[filters.urgent]
+query = \"is:unread flag:flagged\"
+pinned = true
+order = 1
+
+[filters.newsletters]
+query = \"list:*\"
+name = \"Mailing lists\"
+a_key_this_build_does_not_know = true
+
+# hand-written, and it should stay that way
+[ui]
+density = \"compact\"
+";
+
+#[test]
+fn a_filter_shows_the_name_its_owner_gave_it_not_its_key() {
+    // #292 keeps the key stable and TOML-safe so a rename cannot orphan a
+    // filter. The label is `name`, and falls back to the key for every filter
+    // saved before renaming existed.
+    let filters = settings_filters(FILTERS.to_owned()).expect("the sample parses");
+
+    assert_eq!(filters.len(), 2);
+    assert_eq!(filters[0].key, "urgent");
+    assert_eq!(
+        filters[0].name, "urgent",
+        "never renamed, so the key stands in"
+    );
+    assert_eq!(filters[1].key, "newsletters");
+    assert_eq!(filters[1].name, "Mailing lists");
+}
+
+#[test]
+fn filters_come_back_in_the_order_the_sidebar_shows_them() {
+    // An explicit order first, then everything without one alphabetically —
+    // the order every filter had before reordering existed.
+    let filters = settings_filters(FILTERS.to_owned()).expect("parses");
+
+    assert_eq!(
+        filters.iter().map(|f| f.key.as_str()).collect::<Vec<_>>(),
+        ["urgent", "newsletters"]
+    );
+}
+
+#[test]
+fn editing_one_filter_leaves_the_others_and_their_unknown_keys_alone() {
+    let mut filters = settings_filters(FILTERS.to_owned()).expect("parses");
+    filters[0].query = "is:unread".to_owned();
+    filters[0].pinned = false;
+
+    let written = settings_patch_filter(FILTERS.to_owned(), filters[0].clone()).expect("patch");
+
+    assert!(written.contains("query = \"is:unread\""), "{written}");
+    assert!(
+        written.contains("a_key_this_build_does_not_know = true"),
+        "another filter's unknown key survived: {written}"
+    );
+    assert!(
+        written.contains("# hand-written, and it should stay that way"),
+        "{written}"
+    );
+    let read_back = settings_filters(written).expect("the patched file parses");
+    assert!(!read_back[0].pinned);
+    assert_eq!(read_back[1].name, "Mailing lists", "the other is untouched");
+}
+
+#[test]
+fn clearing_a_name_restores_the_key_rather_than_saving_an_empty_label() {
+    // A saved empty name would draw as nothing at all, which is worse than
+    // the key it replaced.
+    let mut filters = settings_filters(FILTERS.to_owned()).expect("parses");
+    filters[1].name = "   ".to_owned();
+
+    let written = settings_patch_filter(FILTERS.to_owned(), filters[1].clone()).expect("patch");
+
+    let read_back = settings_filters(written).expect("parses");
+    assert_eq!(read_back[1].name, "newsletters", "back to the key");
+}
+
+#[test]
+fn a_filter_can_be_added_and_removed() {
+    let added = settings_add_filter(
+        FILTERS.to_owned(),
+        "today".to_owned(),
+        "is:unread".to_owned(),
+    )
+    .expect("add");
+    let filters = settings_filters(added.clone()).expect("parses");
+    assert_eq!(filters.len(), 3);
+    assert!(filters.iter().any(|filter| filter.key == "today"));
+
+    let removed = settings_remove_filter(added, "today".to_owned()).expect("remove");
+    let filters = settings_filters(removed).expect("parses");
+    assert_eq!(filters.len(), 2);
+    assert!(!filters.iter().any(|filter| filter.key == "today"));
+}
+
+#[test]
+fn two_filters_cannot_share_a_key() {
+    // The key is the identity. A silent overwrite would replace somebody's
+    // saved search with a new one of the same name.
+    let refusal = settings_add_filter(
+        FILTERS.to_owned(),
+        "urgent".to_owned(),
+        "is:unread".to_owned(),
+    )
+    .expect_err("a duplicate key");
+
+    assert!(format!("{refusal}").contains("already"), "{refusal}");
 }

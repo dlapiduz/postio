@@ -76,12 +76,36 @@ public final class PostioSession {
     /// The verbs the focused row announces, from this session's bindings.
     public func rowHints() -> [RowHintFfi] { inner.rowHints() }
 
+    /// The key hints the search bar announces — `Ret open · Tab refine ·
+    /// C-s save as folder`. From this session's keymap, so a rebinding
+    /// reaches the footer.
+    public func searchHints() -> [RowHintFfi] { inner.searchHints() }
+
     /// Every configured account, as the settings pane lists them.
     public func accounts() -> [AccountFfi] { inner.accounts() }
 
     /// Show `scope`, and answer the generation the window is now on.
     @discardableResult
     public func openScope(_ scope: ScopeFfi) -> UInt64 { inner.openScope(scope: scope) }
+
+    /// Read a conversation into the reading pane.
+    ///
+    /// Returns at once. `UiEvent.conversationReady` says when there is
+    /// something to draw and `conversation` is what to draw — the same
+    /// local-first shape every other read here has: nothing awaits I/O.
+    ///
+    /// The list is untouched. A conversation is what the *pane* shows; the
+    /// list stays the list, and there is no drill-in on either platform.
+    public func openConversation(_ thread: Int64) { inner.openConversation(thread: thread) }
+
+    /// The conversation the pane is showing, folded — `nil` until one has
+    /// been asked for.
+    ///
+    /// Already stacked, already focused, already expanded to the cap. **None
+    /// of that is Swift's to decide**: which messages open is what an open
+    /// conversation costs, one web view each, and `postio_ui::conversation`
+    /// answers it for both frontends.
+    public var conversation: ConversationFfi? { inner.conversation() }
 
     /// How many rows the current scope has.
     ///
@@ -104,8 +128,41 @@ public final class PostioSession {
     /// same answer repeatedly — `NWPathMonitor` does exactly that.
     public func setOffline(_ offline: Bool) { inner.setOffline(offline: offline) }
 
+    /// Say which accounts the unified view can vouch for right now.
+    ///
+    /// Read when a whole-view selection is *made*, not when a verb runs
+    /// (#811). The boundary's default is the empty set, which is safe and
+    /// means `⌘A` in the unified list selects nothing until this is
+    /// reported. See `VouchedFor` for what this frontend can honestly say.
+    public func setReachableAccounts(_ accounts: [Int64]) {
+        inner.setReachableAccounts(accounts: accounts)
+    }
+
     /// Whether the platform has told the engine there is no connection.
     public var isOffline: Bool { inner.isOffline() }
+
+
+    /// Everything the pane asks about one open message — the blocked-images
+    /// notice, the decode caveat, the unsubscribe offer and the recipients —
+    /// in one call, one body load and one render (#1589).
+    ///
+    /// **`nonisolated`.** The render inside it is the same sanitizer pass the
+    /// reader runs, and the actor that draws must not pay for a render whose
+    /// only output is a number. Call it from a task and publish the answer —
+    /// which is exactly what `ExpandedMessage.task(id:)` does.
+    public nonisolated func messageFacts(_ message: Int64) -> MessageFactsFfi {
+        inner.messageFacts(message: message)
+    }
+
+    /// One message as a row, by id rather than by list position.
+    ///
+    /// What the single-message pane draws its header from: a message the
+    /// store has not threaded belongs to no conversation and arrives as an
+    /// id, with no list under it to index into. `nil` for a message that is
+    /// not there — a row full of blanks reads as a message with no sender.
+    public func rowFor(_ message: Int64) -> RowFfi? {
+        inner.rowFor(message: message)
+    }
 
     /// The whole document for a message, ready to hand a web view.
     ///
@@ -113,8 +170,54 @@ public final class PostioSession {
     /// font faces, the sanitized body inside its container and the scroll
     /// markers all come from the engine, which is what the GTK reader renders
     /// too. Swift composes no reader HTML.
-    public func readerDocument(message: Int64, remote: RemoteImagesFfi) -> String {
-        inner.readerDocument(message: message, remote: remote)
+    /// `original` is the one gesture that leaves reader view: what the
+    /// sender wrote, on their own paper-white sheet, inset from Postio's
+    /// chrome. Per message and per view — nothing is remembered, so the next
+    /// message opens reduced again.
+    ///
+    /// The answer carries the notice and the caveat too (#1589): both are
+    /// by-products of the render the document pays for anyway, and asking
+    /// for them separately was two more body loads.
+    public func readerDocument(
+        message: Int64,
+        remote: RemoteImagesFfi,
+        original: Bool = false
+    ) -> ReaderDocumentFfi {
+        inner.readerDocument(message: message, remote: remote, original: original)
+    }
+
+    /// One part's bytes.
+    ///
+    /// **`nonisolated`, and deliberately so.** This is the only call in the
+    /// parts surface that can reach the network: a part nobody has
+    /// downloaded is queued and then waited on for up to thirty seconds.
+    /// Every other method here reads SQLite and answers in milliseconds.
+    /// Calling it from the main actor would freeze the window on somebody's
+    /// IMAP server, so the type system is asked to prevent that rather than a
+    /// comment.
+    public nonisolated func partBytes(_ message: Int64, partId: String) throws -> Data {
+        Data(try inner.partBytes(message: message, partId: partId))
+    }
+
+
+    /// Leave the list this message came from — **the deliberate activation**,
+    /// and the only call in this pair that records one.
+    ///
+    /// From a button and from nothing else. A message that offers nothing is
+    /// refused rather than logged, so this cannot unsubscribe anybody from a
+    /// message the reader never offered it on.
+    ///
+    /// **`nonisolated`**: it writes, and a write waits on the store's
+    /// machine-wide gate — behind whatever the sync engine is committing,
+    /// which on a first sync is not a few milliseconds.
+    public nonisolated func activateUnsubscribe(_ message: Int64) -> String? {
+        inner.activateUnsubscribe(message: message)
+    }
+
+    /// Every activation this store holds, newest first — the Privacy pane's
+    /// list. An action nobody can see afterwards is one nobody can audit.
+    public func unsubscribeActivations() -> [UnsubscribeActivationFfi] {
+        inner.unsubscribeActivations()
     }
 
     /// One inline part of `message`, by its `Content-ID`.
@@ -124,6 +227,21 @@ public final class PostioSession {
     /// the tracking pixel the reader blocks, arriving through the back door.
     public func resolveCid(message: Int64, contentId: String) -> InlinePart? {
         inner.resolveCid(message: message, contentId: contentId)
+    }
+
+    /// `thread` as one document, with each message's anchor, sender and
+    /// caveat (#1595, ADR 0032). The page is `postio_ui::reader::thread`'s,
+    /// the same one GTK's pane draws. Blocks on the store: off the main
+    /// actor.
+    public nonisolated func threadDocument(thread: Int64, originals: [Int64]) -> ThreadDocumentFfi {
+        inner.threadDocument(thread: thread, originals: originals)
+    }
+
+    /// The draft behind a draft's message row, for a conversation's
+    /// `Continue editing` — `nil` for another client's draft, which has
+    /// nothing on this machine to edit.
+    public func draftForMessage(_ message: Int64) -> DraftFfi? {
+        inner.draftForMessage(message: message)
     }
 
     /// What one key press means here.
@@ -197,6 +315,94 @@ public final class PostioSession {
     /// Whether the list is showing search results rather than a folder.
     public var isSearching: Bool { inner.isSearching() }
 
+    /// The query the rows on screen came from, or `nil` over a mailbox.
+    ///
+    /// What *Save search as folder* keeps. Not the text in the field: that
+    /// is whatever has been typed since the last run.
+    public var searchQuery: String? { inner.searchQuery() }
+
+    /// Which order the results are in, as the sort control says it —
+    /// "Relevance" or "Newest". The boundary's word, so this control and
+    /// GTK's own say the same thing.
+    public var resultOrderLabel: String { inner.resultOrderLabel() }
+
+    /// The scope rail's counts and the refine chips for the results on
+    /// screen, from one pass over the index (#1157). A second pass, so off
+    /// the main actor: search is budgeted under 100 ms and paying for this
+    /// inline spent that budget twice on one keystroke.
+    public nonisolated func searchFacets() -> SearchFacetsFfi { inner.searchFacets() }
+
+    /// Which scope the search is looking in — All mail unless the rail said
+    /// otherwise, and All mail again for every new search.
+    public var searchScope: SearchScopeFfi { inner.searchScope() }
+
+    /// Look in `scope` and ask the same query again there. The scope is not
+    /// written into the query, so what was typed stays what was typed.
+    @discardableResult
+    public func setSearchScope(_ scope: SearchScopeFfi) -> UInt64 {
+        inner.setSearchScope(scope: scope)
+    }
+
+    /// Read the results the other way round — best first, or newest first.
+    ///
+    /// Re-asks the same query rather than re-sorting what is on screen, and
+    /// does nothing over a mailbox. Answers with the list's new generation.
+    @discardableResult
+    public func toggleResultOrder() -> UInt64 { inner.toggleResultOrder() }
+
+    /// What to draw over a list with nothing in it, when the boundary has
+    /// something to say about *why* it is empty.
+    ///
+    /// `nil` for an empty folder — that plate is this frontend's own and says
+    /// something different. The case the boundary has to answer is a search
+    /// that matched nothing: its row count is zero exactly like an empty
+    /// mailbox's, so a list keyed on the count alone says "no mail" about a
+    /// mailbox holding thousands (ADR 0005 Q10).
+    public var emptyPlate: EmptyPlateFfi? { inner.emptyPlate() }
+
+    /// Throw a draft away — the row and the server copy.
+    ///
+    /// Discarding one that is already gone is not an error: a retried
+    /// discard, or one racing a send that already cleared the row, is the
+    /// expected case, and the window has closed either way.
+    @discardableResult
+    public func discardDraft(_ draft: Int64) -> String? { inner.discardDraft(draft: draft) }
+
+    /// A message's parts, as a tree with the rows already laid out.
+    ///
+    /// The prefixes, the labels, what each row *says*, and above all the
+    /// filename a part is safe to be written under are all the boundary's:
+    /// a sender's `filename=` is attacker-controlled text, and two frontends
+    /// making it safe differently is two answers to a security question.
+    public func messageParts(_ message: Int64) -> MessagePartsFfi {
+        inner.messageParts(message: message)
+    }
+
+    /// Write one part to `path`, which the user chose.
+    ///
+    /// The path is exact — a save panel's answer. Asking for a part that has
+    /// not arrived is what fetches it, so this can take a moment.
+    public func savePart(_ message: Int64, partId: String, to path: String) throws {
+        try inner.savePart(message: message, partId: partId, path: path)
+    }
+
+    /// Write every savable part into `directory`, and say how it went.
+    public func saveAllParts(_ message: Int64, into directory: String) throws -> SavedPartsFfi {
+        try inner.saveAllParts(message: message, directory: directory)
+    }
+
+    /// Write one part into `directory` under a name **Postio** chooses, and
+    /// answer where it landed.
+    ///
+    /// The directory only. This is the route where bytes leave Postio's own
+    /// window — handed to another application — so the frontend does not get
+    /// to pass the sender's filename through to the filesystem.
+    public func exportPart(_ message: Int64, partId: String, into directory: String) throws
+        -> String
+    {
+        try inner.exportPart(message: message, partId: partId, directory: directory)
+    }
+
     /// The excerpt for `message`, with the match located.
     ///
     /// Text and byte ranges, never marked-up text — the same decision the
@@ -231,6 +437,19 @@ public final class PostioSession {
     /// The same list the palette reads, unfiltered — one list read two ways.
     public func cheatSheet(in context: UiContext) -> [PaletteEntryFfi] {
         inner.cheatSheet(context: context)
+    }
+
+    /// The `?` sheet, grouped the way the product groups it: Everywhere, the
+    /// box's prefixes, the reader's own surface, then one section per
+    /// extension namespace.
+    ///
+    /// The grouping is `postio_ui::cheatsheet::sections`' — the same
+    /// function the GTK overlay draws from, so the two frontends teach the
+    /// same sheet. The flat `cheatSheet` above predates it, and a `?`
+    /// overlay drawing that is an ungrouped wall of keys where the other
+    /// platform has headings.
+    public func cheatSheetSections(in context: UiContext) -> [CheatSectionFfi] {
+        inner.cheatSheetSections(context: context)
     }
 
     /// Whether `message` is *marked*.
@@ -285,6 +504,373 @@ public final class PostioSession {
     /// showing none.
     public func binding(for command: String) -> String? {
         inner.bindingFor(command: command)
+    }
+
+    /// The chord a surface draws beside a command, or `nil` when there is
+    /// none to draw.
+    ///
+    /// **The one place a key is turned into glyphs.** Both keyboard layers
+    /// are live, and every surface that names a key wants the same one — the
+    /// `⌘` chord, falling back to the mnemonic — so asking here is what stops
+    /// one button saying `⌘R` and the one beside it saying `E`. It did:
+    /// the conversation pane drew mnemonics for a week because it asked for
+    /// the *primary* binding, which is the other layer.
+    public func accelerator(for command: String) -> String? {
+        MenuPlan.accelerator(among: bindings(for: command))
+    }
+
+    /// Every binding in force for a command, the primary first.
+    ///
+    /// Both of the canvas' keyboard layers, because they are two bindings on
+    /// one command rather than a mode: `e` replies and so does `⌘R`. A menu
+    /// draws the chord, the cheat sheet lists both, and neither decides which
+    /// exists.
+    public func bindings(for command: String) -> [String] {
+        inner.bindingsFor(command: command)
+    }
+
+    /// What the reader is holding back for `message`, or `nil` when nothing
+    /// is — a notice with nothing to report teaches people to dismiss the
+    /// one that matters.
+    /// Who `message` was addressed to, already rendered.
+    ///
+    /// `nil` for a message the store does not hold. A read of its own rather
+    /// than a field on the row: the list draws no recipients, and paying for
+    /// them per row would load a mailbox's addresses to show one message's.
+    /// The composer's editing bridge — the one script Postio runs.
+    ///
+    /// `postio_ui::compose::EDITOR_SCRIPT`, the same bytes WebKitGTK
+    /// injects. It crosses rather than being written again here because it
+    /// decides the *dialect* the surface emits: a second copy would produce
+    /// `<div>`s where this one produces `<p>`s, the boundary would narrow
+    /// them differently, and the two composers would disagree about what the
+    /// same keystrokes wrote while both still round-tripped cleanly.
+    public func editorScript() -> String { inner.editorScript() }
+
+    /// What a rich body reads as in plain text, flowed.
+    ///
+    /// What the Rich/Plain switch needs at the moment it flips (#1293).
+    /// Named for that call site rather than reusing `narrowPaste`, which
+    /// returns the same string but would tell the next reader this was a
+    /// paste.
+    public func plainTextOf(_ html: String) -> String {
+        inner.plainTextOf(html: html)
+    }
+
+    /// The script that applies a mark to the composer's selection, or `nil`
+    /// for a command that is not one of the marks.
+    public func markScript(_ command: String) -> String? {
+        inner.markScript(command: command)
+    }
+
+    /// The script that links the selection to `href`, or `nil` when a
+    /// message may not point there.
+    public func linkScript(_ href: String) -> String? {
+        inner.linkScript(href: href)
+    }
+
+    /// Narrow pasted markup to what a message may carry, and say what that
+    /// cost.
+    ///
+    /// Pure: no store, no network. The sentence in `dropped` is the
+    /// engine's, so both composers say the same thing about the same paste.
+    public func narrowPaste(_ html: String) -> PastedFfi {
+        inner.narrowPaste(html: html)
+    }
+
+    /// The draft `id` as the store has it, or `nil`.
+    public func draft(_ id: Int64) -> DraftFfi? { inner.draft(id: id) }
+
+
+    /// The verbs the reading pane offers, in canvas order.
+    ///
+    /// No key comes with them — `accelerator(for:)` is what spells one on
+    /// this platform. What crosses is which verbs and in what order, which is
+    /// the same on both frontends by construction.
+    public func readerActions() -> [ReaderActionFfi] { inner.readerActions() }
+
+    /// The header bar of a conversation of `messages`, each verb with what it
+    /// will act on in words and whether that is the whole thread (FR-008,
+    /// FR-008a).
+    public func conversationActions(messages: UInt32) -> [ConversationActionFfi] {
+        inner.conversationActions(messages: messages)
+    }
+
+
+    /// Always allow this address's remote images, across restarts.
+    ///
+    /// POSTIO-CONSENT: only ever from the popover's own item, which names
+    /// the address it is about.
+    public func allowSender(_ address: String) { inner.allowSender(address: address) }
+
+    /// Always allow every address at this domain.
+    public func allowDomain(_ domain: String) { inner.allowDomain(domain: domain) }
+
+    /// A draft prefilled from a `mailto:` link.
+    ///
+    /// The parsing is `Mailto`'s — RFC 6068 is the platform's URL machinery —
+    /// and what a mail client does with the result is the boundary's, so both
+    /// frontends behave alike.
+    public func mailtoDraft(_ mailto: Mailto) -> DraftFfi? {
+        inner.mailtoDraft(
+            to: mailto.to,
+            cc: mailto.cc,
+            bcc: mailto.bcc,
+            subject: mailto.subject,
+            body: mailto.body
+        )
+    }
+
+    /// Every standing permission to load remote images.
+    ///
+    /// The Privacy pane's model. Blocked-until-allowed only means something
+    /// if what has been allowed can be looked at and taken back.
+    public func remoteImageGrants() -> [GrantFfi] {
+        inner.remoteImageGrants()
+    }
+
+    /// Take one back; images from it are blocked again at once.
+    public func revokeRemoteImages(_ subject: String) {
+        inner.revokeRemoteImages(subject: subject)
+    }
+
+    /// Add an account that signs in with a password.
+    ///
+    /// `nil` when it was added; a sentence when it was not. The password goes
+    /// to the OS keyring under the address and nowhere else — never
+    /// `config.toml`, never a log (ADR 0014).
+    public func addImapAccount(
+        address: String,
+        password: String,
+        imapHost: String,
+        imapPort: UInt16,
+        smtpHost: String,
+        smtpPort: UInt16
+    ) -> String? {
+        inner.addImapAccount(
+            address: address,
+            password: password,
+            imapHost: imapHost,
+            imapPort: imapPort,
+            smtpHost: smtpHost,
+            smtpPort: smtpPort
+        )
+    }
+
+    /// Add an account that is a directory on this machine.
+    ///
+    /// `nil` when it was added; a sentence when it was not. No credential is
+    /// stored, because there is none: the account signs in to nothing.
+    public func addLocalAccount(address: String, path: String) -> String? {
+        inner.addLocalAccount(address: address, path: path)
+    }
+
+    /// Whether a directory is a mail store Postio can open.
+    ///
+    /// `nil` when it is; a sentence naming the directory when it is not. The
+    /// sheet asks while somebody is still looking at the field, so what is
+    /// wrong with a directory is said before an account points at it.
+    public func inspectLocalStore(_ path: String) -> String? {
+        inner.inspectLocalStore(path: path)
+    }
+
+    /// Open a session against this account's server and close it again.
+    ///
+    /// **Blocks**, so it belongs on a detached task. It is the same path sync
+    /// takes — same credential, same settings — which is what makes a test
+    /// that passes a statement about sync rather than about the button.
+    public func testConnection(_ account: Int64) -> ConnectionReportFfi {
+        inner.testConnection(account: account)
+    }
+
+    /// Change what an account calls itself — the one field the account form
+    /// edits. Everything else on a row came from the preset table or from a
+    /// sign-in, and editing those is changing which account this is.
+    public func setDisplayName(_ account: Int64, to name: String) -> String? {
+        inner.setDisplayName(account: account, name: name)
+    }
+
+    /// How much disk this account's mail takes, in words — or `nil` when
+    /// there is nothing to weigh. A fresh account says nothing rather than
+    /// `0 B`, which reads as a failure.
+    public func weight(of account: Int64) -> String? {
+        inner.accountWeight(account: account)
+    }
+
+    /// Rebuild this account's search index from the mail already here.
+    /// Blocks, and reaches no server.
+    public func reindexAccount(_ account: Int64) -> String? {
+        inner.reindexAccount(account: account)
+    }
+
+    /// Switch an account's syncing on or off.
+    ///
+    /// The row stays in the list: a disabled account is configured and not
+    /// syncing, which is a state to show rather than one to hide.
+    public func setAccountEnabled(_ account: Int64, _ enabled: Bool) -> String? {
+        inner.setAccountEnabled(account: account, enabled: enabled)
+    }
+
+    /// Make an account the one new messages come from when the message
+    /// itself does not say — and nothing else (#960).
+    ///
+    /// There is no way to clear it: the reversal of marking an account is
+    /// marking another, which is why the command carries no undo.
+    public func setDefaultAccount(_ account: Int64) -> String? {
+        inner.setDefaultAccount(account: account)
+    }
+
+    /// Give an account a new password — the repair `AccountFfi.repair` calls
+    /// `.password`.
+    ///
+    /// For the two states that leave an account unable to sign in with
+    /// nothing wrong with its row: a provider that rotated its app password,
+    /// and a row whose keyring entry never arrived. Neither is repaired by
+    /// adding the account again.
+    ///
+    /// **Blocks on the keyring**, and on a locked one it blocks until
+    /// somebody unlocks it. Never from the main actor.
+    public nonisolated func repairCredential(_ account: Int64, _ password: String) -> String? {
+        inner.repairCredential(account: account, password: password)
+    }
+
+    /// Sign an account in again through the system browser — the repair
+    /// `AccountFfi.repair` calls `.browser`.
+    ///
+    /// Takes no client id, unlike a first sign-in: the account already
+    /// carries the one it registered. Reconnect is one press rather than a
+    /// form asking somebody to find a credential again in order to fix an
+    /// account that used to work.
+    ///
+    /// **Returns when the flow is over**, which is when a person comes back
+    /// from a browser tab. Never from the main actor.
+    public nonisolated func reconnectAccount(_ account: Int64) -> String? {
+        inner.reconnectAccount(account: account)
+    }
+
+    /// Take an account away — its row, and its credentials. A mail client
+    /// that forgets an account and keeps its password is worse than one that
+    /// does not forget it.
+    public func removeAccount(_ account: Int64) -> String? {
+        inner.removeAccount(account: account)
+    }
+
+    /// Sign in to `address` through the system browser and add the account.
+    ///
+    /// **Blocks until the flow is over** — it is waiting on a person in
+    /// another application — so it belongs on a detached task, the way
+    /// opening a session does. `nil` when the account was added; a sentence
+    /// otherwise, including when the user closed the tab.
+    ///
+    /// The client id is the user's own. Postio ships none (ADR 0006 Q1): a
+    /// credential inside an open-source application is one every user of it
+    /// shares.
+    public func signInWithBrowser(
+        address: String,
+        clientId: String,
+        clientSecret: String?
+    ) -> String? {
+        inner.signInWithBrowser(
+            address: address, clientId: clientId, clientSecret: clientSecret)
+    }
+
+    /// What the sign-in in flight is doing — the loopback port, mostly.
+    public var signInProgress: SignInProgressFfi { inner.signInProgress() }
+
+    /// Give up on the sign-in in flight. Closing the sheet means this.
+    public func cancelSignIn() { inner.cancelSignIn() }
+
+    // -- writing mail (#1272) ---------------------------------------------
+
+    /// A new message, from the account that would send it.
+    ///
+    /// `nil` when no account is configured, which is a real state on a fresh
+    /// install rather than an error: there is nothing to send from yet.
+    public func newDraft() -> DraftFfi? { inner.newDraft() }
+
+    /// A reply to `message` — to its sender, or to everyone on it.
+    ///
+    /// Who that is, what the subject becomes and what the quote looks like
+    /// are `postio_model::reply`'s answers, shared with the frontend that
+    /// already had them. Swift addresses nothing itself.
+    public func replyDraft(to message: Int64, all: Bool) -> DraftFfi? {
+        inner.replyDraft(message: message, all: all)
+    }
+
+    /// A forward of `message`, addressed to nobody yet.
+    public func forwardDraft(_ message: Int64) -> DraftFfi? {
+        inner.forwardDraft(message: message)
+    }
+
+    /// Attach a file to a draft, and answer the draft with it on.
+    ///
+    /// The MIME type is sniffed here because that is a platform service:
+    /// macOS asks `UniformTypeIdentifiers`, freedesktop reads
+    /// shared-mime-info, and neither can answer for the other. Everything
+    /// else — the size guard, the blob write, the row — happens once, on the
+    /// other side of this call.
+    public func attach(_ file: URL, to draft: DraftFfi) throws -> DraftFfi {
+        try inner.attachToDraft(
+            draft: draft,
+            path: file.path,
+            mimeType: MimeType.of(file)
+        )
+    }
+
+    /// Write the draft where another editor can open it, and answer where.
+    ///
+    /// The file is the user's alone — a private directory, mode 0600 — for
+    /// the reason the shared code records: a draft is mail that has not been
+    /// sent, which is often the most private mail there is.
+    public func beginHandoff(of draft: DraftFfi) throws -> String {
+        try inner.beginHandoff(draft: draft)
+    }
+
+    /// Take back what the other editor wrote.
+    public func endHandoff(of draft: DraftFfi, at path: String) throws -> DraftFfi {
+        try inner.endHandoff(draft: draft, path: path)
+    }
+
+    /// Take an attachment off a draft.
+    /// Put a picture into the draft's body (#1571): answers the draft with
+    /// the part on it, and the script that draws it at the caret.
+    ///
+    /// `bytes` rather than a file, because a picture arrives from a paste as
+    /// often as from the open panel. Blocks on the store.
+    public func insertImage(
+        _ bytes: Data, mimeType: String, into draft: DraftFfi
+    ) throws -> InlineImageFfi {
+        try inner.insertInlineImage(draft: draft, bytes: bytes, mimeType: mimeType)
+    }
+
+    /// A picture in draft `draft`'s own body, by its `Content-ID` — what the
+    /// composer's `postio-cid:` handler answers with.
+    public func resolveDraftCid(draft: Int64, contentId: String) -> InlinePart? {
+        inner.resolveDraftCid(draft: draft, contentId: contentId)
+    }
+
+    public func detach(_ attachment: Int64, from draft: DraftFfi) throws -> DraftFfi {
+        try inner.detachFromDraft(draft: draft, attachment: attachment)
+    }
+
+    /// Write the draft to the store; answers it with the id it now has.
+    public func saveDraft(_ draft: DraftFfi) -> DraftFfi? {
+        inner.saveDraft(draft: draft)
+    }
+
+    /// Queue the draft for sending. `nil` when it went; a sentence when it
+    /// could not, which the composer shows rather than closing over.
+    public func sendDraft(_ draft: DraftFfi) -> String? {
+        inner.sendDraft(draft: draft)
+    }
+
+    /// Queue a draft to leave at `when` — epoch milliseconds.
+    ///
+    /// Every check an immediate send makes, made here too: being refused at
+    /// the scheduled hour, when nobody is watching the composer, is strictly
+    /// worse than being refused now.
+    public func sendDraftLater(_ draft: DraftFfi, at when: Int64) -> String? {
+        inner.sendDraftLater(draft: draft, when: when)
     }
 
     /// Start syncing every configured account; answers how many started.

@@ -36,6 +36,9 @@
 //! scaffolding around it is the part that had to be proven first.
 
 mod account;
+mod compose;
+mod conversation;
+mod cost;
 mod dwell;
 mod event;
 mod focus;
@@ -45,35 +48,80 @@ mod logging;
 mod mailbox;
 mod notify;
 mod palette;
+mod parts;
+mod provisioning;
+mod rail;
 mod reader;
-mod registry;
+pub mod registry;
+mod saved_search;
 mod search;
 mod session;
 mod settings;
+mod sidebar;
+mod unsubscribe;
 
-pub use account::AccountFfi;
+pub use account::{AccountFfi, ConnectionReportFfi, RepairRouteFfi};
+pub use compose::{
+    AttachmentFfi, ComposeError, DraftFfi, DraftKindFfi, InlineImageFfi, PastedFfi, outgoing_shape,
+    recipient_summary,
+};
+pub use conversation::{
+    ConversationFfi, ThreadAnchorFfi, ThreadDocumentFfi, ThreadVerbFfi, ThreadVerbKindFfi,
+    message_when, thread_expand_all_script, thread_observer_script, thread_scroll_script,
+    thread_toggle_script, thread_verb,
+};
+pub use cost::{
+    note_reader_render, note_reader_surface_created, note_reader_surface_released,
+    reader_renders_issued, reader_surfaces_created, reader_surfaces_held,
+};
 pub use dwell::{DwellArmFfi, dwell_on_cursor};
-pub use event::{ConnectionStateFfi, FailureReasonFfi, UiEvent};
+pub use event::{ConnectionStateFfi, FailureReasonFfi, NoticeKindFfi, UiEvent};
 pub use focus::next_pane;
 pub use keys::{KeyOutcomeFfi, ModifiersFfi};
 pub use list::{RowFfi, ScopeFfi};
 pub use logging::start_logging;
-pub use mailbox::{MailboxFfi, MailboxRoleFfi};
+pub use mailbox::{MailboxFfi, MailboxRoleFfi, mailbox_role_name};
 pub use notify::{
     MailArrivalFfi, MailNotificationFfi, NotificationDecisionFfi, SuppressedFfi,
     decide_notification,
 };
 pub use palette::{CheatRowFfi, CheatSectionFfi, PaletteEntryFfi};
-pub use reader::{InlinePart, RemoteImagesFfi};
-pub use registry::{CommandSpecFfi, MenuFfi, MenuSectionFfi, UiContext, UiRecovery, menus};
-pub use search::{ChipFfi, MatchRangeFfi, OutcomeFfi, SnippetFfi, query_chips};
-pub use session::{Session, SessionError, SessionOptions};
-pub use settings::{
-    AppearanceFfi, DensityFfi, GroupFfi, RowActionFfi, RowHintFfi, RowMetricsFfi, SettingsError,
-    SettingsSectionFfi, SettingsStatusFfi, ThemeFfi, row_actions, row_metrics, row_timestamp,
-    settings_appearance, settings_group_label, settings_humanize_interval, settings_load,
-    settings_patch_appearance, settings_path, settings_save, settings_sections, settings_status,
+pub use parts::{
+    MessagePartsFfi, PartFfi, PartsError, SavedPartsFfi, part_cursor_after, part_held_back_note,
+    part_note,
 };
+pub use provisioning::{
+    ProviderHintFfi, RouteFfi, ScopesFfi, SignInProgressFfi, provider_hint, sign_in_scopes,
+};
+pub use rail::{RailEffectFfi, RailFfi, RailPresentationFfi, RailRowFfi, rail_presentation};
+pub use reader::{
+    ConversationActionFfi, GrantFfi, InlinePart, MessageFactsFfi, ReaderActionFfi,
+    ReaderDocumentFfi, ReaderNoticeFfi, RecipientsFfi, RemoteImagesFfi, middle_truncate,
+    reader_page_after, reader_page_fragment, reader_scroll_markers,
+};
+pub use registry::{CommandSpecFfi, MenuFfi, MenuSectionFfi, UiContext, UiRecovery, menus};
+pub use saved_search::{
+    PromptFfi, ReorderFfi, SavedSearchEditFfi, SavedSearchFfi, delete_saved_search,
+    move_saved_search, rename_saved_search, save_search, saved_search_delete_prompt,
+    saved_search_rename_prompt, saved_searches,
+};
+pub use search::{
+    ChipFfi, EmptyPlateFfi, MatchRangeFfi, OutcomeFfi, RefinementFfi, ScopeCountFfi,
+    SearchFacetsFfi, SearchScopeFfi, SnippetFfi, query_chips,
+};
+pub use session::{HANDLED_HERE, Session, SessionError, SessionOptions};
+pub use settings::{
+    AppearanceFfi, AttachmentFetchFfi, BodyFetchFfi, CheckForMailFfi, ComposingFfi, DensityFfi,
+    FilterFfi, FoundEditorFfi, GroupFfi, HandoffTargetFfi, RowActionFfi, RowHintFfi, RowMetricsFfi,
+    SettingsError, SettingsSectionFfi, SettingsStatusFfi, SignaturePlacementFfi, SyncingFfi,
+    ThemeFfi, row_actions, row_metrics, row_timestamp, settings_add_filter, settings_appearance,
+    settings_composing, settings_filters, settings_group_label, settings_handoff_label,
+    settings_handoff_target, settings_humanize_interval, settings_load, settings_patch_appearance,
+    settings_patch_composing, settings_patch_filter, settings_patch_syncing, settings_path,
+    settings_remove_filter, settings_save, settings_sections, settings_status, settings_syncing,
+};
+pub use sidebar::{ActivityFfi, sidebar_status};
+pub use unsubscribe::{UnsubscribeActivationFfi, UnsubscribeOfferFfi};
 
 /// Every command the registry knows, in cheat-sheet order.
 ///
@@ -90,6 +138,18 @@ pub use settings::{
 #[uniffi::export]
 pub fn commands() -> Vec<CommandSpecFfi> {
     registry::commands()
+}
+
+/// The ids `PostioKit.Intercepted` must hold, as the boundary knows them.
+///
+/// Crosses so the Swift copy can be checked against it rather than trusted.
+/// See [`registry::INTERCEPTED`] for why there are two copies at all.
+#[uniffi::export]
+pub fn intercepted_commands() -> Vec<String> {
+    registry::INTERCEPTED
+        .iter()
+        .map(|id| id.to_string())
+        .collect()
 }
 
 uniffi::setup_scaffolding!();

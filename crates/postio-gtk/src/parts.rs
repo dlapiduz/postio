@@ -27,6 +27,14 @@
 //! IMAP part ids are paths — `1`, `2`, `2.1`, `2.2` — so the nesting is
 //! already in the data and [`tree`] only has to read it. Nothing here invents
 //! a hierarchy or asks the store for one.
+//!
+//! # Where the answers are decided
+//!
+//! In [`postio_ui::reader::parts`], and re-exported below. This module is the
+//! panel: the widget, its keys, its drag source and its dialogs. Everything
+//! it *says* — the tree, the box drawing, each row's words, and the filename
+//! a part may be written under — is shared with the macOS reader, which has
+//! exactly the same things to say about exactly the same rows (ADR 0019).
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
@@ -36,216 +44,24 @@ use adw::subclass::prelude::*;
 use gtk::{gdk, gio, glib, graphene, pango};
 use postio_core::{CommandId, Keymap};
 use postio_model::Attachment;
-use postio_model::ids::AttachmentId;
 
-/// One node of the tree, flattened into the order the keyboard walks it.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Node {
-    /// The IMAP part id — `2.1`. Empty for the synthetic root.
-    pub part_id: String,
-    /// How deep it sits; the root is 0.
-    pub depth: usize,
-    /// `text/html`, `image/png`, `multipart/mixed`.
-    pub mime: String,
-    /// The name the sender gave it, if any.
-    pub filename: Option<String>,
-    /// Size in bytes as the server declared it. `0` for a container.
-    pub size: u64,
-    /// Whether the bytes are already in the blob store.
-    pub downloaded: bool,
-    /// Whether this is the last child of its parent, for `└` rather than `├`.
-    pub last: bool,
-    /// The attachment row this came from; `None` for the synthetic root.
-    pub attachment: Option<AttachmentId>,
-}
-
-impl Node {
-    /// What the row calls this part: its filename, or its type when the
-    /// sender did not name it.
-    pub fn label(&self) -> &str {
-        match self.filename.as_deref().map(str::trim) {
-            Some(name) if !name.is_empty() => name,
-            _ => &self.mime,
-        }
-    }
-
-    /// Whether this part holds bytes worth saving, as opposed to being a
-    /// container for other parts.
-    pub fn is_leaf(&self) -> bool {
-        !self.mime.starts_with("multipart/") && self.attachment.is_some()
-    }
-}
-
-/// Reads `parts` as a tree, flattened in walk order.
-///
-/// `root` is the message's own content type — `multipart/mixed` — which is a
-/// property of the message rather than of any part, so it is passed in rather
-/// than guessed. A message with no parts still gets its root node: a tree
-/// with one entry is a true answer, where an empty panel would look broken.
-///
-/// Parts are ordered by their id read as a path of numbers, so `2.10` sorts
-/// after `2.9` rather than before it the way a string compare would.
-pub fn tree(root: &str, parts: &[Attachment]) -> Vec<Node> {
-    let mut ordered: Vec<(Vec<u32>, &Attachment)> = parts
-        .iter()
-        .map(|part| (path_of(part), part))
-        .filter(|(path, _)| !path.is_empty())
-        .collect();
-    ordered.sort_by(|(left, _), (right, _)| left.cmp(right));
-
-    let mut nodes = Vec::with_capacity(ordered.len() + 1);
-    nodes.push(Node {
-        part_id: String::new(),
-        depth: 0,
-        mime: root.to_owned(),
-        filename: None,
-        size: parts.iter().map(|part| part.size).sum(),
-        downloaded: false,
-        last: ordered.is_empty(),
-        attachment: None,
-    });
-
-    for (index, (path, part)) in ordered.iter().enumerate() {
-        // The last child of *this* parent, not the last row overall: a
-        // deeper branch that ends before its parent's next sibling still
-        // needs its own `└`.
-        let last = ordered.get(index + 1).is_none_or(|(next, _)| {
-            next.len() < path.len() || next[..path.len() - 1] != path[..path.len() - 1]
-        });
-        nodes.push(Node {
-            part_id: part.part_id.clone().unwrap_or_default(),
-            depth: path.len(),
-            mime: part.mime_type.clone(),
-            filename: part.filename.clone(),
-            size: part.size,
-            downloaded: part.blob_id.is_some(),
-            last,
-            attachment: Some(part.id),
-        });
-    }
-    nodes
-}
-
-/// A part id read as a path: `"2.1"` becomes `[2, 1]`.
-///
-/// A part with no id at all, or one that is not a path of numbers, sorts as
-/// nothing and is dropped — the tree draws what the server described, and a
-/// row nothing can be fetched for is a row that leads nowhere.
-fn path_of(part: &Attachment) -> Vec<u32> {
-    let Some(id) = part.part_id.as_deref() else {
-        return Vec::new();
-    };
-    let mut path = Vec::new();
-    for segment in id.split('.') {
-        match segment.parse::<u32>() {
-            Ok(number) => path.push(number),
-            Err(_) => return Vec::new(),
-        }
-    }
-    path
-}
-
-/// The box-drawing prefix the canvas draws down the left of the tree.
-///
-/// Two spaces per level of nesting, then `├ ` or `└ `. The root has none.
-pub fn prefix(node: &Node) -> String {
-    if node.depth == 0 {
-        return String::new();
-    }
-    let indent = "  ".repeat(node.depth - 1);
-    let branch = if node.last { "└ " } else { "├ " };
-    format!("{indent}{branch}")
-}
-
-// `human_size` moved to `postio_ui::format` (#411): the status line and the
-// attachment setting both show byte totals now, and two surfaces formatting
-// them their own way is how `1.4 GB` and `1,400 MB` end up on one screen.
+// The tree, the words and the names moved to `postio_ui::reader::parts`.
+//
+// Every one of them was a pure function over `Attachment` rows with no widget
+// in it, and the macOS reader needs the same answers — so keeping a copy here
+// would have been the drift ADR 0019 exists to prevent, on the one rule where
+// drifting is a security bug rather than an inconsistency: `save_name` is what
+// stops a part called `../../.bashrc` steering a save, and a second sanitiser
+// is a second chance to miss a separator.
+//
+// Re-exported rather than renamed at the call sites, the way `human_size`
+// already was (#411): what this module *is* to the rest of `postio-gtk` and to
+// `postio-app` has not changed, only where the answers are decided.
 pub use postio_ui::format::human_size;
-
-/// The header line: `multipart/mixed · 4 parts · 1.2 MB`.
-///
-/// The count is of parts, not of nodes — the root is the message, not a part
-/// of it.
-pub fn summary(nodes: &[Node]) -> String {
-    let Some(root) = nodes.first() else {
-        return String::new();
-    };
-    let parts = nodes.len().saturating_sub(1);
-    let count = match parts {
-        1 => "1 part".to_string(),
-        many => format!("{many} parts"),
-    };
-    format!("{} · {count} · {}", root.mime, human_size(root.size))
-}
-
-/// What the detail pane says about one part: `text/html · 6 KB`.
-pub fn detail(node: &Node) -> String {
-    if node.depth == 0 || node.size == 0 {
-        return node.mime.clone();
-    }
-    format!("{} · {}", node.mime, human_size(node.size))
-}
-
-/// Whether a part is one the panel can show inline rather than only save.
-///
-/// Images and PDFs, and nothing else. Everything else is bytes the
-/// application has no business interpreting, and `x` hands those to the
-/// desktop rather than guessing.
-pub fn previewable(mime: &str) -> bool {
-    let mime = mime.trim().to_ascii_lowercase();
-    mime.starts_with("image/") || mime == "application/pdf"
-}
-
-/// A filename safe to offer the save dialog for `node`.
-///
-/// The sender's name when there is one, with any path separators taken out —
-/// a part called `../../.bashrc` must not be able to steer where the save
-/// dialog opens. Otherwise the part id and a guess at an extension, so the
-/// dialog never opens on an empty name.
-///
-/// This is where an attachment filename stops being *reported* and starts
-/// being *used*. [`postio_model::mime::parse`] hands over what the sender
-/// wrote, faithfully and on purpose; everything that makes it fit to name a
-/// file happens here, which is why the traversal and control-character tests
-/// live beside this function and not beside the parser.
-pub fn save_name(node: &Node) -> String {
-    if let Some(name) = node.filename.as_deref().map(str::trim)
-        && !name.is_empty()
-    {
-        let cleaned: String = name
-            .chars()
-            // A separator becomes a dash: the sender meant a character to be
-            // there, and eliding it silently joins two name components.
-            .map(|c| if c == '/' || c == '\\' { '-' } else { c })
-            // A control character is dropped rather than marked, because the
-            // sender did not mean anything by it that a reader could see.
-            //
-            // #147, found by the `parse_message` fuzz target: a NUL reaches
-            // here both from a literal `filename="a\0b.txt"` and from one
-            // base64'd inside an RFC 2047 encoded word. The name then goes to
-            // `FileDialog::initial_name`, and gtk-rs converts a `&str` to a C
-            // string on the way — a conversion an interior NUL has no valid
-            // answer for. Pressing `s` on a message must not be how the
-            // application ends.
-            .filter(|c| !c.is_control())
-            .collect();
-        let cleaned = cleaned.trim_matches(['.', ' '].as_slice()).to_owned();
-        if !cleaned.is_empty() {
-            return cleaned;
-        }
-    }
-    let extension = node
-        .mime
-        .rsplit_once('/')
-        .map(|(_, sub)| sub)
-        .unwrap_or("bin");
-    let part = if node.part_id.is_empty() {
-        "message"
-    } else {
-        &node.part_id
-    };
-    format!("part-{part}.{extension}")
-}
+pub use postio_ui::reader::parts::{
+    CONTAINER, NOT_FETCHED, Node, detail, first_part, held_back_note, note, prefix, previewable,
+    root_type, save_all_failure, save_name, save_names, spoken, step, summary, tree,
+};
 
 // ---------------------------------------------------------------------------
 // The panel — canvas 3g
@@ -294,13 +110,6 @@ fn hints_for(keymap: &Keymap) -> String {
 fn default_hints() -> String {
     hints_for(&Keymap::resolve(&Default::default()))
 }
-
-/// What the detail pane says about a part nothing has fetched.
-const NOT_FETCHED: &str =
-    "Described by the server, not downloaded. Nothing here has touched the network.";
-
-/// What it says about a container.
-const CONTAINER: &str = "A container for the parts below it. Nothing to save.";
 
 /// How wide the tree column is, from the artboard.
 const TREE_WIDTH: i32 = 290;
@@ -409,12 +218,11 @@ impl PartsPanel {
         self.draw(root, parts);
         // The first *part*, not the message: the row the user came to look at
         // is one of the things inside, and starting on the container would
-        // cost a keystroke every time.
-        self.select_index(if self.imp().nodes.borrow().len() > 1 {
-            1
-        } else {
-            0
-        });
+        // cost a keystroke every time. `first_part` is where that is decided,
+        // so the macOS panel opens on the same row rather than on its own
+        // reading of the same sentence.
+        let count = self.imp().nodes.borrow().len();
+        self.select_index(first_part(count));
         self.refresh_detail();
     }
 
@@ -485,12 +293,12 @@ impl PartsPanel {
 
     /// Walk down the tree.
     pub fn next_part(&self) {
-        self.move_cursor(1);
+        self.move_cursor(true);
     }
 
     /// Walk up the tree.
     pub fn prev_part(&self) {
-        self.move_cursor(-1);
+        self.move_cursor(false);
     }
 
     /// Open what the cursor is on — the canvas' `Ret`.
@@ -766,8 +574,14 @@ impl PartsPanel {
         }
     }
 
-    fn move_cursor(&self, delta: i32) {
-        let count = self.imp().nodes.borrow().len() as i32;
+    /// One row up or down, clamping at the ends rather than wrapping.
+    ///
+    /// The clamp is [`postio_ui::reader::parts::step`]'s, for the reason
+    /// [`first_part`] is shared: which row `j` lands on at the bottom of a
+    /// tree is a decision, and two frontends deciding it separately is how
+    /// one of them ends up wrapping.
+    fn move_cursor(&self, forward: bool) {
+        let count = self.imp().nodes.borrow().len();
         if count == 0 {
             return;
         }
@@ -775,9 +589,9 @@ impl PartsPanel {
             .imp()
             .tree
             .selected_row()
-            .map(|row| row.index())
+            .map(|row| row.index().max(0) as usize)
             .unwrap_or(0);
-        self.select_index((current + delta).clamp(0, count - 1) as usize);
+        self.select_index(step(current, forward, count));
     }
 
     fn select_index(&self, index: usize) {
@@ -809,18 +623,14 @@ impl PartsPanel {
 
         imp.meta.set_text(&detail(&node));
         let (images, trackers) = imp.held_back.get();
-        let held_back = held_back_note(&node, images, trackers);
 
-        imp.render_once.set_visible(held_back.is_some());
-        imp.note.set_text(&match held_back {
-            Some(reason) => reason,
-            None if !node.is_leaf() => CONTAINER.to_string(),
-            None if !node.downloaded => NOT_FETCHED.to_string(),
-            None => format!(
-                "{} · already downloaded",
-                node.filename.clone().unwrap_or_else(|| node.mime.clone())
-            ),
-        });
+        // Which sentence a state gets is `postio_ui::reader::parts::note`'s
+        // call now, not this widget's: the macOS reader has the same four
+        // states to explain, and #751's oversized inline image is a case
+        // where the sentence *is* the explanation the user gets.
+        imp.render_once
+            .set_visible(held_back_note(&node.mime, images, trackers).is_some());
+        imp.note.set_text(&note(&node, images, trackers));
 
         // A container has no bytes, so neither button has anything to act on.
         imp.save.set_sensitive(node.is_leaf());
@@ -998,45 +808,6 @@ impl PartsPanel {
     }
 }
 
-/// Why a part is being held back, or `None` when it is not.
-///
-/// Only the markup parts: an `image/png` attachment references nothing and
-/// cannot phone home, so holding it back would be theatre. `text/html` is the
-/// one that loads things.
-pub fn held_back_note(node: &Node, remote_images: u32, trackers: u32) -> Option<String> {
-    if !node.mime.trim().eq_ignore_ascii_case("text/html") {
-        return None;
-    }
-    if remote_images + trackers == 0 {
-        return None;
-    }
-    let images = match remote_images {
-        0 => String::new(),
-        1 => "1 remote image".to_string(),
-        many => format!("{many} remote images"),
-    };
-    // "Likely", always. The count comes from a size heuristic
-    // (`postio_body::sanitize`) that reads what an `<img>` declares about
-    // itself and nothing else -- it cannot know a beacon from a very small
-    // picture, and it deliberately under-counts rather than accuse an
-    // ordinary image. The word is the difference between a signal and a
-    // claim, and both kinds are blocked identically either way (#174).
-    let trackers = match trackers {
-        0 => String::new(),
-        1 => "1 likely tracker".to_string(),
-        many => format!("{many} likely trackers"),
-    };
-    let what = match (images.is_empty(), trackers.is_empty()) {
-        (false, false) => format!("{images} and {trackers}"),
-        (false, true) => images,
-        (true, false) => trackers,
-        (true, true) => return None,
-    };
-    Some(format!(
-        "HTML part held back — {what} would load. The plain-text part is showing instead."
-    ))
-}
-
 /// One row of the tree: the box-drawing prefix, the part, and its size.
 ///
 /// Mono throughout, because a MIME tree is structure rather than prose and
@@ -1065,27 +836,6 @@ fn tree_row(node: &Node) -> gtk::ListBoxRow {
     row.set_child(Some(&line));
     row.update_property(&[gtk::accessible::Property::Label(&spoken(node))]);
     row
-}
-
-/// How a part reads to a screen reader: what it is, how big, and whether
-/// anything has actually been downloaded.
-pub fn spoken(node: &Node) -> String {
-    if node.depth == 0 {
-        return format!("{}, the whole message", node.mime);
-    }
-    let name = match node.filename.as_deref() {
-        Some(name) if !name.trim().is_empty() => format!("{name}, {}", node.mime),
-        _ => node.mime.clone(),
-    };
-    if !node.is_leaf() {
-        return format!("{name}, a container");
-    }
-    let fetched = if node.downloaded {
-        "downloaded"
-    } else {
-        "not downloaded"
-    };
-    format!("{name}, {}, {fetched}", human_size(node.size))
 }
 
 // ---------------------------------------------------------------------------
@@ -1196,311 +946,10 @@ impl Chips {
 
 #[cfg(test)]
 mod tests {
+    //! What is left here is about the *widget*: the tree, the words and the
+    //! names are `postio_ui::reader::parts`' now, and are tested beside them.
+
     use super::*;
-    use postio_model::BlobId;
-    use postio_model::ids::MessageId;
-
-    fn part(id: &str, mime: &str, size: u64) -> Attachment {
-        let mut part = Attachment::new(MessageId::new(1), mime, size);
-        part.part_id = Some(id.to_owned());
-        part
-    }
-
-    fn named(id: &str, mime: &str, size: u64, filename: &str) -> Attachment {
-        let mut part = part(id, mime, size);
-        part.filename = Some(filename.to_owned());
-        part
-    }
-
-    /// Canvas 3g's own message.
-    fn message() -> Vec<Attachment> {
-        vec![
-            part("1", "text/plain", 2_100),
-            part("2", "text/html", 6 * 1024),
-            named("3", "text/x-diff", 11 * 1024, "0001-index.patch"),
-            named("4", "image/png", 1_100 * 1024, "cold.png"),
-        ]
-    }
-
-    // -- reading the tree --------------------------------------------------
-
-    #[test]
-    fn the_message_is_the_root_and_the_parts_hang_off_it() {
-        let nodes = tree("multipart/mixed", &message());
-
-        assert_eq!(nodes.len(), 5, "four parts and the message itself");
-        assert_eq!(nodes[0].mime, "multipart/mixed");
-        assert_eq!(nodes[0].depth, 0);
-        assert!(nodes[0].attachment.is_none(), "the root is not a part");
-        assert!(nodes[1..].iter().all(|node| node.depth == 1));
-    }
-
-    #[test]
-    fn nesting_comes_out_of_the_part_ids() {
-        let nodes = tree(
-            "multipart/mixed",
-            &[
-                part("1", "text/plain", 10),
-                part("2", "multipart/alternative", 0),
-                part("2.1", "text/plain", 20),
-                part("2.2", "text/html", 30),
-            ],
-        );
-
-        let depths: Vec<usize> = nodes.iter().map(|node| node.depth).collect();
-        assert_eq!(depths, [0, 1, 1, 2, 2]);
-    }
-
-    #[test]
-    fn parts_are_ordered_as_paths_of_numbers_not_as_strings() {
-        let nodes = tree(
-            "multipart/mixed",
-            &[
-                part("2.10", "text/plain", 1),
-                part("2.9", "text/plain", 1),
-                part("2.2", "text/plain", 1),
-            ],
-        );
-
-        let ids: Vec<&str> = nodes[1..]
-            .iter()
-            .map(|node| node.part_id.as_str())
-            .collect();
-        assert_eq!(ids, ["2.2", "2.9", "2.10"], "`2.10` comes after `2.9`");
-    }
-
-    #[test]
-    fn a_part_with_no_usable_id_is_not_drawn() {
-        let mut orphan = part("1", "text/plain", 10);
-        orphan.part_id = None;
-        let mut nonsense = part("TEXT", "text/plain", 10);
-        nonsense.part_id = Some("TEXT".to_owned());
-
-        let nodes = tree("multipart/mixed", &[orphan, nonsense]);
-        assert_eq!(nodes.len(), 1, "nothing to fetch means nothing to offer");
-    }
-
-    #[test]
-    fn a_message_with_no_parts_still_says_what_it_is() {
-        let nodes = tree("text/plain", &[]);
-
-        assert_eq!(nodes.len(), 1);
-        assert_eq!(nodes[0].mime, "text/plain");
-        assert_eq!(summary(&nodes), "text/plain · 0 parts · 0 B");
-    }
-
-    #[test]
-    fn downloaded_is_whether_the_bytes_are_actually_here() {
-        let mut fetched = part("1", "image/png", 100);
-        fetched.blob_id = Some(BlobId::new("abc"));
-        let nodes = tree("multipart/mixed", &[fetched, part("2", "image/png", 100)]);
-
-        assert!(nodes[1].downloaded);
-        assert!(!nodes[2].downloaded, "described, not fetched");
-    }
-
-    #[test]
-    fn an_inline_image_too_big_for_the_text_axis_is_a_part_the_panel_explains() {
-        // #751's last acceptance criterion. An inline part over
-        // `[sync] max_inline_bytes` stays on the payload axis, so the `cid:`
-        // request 404s and the pane draws a broken box. What stops that being
-        // *silent* is this panel: the part is listed, sized, and said to be
-        // undownloaded, so there is somewhere to go and find out why.
-        let mut banner = part("2", "image/png", 4 * 1024 * 1024);
-        banner.content_id = Some("banner@example.com".to_owned());
-        banner.disposition = postio_model::Disposition::Inline;
-
-        let nodes = tree("multipart/related", &[part("1", "text/html", 900), banner]);
-        let node = &nodes[2];
-
-        assert!(
-            node.is_leaf(),
-            "an inline part is a part like any other: it gets a row and a chip"
-        );
-        assert!(!node.downloaded);
-        assert_eq!(detail(node), "image/png · 4.0 MB");
-        assert_eq!(spoken(node), "image/png, 4.0 MB, not downloaded");
-        assert_eq!(
-            NOT_FETCHED,
-            "Described by the server, not downloaded. Nothing here has touched the network.",
-            "the sentence the detail pane shows for it -- changing it is fine,              leaving the user with an unexplained broken box is not"
-        );
-    }
-
-    // -- the box drawing ---------------------------------------------------
-
-    #[test]
-    fn the_last_child_of_a_branch_closes_it() {
-        let nodes = tree("multipart/mixed", &message());
-        let drawn: Vec<String> = nodes.iter().map(prefix).collect();
-
-        assert_eq!(drawn, ["", "├ ", "├ ", "├ ", "└ "]);
-    }
-
-    #[test]
-    fn a_nested_branch_closes_before_its_parents_next_sibling() {
-        let nodes = tree(
-            "multipart/mixed",
-            &[
-                part("1", "multipart/alternative", 0),
-                part("1.1", "text/plain", 1),
-                part("1.2", "text/html", 1),
-                part("2", "image/png", 1),
-            ],
-        );
-        let drawn: Vec<String> = nodes.iter().map(prefix).collect();
-
-        assert_eq!(
-            drawn,
-            ["", "├ ", "  ├ ", "  └ ", "└ "],
-            "`1.2` ends its branch even though `2` follows it"
-        );
-    }
-
-    // -- sizes -------------------------------------------------------------
-
-    #[test]
-    fn sizes_read_the_way_the_canvas_writes_them() {
-        assert_eq!(human_size(11 * 1024), "11 KB");
-        assert_eq!(human_size(1_100 * 1024), "1.1 MB");
-        assert_eq!(human_size(6 * 1024), "6.0 KB");
-        assert_eq!(human_size(900), "900 B");
-        assert_eq!(human_size(0), "0 B");
-    }
-
-    #[test]
-    fn a_megabyte_here_is_the_megabyte_the_query_parser_means() {
-        // `larger:1M` is 1024*1024 bytes; a part the panel calls `1.0 MB`
-        // has to be one that query finds.
-        assert_eq!(human_size(1024 * 1024), "1.0 MB");
-    }
-
-    #[test]
-    fn the_summary_counts_parts_and_not_the_message() {
-        let nodes = tree("multipart/mixed", &message());
-        assert_eq!(summary(&nodes), "multipart/mixed · 4 parts · 1.1 MB");
-    }
-
-    #[test]
-    fn one_part_is_not_plural() {
-        let nodes = tree("multipart/mixed", &[part("1", "text/plain", 10)]);
-        assert!(summary(&nodes).contains("1 part ·"));
-    }
-
-    // -- what a row says ---------------------------------------------------
-
-    #[test]
-    fn a_part_is_called_by_its_name_when_it_has_one() {
-        let nodes = tree("multipart/mixed", &message());
-
-        assert_eq!(nodes[1].label(), "text/plain", "unnamed, so its type");
-        assert_eq!(nodes[3].label(), "0001-index.patch");
-    }
-
-    #[test]
-    fn the_detail_line_pairs_the_type_with_the_size() {
-        let nodes = tree("multipart/mixed", &message());
-        assert_eq!(detail(&nodes[2]), "text/html · 6.0 KB");
-        assert_eq!(
-            detail(&nodes[0]),
-            "multipart/mixed",
-            "the root is not sized"
-        );
-    }
-
-    #[test]
-    fn a_container_is_not_something_to_save() {
-        let nodes = tree(
-            "multipart/mixed",
-            &[
-                part("1", "multipart/alternative", 0),
-                part("1.1", "text/plain", 10),
-            ],
-        );
-        assert!(!nodes[0].is_leaf(), "the message is not a part");
-        assert!(
-            !nodes[1].is_leaf(),
-            "a container holds parts, it is not one"
-        );
-        assert!(nodes[2].is_leaf());
-    }
-
-    // -- previewing and saving ---------------------------------------------
-
-    #[test]
-    fn only_images_and_pdfs_are_shown_rather_than_handed_over() {
-        assert!(previewable("image/png"));
-        assert!(previewable("IMAGE/JPEG"));
-        assert!(previewable("application/pdf"));
-        assert!(!previewable("text/html"));
-        assert!(!previewable("application/octet-stream"));
-    }
-
-    #[test]
-    fn a_save_name_comes_from_the_sender_when_it_is_usable() {
-        let nodes = tree("multipart/mixed", &message());
-        assert_eq!(save_name(&nodes[3]), "0001-index.patch");
-    }
-
-    #[test]
-    fn a_save_name_cannot_steer_the_dialog_out_of_its_folder() {
-        let nodes = tree(
-            "multipart/mixed",
-            &[named("1", "text/plain", 10, "../../.bashrc")],
-        );
-        let name = save_name(&nodes[1]);
-
-        assert!(!name.contains('/'), "{name}");
-        assert!(!name.starts_with('.'), "{name}");
-    }
-
-    #[test]
-    fn a_part_the_sender_did_not_name_still_gets_one() {
-        let nodes = tree("multipart/mixed", &[part("2.1", "image/png", 10)]);
-        assert_eq!(save_name(&nodes[1]), "part-2.1.png");
-    }
-
-    /// #147, found by the `parse_message` fuzz target within a minute of its
-    /// first run. A NUL reaches `Attachment::filename` two ways -- written
-    /// straight into the `filename=` parameter, or base64'd inside an RFC 2047
-    /// encoded word -- and `mime::parse` reports it faithfully, which is its
-    /// job. This is the layer that has to make it safe: the name goes to
-    /// `FileDialog::initial_name`, and gtk-rs converts a `&str` to a C string
-    /// on the way, which an interior NUL is not a valid input for. Opening a
-    /// message's parts and pressing `s` is not allowed to be how the
-    /// application ends.
-    #[test]
-    fn a_save_name_carries_no_control_characters() {
-        for hostile in ["a\0b.txt", "a\nb.txt", "a\rb\tc.txt", "\u{7}bell.txt"] {
-            let nodes = tree("multipart/mixed", &[named("1", "text/plain", 10, hostile)]);
-            let name = save_name(&nodes[1]);
-            assert!(
-                !name.chars().any(char::is_control),
-                "{hostile:?} produced a name with a control character: {name:?}"
-            );
-            assert!(!name.is_empty(), "{hostile:?} produced an empty name");
-        }
-    }
-
-    /// The same find's other half: a slash survives a *malformed* encoded
-    /// word, which is not the shape the existing traversal test used.
-    #[test]
-    fn a_save_name_launders_a_slash_out_of_an_undecoded_encoded_word() {
-        let nodes = tree(
-            "multipart/mixed",
-            &[named("1", "text/plain", 10, "=?utf-8Qa/b.txt")],
-        );
-        let name = save_name(&nodes[1]);
-        assert!(!name.contains('/'), "{name}");
-    }
-
-    #[test]
-    fn a_name_that_is_nothing_but_punctuation_falls_back() {
-        let nodes = tree("multipart/mixed", &[named("1", "image/png", 10, "  ...  ")]);
-        assert_eq!(save_name(&nodes[1]), "part-1.png");
-    }
-
-    // -- the generated footer -----------------------------------------------
 
     #[test]
     fn hints_read_the_live_keymap_not_a_hard_coded_string() {

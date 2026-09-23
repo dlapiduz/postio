@@ -44,6 +44,7 @@ private func makeRow(
     seen: Bool = true,
     flagged: Bool = false,
     threadCount: UInt32 = 1,
+    participants: String = "",
     isThread: Bool = false
 ) -> RowFfi {
     RowFfi(
@@ -56,6 +57,7 @@ private func makeRow(
         // what these tests are about.
         isThread: isThread,
         from: from,
+        fromAddress: from.map { "\($0.lowercased().replacingOccurrences(of: " ", with: "."))@example.com" },
         initials: "AL",
         subject: subject,
         preview: preview,
@@ -68,7 +70,8 @@ private func makeRow(
         // Nil here — these tests are about ordinary mail.
         sendState: nil,
         hasAttachments: false,
-        threadCount: threadCount
+        threadCount: threadCount,
+        participants: participants
     )
 }
 

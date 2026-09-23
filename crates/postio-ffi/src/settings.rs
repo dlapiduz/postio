@@ -18,6 +18,9 @@
 //! because Swift never holds it.
 
 use postio_config::Config;
+use postio_config::compose::{ComposeConfig, SignaturePlacement, patch_compose};
+use postio_config::filters::{FilterConfig, patch_filters};
+use postio_config::sync::{AttachmentFetch, BodyFetch, CheckForMail, SyncConfig, patch_sync};
 use postio_config::ui::{Density, Theme, UiConfig, patch_ui};
 use postio_config::validate;
 use postio_ui::settings::Section;
@@ -39,6 +42,14 @@ pub struct SettingsSectionFfi {
     /// says where a change is going. `None` for the two panes that own no
     /// table of their own.
     pub table: Option<String>,
+    /// Where this pane's settings actually live, in a phrase for the footer.
+    ///
+    /// Not derivable from `table`: three panes own no `config.toml` table,
+    /// and a footer that then says nothing has stopped doing its job. The
+    /// Accounts pane is the one that most needs telling — its settings are
+    /// in the encrypted store, and a footer naming `config.toml` sends
+    /// somebody to edit a file that does not describe their account.
+    pub stored_in: String,
 }
 
 /// The two headings the nav groups its sections under.
@@ -130,6 +141,176 @@ pub struct AppearanceFfi {
     pub sender_avatars: bool,
 }
 
+/// Where a signature sits relative to quoted text.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
+pub enum SignaturePlacementFfi {
+    /// Under what was written and above the quote.
+    AboveQuote,
+    /// Under everything, the quote included.
+    BelowQuote,
+}
+
+/// The `[compose]` table's typed settings — the Composing pane's model.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct ComposingFfi {
+    /// Where the signature goes on a reply.
+    pub signature_on_reply: SignaturePlacementFfi,
+    /// Where the signature goes on a forward.
+    pub signature_on_forward: SignaturePlacementFfi,
+    /// Which editor `⌃⌘E` hands the draft to. Empty means the platform's own
+    /// idea of what opens a text file (#1288).
+    pub editor: String,
+}
+
+/// What the platform found when it looked for the configured editor.
+///
+/// Three answers, not two: a name that is not an application is a terminal
+/// program on macOS and a *typo* on freedesktop, and telling somebody their
+/// editor runs in a terminal when they misspelled it is a wrong answer
+/// confidently given (#1297).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
+pub enum FoundEditorFfi {
+    /// Something this platform can open in a window of its own.
+    Application,
+    /// A real program, but a terminal one.
+    TerminalProgram,
+    /// Nothing by that name at all.
+    Nothing,
+}
+
+/// What the hand-off should do with the configured editor.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Enum)]
+pub enum HandoffTargetFfi {
+    /// Nothing is chosen: open it the way this platform opens a text file.
+    PlatformDefault,
+    /// Open it with this application.
+    Application {
+        /// The application's name, as the platform knows it.
+        name: String,
+    },
+    /// A program that wants a terminal, which no frontend here can give it.
+    NeedsTerminal {
+        /// The program, and the `advice` that names it.
+        name: String,
+        /// What to tell the person who chose it.
+        advice: String,
+    },
+    /// A name the platform could not find. Almost always a typo.
+    Missing {
+        /// The name as it was typed.
+        name: String,
+        /// What to tell the person who typed it.
+        advice: String,
+    },
+}
+
+/// What to do about the configured editor.
+///
+/// `found` is the frontend's answer to the one question only the platform can
+/// settle — `NSWorkspace` and the applications directories here, a desktop
+/// entry or a `PATH` lookup there. Everything that follows from it is decided
+/// in `postio_ui::handoff`, once, so both frontends say the same thing about
+/// the same name.
+#[uniffi::export]
+pub fn settings_handoff_target(configured: String, found: FoundEditorFfi) -> HandoffTargetFfi {
+    let found = match found {
+        FoundEditorFfi::Application => postio_ui::handoff::Found::Application,
+        FoundEditorFfi::TerminalProgram => postio_ui::handoff::Found::TerminalProgram,
+        FoundEditorFfi::Nothing => postio_ui::handoff::Found::Nothing,
+    };
+    match postio_ui::handoff::target(&configured, found) {
+        postio_ui::handoff::Target::PlatformDefault => HandoffTargetFfi::PlatformDefault,
+        postio_ui::handoff::Target::Application(name) => HandoffTargetFfi::Application { name },
+        postio_ui::handoff::Target::NeedsTerminal(name) => HandoffTargetFfi::NeedsTerminal {
+            advice: postio_ui::handoff::terminal_advice(&name),
+            name,
+        },
+        postio_ui::handoff::Target::Missing(name) => HandoffTargetFfi::Missing {
+            advice: postio_ui::handoff::missing_advice(&name),
+            name,
+        },
+    }
+}
+
+/// What the hand-off button should say: `Open in BBEdit`, or `Edit elsewhere`
+/// when nothing is chosen.
+#[uniffi::export]
+pub fn settings_handoff_label(configured: String) -> String {
+    postio_ui::handoff::button_label(&configured)
+}
+
+/// How Postio learns about new mail.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
+pub enum CheckForMailFfi {
+    /// The server pushes — `IDLE`, where it is offered.
+    Idle,
+    /// Ask on a timer, for folders and servers without it.
+    Poll,
+    /// Only when asked.
+    Manual,
+}
+
+/// When message bodies are downloaded.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
+pub enum BodyFetchFfi {
+    /// On opening the message.
+    Lazy,
+    /// With the headers, ahead of being asked.
+    Eager,
+}
+
+/// When attachment payloads are downloaded.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
+pub enum AttachmentFetchFfi {
+    /// When the message is opened.
+    OnOpen,
+    /// With the message.
+    Eager,
+    /// Never, until asked for one by name.
+    Never,
+}
+
+/// The `[sync]` table's typed settings — the Sync & storage pane's model.
+///
+/// Deliberately not every key: `SyncConfig::extra` stays on the Rust side,
+/// for the reason this module's own doc gives.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct SyncingFfi {
+    /// How Postio learns about new mail.
+    pub check_for_mail: CheckForMailFfi,
+    /// Polling interval for folders without `IDLE`, in seconds.
+    pub poll_interval_secs: u64,
+    /// Maximum simultaneous connections per account.
+    pub max_connections: u8,
+    /// Start a sync as soon as the application opens.
+    pub sync_on_startup: bool,
+    /// When bodies are downloaded.
+    pub body_fetch: BodyFetchFfi,
+    /// When attachment payloads are downloaded.
+    pub attachment_fetch: AttachmentFetchFfi,
+    /// How many messages the first sync reaches back for, newest first.
+    pub initial_sync_messages: u32,
+    /// Master switch for desktop notifications on new mail.
+    pub notify: bool,
+}
+
+/// One saved search, as the Filters pane draws it.
+///
+/// The `key` is the `[filters.<key>]` identity and is **not** what the user
+/// sees: #292 keeps the key stable and TOML-safe so a rename cannot orphan a
+/// filter, and `name` is whatever they actually called it.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct FilterFfi {
+    /// The stable `[filters.<key>]` identity. Never shown as a label.
+    pub key: String,
+    /// What the user called it, or the key when nobody has renamed it.
+    pub name: String,
+    /// The search expression this filter runs.
+    pub query: String,
+    /// Whether it appears in the sidebar.
+    pub pinned: bool,
+}
+
 /// Every settings section, in canvas 3f's nav order.
 #[uniffi::export]
 pub fn settings_sections() -> Vec<SettingsSectionFfi> {
@@ -141,6 +322,7 @@ pub fn settings_sections() -> Vec<SettingsSectionFfi> {
             group: section.group().into(),
             description: section.description().to_string(),
             table: section.table().map(str::to_string),
+            stored_in: section.stored_in().to_string(),
         })
         .collect()
 }
@@ -211,13 +393,209 @@ pub fn settings_patch_appearance(
     })
 }
 
+/// The Composing pane's values, or `None` when the file will not parse.
+///
+/// `None` rather than defaults, for the reason
+/// [`settings_appearance`] gives: a form full of plausible settings that are
+/// not the user's invites saving it over the file they were fixing.
+#[uniffi::export]
+pub fn settings_composing(text: String) -> Option<ComposingFfi> {
+    let compose = Config::from_toml_str(&text).ok()?.compose;
+    Some(ComposingFfi {
+        signature_on_reply: compose.signature_on_reply.into(),
+        signature_on_forward: compose.signature_on_forward.into(),
+        editor: compose.editor,
+    })
+}
+
+/// Write `composing` into `text`'s `[compose]` table, leaving the rest
+/// verbatim.
+#[uniffi::export]
+pub fn settings_patch_composing(
+    text: String,
+    composing: ComposingFfi,
+) -> Result<String, SettingsError> {
+    let mut compose: ComposeConfig = Config::from_toml_str(&text)
+        .map_err(|err| SettingsError::Invalid {
+            message: err.to_string(),
+        })?
+        .compose;
+    compose.signature_on_reply = composing.signature_on_reply.into();
+    compose.signature_on_forward = composing.signature_on_forward.into();
+    // Trimmed on the way in: a name with a space on the end is not one the
+    // platform will find, and the difference is invisible in a text field.
+    compose.editor = composing.editor.trim().to_owned();
+    patch_compose(&text, &compose).map_err(|err| SettingsError::Invalid {
+        message: err.to_string(),
+    })
+}
+
+/// The Sync & storage pane's values, or `None` when the file will not parse.
+#[uniffi::export]
+pub fn settings_syncing(text: String) -> Option<SyncingFfi> {
+    let sync = Config::from_toml_str(&text).ok()?.sync;
+    Some(SyncingFfi {
+        check_for_mail: sync.check_for_mail.into(),
+        poll_interval_secs: sync.poll_interval_secs,
+        max_connections: sync.max_connections,
+        sync_on_startup: sync.sync_on_startup,
+        body_fetch: sync.body_fetch.into(),
+        attachment_fetch: sync.attachment_fetch.into(),
+        initial_sync_messages: sync.initial_sync_messages,
+        notify: sync.notify,
+    })
+}
+
+/// Write `syncing` into `text`'s `[sync]` table, leaving the rest verbatim.
+#[uniffi::export]
+pub fn settings_patch_syncing(text: String, syncing: SyncingFfi) -> Result<String, SettingsError> {
+    let mut sync: SyncConfig = Config::from_toml_str(&text)
+        .map_err(|err| SettingsError::Invalid {
+            message: err.to_string(),
+        })?
+        .sync;
+    sync.check_for_mail = syncing.check_for_mail.into();
+    sync.poll_interval_secs = syncing.poll_interval_secs;
+    sync.max_connections = syncing.max_connections;
+    sync.sync_on_startup = syncing.sync_on_startup;
+    sync.body_fetch = syncing.body_fetch.into();
+    sync.attachment_fetch = syncing.attachment_fetch.into();
+    sync.initial_sync_messages = syncing.initial_sync_messages;
+    sync.notify = syncing.notify;
+    patch_sync(&text, &sync).map_err(|err| SettingsError::Invalid {
+        message: err.to_string(),
+    })
+}
+
+/// Every filter in `text`, in the order the sidebar shows them.
+///
+/// Empty for a file with no `[filters]` in it — which is different from a
+/// file that will not parse, and the pane says so differently.
+#[uniffi::export]
+pub fn settings_filters(text: String) -> Option<Vec<FilterFfi>> {
+    let filters = Config::from_toml_str(&text).ok()?.filters;
+    let mut rows: Vec<(Option<u32>, String, FilterFfi)> = filters
+        .into_iter()
+        .map(|(key, filter)| {
+            let name = filter.name.clone().unwrap_or_else(|| key.clone());
+            (
+                filter.order,
+                key.clone(),
+                FilterFfi {
+                    key,
+                    name,
+                    query: filter.query,
+                    pinned: filter.pinned,
+                },
+            )
+        })
+        .collect();
+    // `None` sorts after everything that has an order, then by key — the
+    // alphabetical order every filter had before reordering existed, so a
+    // file nobody has reordered reads exactly as it used to.
+    rows.sort_by(|left, right| {
+        (left.0.is_none(), left.0, &left.1).cmp(&(right.0.is_none(), right.0, &right.1))
+    });
+    Some(rows.into_iter().map(|(_, _, filter)| filter).collect())
+}
+
+/// Write one filter's editable fields back into `text`.
+///
+/// One filter rather than the whole set, because that is what a pane edits
+/// and because rewriting all of them to change one is how the fields this
+/// build does not know get lost. The key is the identity and is never
+/// written from here: renaming is `name`, and moving a filter to a new key
+/// would orphan whatever refers to it (#292).
+#[uniffi::export]
+pub fn settings_patch_filter(text: String, filter: FilterFfi) -> Result<String, SettingsError> {
+    let mut filters = Config::from_toml_str(&text)
+        .map_err(|err| SettingsError::Invalid {
+            message: err.to_string(),
+        })?
+        .filters;
+    let Some(existing) = filters.get_mut(&filter.key) else {
+        return Err(SettingsError::Invalid {
+            message: format!("there is no filter called {}", filter.key),
+        });
+    };
+    existing.query = filter.query;
+    existing.pinned = filter.pinned;
+    // Blank means "not renamed", which is what `None` says in the file — so
+    // clearing the field restores the key as the label rather than saving an
+    // empty name that draws as nothing.
+    let name = filter.name.trim();
+    existing.name = (!name.is_empty() && name != filter.key).then(|| name.to_owned());
+    patch_filters(&text, &filters).map_err(|err| SettingsError::Invalid {
+        message: err.to_string(),
+    })
+}
+
+/// Remove a filter entirely.
+#[uniffi::export]
+pub fn settings_remove_filter(text: String, key: String) -> Result<String, SettingsError> {
+    let mut filters = Config::from_toml_str(&text)
+        .map_err(|err| SettingsError::Invalid {
+            message: err.to_string(),
+        })?
+        .filters;
+    filters.remove(&key);
+    patch_filters(&text, &filters).map_err(|err| SettingsError::Invalid {
+        message: err.to_string(),
+    })
+}
+
+/// Add a filter under `key`, running `query`.
+#[uniffi::export]
+pub fn settings_add_filter(
+    text: String,
+    key: String,
+    query: String,
+) -> Result<String, SettingsError> {
+    let key = key.trim().to_owned();
+    if key.is_empty() {
+        return Err(SettingsError::Invalid {
+            message: "a filter needs a name".to_owned(),
+        });
+    }
+    let mut filters = Config::from_toml_str(&text)
+        .map_err(|err| SettingsError::Invalid {
+            message: err.to_string(),
+        })?
+        .filters;
+    if filters.contains_key(&key) {
+        return Err(SettingsError::Invalid {
+            message: format!("there is already a filter called {key}"),
+        });
+    }
+    filters.insert(
+        key,
+        FilterConfig {
+            query,
+            ..FilterConfig::default()
+        },
+    );
+    patch_filters(&text, &filters).map_err(|err| SettingsError::Invalid {
+        message: err.to_string(),
+    })
+}
+
 /// Why a settings write could not be made.
+///
+/// Shared with the saved-search verbs in [`crate::saved_search`], which are
+/// writes to the same file for the same reasons — one error type for
+/// `config.toml`, rather than a second one a frontend would have to handle
+/// identically.
 #[derive(Debug, thiserror::Error, uniffi::Error)]
 pub enum SettingsError {
-    /// The file does not parse, so there is no table to patch.
+    /// The write did not happen, and the file is as it was.
+    ///
+    /// Usually because it does not parse, so there is no table to patch;
+    /// also a file that could not be read or replaced. One variant because
+    /// there is one thing to do about any of them — show the message and
+    /// leave what is on screen alone.
     #[error("{message}")]
     Invalid {
-        /// What the parser said, for the footer.
+        /// What the parser or the filesystem said, for the footer.
         message: String,
     },
 }
@@ -386,4 +764,80 @@ pub fn row_actions() -> Vec<RowActionFfi> {
             title: action.title().to_string(),
         })
         .collect()
+}
+
+impl From<SignaturePlacement> for SignaturePlacementFfi {
+    fn from(placement: SignaturePlacement) -> Self {
+        match placement {
+            SignaturePlacement::AboveQuote => SignaturePlacementFfi::AboveQuote,
+            SignaturePlacement::BelowQuote => SignaturePlacementFfi::BelowQuote,
+        }
+    }
+}
+
+impl From<SignaturePlacementFfi> for SignaturePlacement {
+    fn from(placement: SignaturePlacementFfi) -> Self {
+        match placement {
+            SignaturePlacementFfi::AboveQuote => SignaturePlacement::AboveQuote,
+            SignaturePlacementFfi::BelowQuote => SignaturePlacement::BelowQuote,
+        }
+    }
+}
+
+impl From<CheckForMail> for CheckForMailFfi {
+    fn from(value: CheckForMail) -> Self {
+        match value {
+            CheckForMail::Idle => CheckForMailFfi::Idle,
+            CheckForMail::Poll => CheckForMailFfi::Poll,
+            CheckForMail::Manual => CheckForMailFfi::Manual,
+        }
+    }
+}
+
+impl From<CheckForMailFfi> for CheckForMail {
+    fn from(value: CheckForMailFfi) -> Self {
+        match value {
+            CheckForMailFfi::Idle => CheckForMail::Idle,
+            CheckForMailFfi::Poll => CheckForMail::Poll,
+            CheckForMailFfi::Manual => CheckForMail::Manual,
+        }
+    }
+}
+
+impl From<BodyFetch> for BodyFetchFfi {
+    fn from(value: BodyFetch) -> Self {
+        match value {
+            BodyFetch::Lazy => BodyFetchFfi::Lazy,
+            BodyFetch::Eager => BodyFetchFfi::Eager,
+        }
+    }
+}
+
+impl From<BodyFetchFfi> for BodyFetch {
+    fn from(value: BodyFetchFfi) -> Self {
+        match value {
+            BodyFetchFfi::Lazy => BodyFetch::Lazy,
+            BodyFetchFfi::Eager => BodyFetch::Eager,
+        }
+    }
+}
+
+impl From<AttachmentFetch> for AttachmentFetchFfi {
+    fn from(value: AttachmentFetch) -> Self {
+        match value {
+            AttachmentFetch::OnOpen => AttachmentFetchFfi::OnOpen,
+            AttachmentFetch::Eager => AttachmentFetchFfi::Eager,
+            AttachmentFetch::Never => AttachmentFetchFfi::Never,
+        }
+    }
+}
+
+impl From<AttachmentFetchFfi> for AttachmentFetch {
+    fn from(value: AttachmentFetchFfi) -> Self {
+        match value {
+            AttachmentFetchFfi::OnOpen => AttachmentFetch::OnOpen,
+            AttachmentFetchFfi::Eager => AttachmentFetch::Eager,
+            AttachmentFetchFfi::Never => AttachmentFetch::Never,
+        }
+    }
 }

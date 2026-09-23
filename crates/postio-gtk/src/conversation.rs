@@ -18,6 +18,27 @@
 //! the other for whether a thirty-message conversation instantiates thirty
 //! `WebKitWebView`s. Both are worth testing without a display, so both are
 //! functions over rows rather than behaviour buried in a widget.
+//!
+//! # These rules are written twice, and only half of them have crossed
+//!
+//! `postio_ui::conversation` carries generic versions of `arrange`,
+//! `opening_focus`, `expanded_on_open` and the cap, over a
+//! `ConversationMessage` trait, so the macOS pane can answer the same two
+//! questions through `postio-ffi` rather than reimplementing them (ADR 0019).
+//! The copies below are this crate's own, over `crate::list::Row` directly.
+//!
+//! The two agree today — both open on the most recent message per FR-015, and
+//! both walk backwards from it — and that is a duplication that will drift,
+//! because nothing makes them move together. It survived the macOS merge
+//! because the shared crate cannot name a `postio-gtk` type and this crate's
+//! callers and tests name `Row`; collapsing the pair onto the generic
+//! versions is a refactor, and a refactor is not a merge's to make.
+//!
+//! ADR 0032 has crossed too: both panes draw a conversation as one document,
+//! composed by `postio_ui::reader::thread::compose` (#1595). What still
+//! differs is only this crate's own copy of the ordering and focus rules
+//! above; `expanded_on_open` and its cap were written to bound a stacked pane
+//! that neither frontend draws any more.
 
 use gtk::glib;
 use gtk::prelude::*;

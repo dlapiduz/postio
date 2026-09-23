@@ -11,10 +11,10 @@
 //! Allow-listing is view preference, not mail data — it does not belong in
 //! `postio-core`'s database any more than a dragged divider does.
 
-use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
 use gtk::glib;
+use postio_ui::allowlist::AllowList;
 
 /// The key-file group every allowed sender's key lives under.
 ///
@@ -24,9 +24,19 @@ use gtk::glib;
 const GROUP: &str = "AlwaysAllow";
 
 /// Senders whose remote images load without asking, across restarts.
+///
+/// A thin shell over [`postio_ui::allowlist::AllowList`], which is the one
+/// implementation both frontends read and write (#1273). Two allow lists
+/// meant two answers to "may this sender see me", and that is the least
+/// acceptable place for the two to drift: the wrong answer is silent and
+/// remote.
+///
+/// The shell stays because the thirty-odd call sites in this crate speak
+/// this vocabulary — `senders`, `save`, a `glib::Error` — and rewriting them
+/// to say the same things differently would be churn without a reader.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct RemoteImageAllowList {
-    senders: BTreeSet<String>,
+    inner: AllowList,
 }
 
 impl RemoteImageAllowList {
@@ -37,23 +47,51 @@ impl RemoteImageAllowList {
     }
 
     /// As [`load`](Self::load), from a path you name.
+    ///
+    /// The shared format first, and the old key file only if that read
+    /// nothing — which is what an `[AlwaysAllow]` file parses to, since
+    /// `AllowList::parse` ignores every line before a section header it
+    /// knows. A file in the old shape is migrated in place, once, and said
+    /// so in the log: there are no deployed installs to protect, but there
+    /// is a maintainer with grants in a running build, and silently
+    /// forgetting who they trusted would be the wrong kind of clean break.
     pub fn load_from(path: &Path) -> Self {
-        let key_file = glib::KeyFile::new();
-        if key_file
-            .load_from_file(path, glib::KeyFileFlags::NONE)
-            .is_err()
-        {
-            return Self::default();
+        let text = std::fs::read_to_string(path).unwrap_or_default();
+        let inner = AllowList::parse(&text);
+        if !inner.is_empty() || text.trim().is_empty() {
+            return Self { inner };
         }
-        let Ok(keys) = key_file.keys(GROUP) else {
-            return Self::default();
+        let Some(inner) = Self::from_key_file(path) else {
+            return Self { inner };
         };
-        let senders = keys
-            .iter()
-            .filter(|key| key_file.boolean(GROUP, key).unwrap_or(false))
-            .map(|key| key.to_string())
-            .collect();
-        RemoteImageAllowList { senders }
+        let migrated = Self { inner };
+        match migrated.save_to(path) {
+            Ok(()) => tracing::info!(
+                path = %path.display(),
+                senders = migrated.inner.addresses().count(),
+                "migrated the remote-image allow list to the shared format"
+            ),
+            // The grants are in memory and correct either way; what is lost
+            // is only that the migration has to happen again next launch.
+            Err(error) => tracing::warn!(%error, "the migrated allow list could not be written"),
+        }
+        migrated
+    }
+
+    /// The old `[AlwaysAllow]` key file, if that is what is there.
+    fn from_key_file(path: &Path) -> Option<AllowList> {
+        let key_file = glib::KeyFile::new();
+        key_file
+            .load_from_file(path, glib::KeyFileFlags::NONE)
+            .ok()?;
+        let keys = key_file.keys(GROUP).ok()?;
+        let mut list = AllowList::new();
+        for key in keys.iter() {
+            if key_file.boolean(GROUP, key).unwrap_or(false) {
+                list.allow(key);
+            }
+        }
+        (!list.is_empty()).then_some(list)
     }
 
     /// Whether `sender` has a standing "always allow" exception.
@@ -62,7 +100,7 @@ impl RemoteImageAllowList {
     /// `<addr>`" mailbox — normalization here is only trimming and
     /// lowercasing, not address parsing.
     pub fn is_allowed(&self, sender: &str) -> bool {
-        self.senders.contains(&normalize(sender))
+        self.inner.is_allowed(sender)
     }
 
     /// Grant `sender` a standing exception, in memory only.
@@ -73,27 +111,27 @@ impl RemoteImageAllowList {
     /// path — see [`save_to`](Self::save_to). Call that (or `save`
     /// (Self::save)) once the mutation is one the caller wants to keep.
     pub fn allow(&mut self, sender: &str) {
-        self.senders.insert(normalize(sender));
+        self.inner.allow(sender);
     }
 
     /// Whether any sender has a standing exception. Cheap enough for a
     /// caller to skip building a menu entry when there is nothing to show.
     pub fn is_empty(&self) -> bool {
-        self.senders.is_empty()
+        self.inner.is_empty()
     }
 
     /// Every sender with a standing exception, address order (`BTreeSet`
     /// already keeps it sorted) — what a settings pane lists to manage
     /// (#871).
     pub fn senders(&self) -> impl Iterator<Item = &str> {
-        self.senders.iter().map(String::as_str)
+        self.inner.addresses()
     }
 
     /// Revokes `sender`'s standing exception, in memory only — same split
     /// as [`allow`](Self::allow): the caller decides whether and when to
     /// persist with [`save`](Self::save)/[`save_to`](Self::save_to).
     pub fn revoke(&mut self, sender: &str) {
-        self.senders.remove(&normalize(sender));
+        self.inner.revoke(sender);
     }
 
     /// Persist to `$XDG_STATE_HOME/postio/remote-images.ini`.
@@ -113,11 +151,12 @@ impl RemoteImageAllowList {
                 )
             })?;
         }
-        let key_file = glib::KeyFile::new();
-        for sender in &self.senders {
-            key_file.set_boolean(GROUP, sender, true);
-        }
-        key_file.save_to_file(path)
+        self.inner.save_to(path).map_err(|error| {
+            glib::Error::new(
+                glib::FileError::Failed,
+                &format!("cannot write {}: {error}", path.display()),
+            )
+        })
     }
 
     /// `$XDG_STATE_HOME/postio/remote-images.ini`.
@@ -126,12 +165,6 @@ impl RemoteImageAllowList {
             .join("postio")
             .join("remote-images.ini")
     }
-}
-
-/// Case-insensitive, trimmed — `Ada@Example.Com` and `ada@example.com ` name
-/// the same standing exception.
-fn normalize(sender: &str) -> String {
-    sender.trim().to_lowercase()
 }
 
 #[cfg(test)]
@@ -158,7 +191,7 @@ mod tests {
         // A bare address, matching what `allow()` expects: this module does
         // not parse a "Display Name <addr>" form, that is the caller's job
         // (`postio_model::EmailAddress::address` before it ever gets here).
-        list.senders.insert(normalize("ADA@example.com"));
+        list.allow("ADA@example.com");
         list.save_to(&path).expect("the allow list should write");
 
         let reloaded = RemoteImageAllowList::load_from(&path);
@@ -196,6 +229,50 @@ mod tests {
             !path.exists(),
             "allow() must not write until save/save_to is called"
         );
+    }
+
+    #[test]
+    fn grants_in_the_old_key_file_survive_the_move_to_the_shared_format() {
+        // There are no deployed installs to protect, and this is still worth
+        // writing: the maintainer has grants in a running build, and
+        // silently forgetting who they trusted is the wrong kind of clean
+        // break — the failure is invisible until a sender they had allowed
+        // is quietly blocked again.
+        let path = scratch("migrate");
+        let key_file = glib::KeyFile::new();
+        key_file.set_boolean(GROUP, "ada@example.com", true);
+        key_file.set_boolean(GROUP, "grace@example.net", true);
+        // A sender who was explicitly *not* allowed must not arrive allowed.
+        key_file.set_boolean(GROUP, "alan@example.org", false);
+        key_file.save_to_file(&path).unwrap();
+
+        let list = RemoteImageAllowList::load_from(&path);
+
+        assert!(list.is_allowed("ada@example.com"));
+        assert!(list.is_allowed("grace@example.net"));
+        assert!(!list.is_allowed("alan@example.org"));
+
+        // Written back in the new shape, so it happens once rather than
+        // every launch — and reads back the same.
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert!(text.contains("[addresses]"), "not rewritten: {text:?}");
+        assert!(RemoteImageAllowList::load_from(&path).is_allowed("ada@example.com"));
+    }
+
+    #[test]
+    fn a_list_already_in_the_shared_format_is_left_alone() {
+        // The migration must not fire on every load, and must never treat a
+        // deliberately empty list as an old file to convert.
+        let path = scratch("already-shared");
+        let mut list = RemoteImageAllowList::default();
+        list.allow("ada@example.com");
+        list.save_to(&path).unwrap();
+        let before = std::fs::read_to_string(&path).unwrap();
+
+        let read_back = RemoteImageAllowList::load_from(&path);
+
+        assert!(read_back.is_allowed("ada@example.com"));
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), before);
     }
 
     #[test]

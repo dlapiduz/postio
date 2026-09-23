@@ -182,9 +182,9 @@ pub async fn export_messages(
 
 /// Write one message part into `into`, under the name the sender gave it.
 ///
-/// The bytes come from [`crate::reading::part_bytes`], so a part that was
-/// never downloaded is fetched exactly as `s` fetches it — the user named
-/// this part by dragging it.
+/// The bytes come from [`postio_session::reading::part_bytes_at`], so a part
+/// that was never downloaded is fetched exactly as `s` fetches it — the user
+/// named this part by dragging it.
 ///
 /// The filename is the panel's own [`postio_gtk::parts::save_name`], the same
 /// one the save dialog offers, so a part saved and a part dragged land under
@@ -198,13 +198,55 @@ pub async fn export_part(
     message: MessageId,
     node: &postio_gtk::parts::Node,
 ) -> Result<PathBuf, String> {
-    let attachment = node
-        .attachment
-        .ok_or("That part is not something with bytes of its own")?;
-    let bytes = crate::reading::part_bytes(database, blobs, engine, message, attachment).await?;
+    let name = postio_gtk::parts::save_name(node);
+    export_part_as(database, blobs, engine, into, message, node, &name).await
+}
+
+/// [`export_part`], for a caller that has already worked out the name.
+///
+/// One part in isolation can be named from itself; a *batch* cannot.
+/// [`postio_gtk::parts::save_name`] answers about one node and knows nothing
+/// of the others, so a message carrying two parts that both call themselves
+/// `invoice.pdf` writes one file and leaves no sign the second ever existed
+/// — a silent loss of the user's mail, from the command whose whole promise
+/// is that it got everything.
+///
+/// [`postio_gtk::parts::save_names`] is what resolves that, over the whole
+/// set at once, and it is shared with the macOS boundary so both frontends
+/// resolve a collision the same way. This is the seam that lets the caller
+/// hand its answer down: `save_all_parts` passes the deduplicated name, the
+/// drag-out and the single save pass nothing and get `save_name` as before.
+///
+/// `name` is expected to have come from one of those two — it is joined onto
+/// `into` and written, with no further laundering, exactly as the name this
+/// used to derive was.
+pub async fn export_part_as(
+    database: &Store,
+    blobs: &BlobStore,
+    engine: Option<Engine>,
+    into: &Path,
+    message: MessageId,
+    node: &postio_gtk::parts::Node,
+    name: &str,
+) -> Result<PathBuf, String> {
+    // The row id is the *leaf* test and nothing else — a container has none,
+    // and there is no file in it to write.
+    if node.attachment.is_none() {
+        return Err("That part is not something with bytes of its own".to_owned());
+    }
+    // Addressed by MIME path, never by `AttachmentId`. A whole-message fetch
+    // replaces a message's attachment rows, so the first part of a batch that
+    // had to be fetched invalidates every id held beside it — and `save_all`
+    // holds one per row. `2` is `2` in every parse of the same bytes.
+    // `postio_session::reading::part_bytes`' own doc is this paragraph from
+    // the other side, and it is why the FFI boundary never names a part by a
+    // row id either.
+    let bytes =
+        postio_session::reading::part_bytes_at(database, blobs, engine, message, &node.part_id)
+            .await?;
 
     std::fs::create_dir_all(into).map_err(|error| error.to_string())?;
-    let path = into.join(postio_gtk::parts::save_name(node));
+    let path = into.join(name);
     std::fs::write(&path, &bytes).map_err(|error| error.to_string())?;
     Ok(path)
 }
@@ -482,6 +524,8 @@ one,two\r\n\
             downloaded: true,
             last: true,
             attachment: Some(attachment.id),
+            content_id: None,
+            inline: false,
         };
 
         let into = tempfile::tempdir().expect("a directory");
@@ -522,6 +566,8 @@ one,two\r\n\
             downloaded: true,
             last: true,
             attachment: None,
+            content_id: None,
+            inline: false,
         };
 
         let into = tempfile::tempdir().expect("a directory");
