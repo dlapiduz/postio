@@ -334,6 +334,51 @@ pub struct ThreadMessage {
     pub body: MessageBody,
 }
 
+thread_local! {
+    /// The reader view every later reader is related to, while it lives
+    /// (#1603). See [`shared_reader_view`].
+    static ANCHOR: RefCell<Option<glib::WeakRef<webkit6::WebView>>> = const { RefCell::new(None) };
+}
+
+/// Build a reader's view so that every reader shares one web process.
+///
+/// WebKitGTK gives each view with a context and a session of its own a web
+/// process of its own, and every reader was built that way: three processes
+/// before the first frame, ~150 MB of resident memory each (#1603). A view
+/// built with `related-view` shares the related view's context, session and
+/// process. So the first reader makes a context -- its schemes registered
+/// for sharing, `postio-cid` answered per view -- and an ephemeral session,
+/// and every reader after it is related to that one while it lives. If it
+/// goes, the next reader starts afresh. Settings and user content stay per
+/// view: the rail's script channel is registered on each reader's own.
+fn shared_reader_view(
+    settings: &webkit6::Settings,
+    content: &webkit6::UserContentManager,
+) -> webkit6::WebView {
+    let builder = || {
+        webkit6::WebView::builder()
+            .settings(settings)
+            .user_content_manager(content)
+            .hexpand(true)
+            .vexpand(true)
+    };
+    if let Some(anchor) =
+        ANCHOR.with(|anchor| anchor.borrow().as_ref().and_then(|weak| weak.upgrade()))
+    {
+        return builder().related_view(&anchor).build();
+    }
+    let network_session = webkit6::NetworkSession::new_ephemeral();
+    network_session.set_persistent_credential_storage_enabled(false);
+    let context = webkit6::WebContext::new();
+    scheme::register_shared(&context);
+    let view = builder()
+        .web_context(&context)
+        .network_session(&network_session)
+        .build();
+    ANCHOR.with(|anchor| *anchor.borrow_mut() = Some(view.downgrade()));
+    view
+}
+
 impl Reader {
     /// Build a reader that resolves inline (`cid:`) images through `source`.
     ///
@@ -363,12 +408,6 @@ impl Reader {
         // thread, so it is counted from the moment one is built.
         postio_ui::reader::cost::note_surface_created();
 
-        let network_session = webkit6::NetworkSession::new_ephemeral();
-        network_session.set_persistent_credential_storage_enabled(false);
-
-        let context = webkit6::WebContext::new();
-        scheme::register(&context, source);
-
         // The channel the rail's observer reports through (#1370). Registered
         // on the view rather than on the context, because the context is per
         // reader and a handler on a shared one would deliver another reader's
@@ -376,14 +415,8 @@ impl Reader {
         let content = webkit6::UserContentManager::new();
         content.register_script_message_handler(RAIL_HANDLER, None);
 
-        let view = webkit6::WebView::builder()
-            .web_context(&context)
-            .network_session(&network_session)
-            .settings(&hardened_settings())
-            .user_content_manager(&content)
-            .hexpand(true)
-            .vexpand(true)
-            .build();
+        let view = shared_reader_view(&hardened_settings(), &content);
+        scheme::attach(&view, source);
         view.add_css_class("postio-reader-view");
         view.set_accessible_role(gtk::AccessibleRole::Article);
         view.connect_decide_policy(handle_decide_policy);
