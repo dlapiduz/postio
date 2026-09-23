@@ -242,35 +242,19 @@ public struct ReaderView: NSViewRepresentable {
     }
 }
 
-/// A reader web view that lets the scroll wheel through to the pane behind it.
+/// A reader's web view, which counts its own life (#1586).
 ///
-/// The conversation stacks bodies inside **one** scroll view and sizes each
-/// web view to its whole document — `BodyHeight` is that measurement — so a
-/// body never has anything of its own to scroll. `WKWebView` does not know
-/// that: it consumes every wheel event over its own frame regardless, and the
-/// conversation's scroll view never sees one.
-///
-/// The effect is that the message *is* the pane, so pointing at it and
-/// scrolling does nothing at all. Only the few points of padding either side
-/// of a body still scrolled, which is not a thing anyone would find.
-///
-/// Forwarding is unconditionally right here **because** of that sizing: there
-/// is no case where this view has scrollable content of its own to keep. If a
-/// body ever grows past `BodyHeight.maximum` and starts scrolling internally,
-/// this has to become conditional — and that clamp is where to look.
-///
-/// # It is also what gets counted
-///
-/// This is the one web view the reader creates, so its lifetime **is** the
-/// reader's surface count (#1586), noted into the counters `postio-gtk`
-/// notes into. Counted from the view's own `init` and `deinit` rather than
-/// from `makeNSView` and `dismantleNSView`: what costs is the content process
+/// Every web view the reader creates is one of these, so its lifetime **is**
+/// the reader's surface count, noted into the counters `postio-gtk` notes
+/// into. Counted from the view's own `init` and `deinit` rather than from
+/// `makeNSView` and `dismantleNSView`: what costs is the content process
 /// behind a web view, and that can go when the view does — which is when ARC
-/// gets round to it, not when SwiftUI takes it out of the hierarchy. A
-/// render still in flight holds one past its dismantling, and a count from
-/// `dismantleNSView` would call it gone.
-final class PassingWebView: WKWebView {
-    override init(frame: CGRect, configuration: WKWebViewConfiguration) {
+/// gets round to it, not when SwiftUI takes it out of the hierarchy.
+///
+/// The conversation document's view is one of these as it is: it scrolls its
+/// own page. A stacked body's view is `PassingWebView`, which does not.
+public class ReaderSurface: WKWebView {
+    override public init(frame: CGRect, configuration: WKWebViewConfiguration) {
         super.init(frame: frame, configuration: configuration)
         noteReaderSurfaceCreated()
     }
@@ -283,7 +267,21 @@ final class PassingWebView: WKWebView {
     deinit {
         noteReaderSurfaceReleased()
     }
+}
 
+/// A reader web view that lets the scroll wheel through to the pane behind it.
+///
+/// The single-message pane sizes its body to its whole document —
+/// `BodyHeight` is that measurement — so a body never has anything of its own
+/// to scroll. `WKWebView` does not know that: it consumes every wheel event
+/// over its own frame regardless, and the scroll view around it never sees
+/// one.
+///
+/// Forwarding is unconditionally right here **because** of that sizing: there
+/// is no case where this view has scrollable content of its own to keep. If a
+/// body ever grows past `BodyHeight.maximum` and starts scrolling internally,
+/// this has to become conditional — and that clamp is where to look.
+final class PassingWebView: ReaderSurface {
     override func scrollWheel(with event: NSEvent) {
         nextResponder?.scrollWheel(with: event)
     }

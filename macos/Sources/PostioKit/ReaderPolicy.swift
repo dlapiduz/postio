@@ -1,4 +1,5 @@
 import AppKit
+import PostioFFI
 import WebKit
 
 /// What the reader is allowed to navigate to, which is almost nothing.
@@ -22,6 +23,10 @@ public final class ReaderNavigationPolicy: NSObject, WKNavigationDelegate, WKUID
     /// what it holds — a scroll view inside a scroll view is the shape every
     /// mail client that gets this wrong has.
     public var didFinish: ((WKWebView) -> Void)?
+
+    /// Called with a verb a conversation document offers for one of its
+    /// messages -- Reply, Forward, Continue editing, Show images (#1595).
+    public var onVerb: ((ThreadVerbFfi) -> Void)?
 
     public init(openExternally: @escaping (URL) -> Void) {
         self.openExternally = openExternally
@@ -55,6 +60,9 @@ public final class ReaderNavigationPolicy: NSObject, WKNavigationDelegate, WKUID
         ) {
         case .allow:
             return (.allow, preferences)
+        case .verb(let verb):
+            onVerb?(verb)
+            return (.cancel, preferences)
         case .openExternally(let url):
             openExternally(url)
             return (.cancel, preferences)
@@ -81,6 +89,8 @@ public final class ReaderNavigationPolicy: NSObject, WKNavigationDelegate, WKUID
     public enum Decision: Equatable {
         /// The reader's own document, or one of its two schemes.
         case allow
+        /// One of the conversation document's own verbs, for its message.
+        case verb(ThreadVerbFfi)
         /// A link the user activated: hand it to the browser, do not navigate.
         case openExternally(URL)
         /// Anything else.
@@ -92,6 +102,14 @@ public final class ReaderNavigationPolicy: NSObject, WKNavigationDelegate, WKUID
     /// only be checked by rendering hostile mail would not be checked at all.
     public static func decide(navigationType: WKNavigationType, url: URL?) -> Decision {
         guard let url else { return .refuse }
+
+        // The page's own verbs first, before a click can be read as a link
+        // for the browser: a Reply is a link the user activates too. The
+        // parse is the boundary's (`thread_verb`), matched on the scheme a
+        // sender's markup can never carry.
+        if let verb = threadVerb(url: url.absoluteString) {
+            return .verb(verb)
+        }
 
         // A deliberate click leaves the application, and only a deliberate
         // click. `.linkActivated` is the one navigation type a person caused.

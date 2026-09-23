@@ -17,6 +17,10 @@ public struct OriginalView: Equatable, Sendable {
     /// Whether `message` is drawn as it arrived.
     public func isOn(_ message: Int64) -> Bool { showing.contains(message) }
 
+    /// Every message drawn as it arrived, in a stable order -- what the
+    /// conversation document is asked for, so the same set is the same page.
+    public var messages: [Int64] { showing.sorted() }
+
     /// Turn it on, or off again.
     public mutating func toggle(_ message: Int64) {
         if showing.contains(message) {

@@ -632,14 +632,16 @@ struct Shell: View {
             ConversationView(
                 session: session,
                 model: engine.conversation,
-                // The message the verb was drawn under travels with it: a
-                // per-message bar that answered the *list's* cursor replied
-                // to the wrong message in any thread longer than one.
+                // The message a verb is for travels with it: a verb that
+                // answered the *list's* cursor replied to the wrong message in
+                // any thread longer than one.
                 run: { engine.run($0, on: $1) },
-                showingOriginal: { engine.original.isOn($0) },
-                showingImages: { engine.rendered.isOn($0) },
-                heights: engine.bodyHeights,
-                toggleOriginal: { engine.toggleOriginal($0) }
+                originals: engine.original.messages,
+                revision: engine.documentRevision,
+                page: engine.readerPage,
+                pageToken: engine.readerPageToken,
+                showing: engine.cursorShowing,
+                onVerb: { engine.handle($0, of: $1) }
             )
         } else if let session = engine.session, let showing, let row = session.rowFor(showing) {
             // A message that threading could not place belongs to no

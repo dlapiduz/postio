@@ -65,9 +65,9 @@ pub use compose::{
     recipient_summary,
 };
 pub use conversation::{
-    ConversationFfi, RunFfi, ThreadAnchorFfi, ThreadDocumentFfi, ThreadVerbFfi, ThreadVerbKindFfi,
-    conversation_runs, message_when, thread_expand_all_script, thread_scroll_script,
-    thread_toggle_script, thread_verb,
+    ConversationFfi, ThreadAnchorFfi, ThreadDocumentFfi, ThreadVerbFfi, ThreadVerbKindFfi,
+    message_when, thread_expand_all_script, thread_scroll_script, thread_toggle_script,
+    thread_verb,
 };
 pub use cost::{
     note_reader_render, note_reader_surface_created, note_reader_surface_released,

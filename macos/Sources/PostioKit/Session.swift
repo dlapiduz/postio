@@ -107,18 +107,6 @@ public final class PostioSession {
     /// answers it for both frontends.
     public var conversation: ConversationFfi? { inner.conversation() }
 
-    /// Which runs of collapsed messages fold into one divider.
-    ///
-    /// Asked again on every expand and collapse, because that is when the
-    /// answer changes. The three-in-a-row minimum and the eliding of the
-    /// names are the boundary's, not this frontend's.
-    /// Static because it is a function, not a question about this session:
-    /// it reads no store and holds no state, and a conversation pane asks it
-    /// on every keystroke that changes what is open.
-    public static func runs(rows: [RowFfi], expanded: [Bool]) -> [RunFfi] {
-        conversationRuns(rows: rows, expanded: expanded)
-    }
-
     /// How many rows the current scope has.
     ///
     /// A `COUNT` on the other side, not the length of anything: a hundred
@@ -239,6 +227,21 @@ public final class PostioSession {
     /// the tracking pixel the reader blocks, arriving through the back door.
     public func resolveCid(message: Int64, contentId: String) -> InlinePart? {
         inner.resolveCid(message: message, contentId: contentId)
+    }
+
+    /// `thread` as one document, with each message's anchor, sender and
+    /// caveat (#1595, ADR 0032). The page is `postio_ui::reader::thread`'s,
+    /// the same one GTK's pane draws. Blocks on the store: off the main
+    /// actor.
+    public nonisolated func threadDocument(thread: Int64, originals: [Int64]) -> ThreadDocumentFfi {
+        inner.threadDocument(thread: thread, originals: originals)
+    }
+
+    /// The draft behind a draft's message row, for a conversation's
+    /// `Continue editing` — `nil` for another client's draft, which has
+    /// nothing on this machine to edit.
+    public func draftForMessage(_ message: Int64) -> DraftFfi? {
+        inner.draftForMessage(message: message)
     }
 
     /// What one key press means here.
@@ -585,6 +588,13 @@ public final class PostioSession {
     /// this platform. What crosses is which verbs and in what order, which is
     /// the same on both frontends by construction.
     public func readerActions() -> [ReaderActionFfi] { inner.readerActions() }
+
+    /// The header bar of a conversation of `messages`, each verb with what it
+    /// will act on in words and whether that is the whole thread (FR-008,
+    /// FR-008a).
+    public func conversationActions(messages: UInt32) -> [ConversationActionFfi] {
+        inner.conversationActions(messages: messages)
+    }
 
 
     /// Always allow this address's remote images, across restarts.

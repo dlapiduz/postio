@@ -1,4 +1,5 @@
 import Foundation
+import PostioFFI
 import Testing
 import WebKit
 
@@ -99,6 +100,57 @@ struct ReaderTests {
 
         let empty = try #require(URL(string: "postio-cid:"))
         #expect(CidSchemeHandler.contentId(from: empty) == nil)
+    }
+
+    // -- a conversation document names each part's message (#1595) ---------
+
+    @Test func aScopedReferenceNamesItsMessageAndItsPart() throws {
+        // One page holds a whole thread, so "whichever message is open" names
+        // nothing: two messages may each carry a part called `logo`. GTK's
+        // handler routes on the same form.
+        let scoped = try #require(URL(string: "postio-cid:42/logo"))
+        let reference = try #require(CidSchemeHandler.reference(from: scoped))
+        #expect(reference.scope == 42)
+        #expect(reference.contentId == "logo")
+    }
+
+    @Test func aContentIdCannotSmuggleASeparator() throws {
+        let encoded = try #require(URL(string: "postio-cid:42/a%2Fb"))
+        #expect(CidSchemeHandler.reference(from: encoded)?.contentId == "a/b")
+    }
+
+    @Test func anUnscopedReferenceIsWhatItAlwaysWas() throws {
+        let plain = try #require(URL(string: "postio-cid:abc@example.com"))
+        let reference = try #require(CidSchemeHandler.reference(from: plain))
+        #expect(reference.scope == nil)
+        #expect(reference.contentId == "abc@example.com")
+    }
+
+    @Test func aScopeThatIsNotAMessageResolvesNothing() throws {
+        // The page names messages by id. Anything else in that position is a
+        // reference nobody this document drew could have written.
+        let odd = try #require(URL(string: "postio-cid:elsewhere/logo"))
+        #expect(CidSchemeHandler.reference(from: odd) == nil)
+    }
+
+    @Test func aVerbInTheDocumentIsTheDocumentsNotTheBrowsers() throws {
+        // A per-message Reply is a link the user activates -- and a link the
+        // user activates otherwise goes to the browser. The verb has to be
+        // recognised first, or every Reply would open a browser tab on a
+        // `postio-reply:` URL.
+        let reply = try #require(URL(string: "postio-reply:42"))
+        for type in [WKNavigationType.linkActivated, .other] {
+            #expect(
+                ReaderNavigationPolicy.decide(navigationType: type, url: reply)
+                    == .verb(ThreadVerbFfi(kind: .reply, message: 42))
+            )
+        }
+        let web = try #require(URL(string: "https://example.com/"))
+        #expect(
+            ReaderNavigationPolicy.decide(navigationType: .linkActivated, url: web)
+                == .openExternally(web),
+            "a sender's own link still goes to the browser"
+        )
     }
 }
 

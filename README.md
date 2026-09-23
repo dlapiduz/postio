@@ -167,7 +167,8 @@ ad-hoc-signed build, which asks again after every rebuild.
 
 **What works:** the three-pane shell, the message list over the paged store,
 the reading pane with its remote-image blocking and per-sender allow list,
-conversations, search with its query language and the chips that teach it
+conversations as one document in one web view (ADR 0032, as GTK draws them),
+search with its query language and the chips that teach it
 — its hit count, refine chips, sort and scope rail included —
 the command palette, the cheat sheet, the menu bar built from the command
 registry, keyboard commands in both layers, compose with rich text,

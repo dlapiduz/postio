@@ -4,15 +4,15 @@ import PostioFFI
 /// The conversation the reading pane is showing, and what a reader has done
 /// to it since it opened (#1263, ADR 0015 Q4).
 ///
-/// **It decides as little as possible.** Where a conversation opens, which
-/// messages are expanded when it does, and which runs of collapsed messages
-/// fold into a divider are all `postio_ui::conversation`'s answers, arriving
-/// through the boundary already made — because those are the decisions that
-/// cost something (one web view per expanded message) and the ones two
-/// frontends must not answer differently.
+/// **It decides as little as possible.** Where a conversation opens and which
+/// messages are expanded when it does are `postio_ui::conversation`'s answers,
+/// arriving through the boundary already made, and the page itself is the
+/// boundary's too (ADR 0032, #1595).
 ///
-/// What is genuinely local is what a person then does: expand this one,
-/// collapse that one, show me the five you folded away. That is this type.
+/// What is genuinely local is what a person then does -- move to the next
+/// message, fold this one, open them all -- and since the page is one
+/// document with its script off, those are requests *to the page*
+/// (`documentRequest`) rather than a model it is drawn from.
 ///
 /// No AppKit here, deliberately (#1264): a conversation is the same thing on
 /// a phone, and the only reason this could not go there is if the logic came
@@ -35,21 +35,41 @@ public final class ConversationModel {
     /// which is `PRODUCT.md` §9's distinction one level down.
     public private(set) var focused: Int = 0
 
-    /// Runs the reader has asked to see, by the index they start at.
+    /// Something the conversation document has been asked to do (#1595).
     ///
-    /// Keyed on the start index rather than on identity because a run *is* a
-    /// position — expanding something inside a conversation reshapes the
-    /// runs, and a reveal that survived that would be about a run nobody is
-    /// looking at any more.
-    private var revealed: Set<Int> = []
+    /// The pane is one page (ADR 0032), and what a person folds, opens or
+    /// scrolls to is that page's state -- with the page's own script off, the
+    /// application cannot even see a summary being clicked. So the keys do not
+    /// change a model the page is drawn from; they ask the page, and the
+    /// request is what can be asserted.
+    public enum DocumentAction: Equatable, Sendable {
+        /// Bring this message to the top of the pane -- `J`, `K`.
+        case scrollTo(message: Int64)
+        /// Fold or unfold this message -- `z`.
+        case toggle(message: Int64)
+        /// Open every message -- *Expand all*.
+        case expandAll
+    }
 
-    /// Which messages have had their `Cc` list opened, by index (#1259).
-    ///
-    /// Per message, never per pane: a conversation can hold eight messages
-    /// addressed to eight different lists, and one disclosure standing for
-    /// all of them would be about none of them — the same reason the blocked
-    /// images notice is per message.
-    private var ccRevealed: Set<Int> = []
+    /// One request, and which one it is, so the same request twice is two.
+    public struct DocumentRequest: Equatable, Sendable {
+        public let action: DocumentAction
+        public let serial: Int
+    }
+
+    /// The most recent request, or `nil` since the conversation opened.
+    public private(set) var documentRequest: DocumentRequest?
+    private var requestsAsked = 0
+
+    private func ask(_ action: DocumentAction) {
+        requestsAsked += 1
+        documentRequest = DocumentRequest(action: action, serial: requestsAsked)
+    }
+
+    /// The message the keyboard is on, if there is one.
+    private var focusedMessage: Int64? {
+        rows.indices.contains(focused) ? rows[focused].id : nil
+    }
 
     public init() {}
 
@@ -70,12 +90,9 @@ public final class ConversationModel {
     public func show(_ conversation: ConversationFfi) {
         self.conversation = conversation
         expanded = conversation.expanded
-        revealed = []
-        // The disclosures are about *these* messages. Carrying them across
-        // would open a recipient list somebody never asked to see, on
-        // somebody else's mail.
-        ccRevealed = []
         focused = Int(conversation.focus ?? 0)
+        // A request is about the page it was made of.
+        documentRequest = nil
     }
 
     /// Show nothing.
@@ -94,9 +111,8 @@ public final class ConversationModel {
     public func clear() {
         conversation = nil
         expanded = []
-        revealed = []
-        ccRevealed = []
         focused = 0
+        documentRequest = nil
     }
 
     /// Open or close the body of message `index`.
@@ -108,6 +124,7 @@ public final class ConversationModel {
     /// Open every message — `⌘⇧E`, the header's own control.
     public func expandAll() {
         expanded = expanded.map { _ in true }
+        ask(.expandAll)
     }
 
     /// Move the keyboard to the next message of the conversation.
@@ -118,53 +135,19 @@ public final class ConversationModel {
     public func focusNext() {
         guard !rows.isEmpty else { return }
         focused = min(focused + 1, rows.count - 1)
+        if let message = focusedMessage { ask(.scrollTo(message: message)) }
     }
 
     /// Move the keyboard to the previous message.
     public func focusPrevious() {
         guard !rows.isEmpty else { return }
         focused = max(focused - 1, 0)
+        if let message = focusedMessage { ask(.scrollTo(message: message)) }
     }
 
     /// Fold or unfold the message the keyboard is on — `Space`.
     public func toggleFocused() {
         toggle(focused)
-    }
-
-    /// The runs of collapsed messages long enough to hide behind a divider,
-    /// minus the ones already revealed.
-    public var runs: [RunFfi] {
-        guard !expanded.isEmpty else { return [] }
-        return PostioSession.runs(rows: rows, expanded: expanded)
-            .filter { !revealed.contains(Int($0.start)) }
-    }
-
-    /// Whether message `index` is showing its `Cc` addresses.
-    public func isCcRevealed(_ index: Int) -> Bool { ccRevealed.contains(index) }
-
-    /// Open or close message `index`'s `Cc` list.
-    public func toggleCc(_ index: Int) {
-        if ccRevealed.contains(index) {
-            ccRevealed.remove(index)
-        } else {
-            ccRevealed.insert(index)
-        }
-    }
-
-    /// Show the messages a divider is standing in for.
-    ///
-    /// They arrive as the one-line headers they already were: revealing is
-    /// about the divider, not about the bodies, so five hidden messages cost
-    /// five lines rather than five web views.
-    public func reveal(_ run: RunFfi) {
-        revealed.insert(Int(run.start))
-    }
-
-    /// Whether message `index` is drawn at all — a message inside a folded
-    /// run is not.
-    public func isVisible(_ index: Int) -> Bool {
-        !runs.contains { run in
-            index >= Int(run.start) && index < Int(run.start) + Int(run.count)
-        }
+        if let message = focusedMessage { ask(.toggle(message: message)) }
     }
 }

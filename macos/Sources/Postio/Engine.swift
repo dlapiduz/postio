@@ -850,6 +850,11 @@ final class Engine {
             // between the list and the "No messages" plate around it.
             listVersion += 1
             controller.tableView?.reloadData()
+            // A body that arrived, or a flag that moved, may change the
+            // conversation on screen. The page is asked for again and loaded
+            // only if it came out different, so this costs a read, not a
+            // reload.
+            if conversation.conversation != nil { documentRevision += 1 }
         case let .conversationReady(thread):
             // The read that `cursorMoved` started has landed. Checked against
             // what the pane is now showing: a cursor that moved on while the
@@ -857,6 +862,7 @@ final class Engine {
             // under it.
             if let read = session?.conversation, read.thread == thread, showingThread == thread {
                 conversation.show(read)
+                documentRevision += 1
             }
         case let .cursorMoved(row, message):
             // Every move re-arms, and a move to a row whose page has not
@@ -1306,6 +1312,43 @@ final class Engine {
     }
 
     private(set) var readerPage: UInt32 = 0
+
+    /// Bumped when what the conversation document is made of may have
+    /// changed -- the thread re-read, a body arrived, a sender allowed. See
+    /// `ThreadDocumentView`, which asks again and loads only a changed page.
+    private(set) var documentRevision = 0
+
+    /// A verb a message offered inside the conversation document (#1595).
+    ///
+    /// Each names its own message: Reply under the second message answers
+    /// the second, not the latest (FR-009).
+    func handle(_ verb: ThreadVerbFfi, of anchor: ThreadAnchorFfi?) {
+        switch verb.kind {
+        case .reply:
+            _ = run("reply", on: verb.message)
+        case .forward:
+            _ = run("forward", on: verb.message)
+        case .continue:
+            // The draft behind the row, or nothing to edit on this machine
+            // (another client's draft) -- said, not swallowed.
+            guard let draft = session?.draftForMessage(verb.message) else {
+                notice = Notice(
+                    kind: .refused,
+                    message: "This draft was written elsewhere, so there is nothing here to edit.",
+                    undoable: false
+                )
+                noticeToken += 1
+                return
+            }
+            compose.open(draft)
+        case .allow:
+            // The consent the notice asks for, per sender (`PRODUCT.md` §21):
+            // the link names the message and the grant is its sender's.
+            guard let session, let address = anchor?.address, !address.isEmpty else { return }
+            session.allowSender(address)
+            documentRevision += 1
+        }
+    }
 
     /// Bumped whenever a page turn is asked for.
     ///

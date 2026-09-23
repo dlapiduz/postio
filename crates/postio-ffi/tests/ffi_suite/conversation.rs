@@ -232,41 +232,6 @@ fn row(id: i64, sender: &str) -> postio_ffi::RowFfi {
     }
 }
 
-#[test]
-fn three_collapsed_messages_in_a_row_become_one_divider() {
-    let rows = vec![
-        row(1, "Ada"),
-        row(2, "Bo"),
-        row(3, "Ada"),
-        row(4, "Quinn"),
-        row(5, "Ada"),
-    ];
-    let runs = postio_ffi::conversation_runs(rows, vec![true, false, false, false, true]);
-
-    assert_eq!(runs.len(), 1);
-    assert_eq!(runs[0].start, 1);
-    assert_eq!(runs[0].count, 3);
-    assert_eq!(
-        runs[0].summary, "3 earlier messages · Bo, Ada, Quinn",
-        "a divider names how many it hides and who is in it"
-    );
-}
-
-#[test]
-fn two_collapsed_messages_are_left_as_two_lines() {
-    // A divider hides its messages behind a click, so it has to save more
-    // lines than it costs. Two become one plus a gesture, which is no saving.
-    let rows = vec![row(1, "Ada"), row(2, "Bo"), row(3, "Ada")];
-    let runs = postio_ffi::conversation_runs(rows, vec![true, false, false]);
-    assert!(runs.is_empty());
-}
-
-#[test]
-fn a_conversation_with_nothing_folded_has_no_dividers() {
-    let rows = vec![row(1, "Ada"), row(2, "Bo")];
-    assert!(postio_ffi::conversation_runs(rows, vec![true, true]).is_empty());
-}
-
 #[tokio::test(flavor = "multi_thread")]
 async fn a_message_can_be_asked_for_as_a_row_without_a_list_position() {
     // The single-message pane's whole problem. `rowAt` answers by *index*

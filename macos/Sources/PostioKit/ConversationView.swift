@@ -1,76 +1,141 @@
 import PostioFFI
 import SwiftUI
 
-/// The conversation, stacked in the reading pane (#1263, ADR 0015 Q4).
+/// The conversation in the reading pane: its header, and the whole thread as
+/// one document (ADR 0032, #1595).
 ///
 /// Selecting a thread does not navigate anywhere: the list stays a list and
-/// every message of the conversation appears here, oldest first. Read
-/// messages are one line that never wraps; the latest and the unread ones are
-/// open; a run of three or more collapsed messages is one divider standing in
-/// for them.
+/// every message of the conversation appears here, oldest first. It used to be
+/// a stack of views with a web view per open message; it is one page now,
+/// composed by the boundary with the same function GTK's pane uses, in one
+/// web view whatever the thread's length (`ThreadDocumentView`).
 ///
-/// Nothing here decides any of that. The fold arrives made
-/// (`ConversationModel`), the divider's wording and its three-in-a-row
-/// minimum are the boundary's, and every verb is a registry command rather
-/// than something this view does itself — so `Reply` from the mouse and `e`
-/// from the keyboard are one code path, undo included.
+/// What stays native is what is about the *conversation* or about the message
+/// the list is on: the subject and its line, the verb bar that says what it
+/// acts on (FR-008, FR-008a), and the notices for that message -- the same
+/// split GTK's pane makes. Each message's own chrome is in the page.
+///
+/// Nothing here decides anything. The page, its anchors, the verbs' scope and
+/// their words are the boundary's, and every verb is a registry command, so
+/// `Reply` from the mouse and `e` from the keyboard are one code path, undo
+/// included.
 public struct ConversationView: View {
     private let session: PostioSession
     private let model: ConversationModel
-    /// Run a command, and say which message the surface that ran it was
-    /// drawn under.
+    /// Run a command, and say which message it is for.
     ///
-    /// `nil` means the conversation as a whole — *Archive conversation* is
-    /// about the thread, not about one of its messages. Everything else
-    /// **must** name one: the per-message bar and the `⋯` menu ran `reply`
-    /// and `forward` with no target at all, so they reached
-    /// `Engine.replyDraft`, which falls back to the *list* cursor. In an
-    /// eight-message thread, Reply under message three composed a reply to
-    /// the thread's representative message — a wrong-recipient bug, with
-    /// nothing on screen to say so.
-    ///
-    /// A parameter rather than a rule, so a new per-message surface cannot
-    /// forget: the type will not let it.
+    /// `nil` means the conversation as a whole -- *Archive conversation* is
+    /// about the thread. Everything else names a message: a verb that fell
+    /// back to the *list* cursor replied to the thread's representative
+    /// message rather than the one it was drawn under, the wrong recipient
+    /// with nothing on screen to say so.
     private let run: (String, Int64?) -> Void
-    /// Whether a message is drawn as its sender wrote it, and how to change
-    /// it. The engine holds this so `⌘O` can reach it.
-    private let showingOriginal: (Int64) -> Bool
-    /// Whether this message's held-back parts are rendered — see
-    /// `RenderedOnce`, which holds it where `H` can reach it.
-    private let showingImages: (Int64) -> Bool
-    /// Measured body heights, so a revisited message opens at full size
-    /// instead of popping from the minimum. See `BodyHeights`.
-    private let heights: BodyHeights
-    private let toggleOriginal: (Int64) -> Void
+    /// The messages the reader asked to see as sent (`⌘O`).
+    private let originals: [Int64]
+    /// Bumped when what the page is made of may have changed -- see
+    /// `ThreadDocumentView`.
+    private let revision: Int
+    private let page: UInt32
+    private let pageToken: Int
+    /// The message the list is on, which the notices above the page are
+    /// about.
+    private let showing: Int64?
+    /// A verb a message offered inside the page.
+    private let onVerb: (ThreadVerbFfi, ThreadAnchorFfi?) -> Void
+
+    /// Where each message is in the page on screen, and what it says about
+    /// itself -- the decode caveat rides here.
+    @State private var anchors: [ThreadAnchorFfi] = []
+    /// The unsubscribe offer for the message the list is on, read once when
+    /// it changes rather than per redraw.
+    @State private var offer: UnsubscribeOfferFfi?
 
     public init(
         session: PostioSession,
         model: ConversationModel,
         run: @escaping (String, Int64?) -> Void,
-        showingOriginal: @escaping (Int64) -> Bool,
-        showingImages: @escaping (Int64) -> Bool,
-        heights: BodyHeights = BodyHeights(),
-        toggleOriginal: @escaping (Int64) -> Void
+        originals: [Int64] = [],
+        revision: Int = 0,
+        page: UInt32 = 0,
+        pageToken: Int = 0,
+        showing: Int64? = nil,
+        onVerb: @escaping (ThreadVerbFfi, ThreadAnchorFfi?) -> Void
     ) {
         self.session = session
         self.model = model
         self.run = run
-        self.showingOriginal = showingOriginal
-        self.showingImages = showingImages
-        self.heights = heights
-        self.toggleOriginal = toggleOriginal
+        self.originals = originals
+        self.revision = revision
+        self.page = page
+        self.pageToken = pageToken
+        self.showing = showing
+        self.onVerb = onVerb
     }
 
+    /// The message the pane lands on when the conversation opens (FR-015).
+    private var focusMessage: Int64? {
+        model.focus.flatMap { focus in
+            model.rows.indices.contains(Int(focus)) ? model.rows[Int(focus)].id : nil
+        }
+    }
+
+    /// The newest message -- what the header's reply verbs answer (FR-008).
+    private var latestMessage: Int64? { model.rows.last?.id }
 
     public var body: some View {
         VStack(spacing: 0) {
             header
             Divider()
-            ConversationStack(model: model) { index, row in
-                expanded(row, at: index)
-            }
+            notices
+            ThreadDocumentView(
+                source: session,
+                thread: model.conversation?.thread ?? 0,
+                originals: originals,
+                revision: revision,
+                focus: focusMessage,
+                request: model.documentRequest,
+                page: page,
+                pageToken: pageToken,
+                onVerb: onVerb,
+                onAnchors: { anchors = $0 }
+            )
         }
         .accessibilityLabel(Pane.reader.label)
+        .task(id: showing) {
+            // Off the main actor: a row read, but not the drawing actor's.
+            guard let showing else {
+                offer = nil
+                return
+            }
+            let session = session
+            let facts = await Task.detached { session.messageFacts(showing) }.value
+            guard !Task.isCancelled else { return }
+            offer = facts.offer
+        }
+    }
+
+    /// What is true of the message the list is on, above the page: the list
+    /// it came from, and whether any of it could not be decoded. GTK's pane
+    /// keeps the same two above its document, for the same message.
+    @ViewBuilder
+    private var notices: some View {
+        if let showing, let offer {
+            UnsubscribeBanner(offer: offer, message: showing, session: session)
+                .padding(.horizontal, PostioTokens.space6)
+                .padding(.top, PostioTokens.space3)
+        }
+        // A body that silently lost a part is exactly what ADR 0005 Q10's
+        // omission rule is about; the wording is the boundary's.
+        if let caveat = anchors.first(where: { $0.message == showing })?.caveat {
+            Label(caveat, systemImage: "exclamationmark.triangle")
+                .font(.callout)
+                .foregroundStyle(.secondary)
+                .padding(.horizontal, PostioTokens.space3)
+                .padding(.vertical, PostioTokens.space2)
+                .background(.quaternary.opacity(0.4), in: .rect(cornerRadius: 6))
+                .padding(.horizontal, PostioTokens.space6)
+                .padding(.top, PostioTokens.space3)
+        }
     }
 
     // -- the header ---------------------------------------------------------
@@ -114,171 +179,50 @@ public struct ConversationView: View {
                 .fixedSize()
                 .accessibilityLabel("More actions for this conversation")
             }
+            verbs
         }
         .padding(.horizontal, PostioTokens.space6)
         .padding(.vertical, PostioTokens.space4)
     }
 
-    // -- one message --------------------------------------------------------
-
-    private func expanded(_ row: RowFfi, at index: Int) -> ExpandedMessage {
-        ExpandedMessage(
-            session: session,
-            row: row,
-            isLatest: index == model.rows.count - 1,
-            showingCc: model.isCcRevealed(index),
-            showingOriginal: showingOriginal(row.id),
-            showingImages: showingImages(row.id),
-            collapse: { model.toggle(index) },
-            toggleCc: { model.toggleCc(index) },
-            toggleOriginal: { toggleOriginal(row.id) },
-            run: run,
-            openSettings: { run(Intercepted.settings, nil) }
-        )
-    }
-}
-
-/// The conversation's messages, stacked: open ones, one-line collapsed ones,
-/// and the dividers standing in for runs of them.
-///
-/// Its own view so a test can host it (#1586). The number of web views a
-/// conversation holds is decided *here* — by which entries exist, by their
-/// identity, and by the stack being lazy — and SwiftUI's `makeNSView` runs
-/// whenever it decides an identity changed. That cannot be read off the code;
-/// it has to be counted, and counting needs something to host that is the
-/// real stack rather than a copy of it. The open message itself is whatever
-/// `expanded` draws — `ExpandedMessage` in the pane, a bare `ReaderView` in
-/// `ReaderSurfacesTests`.
-struct ConversationStack<Expanded: View>: View {
-    let model: ConversationModel
-    let expanded: (Int, RowFfi) -> Expanded
-
-    /// What the stack draws, in order. Identity is the *message*, never its
-    /// position — see `ConversationEntries`, and the crash it is named for.
-    private var entries: [ConversationEntries.Entry] {
-        ConversationEntries.of(rows: model.rows, runs: model.runs)
-    }
-
-    var body: some View {
-        ScrollView {
-            LazyVStack(spacing: 0) {
-                ForEach(entries) { entry in
-                    switch entry {
-                    case let .message(index, _):
-                        message(at: index)
-                    case let .folded(run, _):
-                        FoldedRun(run: run) { model.reveal(run) }
-                    }
-                }
+    /// Reply, Reply all, Forward and Archive, each saying what it will act on
+    /// (FR-008, FR-008a): the first three the latest message, Archive the
+    /// whole thread. The split and its words are the boundary's.
+    private var verbs: some View {
+        HStack(spacing: PostioTokens.space3) {
+            ForEach(session.conversationActions(messages: UInt32(model.rows.count)), id: \.command) {
+                action in
+                verb(action)
             }
+            Spacer()
         }
-        // **One stack per conversation**, and this line is the whole fix for
-        // a pane that never let go of a web view. A lazy stack does not
-        // dismantle what it stops drawing: it hides the platform view and
-        // keeps it, so a message that collapses, or belongs to the
-        // conversation `j` just left, is still a `WKWebView` with a content
-        // process behind it. The pane is not rebuilt between conversations --
-        // the model is handed a new one -- so five conversations of three
-        // open messages held eighteen, and a morning's reading held all of
-        // them. A new identity is what makes SwiftUI throw the old stack
-        // away, and its pool with it.
-        //
-        // It bounds the cost to one conversation, not to one view: inside a
-        // conversation a collapsed message's reader is still held until the
-        // conversation changes. ADR 0032's one document is the answer to
-        // that, and it is not built on this platform.
-        .id(model.conversation?.thread)
     }
 
     @ViewBuilder
-    private func message(at index: Int) -> some View {
-        // Bounds-checked, and not belt-and-braces: SwiftUI updates a
-        // retained child before it discards it, so this can be asked for a
-        // row that has just gone. It used to trap here (`rows[5]` of a
-        // conversation that now holds three), which is what
-        // `ConversationEntries` records. Identity fixes the cause; this
-        // makes the symptom an empty row rather than a dead application.
-        // A `ViewBuilder` `if` with no `else` draws nothing, which is the
-        // right thing for a row that is no longer there.
-        if model.rows.indices.contains(index) {
-            let row = model.rows[index]
-            if model.expanded.indices.contains(index), model.expanded[index] {
-                expanded(index, row)
-            } else {
-                CollapsedMessage(row: row) { model.toggle(index) }
+    private func verb(_ action: ConversationActionFfi) -> some View {
+        let target = action.wholeConversation ? nil : latestMessage
+        let label = HStack(spacing: PostioTokens.space2) {
+            Text(action.title)
+            if let chord = session.accelerator(for: action.command) {
+                Text(chord).opacity(0.75)
             }
         }
-    }
-}
-
-/// A read message: one line, never wrapping, one click from its body.
-struct CollapsedMessage: View {
-    let row: RowFfi
-    let expand: () -> Void
-
-    var body: some View {
-        Button(action: expand) {
-            HStack(spacing: PostioTokens.space3) {
-                StateDot(seen: row.seen, mine: false)
-                Text(row.from ?? "Unknown sender")
-                    .fontWeight(row.seen ? .regular : .semibold)
-                    .frame(width: 160, alignment: .leading)
-                    .lineLimit(1)
-                    .truncationMode(.tail)
-                Text(row.preview ?? "")
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-                    .truncationMode(.tail)
-                Spacer(minLength: PostioTokens.space2)
-                if row.hasAttachments {
-                    Image(systemName: "paperclip")
-                        .foregroundStyle(.secondary)
-                        .accessibilityLabel("has an attachment")
-                }
-                Text(rowTimestamp(receivedAt: row.receivedAt))
-                    .font(.system(.callout, design: .monospaced))
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-            }
-            .padding(.horizontal, PostioTokens.space6)
-            .padding(.vertical, PostioTokens.space3)
-            .contentShape(Rectangle())
+        let enabled = session.isAvailable(action.command, in: .reader)
+        // Two branches rather than a style-erasing wrapper: `.buttonStyle`
+        // takes a concrete type.
+        if action.primary {
+            Button(action: { run(action.command, target) }, label: { label })
+                .buttonStyle(.borderedProminent)
+                .disabled(!enabled)
+                .help(action.description)
+                .accessibilityLabel(action.description)
+        } else {
+            Button(action: { run(action.command, target) }, label: { label })
+                .buttonStyle(.bordered)
+                .disabled(!enabled)
+                .help(action.description)
+                .accessibilityLabel(action.description)
         }
-        .buttonStyle(.plain)
-        .accessibilityLabel("\(row.from ?? "Unknown sender"), \(row.preview ?? "")")
-        .accessibilityHint("Expands this message")
-        Divider()
-    }
-}
-
-/// The divider that stands in for a run of collapsed messages.
-struct FoldedRun: View {
-    let run: RunFfi
-    let show: () -> Void
-
-    var body: some View {
-        HStack(spacing: PostioTokens.space3) {
-            rule
-            Text(run.summary)
-                .font(.callout)
-                .foregroundStyle(.secondary)
-                .lineLimit(1)
-            Button("Show", action: show)
-                .controlSize(.small)
-            rule
-        }
-        .padding(.horizontal, PostioTokens.space6)
-        .padding(.vertical, PostioTokens.space3)
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel(run.summary)
-        .accessibilityHint("Shows the messages this stands for")
-        Divider()
-    }
-
-    private var rule: some View {
-        Rectangle()
-            .fill(Color.secondary.opacity(0.25))
-            .frame(height: 1)
     }
 }
 

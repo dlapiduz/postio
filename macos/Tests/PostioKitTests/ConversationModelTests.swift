@@ -7,8 +7,9 @@ import Testing
 ///
 /// The fold a conversation *opens* with is the boundary's and is tested
 /// there. What is tested here is the part that is genuinely this frontend's:
-/// what happens as someone expands, collapses and reveals — and that none of
-/// it quietly re-decides the fold.
+/// what happens as someone moves, folds and expands -- which, with the pane one
+/// document, is what the page is asked to do -- and that none of it quietly
+/// re-decides the fold.
 @MainActor
 @Suite struct ConversationModelTests {
     private func row(_ id: Int64, from sender: String = "Ada") -> RowFfi {
@@ -82,59 +83,6 @@ import Testing
         model.expandAll()
 
         #expect(model.expanded.allSatisfy { $0 })
-        #expect(model.runs.isEmpty, "nothing is folded, so nothing is a divider")
-    }
-
-    @Test func aRunOfCollapsedMessagesIsHiddenBehindItsDivider() {
-        let model = ConversationModel()
-        model.show(conversation())
-
-        // Four collapsed in a row: one divider, and none of them drawn.
-        #expect(model.runs.count == 1)
-        #expect(model.runs[0].start == 0)
-        #expect(model.runs[0].count == 4)
-        #expect(model.isVisible(0) == false)
-        #expect(model.isVisible(3) == false)
-        #expect(model.isVisible(4), "an expanded message is never inside a run")
-    }
-
-    @Test func showingARunRevealsItsMessagesWithoutExpandingThem() {
-        // "Show" is about the divider, not about the bodies: five one-line
-        // headers appear, and none of them costs a web view.
-        let model = ConversationModel()
-        model.show(conversation())
-        let run = model.runs[0]
-
-        model.reveal(run)
-
-        #expect(model.isVisible(0))
-        #expect(model.isVisible(3))
-        #expect(model.expanded == [false, false, false, false, true, true])
-        #expect(model.runs.isEmpty, "a revealed run no longer draws a divider")
-    }
-
-    @Test func aShortRunIsNeverFolded() {
-        // Two collapsed messages are two lines. A divider that saves nothing
-        // is a gesture where there was none.
-        let model = ConversationModel()
-        model.show(conversation(expanded: [true, false, false, true, true, true]))
-
-        #expect(model.runs.isEmpty)
-        #expect(model.isVisible(1))
-    }
-
-    @Test func openingAnotherConversationForgetsTheLastOne() {
-        // A pane still drawing the previous conversation's revealed runs
-        // under a new selection looks like an answer.
-        let model = ConversationModel()
-        model.show(conversation())
-        model.reveal(model.runs[0])
-        model.toggle(0)
-
-        model.show(conversation())
-
-        #expect(model.expanded == [false, false, false, false, true, true])
-        #expect(model.isVisible(0) == false)
     }
 
     // -- the keyboard inside a conversation (J / K / Space) ----------------
@@ -194,46 +142,10 @@ import Testing
         )
 
         #expect(model.rows.isEmpty)
-        #expect(model.runs.isEmpty)
         #expect(model.focus == nil)
     }
 
-    // MARK: - Recipients (#1259)
 
-    @Test func ccStartsFoldedAndOpensWhenAsked() {
-        // A disclosure that starts open is not one. The common message has
-        // one recipient and no Cc, and it should cost exactly one line.
-        let model = ConversationModel()
-        model.show(conversation())
-
-        #expect(!model.isCcRevealed(0))
-        model.toggleCc(0)
-        #expect(model.isCcRevealed(0))
-        model.toggleCc(0)
-        #expect(!model.isCcRevealed(0))
-    }
-
-    @Test func openingOneMessagesCcSaysNothingAboutAnothers() {
-        // A conversation can hold eight messages with eight recipient lists,
-        // and one disclosure standing for all of them would be about none.
-        let model = ConversationModel()
-        model.show(conversation())
-
-        model.toggleCc(0)
-        #expect(model.isCcRevealed(0))
-        #expect(!model.isCcRevealed(1))
-    }
-
-    @Test func movingToAnotherConversationDoesNotCarryDisclosuresAcross() {
-        // The state is about *these* messages. Carrying it would open a
-        // recipient list somebody never asked to see, on somebody else's mail.
-        let model = ConversationModel()
-        model.show(conversation())
-        model.toggleCc(0)
-
-        model.show(conversation())
-        #expect(!model.isCcRevealed(0))
-    }
     // -- landing on a message with no thread (#70's shape again) -----------
 
     @Test func aPaneWithNothingToShowShowsNothing() {
@@ -280,4 +192,51 @@ import Testing
         #expect(model.conversation == nil)
     }
 
+    // -- the document does what the keys ask (#1595) ----------------------
+
+    @Test func jAndKScrollTheDocumentToTheMessageTheyLandOn() {
+        // In one document, moving inside a conversation is scrolling it: the
+        // focus changing with nothing on screen moving is a key that looks
+        // broken.
+        let model = ConversationModel()
+        model.show(conversation())
+        model.focusPrevious()
+        #expect(model.documentRequest?.action == .scrollTo(message: 4))
+        model.focusNext()
+        #expect(model.documentRequest?.action == .scrollTo(message: 5))
+    }
+
+    @Test func foldingActsOnTheFocusedMessageInTheDocument() {
+        let model = ConversationModel()
+        model.show(conversation())
+        model.toggleFocused()
+        #expect(model.documentRequest?.action == .toggle(message: 5))
+    }
+
+    @Test func expandAllOpensEveryMessageInTheDocument() {
+        let model = ConversationModel()
+        model.show(conversation())
+        model.expandAll()
+        #expect(model.documentRequest?.action == .expandAll)
+    }
+
+    @Test func theSameRequestTwiceIsTwoRequests() {
+        // `z` twice folds and unfolds: a request keyed only on what it asks
+        // would look unchanged the second time and be swallowed.
+        let model = ConversationModel()
+        model.show(conversation())
+        model.toggleFocused()
+        let first = model.documentRequest?.serial
+        model.toggleFocused()
+        #expect(model.documentRequest?.serial != first)
+    }
+
+    @Test func aNewConversationForgetsTheLastOnesRequest() {
+        let model = ConversationModel()
+        model.show(conversation())
+        model.toggleFocused()
+        model.show(conversation())
+        #expect(model.documentRequest == nil)
+    }
 }
+
