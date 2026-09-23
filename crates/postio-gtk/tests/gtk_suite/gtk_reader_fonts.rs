@@ -85,8 +85,13 @@ pub fn the_faces_are_fetched_over_the_scheme_and_not_carried_by_the_document() {
             .collect()
     };
     let first_faces = font_requests(&first);
+    // Asked of the engine rather than of this view: readers share one web
+    // process (#1603), and a reader an earlier case built may already have
+    // fetched every face into the process's cache, so this view asking for
+    // none is the saving working, not the silent fallback. What must be true
+    // is that the faces reached the engine over the scheme at all.
     assert!(
-        !first_faces.is_empty(),
+        postio_gtk::reader::scheme::fonts_served() > 0,
         "the engine never asked for a single face, so the message is being \
          drawn in whatever sans the web process happens to have: {first:?}"
     );

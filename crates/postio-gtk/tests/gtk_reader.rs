@@ -674,7 +674,8 @@ fn the_reader_renders_and_hardens_the_corpus() {
     // and the losers would return through the `no display` guard above and be
     // reported as passing (#355, `check-one-gtk-test-per-binary`).
     rendering_the_next_message_keeps_the_web_process();
-    each_reader_costs_a_web_process_of_its_own();
+    readers_share_one_web_process();
+    two_readers_resolve_their_own_inline_images();
     fifty_conversations_hold_what_one_holds();
     the_pane_is_painted_before_it_has_a_document();
     sender_script_is_refused_even_with_javascript_enabled();
@@ -1964,7 +1965,7 @@ fn the_pane_is_painted_before_it_has_a_document() {
     window.destroy();
 }
 
-fn each_reader_costs_a_web_process_of_its_own() {
+fn readers_share_one_web_process() {
     if adw::init().is_err() || gdk::Display::default().is_none() {
         eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
         return;
@@ -2010,12 +2011,71 @@ fn each_reader_costs_a_web_process_of_its_own() {
     eprintln!("one reader {after_one:?}, two readers {after_two:?}");
     window.set_visible(false);
 
-    assert!(
-        after_two.len() > after_one.len(),
-        "a second reader did not cost a second web process ({after_one:?} -> \
-         {after_two:?}). If that is now true, the contexts are shared and the \
-         comment above is stale -- delete it rather than the assertion"
+    // #1603: every reader was built with a context and a session of its
+    // own, so WebKitGTK gave each its own web process -- three live before
+    // the first frame, ~150 MB each. Readers built as related views share
+    // the first one's.
+    assert_eq!(
+        after_two.len(),
+        after_one.len(),
+        "a second reader cost a web process of its own ({after_one:?} -> \
+         {after_two:?})"
     );
+}
+
+/// Two readers sharing one web context still resolve `cid:` images from
+/// their own sources (#1603).
+///
+/// A shared context has one `postio-cid` handler, and each reader was built
+/// with its own `BlobSource` -- the message it shows. The handler has to ask
+/// which view is loading, or one reader would draw another's images.
+fn two_readers_resolve_their_own_inline_images() {
+    if adw::init().is_err() || gdk::Display::default().is_none() {
+        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
+        return;
+    }
+    let inline = test_corpus::load("inline-image-cid");
+    let parsed = postio_model::mime::parse(inline.bytes());
+    let recorder = |seen: Rc<RefCell<Vec<String>>>| -> Rc<dyn BlobSource> {
+        Rc::new(move |content_id: &str| {
+            seen.borrow_mut().push(content_id.to_owned());
+            None
+        })
+    };
+    let first_seen = Rc::new(RefCell::new(Vec::new()));
+    let second_seen = Rc::new(RefCell::new(Vec::new()));
+    let first = Reader::with_allowlist(
+        recorder(Rc::clone(&first_seen)),
+        RemoteImageAllowList::default(),
+        scratch_path("own-cid-first"),
+    );
+    let second = Reader::with_allowlist(
+        recorder(Rc::clone(&second_seen)),
+        RemoteImageAllowList::default(),
+        scratch_path("own-cid-second"),
+    );
+    let window = gtk::Window::new();
+    let holder = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    holder.append(&first.widget());
+    holder.append(&second.widget());
+    window.set_child(Some(&holder));
+    window.present();
+    pump();
+
+    let finished = track_load_finished(&second);
+    second.render(&parsed.body, None);
+    wait_for(&finished, Duration::from_secs(5));
+    pump();
+    assert!(
+        !second_seen.borrow().is_empty(),
+        "the reader that drew the message never resolved its images"
+    );
+    assert!(
+        first_seen.borrow().is_empty(),
+        "a reader that drew nothing was asked for another reader's images: {:?}",
+        first_seen.borrow()
+    );
+    window.set_visible(false);
 }
 
 /// A blob source with nothing in it, for a render that needs no `cid:` parts.
@@ -2215,10 +2275,11 @@ fn main() {
 
 /// ADR 0032's claim, measured: a thread of any length is one web process.
 ///
-/// The stacked pane builds a `Reader` per expanded message, and
-/// `each_reader_costs_a_web_process_of_its_own` above is why that is not
-/// free — WebKitGTK runs a process per *view*, so a thirty-message thread
-/// ends with thirty of them. One document in one view should cost one,
+/// The stacked pane builds a `Reader` per expanded message, and WebKitGTK
+/// ran a process per view with a context of its own, so a thirty-message
+/// thread ended with thirty of them; readers are related views of one
+/// another now (#1603, `readers_share_one_web_process` above), which is the
+/// other half of the same saving. One document in one view should cost one,
 /// whatever the thread's length, and this is what says whether it does.
 ///
 /// Counted rather than timed, and counted against a *long* thread and a
@@ -2287,12 +2348,12 @@ fn a_whole_thread_costs_one_web_process() {
     // `[.., 74321]`). What the claim is about is the processes *this* reader
     // adds.
     let spawned: Vec<_> = short.iter().filter(|pid| !before.contains(pid)).collect();
-    assert_eq!(
-        spawned.len(),
-        1,
-        "the thread never rendered, or it cost more than one view's process \
-         ({before:?} -> {short:?}), and either way the count below proves \
-         nothing"
+    // At most one: a reader whose context another reader already made
+    // shares its process and adds none (#1603). Whether the thread rendered
+    // at all is the document check at the foot of this case.
+    assert!(
+        spawned.len() <= 1,
+        "the thread cost more than one view's process ({before:?} -> {short:?})"
     );
     let grown: Vec<_> = long.iter().filter(|pid| !short.contains(pid)).collect();
     assert!(
@@ -2350,10 +2411,11 @@ fn a_dead_web_process_fails_the_wait_for_it_at_once() {
         pump();
         std::thread::sleep(Duration::from_millis(10));
     }
-    assert_eq!(
-        postio_gtk::web_process::deaths(),
-        before + 1,
-        "the death was counted"
+    // Counted once per view that lost it: readers share one web process
+    // (#1603), so every reader alive in this binary hears the same death.
+    assert!(
+        postio_gtk::web_process::deaths() > before,
+        "the death was not counted"
     );
     assert!(
         postio_gtk::web_process::last_death().is_some(),
