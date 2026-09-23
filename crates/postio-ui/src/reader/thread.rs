@@ -158,6 +158,146 @@ pub struct Entry<'a> {
     pub styles: &'a str,
 }
 
+/// One message of a conversation document, before its body is drawn.
+///
+/// The frontend's view of a message -- who, when, whether it is open, and its
+/// body still unsanitised -- which [`compose`] turns into an [`Entry`]. It
+/// lived in `postio-gtk`'s reader, and moved here with [`compose`] so the
+/// macOS pane composes the same document from the same decisions rather than
+/// a second copy of them (#1595).
+///
+/// `Clone` because a reader keeps the thread it drew: the `Show` verb inside
+/// the document has to re-render after granting consent, and it re-renders
+/// the same messages rather than asking for them again.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ThreadMessage {
+    /// What this message's `cid:` references are stamped with, and what the
+    /// scheme handler routes on. The message id in decimal: unreserved
+    /// characters only, since it goes into a URI unescaped.
+    pub scope: String,
+    /// Who it is from, as a person reads it.
+    pub sender: String,
+    /// Their address, shown beside the name on an open message (canvas 17),
+    /// and what the per-sender image decision is made on.
+    pub address: String,
+    /// When, already formatted.
+    pub when: String,
+    /// Who it went to, already drawn by
+    /// [`crate::reader::header::recipient_line`] (#1427).
+    pub recipients: String,
+    /// Who else was copied, by the same rule. Empty when nobody was.
+    pub cc: String,
+    /// The one line a collapsed message shows.
+    pub preview: String,
+    /// Whether it starts open.
+    pub expanded: bool,
+    /// Whether the body has not been backfilled yet.
+    ///
+    /// A message with no body used to contribute an empty section and say
+    /// nothing. Only the message that is *open* shows the plate: everything
+    /// unfetched stays the one line it already was, or a thread of thirty
+    /// would carry thirty explanations of one fact.
+    pub absent: bool,
+    /// Whether this is the newest message in the thread -- canvas 17's badge.
+    pub latest: bool,
+    /// Whether this is a draft: written here and never sent (#1212).
+    pub draft: bool,
+    /// Whether it came from one of the account's own addresses (#1241).
+    pub mine: bool,
+    /// The message body, unsanitised -- [`compose`] sanitises it under
+    /// [`scope`](Self::scope), which is the only way the reference stamping
+    /// can be guaranteed.
+    pub body: postio_model::MessageBody,
+}
+
+/// The whole thread as one document, deciding each message on its own terms.
+///
+/// `allowed` answers whether a sender's remote images are allowed, and
+/// `originals` holds the scopes the reader asked to see as sent (`⌃O`,
+/// #1398). Both frontends call this, so a conversation reads the same on
+/// either (#1595).
+pub fn compose(
+    messages: &[ThreadMessage],
+    allowed: impl Fn(&str) -> bool,
+    originals: &std::collections::HashSet<String>,
+) -> String {
+    use super::document::{Absent, Rendered, Rendering, absent_html, body_html_in};
+
+    // Rendered first, and held, because `Entry` borrows the markup. Reader
+    // view is decided per message, from the message: bulk mail opens reduced,
+    // correspondence never does, and a thread can hold both.
+    let rendered: Vec<Rendered> = messages
+        .iter()
+        .map(|message| {
+            // The reader's own choice first: `⌃O` on a message overrules what
+            // its content suggests, for that message and no other (#1398).
+            let rendering = if originals.contains(&message.scope) {
+                Rendering::Original
+            } else if super::document::suits_reader_view(&message.body) {
+                Rendering::Reader
+            } else {
+                Rendering::Original
+            };
+            // Per **message**, from its own sender (`PRODUCT.md` §21), so one
+            // allowed correspondent does not carry the rest of the thread with
+            // them (#1353).
+            let remote = if allowed(&message.address) {
+                RemoteImages::Allowed
+            } else {
+                RemoteImages::Blocked
+            };
+            if message.absent && message.expanded {
+                // The single-message pane's own words, and its `role="status"`
+                // live region with them, so a screen reader is told once.
+                // `Partial`: the thread knows only that no body is here yet.
+                return Rendered {
+                    html: absent_html(Absent::Partial),
+                    ..Rendered::default()
+                };
+            }
+            body_html_in(&message.body, remote, rendering, Some(&message.scope))
+        })
+        .collect();
+    let entries: Vec<Entry<'_>> = messages
+        .iter()
+        .zip(&rendered)
+        .map(|(message, rendered)| Entry {
+            scope: &message.scope,
+            sender: &message.sender,
+            address: &message.address,
+            when: &message.when,
+            preview: &message.preview,
+            expanded: message.expanded,
+            latest: message.latest,
+            draft: message.draft,
+            mine: message.mine,
+            blocked: rendered.held_back.remote_images,
+            body: &rendered.html,
+            styles: &rendered.styles,
+            recipients: &message.recipients,
+            cc: &message.cc,
+        })
+        .collect();
+
+    // The document's `Content-Security-Policy` is one policy for the whole
+    // page, with no per-message form -- the limitation ADR 0032 names. So it
+    // opens only when some message is from a sender the user allowed, and the
+    // *sanitizer* keeps the others out: a blocked sender's `src` is dropped
+    // before the markup is composed. For such a page the policy is no longer a
+    // second, independent refusal; it is still the only refusal for every
+    // thread where nobody is allowed, which is the ordinary case.
+    let anyone_allowed = messages.iter().any(|message| allowed(&message.address));
+    conversation_document(
+        &entries,
+        if anyone_allowed {
+            RemoteImages::Allowed
+        } else {
+            RemoteImages::Blocked
+        },
+        super::document::Sheet::Theme,
+    )
+}
+
 /// The whole conversation, as one hardened document.
 ///
 /// Each message is a `<details>` whose `<summary>` is its header, and whose
@@ -807,5 +947,90 @@ mod tests {
             "a message with nothing to fold gained a fold from its neighbour: \
              {grace}"
         );
+    }
+}
+
+#[cfg(test)]
+mod compose_tests {
+    use super::*;
+    use postio_model::MessageBody;
+    use std::collections::HashSet;
+
+    /// One message from `address`, open, with a remote image in its body.
+    fn from(scope: &str, address: &str) -> ThreadMessage {
+        ThreadMessage {
+            scope: scope.to_owned(),
+            sender: address.to_owned(),
+            address: address.to_owned(),
+            when: "10:40".to_owned(),
+            preview: "the gate".to_owned(),
+            expanded: true,
+            body: MessageBody {
+                text: None,
+                html: Some(format!(
+                    r#"<p>From {scope}.</p><img src="https://images.example.com/{scope}.png" alt="pixel">"#
+                )),
+            },
+            ..ThreadMessage::default()
+        }
+    }
+
+    #[test]
+    fn a_sender_the_user_allowed_keeps_their_images_and_nobody_else_does() {
+        // Per sender, never per page (#1353, `PRODUCT.md` §21): one allowed
+        // correspondent must not carry the rest of the thread with them.
+        let messages = [from("1", "ada@example.com"), from("2", "bo@example.org")];
+        let document = compose(
+            &messages,
+            |address| address == "ada@example.com",
+            &HashSet::new(),
+        );
+        assert!(
+            document.contains("images.example.com/1.png"),
+            "the allowed sender's image went"
+        );
+        assert!(
+            !document.contains("images.example.com/2.png"),
+            "a stranger's image rode in on somebody else's grant"
+        );
+    }
+
+    #[test]
+    fn the_page_opens_to_remote_images_only_when_someone_in_it_is_allowed() {
+        // The policy is one per page, so it is the sanitizer that keeps a
+        // blocked sender out -- and the policy is still the only refusal for
+        // the ordinary thread, where nobody is allowed.
+        let messages = [from("1", "ada@example.com")];
+        let nobody = compose(&messages, |_| false, &HashSet::new());
+        assert!(
+            !nobody.contains("img-src postio-cid: data: http: https:"),
+            "{nobody}"
+        );
+        let someone = compose(&messages, |_| true, &HashSet::new());
+        assert!(someone.contains("img-src postio-cid: data: http: https:"));
+    }
+
+    #[test]
+    fn a_body_still_coming_says_so_only_where_it_is_open() {
+        // One explanation, not thirty: a collapsed message is its one line.
+        let mut open = from("1", "ada@example.com");
+        open.absent = true;
+        let mut shut = from("2", "bo@example.org");
+        shut.absent = true;
+        shut.expanded = false;
+        let document = compose(&[open, shut], |_| false, &HashSet::new());
+        assert_eq!(document.matches("role=\"status\"").count(), 1, "{document}");
+    }
+
+    #[test]
+    fn every_message_has_the_anchor_the_pane_scrolls_to() {
+        let messages = [from("1", "ada@example.com"), from("2", "bo@example.org")];
+        let document = compose(&messages, |_| false, &HashSet::new());
+        for scope in ["1", "2"] {
+            assert!(
+                document.contains(&format!("id=\"{}\"", message_anchor(scope))),
+                "message {scope} cannot be scrolled to"
+            );
+        }
     }
 }

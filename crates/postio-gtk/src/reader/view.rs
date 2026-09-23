@@ -270,66 +270,10 @@ type PartsRequestedHandler = Box<dyn Fn()>;
 
 /// One message's place in a conversation rendered into a single view.
 ///
-/// `Clone` because the reader keeps the thread it drew: the `Show` verb inside
-/// the document has to re-render after granting consent, and it re-renders the
-/// same messages rather than asking the application for them again.
-///
-/// See [`Reader::render_thread`] and ADR 0032.
-#[derive(Clone)]
-pub struct ThreadMessage {
-    /// What this message's `cid:` references are stamped with, and what the
-    /// scheme handler routes on. The message id in decimal: unreserved
-    /// characters only, since it goes into a URI unescaped.
-    pub scope: String,
-    /// Who it is from, as a person reads it.
-    pub sender: String,
-    /// Their address, shown beside the name on an open message (canvas 17).
-    pub address: String,
-    /// When, already formatted.
-    pub when: String,
-    /// Who it went to, already drawn by
-    /// `postio_ui::reader::header::recipient_line` -- the same rule the
-    /// stacked pane's per-entry header uses, so the two panes cannot start
-    /// counting recipients differently (#1427).
-    pub recipients: String,
-    /// Who else was copied, by the same rule. Empty when nobody was.
-    pub cc: String,
-    /// The one line a collapsed message shows.
-    pub preview: String,
-    /// Whether it starts open.
-    pub expanded: bool,
-    /// Whether the body has not been backfilled yet.
-    ///
-    /// A conversation is one document (ADR 0032), so a message with no body
-    /// used to contribute an empty section and say nothing -- the reader saw
-    /// a message that would not open and no reason why. `Absent::Partial`'s
-    /// plate is the answer the single-message path has always given, and this
-    /// is what carries the question into the thread.
-    ///
-    /// Only the message that is *open* shows the plate. Everything unfetched
-    /// stays the one line it already was, because
-    /// `expanded_in_document` opens every message in the thread and a plate
-    /// on each would be thirty explanations of one fact.
-    pub absent: bool,
-    /// Whether this is the newest message in the thread — canvas 17's badge.
-    pub latest: bool,
-    /// Whether this is a draft: written here and never sent.
-    ///
-    /// Changes which verbs the message offers -- `Continue editing` alone
-    /// (#1212). The conversation knows it from `Row::draft`; the reader only
-    /// carries it through to the document.
-    pub draft: bool,
-    /// Whether it came from one of the account's own addresses (#1241).
-    ///
-    /// Folded by the conversation, which is the only layer that knows the
-    /// account's identities -- `postio-gtk`'s reader has no notion of who
-    /// the user is and should not grow one.
-    pub mine: bool,
-    /// The message body, unsanitised — [`Reader::render_thread`] sanitises it
-    /// under [`scope`](Self::scope), which is the only way the reference
-    /// stamping can be guaranteed.
-    pub body: MessageBody,
-}
+/// Shared since #1595, with the composition that draws it: the macOS pane
+/// builds the same document from the same decisions. See
+/// [`postio_ui::reader::thread::compose`] and ADR 0032.
+pub use postio_ui::reader::thread::ThreadMessage;
 
 impl Reader {
     /// Build a reader that resolves inline (`cid:`) images through `source`.
@@ -1726,119 +1670,20 @@ fn load_document(canvas: &Canvas<'_>, document: &str) {
 /// `render_open` is one: the `Show` verb inside the document has to be able
 /// to re-render after granting consent, and a closure that held the whole
 /// `Reader` to do it would hold the widget that owns the closure.
+///
+/// The decisions -- reader view or original, images per sender, the absence
+/// plate, when the page's policy opens -- are
+/// [`postio_ui::reader::thread::compose`]'s, which the macOS pane calls too
+/// (#1595). What is left here is this reader's allow list.
 fn compose_thread_document(
     messages: &[ThreadMessage],
     allowlist: &RefCell<RemoteImageAllowList>,
     originals: &std::collections::HashSet<String>,
 ) -> String {
-    // Rendered first, and held, because `Entry` borrows the markup.
-    // Reader view is decided per message, from the message, exactly as
-    // `render` decides it for one: bulk mail opens reduced, correspondence
-    // never does. A thread can hold both.
-    let rendered: Vec<postio_ui::reader::document::Rendered> = messages
-        .iter()
-        .map(|message| {
-            // The reader's own choice first: `⌃O` on a message overrules what
-            // its content suggests, for that message and no other (#1398).
-            let rendering = if originals.contains(&message.scope) {
-                Rendering::Original
-            } else if postio_ui::reader::document::suits_reader_view(&message.body) {
-                Rendering::Reader
-            } else {
-                Rendering::Original
-            };
-            // Per **message**, from its own sender. A conversation holds
-            // several and the decision is per sender (`PRODUCT.md` §21),
-            // so one allowed correspondent must not carry the rest of the
-            // thread with them. This asked for `Blocked` unconditionally,
-            // which threw away a decision the user had already made the
-            // moment the message appeared in a conversation (#1353).
-            let remote = if allowlist.borrow().is_allowed(&message.address) {
-                RemoteImages::Allowed
-            } else {
-                RemoteImages::Blocked
-            };
-            if message.absent && message.expanded {
-                // The same words the single-message pane has always used, not
-                // a second way of saying it -- `absent_html` carries the
-                // `role="status"` live region with it, so a screen reader is
-                // told when the body is still coming and told it once.
-                //
-                // `Partial` rather than a state read per message: the thread
-                // knows only that no body is here yet, which is what `Partial`
-                // means. Offline is said by the connection banner, which is
-                // about the account and not about one message.
-                //
-                // Only when it is open. A collapsed message contributes its
-                // section to the document either way, so emitting the plate
-                // for all of them puts thirty copies of one sentence into a
-                // thirty-message thread -- invisible, but each carrying an
-                // `aria-live` region, which is not invisible to a screen
-                // reader. A collapsed message is its one preview line, and
-                // that line is built from headers, which are here.
-                return postio_ui::reader::document::Rendered {
-                    html: postio_ui::reader::document::absent_html(
-                        postio_ui::reader::document::Absent::Partial,
-                    ),
-                    ..postio_ui::reader::document::Rendered::default()
-                };
-            }
-            postio_ui::reader::document::body_html_in(
-                &message.body,
-                remote,
-                rendering,
-                Some(&message.scope),
-            )
-        })
-        .collect();
-    let entries: Vec<postio_ui::reader::thread::Entry<'_>> = messages
-        .iter()
-        .zip(&rendered)
-        .map(|(message, rendered)| postio_ui::reader::thread::Entry {
-            scope: &message.scope,
-            sender: &message.sender,
-            address: &message.address,
-            when: &message.when,
-            preview: &message.preview,
-            expanded: message.expanded,
-            latest: message.latest,
-            draft: message.draft,
-            mine: message.mine,
-            blocked: rendered.held_back.remote_images,
-            body: &rendered.html,
-            styles: &rendered.styles,
-            recipients: &message.recipients,
-            cc: &message.cc,
-        })
-        .collect();
-
-    // The document's `Content-Security-Policy` is one policy for the whole
-    // page, and there is no per-message form of it -- which is exactly the
-    // limitation ADR 0032 names: "a document-level network policy cannot
-    // express [per-sender], so the distinction has to move into how each
-    // message's images are addressed".
-    //
-    // So it opens only when some message in the thread is from a sender
-    // the user allowed, and the *sanitizer* is what keeps the others out:
-    // a blocked sender's `src` is dropped before the markup is composed,
-    // and the assertion in `gtk_reader` that a stranger's image is absent
-    // is what holds that line.
-    //
-    // Worth saying plainly rather than leaving implied: for such a
-    // document the CSP is no longer a second, independent refusal. It is
-    // still the only refusal for every thread where nobody is allowed,
-    // which is the ordinary case.
-    let anyone_allowed = messages
-        .iter()
-        .any(|message| allowlist.borrow().is_allowed(&message.address));
-    postio_ui::reader::thread::conversation_document(
-        &entries,
-        if anyone_allowed {
-            RemoteImages::Allowed
-        } else {
-            RemoteImages::Blocked
-        },
-        postio_ui::reader::document::Sheet::Theme,
+    postio_ui::reader::thread::compose(
+        messages,
+        |address| allowlist.borrow().is_allowed(address),
+        originals,
     )
 }
 
