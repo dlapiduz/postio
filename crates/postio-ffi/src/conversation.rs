@@ -238,3 +238,22 @@ pub fn thread_verb(url: String) -> Option<ThreadVerbFfi> {
         message: scope.parse().ok()?,
     })
 }
+
+/// The host script that scrolls a conversation document to `anchor`.
+/// `postio_ui::reader::thread::scroll_script`, for `J`, `K` and the rail.
+#[uniffi::export]
+pub fn thread_scroll_script(anchor: String) -> String {
+    postio_ui::reader::thread::scroll_script(&anchor)
+}
+
+/// The host script that folds or unfolds the message at `anchor` (`z`).
+#[uniffi::export]
+pub fn thread_toggle_script(anchor: String) -> String {
+    postio_ui::reader::thread::toggle_script(&anchor)
+}
+
+/// The host script that opens every message (*Expand all*).
+#[uniffi::export]
+pub fn thread_expand_all_script() -> String {
+    postio_ui::reader::thread::expand_all_script()
+}

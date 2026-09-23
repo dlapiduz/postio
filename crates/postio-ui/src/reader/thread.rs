@@ -199,6 +199,54 @@ pub struct Entry<'a> {
     pub styles: &'a str,
 }
 
+/// A host script that scrolls the page to `anchor` -- `J`, `K`, the rail.
+///
+/// Postio's own script, evaluated by the frontend: the page's own script is
+/// off (ADR 0003). `getElementById` takes a string and never parses a
+/// selector, so the only thing to escape against is the literal it is quoted
+/// in -- and the ids are Postio's own, so that escape is belt and braces
+/// rather than the control. The rule GTK's reader uses for its fragments.
+pub fn scroll_script(anchor: &str) -> String {
+    format!(
+        "(() => {{ const target = document.getElementById(\"{}\"); \
+         if (target) {{ target.scrollIntoView(); }} }})()",
+        quoted(anchor)
+    )
+}
+
+/// A host script that folds or unfolds the message at `anchor` -- `z`.
+///
+/// Expansion is the document's state, not a model's: with the page's script
+/// off, the application cannot see a person click a summary, so the toggle
+/// acts on what is on screen rather than on what the host believes is.
+pub fn toggle_script(anchor: &str) -> String {
+    format!(
+        "(() => {{ const message = document.getElementById(\"{}\"); \
+         if (message) {{ message.open = !message.open; }} }})()",
+        quoted(anchor)
+    )
+}
+
+/// A host script that opens every message -- *Expand all*.
+pub fn expand_all_script() -> String {
+    "(() => { for (const message of document.querySelectorAll('details.postio-message')) \
+     { message.open = true; } })()"
+        .to_owned()
+}
+
+/// `text` inside a double-quoted script literal: its escapes and its quote
+/// escaped, line breaks dropped -- a literal cannot hold one.
+fn quoted(text: &str) -> String {
+    text.chars()
+        .map(|character| match character {
+            '\\' => "\\\\".to_owned(),
+            '"' => "\\\"".to_owned(),
+            '\n' | '\r' => String::new(),
+            other => other.to_string(),
+        })
+        .collect()
+}
+
 /// One message of a conversation document, before its body is drawn.
 ///
 /// The frontend's view of a message -- who, when, whether it is open, and its
@@ -1147,5 +1195,48 @@ mod verb_tests {
             );
             assert_eq!(verb_of(&href), Some((verb, "12".to_owned())));
         }
+    }
+}
+
+#[cfg(test)]
+mod script_tests {
+    use super::*;
+
+    #[test]
+    fn scrolling_to_a_message_finds_it_by_id() {
+        let script = scroll_script(&message_anchor("42"));
+        assert!(script.contains(r#"getElementById("m-42")"#), "{script}");
+        assert!(script.contains("scrollIntoView"), "{script}");
+    }
+
+    #[test]
+    fn an_anchor_cannot_close_the_literal_it_is_quoted_in() {
+        // The ids are Postio's own, so this is belt and braces -- but a quote
+        // or a backslash in one would otherwise end the string and run the
+        // rest as script.
+        let script = scroll_script("m-\"); alert(1); (\"");
+        assert!(
+            script.contains(r#"getElementById("m-\"); alert(1); (\"")"#),
+            "the quote was not escaped, so it closed the literal: {script}"
+        );
+        let script = toggle_script("a\\\nb");
+        assert!(
+            !script.contains('\n'),
+            "a line break ends a literal: {script}"
+        );
+    }
+
+    #[test]
+    fn folding_toggles_one_message_and_expanding_opens_every_one() {
+        let fold = toggle_script(&message_anchor("7"));
+        assert!(
+            fold.contains(r#"getElementById("m-7")"#) && fold.contains(".open = !"),
+            "{fold}"
+        );
+        let all = expand_all_script();
+        assert!(
+            all.contains("querySelectorAll") && all.contains(".open = true"),
+            "{all}"
+        );
     }
 }

@@ -245,3 +245,21 @@ async fn each_anchor_carries_the_sender_the_show_link_would_allow() {
     );
     session.shutdown();
 }
+
+#[test]
+fn the_document_scripts_are_the_shared_ones() {
+    // The Mac runs these against the page; GTK's reader runs the same rules.
+    use postio_ui::reader::thread;
+    assert_eq!(
+        postio_ffi::thread_scroll_script("m-4".to_owned()),
+        thread::scroll_script("m-4")
+    );
+    assert_eq!(
+        postio_ffi::thread_toggle_script("m-4".to_owned()),
+        thread::toggle_script("m-4")
+    );
+    assert_eq!(
+        postio_ffi::thread_expand_all_script(),
+        thread::expand_all_script()
+    );
+}
