@@ -728,6 +728,7 @@ pub fn body_html_in(
     rendering: Rendering,
     scope: Option<&str>,
 ) -> Rendered {
+    crate::reader::cost::bump(&crate::reader::cost::BODIES_SANITISED, 1);
     let html = body.html.as_deref().filter(|html| !html.trim().is_empty());
     let text = body.text.as_deref().filter(|text| !text.trim().is_empty());
 
@@ -907,6 +908,160 @@ pub fn content_security_policy(remote: RemoteImages) -> String {
          img-src {img_src}; font-src {FONT_SCHEME}:; base-uri 'none'; form-action 'none'; \
          frame-src 'none'; connect-src 'none'"
     )
+}
+
+/// What the sanitiser made of each message of a thread, kept while the
+/// thread is on screen, so a redraw re-sanitises only what changed (#1605).
+///
+/// A conversation redraws whenever anything queues one -- a body arriving, a
+/// thread reopening, a read-mark -- and each redraw put every body in the
+/// thread through the sanitiser again, several html5ever parses each, on the
+/// main thread. What the sanitiser returns depends on the body, the image
+/// policy and the rendering and nothing else, so those are the key; the body
+/// is compared by value, which is a memory comparison against the parse it
+/// saves.
+#[derive(Debug, Default)]
+pub struct RenderCache {
+    held: std::collections::HashMap<String, Held>,
+}
+
+#[derive(Debug)]
+struct Held {
+    body: MessageBody,
+    remote: RemoteImages,
+    rendering: Rendering,
+    rendered: Rendered,
+}
+
+impl RenderCache {
+    /// [`body_html_in`] for the message `scope`, from the cache when the
+    /// body and both decisions are what they were last time.
+    pub fn render(
+        &mut self,
+        scope: &str,
+        body: &MessageBody,
+        remote: RemoteImages,
+        rendering: Rendering,
+    ) -> Rendered {
+        if let Some(held) = self.held.get(scope)
+            && held.remote == remote
+            && held.rendering == rendering
+            && held.body == *body
+        {
+            return held.rendered.clone();
+        }
+        let rendered = body_html_in(body, remote, rendering, Some(scope));
+        self.held.insert(
+            scope.to_owned(),
+            Held {
+                body: body.clone(),
+                remote,
+                rendering,
+                rendered: rendered.clone(),
+            },
+        );
+        rendered
+    }
+
+    /// Forget every message but these: the thread on screen is what the
+    /// cache is for, and a message that left it is not drawn again.
+    pub fn keep_only<'a>(&mut self, scopes: impl IntoIterator<Item = &'a str>) {
+        let keep: std::collections::HashSet<&str> = scopes.into_iter().collect();
+        self.held.retain(|scope, _| keep.contains(scope.as_str()));
+    }
+
+    /// How many messages the cache holds.
+    pub fn len(&self) -> usize {
+        self.held.len()
+    }
+
+    /// Whether the cache holds nothing.
+    pub fn is_empty(&self) -> bool {
+        self.held.is_empty()
+    }
+}
+
+#[cfg(test)]
+mod render_cache_tests {
+    use super::*;
+
+    fn body(html: &str) -> MessageBody {
+        MessageBody {
+            text: None,
+            html: Some(html.to_owned()),
+        }
+    }
+
+    #[test]
+    fn a_message_is_sanitised_once_until_something_about_it_changes() {
+        // #1605: a conversation redraw re-sanitised every body in the thread,
+        // on the main thread, each time anything queued a redraw -- a body
+        // arriving, a thread reopening, a timer. The cache hands back what
+        // the sanitiser made for the same body under the same decisions.
+        let mut cache = RenderCache::default();
+        let before = crate::test_support::bodies_sanitised();
+        let first = cache.render(
+            "1",
+            &body("<p>hello</p>"),
+            RemoteImages::Blocked,
+            Rendering::Original,
+        );
+        let again = cache.render(
+            "1",
+            &body("<p>hello</p>"),
+            RemoteImages::Blocked,
+            Rendering::Original,
+        );
+        assert_eq!(first, again);
+        assert_eq!(
+            crate::test_support::bodies_sanitised() - before,
+            1,
+            "the same message under the same decisions was sanitised twice"
+        );
+
+        cache.render(
+            "1",
+            &body("<p>hello, edited</p>"),
+            RemoteImages::Blocked,
+            Rendering::Original,
+        );
+        cache.render(
+            "1",
+            &body("<p>hello, edited</p>"),
+            RemoteImages::Allowed,
+            Rendering::Original,
+        );
+        cache.render(
+            "1",
+            &body("<p>hello, edited</p>"),
+            RemoteImages::Allowed,
+            Rendering::Reader,
+        );
+        assert_eq!(
+            crate::test_support::bodies_sanitised() - before,
+            4,
+            "a new body, a new image policy and a new rendering are each drawn anew"
+        );
+    }
+
+    #[test]
+    fn the_cache_keeps_only_the_messages_it_was_last_told_about() {
+        let mut cache = RenderCache::default();
+        cache.render(
+            "1",
+            &body("<p>a</p>"),
+            RemoteImages::Blocked,
+            Rendering::Original,
+        );
+        cache.render(
+            "2",
+            &body("<p>b</p>"),
+            RemoteImages::Blocked,
+            Rendering::Original,
+        );
+        cache.keep_only(["2"]);
+        assert_eq!(cache.len(), 1, "a message that left the thread is not held");
+    }
 }
 
 #[cfg(test)]

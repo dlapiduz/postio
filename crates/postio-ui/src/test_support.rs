@@ -28,6 +28,13 @@ pub fn largest_document() -> u64 {
     cost::read(&cost::LARGEST_DOCUMENT)
 }
 
+/// How many message bodies this thread has put through the sanitiser for a
+/// reader. The cost [`crate::reader::document::RenderCache`] exists to
+/// bound (#1605).
+pub fn bodies_sanitised() -> u64 {
+    cost::read(&cost::BODIES_SANITISED)
+}
+
 /// How many documents this process has handed to a rendering surface.
 pub fn renders_issued() -> u64 {
     cost::read(&cost::RENDERS)

@@ -1624,9 +1624,10 @@ impl ConversationView {
         // a redraw -- a body arriving, a thread reopening, a timer armed
         // before either -- and they overlap, so the guard belongs here rather
         // than at each of them. This is #749's fourth cause, in a new pane.
-        if reader.would_render_thread(&messages) {
+        // One compose: the check and the load share it, and the reader's
+        // cache re-sanitises only a body that changed (#1605).
+        if reader.render_thread_if_changed(&messages) {
             imp.thread_renders.set(imp.thread_renders.get() + 1);
-            reader.render_thread(&messages);
         }
     }
 
