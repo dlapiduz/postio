@@ -1,0 +1,273 @@
+//! A message, as lines a terminal can draw.
+//!
+//! The body arrives from the daemon as the store holds it. The reader's own
+//! rules -- reader view or original, the sanitiser, quote folding -- are
+//! `postio_ui::reader::document`'s and `postio_body`'s, the same ones the
+//! desktop and macOS readers apply; then `postio_body::markdown::from_html`,
+//! and `tui-markdown` to style it (research R5).
+//!
+//! Everything from the message is made [`SafeText`] before it is styled, so
+//! no line here can carry a control sequence to the terminal.
+
+use postio_body::markdown::{END_FOLD, FOLD, IMAGE_SCHEME};
+use postio_ui::terminal::SafeText;
+use ratatui::text::Line;
+
+/// One block of a rendered message.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Block {
+    /// Lines that are always shown.
+    Lines(Vec<Line<'static>>),
+    /// Quoted history: folded unless expanded.
+    Fold {
+        /// Whether it is folded.
+        folded: bool,
+        /// Its lines, when expanded.
+        lines: Vec<Line<'static>>,
+    },
+}
+
+/// A message's body as blocks of lines.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct Rendered {
+    /// The blocks, top to bottom.
+    pub blocks: Vec<Block>,
+}
+
+impl Rendered {
+    /// The lines to draw, with folds as they stand.
+    pub fn lines(&self) -> Vec<Line<'static>> {
+        let mut out = Vec::new();
+        for block in &self.blocks {
+            match block {
+                Block::Lines(lines) => out.extend(lines.iter().cloned()),
+                Block::Fold {
+                    folded: true,
+                    lines,
+                } => out.push(Line::raw(format!("▸ quoted text ({} lines)", lines.len()))),
+                Block::Fold {
+                    folded: false,
+                    lines,
+                } => {
+                    out.push(Line::raw("▾ quoted text"));
+                    out.extend(lines.iter().cloned());
+                }
+            }
+        }
+        out
+    }
+}
+
+/// Sanitised, folded HTML as a rendered message.
+pub fn from_html(html: &str) -> Rendered {
+    let markdown = placeholders(&postio_body::markdown::from_html(html));
+    // Everything from the message, made safe before it is styled: every span
+    // `tui-markdown` makes is a slice of this.
+    let safe = SafeText::new(&markdown);
+
+    let mut blocks = Vec::new();
+    let mut open = String::new();
+    let mut quoted = String::new();
+    // Folds inside a fold join it: one level of "show quoted text" is what a
+    // person can act on, and the inner markers carry nothing of their own.
+    let mut depth = 0usize;
+    for line in safe.as_str().split('\n') {
+        match line.trim() {
+            FOLD => {
+                if depth == 0 && !open.trim().is_empty() {
+                    blocks.push(Block::Lines(styled(&open)));
+                    open.clear();
+                }
+                depth += 1;
+            }
+            END_FOLD if depth > 0 => {
+                depth -= 1;
+                if depth == 0 {
+                    blocks.push(Block::Fold {
+                        folded: true,
+                        lines: styled(&quoted),
+                    });
+                    quoted.clear();
+                }
+            }
+            _ => {
+                let into = if depth > 0 { &mut quoted } else { &mut open };
+                into.push_str(line);
+                into.push('\n');
+            }
+        }
+    }
+    if !quoted.trim().is_empty() {
+        blocks.push(Block::Fold {
+            folded: true,
+            lines: styled(&quoted),
+        });
+    }
+    if !open.trim().is_empty() {
+        blocks.push(Block::Lines(styled(&open)));
+    }
+    Rendered { blocks }
+}
+
+/// Markdown as styled lines that own their text.
+fn styled(markdown: &str) -> Vec<Line<'static>> {
+    tui_markdown::from_str(markdown)
+        .lines
+        .into_iter()
+        .map(|line| {
+            let style = line.style;
+            Line::from(
+                line.spans
+                    .into_iter()
+                    .map(|span| ratatui::text::Span::styled(span.content.into_owned(), span.style))
+                    .collect::<Vec<_>>(),
+            )
+            .style(style)
+        })
+        .collect()
+}
+
+/// `![alt](postio-image:N)` as the words `[image: alt]`, escaped so Markdown
+/// draws the brackets rather than reading a link.
+fn placeholders(markdown: &str) -> String {
+    let target = format!("]({IMAGE_SCHEME}:");
+    let mut out = String::with_capacity(markdown.len());
+    let mut rest = markdown;
+    while let Some(start) = rest.find("![") {
+        // A placeholder never spans lines; an ordinary `![` must not pair with
+        // a later image's target and swallow the words between them.
+        let line_end = rest[start..].find('\n').map_or(rest.len(), |at| start + at);
+        let (Some(close), Some(end)) = (
+            rest[start..line_end].find(&target),
+            rest[start..line_end].rfind(')'),
+        ) else {
+            out.push_str(&rest[..start + 2]);
+            rest = &rest[start + 2..];
+            continue;
+        };
+        let end = end - close;
+        out.push_str(&rest[..start]);
+        let alt = &rest[start + 2..start + close];
+        out.push_str(&format!("\\[image: {alt}\\]"));
+        rest = &rest[start + close + end + 1..];
+    }
+    out.push_str(rest);
+    out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use postio_body::{RemoteImages, fold_html_quotes, sanitize_body};
+
+    fn text(rendered: &Rendered) -> String {
+        rendered
+            .lines()
+            .iter()
+            .map(|line| {
+                line.spans
+                    .iter()
+                    .map(|span| span.content.as_ref())
+                    .collect::<String>()
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    #[test]
+    fn markdown_structure_is_drawn_without_its_markup() {
+        let rendered =
+            from_html("<h2>Plan</h2><p>Some <b>bold</b> words.</p><ul><li>one</li></ul>");
+        let drawn = text(&rendered);
+        assert!(
+            drawn.contains("Plan") && drawn.contains("bold") && drawn.contains("one"),
+            "{drawn}"
+        );
+        assert!(
+            !drawn.contains("**"),
+            "the markup is styling, not text: {drawn}"
+        );
+    }
+
+    #[test]
+    fn an_image_is_a_labelled_placeholder() {
+        let html = sanitize_body(
+            "<p>Hi</p><img src=\"https://example.org/x.png\" alt=\"Logo\">",
+            RemoteImages::Blocked,
+        )
+        .html;
+        let drawn = text(&from_html(&html));
+        assert!(drawn.contains("[image: Logo]"), "{drawn}");
+        assert!(!drawn.contains("postio-image"), "{drawn}");
+    }
+
+    #[test]
+    fn a_literal_exclamation_bracket_does_not_swallow_the_text_after_it() {
+        let rendered = placeholders("Wow![sic]\nlater ![Logo](postio-image:0) end");
+        assert!(rendered.starts_with("Wow![sic]\n"), "{rendered}");
+        assert!(
+            rendered.contains(r"\[image: Logo\]"),
+            "escaped for Markdown: {rendered}"
+        );
+        assert!(rendered.ends_with(" end"), "{rendered}");
+    }
+
+    #[test]
+    fn quoted_history_is_folded_until_expanded() {
+        let html = fold_html_quotes(
+            &sanitize_body(
+                "<p>Thanks!</p><blockquote><p>Earlier words</p></blockquote>",
+                RemoteImages::Blocked,
+            )
+            .html,
+        );
+        let rendered = from_html(&html);
+        let drawn = text(&rendered);
+        assert!(drawn.contains("Thanks!"), "{drawn}");
+        assert!(drawn.contains("▸ quoted text"), "{drawn}");
+        assert!(!drawn.contains("Earlier words"), "folded: {drawn}");
+    }
+
+    #[test]
+    fn no_corpus_message_reaches_the_terminal_with_markup_or_a_control_character() {
+        // SC-005, on what the terminal would actually draw.
+        let mut checked = 0;
+        for fixture in postio_model::test_corpus::all() {
+            let message = fixture.parse();
+            let Some(html) = message.body.html.as_deref() else {
+                continue;
+            };
+            let folded = fold_html_quotes(&sanitize_body(html, RemoteImages::Blocked).html);
+            let mut rendered = from_html(&folded);
+            for block in &mut rendered.blocks {
+                if let Block::Fold { folded, .. } = block {
+                    *folded = false;
+                }
+            }
+            let drawn = text(&rendered);
+            for forbidden in [
+                "<script",
+                "<div",
+                "<img",
+                "<table",
+                "<style",
+                "javascript:",
+                "postio-image",
+            ] {
+                assert!(
+                    !drawn.to_ascii_lowercase().contains(forbidden),
+                    "{forbidden} in {}",
+                    fixture.name()
+                );
+            }
+            if let Some(c) = drawn
+                .chars()
+                .find(|c| (c.is_control() && *c != '\n') || ('\u{202a}'..='\u{202e}').contains(c))
+            {
+                panic!("{c:?} from {} reached the terminal", fixture.name());
+            }
+            checked += 1;
+        }
+        assert!(checked >= 5, "only {checked} HTML messages were drawn");
+    }
+}

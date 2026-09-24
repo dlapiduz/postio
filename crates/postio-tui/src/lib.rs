@@ -14,6 +14,7 @@ pub mod app;
 pub mod caps;
 pub mod input;
 pub mod layout;
+pub mod reader;
 pub mod row;
 pub mod run;
 pub mod sidebar;

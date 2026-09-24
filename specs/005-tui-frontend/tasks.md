@@ -132,7 +132,7 @@ attachments.
 properties on the grid; US2 scenarios on the fixture store.
 
 - [X] T040 [US2] Write `postio_body::markdown::from_html` in `crates/postio-body/src/markdown.rs` wrapping htmd (T005 passed; research R5) with custom `img` handling (placeholder, never dropped) and `details` handling, keeping `<details>` as fold markers and images as `postio-image:<identity>`. Test first: T005's corpus test, now against `from_html`
-- [ ] T041 [US2] Write `crates/postio-tui/src/view/reader/render.rs`: Markdown → `RenderedMessage` via tui-markdown with a `StyleSheet` from `theme.rs`, a `linkify` pass, every span through `SafeText`. Test first: a corpus-wide test that the rendered grid contains no control character from content and no tag (SC-005)
+- [X] T041 [US2] Write `crates/postio-tui/src/reader.rs`: Markdown → `RenderedMessage` via tui-markdown with a `StyleSheet` from `theme.rs`, a `linkify` pass, every span through `SafeText`. Test first: a corpus-wide test that the rendered grid contains no control character from content and no tag (SC-005)
 - [ ] T042 [US2] Plain-text path in the same file: verbatim with `>` runs folded by `postio_body::quote`, never parsed as Markdown. Test first: US2 scenario 3, a `# not a heading` line renders literally
 - [ ] T043 [US2] Folds: collapsible `Fold` blocks, folded by default, toggled by the existing expand/collapse-quote commands. Test first: US2 scenario 1 snapshot, then the snapshot after expanding
 - [ ] T044 [US2] Images and remote content: placeholders `[image: alt · size]`, held-back counts in the header, the "allow remote images from this sender" command through `AllowRemoteImages`. Test first: US2 scenario 2 — the mock backend and the egress recorder see zero requests while the message is open
