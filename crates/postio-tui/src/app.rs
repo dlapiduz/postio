@@ -1992,6 +1992,12 @@ impl App {
         }
     }
 
+    /// The key that runs `command`, as this terminal can send it, for a
+    /// hint; `None` when nothing it can send is bound.
+    pub fn hint(&self, command: postio_core::CommandId) -> Option<String> {
+        postio_ui::terminal::deliverable_binding(self.keys.keymap(), command, self.enhanced_keys)
+    }
+
     /// The sidebar's lines, and which one the keyboard would be on.
     pub fn sidebar(&self) -> (&[crate::sidebar::Line], usize) {
         (&self.sidebar, self.sidebar_cursor)

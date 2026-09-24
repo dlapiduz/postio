@@ -1,4 +1,4 @@
-//! The search bar, over the list (US4).
+//! The search field, in the top bar (US4).
 
 use ratatui::Frame;
 use ratatui::layout::{Position, Rect};
@@ -8,8 +8,8 @@ use ratatui::text::{Line, Span};
 use crate::theme::{Role, Theme};
 use crate::view::fit;
 
-/// Draw the bar holding `query` in the top row of `area`, with `readout` at
-/// its right; answers the rest of `area`, for the list.
+/// Draw the field holding `query` in the top row of `area`, with `readout`
+/// at its right.
 ///
 /// The operators in the query are drawn as `chips` -- marked, in place -- so
 /// the query language is read back as it is typed, as the desktop's bar does
@@ -26,9 +26,9 @@ pub fn draw(
     readout: Option<&str>,
     focused: bool,
     theme: &Theme,
-) -> Rect {
+) {
     if area.height == 0 {
-        return area;
+        return;
     }
     let row = Rect::new(area.x, area.y, area.width, 1);
     let parsed = postio_search::parse(query, chrono::Local::now().date_naive());
@@ -83,5 +83,4 @@ pub fn draw(
             area.y,
         ));
     }
-    Rect::new(area.x, area.y + 1, area.width, area.height - 1)
 }

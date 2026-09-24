@@ -12,6 +12,7 @@ pub mod reader;
 pub mod search;
 pub mod settings;
 pub mod sidebar;
+pub mod topbar;
 pub mod wrap;
 
 use chrono::{DateTime, Local};
@@ -51,8 +52,13 @@ pub fn draw(frame: &mut Frame, app: &App, theme: &Theme, now: DateTime<Local>) -
             }
         }
         Shown::Panes(panes) => {
-            let [body, status] =
-                Layout::vertical([Constraint::Min(1), Constraint::Length(1)]).areas(area);
+            let [top, body, status] = Layout::vertical([
+                Constraint::Length(1),
+                Constraint::Min(1),
+                Constraint::Length(1),
+            ])
+            .areas(area);
+            topbar::draw(frame, top, app, theme);
             let widths: Vec<Constraint> = panes
                 .iter()
                 .map(|pane| match pane {
@@ -101,22 +107,9 @@ pub fn draw(frame: &mut Frame, app: &App, theme: &Theme, now: DateTime<Local>) -
                         );
                     }
                     Pane::List => {
-                        let list_area = match app.search_query() {
-                            Some(query) => search::draw(
-                                frame,
-                                *area,
-                                query,
-                                &app.search_chips(),
-                                app.search_caret(),
-                                app.search_readout().as_deref(),
-                                app.focus() == Focus::Search,
-                                theme,
-                            ),
-                            None => *area,
-                        };
                         list::draw(
                             frame,
-                            list_area,
+                            *area,
                             &app.visible(),
                             app.top(),
                             theme,
@@ -239,8 +232,12 @@ mod tests {
     }
 
     fn with_sidebar(size: (u16, u16)) -> App {
+        with_sidebar_and_keys(size, &Default::default())
+    }
+
+    fn with_sidebar_and_keys(size: (u16, u16), bindings: &postio_config::KeyBindings) -> App {
         use postio_model::mailbox::{Mailbox, MailboxRole};
-        let keys = Keys::new(&postio_core::Keymap::resolve(&Default::default())).0;
+        let keys = Keys::new(&postio_core::Keymap::resolve(bindings)).0;
         let mut app = App::new(size, keys);
         let mut account = postio_model::Account::new(
             "ada",
@@ -552,7 +549,7 @@ mod tests {
     }
 
     #[test]
-    fn the_search_bar_sits_over_the_list_with_its_readout() {
+    fn the_search_field_in_the_top_bar_holds_the_query_and_its_readout() {
         let mut app = with_sidebar((160, 16));
         update(
             &mut app,
@@ -582,11 +579,47 @@ mod tests {
             },
         );
         let screen = screen(160, 16, &app);
-        let bar = screen
-            .lines()
-            .find(|line| line.contains("/ from:ada tide"))
-            .unwrap_or_else(|| panic!("no bar:\n{screen}"));
+        let bar = screen.lines().next().expect("a top row");
+        assert!(
+            bar.contains("/ from:ada tide"),
+            "the search field is the top bar:\n{screen}"
+        );
+        assert!(
+            !bar.contains("Inbox"),
+            "across the top, over no pane:\n{screen}"
+        );
         assert!(bar.contains("1 hit · 7 ms · still syncing"), "{bar}");
+        assert!(
+            !bar.contains("Search all mail"),
+            "the query replaces the placeholder: {bar}"
+        );
+    }
+
+    #[test]
+    fn the_top_bar_offers_search_and_its_hints_come_from_the_keymap() {
+        let app = with_sidebar((160, 16));
+        let drawn = screen(160, 16, &app);
+        let top = drawn.lines().next().expect("a top row");
+        assert!(top.contains("Search all mail"), "{top}");
+        assert!(top.contains("? keys"), "{top}");
+        assert!(top.contains("c compose"), "{top}");
+
+        let mut bindings = postio_config::KeyBindings::default();
+        bindings
+            .overrides_mut()
+            .insert("compose".into(), "N".into());
+        let keymap = postio_core::Keymap::resolve(&bindings);
+        let compose = postio_ui::terminal::deliverable_binding(
+            &keymap,
+            postio_core::CommandId::Compose,
+            false,
+        )
+        .expect("still bound");
+        let rebound = with_sidebar_and_keys((160, 16), &bindings);
+        let drawn = screen(160, 16, &rebound);
+        let top = drawn.lines().next().expect("a top row");
+        assert!(top.contains(&format!("{compose} compose")), "{top}");
+        assert!(!top.contains("c compose"), "{top}");
     }
 
     #[test]
