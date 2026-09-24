@@ -1,11 +1,8 @@
 //! What a store holds, what it costs, and what the background lanes still
 //! owe -- counts, sizes, ids and header tokens, never mail.
 //!
-//! The reports `postio-diag` prints. A library rather than the binary's own
-//! code because the daemon owns the store while it runs (ADR 0041): with it
-//! running, `postio-diag` asks it for the report over the socket, and the
-//! daemon runs these same queries on its own connection. Without it, the
-//! binary opens the store and runs them itself.
+//! The reports `postio-diag` prints, over a connection to a store it opened
+//! -- the live one, or a copy.
 //!
 //! Every report issues `SELECT` and `PRAGMA` and nothing else.
 

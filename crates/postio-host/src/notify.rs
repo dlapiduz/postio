@@ -1,113 +1,25 @@
-//! New mail, told to exactly one frontend.
+//! New mail: whether an arrival is worth a notification, and what it says.
 //!
-//! With two frontends on one store, an arrival must still raise one desktop
-//! notification, not one per window (research R1c). So the host decides:
-//! whether this folder's arrivals notify at all (`[sync]`), whether the
-//! person is already looking at them, and what the notification says --
-//! `postio_ui::notify::decide`, unchanged -- and then sends the answer to one
-//! frontend, which only delivers it.
-//!
-//! **Which frontend** is an election held at each arrival: the first desktop
-//! app still connected, since a click on its notification raises its window;
-//! else the first terminal. A test client or the macOS frontend is never
-//! elected. With nobody to deliver it, nothing is read and nothing is said.
+//! Whether this folder's arrivals notify at all (`[sync]`), whether the
+//! person is already looking at them, and the words --
+//! `postio_ui::notify::decide`, unchanged, over the rows the store holds.
+//! The app that has the store open asks: the desktop app's window
+//! (`postio-app`'s `Notifier`) and the terminal ([`crate::Host::notification`]).
+//! Each only delivers what this answers.
 
-use std::sync::Weak;
-
-use postio_client::protocol::{ClientId, ClientKind};
 use postio_config::SyncConfig;
-use postio_core::Event;
-use postio_core::bridge::EventStream;
 use postio_model::listing::{MailStore, MessageSummary};
 use postio_model::{AccountId, MailboxId, MailboxRole, MessageId};
 use postio_storage::Store;
 use postio_storage::repository::{AccountRepository, MailboxRepository};
 use postio_ui::notify::{self, Attention, Decision, Notification, Wording};
 
-use crate::Inner;
-
-/// Who delivers notifications, among `clients`: the first connected
-/// desktop app, else the first connected terminal.
-///
-/// "First" is the lowest id: ids are handed out in the order clients
-/// connect, and never reused.
-pub fn elect(clients: impl IntoIterator<Item = (ClientId, ClientKind)>) -> Option<ClientId> {
-    let mut desktop = None;
-    let mut terminal = None;
-    for (id, kind) in clients {
-        let first = match kind {
-            ClientKind::Gtk => &mut desktop,
-            ClientKind::Tui => &mut terminal,
-            ClientKind::Ffi | ClientKind::Test => continue,
-        };
-        if first.is_none_or(|earlier: ClientId| id.0 < earlier.0) {
-            *first = Some(id);
-        }
-    }
-    desktop.or(terminal)
-}
-
-/// Hear every arrival for as long as the host lives, and tell the elected
-/// frontend about each one worth a notification.
-///
-/// One arrival at a time, in the order they came: a notification per folder
-/// replaces the one before it, so two raced would leave the older showing.
-pub(crate) async fn run(inner: Weak<Inner>, arrivals: EventStream) {
-    while let Some(event) = arrivals.next().await {
-        let Event::NewMail {
-            mailbox, messages, ..
-        } = event
-        else {
-            continue;
-        };
-        let Some(inner) = inner.upgrade() else {
-            return;
-        };
-        // Elected before anything is read: with nobody to tell, there is
-        // nothing worth reading.
-        let elected = {
-            let clients = inner.clients.lock().expect("never poisoned");
-            elect(clients.iter().map(|(id, entry)| (*id, entry.kind)))
-                .and_then(|id| clients.get(&id).map(|entry| (id, entry.attention)))
-        };
-        let Some((client, attention)) = elected else {
-            continue;
-        };
-        let config = inner.notify.lock().expect("never poisoned").clone();
-        let decided = decide_arrival(
-            &inner.wiring.database,
-            inner.wiring.store.as_ref(),
-            &config,
-            mailbox,
-            &messages,
-            attention,
-        )
-        .await;
-        let Some(notification) = decided else {
-            continue;
-        };
-        // Whoever is elected now: the one elected above may have left while
-        // the rows were read.
-        let notices = inner
-            .clients
-            .lock()
-            .expect("never poisoned")
-            .get(&client)
-            .map(|entry| entry.notices.clone());
-        if let Some(notices) = notices {
-            tracing::debug!(client = client.0, mailbox = mailbox.get(), "new mail told");
-            let _ = notices.try_send(notification);
-        }
-    }
-}
-
 /// Whether `messages` arriving in `mailbox` is worth a notification, and
 /// what it says: `[sync]`'s folder gate, then [`notify::decide`] over the
 /// rows, worded with the newest arrival's sender and subject.
 ///
-/// The one decision every frontend's notification comes from, whether this
-/// host sends it over a socket or a frontend in this process asks it itself.
-/// A store that cannot be read is no notification, never an error.
+/// The one decision every frontend's notification comes from. A store that
+/// cannot be read is no notification, never an error.
 pub async fn decide_arrival(
     database: &Store,
     store: &dyn MailStore,
@@ -211,11 +123,6 @@ pub fn decision(
 
 #[cfg(test)]
 pub(crate) mod tests {
-    use std::time::Duration;
-
-    use postio_client::Client;
-    use postio_ui::notify::{Attention, Notification};
-
     use postio_model::EmailAddress;
     use postio_ui::notify::Suppressed;
 
@@ -257,102 +164,38 @@ pub(crate) mod tests {
         }
     }
 
-    /// The world's message arrives, as the engine says so.
-    pub(crate) fn arrive(world: &World) {
-        world.host().wiring().events.emit(Event::NewMail {
-            account: world.account,
-            mailbox: world.inbox(),
-            messages: vec![world.message()],
-        });
-    }
-
-    /// The next notification `client` is asked to deliver, if one comes.
-    fn told(world: &World, client: &Client) -> Option<Notification> {
-        let notices = client.notifications();
-        world.rt.block_on(async {
-            tokio::time::timeout(Duration::from_millis(500), notices.recv())
-                .await
-                .ok()
-                .and_then(Result::ok)
-        })
+    /// What the host answers about the world's message arriving in its
+    /// inbox, with the person's attention where `attention` says.
+    fn told(world: &World, attention: Attention) -> Option<Notification> {
+        world.rt.block_on(world.host().notification(
+            world.inbox(),
+            vec![world.message()],
+            attention,
+        ))
     }
 
     #[test]
-    fn the_first_desktop_app_is_elected_over_an_earlier_terminal() {
-        let clients = [
-            (ClientId(1), ClientKind::Tui),
-            (ClientId(3), ClientKind::Gtk),
-            (ClientId(2), ClientKind::Gtk),
-        ];
-        assert_eq!(elect(clients), Some(ClientId(2)));
-    }
-
-    #[test]
-    fn with_no_desktop_app_the_first_terminal_is_elected_and_nobody_else_ever() {
-        assert_eq!(
-            elect([
-                (ClientId(4), ClientKind::Tui),
-                (ClientId(1), ClientKind::Test),
-                (ClientId(2), ClientKind::Ffi),
-                (ClientId(3), ClientKind::Tui),
-            ]),
-            Some(ClientId(3))
-        );
-        assert_eq!(
-            elect([
-                (ClientId(1), ClientKind::Test),
-                (ClientId(2), ClientKind::Ffi)
-            ]),
-            None
-        );
-    }
-
-    #[test]
-    fn an_arrival_is_told_to_the_desktop_app_once_then_to_the_terminal_when_it_leaves() {
+    fn an_arrival_the_person_is_not_looking_at_is_told_once_decided() {
         let world = World::new();
-        let (terminal, _) = world.frontend(ClientKind::Tui);
-        let (desktop, _) = world.frontend(ClientKind::Gtk);
-
-        arrive(&world);
-        let notification = told(&world, &desktop).expect("the desktop app is told");
+        let notification = told(&world, Attention::default()).expect("a notification");
         assert_eq!(notification.mailbox, world.inbox());
         assert_eq!(notification.message, Some(world.message()));
-        assert_eq!(
-            told(&world, &desktop),
-            None,
-            "one arrival, one notification"
-        );
-        assert_eq!(
-            told(&world, &terminal),
-            None,
-            "and the terminal says nothing"
-        );
-
-        drop(desktop);
-        arrive(&world);
-        let notification = told(&world, &terminal).expect("the terminal is told now");
-        assert_eq!(notification.mailbox, world.inbox());
     }
 
     #[test]
-    fn mail_landing_where_the_elected_frontend_is_looking_is_not_told() {
+    fn mail_landing_where_the_person_is_looking_is_not_told() {
         let world = World::new();
-        let (desktop, _) = world.frontend(ClientKind::Gtk);
-        desktop.attention(Attention {
+        let looking = Attention {
             showing: Some(world.inbox()),
             active: true,
-        });
-
-        arrive(&world);
-        assert_eq!(told(&world, &desktop), None);
-
+        };
+        assert_eq!(told(&world, looking), None);
         // Behind another application, the same folder is not being watched.
-        desktop.attention(Attention {
-            showing: Some(world.inbox()),
+        let behind = Attention {
             active: false,
-        });
-        arrive(&world);
-        assert!(told(&world, &desktop).is_some());
+            ..looking
+        };
+        assert!(told(&world, behind).is_some());
     }
 
     #[test]
@@ -362,16 +205,13 @@ pub(crate) mod tests {
             notify: false,
             ..Default::default()
         });
-        let (desktop, _) = world.frontend(ClientKind::Gtk);
-        arrive(&world);
-        assert_eq!(told(&world, &desktop), None);
+        assert_eq!(told(&world, Attention::default()), None);
 
         world
             .host()
             .notify_with(postio_config::SyncConfig::default());
-        arrive(&world);
         assert!(
-            told(&world, &desktop).is_some(),
+            told(&world, Attention::default()).is_some(),
             "the inbox is watched by default"
         );
     }

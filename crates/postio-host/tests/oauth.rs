@@ -5,7 +5,7 @@
 //! environment (`postio-app/tests/oauth_signin.rs` says why at length).
 //!
 //! What it proves: the consent URL comes back to the frontend in full, and
-//! nothing is opened or fetched until the person acts -- the daemon's browser
+//! nothing is opened or fetched until the person acts -- the host's browser
 //! opener only reports the URL, and the provider's token endpoint has not
 //! been contacted. Cancelling ends it, in words.
 //!

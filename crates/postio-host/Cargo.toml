@@ -1,16 +1,12 @@
 [package]
 name = "postio-host"
-description = "The one process that owns Postio's store, and serves every frontend (ADR 0041)"
+description = "What owns Postio's store in the app that opened it, and serves that app's frontend (ADR 0041)"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 publish.workspace = true
 repository.workspace = true
-
-[[bin]]
-name = "postio-daemon"
-path = "src/bin/postio-daemon.rs"
 
 [lints]
 workspace = true
@@ -29,8 +25,7 @@ postio-search.workspace = true
 postio-session.workspace = true
 postio-storage.workspace = true
 postio-ui.workspace = true
-thiserror = { workspace = true }
-tokio = { workspace = true, features = ["io-util", "macros", "net", "rt", "rt-multi-thread", "signal", "sync", "time"] }
+tokio = { workspace = true, features = ["macros", "rt", "rt-multi-thread", "sync", "time"] }
 tracing = { workspace = true }
 
 [dev-dependencies]

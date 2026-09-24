@@ -5,7 +5,7 @@
 //! the same first run (specs/005-tui-frontend T016): the same probe options,
 //! the same proof in the same order, the same sentences for the same
 //! failures, the same credential-first write. The desktop calls it; the
-//! daemon answers the terminal's onboarding requests with it.
+//! host answers the terminal's onboarding requests with it.
 
 use std::sync::Arc;
 

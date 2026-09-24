@@ -13,7 +13,6 @@ repository.workspace = true
 # drainer replays them in the order they happened.
 chrono = { workspace = true, features = ["std"] }
 postio-config.workspace = true
-postio-client.workspace = true
 postio-core.workspace = true
 postio-account.workspace = true
 postio-jmap.workspace = true

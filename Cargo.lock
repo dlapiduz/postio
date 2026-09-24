@@ -4154,12 +4154,8 @@ dependencies = [
  "postio-model",
  "postio-search",
  "postio-ui",
- "serde",
- "serde_json",
- "tempfile",
  "thiserror",
  "tokio",
- "tracing",
 ]
 
 [[package]]
@@ -4284,7 +4280,6 @@ dependencies = [
  "postio-ui",
  "serde-xml-rs",
  "tempfile",
- "thiserror",
  "tokio",
  "tracing",
  "tracing-subscriber",
@@ -4375,7 +4370,6 @@ dependencies = [
  "chrono",
  "mimalloc",
  "postio-account",
- "postio-client",
  "postio-config",
  "postio-core",
  "postio-gmail",

@@ -2,9 +2,9 @@
 //! it is open, and the storage ceiling.
 //!
 //! The store's owner's work, moved here from the desktop app (ADR 0041), so
-//! it runs wherever the store is open: in `postio-daemon` for every frontend,
-//! or in a process that hosts the store itself. None of it is anything a
-//! person waits on, and none of it reaches the network.
+//! it runs in whichever app has the store open: the desktop app or the
+//! terminal. None of it is anything a person waits on, and none of it
+//! reaches the network.
 
 use postio_session::Wiring;
 

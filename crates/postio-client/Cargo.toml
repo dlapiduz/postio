@@ -1,6 +1,6 @@
 [package]
 name = "postio-client"
-description = "What every Postio frontend holds: commands down, events up, queries answered by the store's one owner (ADR 0041)"
+description = "What every Postio frontend holds: commands down, events up, queries answered by the store's host in the same process (ADR 0041)"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -12,24 +12,13 @@ repository.workspace = true
 workspace = true
 
 [dependencies]
-chrono = { workspace = true, features = ["serde"] }
+chrono = { workspace = true }
 async-channel = { workspace = true }
 postio-core.workspace = true
 postio-model.workspace = true
 postio-search.workspace = true
 postio-ui.workspace = true
-serde = { workspace = true }
-# The wire encoding. Self-describing on purpose: several model types have
-# hand-written `Deserialize` impls, which compact non-self-describing
-# formats cannot always read back. Already in the graph (research R2, T008).
-serde_json = { workspace = true }
 thiserror = { workspace = true }
-# The socket: its I/O runs on a runtime of the client's own, on its own
-# thread, so a caller on any executor -- GTK's main loop, the terminal's
-# tokio -- can hold a client.
-tokio = { workspace = true, features = ["io-util", "net", "rt", "sync", "time"] }
-tracing = { workspace = true }
 
 [dev-dependencies]
-tempfile = { workspace = true }
 tokio = { workspace = true, features = ["macros", "rt"] }

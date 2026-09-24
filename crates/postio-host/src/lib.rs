@@ -1,31 +1,32 @@
-//! The one process that owns Postio's store.
+//! What owns Postio's store, in the process of the app that opened it.
 //!
 //! Turso holds an exclusive lock on the database file, and the operation
-//! queue is correct only with one drainer, so exactly one process opens the
-//! store and runs the engines: this one (ADR 0041). Frontends reach it through
-//! `postio-client`, over a socket as `postio-daemon` or in-process where no
-//! other frontend can share the store.
+//! queue is correct only with one drainer, so one app at a time opens the
+//! store -- the desktop app or the terminal -- and runs the engines in its
+//! own process (ADR 0041). Whichever it is starts a [`Host`] over the store
+//! ([`Host::open`]) and reads and writes only through `postio-client`'s
+//! [`Client`], handed out by [`Host::connect`] with no encoding in between:
+//! a request is a value on a channel, answered on the host's runtime.
 //!
-//! # One store, a selection per frontend
+//! # A selection per client
 //!
-//! Every frontend has its own selection, focus and undo history, and the host
+//! Each client has its own selection, focus and undo history, and the host
 //! has none of its own. So each connected client gets its own verbs over the
-//! shared store: its own [`SharedState`], which adopts the snapshot each of
-//! its commands carries, and its own [`Actions`], whose undo stack is
-//! therefore that client's alone (research R1a).
+//! store: its own [`SharedState`], which adopts the snapshot each of its
+//! commands carries, and its own [`Actions`], whose undo stack is therefore
+//! that client's alone (research R1a). A window's first-run screen and its
+//! panes are two clients of one host.
 //!
-//! Commands from every client still run **one at a time, in arrival order**,
-//! on one queue. That is what the single bridge pump guaranteed when one
-//! process had one frontend, and the verbs were written against it.
+//! Commands from every client run **one at a time, in arrival order**, on
+//! one queue. That is what the single bridge pump guaranteed, and the verbs
+//! were written against it.
 //!
 //! # Whose events are whose
 //!
-//! What a command changed in the store is everybody's news: a message
-//! archived in the terminal has to leave the desktop app's list. What a
-//! command *says about itself* is its sender's alone: the "Archived 12
-//! messages — Undo" notice, a refusal, an error, the end of a tracked send.
-//! Showing another frontend's undo offer would invite a `u` that undoes
-//! nothing there. [`is_feedback`] draws that line.
+//! What a command changed in the store is everybody's news. What a command
+//! *says about itself* is its sender's alone: the "Archived 12 messages —
+//! Undo" notice, a refusal, an error, the end of a tracked send.
+//! [`is_feedback`] draws that line.
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -42,7 +43,7 @@ use postio_session::actions::{self, Actions};
 use postio_session::refresh;
 use postio_storage::{BlobStore, Store};
 
-/// The store's one owner, serving the clients connected to it.
+/// The store's owner in this process, serving the clients connected to it.
 ///
 /// Dropping it stops its runtime, and with it the engines.
 pub struct Host {
@@ -67,8 +68,6 @@ struct Inner {
     clients: Mutex<HashMap<ClientId, Entry>>,
     next_client: AtomicU64,
     queue: async_channel::Sender<Queued>,
-    /// How many frontends are connected, watched by the daemon's idle timer.
-    connected: tokio::sync::watch::Sender<usize>,
     /// `[sync]`'s notification settings: which folders' arrivals notify.
     notify: Mutex<postio_config::SyncConfig>,
     /// The engine syncing each account, once started.
@@ -82,8 +81,9 @@ type Engines = Arc<EngineTable>;
 #[derive(Default)]
 struct EngineTable {
     running: Mutex<HashMap<postio_model::AccountId, postio_runtime::Engine>>,
-    /// Held while engines start, so two asks at once -- the daemon's own at
-    /// startup and a window's -- cannot both find none running.
+    /// Held while engines start, so two asks at once -- the app's own at
+    /// startup and one after an account is added -- cannot both find none
+    /// running.
     starting: tokio::sync::Mutex<()>,
 }
 
@@ -100,10 +100,6 @@ struct Entry {
     tasks: Vec<tokio::task::AbortHandle>,
     /// This client's draft writes, in the order it made them.
     drafts: compose::DraftWriter,
-    /// What it last said it was showing, for a notification's decision.
-    attention: postio_ui::notify::Attention,
-    /// Where the notifications it is elected to deliver go.
-    notices: async_channel::Sender<postio_ui::notify::Notification>,
 }
 
 /// Start syncing every enabled account that is not syncing yet.
@@ -232,7 +228,7 @@ struct SignIn {
     done: tokio::sync::watch::Receiver<Option<Result<(), String>>>,
 }
 
-/// The daemon's browser opener: it opens nothing, and reports the URL to the
+/// The host's browser opener: it opens nothing, and reports the URL to the
 /// frontend that asked, which opens it only when the person does.
 struct Announcer(Mutex<Option<tokio::sync::oneshot::Sender<postio_account::oauth::Url>>>);
 
@@ -286,9 +282,6 @@ const WORKER_THREADS: usize = 2;
 /// after the first frame and the odd synchronous read, without climbing
 /// toward tokio's default of 512 in a burst.
 const BLOCKING_THREADS: usize = 8;
-
-/// How many notifications wait for a frontend before the rest go unsaid.
-const NOTICES: usize = 16;
 
 /// A frontend's verbs over the shared store: the session's actions and
 /// refresh, resolving against `state`.
@@ -424,21 +417,12 @@ impl Host {
             clients: Mutex::new(HashMap::new()),
             next_client: AtomicU64::new(1),
             queue,
-            connected: tokio::sync::watch::Sender::new(0),
             notify: Mutex::new(postio_config::SyncConfig::default()),
             engines: Engines::default(),
             offers: Mutex::new(HashMap::new()),
             oauth_offers: Mutex::new(HashMap::new()),
             sign_ins: Mutex::new(HashMap::new()),
         });
-        // New mail becomes one notification, for one frontend. Over a
-        // wiring whose events go to one reader there is no news to hear, and
-        // whoever reads it notifies as it always did.
-        if let Some(arrivals) = inner.hub.subscribe("notifier") {
-            inner
-                .runtime()
-                .spawn(notify::run(Arc::downgrade(&inner), arrivals));
-        }
         let pump = Arc::clone(&inner);
         inner.runtime().spawn(async move {
             while let Ok(queued) = commands.recv().await {
@@ -500,10 +484,8 @@ impl Host {
 
     /// Start a sync engine for every enabled account, on the host's runtime.
     ///
-    /// The host does this rather than a frontend because the host is the
-    /// one process that outlives every window: sync runs while any frontend
-    /// is open and stops with the host, exactly as it ran with the desktop
-    /// app before (research R1b).
+    /// Sync runs while the app that opened the store runs, and stops with
+    /// the host ([`Host::stop`]).
     pub fn start_syncing(&self) {
         let wiring = self.inner.wiring.clone();
         let engines = Arc::clone(&self.inner.engines);
@@ -540,15 +522,13 @@ impl Host {
         postio_session::blocking::now(postio_session::end_session(&self.inner.wiring.database));
     }
 
-    /// A client in this process: `postio-ffi`, the integration suites, and
-    /// until the socket exists, the desktop app.
+    /// A client of this host: every frontend's, in its own process.
     pub fn connect(&self, kind: ClientKind) -> Client {
-        let (id, events, notices) = self.inner.join(kind);
+        let (id, events) = self.inner.join(kind);
         Client::new(Arc::new(Local {
             inner: Arc::clone(&self.inner),
             client: id,
             events,
-            notices,
         }))
     }
 }
@@ -559,21 +539,11 @@ impl Inner {
     }
 
     /// Register a client and start sorting its events.
-    fn join(
-        &self,
-        kind: ClientKind,
-    ) -> (
-        ClientId,
-        async_channel::Receiver<EventEnvelope>,
-        async_channel::Receiver<postio_ui::notify::Notification>,
-    ) {
+    fn join(&self, kind: ClientKind) -> (ClientId, async_channel::Receiver<EventEnvelope>) {
         let id = ClientId(self.next_client.fetch_add(1, Ordering::Relaxed));
         let state = SharedState::default();
         let verbs = Arc::new(verbs(&self.wiring, &state));
         let (outbox, events) = async_channel::unbounded::<EventEnvelope>();
-        // Bounded, and never waited on: a notification per folder replaces
-        // the one before it, so one a frontend has not read is worth nothing.
-        let (noticed, notices) = async_channel::bounded(NOTICES);
 
         // Everybody's news, from the engines and from every client's verbs.
         let label = format!("client:{kind:?}:{}", id.0).to_lowercase();
@@ -622,13 +592,10 @@ impl Inner {
                 sink,
                 tasks: vec![hearing.abort_handle(), sorting.abort_handle()],
                 drafts: compose::DraftWriter::spawn(self.wiring.database.clone(), self.runtime()),
-                attention: postio_ui::notify::Attention::default(),
-                notices: noticed,
             },
         );
-        self.connected.send_modify(|count| *count += 1);
         tracing::info!(client = id.0, ?kind, "a frontend connected");
-        (id, events, notices)
+        (id, events)
     }
 
     /// Forget a client: its events stop, and a command it queued and has
@@ -639,8 +606,6 @@ impl Inner {
             for task in &entry.tasks {
                 task.abort();
             }
-            self.connected
-                .send_modify(|count| *count = count.saturating_sub(1));
             tracing::info!(client = client.0, kind = ?entry.kind, "a frontend left");
         }
     }
@@ -659,17 +624,6 @@ impl Inner {
                     Resp::Done => Resp::Tracked(invocation),
                     refused => refused,
                 })
-            }
-            Req::Attention(attention) => {
-                if let Some(entry) = self
-                    .clients
-                    .lock()
-                    .expect("never poisoned")
-                    .get_mut(&client)
-                {
-                    entry.attention = attention;
-                }
-                InOrder::Answered(Resp::Done)
             }
             Req::NoteRemoved(mailbox, messages) => {
                 self.wiring.store.note_removed(mailbox, messages);
@@ -763,7 +717,6 @@ impl Inner {
             Req::Send(..)
             | Req::SendTracked(..)
             | Req::NoteRemoved(..)
-            | Req::Attention(_)
             | Req::SaveDraft { .. }
             | Req::QueueSend { .. }
             | Req::DiscardDraft { .. } => {
@@ -892,25 +845,6 @@ impl Inner {
                 Ok(()) => Resp::Done,
                 Err(sentence) => Resp::Failed(postio_model::listing::StoreError::new(sentence)),
             },
-            Req::Diagnose(report) => {
-                let file = self
-                    .wiring
-                    .database
-                    .path()
-                    .and_then(|path| std::fs::metadata(path).ok())
-                    .map_or(0, |meta| meta.len());
-                match self.wiring.database.connect().await {
-                    Ok(connection) => {
-                        match postio_session::diag::report(connection, file, &report).await {
-                            Ok(text) => Resp::Diagnosis(text),
-                            Err(reason) => {
-                                Resp::Failed(postio_model::listing::StoreError::new(reason))
-                            }
-                        }
-                    }
-                    Err(error) => Resp::Failed(postio_model::listing::StoreError::from(error)),
-                }
-            }
             Req::AccountSettings { weights } => settings::accounts(&self.wiring.database, weights)
                 .await
                 .map_or_else(Resp::Failed, Resp::AccountSettings),
@@ -1226,7 +1160,7 @@ impl Inner {
     /// (`postio_session::onboarding::run_sign_in`) and answer where it waits
     /// for the person: the consent URL, in full.
     ///
-    /// **Nothing is opened here.** The daemon's opener only reports the URL;
+    /// **Nothing is opened here.** The host's opener only reports the URL;
     /// the frontend shows it and opens it, or copies it, when the person
     /// asks (US7 scenario 2). The sign-in runs on, waiting at its loopback
     /// redirect, and [`finish_oauth`](Self::finish_oauth) is how a frontend
@@ -1585,7 +1519,6 @@ struct Local {
     inner: Arc<Inner>,
     client: ClientId,
     events: async_channel::Receiver<EventEnvelope>,
-    notices: async_channel::Receiver<postio_ui::notify::Notification>,
 }
 
 impl Drop for Local {
@@ -1637,10 +1570,6 @@ impl Transport for Local {
     fn events(&self) -> async_channel::Receiver<EventEnvelope> {
         self.events.clone()
     }
-
-    fn notifications(&self) -> async_channel::Receiver<postio_ui::notify::Notification> {
-        self.notices.clone()
-    }
 }
 
 pub mod compose;
@@ -1651,7 +1580,6 @@ pub mod onboarding;
 pub mod parts;
 pub mod reading;
 pub mod search;
-pub mod serve;
 pub mod settings;
 pub mod startup;
 

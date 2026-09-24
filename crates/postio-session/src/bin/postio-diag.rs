@@ -10,15 +10,14 @@
 //! next question starts from `postio-diag` rather than from a blank file.
 //!
 //! ```text
-//! postio-diag census                      # asks the daemon, or opens the store
+//! postio-diag census                      # opens the live store
 //! postio-diag --store /path/to/copy.db pending
 //! POSTIO_STORE_KEY=<hex> postio-diag --store copy.db encoding
 //! ```
 //!
-//! **With Postio running, the daemon answers.** It owns the store while it
-//! runs (ADR 0041), so the reports are asked of it over its socket and run
-//! on its own connection: nothing else opens the file. With nothing running,
-//! the store is opened here.
+//! **With Postio running, the live store is refused.** One process at a time
+//! has the store (ADR 0041), so close Postio first, or point `--store` at a
+//! copy.
 //!
 //! **Read-only by promise, not by mode.** The engine has no read-only open
 //! (ADR 0038), so every subcommand issues `SELECT` and `PRAGMA` and nothing
@@ -42,9 +41,8 @@ usage: postio-diag [--store <postio.db>] <command>
   shape     rows per page, with and without the body columns
   pending   what the background lanes still owe: backfill, index, queue
 
-Reads only. With Postio running, its daemon answers; otherwise the store is
-opened, or the copy --store names. The key comes from the keyring, or
-POSTIO_STORE_KEY.";
+Reads only. Opens the live store -- close Postio first -- or the copy --store
+names. The key comes from the keyring, or POSTIO_STORE_KEY.";
 
 #[tokio::main(flavor = "multi_thread")]
 async fn main() -> ExitCode {
@@ -70,28 +68,7 @@ async fn main() -> ExitCode {
         return ExitCode::FAILURE;
     };
 
-    // The live store belongs to the daemon while it runs: ask it.
-    if path.is_none()
-        && let Ok(endpoint) = postio_client::socket::Endpoint::from_env()
-        && let Ok(client) =
-            postio_client::socket::connect(&endpoint, postio_client::protocol::ClientKind::Test)
-    {
-        return match client.diagnose(command.clone()).await {
-            Ok(text) => {
-                eprintln!("postio-diag: asked the running daemon");
-                print!("{text}");
-                ExitCode::SUCCESS
-            }
-            Err(error) => {
-                eprintln!("postio-diag: {}", error.message());
-                ExitCode::FAILURE
-            }
-        };
-    }
-    let path = path.unwrap_or_else(|| {
-        eprintln!("postio-diag: nothing running; reading the live store");
-        postio_session::paths::store_path()
-    });
+    let path = path.unwrap_or_else(postio_session::paths::store_path);
     let master = match std::env::var("POSTIO_STORE_KEY") {
         Ok(hex) => match StoreKey::from_hex(hex.trim()) {
             Ok(key) => key,

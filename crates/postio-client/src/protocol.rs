@@ -1,25 +1,16 @@
-//! The wire between a frontend and the store's one owner.
+//! What a frontend asks of the store's host, and what it answers.
 //!
-//! `specs/005-tui-frontend/contracts/protocol.md` is the contract; this is its
-//! types and its framing. Client and host always come from one build, so there
-//! is no negotiation: a handshake that finds another build is refused, and the
-//! frontend says which two versions disagree.
+//! `specs/005-tui-frontend/contracts/protocol.md` is the contract. The host
+//! is in the frontend's own process (ADR 0041), so a request is a value
+//! handed over a channel and never encoded: these are the vocabulary of
+//! [`crate::Client`] and `postio-host`, nothing more.
 //!
 //! **Nothing here waits on the network.** Every [`Req`] is answered from the
 //! host's local state; anything remote is a [`Command`], whose outcome arrives
 //! later as events (Principle I).
-//!
-//! # Framing
-//!
-//! A frame is a big-endian `u32` length followed by that many bytes of JSON.
-//! JSON rather than a compact binary format because several model types
-//! deserialize by hand, and a format that is not self-describing cannot
-//! always read those back. The cost is measured in microseconds for a page of
-//! rows (research R2). [`MAX_FRAME`] refuses a length no real frame has, so
-//! a corrupt stream is an error rather than a gigabyte allocation.
 
 use chrono::{DateTime, Utc};
-use postio_core::{Command, EventEnvelope, InvocationId, StateSnapshot};
+use postio_core::{Command, InvocationId, StateSnapshot};
 use postio_model::ListScope;
 use postio_model::contact_group::RecipientCandidate;
 use postio_model::ids::{AccountId, MailboxId, MessageId};
@@ -28,42 +19,10 @@ use postio_model::listing::{
 };
 use postio_model::mailbox::Mailbox;
 use postio_model::{Account, Draft, DraftId};
-use serde::{Deserialize, Serialize};
 
-/// The protocol's own version. Bumped with any change to [`Frame`]; the
-/// build id already refuses a mismatch, and this makes the refusal's reason
-/// legible.
-pub const PROTOCOL: u32 = 1;
-
-/// The largest frame either side will read: 256 MiB. A message body is the
-/// largest thing that crosses, and the store refuses bodies far below this.
-pub const MAX_FRAME: u32 = 256 * 1024 * 1024;
-
-/// Which build a process is: the crate version and, when the build knows
-/// it, the commit. Client and host must agree exactly.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct BuildId(pub String);
-
-impl BuildId {
-    /// This build.
-    pub fn current() -> Self {
-        let version = env!("CARGO_PKG_VERSION");
-        match option_env!("POSTIO_GIT_COMMIT") {
-            Some(commit) => BuildId(format!("{version}+{commit}")),
-            None => BuildId(version.to_owned()),
-        }
-    }
-}
-
-impl std::fmt::Display for BuildId {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(&self.0)
-    }
-}
-
-/// What kind of frontend is connecting. Decides who delivers notifications
-/// and labels the connection in the host's log.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+/// What kind of frontend is connecting: labels the connection in the host's
+/// log.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ClientKind {
     /// The GTK desktop app.
     Gtk,
@@ -76,54 +35,12 @@ pub enum ClientKind {
 }
 
 /// The host's name for one connection.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct ClientId(pub u64);
-
-/// Why the host would not take a connection.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub enum Refusal {
-    /// The two sides are different builds.
-    VersionMismatch {
-        /// The host's build.
-        host: BuildId,
-        /// The client's build.
-        client: BuildId,
-    },
-    /// The host is still opening the store; try again shortly.
-    Starting(Opening),
-}
-
-/// What a starting daemon is waiting on, so a frontend can say so: the
-/// desktop named these waits when it opened the store itself (#1114).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum Opening {
-    /// The keyring, for the store's key; it may be showing a prompt.
-    Keyring,
-    /// Opening the store file.
-    Store,
-    /// Bringing the store's schema up to date.
-    Migrating,
-    /// Rebuilding what can be rebuilt, such as the search index.
-    Indexing,
-}
-
-/// The same wait, in the words both frontends use for it
-/// (`postio_ui::list_state::describe_wait`).
-impl From<Opening> for postio_ui::list_state::Waiting {
-    fn from(opening: Opening) -> Self {
-        use postio_ui::list_state::Waiting;
-        match opening {
-            Opening::Keyring => Waiting::Keyring,
-            Opening::Store => Waiting::Store,
-            Opening::Migrating => Waiting::Migrating,
-            Opening::Indexing => Waiting::Indexing,
-        }
-    }
-}
 
 /// A request a frontend makes of the host. Each is answered by exactly one
 /// [`Resp`] with the same id.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Req {
     /// Run a command, aimed with the frontend's own selection; its effects
     /// arrive as events.
@@ -277,7 +194,7 @@ pub enum Req {
         /// Where the file is.
         path: std::path::PathBuf,
         /// Its type, when the frontend can sniff one better than the host's
-        /// fallback: the desktop asks shared-mime-info, which the daemon
+        /// fallback: the desktop asks shared-mime-info, which the terminal
         /// may not have.
         mime_type: Option<String>,
     },
@@ -319,8 +236,6 @@ pub enum Req {
         /// The scope on screen.
         scope: postio_search::facets::Scope,
     },
-    /// One of `postio-diag`'s reports, by name.
-    Diagnose(String),
     /// Change an account the way the settings' account commands do.
     Account(AccountOp),
     /// Look up the servers for a new account's address.
@@ -383,12 +298,6 @@ pub enum Req {
     OrientationSeen,
     /// Write down that this installation is done with the orientation.
     RetireOrientation,
-    /// What this frontend is showing, and whether it is in front: the half
-    /// of a new-mail notification's decision only the frontend can see
-    /// (`postio_ui::notify::Attention`). Posted when it changes, never
-    /// awaited; the host keeps the latest for the frontend it elects to
-    /// deliver notifications.
-    Attention(postio_ui::notify::Attention),
     /// Fetch this message's body ahead of the backfill: a person opened it.
     /// Posted; the body arrives as `BodyLoaded`.
     FetchBody(MessageId),
@@ -429,7 +338,7 @@ pub enum Req {
 }
 
 /// The host's answer to one [`Req`].
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Resp {
     /// Done; nothing to report.
     Done,
@@ -512,8 +421,6 @@ pub enum Resp {
     Startup(StartupRoute),
     /// The verbs the owner answers.
     Wired(Vec<postio_core::CommandId>),
-    /// A report's text.
-    Diagnosis(String),
     /// What discovery found, as the first-run screen shows it.
     Onboarding(Box<postio_ui::onboarding::Status>),
     /// Where the browser sign-in waits for the person.
@@ -525,7 +432,7 @@ pub enum Resp {
 /// A message's body as the store holds it, or which kind of "no body" this
 /// is. The frontend applies the reader's rules to it -- sanitising, reader
 /// view, folding -- with the same shared code every reader uses.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Body {
     /// The words are here.
     Ready {
@@ -547,7 +454,7 @@ pub enum Body {
 }
 
 /// Everything a reading pane draws of one message, read on one turn.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Reading {
     /// Which message.
     pub message: MessageId,
@@ -562,7 +469,7 @@ pub struct Reading {
 }
 
 /// What the settings' account commands do to an account.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AccountOp {
     /// Sync it, or stop.
     SetEnabled {
@@ -583,7 +490,7 @@ pub enum AccountOp {
 }
 
 /// One field of an account's row, as the settings' detail view edits it.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AccountField {
     /// The name shown in the sidebar.
     DisplayName(String),
@@ -600,7 +507,7 @@ pub enum AccountField {
 }
 
 /// One account as the settings panel shows it.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AccountSettings {
     /// The row.
     pub account: Account,
@@ -617,7 +524,7 @@ pub struct AccountSettings {
 }
 
 /// What the privacy pane draws.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct PrivacyLog {
     /// Every account's unsubscribe activations, newest first.
     pub activations: Vec<postio_model::UnsubscribeActivation>,
@@ -629,7 +536,7 @@ pub struct PrivacyLog {
 ///
 /// The tokens cross to the store's owner, which writes them to the keyring
 /// and nowhere else; `Debug` never shows them.
-#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct OAuthGrant {
     /// What the form held.
     pub submission: postio_ui::onboarding::Submission,
@@ -663,11 +570,11 @@ impl std::fmt::Debug for OAuthGrant {
 }
 
 /// A search, as a frontend's search bar asks it.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Search {
     /// Which accounts.
     pub account: postio_model::AccountScope,
-    /// The query as typed, in Postio's query language; the daemon parses it.
+    /// The query as typed, in Postio's query language; the host parses it.
     pub query: String,
     /// Newest first rather than best match first.
     pub newest_first: bool,
@@ -675,7 +582,7 @@ pub struct Search {
 
 /// What a search found: the matching messages, best first, and what the
 /// readout says about them (`postio_ui::search::Outcome`).
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Found {
     /// The messages, in the order the list shows them.
     pub ids: Vec<MessageId>,
@@ -694,7 +601,7 @@ pub struct Found {
 /// A wrapper only for [`Resp`]'s `Eq`: a hit's rank is an `f64`, which has
 /// no total equality. It is never NaN -- the executor folds `bm25` with
 /// finite weights -- so equality here is reflexive in practice.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Hits(pub postio_search::SearchResults);
 
 impl Eq for Hits {}
@@ -704,335 +611,12 @@ impl Eq for Hits {}
 /// An account is something to open only when the store holds a row **and**
 /// the keyring gives up a password for it; otherwise the first-run screen,
 /// prefilled from the row when there is one.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum StartupRoute {
     /// Open it: there is a row, and a password to authenticate with.
     Ready(Box<postio_model::Account>),
     /// Show the first-run screen; `Some` is a repair of this account.
     Onboard(Option<Box<postio_model::Account>>),
-}
-
-/// Everything that crosses the wire.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub enum Frame {
-    /// The client's first frame.
-    Hello {
-        /// The client's build.
-        build: BuildId,
-        /// What kind of frontend it is.
-        kind: ClientKind,
-        /// [`PROTOCOL`] as the client knows it.
-        protocol: u32,
-    },
-    /// The host took the connection.
-    Welcome {
-        /// This connection's id.
-        client: ClientId,
-        /// The host's build, equal to the client's.
-        host_build: BuildId,
-    },
-    /// The host would not take the connection.
-    Refused(Refusal),
-    /// A request.
-    Request {
-        /// Echoed on the response.
-        id: u64,
-        /// What is asked.
-        body: Req,
-    },
-    /// The answer to the request with the same id.
-    Response {
-        /// The request's id.
-        id: u64,
-        /// The answer.
-        body: Resp,
-    },
-    /// Something happened; sent unasked, in order.
-    Event(EventEnvelope),
-    /// A desktop notification to deliver, sent only to the one frontend
-    /// the host elected to deliver them: the first desktop app connected,
-    /// else the first terminal (`postio-host`'s `notify`).
-    Notify(postio_ui::notify::Notification),
-}
-
-/// A frame that could not be read.
-#[derive(Debug, thiserror::Error)]
-pub enum FrameError {
-    /// The length prefix names more bytes than any frame may hold.
-    #[error("a frame of {0} bytes is larger than any Postio frame")]
-    TooLarge(u32),
-    /// Fewer bytes than the length prefix promised.
-    #[error("the frame ended early")]
-    Truncated,
-    /// The bytes are not a frame.
-    #[error("the frame could not be read: {0}")]
-    Malformed(#[from] serde_json::Error),
-}
-
-/// `frame`, length-prefixed, ready to write.
-pub fn encode(frame: &Frame) -> Vec<u8> {
-    // Serialising our own types cannot fail: every map key is a string and
-    // nothing implements `Serialize` fallibly.
-    let body = serde_json::to_vec(frame).expect("a frame always serialises");
-    let length = u32::try_from(body.len()).expect("no frame reaches 4 GiB");
-    let mut bytes = Vec::with_capacity(4 + body.len());
-    bytes.extend_from_slice(&length.to_be_bytes());
-    bytes.extend_from_slice(&body);
-    bytes
-}
-
-/// One frame from the front of `bytes`, and how many bytes it took; `None`
-/// when `bytes` does not yet hold a whole frame.
-pub fn decode(bytes: &[u8]) -> Result<Option<(Frame, usize)>, FrameError> {
-    let Some(prefix) = bytes.first_chunk::<4>() else {
-        return Ok(None);
-    };
-    let length = u32::from_be_bytes(*prefix);
-    if length > MAX_FRAME {
-        return Err(FrameError::TooLarge(length));
-    }
-    let end = 4 + length as usize;
-    let Some(body) = bytes.get(4..end) else {
-        return Ok(None);
-    };
-    Ok(Some((serde_json::from_slice(body)?, end)))
-}
-
-/// Read one frame from `reader`; `None` at a clean end of stream.
-pub async fn read_frame<R>(reader: &mut R) -> Result<Option<Frame>, FrameError>
-where
-    R: tokio::io::AsyncRead + Unpin,
-{
-    use tokio::io::AsyncReadExt;
-    let mut prefix = [0u8; 4];
-    match reader.read_exact(&mut prefix).await {
-        Ok(_) => {}
-        Err(error) if error.kind() == std::io::ErrorKind::UnexpectedEof => return Ok(None),
-        Err(_) => return Err(FrameError::Truncated),
-    }
-    let length = u32::from_be_bytes(prefix);
-    if length > MAX_FRAME {
-        return Err(FrameError::TooLarge(length));
-    }
-    let mut body = vec![0u8; length as usize];
-    reader
-        .read_exact(&mut body)
-        .await
-        .map_err(|_| FrameError::Truncated)?;
-    Ok(Some(serde_json::from_slice(&body)?))
-}
-
-/// Write one frame to `writer`.
-pub async fn write_frame<W>(writer: &mut W, frame: &Frame) -> std::io::Result<()>
-where
-    W: tokio::io::AsyncWrite + Unpin,
-{
-    use tokio::io::AsyncWriteExt;
-    writer.write_all(&encode(frame)).await
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use postio_core::Event;
-
-    fn round_trip(frame: Frame) {
-        let bytes = encode(&frame);
-        let (back, used) = decode(&bytes)
-            .expect("a frame we wrote is readable")
-            .expect("and whole");
-        assert_eq!(used, bytes.len(), "the whole frame was consumed");
-        assert_eq!(back, frame);
-    }
-
-    #[test]
-    fn a_handshake_round_trips() {
-        round_trip(Frame::Hello {
-            build: BuildId::current(),
-            kind: ClientKind::Tui,
-            protocol: PROTOCOL,
-        });
-        round_trip(Frame::Refused(Refusal::VersionMismatch {
-            host: BuildId("0.3.0+aaa".into()),
-            client: BuildId("0.3.0+bbb".into()),
-        }));
-    }
-
-    #[test]
-    fn every_request_round_trips() {
-        let account = AccountId::new(1);
-        let mailbox = MailboxId::new(2);
-        let messages = vec![MessageId::new(3), MessageId::new(4)];
-        let scope = ListScope::Mailbox(mailbox);
-        for (id, body) in [
-            Req::Send(
-                Command::Archive {
-                    target: postio_core::MessageTarget::Messages(messages.clone()),
-                },
-                StateSnapshot::default(),
-            ),
-            Req::SendTracked(Command::Undo, StateSnapshot::default()),
-            Req::Page(PageRequest {
-                scope,
-                offset: 40,
-                limit: 20,
-            }),
-            Req::Count(scope),
-            Req::Rows(messages.clone()),
-            Req::RowsIn(scope, messages.clone()),
-            Req::NoteRemoved(mailbox, messages.clone()),
-            Req::Mailboxes(account),
-            Req::DraftCounts(account),
-            Req::Attach {
-                path: "/tmp/minutes.txt".into(),
-                mime_type: Some("text/plain".into()),
-            },
-            Req::AttachmentBytes(postio_model::ids::BlobId::new("ab12")),
-            Req::RecoverDraft(account),
-        ]
-        .into_iter()
-        .enumerate()
-        {
-            round_trip(Frame::Request {
-                id: id as u64,
-                body,
-            });
-        }
-    }
-
-    #[test]
-    fn a_desktop_search_and_its_answers_round_trip() {
-        // The parsed query crosses as the box built it, operators and all,
-        // and the hits come back with their excerpts and their suggestion.
-        let query = postio_search::parse(
-            "from:ada@example.com -is:unread interlock",
-            chrono::NaiveDate::from_ymd_opt(2026, 9, 24).expect("a date"),
-        );
-        let account = postio_model::AccountScope::Account(AccountId::new(1));
-        round_trip(Frame::Request {
-            id: 1,
-            body: Req::SearchHits {
-                account,
-                query: query.clone(),
-                scope: postio_search::facets::Scope::Inbox,
-                order: postio_search::ResultOrder::Newest,
-                snippets: 1,
-            },
-        });
-        round_trip(Frame::Request {
-            id: 2,
-            body: Req::Facets {
-                account,
-                query,
-                scope: postio_search::facets::Scope::AllMail,
-            },
-        });
-        round_trip(Frame::Response {
-            id: 1,
-            body: Resp::Hits(Some(Box::new(Hits(postio_search::SearchResults {
-                hits: vec![postio_search::SearchHit {
-                    message_id: MessageId::new(3),
-                    thread_id: None,
-                    mailbox_id: MailboxId::new(2),
-                    subject: Some("Tide gate".into()),
-                    from: None,
-                    received_at: chrono::DateTime::from_timestamp(1_790_000_000, 0)
-                        .expect("a time"),
-                    snippet: "the interlock".into(),
-                    score: -1.5,
-                }],
-                total_hits: 1,
-                total_hits_capped: false,
-                elapsed: std::time::Duration::from_millis(4),
-                corpus_complete: true,
-                suggestion: None,
-            })))),
-        });
-        round_trip(Frame::Request {
-            id: 3,
-            body: Req::ExportMessages(vec![(MessageId::new(3), "/tmp/One.eml".into())]),
-        });
-    }
-
-    #[test]
-    fn the_settings_requests_and_answers_round_trip() {
-        let account = AccountId::new(1);
-        for (id, body) in [
-            Req::AccountSettings { weights: true },
-            Req::EditAccount(account, AccountField::ImapPort(993)),
-            Req::EgressLog(50),
-            Req::PrivacyLog,
-            Req::SetBackfillExcluded {
-                mailbox: MailboxId::new(2),
-                excluded: true,
-            },
-            Req::OrientationSeen,
-            Req::RebuildIndex(account),
-            Req::Attention(postio_ui::notify::Attention {
-                showing: Some(MailboxId::new(2)),
-                active: true,
-            }),
-        ]
-        .into_iter()
-        .enumerate()
-        {
-            round_trip(Frame::Request {
-                id: id as u64,
-                body,
-            });
-        }
-        round_trip(Frame::Response {
-            id: 9,
-            body: Resp::Egress(vec![postio_model::egress::EgressEvent {
-                at: chrono::DateTime::from_timestamp(1_790_000_000, 0).expect("a time"),
-                subsystem: postio_model::egress::EgressSubsystem::Smtp,
-                account: Some(account),
-                host: "send.example.test".into(),
-                port: 465,
-                outcome: postio_model::egress::EgressOutcome::Failed,
-            }]),
-        });
-    }
-
-    #[test]
-    fn answers_and_events_round_trip() {
-        round_trip(Frame::Response {
-            id: 7,
-            body: Resp::DraftCounts(DraftCounts {
-                outbox: 1,
-                attention: 2,
-                drafts: 3,
-            }),
-        });
-        round_trip(Frame::Response {
-            id: 8,
-            body: Resp::Failed(StoreError::new("The store is closed.")),
-        });
-        round_trip(Frame::Event(EventEnvelope::untracked(
-            Event::MailboxesChanged {
-                account: AccountId::new(1),
-            },
-        )));
-    }
-
-    #[test]
-    fn a_partial_frame_is_not_yet_a_frame() {
-        let bytes = encode(&Frame::Refused(Refusal::Starting(Opening::Keyring)));
-        assert!(bytes.len() > 4, "a frame has a body: {bytes:?}");
-        assert!(
-            decode(&bytes[..bytes.len() - 1])
-                .expect("not an error")
-                .is_none()
-        );
-        assert!(decode(&bytes[..2]).expect("not an error").is_none());
-    }
-
-    #[test]
-    fn a_length_no_frame_has_is_refused_before_reading_it() {
-        let mut bytes = (MAX_FRAME + 1).to_be_bytes().to_vec();
-        bytes.extend_from_slice(b"{}");
-        assert!(matches!(decode(&bytes), Err(FrameError::TooLarge(_))));
-    }
 }
 
 /// What recipient completion can offer an account: its groups, each with

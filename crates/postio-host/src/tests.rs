@@ -636,31 +636,6 @@ fn a_frontend_searches_and_hears_which_messages_matched() {
     assert!(!found.capped);
 }
 
-#[test]
-fn postio_diag_asks_the_daemon_for_its_reports() {
-    // T083: the daemon owns the store while it runs, so the diagnostic
-    // reports are its to run.
-    let world = World::new();
-    let (client, _) = world.frontend(ClientKind::Test);
-    let census = world
-        .rt
-        .block_on(client.diagnose("census".into()))
-        .expect("a report");
-    assert!(census.contains("messages"), "{census}");
-    assert!(
-        census
-            .lines()
-            .any(|line| line.starts_with("messages") && line.trim_end().ends_with('1')),
-        "the fixture's one message is counted: {census}"
-    );
-    assert!(
-        world
-            .rt
-            .block_on(client.diagnose("nonsense".into()))
-            .is_err()
-    );
-}
-
 /// A network that answers nothing: discovery falls back to the provider
 /// table, and nothing dials.
 struct Offline;
@@ -772,7 +747,7 @@ fn onboarding_world(mock: postio_account::backend::MockBackend) -> World {
 }
 
 #[test]
-fn a_frontend_finds_a_domains_servers_through_the_daemon() {
+fn a_frontend_finds_a_domains_servers_through_the_host() {
     // US7: discovery, from the terminal, is the desktop's.
     let world = onboarding_world(postio_account::backend::MockBackend::new());
     let (client, _) = world.frontend(ClientKind::Tui);
@@ -812,7 +787,7 @@ fn submission(password: &str) -> postio_ui::onboarding::Submission {
 }
 
 #[test]
-fn a_frontend_adds_an_account_through_the_daemon() {
+fn a_frontend_adds_an_account_through_the_host() {
     let world = onboarding_world(postio_account::backend::MockBackend::new());
     let (client, _) = world.frontend(ClientKind::Tui);
     world
@@ -860,7 +835,7 @@ fn a_submission_never_shows_its_password() {
 }
 
 #[test]
-fn a_frontend_disables_removes_and_restores_an_account_through_the_daemon() {
+fn a_frontend_disables_removes_and_restores_an_account_through_the_host() {
     // T087: the settings' account commands, from the terminal.
     use postio_client::protocol::AccountOp;
     let world = World::new();
@@ -899,7 +874,7 @@ fn a_frontend_disables_removes_and_restores_an_account_through_the_daemon() {
 
 #[test]
 fn the_finder_is_told_the_accounts_correspondents_and_labels() {
-    // T066: `@` and `+` offer what the store knows, read through the daemon.
+    // T066: `@` and `+` offer what the store knows, read through the host.
     let world = World::new();
     let (client, _) = world.frontend(ClientKind::Tui);
     let account = world.rt.block_on(client.accounts()).expect("accounts")[0].id;
@@ -1910,8 +1885,8 @@ fn a_storage_ceiling_evicts_the_oldest_blobs_over_it_and_keeps_what_fits() {
 
 #[test]
 fn start_sync_asked_twice_gives_the_account_one_engine() {
-    // `Req::StartSync`: every window asks once its first frame is up, and
-    // the daemon has usually asked already.
+    // `Req::StartSync`: a frontend may ask once its first frame is up, and
+    // the app has usually started the engines already.
     let mock = server_with_one_message();
     let world = syncing_world(mock.clone());
     let (client, _) = world.frontend(ClientKind::Gtk);

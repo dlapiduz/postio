@@ -379,8 +379,8 @@ pub fn configured(account: &postio_model::Account) -> Settings {
     }
 }
 
-/// Without the password: a submission crosses to the daemon over its
-/// socket, and anything that prints one must not print that.
+/// Without the password: a submission is handed to the host and logged
+/// on the way, and anything that prints one must not print that.
 impl std::fmt::Debug for Submission {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter
