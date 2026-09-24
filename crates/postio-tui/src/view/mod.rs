@@ -2,6 +2,7 @@
 //!
 //! Nothing here decides anything about mail; it draws what `App` holds.
 
+pub mod cheatsheet;
 pub mod composer;
 pub mod list;
 pub mod palette;
@@ -139,6 +140,9 @@ pub fn draw(frame: &mut Frame, app: &App, theme: &Theme, now: DateTime<Local>) {
             }
             if let Some(open) = app.palette() {
                 palette::draw(frame, area, &open, theme);
+            }
+            if let Some(sections) = app.cheat_sheet() {
+                cheatsheet::draw(frame, area, &sections, theme);
             }
             let words = fit(&words, usize::from(status.width));
             frame.render_widget(Line::styled(words, theme.style(Role::Dim)), status);
@@ -538,6 +542,50 @@ mod tests {
             .find(|line| line.contains("Archive") && !line.contains("thread"))
             .unwrap_or_else(|| panic!("no Archive row:\n{screen}"));
         assert!(row.contains(" a│"), "the key, at the right edge: {row}");
+    }
+
+    #[test]
+    fn the_cheat_sheet_shows_every_section_and_binding() {
+        // T067.
+        use crossterm::event::{KeyCode, KeyEvent};
+        let mut app = with_sidebar((200, 90));
+        update(&mut app, Input::Key(KeyEvent::from(KeyCode::Char('?'))));
+        let screen = screen(200, 90, &app);
+        let keymap = postio_core::Keymap::resolve(&Default::default());
+        let sections = postio_ui::cheatsheet::sections(
+            &keymap,
+            postio_core::Context::List,
+            // No list is open here, so the view is unified, where a move has
+            // no account to move within (#182).
+            postio_core::Availability::open(postio_core::Scope::Unified),
+        );
+        assert!(!sections.is_empty());
+        for section in &sections {
+            assert!(
+                screen.contains(section.title),
+                "{} missing:\n{screen}",
+                section.title
+            );
+            for row in &section.rows {
+                let key = row
+                    .id
+                    .and_then(|id| postio_ui::terminal::deliverable_binding(&keymap, id, false))
+                    .unwrap_or_default();
+                assert!(
+                    screen
+                        .lines()
+                        .any(|line| line.contains(row.title) && line.contains(&key)),
+                    "{} ({key}) missing:\n{screen}",
+                    row.title
+                );
+            }
+        }
+        update(&mut app, Input::Key(KeyEvent::from(KeyCode::Esc)));
+        assert!(!screen_of_size(&app, 200, 90).contains(sections[0].title));
+    }
+
+    fn screen_of_size(app: &App, width: u16, height: u16) -> String {
+        screen(width, height, app)
     }
 
     #[test]

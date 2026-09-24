@@ -375,7 +375,13 @@ pub struct App {
     /// Whether the terminal speaks the kitty keyboard protocol, so every
     /// chord arrives; otherwise only what a legacy terminal can send does.
     enhanced_keys: bool,
+    /// Where the keyboard was when the cheat sheet opened, while it is open.
+    cheatsheet: Option<Focus>,
 }
+
+/// One section of the cheat sheet as it is drawn: its heading, and each
+/// command with the key this terminal can send for it.
+pub type SheetSection = (&'static str, Vec<(&'static str, String)>);
 
 /// Which of the finder's modes the palette is in (`postio_ui::finder`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -504,6 +510,7 @@ impl App {
             search: None,
             palette: None,
             enhanced_keys: false,
+            cheatsheet: None,
         }
     }
 
@@ -835,6 +842,58 @@ impl App {
         vec![Effect::Redraw]
     }
 
+    /// The registry's context for where the keyboard is.
+    fn context_of(focus: Focus) -> postio_core::Context {
+        match focus {
+            Focus::List | Focus::Search | Focus::Palette => postio_core::Context::List,
+            Focus::Sidebar => postio_core::Context::Sidebar,
+            Focus::Reader => postio_core::Context::Reader,
+            Focus::Parts => postio_core::Context::Parts,
+            Focus::Composer => postio_core::Context::Composer,
+        }
+    }
+
+    /// What can run here, given what is on screen.
+    fn availability(&self) -> postio_core::Availability {
+        postio_core::Availability::open(
+            self.account
+                .map_or(postio_core::Scope::Unified, postio_core::Scope::Account),
+        )
+    }
+
+    /// The cheat sheet, while it is open: `postio_ui::cheatsheet::sections`
+    /// for where the keyboard was, each key as this terminal can send it.
+    pub fn cheat_sheet(&self) -> Option<Vec<SheetSection>> {
+        let focus = self.cheatsheet?;
+        let keymap = self.keys.keymap();
+        Some(
+            postio_ui::cheatsheet::sections(keymap, Self::context_of(focus), self.availability())
+                .into_iter()
+                .map(|section| {
+                    let rows = section
+                        .rows
+                        .into_iter()
+                        .map(|row| {
+                            let key = row
+                                .id
+                                .and_then(|id| {
+                                    postio_ui::terminal::deliverable_binding(
+                                        keymap,
+                                        id,
+                                        self.enhanced_keys,
+                                    )
+                                })
+                                .or(row.binding)
+                                .unwrap_or_default();
+                            (row.title, key)
+                        })
+                        .collect();
+                    (section.title, rows)
+                })
+                .collect(),
+        )
+    }
+
     /// The palette as it is drawn, while it is open.
     pub fn palette(&self) -> Option<PaletteView> {
         let state = self.palette.as_ref()?;
@@ -860,17 +919,8 @@ impl App {
         let query = state.input.value();
         match state.finding {
             Finding::Commands => {
-                let context = match state.from {
-                    Focus::List | Focus::Search | Focus::Palette => postio_core::Context::List,
-                    Focus::Sidebar => postio_core::Context::Sidebar,
-                    Focus::Reader => postio_core::Context::Reader,
-                    Focus::Parts => postio_core::Context::Parts,
-                    Focus::Composer => postio_core::Context::Composer,
-                };
-                let availability = postio_core::Availability::open(
-                    self.account
-                        .map_or(postio_core::Scope::Unified, postio_core::Scope::Account),
-                );
+                let context = Self::context_of(state.from);
+                let availability = self.availability();
                 postio_ui::palette::entries(self.keys.keymap(), context, availability, query)
                     .into_iter()
                     .map(|entry| {
@@ -1496,6 +1546,7 @@ impl App {
             "focus_sidebar" => self.focus = Focus::Sidebar,
             "search" => return self.open_search(),
             "command_palette" => return self.open_palette(Finding::Commands),
+            "cheat_sheet" => self.cheatsheet = Some(self.focus),
             "cycle_pane" => {
                 // The composer is the reading pane while it is open.
                 let reader = if self.composer.is_some() && !self.detached {
@@ -1997,6 +2048,11 @@ pub fn update(app: &mut App, input: Input) -> Vec<Effect> {
     let mut effects = match input {
         Input::Resize(width, height) => {
             app.size = (width, height);
+            vec![Effect::Redraw]
+        }
+        // Any key puts the cheat sheet away; it is something to read.
+        Input::Key(_) if app.cheatsheet.is_some() => {
+            app.cheatsheet = None;
             vec![Effect::Redraw]
         }
         Input::Key(key) if app.focus == Focus::Composer => app.composer_key(&key),
