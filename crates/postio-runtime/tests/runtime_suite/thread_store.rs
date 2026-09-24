@@ -465,3 +465,62 @@ async fn a_folder_that_gains_a_message_is_counted_again() {
         after.total
     );
 }
+
+#[tokio::test]
+async fn a_message_list_s_rows_cost_the_same_however_many() {
+    // #1613: each message row read one `threads.get` for its conversation's
+    // size -- fifty-one statements for a page of fifty, in search results
+    // and every query view. The size is a column of the row's own query.
+    use postio_storage::test_support::counting::counted_async;
+    let (store, account, _inbox, database) = store(200, 4).await;
+    let ids: Vec<postio_model::MessageId> = {
+        let connection = database.connect().await.expect("a connection");
+        postio_storage::sql::execute(
+            &connection,
+            "UPDATE messages SET flagged = 1 WHERE account_id = ?1",
+            [account.get()],
+        )
+        .await
+        .expect("flag them");
+        postio_storage::sql::all(
+            &connection,
+            "SELECT id FROM messages WHERE thread_id IS NOT NULL ORDER BY id LIMIT 50",
+            (),
+            |row| {
+                Ok(postio_model::MessageId::new(
+                    postio_storage::sql::RowExt::col(row, 0)?,
+                ))
+            },
+        )
+        .await
+        .expect("ids")
+    };
+    let scope = ListScope::Flagged(account);
+    let one = counted_async(|| async {
+        store
+            .rows_in(scope, ids[..1].to_vec())
+            .await
+            .expect("one row");
+    })
+    .await;
+    let fifty = counted_async(|| async {
+        let rows = store.rows_in(scope, ids.clone()).await.expect("fifty rows");
+        let postio_runtime::store::ListRows::Messages(rows) = rows else {
+            panic!("Flagged lists messages");
+        };
+        assert!(
+            rows.iter().all(|row| row.thread_count >= 1),
+            "every row says how big its conversation is"
+        );
+        assert!(
+            rows.iter().any(|row| row.thread_count > 1),
+            "the seeded conversations hold more than one message"
+        );
+    })
+    .await;
+    assert_eq!(
+        one.statements, fifty.statements,
+        "the rows of fifty messages took {} statements where one took {}",
+        fifty.statements, one.statements
+    );
+}
