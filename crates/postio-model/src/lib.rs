@@ -58,6 +58,7 @@ pub mod mailto;
 pub mod mention;
 pub mod message;
 pub mod mime;
+pub mod net;
 pub mod operation;
 pub mod outgoing;
 pub mod reply;
