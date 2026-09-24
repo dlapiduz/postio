@@ -33,6 +33,7 @@ pub mod row;
 pub mod schedule;
 pub mod search;
 pub mod selection;
+pub mod sending;
 pub mod settings;
 pub mod sidebar;
 pub mod status;

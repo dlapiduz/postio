@@ -226,35 +226,6 @@ pub fn recipient_warning(draft: &Draft) -> Option<String> {
     }
 }
 
-/// What is odd about this message, in the words the dialog uses.
-///
-/// Empty for a message with nothing odd about it, which is almost all of
-/// them. Each entry is a clause rather than a sentence, because they are
-/// joined into one.
-fn send_concerns(draft: &Draft) -> Vec<String> {
-    let mut concerns = Vec::new();
-    // FR-018. Asked, never refused: a message with no subject is a perfectly
-    // ordinary thing to send on purpose, and refusing it would be the app
-    // having an opinion about someone else's correspondence.
-    if draft.subject.trim().is_empty() {
-        concerns.push("this message has no subject".to_owned());
-    }
-    // FR-057.
-    if postio_model::mention::mentions_an_attachment(draft) {
-        concerns.push("it mentions an attachment and does not carry one".to_owned());
-    }
-    concerns
-}
-
-/// `a`, `a and b`, `a, b and c`.
-fn join_with_and(parts: &[String]) -> String {
-    match parts {
-        [] => String::new(),
-        [one] => one.clone(),
-        [rest @ .., last] => format!("{} and {last}", rest.join(", ")),
-    }
-}
-
 /// How many wrong addresses a warning names before it starts counting.
 const NAMED_ADDRESSES: usize = 3;
 
@@ -377,14 +348,6 @@ const NO_SEND_PATH: &str = "not sent — no outgoing account is connected yet";
 /// say so: the bug this fixes was not the refusal, which is right, but that
 /// refusing looked identical to the key doing nothing at all.
 const REPLY_BLOCKED: &str = "not opened — finish or close the current draft first";
-
-/// What the status line says when `ctrl+Return` is pressed on a draft that is
-/// addressed to nobody.
-const NO_RECIPIENTS: &str = "not sent — add a recipient first";
-
-/// What the status line says when `ctrl+Return` is pressed on a draft that has
-/// already been handed over: it is the queue's now, not the composer's.
-const ALREADY_QUEUED: &str = "not sent again — this draft is already on its way";
 
 /// What the status line says when a file was chosen or dropped but nothing
 /// is listening on [`Composer::connect_attach`] to turn it into an attachment.
@@ -547,6 +510,7 @@ fn reply_draft(id: CommandId, source: &Message, account: &Account) -> Option<Dra
 use postio_body::replying::{ReplyKind, source_document};
 
 use postio_ui::schedule::schedule_presets;
+use postio_ui::sending::{ALREADY_QUEUED, NO_RECIPIENTS, join_with_and, send_concerns};
 
 mod imp {
     use super::*;
