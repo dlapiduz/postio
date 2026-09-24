@@ -609,3 +609,46 @@ async fn a_jump_to_the_bottom_of_a_folder_seeks_rather_than_skips() {
             .collect::<Vec<_>>(),
     );
 }
+
+#[tokio::test]
+async fn a_query_view_is_counted_from_the_folders_cached_counts() {
+    // #1614: the Flagged and Snoozed pages ran a count(*) over messages on
+    // every page read -- `flagged` is in no index, so the
+    // Flagged count read the table row of every message in the account. The
+    // sidebar already sums the folders' cached columns for the same numbers.
+    // A sentinel in the column is what proves the page read it rather than
+    // counting the messages again.
+    let (store, account, _inbox, database) = store(200, 4).await;
+    {
+        let connection = database.connect().await.expect("a connection");
+        postio_storage::sql::execute(
+            &connection,
+            "UPDATE mailboxes SET flagged_count = 0, snoozed_count = 0 WHERE account_id = ?1",
+            [account.get()],
+        )
+        .await
+        .expect("clear");
+        postio_storage::sql::execute(
+            &connection,
+            "UPDATE mailboxes SET flagged_count = 777, snoozed_count = 4321
+              WHERE id = (SELECT min(id) FROM mailboxes WHERE account_id = ?1)",
+            [account.get()],
+        )
+        .await
+        .expect("a sentinel");
+    }
+    for (scope, expected) in [
+        (ListScope::Flagged(account), 777),
+        (ListScope::Snoozed(account), 4321),
+    ] {
+        let total = match store
+            .list_page(request(scope, 0, 10))
+            .await
+            .expect("a page")
+        {
+            postio_runtime::store::ListPage::Messages(page) => page.total,
+            postio_runtime::store::ListPage::Threads(page) => page.total,
+        };
+        assert_eq!(total, expected, "{scope:?} was counted rather than read");
+    }
+}

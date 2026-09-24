@@ -678,8 +678,8 @@ async fn draft_counts_read_only_the_account_s_drafts_from_an_index() {
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
     let (account, _) = test_support::account_with_inbox(&connection).await;
-    let sql = postio_storage::repository::MailboxRepository::new(&connection)
-        .explain_draft_counts();
+    let sql =
+        postio_storage::repository::MailboxRepository::new(&connection).explain_draft_counts();
     let plan: Vec<String> = postio_storage::sql::all(
         &connection,
         &format!("EXPLAIN QUERY PLAN {sql}"),
