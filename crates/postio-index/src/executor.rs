@@ -1520,6 +1520,26 @@ fn filter_condition(filter: &Filter) -> (String, Vec<turso::Value>) {
         // An unresolvable group name is an empty member set and therefore
         // matches nothing, the same "never everything" rule `Account` and
         // `In` follow just above.
+        // specs/005-contacts R6: any of the listed addresses, in any address
+        // header but `sender`/`reply_to` -- the same headers `group:` means --
+        // matched by exact normalised address through `recipients`, never as
+        // full text. An address the store has never seen is an empty set and
+        // matches nothing, the rule the arms around this one follow.
+        Filter::With(addresses) => {
+            let placeholders = vec!["?"; addresses.len()].join(", ");
+            (
+                format!(
+                    "m.id IN (SELECT r.message_id FROM recipients r \
+                     JOIN addresses a ON a.id = r.address_id \
+                     WHERE r.kind IN ('from', 'to', 'cc', 'bcc') \
+                       AND a.address_normalized IN ({placeholders}))"
+                ),
+                addresses
+                    .iter()
+                    .map(|address| turso::Value::Text(address.to_lowercase()))
+                    .collect(),
+            )
+        }
         //
         // A member is a person, so the set is every address any live member
         // owns, reached through `addresses.contact_id` and matched against

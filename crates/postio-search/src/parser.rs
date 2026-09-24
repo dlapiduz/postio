@@ -170,6 +170,22 @@ fn operator(negated: bool, field: Field, raw: &str, today: NaiveDate) -> TokenKi
         Field::List => filter(Filter::List(value)),
         Field::Account => filter(Filter::Account(value)),
         Field::Group => filter(Filter::Group(value)),
+        // A comma-separated list of addresses; empty entries are someone
+        // between one address and the next, and a value of nothing but
+        // separators has nothing to look for yet.
+        Field::With => {
+            let addresses: Vec<String> = value
+                .split(',')
+                .map(str::trim)
+                .filter(|address| !address.is_empty())
+                .map(str::to_owned)
+                .collect();
+            if addresses.is_empty() {
+                partial(value)
+            } else {
+                filter(Filter::With(addresses))
+            }
+        }
         Field::Has => match value.to_ascii_lowercase().as_str() {
             "attach" | "attachment" | "attachments" | "file" | "files" => {
                 filter(Filter::HasAttachment)

@@ -228,7 +228,13 @@ subject:invoice -in:archive
 
 `from:` `to:` `subject:` `in:` `list:` `filename:` `has:attach` `is:unread`
 `is:read` `is:flagged` `before:` `after:` `larger:` `smaller:` `account:`
-`group:` `header:`
+`with:` `group:` `header:`
+
+`with:ada@work.example,ada@home.example` is mail from, to or copied to any of
+those addresses, matched exactly rather than as text — what picking a person
+in `@` or "show mail" in Contacts writes, since the language has no `or`. It
+names addresses, not a person, so a search pinned from it keeps meaning the
+addresses it named (`specs/005-contacts`).
 
 `header:` reaches any RFC 5322 field the envelope does not carry:
 `header:x-mailer` asks whether a message has that field at all,
