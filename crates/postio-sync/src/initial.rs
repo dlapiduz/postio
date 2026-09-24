@@ -293,6 +293,13 @@ pub(crate) async fn enumerate(
     }
 
     let now = Utc::now();
+    // Whether this pass is the folder's first to finish: asked before
+    // `observe` stamps anything, and read again below, where only a first
+    // sync repairs the conversations its own filing order split.
+    let first_sync = !SyncStateRepository::new(connection)
+        .get(mailbox.id)
+        .await?
+        .is_some_and(|state| state.has_synced());
     SyncStateRepository::new(connection)
         .observe(mailbox.id, &server_status, now)
         .await?;
@@ -492,7 +499,40 @@ pub(crate) async fn enumerate(
     SyncStateRepository::new(connection)
         .complete_full_sync(mailbox.id, now)
         .await?;
+    if first_sync {
+        rethread_orphans(connection, mailbox).await;
+    }
     Ok(report)
+}
+
+/// Joins the replies a first sync filed before the messages they answer.
+///
+/// A first sync files newest first, so a reply routinely arrives before its
+/// original. One that names its parent is claimed and waits for it; one
+/// with no `In-Reply-To` and no `References` can only be placed by its
+/// subject, and when it was filed there was nothing yet to place it with.
+/// Once the whole folder is local, every original such a reply could join
+/// is here. After the first sync only: later passes fetch what is new, and
+/// what is new arrives after what it answers.
+///
+/// Background, like every write a pass makes, and never fatal: a folder
+/// whose repair failed is a folder with a split conversation, which is
+/// what it was before this existed.
+async fn rethread_orphans(connection: &Checkout, mailbox: &Mailbox) {
+    let _permit = connection
+        .write_gate()
+        .acquire(WritePriority::Background)
+        .await;
+    match postio_storage::repository::ThreadingRepository::new(connection, mailbox.account_id)
+        .rethread_orphans(mailbox.id)
+        .await
+    {
+        Ok(0) => {}
+        Ok(moved) => tracing::debug!(mailbox = mailbox.id.get(), moved, "rethreaded replies"),
+        Err(error) => {
+            tracing::warn!(mailbox = mailbox.id.get(), %error, "could not rethread replies");
+        }
+    }
 }
 
 /// Asks the backend which UIDs exist, and treats a refusal as "it will not
