@@ -737,14 +737,27 @@ pub async fn feed_the_window(window: &Window, wiring: &Wiring) -> Option<Wired> 
     // being_asked` proves reaches a person: a store opened with no account,
     // or with the network down, still has bodies on disk and still becomes
     // searchable.
-    postio_session::spawn_body_indexer(
-        wiring.database.clone(),
-        wiring.events.subscribe("indexer"),
-        &wiring.runtime,
-    );
-    repair_the_header_blocks(wiring).await;
-    catch_up_the_header_index(wiring).await;
-    reclaim_disk(wiring).await;
+    //
+    // **After the first frame, and a moment after it** (#1604). All four are
+    // catch-up work nobody is waiting on, and they used to start at the same
+    // instant as the first page read, on a runtime of two workers -- the
+    // journal had the WAL truncation landing 20 ms after the first page was
+    // asked for. The indexer's catch-up pass also covers any `BodyLoaded` it
+    // was not yet subscribed to hear.
+    let idle = wiring.clone();
+    postio_gtk::startup::on_first_frame(window, move || {
+        let wiring = idle.clone();
+        glib::timeout_add_local_once(IDLE_PASSES_AFTER_FIRST_FRAME, move || {
+            postio_session::spawn_body_indexer(
+                wiring.database.clone(),
+                wiring.events.subscribe("indexer"),
+                &wiring.runtime,
+            );
+            repair_the_header_blocks(&wiring);
+            catch_up_the_header_index(&wiring);
+            reclaim_disk(&wiring);
+        });
+    });
 
     // Live `[storage] max_bytes` (#929): the ceiling is read once at startup
     // through `Wiring::storage_ceiling` -- this is the other half. Lowering
@@ -777,6 +790,12 @@ pub async fn feed_the_window(window: &Window, wiring: &Wiring) -> Option<Wired> 
     Some(Wired { feeds, search })
 }
 
+/// How long after the first frame the idle passes start: long enough for
+/// the first pages and the reading pane to have had the runtime to
+/// themselves, short enough that a store opened to search is searchable
+/// within a breath.
+const IDLE_PASSES_AFTER_FIRST_FRAME: std::time::Duration = std::time::Duration::from_millis(750);
+
 /// Rebuild the header blocks of mail that arrived before there was anywhere
 /// to put them, out of the way.
 ///
@@ -795,7 +814,7 @@ pub async fn feed_the_window(window: &Window, wiring: &Wiring) -> Option<Wired> 
 /// this only makes a *later* search sharper.
 ///
 /// Every pass after the first costs one query that finds nothing.
-async fn repair_the_header_blocks(wiring: &Wiring) {
+fn repair_the_header_blocks(wiring: &Wiring) {
     let (database, blobs) = (wiring.database.clone(), wiring.blobs.clone());
     wiring.runtime.spawn(async move {
         if let Err(error) = postio_session::repair_header_blocks(&database, &blobs).await {
@@ -828,7 +847,7 @@ async fn repair_the_header_blocks(wiring: &Wiring) {
 /// [`postio_session::spawn_body_indexer`] has: it is synchronous SQLite that
 /// decompresses and parses a block per message, and nothing on screen waits
 /// for it. Every pass after the first costs one query that finds nothing.
-async fn catch_up_the_header_index(wiring: &Wiring) {
+fn catch_up_the_header_index(wiring: &Wiring) {
     let database = wiring.database.clone();
     wiring.runtime.spawn(async move {
         if let Err(error) = postio_session::index_local_headers(&database).await {
@@ -882,7 +901,7 @@ async fn catch_up_the_header_index(wiring: &Wiring) {
 /// two sweeps that take only what nothing wants: there is no sense evicting a
 /// blob somebody would have to refetch when an orphan of the same size was
 /// about to go for free.
-async fn reclaim_disk(wiring: &Wiring) {
+fn reclaim_disk(wiring: &Wiring) {
     let (database, blobs) = (wiring.database.clone(), wiring.blobs.clone());
     let ceiling = wiring.storage_ceiling;
     wiring.runtime.spawn(async move {
