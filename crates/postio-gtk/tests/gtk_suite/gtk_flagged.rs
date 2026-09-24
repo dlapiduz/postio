@@ -381,7 +381,10 @@ fn rows(window: &Window) -> Vec<(String, gtk::ListBoxRow)> {
     walk(
         window.sidebar().upcast_ref::<gtk::Widget>(),
         &mut |widget| {
+            // Folder rows only: the Contacts row below them is a destination,
+            // not a folder (specs/005-contacts).
             if let Some(row) = widget.downcast_ref::<gtk::ListBoxRow>()
+                && !row.has_css_class("postio-sidebar-destination")
                 && let Some(label) = first_label(row.upcast_ref::<gtk::Widget>())
             {
                 found.push((label, row.clone()));

@@ -159,6 +159,10 @@ mod imp {
         /// second draft moves this one into a window of its own and builds a
         /// fresh one here, so "the composer" is a role rather than an object.
         pub composer: RefCell<Option<crate::composer::Composer>>,
+        /// The Contacts screen, built into the reading pane on first use
+        /// (specs/005-contacts), for the reason the composer and the reader
+        /// are lazy: a session that never opens it never pays for it.
+        pub contacts: RefCell<Option<crate::contacts::ContactsPane>>,
         /// The ones that have been pushed out, kept alive because nothing
         /// else owns them -- their windows hold their widgets, and a window
         /// with no owning reference is a window that closes on its own.
@@ -852,6 +856,25 @@ impl Window {
                     .find(|composer| held(composer))
                     .cloned()
             })
+    }
+
+    /// The Contacts screen, built and mounted on first use.
+    pub fn contacts(&self) -> crate::contacts::ContactsPane {
+        if let Some(pane) = self.imp().contacts.borrow().clone() {
+            return pane;
+        }
+        let pane = crate::contacts::install(self);
+        *self.imp().contacts.borrow_mut() = Some(pane.clone());
+        pane
+    }
+
+    /// Whether the Contacts screen is open, without building it to ask.
+    pub fn contacts_open(&self) -> bool {
+        self.imp()
+            .contacts
+            .borrow()
+            .as_ref()
+            .is_some_and(|pane| pane.is_open())
     }
 
     pub fn composer(&self) -> crate::composer::Composer {
@@ -1779,6 +1802,13 @@ impl Window {
         ));
         sidebar.add_controller(focus);
 
+        // The sidebar's Contacts row is `g c` by pointer (specs/005-contacts).
+        sidebar.connect_contacts_requested(glib::clone!(
+            #[weak(rename_to = window)]
+            self,
+            move || window.contacts().open()
+        ));
+
         // A message dragged onto a folder is the `m` key with the destination
         // already answered — the same registry command, so it is undoable the
         // same way and reaches the server through the same queue.
@@ -2394,6 +2424,20 @@ impl Window {
 
     fn handled_here(&self, id: CommandId) -> bool {
         match id {
+            // specs/005-contacts: a destination, like `g i`. The screen
+            // answers its own commands through `connect_command` while it is
+            // open, the way the composer does; these are the ones the window
+            // has to answer because they would otherwise reach the message
+            // list behind the screen.
+            CommandId::OpenContacts => self.contacts().open(),
+            CommandId::ToggleSelection
+            | CommandId::ExtendSelectionDown
+            | CommandId::ExtendSelectionUp
+            | CommandId::SelectAll
+                if self.context() == Context::Contacts =>
+            {
+                self.contacts().dispatch(id);
+            }
             CommandId::CommandPalette => self.open_finder(Mode::Command),
             CommandId::CheatSheet => self.toggle_cheatsheet(),
             // The conversation's own axis. `j`/`k` move between threads in
@@ -2506,6 +2550,9 @@ impl Window {
             }
             CommandId::Back if self.parts().is_visible() => self.close_parts(),
             CommandId::Back if self.cheatsheet().is_visible() => self.close_cheatsheet(),
+            // Before the finder and the list: Contacts covers them, and `Esc`
+            // is about the screen the person is looking at.
+            CommandId::Back if self.contacts_open() => self.contacts().close(),
             // Through `press_escape`, not `close_finder` directly (#1011):
             // this is the path that runs once the keyboard has moved off
             // the search entry onto the list to read a result, and

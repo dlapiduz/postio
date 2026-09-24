@@ -323,7 +323,10 @@ button.postio-icon-button:hover {
 /* 36px rows, 21px in from the edge. A selected row spends 3px of that on the
    steel edge and 18px on padding, so the label does not shift when you move
    the selection — the one thing that would make the whole list twitch. */
-.postio-folder {
+/* `.postio-sidebar-destination` is the Contacts row (specs/005-contacts):
+   drawn like a folder, and not one, so nothing that counts folders counts it. */
+.postio-folder,
+.postio-sidebar-destination {
   min-height: 36px;
   margin-bottom: 3px;
   padding: 0 21px;
@@ -332,7 +335,8 @@ button.postio-icon-button:hover {
   background: none;
 }
 
-.postio-folder:hover {
+.postio-folder:hover,
+.postio-sidebar-destination:hover {
   background-color: var(--postio-hover-bg);
 }
 
@@ -354,7 +358,8 @@ button.postio-icon-button:hover {
    `g f`, and by a click landing on it — and GTK only marks focus "visible"
    for its own keyboard traversal, so the ring would have been absent in
    exactly the case it exists for. Caught by rendering it and looking. */
-.postio-folder:focus {
+.postio-folder:focus,
+.postio-sidebar-destination:focus {
   outline: 2px solid var(--postio-accent);
   outline-offset: -2px;
 }
@@ -2347,4 +2352,75 @@ button.postio-compose-more {
 .conversation-index .postio-rail {
   border-left: none;
   padding-top: var(--postio-space-2);
+}
+
+/* ── Contacts (specs/005-contacts) ─────────────────────────────────────
+   The screen takes the reading pane. Its header is the list's own
+   (`.postio-list-header`, `.postio-list-title`, `.postio-list-meta`); its
+   rows draw themselves off the message row's roles. What is here is the
+   filter, the detail column beside the list, and the two quiet lines. */
+.postio-contacts-filter {
+  margin-top: var(--postio-space-2);
+}
+
+.postio-contacts-empty,
+.postio-contact-nobody {
+  font-family: var(--postio-font-body);
+  font-size: 0.8863rem;
+  color: var(--postio-dim);
+  padding: var(--postio-space-8) var(--postio-space-6);
+}
+
+/* A command that meant nothing on the focused row says what it wants,
+   on the line under the list, in the key hint's voice. */
+.postio-contacts-hint {
+  font-family: var(--postio-font-mono);
+  font-size: 0.75rem;
+  color: var(--postio-dim);
+  padding: var(--postio-space-2) var(--postio-space-6);
+  box-shadow: inset 0 1px var(--postio-hairline);
+}
+
+/* The detail column: a hairline against the list, the name in the
+   heading face, facts in mono because they are counts and dates. */
+.postio-contact-detail {
+  min-width: 280px;
+  padding: var(--postio-space-6);
+  box-shadow: inset 1px 0 var(--postio-hairline);
+}
+
+.postio-contact-detail.stacked {
+  min-width: 0;
+  box-shadow: inset 0 1px var(--postio-hairline);
+}
+
+.postio-contact-name {
+  font-family: var(--postio-font-heading);
+  font-weight: var(--postio-font-heading-weight);
+  font-size: 1.3636rem;
+  color: var(--postio-ink);
+}
+
+.postio-contact-organization,
+.postio-contact-note {
+  font-family: var(--postio-font-body);
+  font-size: 0.8863rem;
+  color: var(--postio-ink-secondary);
+}
+
+.postio-contact-address {
+  font-family: var(--postio-font-body);
+  font-size: 0.9204rem;
+  color: var(--postio-ink);
+}
+
+.postio-contact-facts,
+.postio-contact-groups {
+  font-family: var(--postio-font-mono);
+  font-size: 0.75rem;
+  color: var(--postio-dim);
+}
+
+.postio-contact-action {
+  margin-top: var(--postio-space-3);
 }

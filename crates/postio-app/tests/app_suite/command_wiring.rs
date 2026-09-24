@@ -148,15 +148,19 @@ const SEARCH_OWNED: &[CommandId] = &[CommandId::ToggleResultOrder];
 /// `Window::act` and proven end to end by `search_open.rs`; `AddLabel` was
 /// the other, removed by #766 when it had nothing behind it and brought back
 /// by #780 with a handler, which is why it is not listed here.
-const KNOWN_ORPHANS: &[(CommandId, &str)] = &[
-    // specs/005-contacts lands the Contacts screen's commands before the
-    // screen that answers them; each leaves this list with the task that
-    // wires it, and the sweep fails if one is taken off too early.
-    (CommandId::OpenContacts, "specs/005-contacts T036"),
-    (CommandId::ContactShowMail, "specs/005-contacts T038"),
-    (CommandId::ContactCompose, "specs/005-contacts T038"),
-    (CommandId::ContactsFilter, "specs/005-contacts T035"),
-    (CommandId::ContactsToggleEveryone, "specs/005-contacts T035"),
+const KNOWN_ORPHANS: &[(CommandId, &str)] = &[];
+
+/// Answered by `postio_gtk::contacts::ContactsPane::dispatch`, the Contacts
+/// screen's own `connect_command` subscriber, installed when the screen is
+/// first built and answering only while it is open -- the composer's shape.
+/// `OpenContacts` is not here: the window answers it. Covered by
+/// `contacts_screen.rs`, which drives each of these through the wired app,
+/// and `gtk_suite/gtk_contacts_pane.rs`.
+const CONTACTS_OWNED: &[CommandId] = &[
+    CommandId::ContactShowMail,
+    CommandId::ContactCompose,
+    CommandId::ContactsFilter,
+    CommandId::ContactsToggleEveryone,
 ];
 
 pub fn every_command_id_is_handled_locally_or_wired_to_the_bus() {
@@ -230,6 +234,7 @@ pub fn every_command_id_is_handled_locally_or_wired_to_the_bus() {
                 || COMPOSER_OWNED.contains(&id)
                 || CONFIG_AND_ACCOUNT_OWNED.contains(&id)
                 || SEARCH_OWNED.contains(&id)
+                || CONTACTS_OWNED.contains(&id)
                 || known_orphans.contains(&id)
             {
                 continue;

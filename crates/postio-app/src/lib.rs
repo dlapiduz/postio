@@ -29,6 +29,7 @@
 pub mod add_account;
 pub mod commands;
 pub mod compose;
+pub mod contacts;
 pub mod export;
 pub mod feed;
 pub mod notifications;
@@ -682,6 +683,11 @@ pub async fn feed_the_window(window: &Window, wiring: &Wiring) -> Option<Wired> 
         },
     )
     .await;
+
+    // The Contacts screen (specs/005-contacts). After the composer, whose
+    // draft "write to" opens, and with the same account a new message is
+    // from.
+    contacts::install(window, wiring, composing).await;
 
     // The reading pane. After `compose::install`, because the two share the
     // pane and the window wires their swap when the composer is installed.

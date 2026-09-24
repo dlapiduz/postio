@@ -297,6 +297,27 @@ fn wait_for_first_page(window: &Window) -> bool {
     false
 }
 
+/// Opens the Contacts screen and waits for its first page and the detail of
+/// whoever the cursor lands on, the way [`wait_for_first_page`] waits for the
+/// list's.
+fn show_contacts(window: &Window, everyone: bool) {
+    window.act(postio_core::Command::OpenContacts);
+    let pane = window.contacts();
+    if everyone {
+        pane.set_view(postio_model::ContactView::Everyone);
+    }
+    let context = glib::MainContext::default();
+    let deadline = Instant::now() + Duration::from_millis(SETTLE_MS);
+    while Instant::now() < deadline {
+        while context.iteration(false) {}
+        let listed = pane.model().n_items() == 0 || pane.cursor_person().is_some();
+        if listed {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+}
+
 /// Correspondents for the `@` mode, in the canvas' own cast.
 ///
 /// Every address is a reserved domain, per CLAUDE.md.
@@ -1156,6 +1177,12 @@ fn main() -> glib::ExitCode {
     }
     if flag("compose") {
         show_composer(&window);
+    }
+    // The Contacts screen (specs/005-contacts), over the demo store through
+    // the same `feed_the_window` the binary runs; `everyone` shows everyone
+    // from mail rather than the people the user wrote to.
+    if flag("contacts") {
+        show_contacts(&window, flag("everyone"));
     }
     window.present();
 

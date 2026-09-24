@@ -472,7 +472,8 @@ pub fn at_finds_a_correspondent_and_searches_their_mail() {
         Mode::Search,
         "the box does not strand you in a mode with nowhere to go"
     );
-    assert_eq!(finder.query().text, "from:grace@example.com");
+    // `with:` -- both directions of the correspondence (specs/005-contacts).
+    assert_eq!(finder.query().text, "with:grace@example.com");
     assert_eq!(
         finder.chips().len(),
         1,

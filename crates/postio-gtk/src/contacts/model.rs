@@ -119,7 +119,16 @@ mod imp {
         type Interfaces = (gio::ListModel,);
     }
 
-    impl ObjectImpl for ContactsModel {}
+    impl ObjectImpl for ContactsModel {
+        fn signals() -> &'static [glib::subclass::Signal] {
+            static SIGNALS: std::sync::OnceLock<Vec<glib::subclass::Signal>> =
+                std::sync::OnceLock::new();
+            // A delivery gave rows to positions that already existed -- for
+            // whoever is not a `GtkListView` and wants to know, the detail
+            // column following the cursor onto a row that just became real.
+            SIGNALS.get_or_init(|| vec![glib::subclass::Signal::builder("filled").build()])
+        }
+    }
 
     impl ListModelImpl for ContactsModel {
         fn item_type(&self) -> glib::Type {
@@ -205,6 +214,7 @@ impl ContactsModel {
         for (held, row) in filling {
             held.set_row(row);
         }
+        self.emit_by_name::<()>("filled", &[]);
         {
             let mut handed = self.imp().handed.borrow_mut();
             for page in evicted {
@@ -223,6 +233,17 @@ impl ContactsModel {
                 self.items_changed(total, before - total, 0);
             }
         }
+    }
+
+    /// Calls `on_filled` whenever a delivery lands -- after the rows are in,
+    /// which a delivery held past an `item()` call may be a turn later.
+    pub fn connect_filled(&self, on_filled: impl Fn(&Self) + 'static) -> glib::SignalHandlerId {
+        self.connect_local("filled", false, move |values| {
+            if let Some(model) = values.first().and_then(|value| value.get::<Self>().ok()) {
+                on_filled(&model);
+            }
+            None
+        })
     }
 
     /// Gives up on a page whose read failed, so the view can ask again.

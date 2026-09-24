@@ -90,6 +90,9 @@ pub enum ReaderOccupant {
     Conversation,
     /// The composer, which takes the pane over (docs/PRODUCT.md).
     Composer,
+    /// The Contacts screen, which takes the pane over like the composer and
+    /// above it while it is open (specs/005-contacts R10).
+    Contacts,
 }
 
 /// Whether the sidebar is drawn, given what the user asked for and what the
@@ -124,7 +127,10 @@ pub fn sidebar_wanted_after_toggle(on: bool, mode: Mode, wanted: bool) -> bool {
 
 /// The occupant the active surfaces call for, by rank.
 ///
-/// The composer outranks everything: a half-written draft on a hidden widget
+/// Contacts outranks everything while it is open: it is a screen the user
+/// opened on purpose, and it leaves by `Esc` or by a verb that closes it
+/// first ("write to" does, so the composer is never hidden behind it). Then
+/// the composer: a half-written draft on a hidden widget
 /// is the worst state the pane has. Search outranks plain reading while it is
 /// up, because the pane is the search's answer column. Pure, so the whole
 /// priority is testable without a window.
@@ -134,12 +140,15 @@ pub fn sidebar_wanted_after_toggle(on: bool, mode: Mode, wanted: bool) -> bool {
 /// pane open on" — a thread is open, and the single-message reader is what
 /// shows when one is not. They are never both right (#1195).
 pub fn fallback(
+    contacts: bool,
     composing: bool,
     searching: bool,
     reading: bool,
     conversing: bool,
 ) -> ReaderOccupant {
-    if composing {
+    if contacts {
+        ReaderOccupant::Contacts
+    } else if composing {
         ReaderOccupant::Composer
     } else if searching {
         ReaderOccupant::SearchPreview
@@ -200,6 +209,8 @@ mod imp {
         pub conversing: Cell<bool>,
         /// The activity flags `fallback` is computed from.
         pub composing: Cell<bool>,
+        /// Whether the Contacts screen is open over the pane.
+        pub contacts: Cell<bool>,
         pub searching: Cell<bool>,
         pub reading: Cell<bool>,
     }
@@ -234,6 +245,7 @@ mod imp {
                 occupant: Cell::new(ReaderOccupant::default()),
                 conversing: Cell::new(false),
                 composing: Cell::new(false),
+                contacts: Cell::new(false),
                 searching: Cell::new(false),
                 reading: Cell::new(false),
             }
@@ -394,7 +406,7 @@ impl Shell {
     /// [`claim_reading`]: Self::claim_reading
     pub fn set_reading(&self, reading: bool) {
         self.imp().reading.set(reading);
-        if self.imp().composing.get() {
+        if self.pane_is_held() {
             return;
         }
         if !reading && self.imp().occupant.get() == ReaderOccupant::Reader {
@@ -410,7 +422,7 @@ impl Shell {
     /// lost to a cursor movement.
     pub fn claim_reading(&self) {
         self.imp().reading.set(true);
-        if !self.imp().composing.get() {
+        if !self.pane_is_held() {
             self.show_occupant(ReaderOccupant::Reader);
         }
     }
@@ -418,7 +430,7 @@ impl Shell {
     /// Search took (or left) the pane's column.
     pub fn set_searching(&self, searching: bool) {
         self.imp().searching.set(searching);
-        if self.imp().composing.get() {
+        if self.pane_is_held() {
             return;
         }
         if searching {
@@ -434,7 +446,7 @@ impl Shell {
     /// next arrow puts the preview back. A no-op outside search or while the
     /// composer holds the pane.
     pub fn preview_focused(&self) {
-        if self.imp().searching.get() && !self.imp().composing.get() {
+        if self.imp().searching.get() && !self.pane_is_held() {
             self.show_occupant(ReaderOccupant::SearchPreview);
         }
     }
@@ -448,7 +460,7 @@ impl Shell {
     /// pane (#1195). Nothing outside this file decides what the pane shows.
     pub fn set_conversing(&self, conversing: bool) {
         self.imp().conversing.set(conversing);
-        if self.imp().composing.get() {
+        if self.pane_is_held() {
             return;
         }
         if conversing {
@@ -462,17 +474,29 @@ impl Shell {
     /// [`fallback`].
     pub fn set_composing(&self, composing: bool) {
         self.imp().composing.set(composing);
-        if composing {
-            self.show_occupant(ReaderOccupant::Composer);
-        } else {
-            self.settle_reader_pane();
-        }
+        // Settled rather than shown: while Contacts is open it outranks the
+        // composer, and a draft opened underneath waits there.
+        self.settle_reader_pane();
+    }
+
+    /// The Contacts screen opened over the pane, or closed. It outranks
+    /// everything while open: see [`fallback`].
+    pub fn set_contacts_open(&self, open: bool) {
+        self.imp().contacts.set(open);
+        self.settle_reader_pane();
+    }
+
+    /// Whether a surface that takes the pane over -- the composer, Contacts --
+    /// holds it, so a reading or search flag only updates and shows nothing.
+    fn pane_is_held(&self) -> bool {
+        self.imp().composing.get() || self.imp().contacts.get()
     }
 
     /// Shows what the flags call for — after the current occupant left.
     fn settle_reader_pane(&self) {
         let imp = self.imp();
         self.show_occupant(fallback(
+            imp.contacts.get(),
             imp.composing.get(),
             imp.searching.get(),
             imp.reading.get(),
@@ -687,22 +711,34 @@ mod tests {
         // The pane shows one thread *or* one message, never both — which is
         // what the composer sharing the pane with a conversation proved was
         // not being decided anywhere (#1195).
-        assert_eq!(fallback(false, false, true, true), Conversation);
-        assert_eq!(fallback(false, false, false, true), Conversation);
+        assert_eq!(fallback(false, false, false, true, true), Conversation);
+        assert_eq!(fallback(false, false, false, false, true), Conversation);
         // And it is still a reading surface: anything that outranks the
         // reader outranks it too.
-        assert_eq!(fallback(true, false, true, true), Composer);
-        assert_eq!(fallback(false, true, true, true), SearchPreview);
+        assert_eq!(fallback(false, true, false, true, true), Composer);
+        assert_eq!(fallback(false, false, true, true, true), SearchPreview);
+    }
+
+    #[test]
+    fn contacts_outranks_everything_while_it_is_open() {
+        use ReaderOccupant::*;
+        // specs/005-contacts R10: the Contacts screen takes the pane over the
+        // way the composer does, above it -- "write to" closes Contacts before
+        // it opens a draft, so the composer is never hidden behind it, and a
+        // draft already open waits underneath and comes back on `Esc`.
+        assert_eq!(fallback(true, true, true, true, true), Contacts);
+        assert_eq!(fallback(true, false, false, false, false), Contacts);
+        assert_eq!(fallback(false, true, false, false, false), Composer);
     }
 
     #[test]
     fn the_fallback_ranks_composer_over_search_over_reading() {
         use ReaderOccupant::*;
-        assert_eq!(fallback(true, true, true, false), Composer);
-        assert_eq!(fallback(true, false, false, false), Composer);
-        assert_eq!(fallback(false, true, true, false), SearchPreview);
-        assert_eq!(fallback(false, true, false, false), SearchPreview);
-        assert_eq!(fallback(false, false, true, false), Reader);
-        assert_eq!(fallback(false, false, false, false), Empty);
+        assert_eq!(fallback(false, true, true, true, false), Composer);
+        assert_eq!(fallback(false, true, false, false, false), Composer);
+        assert_eq!(fallback(false, false, true, true, false), SearchPreview);
+        assert_eq!(fallback(false, false, true, false, false), SearchPreview);
+        assert_eq!(fallback(false, false, false, true, false), Reader);
+        assert_eq!(fallback(false, false, false, false, false), Empty);
     }
 }

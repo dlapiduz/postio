@@ -67,6 +67,7 @@ mod gtk_composer_size;
 mod gtk_composer_toolbar;
 mod gtk_composer_tracking_notice;
 mod gtk_composer_warm;
+mod gtk_contacts_pane;
 mod gtk_conversation;
 mod gtk_cursor_preview;
 mod gtk_dispatch;
@@ -151,6 +152,7 @@ mod gtk_shell;
 mod gtk_sidebar;
 mod gtk_sidebar_accounts;
 mod gtk_sidebar_backfill_exclusion;
+mod gtk_sidebar_contacts_row;
 mod gtk_sidebar_height;
 mod gtk_sidebar_keys;
 mod gtk_sidebar_saved_searches;
@@ -180,6 +182,18 @@ mod no_stray_prints;
 const IGNORED: &[&str] = &[]; // nothing held out; see app_suite's copy
 
 const CASES: &[(&str, fn())] = &[
+    (
+        "gtk_sidebar_contacts_row::walking_to_the_contacts_row_opens_contacts",
+        gtk_sidebar_contacts_row::walking_to_the_contacts_row_opens_contacts,
+    ),
+    (
+        "gtk_contacts_pane::contacts_takes_the_pane_and_esc_gives_it_back",
+        gtk_contacts_pane::contacts_takes_the_pane_and_esc_gives_it_back,
+    ),
+    (
+        "gtk_contacts_pane::a_draft_open_underneath_waits_for_contacts_to_close",
+        gtk_contacts_pane::a_draft_open_underneath_waits_for_contacts_to_close,
+    ),
     (
         "gtk_conversation::dropping_a_conversation_releases_its_pane",
         gtk_conversation::dropping_a_conversation_releases_its_pane as fn(),

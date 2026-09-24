@@ -403,12 +403,28 @@ impl ContactRepository<'_> {
         after: Option<&ContactCursor>,
         limit: u32,
     ) -> Result<Vec<ContactListRow>> {
+        self.page_from(view, after, 0, limit).await
+    }
+
+    /// [`page`](Self::page), starting `skip` rows past `after`.
+    ///
+    /// For a jump into the list: the caller seeks to the nearest page
+    /// boundary it has already read -- the message list's marks, in
+    /// `postio-runtime` -- and skips only what is left, so sequential
+    /// scrolling skips nothing and a jump skips less than a page's worth.
+    pub async fn page_from(
+        &self,
+        view: ContactView,
+        after: Option<&ContactCursor>,
+        skip: u32,
+        limit: u32,
+    ) -> Result<Vec<ContactListRow>> {
         match after {
             None => {
                 sql::all(
                     self.connection,
                     &first_page_sql(view),
-                    [i64::from(limit)],
+                    bind![i64::from(limit), i64::from(skip)],
                     read_list_row,
                 )
                 .await
@@ -417,7 +433,12 @@ impl ContactRepository<'_> {
                 sql::all(
                     self.connection,
                     &next_page_sql(view),
-                    bind![cursor.sort_key, cursor.id.get(), i64::from(limit)],
+                    bind![
+                        cursor.sort_key,
+                        cursor.id.get(),
+                        i64::from(limit),
+                        i64::from(skip)
+                    ],
                     read_list_row,
                 )
                 .await
@@ -548,7 +569,7 @@ fn first_page_sql(view: ContactView) -> String {
         "SELECT {LIST_COLUMNS} FROM contacts c
            LEFT JOIN addresses pa ON pa.id = c.preferred_address
           WHERE {}
-          ORDER BY c.sort_key, c.id LIMIT ?1",
+          ORDER BY c.sort_key, c.id LIMIT ?1 OFFSET ?2",
         view_predicate(view)
     )
 }
@@ -558,7 +579,7 @@ fn next_page_sql(view: ContactView) -> String {
         "SELECT {LIST_COLUMNS} FROM contacts c
            LEFT JOIN addresses pa ON pa.id = c.preferred_address
           WHERE {} AND c.sort_key >= ?1 AND (c.sort_key > ?1 OR c.id > ?2)
-          ORDER BY c.sort_key, c.id LIMIT ?3",
+          ORDER BY c.sort_key, c.id LIMIT ?3 OFFSET ?4",
         view_predicate(view)
     )
 }

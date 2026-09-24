@@ -315,6 +315,12 @@ mod imp {
         pub ordinary_section: gtk::Box,
         pub saved: gtk::ListBox,
         pub saved_section: gtk::Box,
+        /// The one row that opens Contacts (specs/005-contacts FR-001). A
+        /// list of its own with no selection: opening Contacts must not take
+        /// the highlight off the folder whose mail is behind the screen, so
+        /// `Esc` comes back to a sidebar that still says where you were.
+        pub contacts: gtk::ListBox,
+        pub contacts_requested: RefCell<Vec<Box<dyn Fn()>>>,
         pub status_state: gtk::Label,
         pub status_detail: gtk::Label,
         /// The manual sync trigger, beside the status text (#495).
@@ -471,6 +477,29 @@ impl Sidebar {
         // Nothing to list until a search has been pinned.
         imp.saved_section.set_visible(false);
         folders.append(&imp.saved_section);
+
+        // Contacts: a destination, not a folder or a view (ADR 0036 governs
+        // those rows and does not reach this one).
+        let contacts_rule = gtk::Separator::new(gtk::Orientation::Horizontal);
+        contacts_rule.add_css_class("postio-rule");
+        folders.append(&contacts_rule);
+        imp.contacts.set_selection_mode(gtk::SelectionMode::None);
+        imp.contacts.add_css_class("postio-sidebar-contacts");
+        let name = gtk::Label::new(Some("Contacts"));
+        name.add_css_class("postio-folder-name");
+        name.set_xalign(0.0);
+        name.set_hexpand(true);
+        let row = gtk::ListBoxRow::new();
+        row.add_css_class("postio-sidebar-destination");
+        row.set_child(Some(&name));
+        row.update_property(&[gtk::accessible::Property::Label("Contacts")]);
+        imp.contacts.append(&row);
+        imp.contacts.connect_row_activated(glib::clone!(
+            #[weak(rename_to = sidebar)]
+            self,
+            move |_, _| sidebar.request_contacts()
+        ));
+        folders.append(&imp.contacts);
 
         let scroller = gtk::ScrolledWindow::new();
         scroller.set_policy(gtk::PolicyType::Never, gtk::PolicyType::Automatic);
@@ -1543,6 +1572,8 @@ impl Sidebar {
     fn selectable_lists(&self) -> Vec<gtk::ListBox> {
         let mut lists = self.imp().folder_lists.borrow().clone();
         lists.push(self.imp().saved.clone());
+        // Last because it is drawn last; `rows` hands this order to `j`/`k`.
+        lists.push(self.imp().contacts.clone());
         lists
     }
 
@@ -1713,6 +1744,11 @@ impl Sidebar {
         };
         let row = &rows[next];
         row.grab_focus();
+        if row.parent().as_ref() == Some(self.imp().contacts.upcast_ref::<gtk::Widget>()) {
+            // Landing on it opens it, as landing on a folder opens the folder.
+            self.request_contacts();
+            return None;
+        }
         if self.is_saved_search_row(row) {
             // `imp.saved`'s own `connect_row_selected` (see `constructed`)
             // does the rest: clears the folder sections and fires
@@ -1779,6 +1815,21 @@ impl Sidebar {
             .refresh_requested
             .borrow_mut()
             .push(Box::new(callback));
+    }
+
+    /// What to call when the user asks for Contacts from the sidebar -- by
+    /// click, `Enter`, or walking onto the row. The window opens the screen.
+    pub fn connect_contacts_requested(&self, callback: impl Fn() + 'static) {
+        self.imp()
+            .contacts_requested
+            .borrow_mut()
+            .push(Box::new(callback));
+    }
+
+    fn request_contacts(&self) {
+        for callback in self.imp().contacts_requested.borrow().iter() {
+            callback();
+        }
     }
 
     pub fn connect_selected(&self, callback: impl Fn(SidebarChoice) + 'static) {

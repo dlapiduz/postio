@@ -395,15 +395,14 @@ fn contact_name(contact: &Contact) -> String {
 
 /// The query picking `hit` puts in the box.
 ///
-/// A `from:` chip, quoted if the address could not survive being typed back
-/// in. Deliberately *the query*, not a search that has already run: the point
-/// of landing in [`Mode::Search`] is that the user can go on building on it.
+/// A `with:` chip over every address the person owns -- mail from them and
+/// mail to them, whichever address it went through (specs/005-contacts R6)
+/// -- written by the same rule the Contacts screen's "show mail" uses, so the
+/// two can never spell it differently. Deliberately *the query*, not a
+/// search that has already run: the point of landing in [`Mode::Search`] is
+/// that the user can go on building on it.
 pub fn contact_query(hit: &ContactHit) -> String {
-    if hit.address.chars().any(char::is_whitespace) {
-        format!("from:\"{}\"", hit.address.replace('"', ""))
-    } else {
-        format!("from:{}", hit.address)
-    }
+    postio_ui::contacts::show_mail_query(&hit.addresses)
 }
 
 // ---------------------------------------------------------------------------
@@ -1811,12 +1810,15 @@ mod tests {
 
     #[test]
     fn picking_a_correspondent_writes_a_query_the_parser_reads_back() {
+        // `with:`, not `from:`: finding someone's mail is both directions of
+        // the correspondence, and `from:` alone missed everything the user
+        // sent them (specs/005-contacts R6).
         let hits = contacts(
             &[correspondent(Some("Grace Hopper"), "grace@example.com", 40)],
             "grace",
         );
         let query = contact_query(&hits[0]);
-        assert_eq!(query, "from:grace@example.com");
+        assert_eq!(query, "with:grace@example.com");
 
         // It has to survive being typed back in as an ordinary chip.
         let parsed = postio_search::parse(
@@ -1829,9 +1831,23 @@ mod tests {
             .collect();
         assert_eq!(
             filters,
-            vec![postio_search::query::Filter::From(
+            vec![postio_search::query::Filter::With(vec![
                 "grace@example.com".to_owned()
-            )]
+            ])]
+        );
+    }
+
+    #[test]
+    fn picking_a_person_with_two_addresses_searches_both() {
+        let mut ada = correspondent(Some("Ada Lovelace"), "ada@work.example", 12);
+        ada.addresses.push(postio_model::ContactAddress::new(
+            postio_model::AddressId::new(2),
+            postio_model::EmailAddress::new(None::<String>, "ada@home.example"),
+        ));
+        let hits = contacts(std::slice::from_ref(&ada), "ada");
+        assert_eq!(
+            contact_query(&hits[0]),
+            "with:ada@work.example,ada@home.example"
         );
     }
 
@@ -1841,7 +1857,7 @@ mod tests {
             &[correspondent(Some("Odd One"), "odd one@example.com", 1)],
             "odd",
         );
-        assert_eq!(contact_query(&hits[0]), "from:\"odd one@example.com\"");
+        assert_eq!(contact_query(&hits[0]), "with:\"odd one@example.com\"");
     }
 
     #[test]
