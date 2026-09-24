@@ -21,13 +21,12 @@ types (`postio-model`) are unchanged.
 - Existing rows take NULL. No migration beyond the column (no backwards
   compatibility).
 
-### Remote-image allowlist (moved, reformatted)
+### Remote-image allowlist (moved)
 
 It was a GTK `KeyFile` at `$XDG_STATE_HOME/postio/remote-images.ini`
-(`crates/postio-gtk/src/reader/allowlist.rs:28`). It becomes a host-owned
-TOML file at the same directory, `remote-images.toml`, read and written only
-by the daemon. Fields: a list of sender addresses allowed to load remote
-images. An existing `.ini` is not read.
+(`crates/postio-gtk/src/reader/allowlist.rs:28`). It moves, file and format
+unchanged, to `postio_ui::allowlist`, so both frontends read and write the
+same file. Fields: a list of sender addresses allowed to load remote images.
 
 ### `config.toml` additions
 

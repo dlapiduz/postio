@@ -50,6 +50,16 @@ crate, and moving it there is in scope.
   own palette for everything, plus Postio's accent for selection and focus on
   true-colour terminals; overridable in `config.toml`.
 
+### Session 2026-09-24
+
+- Q: Must the desktop app and the terminal run at the same time on one
+  store? → A: No. "Kill the idea of the daemon. That's too much complexity.
+  Let's set it up so we can only run one app at a time but it can be either
+  or. If the store is locked the user needs to close the other version in
+  order to open the different one." One store, used by either app; never
+  both at once. This replaces the background-process design first planned
+  here (ADR 0041 records both).
+
 ## User Scenarios & Testing *(mandatory)*
 
 ### User Story 1 - Triage the inbox from a terminal (Priority: P1)
@@ -244,33 +254,41 @@ on the resulting screen and store state.
 
 ---
 
-### User Story 6 - One store, both frontends (Priority: P2)
+### User Story 6 - One store, either frontend (Priority: P2)
 
-The user runs the desktop app on their workstation and the terminal frontend
-in a terminal on the same machine, against the same store. An archive in one
-disappears from the other's list; mail synced by one appears in the other; a
-draft started in one opens in the other. They do not configure anything to
-make this true.
+The user reads mail in the desktop app on their workstation, closes it, and
+later opens the terminal frontend -- on the same machine, over SSH -- and finds
+the same mailbox: the same folders, the archive they just made, the draft they
+left. They do not configure anything to make this true. If the desktop app is
+still open, the terminal frontend says so and asks them to close it, and the
+reverse holds.
 
-**Why this priority**: Asked for directly. Without it the terminal frontend
-would be a second mail client with a second copy of the mailbox, which is the
-thing `ARCHITECTURE.md` (and ADR 0010) calls a second application sharing a
-file, not a second frontend.
+**Why this priority**: Asked for directly ("the same store available to the
+GTK version and TUI"). Without it the terminal frontend would be a second mail
+client with a second copy of the mailbox, which is the thing `ARCHITECTURE.md`
+(and ADR 0010) calls a second application sharing a file, not a second
+frontend. Running both at once was asked for first and then withdrawn as not
+worth its complexity (Clarifications, 2026-09-24).
 
-**Independent Test**: Open two sessions on one store in two processes, act in
-one, and assert on what the other presents, within the stated delay, with no
-corruption, no duplicate outgoing message, and no duplicate remote effect.
+**Independent Test**: Open the store in one process and try to open it from a
+second: the second refuses with the sentence below and leaves the store
+untouched. Close the first, open the second, and assert it presents what the
+first wrote.
 
 **Acceptance Scenarios**:
 
-1. **Given** both frontends open on one store, **When** a message is archived
-   in one, **Then** the other's list shows it gone within one second.
-2. **Given** both frontends open, **When** new mail arrives, **Then** it is
-   fetched once, not once per frontend, and appears in both.
-3. **Given** both frontends open, **When** a message is sent from either,
-   **Then** it leaves exactly once.
-4. **Given** the desktop app is not running, **When** the terminal frontend
-   starts, **Then** it syncs on its own; and the reverse holds.
+1. **Given** a message archived in the desktop app, **When** the desktop app
+   is closed and the terminal frontend opened, **Then** the message is in
+   the archive and not the inbox; and the reverse holds.
+2. **Given** the desktop app open, **When** the terminal frontend starts,
+   **Then** it says "Postio is already open in another window. Close it to
+   open Postio here." and exits without touching the store; and the reverse
+   holds, the desktop app saying the same on its "cannot open" screen with a
+   retry.
+3. **Given** a draft started in one frontend and left, **When** the other is
+   opened, **Then** the draft is in Drafts and opens for editing there.
+4. **Given** either frontend is the one running, **When** it runs, **Then**
+   it syncs and sends on its own; nothing else needs to be running.
 
 ---
 
@@ -332,10 +350,11 @@ first sync.
   existing, readable file becomes an attachment; anything else is text.
 - **Huge or many files dropped at once**: each is attached without stalling
   input, and the attachment size warning the desktop composer gives applies.
-- **Store locked or keyring unavailable**: the frontend says which, in words,
-  and exits cleanly rather than opening empty.
-- **Other frontend quits mid-sync**: the surviving frontend takes over
-  background sync without losing queued operations.
+- **Store in use, locked or keyring unavailable**: the frontend says which,
+  in words -- for a store the other frontend has open, that closing it is
+  the fix -- and exits cleanly rather than opening empty.
+- **The other frontend quit mid-sync**: whichever opens the store next
+  carries on the operation queue where it stopped; nothing queued is lost.
 - **SSH with no browser**: every "open" action (link, attachment, OAuth
   consent) degrades to showing the target so the user can act elsewhere.
 - **Suspend and resume** (`Ctrl+Z`, then `fg`), and handing the terminal to
@@ -445,14 +464,15 @@ first sync.
 - **FR-040**: The terminal frontend MUST open the same store, the same
   `config.toml` and the same keyring entries as the desktop app, with no
   import, export or second copy.
-- **FR-041**: Both frontends MUST be able to run at the same time on one
-  store. A change made through either MUST become visible in the other within
-  one second, without the user refreshing.
-- **FR-042**: While both run, each remote effect (fetch, flag change, move,
-  send) MUST be performed once, not once per frontend; exactly-once send
-  (ADR 0021) MUST hold across processes.
-- **FR-043**: When either frontend exits, the other MUST continue to sync and
-  drain the operation queue on its own.
+- **FR-041**: Only one frontend at a time may have the store open. A frontend
+  that finds it open elsewhere MUST say so in a sentence naming what to do
+  (close the other), MUST NOT modify the store, and MUST NOT start sync.
+- **FR-042**: Whichever frontend has the store open does everything the store
+  needs on its own: sync, the operation queue, exactly-once send (ADR 0021),
+  and the store's upkeep. There is no background process.
+- **FR-043**: What either frontend wrote MUST be what the other presents when
+  it next opens the store: the same folders, messages, flags, drafts and
+  queued sends.
 
 **Performance and size**
 
@@ -502,8 +522,7 @@ first sync.
   translation to and from Postio's composer document — the single thing both
   frontends' drafts are stored as.
 - **Shared store**: the one encrypted store and configuration both frontends
-  use, and the coordination that lets two processes use it at once without
-  doubling remote work.
+  use, one frontend at a time, and the lock that says which one has it.
 
 ## Success Criteria *(mandatory)*
 
@@ -528,10 +547,10 @@ first sync.
   shows its recipient, in an HTML client, exactly what the same content
   composed in the desktop app shows — the HTML parts are byte-identical — and,
   in a plain-text client, the Markdown the sender wrote.
-- **SC-007**: With both frontends open on one store, an action in either is
-  visible in the other within one second, and across a scripted session of
-  mixed actions no message is sent twice and no remote operation is performed
-  twice.
+- **SC-007**: A frontend started while the other has the store open refuses
+  within one second with the "already open" sentence, and leaves the store
+  byte-for-byte unchanged; after the other closes, it opens and presents what
+  the other wrote.
 
 ## Assumptions
 
@@ -565,10 +584,10 @@ first sync.
   standalone download against the desktop app's binary with its libraries,
   and the terminal flatpak (with its runtime) against the desktop flatpak
   (with its runtime).
-- **Shared-store concurrency** is a requirement set by the maintainer
-  (2026-09-23). How two processes coordinate on one encrypted store, and which
-  of them runs sync, is the plan's to decide; the current desktop app is
-  single-instance within itself and has not been built for a second process.
+- **One frontend at a time** (maintainer, 2026-09-24, replacing the
+  2026-09-23 wish for both at once). The store engine takes the file for
+  whoever opens it, and that is the rule: the other frontend is told to wait
+  its turn rather than coordinated with.
 - **One landing, whole** (clarified 2026-09-23). The feature branch lands on
   `main` once, when all seven user stories meet their acceptance scenarios.
   Priorities order the work on the branch; they are not release slices. The

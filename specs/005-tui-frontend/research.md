@@ -13,6 +13,14 @@ decision about the GTK surface, this document says so and decides afresh.
 
 ## R1. Two frontends on one store: one process owns it
 
+> **Superseded 2026-09-24.** The maintainer withdrew both-at-once: "Kill the
+> idea of the daemon. That's too much complexity. Let's set it up so we can
+> only run one app at a time but it can be either or." Each app now opens
+> the store itself and runs the host in-process (R2 still holds); an app
+> that finds the store open elsewhere says so. The daemon below was built,
+> worked, and was removed; this section is kept as the record of why it was
+> tried and what it would take to bring back. ADR 0041 carries the rule.
+
 **Decision**: A new headless process, `postio-daemon`, is the only process that
 opens the store. It owns the store, the blob directory, the keyring key, the
 sync engines, the operation-queue drainer, the event hub, the undo stacks and

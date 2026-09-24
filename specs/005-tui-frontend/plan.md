@@ -11,17 +11,20 @@ the same commands, keys, store and behaviour as the GTK app. It reads mail as
 Markdown-styled text, writes it in Markdown, works with the mouse, and takes
 dropped and pasted files and images.
 
-The terminal is the smaller half of the work. The larger half is what makes
-"both frontends on one store at once" true. Turso will not let two processes
-open the store, and two hosts would double every remote effect. So a new
-headless **`postio-daemon`** becomes the only process that opens the store,
-and both the GTK app and the terminal frontend become its clients over a
-Unix socket. The macOS frontend keeps running the same host in-process. The
-store-side logic that today lives in `postio-app` moves into the host, where
-both frontends reach it through one client API. That move is FR-004's "logic
-once" as well as FR-041's shared store. [research.md](./research.md) R1–R2 is
-the reasoning; ADR 0041 (Proposed, written on this branch) is the rule it
-leaves behind.
+The terminal is the smaller half of the work. The larger half is sharing
+one store. The store-side logic that lived in `postio-app` moves into
+`postio-host`, and every frontend -- GTK, the terminal, macOS -- runs that host
+inside its own process and reaches mail through `postio-client`. That move is
+FR-004's "logic once" as well as FR-040's shared store. Only one app has the
+store open at a time; the other says so (FR-041).
+
+> **Revised 2026-09-24.** This plan first made both apps open at once true
+> with a headless `postio-daemon` owning the store and every frontend its
+> client over a Unix socket. It was built, and the maintainer withdrew it as
+> too much complexity (spec Clarifications, 2026-09-24). What follows keeps
+> the daemon's sections as the record of that design; where they disagree
+> with the paragraph above, the paragraph above is what holds, and ADR 0041
+> is the rule. research.md R1 says the same at its top.
 
 ## Technical Context
 
@@ -163,7 +166,7 @@ flatpak/
 └── dev.postio.PostioTui.json# NEW  org.freedesktop.Platform
 .github/workflows/release.yml# + tui-flatpak and tui-tarball jobs, same suite gate
 scripts/checks/check-crate-boundaries.py  # + postio-tui, postio-client, postio-ui
-docs/decisions/0041-one-process-owns-the-store.md  # NEW (Proposed)
+docs/decisions/0041-one-app-opens-the-store-at-a-time.md  # NEW (Proposed)
 ```
 
 **Structure Decision**: Three new crates. `postio-client` and `postio-host`
@@ -198,10 +201,6 @@ GTK and macOS green:
 
 These are recorded in research.md and are one-line changes if overridden:
 
-- **Undo is per frontend** (R1a). `u` undoes what was done in *this*
-  frontend.
-- **The daemon exits 30 s after the last frontend closes** (R1b). Postio
-  still syncs only while open.
 - **The desktop flatpak's store moves** to `~/.local/share/postio` so both
   flatpaks and the standalone download share it (R10). An existing flatpak
   store resyncs.
@@ -211,8 +210,8 @@ These are recorded in research.md and are one-line changes if overridden:
 
 | Cost accepted | Why | What was rejected |
 |---|---|---|
-| A daemon process and a socket protocol | Turso refuses a second opener, its multi-process mode refuses `VACUUM` and has open panics, and one queue drainer is what makes exactly-once hold (R1) | Two processes on one file; host hand-over between frontends; refusing to run both |
-| GTK app becomes a client (~78 call sites) | FR-041 needs both frontends live on one store, and whichever starts first cannot be special | Only the terminal as a client, which fails the moment the terminal starts first |
+| One app at a time | Turso refuses a second opener and its multi-process mode is not ready (R1); a daemon to share it was built and withdrawn as too much complexity | A daemon owning the store with frontends as its clients (the first version of ADR 0041) |
+| GTK app becomes an in-process client (~78 call sites) | One implementation of every store operation for three frontends (FR-004) | Each frontend keeping its own store code |
 | Three new crates | Keeps the store engine out of frontend graphs (size, boundary check) | One `postio-client` crate that includes the host |
 | Constitution Scope amendment | Maintainer-directed new frontend | Leaving the constitution saying "GTK only" while shipping a second frontend |
 | A second Markdown path (`to_document` + the text part as written) | FR-021: the maintainer asked for Markdown writing, and ADR 0003's rejection was a GTK-editor decision | Sending `to_flowed_text` from the terminal, which would not be what the user wrote |

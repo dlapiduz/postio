@@ -4,11 +4,11 @@
 the desktop app, local or over SSH, with the mouse as well as the keyboard.
 Mail is read and written as Markdown.
 
-It is not a second mail client. The desktop app and the terminal can be open
-at the same time on the same mailbox, and what you archive in one is gone
-from the other. Neither of them opens your mail store itself: a small
-background process, `postio-daemon`, owns it, and both talk to it
-([ADR 0041](https://github.com/dlapiduz/postio/blob/main/docs/decisions/0041-one-process-owns-the-store.md)).
+It is not a second mail client. The desktop app and the terminal use the
+same mailbox: what you archive in one is archived when you open the other.
+They take turns, though. Only one of them can have your mail open at a time,
+so close one before opening the other
+([ADR 0041](https://github.com/dlapiduz/postio/blob/main/docs/decisions/0041-one-app-opens-the-store-at-a-time.md)).
 
 ## Running it
 
@@ -18,14 +18,11 @@ From a checkout:
 cargo run -p postio-tui
 ```
 
-The terminal frontend starts `postio-daemon` the first time it needs it and
-talks to it over a socket under `$XDG_RUNTIME_DIR/postio/`. That socket is
-private to your user and is never a network port. It looks for the daemon
-beside its own executable first, then on your `PATH`. The daemon stops on
-its own a little while after the last window closes.
-
-If the daemon cannot be started, the terminal says why and exits. It never
-falls back to opening the store itself.
+It opens your mail store itself and syncs while it runs, as the desktop app
+does. If the desktop app already has the store open, the terminal says
+"Postio is already open in another window. Close it to open Postio here."
+and exits without touching anything. Close the desktop app and start the
+terminal again. The desktop app does the same the other way round.
 
 There is no published package for the terminal frontend yet. When there is
 one, it will be its own Flatpak, much smaller than the desktop one, sharing

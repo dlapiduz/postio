@@ -1,18 +1,16 @@
 # Contract: the terminal surface
 
-What a user (or a test) can rely on from `postio-tui` and `postio-daemon`.
+What a user (or a test) can rely on from `postio-tui`.
 
 ## Command lines
 
 ```text
 postio-tui [--scope <query>] [--compose [mailto:…]]
 postio-tui --version
-postio-daemon            # normally started by a frontend, not by hand
-postio-daemon --version
 ```
 
-- Exit `0` on quit. Exit `1` with one sentence on stderr for: no daemon
-  reachable, version mismatch, keyring unavailable, or store refused.
+- Exit `0` on quit. Exit `1` with one sentence on stderr for: the store open
+  in another Postio window, keyring unavailable, or store refused.
 - A `mailto:` argument opens a composer, the same as GTK's `HANDLES_OPEN`.
 - Environment: `NO_COLOR`, `COLORTERM`, `EDITOR`/`VISUAL`, `POSTIO_LOG`,
   `XDG_*`. No other variable changes behaviour.

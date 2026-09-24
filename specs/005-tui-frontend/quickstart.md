@@ -18,11 +18,11 @@ criterion it proves. The shapes are in [contracts/](./contracts/) and
 ```bash
 cargo nextest run -p postio-tui                      # screens, input, paste, layout (TestBackend)
 cargo nextest run -p postio-body --test body_suite   # markdown mapping + corpus privacy (SC-005)
-cargo nextest run -p postio-client                   # protocol round-trips, handshake refusals
-cargo nextest run -p postio-host --test two_clients  # US6: two clients, one daemon (SC-007)
+cargo nextest run -p postio-client                   # the in-process client and its counts
+cargo nextest run -p postio-host                     # every store operation, answered once
 cargo nextest run -p postio-app --test app_suite     # GTK unchanged (FR-005)
 cargo nextest run -p postio-ffi                      # macOS facade unchanged, now with writes
-python3 scripts/checks/check-crate-boundaries.py     # no GTK/WebKit/turso in postio-tui (FR-051)
+python3 scripts/checks/check-crate-boundaries.py     # no GTK/WebKit in postio-tui (FR-051)
 ```
 
 What each must show:
@@ -34,22 +34,25 @@ What each must show:
 | `postio-tui` `reader` | US2 scenarios 1–5; a plain-text `#` line stays literal |
 | `postio-tui` `composer` | US3 scenarios 1–11; the queued bytes have HTML equal to GTK's and a text part equal to the Markdown |
 | `postio-body` corpus test | No tag, script, remote image or control character from any corpus message (SC-005) |
-| `two_clients` | An archive in one client is gone from the other within 1 s, and a send is submitted once to the mock (SC-007) |
+| store in use | A second app opening a store another process holds refuses with the sentence and leaves the store unchanged (SC-007) |
 | `app_suite` | Passes with no edits beyond import paths |
 
 ## By hand: the scenarios a person should see
 
-### 1. Two frontends, one store (US6)
+### 1. One store, either frontend (US6)
 
 ```bash
-cargo run -p postio-app            # GTK; spawns postio-daemon
-cargo run -p postio-tui            # in a terminal; joins the same daemon
+cargo run -p postio-app            # GTK
+cargo run -p postio-tui            # in a terminal, while GTK is open
 ```
 
-Archive a conversation with `a` in the terminal. Expected: it leaves the GTK
-list within a second. Start a reply in GTK, close the composer, then open
-Drafts in the terminal. Expected: the draft is there. Quit both. Expected:
-`postio-daemon` exits about 30 s later (`pgrep postio-daemon` is empty).
+Expected: the terminal prints "Postio is already open in another window.
+Close it to open Postio here." and exits. Start a reply in GTK, close the
+composer, archive a conversation with `a`, and quit GTK. Start the terminal
+again. Expected: the conversation is in the archive and the draft is in
+Drafts. With the terminal open, start GTK. Expected: its "cannot open"
+screen says the same, and "Try again" opens the mail once the terminal has
+quit.
 
 ### 2. Reading (US2)
 
@@ -94,4 +97,4 @@ scripts/measure-package-size.sh     # new; compares tarball vs GTK binary+libs, 
 
 Expected: each terminal package is under half the desktop equivalent, and
 the terminal frontend's RSS with the same mailbox open is under half of GTK's
-(`/proc/<pid>/status` VmRSS, daemon counted for neither).
+(`/proc/<pid>/status` VmRSS, each app measured alone on the same mailbox).

@@ -4,12 +4,12 @@ Sync Impact Report
 Version change: 1.1.0 → 1.2.0 (was: 1.0.0 → 1.1.0; unversioned scaffold → 1.0.0)
 Bump rationale (1.2.0): MINOR. Additional Constraints → Scope names a second
   Linux frontend, the terminal one (`postio-tui`), on the same store as the
-  desktop app; the maintainer asked for it on 2026-09-23 ("I want to create a
+  desktop app, one app at a time; the maintainer asked for it on 2026-09-23 ("I want to create a
   TUI version of postio", and "the same store to be available to the GTK
   version and TUI"). Principle VII's boundary list gains the rules
   `check-crate-boundaries.py` already enforces for `postio-client` and
-  `postio-tui`, and the one-owner rule of ADR 0041 they follow from. This
-  expands both sections; it narrows nothing.
+  `postio-tui`, and ADR 0041's rule that every frontend reaches mail through
+  `postio-client`. This expands both sections; it narrows nothing.
 Bump rationale (1.1.0): MINOR. Development Workflow gains a second sanctioned
   mode — spec-driven work on one feature branch, with tasks from `tasks.md`
   instead of an issue each. The issue loop remains the default and is unchanged;
@@ -37,9 +37,9 @@ Added sections:
 Removed sections: none
 
 Modified sections (1.2.0):
-  VII. Boundaries Are Enforced, Not Advised — adds one process owning the
-  store, and `postio-client`/`postio-tui` taking no toolkit, WebKit, store
-  engine or protocol.
+  VII. Boundaries Are Enforced, Not Advised — adds every frontend reaching
+  mail through `postio-client`, `postio-client` taking no toolkit, WebKit,
+  store engine or protocol, and `postio-tui` no toolkit or WebKit.
   Additional Constraints — Scope names the terminal frontend
   (specs/005-tui-frontend).
 
@@ -200,9 +200,9 @@ take no GTK; `postio-gtk` takes no SQL and no protocol; `postio-search` and
 `postio-body` are pure leaves; `postio-model` takes no ammonia/html5ever,
 rusqlite, gtk4, or tokio; `postio-config` takes no rusqlite or gtk4;
 `postio-sync` talks to the `MailBackend` trait and never to `io-imap` types.
-One process owns the store (ADR 0041): every other frontend reaches mail
-through `postio-client`, and `postio-client` and `postio-tui` take no toolkit,
-no WebKit, no store engine and no protocol.
+Every frontend reaches mail through `postio-client`, one app holding the
+store at a time (ADR 0041); `postio-client` takes no toolkit, no WebKit, no
+store engine and no protocol, and `postio-tui` no toolkit and no WebKit.
 
 **Providers are data, not code.** Server settings live in the preset table.
 Named constants and provider-specific branches are forbidden: Postio is not

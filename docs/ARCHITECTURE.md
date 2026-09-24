@@ -17,7 +17,7 @@ in [`docs/archive/`](archive/); every finding it raised has since landed.
 graph TD
     app["<b>postio-app</b><br/><i>GTK binary</i><br/>a window, and the presenters that join the two halves"]
     tui["<b>postio-tui</b><br/><i>terminal binary</i><br/>ratatui · crossterm · Markdown in and out"]
-    host["<b>postio-host</b><br/><i>postio-daemon</i><br/>the store's one owner · a dispatcher per frontend"]
+    host["<b>postio-host</b><br/><i>in each app's process</i><br/>every store operation, once · sync · upkeep"]
     client["<b>postio-client</b><br/>Req/Resp · commands down, events up<br/><i>no engine — CI enforced</i>"]
     session["<b>postio-session</b><br/><i>composition root — no toolkit</i><br/>store · runtime · engines · the verb vocabulary<br/><i>no GTK — CI enforced</i>"]
 
@@ -50,6 +50,7 @@ graph TD
     app --> host
     app --> client
     tui --> client
+    tui --> host
     host --> session
     host --> client
     client --> core
@@ -101,14 +102,13 @@ frontend but a second application sharing a file.
 Dashed borders mark the crates whose dependency closure CI polices
 (`scripts/checks/check-crate-boundaries.py`).
 
-**One process owns the store** ([ADR 0041](decisions/0041-one-process-owns-the-store.md)).
-`postio-host` is that owner — built as the `postio-daemon` binary, or run
-inside a process that no other frontend can share a store with (the macOS
-frontend, the integration suites) — and every frontend reaches mail through
-`postio-client`. The terminal frontend is the first built that way from the
-start; the desktop app is moving onto its client surface by surface
-(`specs/005-tui-frontend` T018), which is why it still draws an edge to
-`postio-session` and to the host.
+**One app opens the store at a time** ([ADR 0041](decisions/0041-one-app-opens-the-store-at-a-time.md)).
+The desktop, terminal and macOS apps each run `postio-host` inside their own
+process and reach mail only through `postio-client`, whose in-process
+transport is a spawn and a oneshot. The host is where every store operation
+is written once -- paging, reading, search, compose, settings, onboarding,
+sync and upkeep -- and the frontends draw. Whichever app starts first holds
+the store; the other says so and waits to be asked again.
 
 ---
 
@@ -310,10 +310,12 @@ hide inside the thing meant to catch it.
 - **`postio-gtk` must not depend on `turso`/`io-imap`.** The view layer does
   no SQL and speaks no protocol. (`rusqlite` stays on the banned list beside
   `turso`, so the rule outlives the engine that made it.)
-- **`postio-client` and `postio-tui` must not depend on a toolkit, WebKit,
-  the database engine or the protocol crates.** A frontend's client that could
-  open the store would be the second writer ADR 0041 rules out, and the
-  terminal package is held to being small (`specs/005-tui-frontend` FR-051).
+- **`postio-client` must not depend on a toolkit, WebKit, the database
+  engine or the protocol crates**, and **`postio-tui` on a toolkit or
+  WebKit.** The client is the frontends' whole view of mail, and it stays
+  free of what any one of them draws with; the terminal opens the store
+  through the host like every app, and is held to being small
+  (`specs/005-tui-frontend` FR-051) by leaving GTK and WebKit out.
 
 `scripts/checks/check-crate-boundaries.py` inspects `cargo metadata`'s **resolved
 graph**, not source text, so a violation arriving transitively through an

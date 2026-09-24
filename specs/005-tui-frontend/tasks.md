@@ -17,6 +17,13 @@ seen red has not been done. Terminal tests assert on the rendered
 `TestBackend` buffer — what a person would see — never on what a widget was
 handed.
 
+> **Revised 2026-09-24: one app at a time.** The maintainer withdrew
+> "both frontends at once" (spec Clarifications, 2026-09-24). The daemon
+> tasks below -- T020, T021, T022's election, T023's socket switch, T077–T083,
+> and the daemon parts of T089–T091 and T094 -- were built, then removed by
+> Phase 11. They stay ticked as the record of what was done; Phase 11 is
+> what holds now.
+
 ## Format: `[ID] [P?] [Story] Description`
 
 - **[P]** — touches files nothing else in its phase touches, so it can run beside its siblings
@@ -205,7 +212,7 @@ store.
 
 ---
 
-## Phase 8: User Story 6 — One store, both frontends (Priority: P2)
+## Phase 8: User Story 6 — One store, both frontends (Priority: P2) *(superseded by Phase 11)*
 
 **Goal**: GTK and the terminal live on one daemon, with no configuration.
 (The architecture is in Phase 2; this phase proves the story and closes its
@@ -257,6 +264,18 @@ through the local transport.
 
 ---
 
+## Phase 11: One app at a time (revision of 2026-09-24)
+
+**Goal**: No daemon. Each app opens the store and runs the host in-process;
+an app that finds the store open elsewhere says so (FR-041, US6 as revised).
+
+- [ ] T101 Test first: a store held open by another process is refused with "Postio is already open in another window. Close it to open Postio here.", and the store is unchanged (SC-007); map the engine's refusal to a distinct error in `postio-storage`/`postio-session`
+- [ ] T102 The terminal opens the store and runs `postio-host` in-process (`ClientKind::Tui`); a store in use prints the sentence and exits `1` before the alternate screen; `check-crate-boundaries.py` lets `postio-tui` link the store engine and still bans GTK and WebKit
+- [ ] T103 The desktop opens the store and runs the host in-process again, the startup screen naming each wait from `open_store_reporting`; a store in use shows the sentence on the "cannot open" screen, whose retry opens it once free; a new `app_suite` case proves both
+- [ ] T104 Remove `postio-daemon`, `serve.rs`, the socket transport, the reconnect handling, the notifier election and their tests; the flatpaks ship no daemon and drop `xdg-run/postio`; the release tarball ships `postio-tui` alone; `startup_budget.rs` measures the in-process start
+
+---
+
 ## Dependencies & execution order
 
 ```text
@@ -274,7 +293,7 @@ Phase 1 Setup ──► Phase 2 Foundational ──┬─► US1 ──► US2 �
 - **US2 depends on US1** for the reader pane; **US3 on US2** for the preview
   renderer (T057) and on T024 for drafts.
 - **US4, US5, US7** need only US1's shell; US5's T075 needs US3's composer.
-- **US6** needs the daemon (T020–T024) and uses US3's draft path in T082.
+- **US6** as revised needs Phase 11; the daemon it first needed (T020–T024) is gone.
 
 ## Parallel opportunities
 
