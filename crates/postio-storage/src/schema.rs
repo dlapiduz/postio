@@ -697,6 +697,10 @@ CREATE INDEX idx_messages_mailbox_remote_id ON messages (mailbox_id, remote_id);
 
 CREATE INDEX idx_messages_mod_seq ON messages (mailbox_id, mod_seq);
 
+-- A folder's thread count, read from the index alone (#1607, #1610).
+CREATE INDEX idx_messages_mailbox_threads
+    ON messages (mailbox_id, deleted_locally, snoozed_until, thread_id);
+
 CREATE INDEX idx_messages_recency
     ON messages (received_at DESC, id DESC, deleted_locally, snoozed_until);
 
