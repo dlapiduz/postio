@@ -35,8 +35,7 @@ use tokio_rustls::client::TlsStream;
 
 use crate::backend::BackendError;
 
-/// How long to wait for a socket or a TLS handshake.
-const DEFAULT_CONNECT_TIMEOUT: Duration = Duration::from_secs(30);
+use super::settings::DEFAULT_CONNECT_TIMEOUT;
 
 /// Everything the transport layer can fail with.
 ///

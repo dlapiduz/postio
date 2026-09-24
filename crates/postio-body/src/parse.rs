@@ -260,7 +260,7 @@ fn block_for(handle: &Handle, name: &str) -> Option<Block> {
 /// unique within the document it is emitted into, and a draft holds one reply
 /// quote. Carrying the original message's id here would put a database id in
 /// markup that goes out on the wire for no gain.
-const QUOTE_SCOPE: &str = "quote";
+pub const QUOTE_SCOPE: &str = "quote";
 
 /// A marked element back into the block it was emitted from.
 ///

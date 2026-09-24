@@ -213,7 +213,7 @@ impl<'a> AccountRepository<'a> {
                 kept.push(identity.id.get());
             }
 
-            let placeholders = placeholders(kept.len());
+            let placeholders = super::messages::placeholders(kept.len(), 2);
             let mut arguments: Vec<turso::Value> = Vec::with_capacity(kept.len() + 1);
             arguments.push(turso::Value::Integer(id));
             arguments.extend(kept.into_iter().map(turso::Value::Integer));
@@ -797,10 +797,3 @@ fn optional_signature_id(id: Option<SignatureId>) -> Option<i64> {
     id.filter(|id| id.is_assigned()).map(SignatureId::get)
 }
 
-/// `?1, ?2, ...` for `count` parameters, offset by one for the leading id.
-fn placeholders(count: usize) -> String {
-    (0..count)
-        .map(|index| format!("?{}", index + 2))
-        .collect::<Vec<_>>()
-        .join(", ")
-}

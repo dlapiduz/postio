@@ -70,9 +70,8 @@ use postio_storage::{BlobStore, Store};
 /// and the settings panel shows them where they can be fixed. This is the
 /// same shape as `notifications::config_at`, and for the same reason.
 pub fn mailbox_roles_at(path: &std::path::Path) -> postio_model::RoleOverrides {
-    std::fs::read_to_string(path)
+    postio_config::Config::load_from_path(path)
         .ok()
-        .and_then(|text| postio_config::Config::from_toml_str(&text).ok())
         .map(|config| config.role_overrides())
         .unwrap_or_default()
 }
@@ -85,9 +84,8 @@ pub fn mailbox_roles_at(path: &std::path::Path) -> postio_model::RoleOverrides {
 /// not in a position to make. Read once at startup, like `[mailboxes]` and
 /// `[sync]` beside it.
 pub fn storage_ceiling_at(path: &std::path::Path) -> Option<u64> {
-    std::fs::read_to_string(path)
+    postio_config::Config::load_from_path(path)
         .ok()
-        .and_then(|text| postio_config::Config::from_toml_str(&text).ok())
         .and_then(|config| config.storage.max_bytes)
 }
 
@@ -108,9 +106,8 @@ pub fn storage_ceiling_at(path: &std::path::Path) -> Option<u64> {
 /// the defaults standing — the settings panel is where a broken file is
 /// reported, and syncing differently because of one would be a worse answer.
 pub fn backfill_policy_at(path: &std::path::Path) -> postio_runtime::BackfillPolicy {
-    let sync = std::fs::read_to_string(path)
+    let sync = postio_config::Config::load_from_path(path)
         .ok()
-        .and_then(|text| postio_config::Config::from_toml_str(&text).ok())
         .map(|config| config.sync)
         .unwrap_or_default();
     backfill_policy(&sync)
@@ -130,9 +127,8 @@ pub fn backfill_policy_at(path: &std::path::Path) -> postio_runtime::BackfillPol
 /// change applies at the next start. A file that will not parse leaves the
 /// defaults standing.
 pub fn watch_policy_at(path: &std::path::Path) -> postio_sync::WatchPolicy {
-    let sync = std::fs::read_to_string(path)
+    let sync = postio_config::Config::load_from_path(path)
         .ok()
-        .and_then(|text| postio_config::Config::from_toml_str(&text).ok())
         .map(|config| config.sync)
         .unwrap_or_default();
     watch_policy(&sync)

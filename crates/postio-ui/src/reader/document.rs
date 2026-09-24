@@ -232,15 +232,18 @@ fn senders_sheet_css() -> String {
     )
 }
 
+/// The generated reader palette: the light scheme, then its dark block.
+pub(crate) const PALETTE: &str = include_str!("../../data/reader-tokens.css");
+
+/// Where [`PALETTE`]'s dark scheme begins.
+pub(crate) const DARK_BLOCK: &str = "@media (prefers-color-scheme: dark)";
+
 /// The light half of the generated palette, as declarations.
 ///
 /// A sibling of [`reader_ground`], split out of the same file the same way:
 /// everything before the dark block is the light scheme, and the `:root`
 /// body of it is the set of values a sender's page should be drawn with.
 fn light_tokens() -> &'static str {
-    const PALETTE: &str = include_str!("../../data/reader-tokens.css");
-    const DARK_BLOCK: &str = "@media (prefers-color-scheme: dark)";
-
     let (light, _) = PALETTE
         .split_once(DARK_BLOCK)
         .expect("the generated palette always emits a dark block");
@@ -278,9 +281,6 @@ fn reader_css() -> String {
 /// and a second copy would be one that could silently drift from the design
 /// system the first is regenerated from.
 pub fn reader_ground(dark: bool) -> &'static str {
-    const PALETTE: &str = include_str!("../../data/reader-tokens.css");
-    const DARK_BLOCK: &str = "@media (prefers-color-scheme: dark)";
-
     let (light, dark_block) = PALETTE
         .split_once(DARK_BLOCK)
         .expect("the generated palette always emits a dark block");
