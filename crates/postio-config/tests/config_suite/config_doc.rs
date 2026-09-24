@@ -145,6 +145,30 @@ const ENTRIES: &[Entry] = &[
         default: "\"above_quote\"",
         description: "Where the signature goes on a forward.",
     },
+    // ── [tui] ─────────────────────────────────────────────────────────
+    Entry {
+        path: "tui.preview",
+        kind: "string",
+        default: "\"toggle\"",
+        description: "How the terminal composer shows the message it would send: `toggle` \
+                       (one key swaps editor and preview) or `split` (side by side).",
+    },
+    Entry {
+        path: "tui.mouse",
+        kind: "boolean",
+        default: "true",
+        description: "Whether the terminal frontend takes the mouse. `false` leaves the \
+                       terminal's own text selection; every key still works.",
+    },
+    Entry {
+        path: "tui.colors",
+        kind: "table",
+        default: "{}",
+        description: "Colour overrides for the terminal frontend, by role: `text`, `dim`, \
+                       `accent`, `selection`, `focus`, `unread`, `flagged`, `link`, `quote`, \
+                       `code`, `error`, `warning`, `success`. A value is a colour name, a \
+                       palette number or `#rrggbb`. `NO_COLOR` overrides every one.",
+    },
     // ── [logging] ─────────────────────────────────────────────────────
     Entry {
         path: "logging.level",
