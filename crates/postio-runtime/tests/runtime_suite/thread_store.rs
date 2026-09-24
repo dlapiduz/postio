@@ -568,3 +568,44 @@ async fn the_unified_list_is_counted_once_while_nothing_moves() {
         .total;
     assert_eq!(after, total + 1, "a new conversation went uncounted");
 }
+
+#[tokio::test]
+async fn a_jump_to_the_bottom_of_a_folder_seeks_rather_than_skips() {
+    // #1610: a scrollbar drag into a large folder read its page with an
+    // OFFSET over the window's correlated predicate, linear in the depth.
+    let (store, account, inbox, database) = store(3_000, 3).await;
+    let total = store
+        .thread_count(ListScope::Mailbox(inbox))
+        .await
+        .expect("a count");
+    assert!(total > 400, "a folder long enough to jump in: {total}");
+    let offset = total - 20;
+    let page = store
+        .thread_page(request(ListScope::Mailbox(inbox), offset, 50))
+        .await
+        .expect("the bottom page");
+    assert!(
+        postio_runtime::store::last_thread_skip() <= 50,
+        "the jump skipped {} rows after its seek",
+        postio_runtime::store::last_thread_skip()
+    );
+
+    // And it is the page OFFSET would have read.
+    let connection = database.connect().await.expect("a connection");
+    let mut query = postio_storage::repository::ThreadListQuery::in_mailbox(account, inbox);
+    query.limit = 50;
+    let expected = postio_storage::repository::ThreadRepository::new(&connection)
+        .page_at(&query, offset)
+        .await
+        .expect("by offset");
+    assert_eq!(
+        page.rows
+            .iter()
+            .map(|row| row.representative.id)
+            .collect::<Vec<_>>(),
+        expected
+            .iter()
+            .map(|row| row.latest.as_ref().expect("a representative").id)
+            .collect::<Vec<_>>(),
+    );
+}

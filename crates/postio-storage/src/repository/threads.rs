@@ -1284,6 +1284,65 @@ impl<'a> ThreadRepository<'a> {
         self.page_with(query, &format!(" OFFSET {offset}")).await
     }
 
+    /// Where every `stride`-th row of a folder's list begins, as the cursor a
+    /// page resumes after: `(offset, cursor)` for offsets `stride`,
+    /// `2 * stride`, ... -- what a scrollbar jump seeks from instead of
+    /// skipping (#1610).
+    pub async fn boundaries(
+        &self,
+        query: &ThreadListQuery,
+        stride: u32,
+    ) -> Result<Vec<(u32, ThreadCursor)>> {
+        let Some(mailbox) = query.mailbox else {
+            return Ok(Vec::new());
+        };
+        let stride = stride.max(1);
+        // One pass over the folder's own index, newest first, keys only --
+        // no correlated predicate per row. A row of the list is the first
+        // message of its conversation met in that order (the representative
+        // the window's `NOT EXISTS` asks for), or a message in no
+        // conversation at all; counting them as they go by is counting the
+        // list's rows.
+        let mut rows = sql::statement(
+            self.connection,
+            &format!(
+                "SELECT received_at, id, thread_id FROM messages
+                  WHERE mailbox_id = ?1 AND {MEMBER}
+                  ORDER BY received_at DESC, id DESC"
+            ),
+        )
+        .await?
+        .query([mailbox.get()])
+        .await?;
+        let mut seen = std::collections::HashSet::new();
+        let mut counted = 0u32;
+        let mut boundaries = Vec::new();
+        while let Some(row) = rows.next().await? {
+            let thread: Option<i64> = row.col(2)?;
+            if thread.is_some_and(|thread| !seen.insert(thread)) {
+                continue;
+            }
+            counted += 1;
+            if counted.is_multiple_of(stride) {
+                boundaries.push((
+                    counted,
+                    ThreadCursor {
+                        last_at: from_millis(row.col(0)?),
+                        id: row.col(1)?,
+                    },
+                ));
+            }
+        }
+        // A boundary at the very end begins no page.
+        if boundaries
+            .last()
+            .is_some_and(|(offset, _)| *offset == counted)
+        {
+            boundaries.pop();
+        }
+        Ok(boundaries)
+    }
+
     /// How many threads the list would show.
     pub async fn count(&self, account_id: AccountId) -> Result<u32> {
         self.count_of(&ThreadListQuery::account(account_id)).await

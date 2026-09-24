@@ -191,6 +191,15 @@ async fn unified_total(
     Ok(total)
 }
 
+/// How many rows the last threaded page read skipped with `OFFSET` after
+/// its seek. For tests: a scrollbar jump should skip under a page (#1610).
+#[doc(hidden)]
+pub fn last_thread_skip() -> u64 {
+    LAST_THREAD_SKIP.load(Ordering::Relaxed)
+}
+
+static LAST_THREAD_SKIP: AtomicU64 = AtomicU64::new(0);
+
 /// A folder's thread count, from the cache when the folder has not moved.
 ///
 /// Only for a folder scope. An account-wide or unified count has no single
@@ -471,10 +480,30 @@ impl LocalStore {
                 marks.check(total);
                 marks.nearest(request.offset)
             };
-            let (seek, skip) = match start {
+            let (mut seek, mut skip) = match start {
                 Some((at, cursor)) => (Some(cursor), request.offset - at),
                 None => (None, request.offset),
             };
+            // A jump further than a page from any mark -- a scrollbar dragged
+            // deep into a folder -- would be an `OFFSET` walk over the
+            // window's correlated predicate, linear in the depth: 638 ms to
+            // the bottom of 17,804 conversations. One pass over the folder's
+            // index finds where every page begins for a tenth of that, and
+            // then this and every later jump seeks (#1610).
+            let stride = request.limit.max(1);
+            if skip > stride && matches!(request.scope, ListScope::Mailbox(_)) {
+                let boundaries = threads.boundaries(&query, stride).await?;
+                let mut marks = marks.lock().expect("not poisoned");
+                marks.check(total);
+                for (offset, cursor) in boundaries {
+                    marks.remember(offset, cursor);
+                }
+                if let Some((at, cursor)) = marks.nearest(request.offset) {
+                    seek = Some(cursor);
+                    skip = request.offset - at;
+                }
+            }
+            LAST_THREAD_SKIP.store(u64::from(skip), Ordering::Relaxed);
             let mut rows = threads
                 .page_at(
                     &ThreadListQuery {
