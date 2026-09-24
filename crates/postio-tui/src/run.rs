@@ -180,6 +180,38 @@ async fn main_loop(
     outcome
 }
 
+/// Put `text` on the clipboard of the terminal's own machine, with OSC 52:
+/// it works over SSH, where no clipboard tool on this side would help.
+fn copy_to_clipboard(text: &str) {
+    use std::io::Write;
+    let sequence = format!("\x1b]52;c;{}\x07", base64(text.as_bytes()));
+    let mut out = io::stdout();
+    let _ = out.write_all(sequence.as_bytes());
+    let _ = out.flush();
+}
+
+/// Standard Base64, padded: all OSC 52 asks for, too small to be a
+/// dependency.
+fn base64(bytes: &[u8]) -> String {
+    const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut out = String::with_capacity(bytes.len().div_ceil(3) * 4);
+    for chunk in bytes.chunks(3) {
+        let triple = chunk.iter().enumerate().fold(0u32, |acc, (index, byte)| {
+            acc | u32::from(*byte) << (16 - 8 * index)
+        });
+        for index in 0..4 {
+            if index <= chunk.len() {
+                out.push(char::from(
+                    ALPHABET[(triple >> (18 - 6 * index)) as usize & 63],
+                ));
+            } else {
+                out.push('=');
+            }
+        }
+    }
+    out
+}
+
 /// A mouse event as the app hears it: what it landed on in the last frame.
 fn pointer(
     mouse: &crossterm::event::MouseEvent,
@@ -529,6 +561,23 @@ fn perform(
                     let _ = inputs.send(Input::PartWritten { written, open }).await;
                 });
             }
+            Effect::OpenLink(target) => {
+                let opened = std::process::Command::new("xdg-open")
+                    .arg(&target)
+                    .stdin(std::process::Stdio::null())
+                    .stdout(std::process::Stdio::null())
+                    .stderr(std::process::Stdio::null())
+                    .spawn();
+                if opened.is_err() {
+                    // No opener here -- a server over SSH. The link goes to
+                    // the terminal's clipboard instead, which reaches the
+                    // person's own machine (research R7, OSC 52).
+                    copy_to_clipboard(&target);
+                    let _ = inputs.try_send(Input::Host(postio_core::Event::Error {
+                        message: format!("No opener here; {target} is on the clipboard"),
+                    }));
+                }
+            }
             Effect::Launch(path) => {
                 // The system's opener, detached, its output away from the
                 // terminal. Where there is none -- a server over SSH -- the
@@ -753,6 +802,18 @@ mod tests {
     use postio_client::protocol::{BuildId, Frame, Refusal, read_frame, write_frame};
 
     use super::*;
+
+    #[test]
+    fn base64_is_the_standard_alphabet_padded() {
+        assert_eq!(base64(b""), "");
+        assert_eq!(base64(b"f"), "Zg==");
+        assert_eq!(base64(b"fo"), "Zm8=");
+        assert_eq!(base64(b"foo"), "Zm9v");
+        assert_eq!(
+            base64(b"https://example.com/a?b"),
+            "aHR0cHM6Ly9leGFtcGxlLmNvbS9hP2I="
+        );
+    }
 
     #[test]
     fn a_daemon_of_another_build_is_said_naming_both_versions() {

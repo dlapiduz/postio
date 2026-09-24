@@ -65,6 +65,61 @@ impl Rendered {
     }
 }
 
+/// What one drawn line of a message stands for, for a click on it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LineTarget {
+    /// Nothing to act on.
+    Text,
+    /// A fold marker: which block it folds.
+    Fold(usize),
+    /// A link: which of [`Rendered::links`].
+    Link(usize),
+    /// An image's placeholder.
+    Placeholder,
+}
+
+impl Rendered {
+    /// What each line of [`Rendered::lines`] stands for, line for line.
+    pub fn targets(&self) -> Vec<LineTarget> {
+        let of = |line: &Line<'static>| {
+            let text = line.to_string();
+            if let Some(index) = self
+                .links
+                .iter()
+                .position(|link| text.contains(link.as_str()))
+            {
+                LineTarget::Link(index)
+            } else if text.contains("[image:") {
+                LineTarget::Placeholder
+            } else {
+                LineTarget::Text
+            }
+        };
+        let mut out = Vec::new();
+        for (index, block) in self.blocks.iter().enumerate() {
+            match block {
+                Block::Lines(lines) => out.extend(lines.iter().map(of)),
+                Block::Fold { folded: true, .. } => out.push(LineTarget::Fold(index)),
+                Block::Fold {
+                    folded: false,
+                    lines,
+                } => {
+                    out.push(LineTarget::Fold(index));
+                    out.extend(lines.iter().map(of));
+                }
+            }
+        }
+        out
+    }
+
+    /// Fold or unfold block `index`.
+    pub fn toggle_fold(&mut self, index: usize) {
+        if let Some(Block::Fold { folded, .. }) = self.blocks.get_mut(index) {
+            *folded = !*folded;
+        }
+    }
+}
+
 /// Sanitised, folded HTML as a rendered message.
 pub fn from_html(html: &str) -> Rendered {
     let (markdown, links) = links_in(&placeholders(&postio_body::markdown::from_html(html)));

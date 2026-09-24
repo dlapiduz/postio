@@ -13,7 +13,7 @@ use postio_ui::terminal::SafeText;
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 
-use crate::reader::{Block, Rendered};
+use crate::reader::{Block, LineTarget, Rendered};
 
 /// One message of what is being read.
 #[derive(Debug, Clone, PartialEq)]
@@ -80,6 +80,33 @@ pub struct Reading {
     pub current: usize,
 }
 
+/// What a line of a reading stands for, for a click on it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum At {
+    /// Nothing to act on.
+    Nothing,
+    /// A member's header in a conversation.
+    Header(usize),
+    /// A fold marker.
+    Fold {
+        /// Whose.
+        member: usize,
+        /// Which block.
+        block: usize,
+    },
+    /// A link, by its destination.
+    Link(String),
+    /// An image placeholder in a member's body.
+    Placeholder(usize),
+    /// An attachment's line.
+    Part {
+        /// Whose.
+        member: usize,
+        /// Which of its attachments.
+        part: usize,
+    },
+}
+
 impl Reading {
     /// Every line, top to bottom, and the line each member's header is on.
     pub fn layout(&self, now: DateTime<Local>) -> (Vec<Line<'static>>, Vec<usize>) {
@@ -129,6 +156,55 @@ impl Reading {
             }
         }
         (lines, headers)
+    }
+
+    /// What each line of [`Reading::layout`] stands for, line for line.
+    pub fn targets(&self) -> Vec<At> {
+        let mut out = Vec::new();
+        let several = self.members.len() > 1;
+        for (index, member) in self.members.iter().enumerate() {
+            if several {
+                if index > 0 {
+                    out.push(At::Nothing);
+                }
+                out.push(At::Header(index));
+            }
+            if member.images_allowed
+                || member.held_back.remote_images + member.held_back.trackers > 0
+            {
+                out.push(At::Nothing);
+            }
+            match &member.body {
+                Some(body) => out.extend(body.targets().into_iter().map(|target| match target {
+                    LineTarget::Text => At::Nothing,
+                    LineTarget::Fold(block) => At::Fold {
+                        member: index,
+                        block,
+                    },
+                    LineTarget::Link(link) => At::Link(body.links[link].as_str().to_owned()),
+                    LineTarget::Placeholder => At::Placeholder(index),
+                })),
+                None => out.push(At::Nothing),
+            }
+            for part in 0..member.attachments().len() {
+                out.push(At::Part {
+                    member: index,
+                    part,
+                });
+            }
+        }
+        out
+    }
+
+    /// Fold or unfold one fold of one member.
+    pub fn toggle_fold(&mut self, member: usize, block: usize) {
+        if let Some(body) = self
+            .members
+            .get_mut(member)
+            .and_then(|member| member.body.as_mut())
+        {
+            body.toggle_fold(block);
+        }
     }
 
     /// Every fold in every member: expand them all, or fold them all again.

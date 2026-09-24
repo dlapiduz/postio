@@ -136,8 +136,8 @@ properties on the grid; US2 scenarios on the fixture store.
 - [X] T042 [US2] Plain-text path in the same file: verbatim with `>` runs folded by `postio_body::quote`, never parsed as Markdown. Test first: US2 scenario 3, a `# not a heading` line renders literally
 - [X] T043 [US2] Folds: collapsible `Fold` blocks, folded by default, toggled by the existing expand/collapse-quote commands. Test first: US2 scenario 1 snapshot, then the snapshot after expanding
 - [X] T044 [US2] Images and remote content: placeholders `[image: alt · size]`, held-back counts in the header, the "allow remote images from this sender" command through `AllowRemoteImages`. Test first: US2 scenario 2 — the mock backend and the egress recorder see zero requests while the message is open
-- [ ] T045 [US2] Links: a link focus mode that shows the full target, opening only on deliberate activation (xdg-open, or show-and-copy via OSC 52 when no opener exists). Test first: US2 scenario 4 — nothing is opened until the second activation
-  - Progress: the full target is drawn inline, `text (destination)`, as tui-markdown draws a link, and `Rendered::links` collects them; opening waits for the mouse (T073), since the registry has no link commands and adding one would oblige the desktop frontend too.
+- [X] T045 [US2] Links: a link focus mode that shows the full target, opening only on deliberate activation (xdg-open, or show-and-copy via OSC 52 when no opener exists). Test first: US2 scenario 4 — nothing is opened until the second activation
+  - Progress: the full target is drawn inline, `text (destination)`, as tui-markdown draws a link, and `Rendered::links` collects them; opening waits for the mouse (T073), since the registry has no link commands and adding one would oblige the desktop frontend too. Done with T073: a click shows the whole destination on the status line, and only a second click on the same link opens it (xdg-open, or OSC 52 to the clipboard where there is no opener). Keyboard activation still waits on whether the registry should gain link commands, a decision left to the maintainer.
 - [X] T046 [US2] Attachments: list with name and size; save (`SavePart`) and open (`OpenPart` + xdg-open), fetching only then. Test first: US2 scenario 5 — the payload is requested only after "open"
 - [X] T047 [US2] Conversations: `J`/`K` walk messages of one scrolling document (ADR 0032's shape) with per-message headers from `postio_ui::reader::header`. Test first: `J` moves to the next message's header row
 - [X] T048 [US2] Unsubscribe on deliberate activation only, through `ActivateUnsubscribe`. Test first: opening a list message sends nothing; the command sends once
@@ -198,7 +198,7 @@ store.
 - [X] T070 [US5] Hit testing in `crates/postio-tui/src/view/hit.rs`: each frame records rects → targets; mouse events resolve against the last frame. Test first: a click on the third list row resolves to that row
 - [X] T071 [US5] List and sidebar clicks, `Ctrl`+click toggle, `Shift`+click extend. Tests first: US5 scenario 1
 - [X] T072 [US5] Wheel scrolls only the pane under the pointer. Test first: US5 scenario 2
-- [ ] T073 [US5] Links, fold markers, placeholders and attachments respond to clicks (same commands as keys). Test first: a click on a fold marker expands it
+- [X] T073 [US5] Links, fold markers, placeholders and attachments respond to clicks (same commands as keys). Test first: a click on a fold marker expands it
 - [ ] T074 [US5] Pane divider drag (Down, Drag…, Up) with widths persisted in window state. Test first: dragging 10 columns right widens the list by 10 and survives a restart
 - [ ] T075 [US5] Click to place the cursor in the composer via `screen_to_data` + `CursorMove::Jump`. Test first: clicking column 5 of body line 2 puts the cursor there
 - [ ] T076 [US5] `[tui].mouse = false` and a terminal reporting no mouse. Test first: US5 scenario 3 — clicks are ignored and every key path still works

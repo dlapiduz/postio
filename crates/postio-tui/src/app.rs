@@ -296,6 +296,9 @@ pub enum Effect {
     },
     /// Open the local draft behind a Drafts or Outbox row.
     Resume(postio_model::MessageId),
+    /// Open a link with the system's opener, the person having clicked it
+    /// twice.
+    OpenLink(String),
     /// Read the message a reply or forward starts from, and its account.
     ReplySource {
         /// Which draft to start.
@@ -406,6 +409,9 @@ pub struct App {
     enhanced_keys: bool,
     /// Where the keyboard was when the cheat sheet opened, while it is open.
     cheatsheet: Option<Focus>,
+    /// A link clicked once: shown in full, and opened by a second click
+    /// on it (US2 scenario 4).
+    armed_link: Option<String>,
 }
 
 /// One section of the cheat sheet as it is drawn: its heading, and each
@@ -542,6 +548,7 @@ impl App {
             palette: None,
             enhanced_keys: false,
             cheatsheet: None,
+            armed_link: None,
         }
     }
 
@@ -899,11 +906,15 @@ impl App {
                     // the keys does.
                     self.walk_sidebar(0)
                 }
-                Target::Reader(_) => {
-                    if self.reading.is_some() {
-                        self.focus = Focus::Reader;
+                Target::Reader(line) => {
+                    if self.reading.is_none() {
+                        return Vec::new();
                     }
-                    vec![Effect::Redraw]
+                    self.focus = Focus::Reader;
+                    match line {
+                        Some(line) => self.click_reader(line),
+                        None => vec![Effect::Redraw],
+                    }
                 }
                 Target::ComposerBody | Target::ComposerField(_) => {
                     if self.composer.is_some() {
@@ -921,6 +932,52 @@ impl App {
                     _ => return Vec::new(),
                 }
                 vec![Effect::Redraw]
+            }
+        }
+    }
+
+    /// A click on line `line` of what is being read: what the keys do there.
+    fn click_reader(&mut self, line: usize) -> Vec<Effect> {
+        use crate::conversation::At;
+        let Some(reading) = self.reading.as_mut() else {
+            return Vec::new();
+        };
+        let at = reading.targets().get(line).cloned().unwrap_or(At::Nothing);
+        if !matches!(at, At::Link(_)) {
+            self.armed_link = None;
+        }
+        match at {
+            At::Nothing => vec![Effect::Redraw],
+            At::Header(member) => {
+                reading.current = member;
+                vec![Effect::Redraw]
+            }
+            At::Fold { member, block } => {
+                reading.toggle_fold(member, block);
+                vec![Effect::Redraw]
+            }
+            // Nothing leaves this machine on one click: the first shows the
+            // whole destination, and only a second on the same link opens it.
+            At::Link(target) => {
+                if self.armed_link.as_deref() == Some(target.as_str()) {
+                    self.armed_link = None;
+                    let mut effects = self.say(&format!("Opening {target}"));
+                    effects.push(Effect::OpenLink(target));
+                    effects
+                } else {
+                    let effects = self.say(&format!("{target} — click again to open it"));
+                    self.armed_link = Some(target);
+                    effects
+                }
+            }
+            At::Placeholder(member) => {
+                reading.current = member;
+                self.command("open_parts")
+            }
+            At::Part { member, part } => {
+                reading.current = member;
+                self.part_cursor = part;
+                self.write_parts(false, false)
             }
         }
     }
@@ -3794,6 +3851,67 @@ pub(crate) mod tests {
         update(&mut app, wheel(Target::Row(0), true));
         assert!(app.top() > 0, "the list scrolled");
         assert_eq!(app.reader_top(), reader_top, "the reader did not");
+    }
+
+    fn reading_of(body: crate::reader::Rendered) -> crate::conversation::Reading {
+        let mut member = crate::conversation::tests::member_with_lines(1, 0);
+        member.body = Some(body);
+        crate::conversation::Reading {
+            row: MessageId::new(1),
+            members: vec![member],
+            current: 0,
+        }
+    }
+
+    fn line_of(app: &App, wanted: &str) -> usize {
+        let (lines, _) = app.reading().unwrap().layout(chrono::Local::now());
+        lines
+            .iter()
+            .position(|line| line.to_string().contains(wanted))
+            .unwrap_or_else(|| panic!("no line with {wanted}"))
+    }
+
+    #[test]
+    fn a_click_on_a_fold_marker_expands_it() {
+        // T073.
+        use crate::view::hit::Target;
+        let mut app = app((160, 40));
+        app.reading = Some(reading_of(crate::reader::from_text(
+            "Sounds good.\n> earlier\n> words",
+        )));
+        let marker = line_of(&app, "quoted text");
+        update(&mut app, click(Target::Reader(Some(marker)), false, false));
+        let (lines, _) = app.reading().unwrap().layout(chrono::Local::now());
+        let text: Vec<String> = lines.iter().map(ToString::to_string).collect();
+        assert!(text.iter().any(|line| line.contains("earlier")), "{text:?}");
+    }
+
+    #[test]
+    fn a_link_opens_only_on_a_second_click() {
+        // US2 scenario 4 and T045: the first click shows where it goes.
+        use crate::view::hit::Target;
+        let mut app = app((160, 40));
+        app.reading = Some(reading_of(crate::reader::from_html(
+            "<p>See <a href=\"https://example.com/report\">the report</a>.</p>",
+        )));
+        let at = line_of(&app, "example.com/report");
+        let first = update(&mut app, click(Target::Reader(Some(at)), false, false));
+        assert!(
+            !first
+                .iter()
+                .any(|effect| matches!(effect, Effect::OpenLink(_))),
+            "{first:?}"
+        );
+        assert!(
+            app.notice().unwrap().contains("https://example.com/report"),
+            "the whole destination is shown first: {:?}",
+            app.notice()
+        );
+        let second = update(&mut app, click(Target::Reader(Some(at)), false, false));
+        assert!(
+            second.contains(&Effect::OpenLink("https://example.com/report".into())),
+            "{second:?}"
+        );
     }
 
     #[test]
