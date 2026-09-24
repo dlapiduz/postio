@@ -21,6 +21,10 @@ markup5ever_rcdom = "0.39.0"
 postio-model = { workspace = true }
 
 [dev-dependencies]
+# Spike T0.1 (specs/005-tui-frontend T005): is htmd good enough to turn the
+# reader's sanitised HTML into Markdown for the terminal? Moves to
+# [dependencies] with `markdown::from_html` (T040) if it is.
+htmd = "0.5.5"
 postio-model = { workspace = true, features = ["test-corpus"] }
 
 [lints]

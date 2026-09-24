@@ -258,6 +258,21 @@ converting *after* the sanitiser keeps it. Converting through the composer
 narrow subset (h1–h3 only, no tables, no strikethrough, cid-only images), so
 FR-010's "tables at least as faithfully as plain text" would fail.
 
+**Spike T0.1 result (2026-09-23, T005)**: `htmd 0.5.5` over every corpus
+message with an HTML body, after `sanitize_body(…, Blocked)` and
+`fold_html_quotes`: **all safety promises hold**, with no tag, script,
+`javascript:` or remote image in any output, and a GFM table survives as a
+table (`crates/postio-body/tests/body_suite/markdown_corpus.rs`). Two
+structural gaps: an `<img>` whose remote `src` the sanitiser stripped
+**disappears** instead of leaving a placeholder, and `<details>`/`<summary>`
+fold markers are dropped, keeping their content. Both are handled with
+`htmd`'s custom element handlers, so **T040 wraps htmd** with `img` and
+`details` handlers rather than writing the walk. **Cost to watch**: htmd
+0.5.5 depends on html5ever **0.38** while `postio-body` uses 0.39, so the
+graph carries two HTML parsers. T092's size measurement decides whether that
+matters for SC-004. If it does, the fallback is our own walk on 0.39 (a few
+hundred lines, with htmd as the structural reference).
+
 **Test**: a corpus-wide test in the pattern of
 `crates/postio-body/tests/body_suite/replying.rs:639` renders every
 `crates/postio-model/tests/corpus/*.eml` through the terminal reader and

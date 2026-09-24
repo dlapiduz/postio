@@ -18,6 +18,7 @@
 
 mod document;
 mod edit;
+mod markdown_corpus;
 mod outgoing;
 mod reader_view;
 mod replying;

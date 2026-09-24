@@ -58,7 +58,7 @@ Commits end `Refs: specs/005-tui-frontend` and the task id — never
 
 ### The three spikes come first — each writes its answer into research.md
 
-- [ ] T005 **Spike T0.1** — in `crates/postio-body/tests/body_suite/markdown_corpus.rs`, run `htmd` over the sanitised HTML of every corpus message and assert contracts/markdown.md's `from_html` promises (no tag, no script text, no `javascript:`, no remote URL in an image position; tables survive as GFM tables). Record pass/fail per message in research.md R5. **If it fails, T040 writes the html5ever walk instead of wrapping htmd**
+- [X] T005 **Spike T0.1** — in `crates/postio-body/tests/body_suite/markdown_corpus.rs`, run `htmd` over the sanitised HTML of every corpus message and assert contracts/markdown.md's `from_html` promises (no tag, no script text, no `javascript:`, no remote URL in an image position; tables survive as GFM tables). Record pass/fail per message in research.md R5. **If it fails, T040 writes the html5ever walk instead of wrapping htmd**
 - [ ] T006 **Spike T0.2** — in `crates/postio-core/tests/terminal_chords.rs`, enumerate `registry::all()` and list every command whose default and alternate bindings are all undeliverable by a legacy (non-kitty-protocol) terminal. Record the list in research.md R4. **T017 adds an alternate for each**
 - [ ] T007 **Spike T0.3** — on `spike/daemon-cold-start` (not this branch), measure fork+exec of a minimal daemon, then keyring, then store open against the reference mailbox, overlapped with a ratatui startup; record the numbers in research.md R1. If cold start exceeds 500 ms, record which step and stop for a re-think before T020
 
@@ -131,7 +131,7 @@ attachments.
 **Independent test**: render every corpus message and assert the SC-005
 properties on the grid; US2 scenarios on the fixture store.
 
-- [ ] T040 [US2] Write `postio_body::markdown::from_html` in `crates/postio-body/src/markdown.rs` (wrapping htmd, or the html5ever walk if T005 failed), keeping `<details>` as fold markers and images as `postio-image:<identity>`. Test first: T005's corpus test, now against `from_html`
+- [ ] T040 [US2] Write `postio_body::markdown::from_html` in `crates/postio-body/src/markdown.rs` wrapping htmd (T005 passed; research R5) with custom `img` handling (placeholder, never dropped) and `details` handling, keeping `<details>` as fold markers and images as `postio-image:<identity>`. Test first: T005's corpus test, now against `from_html`
 - [ ] T041 [US2] Write `crates/postio-tui/src/view/reader/render.rs`: Markdown → `RenderedMessage` via tui-markdown with a `StyleSheet` from `theme.rs`, a `linkify` pass, every span through `SafeText`. Test first: a corpus-wide test that the rendered grid contains no control character from content and no tag (SC-005)
 - [ ] T042 [US2] Plain-text path in the same file: verbatim with `>` runs folded by `postio_body::quote`, never parsed as Markdown. Test first: US2 scenario 3, a `# not a heading` line renders literally
 - [ ] T043 [US2] Folds: collapsible `Fold` blocks, folded by default, toggled by the existing expand/collapse-quote commands. Test first: US2 scenario 1 snapshot, then the snapshot after expanding
