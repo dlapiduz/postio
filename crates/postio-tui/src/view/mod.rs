@@ -27,7 +27,6 @@ use crate::layout::{Pane, Shown};
 const SIDEBAR: u16 = 26;
 use crate::theme::{Role, Theme};
 
-/// Draw the whole screen, and answer what is where on it, for the mouse.
 /// The composer's buttons, each with the key this terminal can send for
 /// it, from the keymap in force; one with no key it can send is left out,
 /// and the last go first when the pane is narrow.
@@ -45,6 +44,7 @@ fn composer_actions(app: &App) -> Vec<composer::Action> {
     .collect()
 }
 
+/// Draw the whole screen, and answer what is where on it, for the mouse.
 pub fn draw(frame: &mut Frame, app: &App, theme: &Theme, now: DateTime<Local>) -> hit::Hits {
     let mut hits = hit::Hits::default();
     let area = frame.area();

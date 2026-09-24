@@ -17,6 +17,7 @@ const LABEL: u16 = 9;
 
 /// Draw `composer` into `area`; with `focused`, the terminal's cursor goes
 /// where the next letter will land.
+#[allow(clippy::too_many_arguments)]
 pub fn draw(
     frame: &mut Frame,
     area: Rect,
