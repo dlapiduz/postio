@@ -718,8 +718,11 @@ impl LocalStore {
 /// `deleted_locally = 0`, which is exactly the list query's own predicate, so
 /// the two cannot mean different things.
 ///
-/// The account-wide and flagged views still count: there is no column for
-/// them, and neither is on the scrolling hot path.
+/// Flagged and Snoozed are the same numbers summed over folders: each
+/// folder's `flagged_count` and `snoozed_count` keep the list query's own
+/// predicates. They counted, once, on the belief they were off the
+/// hot path; every page read paid it, and `flagged` is in no index, so
+/// Flagged read the row of every message in the account (#1614).
 ///
 /// # Why zero is not taken at its word
 ///
@@ -740,11 +743,21 @@ async fn count(
     scope: ListScope,
     query: &ListQuery,
 ) -> Result<u32, StoreError> {
-    if let ListScope::Mailbox(mailbox) = scope
-        && let Some(counts) = MailboxRepository::new(connection).counts(mailbox).await?
-        && counts.total > 0
-    {
-        return Ok(counts.total);
+    let folders = MailboxRepository::new(connection);
+    let cached = match scope {
+        ListScope::Mailbox(mailbox) => folders.counts(mailbox).await?.map(|counts| counts.total),
+        ListScope::Flagged(account) => Some(folders.account_counts(account).await?.flagged),
+        ListScope::Snoozed(account) => Some(folders.account_counts(account).await?.snoozed),
+        // The account and unified views list conversations, and their count
+        // is a thread count, not this one. The Outbox is a predicate over
+        // Drafts, and a thread drill-in is one conversation: no column.
+        ListScope::Account(_)
+        | ListScope::Unified
+        | ListScope::Outbox(_)
+        | ListScope::Thread(_) => None,
+    };
+    if let Some(total) = cached.filter(|total| *total > 0) {
+        return Ok(total);
     }
     Ok(MessageRepository::new(connection).count(query).await?)
 }
