@@ -145,7 +145,7 @@ impl Listener {
 
 impl Host {
     /// Serve frontends on `listener` until none has been connected for
-    /// `idle`, then return. Blocks; call it outside any async context, and
+    /// `idle`, or until the process is sent SIGTERM, then return. Blocks; call it outside any async context, and
     /// drop the host after it returns.
     pub fn serve(&self, listener: Listener, idle: Duration) {
         let inner = Arc::clone(&self.inner);
@@ -170,6 +170,10 @@ async fn serve(inner: Arc<Inner>, listener: Listener, idle: Duration) {
         }
     };
     let mut connected = inner.connected.subscribe();
+    // SIGTERM stops the daemon the way the grace period does: engines first,
+    // by whoever called `serve`, once it returns.
+    let mut terminate =
+        tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()).ok();
     loop {
         let nobody = *connected.borrow_and_update() == 0;
         tokio::select! {
@@ -182,6 +186,15 @@ async fn serve(inner: Arc<Inner>, listener: Listener, idle: Duration) {
             _ = connected.changed() => {}
             () = tokio::time::sleep(idle), if nobody => {
                 tracing::info!("no frontend for the grace period; stopping");
+                return;
+            }
+            Some(()) = async {
+                match terminate.as_mut() {
+                    Some(signal) => signal.recv().await,
+                    None => std::future::pending().await,
+                }
+            } => {
+                tracing::info!("asked to stop");
                 return;
             }
         }

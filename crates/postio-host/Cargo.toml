@@ -19,16 +19,18 @@ workspace = true
 async-channel = { workspace = true }
 postio-client.workspace = true
 postio-core.workspace = true
+postio-config.workspace = true
+postio-account.workspace = true
 postio-model.workspace = true
+postio-runtime.workspace = true
 postio-session.workspace = true
 postio-storage.workspace = true
 thiserror = { workspace = true }
-tokio = { workspace = true, features = ["io-util", "macros", "net", "rt", "sync", "time"] }
+tokio = { workspace = true, features = ["io-util", "macros", "net", "rt", "rt-multi-thread", "signal", "sync", "time"] }
 tracing = { workspace = true }
 
 [dev-dependencies]
 chrono = { workspace = true }
-postio-account.workspace = true
 postio-storage = { workspace = true, features = ["test-support"] }
 tempfile = { workspace = true }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread", "time"] }

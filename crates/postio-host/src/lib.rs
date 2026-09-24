@@ -175,6 +175,55 @@ impl Host {
         &self.inner.wiring
     }
 
+    /// Start a sync engine for every enabled account, on the host's runtime.
+    ///
+    /// The host does this rather than a frontend because the host is the
+    /// one process that outlives every window: sync runs while any frontend
+    /// is open and stops with the host, exactly as it ran with the desktop
+    /// app before (research R1b).
+    pub fn start_syncing(&self) {
+        let wiring = self.inner.wiring.clone();
+        self.inner.runtime().spawn(async move {
+            let accounts = match wiring.database.connect().await {
+                Ok(connection) => postio_storage::repository::AccountRepository::new(&connection)
+                    .list_enabled()
+                    .await
+                    .unwrap_or_else(|error| {
+                        tracing::error!(%error, "cannot read the accounts: {error}");
+                        Vec::new()
+                    }),
+                Err(error) => {
+                    tracing::error!(%error, "cannot read the accounts: {error}");
+                    Vec::new()
+                }
+            };
+            if accounts.is_empty() {
+                return;
+            }
+            match postio_session::engine::start_all(&accounts, &wiring).await {
+                Ok(engines) => {
+                    for (_, engine) in engines {
+                        postio_runtime::retain(engine.clone());
+                        wiring.engine.fill(engine);
+                    }
+                }
+                Err(refusal) => {
+                    tracing::error!(%refusal, "not starting the sync engines: {refusal}");
+                }
+            }
+        });
+    }
+
+    /// Stop the engines and mark a clean end, before the host is dropped.
+    ///
+    /// Engines first: they are the one thing still writing on threads of
+    /// their own, and a write torn by the process exit is left for a pre-1.0
+    /// engine to recover (`postio-app`'s `run` says the same, and did this).
+    pub fn stop(&self) {
+        postio_runtime::stop_retained();
+        postio_session::blocking::now(postio_session::end_session(&self.inner.wiring.database));
+    }
+
     /// A client in this process: `postio-ffi`, the integration suites, and
     /// until the socket exists, the desktop app.
     pub fn connect(&self, kind: ClientKind) -> Client {
