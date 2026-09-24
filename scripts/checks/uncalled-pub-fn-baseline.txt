@@ -58,7 +58,6 @@ is_paused                         # crates/postio-sync/src/backfill.rs:507
 is_reversible                     # crates/postio-model/src/operation.rs:351
 is_settled                        # crates/postio-model/src/operation.rs:172
 latest_message_id                 # crates/postio-model/src/thread.rs:91
-len_of                            # crates/postio-storage/src/blob.rs:287
 lookup_binding                    # crates/postio-core/src/registry.rs:1067
 mark_in_flight                    # crates/postio-storage/src/repository/operations.rs:465
 message_page                      # crates/postio-runtime/src/store/local.rs -- the flat window under MailStore::list_page; for postio-bench store_reads and runtime_suite, which measure one window on purpose
