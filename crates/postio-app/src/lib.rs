@@ -698,7 +698,7 @@ pub async fn feed_the_window(window: &Window, wiring: &Wiring) -> Option<Wired> 
 
     // Dragging messages out to another application. Nothing is written until
     // a drop actually asks, so this costs nothing until it is used.
-    export::install(window, wiring).await;
+    export::install(window, wiring, client.clone()).await;
 
     // Which accounts are rebuilding their local search index right now
     // (#981) -- shared between the settings panel, which owns the set, and
@@ -728,7 +728,7 @@ pub async fn feed_the_window(window: &Window, wiring: &Wiring) -> Option<Wired> 
     // Leaked for the same reason the engine is: the search surfaces live as
     // long as the window, and dropping the `View` here would unhook the
     // handlers that answer the box a moment after they were connected.
-    let search = search::install(window, wiring, &feeds, reindexing)
+    let search = search::install(window, wiring, client.clone(), &feeds, reindexing)
         .await
         .map(|view| &*Box::leak(Box::new(view)));
 

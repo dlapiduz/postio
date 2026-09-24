@@ -1,11 +1,12 @@
-//! Search, joined to the store.
+//! Search, joined to the store's owner.
 //!
 //! `postio-gtk` built the whole search surface and cannot run a search: it may
 //! not link SQLite, so the box paces the query and then hands it to whoever
-//! owns the store. That is this crate. Everything here is the other half of a
-//! seam `postio-gtk` deliberately left open — [`Live::connect_run`],
-//! [`View::set_facets`], [`View::set_focused`], [`Finder::set_contacts`] — and
-//! until it existed, typing in the box did nothing at all (`postio-1ag`).
+//! owns the store -- the host, asked through this crate's client (ADR 0041).
+//! Everything here is the other half of a seam `postio-gtk` deliberately left
+//! open — [`Live::connect_run`], [`View::set_facets`], [`View::set_focused`],
+//! [`Finder::set_contacts`] — and until it existed, typing in the box did
+//! nothing at all (`postio-1ag`).
 //!
 //! # Two round trips, not one
 //!
@@ -22,10 +23,10 @@
 //!
 //! # Crossing the two loops
 //!
-//! The same arrangement as [`crate::feed`], for the same reason: `rusqlite` is
-//! blocking and the GTK main loop must never be inside a query. The read goes
-//! to the runtime's blocking pool and the answer comes back over an
-//! `async_channel` that both loops can wait on.
+//! The GTK main loop must never be inside a query. Every read is a
+//! [`Client`] call: the host runs it on its own runtime and the answer comes
+//! back through a oneshot this loop can wait on, one call where there was one
+//! read (`Req::SearchHits`, `Req::Facets`, `Req::StoredBody`).
 //!
 //! # Superseded answers are dropped whole
 //!
@@ -48,22 +49,23 @@ use postio_gtk::feed::{Feeds, Folders};
 use postio_gtk::finder::Finder;
 use postio_gtk::search::{Outcome, View};
 use postio_gtk::window::Window;
-use postio_index::SearchRequest;
 use postio_model::AccountScope;
 use postio_model::ids::AccountId;
 use postio_search::facets::{Facets, Scope};
 use postio_search::{ParsedQuery, SearchResults};
-// `run`, `snippet_hits`, `HIT_LIMIT` and `SNIPPET_HITS` moved to
-// `postio_session::search` in #660, so the macOS frontend runs the same search
-// rather than a second one with its own hit limit and its own excerpt rule.
-// `facets` below still needs the limit, which is why it is imported and not
-// merely called through.
-use postio_session::search::{HIT_LIMIT, execute_with_snippets};
-use postio_storage::repository::{ContactRepository, LabelRepository};
-use postio_storage::{Checkout, Store};
 
 use crate::Wiring;
 use crate::settings_accounts::Reindexing;
+// The search itself -- `postio_session::search`, one executor for every
+// frontend (#660) -- runs in the host now, behind `Client::search_hits` and
+// `Client::facets`.
+use postio_client::Client;
+
+/// Read the store on the runtime and answer over a channel: moved to the one
+/// surface that still reads the store itself, and named here for the test
+/// below that proves it does not queue behind a backfill (#672).
+#[cfg(test)]
+pub(crate) use crate::orientation::ask;
 
 /// Wire the search surfaces to the store.
 ///
@@ -75,13 +77,25 @@ use crate::settings_accounts::Reindexing;
 /// optional in the running application — `feed_the_window` builds both — and
 /// is taken by reference here rather than found, because which `Feeds` a
 /// window has is the composition root's business, the same as the source.
+///
+/// `client` is the window's, the same one the list and the reading pane
+/// read through: every read here is one of its calls.
 pub async fn install(
     window: &Window,
     wiring: &Wiring,
+    client: Client,
     feeds: &Feeds,
     reindexing: Reindexing,
 ) -> Option<View> {
-    let account = crate::first_account(&wiring.database).await?;
+    // `first_account`'s answer, asked of the host: the first enabled account
+    // in creation order, which is the order it lists them in.
+    let account = client
+        .accounts()
+        .await
+        .map_err(|error| tracing::error!(%error, "cannot read the accounts: {error}"))
+        .ok()?
+        .into_iter()
+        .find(|account| account.enabled)?;
     let finder = window.finder();
     let view = View::attach(&window.shell(), &finder);
 
@@ -105,23 +119,24 @@ pub async fn install(
     let order: Order = Rc::new(std::cell::Cell::new(postio_search::ResultOrder::default()));
 
     install_leave_to_list(window, &finder);
-    install_preview(&view, wiring, window).await;
+    install_preview(&view, &client, window).await;
     install_run(
         &view,
         &finder,
         window,
         feeds,
         wiring,
+        &client,
         held.clone(),
         order.clone(),
         reindexing,
     )
     .await;
     install_scope_rerun(window, &finder);
-    install_results(window, feeds, &view, held, wiring, order.clone()).await;
+    install_results(window, feeds, &view, held, &client, order.clone()).await;
     install_order_toggle(window, &finder, feeds, order);
-    load_contacts(&finder, account.id, wiring).await;
-    load_labels(&finder, account.id, wiring).await;
+    load_contacts(&finder, account.id, &client).await;
+    load_labels(&finder, account.id, &client).await;
 
     Some(view)
 }
@@ -382,6 +397,7 @@ async fn install_run(
     window: &Window,
     feeds: &Feeds,
     wiring: &Wiring,
+    client: &Client,
     held: Held,
     order: Order,
     reindexing: Reindexing,
@@ -395,8 +411,7 @@ async fn install_run(
         return;
     };
 
-    let database = wiring.database.clone();
-    let runtime = wiring.runtime.clone();
+    let client = client.clone();
     let events = wiring.events.clone();
     let view = view.clone();
     let folders = feeds.folders.clone();
@@ -423,29 +438,29 @@ async fn install_run(
             // Read on this side of the thread hop: the cell lives with the
             // GTK loop, and the value — `Copy` — travels with the work.
             let order = order.get();
-            let hits = ask(&database, &runtime, {
+            // One excerpt: the preview draws the focused hit's, and only
+            // until its body arrives -- `focus` reads that body straight
+            // after. The rest were fifty body reads between the keystroke
+            // and this answer (#1613).
+            let hits = client.clone();
+            let hits = {
                 let query = query.clone();
-                move |connection| async move {
-                    // One excerpt: the preview draws the focused hit's, and
-                    // only until its body arrives -- `focus` reads that body
-                    // straight after. The rest were fifty body reads between
-                    // the keystroke and this answer (#1613).
-                    execute_with_snippets(&connection, account, &query, scope, order, 1).await
-                }
-            });
+                async move { hits.search_hits(account, query, scope, order, 1).await }
+            };
 
             glib::spawn_future_local({
                 let live = live.clone();
                 let view = view.clone();
-                let database = database.clone();
-                let runtime = runtime.clone();
+                let client = client.clone();
                 let events = events.clone();
                 let held = held.clone();
                 let folders = folders.clone();
                 let window = window.clone();
                 let reindexing = reindexing.clone();
                 async move {
-                    let Ok(Some(results)) = hits.recv().await else {
+                    // POSTIO-GLIB-SAFE: a client call is a oneshot receive; the host answers
+                    // on its own runtime.
+                    let Ok(Some(results)) = hits.await else {
                         // The store could not be read, so there is no answer
                         // coming. Saying so is what lets the box send out
                         // whatever query queued up behind this run — the
@@ -518,7 +533,7 @@ async fn install_run(
                     // Measured rather than assumed: `app_suite::glib_main_context` opens a
                     // store and reads it on this context with no runtime anywhere, and fails
                     // loudly if that stops being true.
-                    focus(&view, &results, &database, &runtime).await;
+                    focus(&view, &results, &client).await;
                     held.replace(Some(results));
                     // Scoped, so the borrow is gone before `facets` runs:
                     // nothing downstream needs `held` today, and a borrow
@@ -527,17 +542,15 @@ async fn install_run(
                     if let Some(results) = held.borrow().as_ref() {
                         announce(&events, &query, results);
                     }
-                    facets(
-                        &view, &live, sequence, account, &query, scope, &database, &runtime,
-                    )
-                    // POSTIO-GLIB-SAFE: nothing under this await wants a reactor. The
-                    // network work it reaches is spawned onto the runtime and answers over a
-                    // channel -- `onboarding::probe_with_offer` is the shape -- and what is
-                    // left is store reads, whose futures this engine makes self-contained.
-                    // Measured rather than assumed: `app_suite::glib_main_context` opens a
-                    // store and reads it on this context with no runtime anywhere, and fails
-                    // loudly if that stops being true.
-                    .await;
+                    facets(&view, &live, sequence, account, &query, scope, &client)
+                        // POSTIO-GLIB-SAFE: nothing under this await wants a reactor. The
+                        // network work it reaches is spawned onto the runtime and answers over a
+                        // channel -- `onboarding::probe_with_offer` is the shape -- and what is
+                        // left is store reads, whose futures this engine makes self-contained.
+                        // Measured rather than assumed: `app_suite::glib_main_context` opens a
+                        // store and reads it on this context with no runtime anywhere, and fails
+                        // loudly if that stops being true.
+                        .await;
                 }
             });
         }
@@ -549,7 +562,6 @@ async fn install_run(
 /// Checked against `sequence` again when it lands, because it is a whole extra
 /// read behind an answer that was current when it started and may not be by
 /// the time it finishes.
-#[allow(clippy::too_many_arguments)]
 async fn facets(
     view: &View,
     live: &postio_gtk::search::Live,
@@ -557,36 +569,23 @@ async fn facets(
     account: AccountScope,
     query: &ParsedQuery,
     scope: Scope,
-    database: &Store,
-    runtime: &tokio::runtime::Handle,
+    client: &Client,
 ) {
-    let answer = ask(database, runtime, {
+    // The scope the hits were counted under, carried rather than re-read:
+    // the columns have to describe *this* result set, and the user is free
+    // to switch scope while this second round trip is in flight.
+    let answer = {
+        let client = client.clone();
         let query = query.clone();
-        move |connection| async move {
-            postio_index::executor::facets(
-                &connection,
-                &SearchRequest {
-                    // The scope the hits were counted under, carried rather
-                    // than re-read: the columns have to describe *this*
-                    // result set, and the user is free to switch scope while
-                    // this second round trip is in flight.
-                    account,
-                    query: &query,
-                    scope,
-                    limit: HIT_LIMIT,
-                    order: postio_search::ResultOrder::Relevance,
-                },
-            )
-            .await
-            .map_err(|error| tracing::warn!(%error, "the facet counts did not run"))
-            .ok()
-        }
-    });
+        async move { client.facets(account, query, scope).await }
+    };
     glib::spawn_future_local({
         let view = view.clone();
         let live = live.clone();
         async move {
-            let Ok(Some(facets)) = answer.recv().await else {
+            // POSTIO-GLIB-SAFE: a client call is a oneshot receive; the host answers
+            // on its own runtime.
+            let Ok(Some(facets)) = answer.await else {
                 return;
             };
             if live.outstanding() != sequence {
@@ -629,45 +628,42 @@ type Held = Rc<std::cell::RefCell<Option<SearchResults>>>;
 /// `follow_cursor` takes over from the next keystroke on. Both go through
 /// [`preview`], so there is one path to the pane rather than two that can
 /// disagree.
-async fn focus(
-    view: &View,
-    results: &SearchResults,
-    database: &Store,
-    runtime: &tokio::runtime::Handle,
-) {
+async fn focus(view: &View, results: &SearchResults, client: &Client) {
     view.set_focused(results.hits.first());
     let Some(hit) = results.hits.first() else {
         return;
     };
-    preview(view, hit, database, runtime).await;
+    preview(view, hit, client).await;
 }
 
 /// Draw `hit`'s body into the preview.
-async fn preview(
-    view: &View,
-    hit: &postio_search::SearchHit,
-    database: &Store,
-    runtime: &tokio::runtime::Handle,
-) {
+async fn preview(view: &View, hit: &postio_search::SearchHit, client: &Client) {
     // The snippet is already on screen — highlighted, from the index — so this
     // is the body arriving under it rather than the pane waiting on a read to
     // show anything at all.
     let message = hit.message_id;
     let sender = hit.from.as_ref().map(|from| from.address.clone());
-    // Judged and sanitised on the runtime, under the policy the preview
+    // Judged and sanitised off the main thread, under the policy the preview
     // would draw this sender with, so the main thread only loads it.
     let remote = view.preview().remote_images_for(sender.as_deref());
-    let answer = ask(database, runtime, move |connection| async move {
-        Some(crate::compose::load_body(&connection, message).await)
-    });
-    let answer = then_off_thread(runtime, answer, move |body| {
-        let prepared = postio_ui::reader::document::prepare_message(&body, remote);
-        (body, prepared)
-    });
+    let answer = {
+        let client = client.clone();
+        async move { client.stored_body(message).await }
+    };
     glib::spawn_future_local({
         let view = view.clone();
         async move {
-            let Ok(Some((body, prepared))) = answer.recv().await else {
+            // POSTIO-GLIB-SAFE: a client call is a oneshot receive; the host answers
+            // on its own runtime.
+            let Ok(body) = answer.await else {
+                return;
+            };
+            let Ok((body, prepared)) = gtk::gio::spawn_blocking(move || {
+                let prepared = postio_ui::reader::document::prepare_message(&body, remote);
+                (body, prepared)
+            })
+            .await
+            else {
                 return;
             };
             let preview = view.preview();
@@ -714,7 +710,7 @@ async fn install_results(
     feeds: &Feeds,
     view: &View,
     held: Held,
-    wiring: &Wiring,
+    client: &Client,
     order: Order,
 ) {
     let list = window.list();
@@ -775,8 +771,7 @@ async fn install_results(
         let list = list.clone();
         let view = view.clone();
         let feeds = feeds.clone();
-        let database = wiring.database.clone();
-        let runtime = wiring.runtime.clone();
+        let client = client.clone();
         move |_| {
             postio_session::blocking::now(async {
                 if !feeds.messages.showing_results() {
@@ -800,7 +795,7 @@ async fn install_results(
                     return;
                 };
                 view.set_focused(Some(&hit));
-                preview(&view, &hit, &database, &runtime).await;
+                preview(&view, &hit, &client).await;
             })
         }
     });
@@ -854,9 +849,9 @@ fn results_label(count: u32) -> String {
 }
 
 /// Resolve `cid:` parts, and open what the preview asks to open.
-async fn install_preview(view: &View, wiring: &Wiring, window: &Window) {
+async fn install_preview(view: &View, client: &Client, window: &Window) {
     let preview = view.preview();
-    preview.set_blob_source(postio_session::reading::cid_source(
+    preview.set_blob_source(crate::reading::cid_source(
         {
             // The preview and the reading pane have the same problem and
             // different notions of "the message on screen", which is why the
@@ -864,8 +859,7 @@ async fn install_preview(view: &View, wiring: &Wiring, window: &Window) {
             let preview = preview.clone();
             move || preview.focused()
         },
-        wiring.database.clone(),
-        wiring.blobs.clone(),
+        client.clone(),
     ));
     install_open(&preview, window).await;
 }
@@ -900,22 +894,24 @@ async fn install_open(preview: &postio_gtk::search::Preview, window: &Window) {
 /// the UI thread because it is the one read here whose size is set by the
 /// mailbox rather than by the query, and a window that paused at startup to
 /// count someone's correspondents would be paying the whole cost up front.
-async fn load_contacts(finder: &Finder, account: AccountId, wiring: &Wiring) {
-    let answer = ask(
-        &wiring.database,
-        &wiring.runtime,
-        move |connection| async move {
-            ContactRepository::new(&connection)
-                .search(Some(account), "", CONTACT_LIMIT)
-                .await
-                .map_err(|error| tracing::warn!(%error, "could not read the correspondents"))
-                .ok()
-        },
-    );
+///
+/// The host reads at most 50,000 of them (`postio_host::compose`'s
+/// `CORRESPONDENT_LIMIT`): a bound rather than a page, because the matcher
+/// needs the whole list to subsequence over. Distinct correspondents are
+/// bounded by the people who have written to the account -- thousands,
+/// against millions of messages -- so the bound exists to stop a
+/// pathological store rather than to page a normal one.
+async fn load_contacts(finder: &Finder, account: AccountId, client: &Client) {
+    let client = client.clone();
     glib::spawn_future_local({
         let finder = finder.clone();
         async move {
-            let Ok(Some(contacts)) = answer.recv().await else {
+            // POSTIO-GLIB-SAFE: a client call is a oneshot receive; the host answers
+            // on its own runtime.
+            let found = client.correspondents(account).await;
+            let Ok(contacts) =
+                found.map_err(|error| tracing::warn!(%error, "could not read the correspondents"))
+            else {
                 return;
             };
             tracing::debug!(count = contacts.len(), "correspondents read");
@@ -936,22 +932,17 @@ async fn load_contacts(finder: &Finder, account: AccountId, wiring: &Wiring) {
 /// that is not offered until the next start -- which is the same limit the
 /// correspondents list has, and worth stating rather than discovering: there
 /// is no label-creation surface yet, so nothing can create one mid-session.
-async fn load_labels(finder: &Finder, account: AccountId, wiring: &Wiring) {
-    let answer = ask(
-        &wiring.database,
-        &wiring.runtime,
-        move |connection| async move {
-            LabelRepository::new(&connection)
-                .list(account)
-                .await
-                .map_err(|error| tracing::warn!(%error, "could not read the labels"))
-                .ok()
-        },
-    );
+async fn load_labels(finder: &Finder, account: AccountId, client: &Client) {
+    let client = client.clone();
     glib::spawn_future_local({
         let finder = finder.clone();
         async move {
-            let Ok(Some(labels)) = answer.recv().await else {
+            // POSTIO-GLIB-SAFE: a client call is a oneshot receive; the host answers
+            // on its own runtime.
+            let found = client.labels(account).await;
+            let Ok(labels) =
+                found.map_err(|error| tracing::warn!(%error, "could not read the labels"))
+            else {
                 return;
             };
             tracing::debug!(count = labels.len(), "labels read");
@@ -959,15 +950,6 @@ async fn load_labels(finder: &Finder, account: AccountId, wiring: &Wiring) {
         }
     });
 }
-
-/// How many correspondents `@` can offer.
-///
-/// A bound rather than a page: the matcher needs the whole list to subsequence
-/// over. Distinct correspondents are bounded by the people who have written to
-/// the account — thousands, against millions of messages — and the palette
-/// draws only its own first rows, so this exists to stop a pathological store
-/// rather than to page a normal one.
-const CONTACT_LIMIT: u32 = 50_000;
 
 #[cfg(test)]
 mod tests {

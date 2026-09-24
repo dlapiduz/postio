@@ -1930,7 +1930,7 @@ pub(crate) use postio_host::parts::{part_bytes, read_message, wait_for_body};
 /// resolve to bytes before the image can be placed, and there is nothing to
 /// hand a future to. It was a blocking store read before; it is a blocking
 /// call to the host now, the same indexed read on the host's runtime.
-fn cid_source(
+pub(crate) fn cid_source(
     showing: impl Fn() -> Option<MessageId> + 'static,
     client: Client,
 ) -> Rc<dyn postio_ui::reader::parts::BlobSource> {

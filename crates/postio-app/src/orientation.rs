@@ -41,7 +41,7 @@ pub async fn install(window: &Window, wiring: &Wiring, feeds: &Feeds) {
     // its four inputs in any order rather than assuming this one is first.
     // `ask` spawns onto the runtime, so the closure must own everything it
     // touches rather than borrowing `wiring`.
-    let answer = crate::search::ask(
+    let answer = ask(
         &wiring.database,
         &wiring.runtime,
         move |connection| async move {
@@ -228,6 +228,50 @@ impl Orientation {
         Effect::Show
     }
 }
+
+/// Read the store on the runtime and answer over a channel.
+///
+/// `work` runs on the runtime with a turn on a warm reader, because every
+/// caller is waiting on the answer to draw something. `None` from `work` --
+/// or a reader that could not be had -- reaches the caller as `None`.
+///
+/// Search's reads used to come through here, which is why the test that
+/// proves a read does not queue behind a backfill (#672) still names it
+/// `crate::search::ask`; they are the host's now, and the settings row this
+/// module reads is the last read of its kind.
+pub(crate) fn ask<T, F, Fut>(
+    database: &postio_storage::Store,
+    runtime: &tokio::runtime::Handle,
+    work: F,
+) -> Answer<T>
+where
+    T: Send + 'static,
+    F: FnOnce(postio_storage::Checkout) -> Fut + Send + 'static,
+    Fut: std::future::Future<Output = Option<T>> + Send,
+{
+    let (sender, receiver) = async_channel::bounded(1);
+    let database = database.clone();
+    runtime.spawn(async move {
+        // A turn on a warm reader rather than a connection of its own: a
+        // search run took four cold caches per keystroke (#1602).
+        let answer = match database.read().await {
+            Ok(reader) => {
+                let answer = work(reader.checkout()).await;
+                drop(reader);
+                answer
+            }
+            Err(error) => {
+                tracing::warn!(%error, "no connection to read the store with");
+                None
+            }
+        };
+        let _ = sender.send_blocking(answer);
+    });
+    receiver
+}
+
+/// What [`ask`] hands back: one answer, or none.
+type Answer<T> = async_channel::Receiver<Option<T>>;
 
 #[cfg(test)]
 mod tests {

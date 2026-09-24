@@ -693,8 +693,9 @@ fn mime_type_of(path: &std::path::Path) -> String {
 // `load_body`, `Body`, `load_body_or_reason` and `read_blob_text` moved to
 // `postio_session::reading` (#608): the macOS frontend needs the same six-way
 // answer about why a body is missing, and a second copy of it would reproduce
-// #70's blank column rather than the fix.
-pub(crate) use postio_session::reading::{Body, load_body};
+// #70's blank column rather than the fix. `load_body`'s last reader here was
+// the search preview, which asks the host for it now (`Req::StoredBody`).
+pub(crate) use postio_session::reading::Body;
 
 #[cfg(test)]
 mod tests {
