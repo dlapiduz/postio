@@ -400,7 +400,21 @@ pub(crate) async fn open_account_for(
     //
     // The mail is already on disk. Everything below this line reads it, and
     // none of it needs a connection.
-    let Some(Wired { feeds, .. }) = feed_the_window_for(window, frontend).await else {
+    // Every gesture the window produces reaches a real handler from the
+    // moment it has rows to act on: the list starts filling as soon as the
+    // feeds exist, and the rest of the window's wiring awaits, so installing
+    // this after it returned dropped a keystroke made in between.
+    let Some(Wired { feeds, .. }) = feed_the_window_then(window, frontend, |feeds| {
+        commands::install(
+            window,
+            feeds,
+            state.clone(),
+            frontend.commands.clone(),
+            wired.to_vec(),
+        );
+    })
+    .await
+    else {
         return;
     };
 
@@ -436,16 +450,6 @@ pub(crate) async fn open_account_for(
             }
         }
     }
-    // Every gesture the window produces from here on reaches a real handler.
-    // Before this line the keymap, the palette and the selection model all
-    // resolved correctly and then handed off to nothing.
-    commands::install(
-        window,
-        &feeds,
-        state.clone(),
-        frontend.commands.clone(),
-        wired.to_vec(),
-    );
     // Everything either half has to say reaches the panes here: a mailbox the
     // server disagreed with, a body that arrived, an archive that landed. One
     // queue, because the hub fans both producers in before the window sees
@@ -492,6 +496,18 @@ pub async fn feed_the_window(window: &Window, wiring: &Wiring) -> Option<Wired> 
 /// [`feed_the_window`], for a window whose store's owner may be another
 /// process: every surface reads through `frontend`'s client.
 pub async fn feed_the_window_for(window: &Window, frontend: &frontend::Frontend) -> Option<Wired> {
+    feed_the_window_then(window, frontend, |_| {}).await
+}
+
+/// [`feed_the_window_for`], calling `ready` the moment the panes have their
+/// feeds -- before the rest of the window is wired, which awaits. The list
+/// starts filling then, and anything that has to be in place before a person
+/// can act on a row belongs in `ready`, not after this returns.
+async fn feed_the_window_then(
+    window: &Window,
+    frontend: &frontend::Frontend,
+    ready: impl FnOnce(&postio_gtk::feed::Feeds),
+) -> Option<Wired> {
     // Everything from here to the return is synchronous main-thread work,
     // and the first frame is waiting on all of it. The two marks around it
     // are what let a startup trace say so: before #1479 the whole stretch
@@ -577,6 +593,7 @@ pub async fn feed_the_window_for(window: &Window, frontend: &frontend::Frontend)
         sources.clone(),
         sources.clone(),
     );
+    ready(&feeds);
     // The same store, read as a set of hits rather than a window over a
     // mailbox. Set here rather than inside `install_feeds` because whether a
     // window has a search is the composition root's business: postio-gtk

@@ -134,13 +134,13 @@ const CASES: &[(&str, fn())] = &[
             as fn(),
     ),
     (
-        "daemon_window::a_window_over_the_daemons_socket_shows_its_mail_and_acts_on_it",
-        daemon_window::a_window_over_the_daemons_socket_shows_its_mail_and_acts_on_it as fn(),
-    ),
-    (
         "daemon_gone_window::a_window_whose_daemon_stops_says_so_and_retry_reaches_a_new_one",
         daemon_gone_window::a_window_whose_daemon_stops_says_so_and_retry_reaches_a_new_one
             as fn(),
+    ),
+    (
+        "daemon_window::a_window_over_the_daemons_socket_shows_its_mail_and_acts_on_it",
+        daemon_window::a_window_over_the_daemons_socket_shows_its_mail_and_acts_on_it as fn(),
     ),
     (
         "escape_after_finder_closed::escape_leaves_search_even_after_the_box_has_closed",
