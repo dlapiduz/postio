@@ -3765,6 +3765,7 @@ dependencies = [
  "async-trait",
  "chrono",
  "futures-util",
+ "mimalloc",
  "postio-account",
  "postio-core",
  "postio-index",

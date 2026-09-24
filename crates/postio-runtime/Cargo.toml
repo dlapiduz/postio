@@ -30,6 +30,9 @@ tracing = { workspace = true }
 zbus = { version = "5.19.0", default-features = false, features = ["tokio"] }
 
 [dev-dependencies]
+# The application's allocator, for `first_sync_memory`, which measures the
+# heap the application would hold (#1606). A test binary may set its own.
+mimalloc = "0.1"
 postio-model = { workspace = true, features = ["test-corpus"] }
 postio-storage = { workspace = true, features = ["test-support"] }
 # The shared deadline dial: every wall-clock wait in a test answers to
