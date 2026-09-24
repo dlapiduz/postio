@@ -193,6 +193,8 @@ pub enum Req {
     },
     /// Store the file at this path as an attachment.
     Attach(std::path::PathBuf),
+    /// Search, as the desktop's search bar does.
+    Search(Search),
     /// Store pasted image bytes as an inline part.
     InlineImage {
         /// The image.
@@ -249,6 +251,8 @@ pub enum Resp {
     Signature(Option<postio_model::SignatureId>),
     /// A stored attachment, or none when the file could not be read.
     Attached(Option<postio_model::Attachment>),
+    /// What a search found, or nothing when the store could not be read.
+    Found(Option<Found>),
     /// The read could not be answered; the sentence is for the user.
     Failed(StoreError),
 }
@@ -275,6 +279,33 @@ pub enum Body {
     Empty,
     /// A draft written by another client: nothing here to edit.
     ForeignDraft,
+}
+
+/// A search, as a frontend's search bar asks it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Search {
+    /// Which accounts.
+    pub account: postio_model::AccountScope,
+    /// The query as typed, in Postio's query language; the daemon parses it.
+    pub query: String,
+    /// Newest first rather than best match first.
+    pub newest_first: bool,
+}
+
+/// What a search found: the matching messages, best first, and what the
+/// readout says about them (`postio_ui::search::Outcome`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Found {
+    /// The messages, in the order the list shows them.
+    pub ids: Vec<MessageId>,
+    /// How many matched.
+    pub hits: u64,
+    /// Whether `hits` is a floor rather than the true count.
+    pub capped: bool,
+    /// Whether every message searched had a body to search.
+    pub corpus_complete: bool,
+    /// How long it took.
+    pub elapsed: std::time::Duration,
 }
 
 /// Everything that crosses the wire.

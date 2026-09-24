@@ -463,6 +463,7 @@ impl Inner {
                 .flatten();
                 Resp::Attached(stored)
             }
+            Req::Search(search) => Resp::Found(self.search(search).await),
             Req::InlineImage { bytes, mime_type } => {
                 let blobs = self.wiring.blobs.clone();
                 let stored = tokio::task::spawn_blocking(move || {
@@ -529,6 +530,44 @@ impl Inner {
                 .await
                 .map_or_else(Resp::Failed, Resp::DraftCounts),
         }
+    }
+
+    /// A search, as the desktop's bar runs it: every folder but drafts,
+    /// junk and trash unless the query names one, up to the desktop's hit
+    /// limit, with no excerpts -- a terminal list shows none.
+    async fn search(
+        &self,
+        search: postio_client::protocol::Search,
+    ) -> Option<postio_client::protocol::Found> {
+        let query = postio_search::parse(&search.query, chrono::Local::now().date_naive());
+        let order = if search.newest_first {
+            postio_search::ResultOrder::Newest
+        } else {
+            postio_search::ResultOrder::Relevance
+        };
+        let connection = self
+            .wiring
+            .database
+            .read()
+            .await
+            .map_err(|error| tracing::warn!(%error, "could not open the store to search"))
+            .ok()?;
+        let results = postio_session::search::execute_with_snippets(
+            &connection,
+            search.account,
+            &query,
+            postio_search::facets::Scope::AllMail,
+            order,
+            0,
+        )
+        .await?;
+        Some(postio_client::protocol::Found {
+            ids: results.hits.iter().map(|hit| hit.message_id).collect(),
+            hits: results.total_hits,
+            capped: results.total_hits_capped,
+            corpus_complete: results.corpus_complete,
+            elapsed: results.elapsed,
+        })
     }
 
     /// A message's body, or which kind of "no body" it is.

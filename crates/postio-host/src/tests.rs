@@ -501,3 +501,38 @@ fn a_composition_closed_empty_leaves_no_draft() {
 
     assert!(drafts_in(&world, account).is_empty());
 }
+
+#[test]
+fn a_frontend_searches_and_hears_which_messages_matched() {
+    let world = World::new();
+    let (client, _) = world.frontend(ClientKind::Tui);
+    let account = world.rt.block_on(client.accounts()).expect("accounts")[0].id;
+    let matching = world.rt.block_on(async {
+        let connection = world.database.connect().await.expect("a connection");
+        postio_index::index::ensure_schema(&connection)
+            .await
+            .expect("the index");
+        let mut message = Message::new(account, world.inbox, Utc::now());
+        message.subject = Some("Tide gate interlock".into());
+        message.sync.body_state = postio_model::BodyState::Full;
+        let messages = MessageRepository::new(&connection);
+        let id = messages.create(&mut message).await.expect("a message");
+        postio_index::index::index_body(&connection, id.get(), Some("the interlock report"))
+            .await
+            .expect("indexed");
+        id
+    });
+
+    let found = world
+        .rt
+        .block_on(client.search(postio_client::protocol::Search {
+            account: postio_model::AccountScope::Account(account),
+            query: "interlock".into(),
+            newest_first: false,
+        }))
+        .expect("an answer")
+        .expect("the store was read");
+    assert_eq!(found.ids, vec![matching]);
+    assert_eq!(found.hits, 1);
+    assert!(!found.capped);
+}

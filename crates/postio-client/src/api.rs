@@ -90,6 +90,7 @@ impl Req {
             Req::DefaultSignature { .. } => "DefaultSignature",
             Req::Attach(_) => "Attach",
             Req::InlineImage { .. } => "InlineImage",
+            Req::Search(_) => "Search",
         }
     }
 }
@@ -400,6 +401,18 @@ impl Client {
         let request = Req::InlineImage { bytes, mime_type };
         self.read(request, "an inline image", |answer| match answer {
             Resp::Attached(found) => Some(found),
+            _ => None,
+        })
+        .await
+    }
+
+    /// Search; `None` when the store could not be read.
+    pub async fn search(
+        &self,
+        search: crate::protocol::Search,
+    ) -> Result<Option<crate::protocol::Found>, StoreError> {
+        self.read(Req::Search(search), "a search", |answer| match answer {
+            Resp::Found(found) => Some(found),
             _ => None,
         })
         .await
