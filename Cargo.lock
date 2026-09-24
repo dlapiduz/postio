@@ -4264,6 +4264,7 @@ dependencies = [
  "async-channel",
  "chrono",
  "postio-account",
+ "postio-body",
  "postio-client",
  "postio-config",
  "postio-core",

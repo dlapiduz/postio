@@ -214,6 +214,26 @@ impl Daemon {
     }
 }
 
+impl Daemon {
+    /// Whether the daemon has stopped serving, waiting at most `within`.
+    pub fn stopped_within(&self, within: Duration) -> bool {
+        let deadline = std::time::Instant::now() + within;
+        loop {
+            if self
+                .serving
+                .as_ref()
+                .is_none_or(|serving| serving.is_finished())
+            {
+                return true;
+            }
+            if std::time::Instant::now() >= deadline {
+                return false;
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        }
+    }
+}
+
 impl Drop for Daemon {
     fn drop(&mut self) {
         // Every client is gone by now; the daemon leaves after its grace.
@@ -494,4 +514,132 @@ fn a_mixed_session_from_both_reaches_the_servers_exactly_once() {
         ListPage::Threads(page) => page.rows.iter().any(|row| row.representative.flagged),
     };
     assert!(flagged, "the terminal's flag is what the desktop sees");
+}
+
+#[test]
+fn one_frontend_leaving_mid_sync_leaves_the_other_whole_and_the_last_to_leave_ends_it() {
+    // US6 scenario 4 and FR-043.
+    let daemon = Daemon::start(vec![
+        a_message("Tide gate", "tide"),
+        a_message("Second", "second"),
+    ]);
+    let (desktop, _) = daemon.connect(ClientKind::Gtk);
+    let (terminal, heard) = daemon.connect(ClientKind::Tui);
+    // The desktop goes while the first sync is still running.
+    drop(desktop);
+
+    daemon.until("the first sync", || daemon.inbox_rows(&terminal) == 2);
+    let terminal = looking_at(&daemon, terminal, 0);
+    daemon
+        .rt
+        .block_on(terminal.send(postio_core::Command::Archive {
+            target: postio_core::MessageTarget::Selection,
+        }))
+        .expect("archived");
+    daemon.hear(&heard, |event| {
+        matches!(event, Event::MessagesRemoved { .. })
+    });
+    daemon.until("the queue drained", || daemon.on_server("Archive") == 1);
+    assert!(
+        !daemon.stopped_within(Duration::from_millis(100)),
+        "a frontend is still here, so the daemon is too"
+    );
+
+    drop(heard);
+    drop(terminal);
+    assert!(
+        daemon.stopped_within(Duration::from_secs(5)),
+        "the last frontend gone, the daemon leaves after its grace"
+    );
+}
+
+/// The local draft behind the only row in Drafts, as `client` reopens it.
+fn draft_in_drafts(
+    daemon: &Daemon,
+    client: &Client,
+    account: postio_model::AccountId,
+) -> postio_model::Draft {
+    let drafts = daemon
+        .rt
+        .block_on(client.mailboxes(account))
+        .expect("folders")
+        .into_iter()
+        .find(|folder| folder.path == "Drafts")
+        .expect("a Drafts folder")
+        .id;
+    let mut found = None;
+    daemon.until("the draft's row in Drafts", || {
+        let page = daemon
+            .rt
+            .block_on(client.list_page(PageRequest {
+                scope: ListScope::Mailbox(drafts),
+                offset: 0,
+                limit: 10,
+            }))
+            .expect("a page");
+        let rows: Vec<_> = match page {
+            ListPage::Messages(page) => page.rows.into_iter().map(|row| row.id).collect(),
+            ListPage::Threads(page) => page
+                .rows
+                .into_iter()
+                .map(|row| row.representative.id)
+                .collect(),
+        };
+        found = rows
+            .into_iter()
+            .find_map(|row| daemon.rt.block_on(client.draft_behind(row)).ok().flatten());
+        found.is_some()
+    });
+    found.expect("found")
+}
+
+#[test]
+fn a_draft_crosses_between_the_frontends_with_its_formatting() {
+    // FR-023: written on the desktop, reopened in the terminal as Markdown.
+    let daemon = Daemon::start(vec![]);
+    let (desktop, _) = daemon.connect(ClientKind::Gtk);
+    let (terminal, _) = daemon.connect(ClientKind::Tui);
+    let account = daemon.rt.block_on(desktop.accounts()).expect("accounts")[0].id;
+
+    let mut written = postio_model::Draft::new(account);
+    written.subject = "Tide gate".into();
+    written.body.text = Some("Some bold words".into());
+    written.body.html = Some("<p>Some <strong>bold</strong> words</p>".into());
+    daemon
+        .rt
+        .block_on(desktop.save_draft(1, written))
+        .expect("saved on the desktop");
+
+    let reopened = draft_in_drafts(&daemon, &terminal, account);
+    assert_eq!(reopened.body_markdown, None, "the desktop wrote HTML");
+    let html = reopened.body.html.as_deref().expect("its HTML travelled");
+    let markdown = postio_body::markdown::from_document(&postio_body::parse(html));
+    assert_eq!(markdown.trim_end(), "Some **bold** words");
+}
+
+#[test]
+fn a_terminal_draft_opens_on_the_desktop_with_its_formatting() {
+    // FR-023, the other way: written in Markdown, reopened as HTML with the
+    // formatting in it, and the Markdown kept for the terminal to reopen.
+    let daemon = Daemon::start(vec![]);
+    let (desktop, _) = daemon.connect(ClientKind::Gtk);
+    let (terminal, _) = daemon.connect(ClientKind::Tui);
+    let account = daemon.rt.block_on(terminal.accounts()).expect("accounts")[0].id;
+
+    let typed = "Some **bold** words";
+    let document = postio_body::markdown::to_document(typed);
+    let mut written = postio_model::Draft::new(account);
+    written.subject = "Tide gate".into();
+    written.body.text = Some(typed.into());
+    written.body.html = Some(postio_body::render(&document).1);
+    written.body_markdown = Some(typed.into());
+    daemon
+        .rt
+        .block_on(terminal.save_draft(1, written))
+        .expect("saved in the terminal");
+
+    let reopened = draft_in_drafts(&daemon, &desktop, account);
+    let html = reopened.body.html.as_deref().expect("its HTML travelled");
+    assert!(html.contains("<strong>bold</strong>"), "{html}");
+    assert_eq!(reopened.body_markdown.as_deref(), Some(typed));
 }
