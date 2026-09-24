@@ -293,10 +293,6 @@ impl<T: ListRow> ListWindow<T> {
         true
     }
 
-    /// The row at `position`, fetching its page — and, at a boundary, the
-    /// page either side — if it is not resident.
-    ///
-    /// `None` for a position outside the current total.
     /// Every row held, in no particular order, asking for nothing.
     ///
     /// For a caller that wants what is already here -- the subset of a
@@ -306,6 +302,10 @@ impl<T: ListRow> ListWindow<T> {
         self.pages.values().flatten()
     }
 
+    /// The row at `position`, fetching its page — and, at a boundary, the
+    /// page either side — if it is not resident.
+    ///
+    /// `None` for a position outside the current total.
     pub fn row_at(&mut self, position: u32) -> Option<Lookup<'_, T>> {
         if position >= self.total {
             return None;

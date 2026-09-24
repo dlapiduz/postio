@@ -124,11 +124,9 @@ impl Fnv {
     }
 
     fn write(&mut self, bytes: &[u8]) {
-        let words = bytes.chunks_exact(8);
-        let tail = words.remainder();
+        let (words, tail) = bytes.as_chunks::<8>();
         for word in words {
-            let word = u64::from_le_bytes(word.try_into().expect("eight bytes"));
-            self.0 ^= word;
+            self.0 ^= u64::from_le_bytes(*word);
             self.0 = self.0.wrapping_mul(0x1000_0000_01b3);
         }
         for b in tail {
