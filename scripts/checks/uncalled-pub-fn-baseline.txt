@@ -69,7 +69,6 @@ on_ext                            # crates/postio-core/src/dispatch.rs:322
 on_generated                      # crates/postio-account/src/imap/transport.rs:498
 open_composer                     # crates/postio-core/src/state.rs:620
 open_flagged                      # crates/postio-core/src/state.rs:522
-open_search                       # crates/postio-core/src/state.rs:607
 partials                          # crates/postio-search/src/query.rs:369
 plain_forward                     # crates/postio-model/src/reply.rs:221
 plain_quote                       # crates/postio-model/src/reply.rs:213
@@ -86,7 +85,6 @@ reports_destination_uid           # crates/postio-account/src/imap/dispatch.rs:1
 requeue_in_flight                 # crates/postio-storage/src/repository/operations.rs:510
 resync_strategy                   # crates/postio-account/src/imap/dispatch.rs:144
 root_message_id                   # crates/postio-model/src/thread.rs:86
-search_query                      # crates/postio-core/src/state.rs:413
 section_spec                      # crates/postio-account/src/backend/message.rs:585
 seed_backfill                     # crates/postio-runtime/src/engine.rs:671 -- a test lever: the runtime suite drives the body queue through it; the app seeds nothing itself since #1593
 send_tracked                      # crates/postio-core/src/bridge.rs:212
@@ -111,4 +109,3 @@ with_blobs                        # crates/postio-sync/src/drain.rs:206
 with_connect_timeout              # crates/postio-account/src/imap/settings.rs:102
 with_html                         # crates/postio-model/src/account.rs:188
 with_internal_date                # crates/postio-account/src/backend/message.rs:638
-yes                               # crates/postio-config/src/lib.rs:105

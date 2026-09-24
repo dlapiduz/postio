@@ -44,7 +44,7 @@ ALLOWED = {
     # recipient suggestions (1).
     "crates/postio-app/src/compose.rs": 3,
     "crates/postio-app/src/export.rs": 1,
-    "crates/postio-app/src/lib.rs": 3,
+    "crates/postio-app/src/lib.rs": 2,
     "crates/postio-app/src/onboarding.rs": 1,
     "crates/postio-app/src/orientation.rs": 2,
     "crates/postio-app/src/reading.rs": 1,
