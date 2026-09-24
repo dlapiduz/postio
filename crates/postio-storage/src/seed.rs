@@ -441,10 +441,13 @@ async fn thread_in_runs(
     sql::in_scope(&connection, |scope| async move {
         // Replaced, not added to: `ON DELETE SET NULL` clears the messages'
         // membership with the threads.
-        scope
-            .execute("DELETE FROM threads WHERE account_id = ?1", [account.get()])
-            .await
-            .expect("clear the seeded threads");
+        sql::execute(
+            &scope,
+            "DELETE FROM threads WHERE account_id = ?1",
+            [account.get()],
+        )
+        .await
+        .expect("clear the seeded threads");
         let mut threads = 0;
         let mut rest = rows.as_slice();
         while !rest.is_empty() {
