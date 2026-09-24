@@ -108,6 +108,28 @@ async fn start_engine_for(wiring: &Wiring, address: &str) {
     }
 }
 
+/// Rebuild `account`'s local search index (#981), announcing each reading
+/// as [`Event::BackfillProgress`] on the account's own id: one progress
+/// channel, not two.
+async fn rebuild(database: Store, events: EventSink, account: postio_model::AccountId) {
+    let rebuilt = postio_session::reindex_account(&database, account, |done, total| {
+        events.emit(Event::BackfillProgress {
+            account,
+            done,
+            total,
+            footprint: None,
+        });
+    });
+    if let Err(error) = rebuilt.await {
+        tracing::warn!(%error, "could not rebuild an account's local search index");
+    }
+}
+
+/// A write's answer: done, or the store's sentence for why not.
+fn done(written: Result<(), postio_model::listing::StoreError>) -> Resp {
+    written.map_or_else(Resp::Failed, |()| Resp::Done)
+}
+
 /// A browser sign-in under way.
 struct SignIn {
     /// Gives it up.
@@ -652,6 +674,63 @@ impl Inner {
                     Err(error) => Resp::Failed(postio_model::listing::StoreError::from(error)),
                 }
             }
+            Req::AccountSettings { weights } => settings::accounts(&self.wiring.database, weights)
+                .await
+                .map_or_else(Resp::Failed, Resp::AccountSettings),
+            Req::EditAccount(account, field) => {
+                done(settings::edit(&self.wiring.database, account, field).await)
+            }
+            Req::SaveSignature {
+                account,
+                signature,
+                name,
+                text,
+            } => done(
+                settings::save_signature(&self.wiring.database, account, signature, &name, &text)
+                    .await,
+            ),
+            Req::DeleteSignature(signature) => {
+                done(settings::delete_signature(&self.wiring.database, signature).await)
+            }
+            Req::RebuildIndex(account) => {
+                self.rebuild_index(account).await;
+                Resp::Done
+            }
+            Req::EgressLog(limit) => settings::egress(&self.wiring.database, limit)
+                .await
+                .map_or_else(Resp::Failed, Resp::Egress),
+            Req::PrivacyLog => settings::privacy(&self.wiring.database)
+                .await
+                .map_or_else(Resp::Failed, Resp::Privacy),
+            Req::SetBackfillExcluded { mailbox, excluded } => {
+                settings::set_backfill_excluded(&self.wiring.database, mailbox, excluded)
+                    .await
+                    .map_or_else(Resp::Failed, Resp::Mailboxes)
+            }
+            Req::OrientationSeen => settings::orientation_seen(&self.wiring.database)
+                .await
+                .map_or_else(Resp::Failed, Resp::Seen),
+            Req::RetireOrientation => {
+                done(settings::retire_orientation(&self.wiring.database).await)
+            }
+            Req::SaveAccount {
+                submission,
+                backend,
+            } => done(
+                postio_session::onboarding::persist(
+                    &self.wiring.database,
+                    self.wiring.secrets.as_ref(),
+                    &submission,
+                    backend,
+                )
+                .await
+                .map_err(postio_model::listing::StoreError::new),
+            ),
+            Req::SaveOAuthAccount(grant) => done(
+                onboarding::save_oauth(&self.wiring.database, self.wiring.secrets.clone(), *grant)
+                    .await
+                    .map_err(postio_model::listing::StoreError::new),
+            ),
             Req::InlineImage { bytes, mime_type } => {
                 let blobs = self.wiring.blobs.clone();
                 let stored = tokio::task::spawn_blocking(move || {
@@ -787,22 +866,11 @@ impl Inner {
             AccountOp::SetDefault(account) => accounts.set_default(account).await?,
             AccountOp::RebuildIndex(account) => {
                 drop(connection);
-                let database = self.wiring.database.clone();
-                let events = self.wiring.events.clone();
-                self.runtime().spawn(async move {
-                    let rebuilt =
-                        postio_session::reindex_account(&database, account, |done, total| {
-                            events.emit(Event::BackfillProgress {
-                                account,
-                                done,
-                                total,
-                                footprint: None,
-                            });
-                        });
-                    if let Err(error) = rebuilt.await {
-                        tracing::warn!(%error, "could not rebuild an account's local search index");
-                    }
-                });
+                self.runtime().spawn(rebuild(
+                    self.wiring.database.clone(),
+                    self.wiring.events.clone(),
+                    account,
+                ));
                 return Ok(());
             }
         }
@@ -817,6 +885,16 @@ impl Inner {
         };
         self.hub.emit(Event::MailboxesChanged { account });
         Ok(())
+    }
+
+    /// Rebuild `account`'s local search index, and return when it is over.
+    async fn rebuild_index(&self, account: postio_model::AccountId) {
+        rebuild(
+            self.wiring.database.clone(),
+            self.wiring.events.clone(),
+            account,
+        )
+        .await;
     }
 
     /// What discovery finds for `address`, as the first-run screen shows it:
@@ -1275,10 +1353,12 @@ impl Transport for Local {
 
 pub mod compose;
 pub mod export;
+pub mod onboarding;
 pub mod parts;
 pub mod reading;
 pub mod search;
 pub mod serve;
+pub mod settings;
 
 #[cfg(test)]
 mod tests;

@@ -108,6 +108,18 @@ impl Req {
             Req::FinishOAuth(_) => "FinishOAuth",
             Req::CancelOAuth(_) => "CancelOAuth",
             Req::AddAccount(_) => "AddAccount",
+            Req::AccountSettings { .. } => "AccountSettings",
+            Req::EditAccount(..) => "EditAccount",
+            Req::SaveSignature { .. } => "SaveSignature",
+            Req::DeleteSignature(_) => "DeleteSignature",
+            Req::RebuildIndex(_) => "RebuildIndex",
+            Req::EgressLog(_) => "EgressLog",
+            Req::PrivacyLog => "PrivacyLog",
+            Req::SetBackfillExcluded { .. } => "SetBackfillExcluded",
+            Req::OrientationSeen => "OrientationSeen",
+            Req::RetireOrientation => "RetireOrientation",
+            Req::SaveAccount { .. } => "SaveAccount",
+            Req::SaveOAuthAccount(_) => "SaveOAuthAccount",
         }
     }
 }
@@ -688,6 +700,154 @@ impl Client {
                 _ => None,
             },
         )
+        .await
+    }
+
+    /// Every account the settings show, with its folders and role map, and
+    /// what its mail weighs when `weights`.
+    pub async fn account_settings(
+        &self,
+        weights: bool,
+    ) -> Result<Vec<crate::protocol::AccountSettings>, StoreError> {
+        let request = Req::AccountSettings { weights };
+        self.read(request, "the account settings", |answer| match answer {
+            Resp::AccountSettings(accounts) => Some(accounts),
+            _ => None,
+        })
+        .await
+    }
+
+    /// Change one field of `account`'s row.
+    pub async fn edit_account(
+        &self,
+        account: AccountId,
+        field: crate::protocol::AccountField,
+    ) -> Result<(), StoreError> {
+        self.done(Req::EditAccount(account, field), "an account edit")
+            .await
+    }
+
+    /// Write a signature: `signature` for an edit, `None` for a new one.
+    /// A refusal's sentence is for the person who typed it.
+    pub async fn save_signature(
+        &self,
+        account: AccountId,
+        signature: Option<postio_model::SignatureId>,
+        name: String,
+        text: String,
+    ) -> Result<(), StoreError> {
+        let request = Req::SaveSignature {
+            account,
+            signature,
+            name,
+            text,
+        };
+        self.done(request, "a saved signature").await
+    }
+
+    /// Remove a signature.
+    pub async fn delete_signature(
+        &self,
+        signature: postio_model::SignatureId,
+    ) -> Result<(), StoreError> {
+        self.done(Req::DeleteSignature(signature), "a removed signature")
+            .await
+    }
+
+    /// Rebuild `account`'s local search index; answers when it is over.
+    pub async fn rebuild_index(&self, account: AccountId) -> Result<(), StoreError> {
+        self.done(Req::RebuildIndex(account), "a rebuilt index")
+            .await
+    }
+
+    /// The newest `limit` outbound connections, newest first.
+    pub async fn egress_log(
+        &self,
+        limit: u32,
+    ) -> Result<Vec<postio_model::egress::EgressEvent>, StoreError> {
+        self.read(
+            Req::EgressLog(limit),
+            "the egress log",
+            |answer| match answer {
+                Resp::Egress(entries) => Some(entries),
+                _ => None,
+            },
+        )
+        .await
+    }
+
+    /// The privacy pane's figures.
+    pub async fn privacy_log(&self) -> Result<crate::protocol::PrivacyLog, StoreError> {
+        self.read(Req::PrivacyLog, "the privacy log", |answer| match answer {
+            Resp::Privacy(log) => Some(log),
+            _ => None,
+        })
+        .await
+    }
+
+    /// Skip or resume `mailbox`'s backfill; the answer is its account's
+    /// folders as they now stand.
+    pub async fn set_backfill_excluded(
+        &self,
+        mailbox: MailboxId,
+        excluded: bool,
+    ) -> Result<Vec<Mailbox>, StoreError> {
+        let request = Req::SetBackfillExcluded { mailbox, excluded };
+        self.read(request, "a folder's backfill", |answer| match answer {
+            Resp::Mailboxes(mailboxes) => Some(mailboxes),
+            _ => None,
+        })
+        .await
+    }
+
+    /// Whether some earlier run already showed the keyboard orientation.
+    pub async fn orientation_seen(&self) -> Result<bool, StoreError> {
+        self.read(
+            Req::OrientationSeen,
+            "the orientation",
+            |answer| match answer {
+                Resp::Seen(seen) => Some(seen),
+                _ => None,
+            },
+        )
+        .await
+    }
+
+    /// Write down that the orientation is done with, for every later run.
+    pub async fn retire_orientation(&self) -> Result<(), StoreError> {
+        self.done(Req::RetireOrientation, "the orientation").await
+    }
+
+    /// Save an account whose credentials were proved: the password to the
+    /// keyring, then the row. The error is the first-run screen's sentence.
+    pub async fn save_account(
+        &self,
+        submission: postio_ui::onboarding::Submission,
+        backend: postio_model::account::Backend,
+    ) -> Result<(), StoreError> {
+        let request = Req::SaveAccount {
+            submission: Box::new(submission),
+            backend,
+        };
+        self.done(request, "a saved account").await
+    }
+
+    /// Save an account a browser sign-in proved: its tokens to the keyring,
+    /// then the row.
+    pub async fn save_oauth_account(
+        &self,
+        grant: crate::protocol::OAuthGrant,
+    ) -> Result<(), StoreError> {
+        self.done(Req::SaveOAuthAccount(Box::new(grant)), "a saved account")
+            .await
+    }
+
+    /// A write answered with [`Resp::Done`].
+    async fn done(&self, request: Req, asked: &str) -> Result<(), StoreError> {
+        self.read(request, asked, |answer| match answer {
+            Resp::Done => Some(()),
+            _ => None,
+        })
         .await
     }
 

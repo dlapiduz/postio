@@ -290,6 +290,65 @@ pub enum Req {
     /// Prove a new account's credentials and save it (the password goes to
     /// the keyring and nowhere else).
     AddAccount(Box<postio_ui::onboarding::Submission>),
+    /// Every account the settings show -- all but those being removed --
+    /// each with its folders and role map, and, when `weights`, what its
+    /// mail weighs. One read for the whole panel.
+    AccountSettings {
+        /// Whether to measure each account's mail: a scan of every message
+        /// it holds, asked for only while the panel is on screen.
+        weights: bool,
+    },
+    /// Change one field of an account's row.
+    EditAccount(AccountId, AccountField),
+    /// Write a signature, new or edited; an edit keeps the rich variant this
+    /// form does not show. A refusal's sentence is for the person who typed.
+    SaveSignature {
+        /// Whose.
+        account: AccountId,
+        /// Which, for an edit; `None` for a new one.
+        signature: Option<postio_model::SignatureId>,
+        /// Its name.
+        name: String,
+        /// Its text.
+        text: String,
+    },
+    /// Remove a signature.
+    DeleteSignature(postio_model::SignatureId),
+    /// Rebuild an account's local search index and answer when it is over;
+    /// progress arrives as events meanwhile. [`AccountOp::RebuildIndex`]
+    /// starts the same rebuild and answers at once.
+    RebuildIndex(AccountId),
+    /// The newest outbound connections the egress log holds, at most this
+    /// many (#151).
+    EgressLog(u32),
+    /// The privacy pane's figures: every unsubscribe activation, newest
+    /// first, and how many messages asked for a read receipt.
+    PrivacyLog,
+    /// Skip or resume a folder's background backfill, and answer its
+    /// account's folders as they now stand.
+    SetBackfillExcluded {
+        /// Which folder.
+        mailbox: MailboxId,
+        /// Whether it is skipped.
+        excluded: bool,
+    },
+    /// Whether some earlier run already showed the keyboard orientation.
+    OrientationSeen,
+    /// Write down that this installation is done with the orientation.
+    RetireOrientation,
+    /// Save an account whose credentials a frontend already proved: the
+    /// password to the keyring first, then the row, as the desktop's
+    /// first-run screen writes them (`postio_session::onboarding::persist`).
+    SaveAccount {
+        /// What the form held.
+        submission: Box<postio_ui::onboarding::Submission>,
+        /// Which backend the proof signed in with.
+        backend: postio_model::account::Backend,
+    },
+    /// Save an account a frontend's browser sign-in already proved: its
+    /// tokens to the keyring, then the row
+    /// (`postio_session::onboarding::persist_oauth`).
+    SaveOAuthAccount(Box<OAuthGrant>),
     /// Store pasted image bytes as an inline part.
     InlineImage {
         /// The image.
@@ -367,6 +426,14 @@ pub enum Resp {
     StoredBody(postio_model::MessageBody),
     /// Where each exported message was written, in the order asked.
     Exported(Vec<std::path::PathBuf>),
+    /// The accounts the settings show, with their folders and weights.
+    AccountSettings(Vec<AccountSettings>),
+    /// Outbound connections, newest first.
+    Egress(Vec<postio_model::egress::EgressEvent>),
+    /// The privacy pane's figures.
+    Privacy(PrivacyLog),
+    /// Whether the orientation was seen before.
+    Seen(bool),
     /// A report's text.
     Diagnosis(String),
     /// What discovery found, as the first-run screen shows it.
@@ -435,6 +502,86 @@ pub enum AccountOp {
     SetDefault(AccountId),
     /// Rebuild its local search index; progress arrives as events.
     RebuildIndex(AccountId),
+}
+
+/// One field of an account's row, as the settings' detail view edits it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum AccountField {
+    /// The name shown in the sidebar.
+    DisplayName(String),
+    /// The incoming server's hostname.
+    ImapHost(String),
+    /// The incoming server's port.
+    ImapPort(u16),
+    /// The outgoing server's hostname.
+    SmtpHost(String),
+    /// The outgoing server's port.
+    SmtpPort(u16),
+    /// Which signature the composer starts on, or none of them.
+    DefaultSignature(Option<postio_model::SignatureId>),
+}
+
+/// One account as the settings panel shows it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AccountSettings {
+    /// The row.
+    pub account: Account,
+    /// Every folder it can open, by server path, in listing order.
+    pub folders: Vec<String>,
+    /// The roles pointed somewhere by hand, and where.
+    pub chosen: Vec<(postio_model::MailboxRole, String)>,
+    /// What each role resolves to right now, mapped or not.
+    pub resolved: Vec<(postio_model::MailboxRole, String)>,
+    /// The roles the server refused a folder for, and what it said.
+    pub refused: Vec<(postio_model::MailboxRole, String)>,
+    /// What its mail weighs, when asked for and measurable.
+    pub weight: Option<postio_core::event::MailFootprint>,
+}
+
+/// What the privacy pane draws.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PrivacyLog {
+    /// Every account's unsubscribe activations, newest first.
+    pub activations: Vec<postio_model::UnsubscribeActivation>,
+    /// How many messages, in every account, asked for a read receipt.
+    pub read_receipts: u64,
+}
+
+/// A browser sign-in a frontend completed and proved, to be saved.
+///
+/// The tokens cross to the store's owner, which writes them to the keyring
+/// and nowhere else; `Debug` never shows them.
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OAuthGrant {
+    /// What the form held.
+    pub submission: postio_ui::onboarding::Submission,
+    /// Where consent was asked.
+    pub authorize_url: String,
+    /// Where tokens are minted.
+    pub token_url: String,
+    /// The scopes granted.
+    pub scopes: Vec<String>,
+    /// How long the provider keeps a refresh token alive, when it says.
+    pub refresh_token_lifetime_days: Option<u32>,
+    /// The access token.
+    pub access_token: String,
+    /// The refresh token, when one was issued.
+    pub refresh_token: Option<String>,
+    /// How long the access token lives, from when it was issued.
+    pub expires_in: Option<std::time::Duration>,
+    /// The token type the server named.
+    pub token_type: String,
+    /// The scope the server said it granted.
+    pub scope: Option<String>,
+}
+
+impl std::fmt::Debug for OAuthGrant {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("OAuthGrant")
+            .field("submission", &self.submission)
+            .field("scopes", &self.scopes)
+            .finish_non_exhaustive()
+    }
 }
 
 /// A search, as a frontend's search bar asks it.
@@ -703,6 +850,42 @@ mod tests {
         round_trip(Frame::Request {
             id: 3,
             body: Req::ExportMessages(vec![(MessageId::new(3), "/tmp/One.eml".into())]),
+        });
+    }
+
+    #[test]
+    fn the_settings_requests_and_answers_round_trip() {
+        let account = AccountId::new(1);
+        for (id, body) in [
+            Req::AccountSettings { weights: true },
+            Req::EditAccount(account, AccountField::ImapPort(993)),
+            Req::EgressLog(50),
+            Req::PrivacyLog,
+            Req::SetBackfillExcluded {
+                mailbox: MailboxId::new(2),
+                excluded: true,
+            },
+            Req::OrientationSeen,
+            Req::RebuildIndex(account),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            round_trip(Frame::Request {
+                id: id as u64,
+                body,
+            });
+        }
+        round_trip(Frame::Response {
+            id: 9,
+            body: Resp::Egress(vec![postio_model::egress::EgressEvent {
+                at: chrono::DateTime::from_timestamp(1_790_000_000, 0).expect("a time"),
+                subsystem: postio_model::egress::EgressSubsystem::Smtp,
+                account: Some(account),
+                host: "send.example.test".into(),
+                port: 465,
+                outcome: postio_model::egress::EgressOutcome::Failed,
+            }]),
         });
     }
 

@@ -1234,3 +1234,295 @@ fn messages_dragged_out_are_written_as_the_bytes_the_server_sent_in_one_call() {
     );
     assert_eq!(client.counts().of("ExportMessages"), 1);
 }
+
+#[test]
+fn the_settings_panel_reads_every_account_with_its_folders_in_one_call() {
+    // One call for the whole panel, where the desktop read each account's
+    // folders, roles and weight in turn.
+    let world = World::new();
+    let (client, _) = world.frontend(ClientKind::Gtk);
+    let shown = world
+        .rt
+        .block_on(client.account_settings(true))
+        .expect("the settings");
+    assert_eq!(shown.len(), 1);
+    let account = &shown[0];
+    for folder in ["Archive", "Trash"] {
+        assert!(
+            account.folders.iter().any(|path| path == folder),
+            "{folder} is offered: {:?}",
+            account.folders
+        );
+    }
+    assert!(
+        account.weight.is_some(),
+        "the weight is measured when asked for"
+    );
+    assert_eq!(client.counts().of("AccountSettings"), 1);
+
+    let unweighed = world
+        .rt
+        .block_on(client.account_settings(false))
+        .expect("the settings");
+    assert_eq!(
+        unweighed[0].weight, None,
+        "and only then: it scans every message"
+    );
+}
+
+#[test]
+fn an_account_field_edited_in_the_settings_reaches_its_row() {
+    use postio_client::protocol::AccountField;
+    let world = World::new();
+    let (client, _) = world.frontend(ClientKind::Gtk);
+    let account = world.rt.block_on(client.accounts()).expect("accounts")[0].id;
+    world
+        .rt
+        .block_on(client.edit_account(account, AccountField::DisplayName("Work".into())))
+        .expect("edited");
+    world
+        .rt
+        .block_on(client.edit_account(account, AccountField::ImapPort(1993)))
+        .expect("edited");
+    let row = world.rt.block_on(client.accounts()).expect("accounts")[0].clone();
+    assert_eq!(row.display_name, "Work");
+    assert_eq!(row.incoming.port, 1993);
+}
+
+fn signatures_of(world: &World, account: postio_model::AccountId) -> Vec<postio_model::Signature> {
+    world.rt.block_on(async {
+        let connection = world.database.connect().await.expect("a connection");
+        postio_storage::repository::SignatureRepository::new(&connection)
+            .list_for_account(account)
+            .await
+            .expect("the signatures")
+    })
+}
+
+#[test]
+fn a_signature_is_written_refused_by_name_edited_and_removed() {
+    let world = World::new();
+    let (client, _) = world.frontend(ClientKind::Gtk);
+    let account = world.rt.block_on(client.accounts()).expect("accounts")[0].id;
+    world
+        .rt
+        .block_on(client.save_signature(account, None, "Work".into(), "Ada".into()))
+        .expect("written");
+    let written = signatures_of(&world, account);
+    assert_eq!(written.len(), 1);
+
+    let refused = world
+        .rt
+        .block_on(client.save_signature(account, None, "Work".into(), "Again".into()))
+        .expect_err("a second of the same name");
+    assert_eq!(
+        refused.message(),
+        "This account already has a signature called “Work”",
+        "said as the person who typed it needs it"
+    );
+
+    world.rt.block_on(async {
+        let connection = world.database.connect().await.expect("a connection");
+        let mut rich = written[0].clone();
+        rich.html = Some("<b>Ada</b>".into());
+        postio_storage::repository::SignatureRepository::new(&connection)
+            .update(&rich)
+            .await
+            .expect("a rich variant");
+    });
+    world
+        .rt
+        .block_on(client.save_signature(
+            account,
+            Some(written[0].id),
+            "Work".into(),
+            "Ada L.".into(),
+        ))
+        .expect("edited");
+    let edited = signatures_of(&world, account);
+    assert_eq!(edited[0].text, "Ada L.");
+    assert_eq!(
+        edited[0].html.as_deref(),
+        Some("<b>Ada</b>"),
+        "the rich variant this form does not show is kept"
+    );
+
+    world
+        .rt
+        .block_on(client.delete_signature(written[0].id))
+        .expect("removed");
+    assert!(signatures_of(&world, account).is_empty());
+}
+
+#[test]
+fn a_rebuild_asked_for_from_the_settings_answers_when_it_is_over() {
+    let world = World::new();
+    let (client, _) = world.frontend(ClientKind::Gtk);
+    let account = world.rt.block_on(client.accounts()).expect("accounts")[0].id;
+    world.rt.block_on(async {
+        let connection = world.database.connect().await.expect("a connection");
+        postio_index::index::ensure_schema(&connection)
+            .await
+            .expect("the index");
+    });
+    world
+        .rt
+        .block_on(client.rebuild_index(account))
+        .expect("rebuilt");
+    assert_eq!(client.counts().of("RebuildIndex"), 1);
+}
+
+#[test]
+fn the_egress_log_is_read_newest_first() {
+    use postio_model::egress::{EgressEvent, EgressOutcome, EgressSubsystem};
+    let world = World::new();
+    let (client, _) = world.frontend(ClientKind::Gtk);
+    world.rt.block_on(async {
+        let connection = world.database.connect().await.expect("a connection");
+        let log = postio_storage::repository::EgressLogRepository::new(&connection);
+        for (seconds, host) in [(1, "mail.example.test"), (2, "send.example.test")] {
+            log.record(&EgressEvent {
+                at: chrono::DateTime::from_timestamp(1_790_000_000 + seconds, 0).expect("a time"),
+                subsystem: EgressSubsystem::Imap,
+                account: None,
+                host: host.into(),
+                port: 993,
+                outcome: EgressOutcome::Connected,
+            })
+            .await
+            .expect("recorded");
+        }
+    });
+    let entries = world.rt.block_on(client.egress_log(1)).expect("the log");
+    assert_eq!(
+        entries
+            .iter()
+            .map(|entry| entry.host.as_str())
+            .collect::<Vec<_>>(),
+        ["send.example.test"]
+    );
+}
+
+#[test]
+fn the_privacy_pane_reads_its_log_and_its_count_in_one_call() {
+    let world = World::new();
+    let (client, _) = world.frontend(ClientKind::Gtk);
+    let account = world.rt.block_on(client.accounts()).expect("accounts")[0].id;
+    another_message(&world, |message| message.read_receipt_requested = true);
+    world.rt.block_on(async {
+        let connection = world.database.connect().await.expect("a connection");
+        let log = postio_storage::repository::UnsubscribeRepository::new(&connection);
+        for (seconds, list) in [(1, "older.example.test"), (2, "newer.example.test")] {
+            let at = chrono::DateTime::from_timestamp(1_790_000_000 + seconds, 0).expect("a time");
+            log.record(&mut postio_model::UnsubscribeActivation::new(
+                account, list, at,
+            ))
+            .await
+            .expect("recorded");
+        }
+    });
+    let log = world.rt.block_on(client.privacy_log()).expect("the log");
+    assert_eq!(
+        log.activations
+            .iter()
+            .map(|activation| activation.list_identifier.as_str())
+            .collect::<Vec<_>>(),
+        ["newer.example.test", "older.example.test"]
+    );
+    assert_eq!(log.read_receipts, 1);
+    assert_eq!(client.counts().of("PrivacyLog"), 1);
+}
+
+#[test]
+fn skipping_a_folders_backfill_answers_the_folders_as_they_now_stand() {
+    let world = World::new();
+    let (client, _) = world.frontend(ClientKind::Gtk);
+    let folders = world
+        .rt
+        .block_on(client.set_backfill_excluded(world.inbox, true))
+        .expect("the folders");
+    let inbox = folders
+        .iter()
+        .find(|mailbox| mailbox.id == world.inbox)
+        .expect("the inbox is among them");
+    assert!(inbox.backfill_excluded);
+    assert!(
+        folders.len() >= 3,
+        "every folder of its account: {folders:?}"
+    );
+}
+
+#[test]
+fn the_orientation_is_unseen_until_it_is_retired() {
+    let world = World::new();
+    let (client, _) = world.frontend(ClientKind::Gtk);
+    assert!(!world.rt.block_on(client.orientation_seen()).expect("asked"));
+    world
+        .rt
+        .block_on(client.retire_orientation())
+        .expect("retired");
+    let (later, _) = world.frontend(ClientKind::Gtk);
+    assert!(
+        world.rt.block_on(later.orientation_seen()).expect("asked"),
+        "every later run, whichever frontend asks"
+    );
+}
+
+#[test]
+fn an_account_a_frontend_proved_is_saved_by_the_host() {
+    let world = World::new();
+    let (client, _) = world.frontend(ClientKind::Gtk);
+    world
+        .rt
+        .block_on(client.save_account(
+            submission("correct horse"),
+            postio_model::account::Backend::Imap,
+        ))
+        .expect("saved");
+    let accounts = world.rt.block_on(client.accounts()).expect("accounts");
+    let saved = accounts
+        .iter()
+        .find(|account| account.address.address == "grace@example.test")
+        .expect("the row");
+    assert_eq!(saved.incoming.host, "mail.example.test");
+}
+
+#[test]
+fn a_browser_sign_in_a_frontend_completed_is_saved_with_its_endpoints() {
+    let world = World::new();
+    let (client, _) = world.frontend(ClientKind::Gtk);
+    let mut signed_in = submission("");
+    signed_in.oauth_client = Some(postio_ui::onboarding::OAuthClientSubmission {
+        client_id: "postio-test".into(),
+        client_secret: None,
+    });
+    let grant = postio_client::protocol::OAuthGrant {
+        submission: signed_in,
+        authorize_url: "https://auth.example.test/authorize".into(),
+        token_url: "https://auth.example.test/token".into(),
+        scopes: vec!["mail".into()],
+        refresh_token_lifetime_days: Some(7),
+        access_token: "access-sentinel".into(),
+        refresh_token: Some("refresh-sentinel".into()),
+        expires_in: Some(Duration::from_secs(3600)),
+        token_type: "Bearer".into(),
+        scope: None,
+    };
+    assert!(
+        !format!("{grant:?}").contains("sentinel"),
+        "a grant never shows its tokens"
+    );
+    world
+        .rt
+        .block_on(client.save_oauth_account(grant))
+        .expect("saved");
+    let accounts = world.rt.block_on(client.accounts()).expect("accounts");
+    let saved = accounts
+        .iter()
+        .find(|account| account.address.address == "grace@example.test")
+        .expect("the row");
+    assert_eq!(saved.auth, postio_model::account::AuthMethod::XOAuth2);
+    let oauth = saved.oauth.as_ref().expect("its sign-in");
+    assert_eq!(oauth.token_url, "https://auth.example.test/token");
+    assert_eq!(oauth.scopes, "mail");
+}

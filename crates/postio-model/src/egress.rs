@@ -15,6 +15,7 @@
 //! auditable fact, and nothing here can carry a byte of anyone's mail.
 
 use chrono::{DateTime, Utc};
+use serde::{Deserialize, Serialize};
 
 use crate::ids::AccountId;
 
@@ -22,7 +23,7 @@ use crate::ids::AccountId;
 ///
 /// ADR 0009 Q6 extends this with AI providers when that subsystem lands;
 /// OAuth's token endpoints join when #2's flow does.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum EgressSubsystem {
     /// The IMAP sync engine.
     Imap,
@@ -54,7 +55,7 @@ impl EgressSubsystem {
 }
 
 /// How the connection attempt ended.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum EgressOutcome {
     /// A TCP connection was established.
     Connected,
@@ -82,7 +83,7 @@ impl EgressOutcome {
 }
 
 /// One outbound connection, as the log records it.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct EgressEvent {
     /// When the attempt was made.
     pub at: DateTime<Utc>,
