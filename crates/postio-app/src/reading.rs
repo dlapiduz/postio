@@ -1717,8 +1717,8 @@ fn document_signature(body: &crate::compose::Body, sender: Option<&str>, offline
 }
 
 /// The header fields the reading pane needs (#319), pulled out of a full
-/// [`Message`] row so `Fill::fill`'s database closure hands only what the
-/// GTK side needs across the channel, not the whole row.
+/// [`Message`] row so what [`Loaded`] keeps is only what the GTK side draws,
+/// not the whole row.
 struct Envelope {
     /// Which account it arrived in. Read here rather than looked up later
     /// because the message row is already in hand and the reading pane is
