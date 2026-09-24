@@ -1154,7 +1154,15 @@ static SPECS: &[CommandSpec] = &[
         title: "Toggle sidebar",
         default_binding: "mod+b",
         alternate_bindings: &[],
-        contexts: ctx(MESSAGE_SURFACES),
+        // The sidebar too: a toggle that cannot be pressed from inside the
+        // thing it closes leaves the terminal's narrow layout, where it is
+        // brought forward with the keyboard in it, with no way back but Tab.
+        contexts: ctx(&[
+            Context::List,
+            Context::Conversation,
+            Context::Reader,
+            Context::Sidebar,
+        ]),
         destructive: false,
         recovery: Recovery::None,
         requires: CHROME,

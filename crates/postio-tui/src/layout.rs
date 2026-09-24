@@ -24,7 +24,8 @@ pub enum Pane {
 pub struct Requested {
     /// Whether the sidebar is open.
     pub sidebar: bool,
-    /// Which of list and reader is in front when only one fits.
+    /// Which pane is in front when not all fit: the list or the reader, or
+    /// the sidebar when it was asked for where it does not fit beside them.
     pub front: Pane,
 }
 
@@ -61,8 +62,10 @@ pub fn shown(width: u16, height: u16, requested: Requested) -> Shown {
     if width < MINIMUM.0 || height < MINIMUM.1 {
         return Shown::TooSmall { needs: MINIMUM };
     }
-    let panes = if width >= THREE_PANES && requested.sidebar {
+    let panes = if width >= THREE_PANES && (requested.sidebar || requested.front == Pane::Sidebar) {
         vec![Pane::Sidebar, Pane::List, Pane::Reader]
+    } else if requested.front == Pane::Sidebar && width >= TWO_PANES {
+        vec![Pane::Sidebar, Pane::List]
     } else if width >= TWO_PANES {
         vec![Pane::List, Pane::Reader]
     } else {
@@ -80,6 +83,24 @@ mod tests {
         assert_eq!(
             shown(160, 40, Requested::default()),
             Shown::Panes(vec![Pane::Sidebar, Pane::List, Pane::Reader])
+        );
+    }
+
+    #[test]
+    fn a_sidebar_asked_for_in_front_shows_where_three_panes_do_not_fit() {
+        let asked = Requested {
+            front: Pane::Sidebar,
+            ..Requested::default()
+        };
+        assert_eq!(
+            shown(100, 30, asked),
+            Shown::Panes(vec![Pane::Sidebar, Pane::List])
+        );
+        assert_eq!(shown(60, 30, asked), Shown::Panes(vec![Pane::Sidebar]));
+        assert_eq!(
+            shown(160, 30, asked),
+            Shown::Panes(vec![Pane::Sidebar, Pane::List, Pane::Reader]),
+            "where it fits anyway, nothing changes"
         );
     }
 

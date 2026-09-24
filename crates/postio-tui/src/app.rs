@@ -2310,9 +2310,31 @@ impl App {
                 return self.close_search();
             }
             "back" => self.selection.clear(),
+            "toggle_sidebar" => return self.toggle_sidebar(),
             "next_folder" => return self.walk_sidebar(1),
             "prev_folder" => return self.walk_sidebar(-1),
             other => return self.send(other),
+        }
+        vec![Effect::Redraw]
+    }
+
+    /// Open or close the sidebar where it fits beside the list and reader;
+    /// where it does not, bring it to the front with the keyboard in it, and
+    /// put the list back on the second press (ADR 0024: fitting is the
+    /// terminal's, asking is the person's).
+    fn toggle_sidebar(&mut self) -> Vec<Effect> {
+        use crate::layout::Pane;
+        if self.size.0 >= crate::layout::THREE_PANES {
+            self.requested.sidebar = !self.requested.sidebar;
+            if !self.requested.sidebar && self.focus == Focus::Sidebar {
+                self.focus = Focus::List;
+            }
+        } else if self.requested.front == Pane::Sidebar {
+            self.requested.front = Pane::List;
+            self.focus = Focus::List;
+        } else {
+            self.requested.front = Pane::Sidebar;
+            self.focus = Focus::Sidebar;
         }
         vec![Effect::Redraw]
     }
@@ -3525,6 +3547,36 @@ pub(crate) mod tests {
             None,
             "and Escape from the results leaves the search too"
         );
+    }
+
+    fn panes(app: &App) -> Vec<crate::layout::Pane> {
+        match app.shown() {
+            crate::layout::Shown::Panes(panes) => panes,
+            crate::layout::Shown::TooSmall { .. } => Vec::new(),
+        }
+    }
+
+    #[test]
+    fn toggle_sidebar_closes_and_opens_it_where_it_fits() {
+        use crate::layout::Pane;
+        let mut app = app((160, 40));
+        update(&mut app, ctrl('b'));
+        assert_eq!(panes(&app), vec![Pane::List, Pane::Reader]);
+        update(&mut app, ctrl('b'));
+        assert_eq!(panes(&app), vec![Pane::Sidebar, Pane::List, Pane::Reader]);
+    }
+
+    #[test]
+    fn toggle_sidebar_brings_it_forward_where_it_does_not_fit() {
+        use crate::layout::Pane;
+        let mut app = app((100, 40));
+        assert_eq!(panes(&app), vec![Pane::List, Pane::Reader]);
+        update(&mut app, ctrl('b'));
+        assert_eq!(panes(&app), vec![Pane::Sidebar, Pane::List]);
+        assert_eq!(app.focus(), Focus::Sidebar, "and the keyboard goes with it");
+        update(&mut app, ctrl('b'));
+        assert_eq!(panes(&app), vec![Pane::List, Pane::Reader]);
+        assert_eq!(app.focus(), Focus::List);
     }
 
     fn composing(app: &mut App) {
