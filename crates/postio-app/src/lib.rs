@@ -681,11 +681,8 @@ pub async fn feed_the_window(window: &Window, wiring: &Wiring) -> Option<Wired> 
     // The account a new message comes from is the one marked default, which
     // is not necessarily the one the window opened on (#960, #1161): the
     // marker means "new messages come from here" and nothing about order.
-    // `postio_session::composing_account`'s rule, over the list already read.
-    let composing = enabled
-        .iter()
-        .find(|candidate| candidate.is_default)
-        .map_or(account.id, |chosen| chosen.id);
+    let composing =
+        postio_session::composing_account(&enabled).map_or(account.id, |chosen| chosen.id);
     // The window's own client: the host tells every frontend a send moved a
     // row, and this window hears it, so the composer announces nothing
     // itself.

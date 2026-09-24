@@ -1777,24 +1777,18 @@ pub async fn reindex_account(
 /// `postio_model::reply` already decides; the sidebar opens on
 /// [`first_account`] whatever is marked, because which account is shown
 /// first is not what the marker means. A marked account that has been
-/// disabled is not marked for this purpose either -- `list_enabled` does
-/// not return it -- so the fallback is the same as no marker at all.
-pub async fn composing_account(database: &Store) -> Option<postio_model::Account> {
-    let connection = database
-        .read()
-        .await
-        .map_err(|error| tracing::error!(%error, "cannot read the accounts: {error}"))
-        .ok()?;
-    let enabled = AccountRepository::new(&connection)
-        .list_enabled()
-        .await
-        .map_err(|error| tracing::error!(%error, "cannot read the accounts: {error}"))
-        .ok()?;
+/// disabled is not marked for this purpose either -- `enabled` holds only
+/// the accounts that sync, in creation order -- so the fallback is the same
+/// as no marker at all.
+///
+/// Over a list the caller already holds rather than a read of its own: the
+/// window reads its accounts once, from the host, and answers every question
+/// about them from that one read.
+pub fn composing_account(enabled: &[postio_model::Account]) -> Option<&postio_model::Account> {
     enabled
         .iter()
-        .position(|account| account.is_default)
-        .map(|index| enabled[index].clone())
-        .or_else(|| enabled.into_iter().next())
+        .find(|account| account.is_default)
+        .or_else(|| enabled.first())
 }
 
 /// The account to open, if the store holds one.
