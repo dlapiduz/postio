@@ -182,6 +182,20 @@ zeroize = "1.9.0"
 lto = "thin"
 codegen-units = 1
 
+# The terminal frontend's release build: `cargo build --profile release-tui
+# -p postio-tui`. Its size is a requirement, not a nicety -- each terminal
+# package must be under half its desktop counterpart
+# (specs/005-tui-frontend SC-004) -- so it trades build time for bytes:
+# whole-program LTO, `s` rather than speed, no unwinding tables, no symbols.
+# `panic = "abort"` is safe here because the terminal is restored by a panic
+# hook, which runs before the abort (postio-tui's `term.rs`).
+[profile.release-tui]
+inherits = "release"
+lto = "fat"
+opt-level = "s"
+panic = "abort"
+strip = true
+
 # Debug info is the heaviest part of compiling and linking the GTK/WebKit
 # stack, and diagnosis here happens through tests and POSTIO_LOG, not a
 # debugger. This was tuned once to `line-tables-only` without measuring what
