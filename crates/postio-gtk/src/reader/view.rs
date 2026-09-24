@@ -784,7 +784,7 @@ impl Reader {
             });
         }
 
-        reader.clear();
+        reader.reset();
         reader
     }
 
@@ -1574,6 +1574,23 @@ impl Reader {
     }
 
     pub fn clear(&self) {
+        self.reset();
+        load_document(
+            &self.canvas(),
+            &wrap_document("", RemoteImages::Blocked, Sheet::Theme),
+        );
+        for handler in self.rendered.borrow().iter() {
+            handler(HeldBack::default());
+        }
+    }
+
+    /// Everything [`clear`](Self::clear) resets, without the empty document.
+    ///
+    /// What a new reader starts from (#1603): its view's first load is what
+    /// starts a web process, and the window's reader is built before the
+    /// first frame, so the constructor must not load anything. The pane is
+    /// already painted its ground colour without a document.
+    fn reset(&self) {
         *self.open.borrow_mut() = None;
         self.absent.set(None);
         self.header.clear();
@@ -1587,13 +1604,6 @@ impl Reader {
         // Per-message, like the two above: a message drawn over one that
         // was being sent must not inherit its bar.
         self.set_send_state(None);
-        load_document(
-            &self.canvas(),
-            &wrap_document("", RemoteImages::Blocked, Sheet::Theme),
-        );
-        for handler in self.rendered.borrow().iter() {
-            handler(HeldBack::default());
-        }
     }
 
     /// Move the document to `fragment`, by script rather than by navigating.
