@@ -109,6 +109,44 @@ pub fn from_html(html: &str) -> Rendered {
     Rendered { blocks }
 }
 
+/// A plain-text message as it was written.
+///
+/// Never parsed as Markdown: a line that begins `#` is the sender's `#`, not a
+/// heading (US2 scenario 3). Each run of `>` lines is quoted history, folded
+/// as the HTML reader folds a blockquote.
+pub fn from_text(text: &str) -> Rendered {
+    let safe = SafeText::new(text);
+    let mut blocks = Vec::new();
+    let mut open: Vec<Line<'static>> = Vec::new();
+    let mut quoted: Vec<Line<'static>> = Vec::new();
+    for line in safe.as_str().lines() {
+        if line.trim_start().starts_with('>') {
+            if !open.is_empty() {
+                blocks.push(Block::Lines(std::mem::take(&mut open)));
+            }
+            quoted.push(Line::raw(line.to_owned()));
+        } else {
+            if !quoted.is_empty() {
+                blocks.push(Block::Fold {
+                    folded: true,
+                    lines: std::mem::take(&mut quoted),
+                });
+            }
+            open.push(Line::raw(line.to_owned()));
+        }
+    }
+    if !quoted.is_empty() {
+        blocks.push(Block::Fold {
+            folded: true,
+            lines: quoted,
+        });
+    }
+    if !open.is_empty() {
+        blocks.push(Block::Lines(open));
+    }
+    Rendered { blocks }
+}
+
 /// Markdown as styled lines that own their text.
 fn styled(markdown: &str) -> Vec<Line<'static>> {
     tui_markdown::from_str(markdown)
@@ -210,6 +248,34 @@ mod tests {
             "escaped for Markdown: {rendered}"
         );
         assert!(rendered.ends_with(" end"), "{rendered}");
+    }
+
+    #[test]
+    fn plain_text_is_shown_as_written_not_read_as_markdown() {
+        let drawn = text(&from_text("# not a heading\n**not bold**\nplain"));
+        assert_eq!(drawn, "# not a heading\n**not bold**\nplain");
+    }
+
+    #[test]
+    fn a_run_of_quoted_lines_folds() {
+        let rendered =
+            from_text("Sounds good.\n\n> On Monday you wrote:\n> the old words\n\nThanks");
+        let drawn = text(&rendered);
+        assert!(
+            drawn.contains("Sounds good.") && drawn.contains("Thanks"),
+            "{drawn}"
+        );
+        assert!(drawn.contains("▸ quoted text (2 lines)"), "{drawn}");
+        assert!(!drawn.contains("the old words"), "{drawn}");
+    }
+
+    #[test]
+    fn plain_text_is_made_safe_too() {
+        let drawn = text(&from_text("title\u{1b}]0;pwned\u{7}"));
+        assert!(
+            !drawn.contains('\u{1b}') && !drawn.contains('\u{7}'),
+            "{drawn:?}"
+        );
     }
 
     #[test]
