@@ -30,7 +30,7 @@ What each must show:
 | Suite | Proves |
 |---|---|
 | `postio-tui` `registry_parity` | Every command has a chord a legacy terminal delivers and a palette entry (SC-001) |
-| `postio-tui` `triage` | US1 scenarios 1–6, asserted on the rendered buffer; the budget test allows at most one `Page` request per keystroke |
+| `postio-tui` `triage` | US1 scenarios 1–6, asserted on the rendered buffer; the budget test allows at most one `Page` request and its read-ahead per keystroke, and never more pages than the rows passed through view |
 | `postio-tui` `reader` | US2 scenarios 1–5; a plain-text `#` line stays literal |
 | `postio-tui` `composer` | US3 scenarios 1–11; the queued bytes have HTML equal to GTK's and a text part equal to the Markdown |
 | `postio-body` corpus test | No tag, script, remote image or control character from any corpus message (SC-005) |

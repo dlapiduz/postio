@@ -4169,6 +4169,7 @@ dependencies = [
  "postio-model",
  "postio-ui",
  "ratatui",
+ "tracing",
  "unicode-width 0.2.2",
 ]
 
