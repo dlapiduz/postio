@@ -50,7 +50,11 @@ pub fn opening_a_large_folder_asks_for_a_bounded_number_of_pages() {
         }
 
         let database = test_support::memory().await;
-        seed_large(&database, 11, MESSAGES).await;
+        let seeded = seed_large(&database, 11, MESSAGES).await;
+        // In conversations, as a real folder lists them: landing on a row is
+        // then opening a conversation, which is the path the `j` presses
+        // below are about.
+        postio_storage::seed::thread_seeded_messages(&database, seeded.account.id, 3).await;
         let directory = tempfile::tempdir().expect("a blob directory");
         let blobs = BlobStore::open(
             directory.path().to_path_buf(),
@@ -139,6 +143,29 @@ pub fn opening_a_large_folder_asks_for_a_bounded_number_of_pages() {
          fit in the cache — so at least {} of them were evicted and asked for \
          again. A folder costs a screen to open, whatever it holds (#1534).",
             asked.saturating_sub(budget)
+        );
+
+        // ── and moving through it ─────────────────────────────────────────────
+        //
+        // Landing on a row opens its conversation, and the subset the list
+        // already holds goes up first. That subset was found by walking every
+        // position in the model -- and a position the window does not hold
+        // is a page request, so each `j` asked for the whole folder.
+        let before = postio_ui::test_support::pages_requested();
+        for _ in 0..5 {
+            window.handle_key(gtk::gdk::Key::j, gtk::gdk::ModifierType::empty());
+            while glib::MainContext::default().iteration(false) {}
+        }
+        for _ in 0..100 {
+            while glib::MainContext::default().iteration(false) {}
+            tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+        }
+        let walked = postio_ui::test_support::pages_requested() - before;
+        eprintln!("DIAG five j presses asked={walked}");
+        assert!(
+            walked <= 1,
+            "five `j` presses near the top of a {rows}-row folder asked for \
+             {walked} pages; the rows they land on are already on screen"
         );
 
         // ── and the way it was actually met: switch while it is still loading ──

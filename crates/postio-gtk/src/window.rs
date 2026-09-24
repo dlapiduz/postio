@@ -548,21 +548,16 @@ impl Window {
     /// so this is what the list has paged in — the header says as much when
     /// that is fewer than the row's own thread count.
     fn thread_rows(&self, thread: postio_model::ids::ThreadId) -> Vec<crate::list::Row> {
-        let model = self.list().model();
-        let mut rows = Vec::new();
-        for index in 0..model.n_items() {
-            let Some(row) = model
-                .item(index)
-                .and_then(|item| item.downcast::<crate::list::MessageRow>().ok())
-                .and_then(|item| item.row())
-            else {
-                continue;
-            };
-            if row.thread == Some(thread) {
-                rows.push(row);
-            }
-        }
-        rows
+        // What the list already holds, not every position it has: a position
+        // it does not hold is a page request, so walking `0..n_items` asked
+        // for the whole folder on every conversation open -- 138 pages for
+        // five `j` presses in a 3,700-row folder.
+        self.list()
+            .model()
+            .held_rows()
+            .into_iter()
+            .filter(|row| row.thread == Some(thread))
+            .collect()
     }
 
     /// Show `row`'s whole conversation in the reading pane (ADR 0015 Q4).
