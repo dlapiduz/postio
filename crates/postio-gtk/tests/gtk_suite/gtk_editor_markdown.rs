@@ -74,8 +74,18 @@ fn type_text(view: &webkit6::WebView, text: &str) {
 /// An editor with the caret in an empty body, ready to be typed into.
 fn ready(editor: &Editor) {
     editor.load(Document::default());
-    settle("the empty page to commit", || {
-        eval_str(editor.widget(), "document.body.textContent").is_empty()
+    // The editor's page, not merely an empty one. A fresh view's blank page
+    // is empty too, so asking only for an empty body could pass before the
+    // load committed -- the caret was set and the text typed into a page
+    // that was then replaced, and the test waited out its whole deadline
+    // for words that no longer existed. It took a loaded machine to make the
+    // load that slow, which is why it failed in the nightly and nowhere else.
+    settle("the editor's empty page to commit", || {
+        eval_str(
+            editor.widget(),
+            "(document.body && document.body.isContentEditable \
+              && document.body.textContent === '') ? 'ready' : ''",
+        ) == "ready"
     });
     eval_str(
         editor.widget(),
