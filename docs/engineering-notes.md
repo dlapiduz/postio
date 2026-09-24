@@ -3043,6 +3043,8 @@ exercising a configuration that never ships.
 
 ## Dated entries, one file each
 
+- [An allocator swap saves tens of MiB here, not a gigabyte](notes/2026-09-23-mimalloc-versus-system-memory.md) — two release builds on the same synthetic store put the system allocator about 24 MiB lower at idle and 36 MiB lower after search; search latency and a full-size compatible store remain unproved (2026-09-23).
+
 Everything below this line used to be appended here, and two sessions
 appending in one day conflicted on every rebase (#1130). Each entry is now
 its own file under `docs/notes/`, named by date and title; a new entry is a
