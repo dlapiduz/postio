@@ -137,6 +137,9 @@ pub struct Timeline(Rc<Inner>);
 
 struct Inner {
     origin: Instant,
+    /// How long the process ran before the timeline started: exec, the
+    /// dynamic loader, static initialisers -- when it could be read.
+    before_main: Option<Duration>,
     marks: RefCell<[Option<Duration>; Phase::ALL.len()]>,
 }
 
@@ -145,13 +148,20 @@ impl Timeline {
     /// budget is measured from process start, and this is as close as a Rust
     /// program gets to it without reading `/proc`.
     pub fn start() -> Self {
-        Self::start_at(Instant::now())
+        Self::start_after(Instant::now(), this_process_age())
     }
 
     /// Start a timeline from an origin you already have.
     pub fn start_at(origin: Instant) -> Self {
+        Self::start_after(origin, None)
+    }
+
+    /// Start a timeline at `origin`, knowing the process had already run for
+    /// `before_main` by then.
+    pub fn start_after(origin: Instant, before_main: Option<Duration>) -> Self {
         Timeline(Rc::new(Inner {
             origin,
+            before_main,
             marks: RefCell::new([None; Phase::ALL.len()]),
         }))
     }
@@ -176,10 +186,17 @@ impl Timeline {
             *slot = Some(elapsed);
         }
         let cost = self.cost(phase).unwrap_or_default();
+        // Every line carries what ran before `main` -- exec, the loader
+        // relocating a few hundred shared objects -- which the timeline's own
+        // origin cannot see (#1604); 0 where it could not be read.
         tracing::info!(
             phase = phase.label(),
             at_ms = elapsed.as_millis() as u64,
             cost_ms = cost.as_millis() as u64,
+            before_main_ms = self
+                .0
+                .before_main
+                .map_or(0, |before| before.as_millis() as u64),
             "startup phase"
         );
     }
@@ -226,14 +243,41 @@ impl Timeline {
 
         match self.total() {
             Some(total) => format!(
-                "startup {} ({phases}) budget {} — {}",
+                "startup {}{} ({phases}) budget {} — {}",
                 millis(total),
+                self.0
+                    .before_main
+                    .map(|before| format!(" after {} before main", millis(before)))
+                    .unwrap_or_default(),
                 millis(BUDGET),
                 if total <= BUDGET { "ok" } else { "OVER" }
             ),
             None => format!("startup incomplete ({phases})"),
         }
     }
+}
+
+/// How long ago this process started, from `/proc/self/stat`'s start time
+/// and `/proc/uptime`: `None` where either cannot be read or parsed.
+pub fn process_age(stat: &str, uptime: &str) -> Option<Duration> {
+    // Fields are counted after the *last* `)`: the command name inside the
+    // brackets may itself hold spaces and brackets. The start time is field
+    // 22 of the line, the 20th after the name, in clock ticks -- which the
+    // kernel reports to user space at 100 a second on every Linux, whatever
+    // the internal tick rate.
+    let after_name = &stat[stat.rfind(')')? + 1..];
+    let started_ticks: u64 = after_name.split_whitespace().nth(19)?.parse().ok()?;
+    let up: f64 = uptime.split_whitespace().next()?.parse().ok()?;
+    let up_ms = (up * 1000.0).round() as u64;
+    let started_ms = started_ticks.checked_mul(10)?;
+    up_ms.checked_sub(started_ms).map(Duration::from_millis)
+}
+
+/// [`process_age`] of this process, now.
+fn this_process_age() -> Option<Duration> {
+    let stat = std::fs::read_to_string("/proc/self/stat").ok()?;
+    let uptime = std::fs::read_to_string("/proc/uptime").ok()?;
+    process_age(&stat, &uptime)
 }
 
 /// Run `f` once, on the first frame after `widget` reaches the screen.
@@ -442,6 +486,45 @@ mod tests {
         tracing::subscriber::with_default(subscriber, body);
         let bytes = captured.0.lock().expect("not poisoned").clone();
         String::from_utf8(bytes).expect("utf-8")
+    }
+
+    #[test]
+    fn a_process_s_age_is_the_uptime_less_its_start() {
+        // A name with spaces and a closing bracket in it: the fields are
+        // counted from the *last* `)`, or a hostile name shifts them all.
+        let stat = "4242 (postio (main) x) S 1 4242 4242 0 -1 4194560 100 0 0 0 \
+                    5 3 0 0 20 0 8 0 12345 0 0 18446744073709551615";
+        assert_eq!(
+            process_age(stat, "124.50 900.00\n"),
+            Some(Duration::from_millis(1_050)),
+            "started at tick 12345 (123.45 s), up 124.50 s"
+        );
+        assert_eq!(process_age("nonsense", "124.5 1"), None);
+        assert_eq!(
+            process_age(stat, "123.00 1"),
+            None,
+            "a start after now is unreadable"
+        );
+    }
+
+    #[test]
+    fn a_phase_says_what_ran_before_main() {
+        // #1604: the ~215 ms of exec and relocation before `main` was outside
+        // the timeline, so no launch's journal could say it had happened.
+        let timeline = Timeline::start_after(Instant::now(), Some(Duration::from_millis(215)));
+        let log = logged(|| {
+            timeline.mark(Phase::Init);
+            timeline.mark(Phase::Window);
+        });
+        let lines: Vec<&str> = log
+            .lines()
+            .filter(|line| line.contains("startup phase"))
+            .collect();
+        assert!(
+            lines[0].contains("before_main_ms=215"),
+            "the first phase line does not say what ran before main: {}",
+            lines[0]
+        );
     }
 
     #[test]
