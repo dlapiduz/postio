@@ -102,7 +102,7 @@ pub fn run() -> ExitCode {
     };
     session.publish();
 
-    let saved = pinned(&config);
+    let saved = crate::config_file::pinned(&config);
     let outcome = runtime.block_on(main_loop(
         client,
         keys,
@@ -402,44 +402,6 @@ async fn drive(
             }
         }
     }
-}
-
-/// Add `query` to `config.toml` as a pinned saved search, as the desktop's
-/// Ctrl+S does, and answer the pinned searches' names now.
-///
-/// Through `patch_filters`, which rewrites only `[filters]`: a whole-file
-/// reserialization would drop a hand-written comment or reorder every other
-/// section (#885).
-fn save_search(query: &str) -> Result<Vec<crate::sidebar::Saved>, String> {
-    let path = postio_config::paths::config_path().map_err(|error| error.to_string())?;
-    let original = std::fs::read_to_string(&path).unwrap_or_default();
-    let mut config = postio_config::Config::from_toml_str(&original).unwrap_or_default();
-    config.save_filter(query);
-    let patched = postio_config::patch_filters(&original, &config.filters)
-        .map_err(|error| error.to_string())?;
-    postio_config::Config::write_text_to_path(&patched, &path)
-        .map_err(|error| error.to_string())?;
-    Ok(pinned(&config))
-}
-
-/// The pinned saved searches as `config.toml` says now.
-fn pinned_now() -> Option<Vec<crate::sidebar::Saved>> {
-    let path = postio_config::paths::config_path().ok()?;
-    let text = std::fs::read_to_string(path).ok()?;
-    Some(pinned(&postio_config::Config::from_toml_str(&text).ok()?))
-}
-
-/// The pinned saved searches, in the sidebar's order.
-fn pinned(config: &postio_config::Config) -> Vec<crate::sidebar::Saved> {
-    config
-        .filters
-        .iter()
-        .filter(|(_, filter)| filter.pinned)
-        .map(|(key, filter)| crate::sidebar::Saved {
-            name: filter.name.clone().unwrap_or_else(|| key.clone()),
-            query: filter.query.clone(),
-        })
-        .collect()
 }
 
 /// What the sidebar holds: every account, its folders, and the counts its
@@ -756,9 +718,13 @@ fn perform(
                 let client = client.clone();
                 let inputs = inputs.clone();
                 tokio::spawn(async move {
-                    let saved = tokio::task::spawn_blocking(move || save_search(&query))
-                        .await
-                        .unwrap_or_else(|error| Err(error.to_string()));
+                    let saved = tokio::task::spawn_blocking(move || {
+                        crate::config_file::path()
+                            .ok_or_else(|| "There is no config.toml here".to_owned())
+                            .and_then(|path| crate::config_file::save_search(&path, &query))
+                    })
+                    .await
+                    .unwrap_or_else(|error| Err(error.to_string()));
                     match saved {
                         Ok(names) => {
                             let contents = sidebar_contents(&client, names).await;
@@ -775,7 +741,9 @@ fn perform(
                 let inputs = inputs.clone();
                 // Read again: a search saved since startup is in the file,
                 // not in what was read then.
-                let saved = pinned_now().unwrap_or_else(|| saved.to_vec());
+                let saved = crate::config_file::path()
+                    .and_then(|path| crate::config_file::pinned_at(&path))
+                    .unwrap_or_else(|| saved.to_vec());
                 tokio::spawn(async move {
                     let contents = sidebar_contents(&client, saved).await;
                     let _ = inputs.send(Input::Sidebar(contents)).await;

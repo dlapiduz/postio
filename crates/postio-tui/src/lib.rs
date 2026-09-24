@@ -14,6 +14,7 @@ pub mod app;
 pub mod caps;
 pub mod clipboard;
 pub mod composer;
+pub mod config_file;
 pub mod conversation;
 pub mod external;
 pub mod first_run;
