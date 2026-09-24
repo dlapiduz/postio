@@ -212,7 +212,7 @@ fn draw_suggestions(
         // A contact's name is whatever a sender's header said.
         let label = SafeText::new(&postio_ui::recipients::candidate_label(candidate));
         let (mark, role) = if chosen {
-            ("› ", Role::Selection)
+            ("› ", Role::Surface)
         } else {
             ("  ", Role::Dim)
         };

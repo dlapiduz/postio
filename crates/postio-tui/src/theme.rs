@@ -2,7 +2,7 @@
 //!
 //! The terminal's own palette for everything -- so Postio looks at home in
 //! whatever theme the user chose -- and, on a true-colour terminal, Postio's
-//! accent for accents, the selected row and the focus, read from the generated design
+//! accent for accents and the focus, read from the generated design
 //! tokens and never retyped (clarified 2026-09-23, FR-054); the raised
 //! `Surface` is a shade of that same accent. Under `NO_COLOR`
 //! there is no colour at all and every state keeps a mark that is not a
@@ -186,7 +186,10 @@ fn base(role: Role, colour: Colour, background: Background) -> Style {
         Role::Text => plain,
         Role::Dim | Role::Quote => plain.fg(Color::DarkGray),
         Role::Accent => plain.fg(accent.unwrap_or(Color::Blue)),
-        Role::Selection => plain.bg(accent.unwrap_or(Color::Blue)).fg(Color::White),
+        // A hue of its own, not the accent's: the cursor is the accent, and
+        // walking through marked rows must still say which one is the
+        // cursor's. Green, the colour of a tick, from the terminal palette.
+        Role::Selection => plain.bg(Color::Green).fg(Color::Black),
         Role::Focus => plain
             .fg(accent.unwrap_or(Color::Cyan))
             .add_modifier(Modifier::BOLD),
@@ -242,18 +245,19 @@ mod tests {
     }
 
     #[test]
-    fn true_colour_uses_postios_accent_for_accent_selection_focus_and_surface_only() {
+    fn true_colour_uses_postios_accent_for_accent_focus_and_surface_only() {
         let (theme, _) = theme(Colour::TrueColor, &[]);
         let (_, dark) = postio_ui::tokens::accent_rgb();
         let accent = Color::Rgb(dark.0, dark.1, dark.2);
-        assert_eq!(theme.style(Role::Selection).bg, Some(accent));
+        assert_ne!(
+            theme.style(Role::Selection).bg,
+            Some(accent),
+            "a selection is not the cursor's colour"
+        );
         assert_eq!(theme.style(Role::Focus).fg, Some(accent));
         assert_eq!(theme.style(Role::Accent).fg, Some(accent));
         for role in Role::ALL {
-            if !matches!(
-                role,
-                Role::Selection | Role::Focus | Role::Accent | Role::Surface
-            ) {
+            if !matches!(role, Role::Focus | Role::Accent | Role::Surface) {
                 let style = theme.style(role);
                 assert!(
                     !matches!(style.fg, Some(Color::Rgb(..)))

@@ -55,11 +55,10 @@ pub fn draw(
     for (offset, visible) in rows.iter().take(fits).enumerate() {
         let y = area.y + u16::try_from(offset).unwrap_or(u16::MAX) * LINES;
         let rect = Rect::new(area.x, y, area.width, LINES);
-        if visible.selected {
-            frame
-                .buffer_mut()
-                .set_style(rect, theme.style(Role::Selection));
-        } else if visible.cursor && visible.row.is_some() {
+        // The cursor is the tint across the row; a selection is a stripe
+        // of its own colour in the gutter, so a cursor inside a selection
+        // is still told apart from the rows around it.
+        if visible.cursor && visible.row.is_some() {
             frame
                 .buffer_mut()
                 .set_style(rect, theme.style(Role::Surface));
@@ -67,6 +66,12 @@ pub fn draw(
         let (top, bottom) = lines(visible, width, theme, now);
         frame.render_widget(top, Rect::new(area.x, y, area.width, 1));
         frame.render_widget(bottom, Rect::new(area.x, y + 1, area.width, 1));
+        if visible.selected && area.width > 2 {
+            frame.buffer_mut().set_style(
+                Rect::new(area.x + 1, y, 2, LINES),
+                theme.style(Role::Selection),
+            );
+        }
         let position = first.saturating_add(u32::try_from(offset).unwrap_or(u32::MAX));
         hits.add(rect, Target::Row(position));
     }
@@ -87,10 +92,7 @@ fn lines<'a>(
         if visible.cursor { "▌" } else { " " },
         theme.style(Role::Focus),
     );
-    let chosen = Span::styled(
-        if visible.selected { "✓" } else { " " },
-        theme.style(Role::Accent),
-    );
+    let chosen = Span::raw(if visible.selected { "✓" } else { " " });
     let mark = |on: bool, glyph: &'static str, role: Role| {
         Span::styled(if on { glyph } else { " " }, theme.style(role))
     };
@@ -113,7 +115,7 @@ fn lines<'a>(
     let pad = room.saturating_sub(from.width() + count.width());
     let top = Line::from(vec![
         bar.clone(),
-        chosen.clone(),
+        chosen,
         Span::raw(" "),
         mark(row.unread, "●", Role::Accent),
         mark(row.flagged, "⚑", Role::Flagged),
@@ -138,8 +140,7 @@ fn lines<'a>(
     };
     let bottom = Line::from(vec![
         bar,
-        chosen,
-        Span::raw(" ".repeat(TEXT - 2)),
+        Span::raw(" ".repeat(TEXT - 1)),
         Span::styled(subject, emphasis),
         Span::styled(preview, theme.style(Role::Dim)),
     ]);
@@ -320,6 +321,69 @@ mod tests {
             }
         }
         assert!(!drawn[(10, 2)].modifier.contains(Modifier::REVERSED));
+    }
+
+    #[test]
+    fn the_cursor_stands_out_from_a_selection_it_is_inside() {
+        // Rows 2-4 marked, the cursor on row 3: walking through a selection
+        // must still say which row the keyboard is on.
+        let rows: Vec<Row> = (1..=5)
+            .map(|id| row(id, "Ada", "Walked through", false, false))
+            .collect();
+        let visible: Vec<Visible> = rows
+            .iter()
+            .enumerate()
+            .map(|(at, row)| Visible {
+                row: Some(row),
+                cursor: at == 2,
+                selected: (1..=3).contains(&at),
+            })
+            .collect();
+        let (drawn, theme) = buffer(&visible, Colour::TrueColor);
+        let surface = theme.style(Role::Surface).bg.expect("a tint");
+        let selection = theme.style(Role::Selection).bg.expect("a selection colour");
+        let focus = theme.style(Role::Focus).fg.expect("the cursor's accent");
+        assert_ne!(selection, surface, "a selection is not the cursor's tint");
+        assert_ne!(selection, focus, "nor the cursor bar's colour");
+        let line = |at: u16| at * 2;
+        // The cursor row: tinted across, on both lines, with its bar.
+        for y in [line(2), line(2) + 1] {
+            assert_eq!(drawn[(10, y)].bg, surface, "the cursor row, line {y}");
+            assert_eq!(drawn[(0, y)].symbol(), "▌");
+        }
+        // Its neighbours in the selection: not tinted, no bar.
+        for at in [1, 3] {
+            for y in [line(at), line(at) + 1] {
+                assert_ne!(drawn[(10, y)].bg, surface, "row {at} looks like the cursor");
+                assert_eq!(
+                    drawn[(10, y)].bg,
+                    drawn[(10, line(0))].bg,
+                    "row {at}'s text sits on the ground"
+                );
+                assert_ne!(drawn[(0, y)].symbol(), "▌", "row {at} has the cursor's bar");
+            }
+        }
+        // All three still marked, the cursor's row included, in the
+        // selection's colour.
+        for at in 1..=3 {
+            assert_eq!(drawn[(1, line(at))].symbol(), "✓", "row {at}");
+            assert_eq!(drawn[(1, line(at))].bg, selection, "row {at}");
+        }
+        for at in [0, 4] {
+            assert_ne!(drawn[(1, line(at))].symbol(), "✓", "row {at} is not marked");
+        }
+
+        // Without colour: the cursor reversed, the selection its checks.
+        let (drawn, _) = buffer(&visible, Colour::None);
+        assert!(drawn[(10, line(2))].modifier.contains(Modifier::REVERSED));
+        for at in [1, 3] {
+            assert!(
+                !drawn[(10, line(at))].modifier.contains(Modifier::REVERSED),
+                "row {at}"
+            );
+            assert_eq!(drawn[(1, line(at))].symbol(), "✓", "row {at}");
+        }
+        assert_eq!(drawn[(1, line(2))].symbol(), "✓");
     }
 
     #[test]

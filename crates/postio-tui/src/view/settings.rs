@@ -38,7 +38,7 @@ pub fn draw(frame: &mut Frame, area: Rect, app: &App, theme: &Theme) {
         {
             let here = *section == settings.current();
             let (mark, role) = match (here, settings.in_accounts()) {
-                (true, false) => ("› ", Role::Selection),
+                (true, false) => ("› ", Role::Surface),
                 (true, true) => ("› ", Role::Accent),
                 _ => ("  ", Role::Text),
             };
@@ -92,7 +92,7 @@ pub fn draw(frame: &mut Frame, area: Rect, app: &App, theme: &Theme) {
                         &format!("{:<28} {}", address.as_str(), name.as_str()),
                         columns.saturating_sub(14),
                     ),
-                    theme.style(if here { Role::Selection } else { Role::Text }),
+                    theme.style(if here { Role::Surface } else { Role::Text }),
                 ),
                 Span::styled(format!("  {state}"), theme.style(Role::Dim)),
             ]));
