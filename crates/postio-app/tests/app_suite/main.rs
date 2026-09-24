@@ -27,6 +27,7 @@ mod conversation_by_default;
 mod conversation_reply_target;
 mod correlation;
 mod cursor_preview;
+mod daemon_gone_window;
 mod daemon_window;
 mod decode_notice;
 mod degraded_unified;
@@ -130,6 +131,11 @@ const CASES: &[(&str, fn())] = &[
     (
         "reader_stability::moving_onto_a_thread_draws_it_once_whole_and_under_its_own_header",
         reader_stability::moving_onto_a_thread_draws_it_once_whole_and_under_its_own_header
+            as fn(),
+    ),
+    (
+        "daemon_gone_window::a_window_whose_daemon_stops_says_so_and_retry_reaches_a_new_one",
+        daemon_gone_window::a_window_whose_daemon_stops_says_so_and_retry_reaches_a_new_one
             as fn(),
     ),
     (

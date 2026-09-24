@@ -24,6 +24,7 @@ use postio_core::CommandId;
 use postio_core::bridge::EventStream;
 use postio_core::state::SharedState;
 use postio_gtk::window::Window;
+use postio_model::listing::MailStore;
 use postio_ui::list_state::Waiting;
 
 use crate::frontend::Frontend;
@@ -126,24 +127,16 @@ pub async fn connected(
         let client = client.clone();
         async move {
             while let Some(command) = queued.recv().await {
-                if client.send(command).await.is_err() {
-                    return;
+                // A gesture made while the owner is gone is not taken; the
+                // next one, after a reconnect, goes to the new owner.
+                if let Err(error) = client.send(command).await {
+                    tracing::warn!(%error, "a command was not taken: {error}");
                 }
             }
         }
     });
     let (sink, stream) = postio_core::bridge::event_channel();
-    let arriving = client.events();
-    runtime.spawn({
-        let sink = sink.clone();
-        async move {
-            while let Ok(envelope) = arriving.recv().await {
-                if !sink.emit(envelope.event) {
-                    return;
-                }
-            }
-        }
-    });
+    forward_events(&client, &sink, &runtime);
 
     Connected {
         frontend: Frontend {
@@ -162,6 +155,105 @@ pub async fn connected(
         wired,
         events: Rc::new(RefCell::new(Some(stream))),
     }
+}
+
+/// Carry what the owner says to `client` into the window's event queue,
+/// until the connection it has now ends.
+fn forward_events(
+    client: &Client,
+    sink: &postio_core::bridge::EventSink,
+    runtime: &tokio::runtime::Handle,
+) {
+    let arriving = client.events();
+    let sink = sink.clone();
+    runtime.spawn(async move {
+        while let Ok(envelope) = arriving.recv().await {
+            if !sink.emit(envelope.event) {
+                return;
+            }
+        }
+    });
+}
+
+/// What the window says when the owner goes away under it.
+pub const STOPPED: &str = "Postio's background service stopped. Your mail is where it was; \
+                           try again to reconnect.";
+
+/// Put the unavailable screen up once the owner the window reaches has
+/// gone: the daemon exited, or the connection broke. "Try again" reaches it
+/// the way startup does, starting it if nothing answers -- only when asked:
+/// nothing here reconnects on its own.
+fn watch_for_the_owner_going(window: &Window, following: &Rc<Following>) {
+    let Some(client) = following
+        .reached
+        .borrow()
+        .as_ref()
+        .map(|connected| connected.frontend.client.clone())
+    else {
+        return;
+    };
+    let closed = client.closed();
+    let window = window.downgrade();
+    let following = Rc::clone(following);
+    glib::spawn_future_local(async move {
+        // POSTIO-GLIB-SAFE: a channel receive; the connection's own thread
+        // closes it.
+        closed.await;
+        let Some(window) = window.upgrade() else {
+            return;
+        };
+        tracing::warn!("the background service went away");
+        {
+            let mut previous = following.previous.borrow_mut();
+            if previous.is_none() {
+                *previous = window.content();
+            }
+        }
+        unreachable(&window, STOPPED, {
+            let window = window.clone();
+            move |screen| {
+                screen.set_busy(true);
+                follow(&window, (following.again)(), Rc::clone(&following));
+            }
+        });
+    });
+}
+
+/// The window is over a new owner: take its connection into every clone of
+/// the old client, and have the sidebar, the list and the reader read
+/// again from it.
+async fn reconnected(window: &Window, connected: &Connected, client: &Client, state: &SharedState) {
+    let frontend = &connected.frontend;
+    frontend.client.reconnect(client);
+    forward_events(&frontend.client, &frontend.events, &frontend.runtime);
+    // POSTIO-GLIB-SAFE: a client call is a oneshot receive; the owner answers
+    // on its own runtime.
+    let accounts = frontend.client.accounts().await.unwrap_or_default();
+    let (showing, focus) = state.read(|app| (app.mailbox(), app.focus()));
+    for account in accounts {
+        let account = account.id;
+        frontend
+            .events
+            .emit(postio_core::Event::MailboxesChanged { account });
+        // POSTIO-GLIB-SAFE: as above.
+        let folders = frontend.client.mailboxes(account).await.unwrap_or_default();
+        for folder in folders {
+            frontend
+                .events
+                .emit(postio_core::Event::MessageListChanged {
+                    account,
+                    mailbox: folder.id,
+                });
+            if Some(folder.id) == showing
+                && let Some(message) = focus
+            {
+                frontend
+                    .events
+                    .emit(postio_core::Event::BodyLoaded { account, message });
+            }
+        }
+    }
+    window.report_usable();
 }
 
 /// Open the window over the owner: its account, or the first-run screen.
@@ -322,6 +414,17 @@ pub fn follow(
                 if let Some(previous) = following.previous.borrow_mut().take() {
                     window.set_content(Some(&previous));
                 }
+                // Once the window has been opened over an owner, a new one
+                // is taken into the connection the panes already hold.
+                let already = following.reached.borrow().clone();
+                if let Some(already) = already {
+                    // POSTIO-GLIB-SAFE: every await under this is a client
+                    // call, a oneshot receive the owner answers on its own
+                    // runtime.
+                    reconnected(&window, &already, &client, &following.state).await;
+                    watch_for_the_owner_going(&window, &following);
+                    return;
+                }
                 let connecting = connected(
                     client,
                     following.runtime.clone(),
@@ -336,6 +439,7 @@ pub fn follow(
                 // POSTIO-GLIB-SAFE: every await under this is a client call,
                 // a oneshot receive the owner answers on its own runtime.
                 open(&window, &ready, following.state.clone(), &following.fed).await;
+                watch_for_the_owner_going(&window, &following);
             }
             Err(reason) => {
                 // Safe verbatim: no connect error carries mail or a key.

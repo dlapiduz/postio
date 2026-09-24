@@ -195,14 +195,25 @@ pub fn deliver_from(
     feeds: &postio_gtk::feed::Feeds,
     client: &postio_client::Client,
 ) {
-    let notices = client.notifications();
     let application = application.downgrade();
-    glib::spawn_future_local(async move {
-        while let Ok(notification) = notices.recv().await {
-            let Some(application) = application.upgrade() else {
-                return;
-            };
-            deliver(&application, &notification);
+    glib::spawn_future_local({
+        let client = client.clone();
+        async move {
+            // From whichever owner is there: after a reconnect, the new
+            // connection's notifications.
+            let mut reconnected = client.reconnected();
+            loop {
+                let notices = client.notifications();
+                while let Ok(notification) = notices.recv().await {
+                    let Some(application) = application.upgrade() else {
+                        return;
+                    };
+                    deliver(&application, &notification);
+                }
+                if reconnected.changed().await.is_err() {
+                    return;
+                }
+            }
         }
     });
 
