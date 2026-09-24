@@ -203,19 +203,9 @@ pub enum AccountEdit {
     MailboxRole(MailboxRole, Option<String>),
 }
 
-/// The roles a folder can be mapped to, in the order the group lists them.
-///
-/// `Inbox` is not among them: RFC 3501 names that folder itself, and pointing
-/// it elsewhere would make Postio disagree with every other client on the
-/// same account about where mail arrives. `Flagged` is a view over folders
-/// rather than one of them.
-const MAPPABLE_ROLES: [(MailboxRole, &str); 5] = [
-    (MailboxRole::Sent, "Sent"),
-    (MailboxRole::Archive, "Archive"),
-    (MailboxRole::Drafts, "Drafts"),
-    (MailboxRole::Trash, "Trash"),
-    (MailboxRole::Junk, "Junk"),
-];
+/// The roles a folder can be mapped to, in the order the group lists them:
+/// the shared table, which the terminal's picker reads too.
+use postio_ui::settings::MAPPABLE_ROLES;
 
 /// One account's folders and role map, as the Mailboxes group needs them.
 ///

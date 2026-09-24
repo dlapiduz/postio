@@ -255,6 +255,21 @@ pub fn humanize_interval(seconds: u64) -> String {
     }
 }
 
+/// The roles a folder can be mapped to (ADR 0035), in the order both
+/// frontends list them, with the name each shows.
+///
+/// `Inbox` is not among them: RFC 3501 names that folder itself, and pointing
+/// it elsewhere would make Postio disagree with every other client on the
+/// same account about where mail arrives. `Flagged` is a view over folders
+/// rather than one of them.
+pub const MAPPABLE_ROLES: [(postio_model::mailbox::MailboxRole, &str); 5] = [
+    (postio_model::mailbox::MailboxRole::Sent, "Sent"),
+    (postio_model::mailbox::MailboxRole::Archive, "Archive"),
+    (postio_model::mailbox::MailboxRole::Drafts, "Drafts"),
+    (postio_model::mailbox::MailboxRole::Trash, "Trash"),
+    (postio_model::mailbox::MailboxRole::Junk, "Junk"),
+];
+
 #[cfg(test)]
 mod tests {
     use super::*;
