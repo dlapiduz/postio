@@ -23,6 +23,7 @@ pub(crate) struct World {
     host: Option<Host>,
     inbox: MailboxId,
     message: MessageId,
+    account: postio_model::AccountId,
     database: postio_storage::Store,
     blob_dir: std::path::PathBuf,
     _blobs: tempfile::TempDir,
@@ -41,7 +42,7 @@ impl World {
             .enable_all()
             .build()
             .expect("a test runtime");
-        let (database, inbox, message) = rt.block_on(async {
+        let (database, inbox, message, account) = rt.block_on(async {
             let database = test_support::memory().await;
             let connection = database.connect().await.expect("a connection");
             let (account, inbox) = test_support::account_with_inbox(&connection).await;
@@ -52,7 +53,8 @@ impl World {
                 .create(&mut message)
                 .await
                 .expect("a message");
-            (database, inbox, message)
+            let account = account.id;
+            (database, inbox, message, account)
         });
         let directory = tempfile::tempdir().expect("a blob directory");
         let blobs = postio_storage::BlobStore::open(
@@ -70,6 +72,7 @@ impl World {
             host: Some(host),
             inbox,
             message,
+            account,
             database: kept,
             blob_dir: directory.path().to_path_buf(),
             _blobs: directory,
@@ -93,8 +96,30 @@ impl World {
         state
     }
 
+    /// The inbox.
+    pub(crate) fn inbox(&self) -> MailboxId {
+        self.inbox
+    }
+
+    /// The message in it.
+    pub(crate) fn message(&self) -> MessageId {
+        self.message
+    }
+
+    /// The message arrives, as the engine says so.
+    pub(crate) fn arrive(&self) {
+        self.host().wiring().events.emit(Event::NewMail {
+            account: self.account,
+            mailbox: self.inbox,
+            messages: vec![self.message],
+        });
+    }
+
     /// A frontend looking at the inbox with the cursor on the message.
-    fn frontend(&self, kind: ClientKind) -> (Client, async_channel::Receiver<EventEnvelope>) {
+    pub(crate) fn frontend(
+        &self,
+        kind: ClientKind,
+    ) -> (Client, async_channel::Receiver<EventEnvelope>) {
         let state = self.looking_at_the_message();
         let client = self
             .host

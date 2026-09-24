@@ -355,6 +355,12 @@ pub enum Req {
     OrientationSeen,
     /// Write down that this installation is done with the orientation.
     RetireOrientation,
+    /// What this frontend is showing, and whether it is in front: the half
+    /// of a new-mail notification's decision only the frontend can see
+    /// (`postio_ui::notify::Attention`). Posted when it changes, never
+    /// awaited; the host keeps the latest for the frontend it elects to
+    /// deliver notifications.
+    Attention(postio_ui::notify::Attention),
     /// Save an account whose credentials a frontend already proved: the
     /// password to the keyring first, then the row, as the desktop's
     /// first-run screen writes them (`postio_session::onboarding::persist`).
@@ -681,6 +687,10 @@ pub enum Frame {
     },
     /// Something happened; sent unasked, in order.
     Event(EventEnvelope),
+    /// A desktop notification to deliver, sent only to the one frontend
+    /// the host elected to deliver them: the first desktop app connected,
+    /// else the first terminal (`postio-host`'s `notify`).
+    Notify(postio_ui::notify::Notification),
 }
 
 /// A frame that could not be read.
@@ -896,6 +906,10 @@ mod tests {
             },
             Req::OrientationSeen,
             Req::RebuildIndex(account),
+            Req::Attention(postio_ui::notify::Attention {
+                showing: Some(MailboxId::new(2)),
+                active: true,
+            }),
         ]
         .into_iter()
         .enumerate()

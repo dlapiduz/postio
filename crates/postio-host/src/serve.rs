@@ -234,7 +234,7 @@ async fn connection(inner: Arc<Inner>, stream: tokio::net::UnixStream, uid: u32)
         }
         _ => return,
     };
-    let (client, events) = inner.join(kind);
+    let (client, events, notices) = inner.join(kind);
     let welcome = Frame::Welcome {
         client,
         host_build: BuildId::current(),
@@ -258,6 +258,16 @@ async fn connection(inner: Arc<Inner>, stream: tokio::net::UnixStream, uid: u32)
         async move {
             while let Ok(envelope) = events.recv().await {
                 if out.send(Frame::Event(envelope)).await.is_err() {
+                    return;
+                }
+            }
+        }
+    });
+    let noticing = tokio::spawn({
+        let out = out.clone();
+        async move {
+            while let Ok(notification) = notices.recv().await {
+                if out.send(Frame::Notify(notification)).await.is_err() {
                     return;
                 }
             }
@@ -290,6 +300,7 @@ async fn connection(inner: Arc<Inner>, stream: tokio::net::UnixStream, uid: u32)
     }
     inner.leave(client);
     telling.abort();
+    noticing.abort();
     drop(out);
     let _ = writing.await;
 }
@@ -381,6 +392,34 @@ mod tests {
             serving >= Duration::from_millis(250),
             "it waited out the grace period, not less: {serving:?}"
         );
+    }
+
+    #[test]
+    fn a_notification_crosses_the_socket_to_the_elected_frontend_alone() {
+        let world = World::new();
+        let dir = tempfile::tempdir().unwrap();
+        let endpoint = Endpoint::at(dir.path().join("postio"));
+        let listener = bind(&endpoint).expect("binds");
+        let host = world.host();
+        std::thread::scope(|scope| {
+            scope.spawn(|| host.serve(listener, Duration::from_millis(300)));
+            let terminal = connect(&endpoint, ClientKind::Tui).expect("connects");
+            let desktop = connect(&endpoint, ClientKind::Gtk).expect("connects");
+            world.arrive();
+            let told = |client: &postio_client::Client| {
+                let notices = client.notifications();
+                world.rt.block_on(async {
+                    tokio::time::timeout(Duration::from_millis(500), notices.recv())
+                        .await
+                        .ok()
+                        .and_then(Result::ok)
+                })
+            };
+            let notification = told(&desktop).expect("the desktop app is told");
+            assert_eq!(notification.mailbox, world.inbox());
+            assert_eq!(told(&terminal), None);
+            drop((terminal, desktop));
+        });
     }
 
     #[test]

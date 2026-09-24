@@ -16,6 +16,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use postio_core::EventEnvelope;
+use postio_ui::notify::Notification;
 use tokio::net::UnixStream;
 use tokio::sync::oneshot;
 
@@ -113,6 +114,7 @@ pub fn connect(endpoint: &Endpoint, kind: ClientKind) -> Result<Client, ConnectE
 
     let (outgoing, to_send) = async_channel::unbounded::<Frame>();
     let (arrived, events) = async_channel::unbounded::<EventEnvelope>();
+    let (noticed, notices) = async_channel::bounded::<Notification>(NOTICES);
     let pending: Arc<Mutex<HashMap<u64, oneshot::Sender<Resp>>>> = Arc::default();
     let (handshake, shaken) = std::sync::mpsc::channel::<Result<ClientId, ConnectError>>();
 
@@ -130,7 +132,9 @@ pub fn connect(endpoint: &Endpoint, kind: ClientKind) -> Result<Client, ConnectE
                     return;
                 }
             };
-            runtime.block_on(run(stream, kind, handshake, to_send, arrived, answers));
+            runtime.block_on(run(
+                stream, kind, handshake, to_send, arrived, noticed, answers,
+            ));
         })
         .map_err(|error| ConnectError::Broken(error.to_string()))?;
 
@@ -142,9 +146,15 @@ pub fn connect(endpoint: &Endpoint, kind: ClientKind) -> Result<Client, ConnectE
         pending,
         next: AtomicU64::new(1),
         events,
+        notices,
         _client: client,
     })))
 }
+
+/// How many notifications wait for a frontend that is not reading them
+/// before the oldest go unsaid. A notification is replaced per folder by the
+/// next anyway, so a backlog is worth nothing.
+const NOTICES: usize = 16;
 
 /// The connection's whole life, on its own thread: the handshake, then
 /// requests out and answers and events in, until either side goes away.
@@ -154,6 +164,7 @@ async fn run(
     handshake: std::sync::mpsc::Sender<Result<ClientId, ConnectError>>,
     to_send: async_channel::Receiver<Frame>,
     arrived: async_channel::Sender<EventEnvelope>,
+    noticed: async_channel::Sender<Notification>,
     pending: Arc<Mutex<HashMap<u64, oneshot::Sender<Resp>>>>,
 ) {
     let broken = |error: &dyn std::fmt::Display| Err(ConnectError::Broken(error.to_string()));
@@ -215,6 +226,11 @@ async fn run(
                 if arrived.send(envelope).await.is_err() {
                     break;
                 }
+            }
+            // Never waited on: a frontend not reading its notifications
+            // must not stall its answers and events behind them.
+            Ok(Some(Frame::Notify(notification))) => {
+                let _ = noticed.try_send(notification);
             }
             Ok(Some(other)) => {
                 tracing::warn!(frame = ?std::mem::discriminant(&other), "an unexpected frame");
@@ -329,6 +345,7 @@ struct Socket {
     pending: Arc<Mutex<HashMap<u64, oneshot::Sender<Resp>>>>,
     next: AtomicU64,
     events: async_channel::Receiver<EventEnvelope>,
+    notices: async_channel::Receiver<Notification>,
     _client: ClientId,
 }
 
@@ -354,6 +371,10 @@ impl Transport for Socket {
 
     fn events(&self) -> async_channel::Receiver<EventEnvelope> {
         self.events.clone()
+    }
+
+    fn notifications(&self) -> async_channel::Receiver<Notification> {
+        self.notices.clone()
     }
 }
 

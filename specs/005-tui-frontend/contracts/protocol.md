@@ -73,6 +73,7 @@ rather than rewritten.
 | Accounts | `Discover`, `AddAccount`, `SaveAccount`, `SaveOAuthAccount`, `BeginOAuth`, `FinishOAuth`, `CancelOAuth`, `Account(AccountOp)`, `EditAccount`, `RebuildIndex` | `postio-host/src/onboarding.rs`, `postio_session::onboarding` |
 | Settings | `AccountSettings`, `SaveSignature`, `DeleteSignature`, `SetBackfillExcluded`, `EgressLog`, `PrivacyLog`, `OrientationSeen`, `RetireOrientation` | `postio-host/src/settings.rs` |
 | Diagnostics | `Diagnose(report)` | `postio_session::diag` |
+| Notifications | `Attention(Attention)`, posted and never awaited | the client's entry in the host, read by `postio-host/src/notify.rs` |
 
 The terminal's settings are its `config.toml` (edited in `$EDITOR` at the
 section) plus the account commands, so the `Settings`/`PatchSettings` pair
@@ -90,6 +91,14 @@ client that owns the entry. Every other event goes to every client.
 The host decides with `postio_ui::notify::decide`, unchanged, then sends
 `Notify` to exactly one client: the first connected `Gtk` client, otherwise
 the first `Tui` client. With no clients there is no notification.
+
+Whether the person is already looking at the folder is the one input only a
+frontend can see, so each client posts `Attention { showing, active }` when it
+changes; the host decides with the elected client's latest, and with none
+posted the arrival is told. The folder gate is `[sync] notify` and
+`notify_roles`, read by the daemon. The wording is `Wording::Newest` (sender
+and subject) for every frontend. A frontend that is not reading its
+notifications loses them rather than stalling its events: at most 16 wait.
 
 ## Lifetime
 

@@ -62,6 +62,12 @@ pub trait Transport: Send + Sync + 'static {
 
     /// Every event the host sends this client, in order.
     fn events(&self) -> async_channel::Receiver<EventEnvelope>;
+
+    /// The notifications the host asks this client to deliver. None, for a
+    /// transport that carries none: the channel is closed from the start.
+    fn notifications(&self) -> async_channel::Receiver<postio_ui::notify::Notification> {
+        async_channel::bounded(1).1
+    }
 }
 
 impl Req {
@@ -126,6 +132,7 @@ impl Req {
             Req::SetBackfillExcluded { .. } => "SetBackfillExcluded",
             Req::OrientationSeen => "OrientationSeen",
             Req::RetireOrientation => "RetireOrientation",
+            Req::Attention(_) => "Attention",
             Req::SaveAccount { .. } => "SaveAccount",
             Req::SaveOAuthAccount(_) => "SaveOAuthAccount",
         }
@@ -172,6 +179,21 @@ impl Client {
     /// Every event the host sends this client.
     pub fn events(&self) -> async_channel::Receiver<EventEnvelope> {
         self.transport.events()
+    }
+
+    /// The desktop notifications this client is asked to deliver: only
+    /// ever the elected one's, and each arrival at most once
+    /// (`contracts/protocol.md`, Notifications).
+    pub fn notifications(&self) -> async_channel::Receiver<postio_ui::notify::Notification> {
+        self.transport.notifications()
+    }
+
+    /// Tell the host what this frontend is showing and whether it is in
+    /// front, so a notification is not raised about mail already on screen.
+    /// Posted, never awaited: nothing the frontend does waits on it.
+    pub fn attention(&self, attention: postio_ui::notify::Attention) {
+        self.counts.record("Attention");
+        self.transport.post(Req::Attention(attention));
     }
 
     async fn call(&self, request: Req) -> Result<Resp, Disconnected> {

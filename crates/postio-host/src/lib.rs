@@ -69,6 +69,8 @@ struct Inner {
     queue: async_channel::Sender<Queued>,
     /// How many frontends are connected, watched by the daemon's idle timer.
     connected: tokio::sync::watch::Sender<usize>,
+    /// `[sync]`'s notification settings: which folders' arrivals notify.
+    notify: Mutex<postio_config::SyncConfig>,
 }
 
 /// One connected frontend, as the host holds it.
@@ -84,6 +86,10 @@ struct Entry {
     tasks: Vec<tokio::task::AbortHandle>,
     /// This client's draft writes, in the order it made them.
     drafts: compose::DraftWriter,
+    /// What it last said it was showing, for a notification's decision.
+    attention: postio_ui::notify::Attention,
+    /// Where the notifications it is elected to deliver go.
+    notices: async_channel::Sender<postio_ui::notify::Notification>,
 }
 
 /// Start the sync of the account saved for `address`, and no other.
@@ -193,6 +199,9 @@ const WORKER_THREADS: usize = 2;
 /// toward tokio's default of 512 in a burst.
 const BLOCKING_THREADS: usize = 8;
 
+/// How many notifications wait for a frontend before the rest go unsaid.
+const NOTICES: usize = 16;
+
 /// A frontend's verbs over the shared store: the session's actions and
 /// refresh, resolving against `state`.
 fn verbs(wiring: &Wiring, state: &SharedState) -> Dispatcher {
@@ -266,10 +275,19 @@ impl Host {
             next_client: AtomicU64::new(1),
             queue,
             connected: tokio::sync::watch::Sender::new(0),
+            notify: Mutex::new(postio_config::SyncConfig::default()),
             offers: Mutex::new(HashMap::new()),
             oauth_offers: Mutex::new(HashMap::new()),
             sign_ins: Mutex::new(HashMap::new()),
         });
+        // New mail becomes one notification, for one frontend. Over a
+        // wiring whose events go to one reader there is no news to hear, and
+        // whoever reads it notifies as it always did.
+        if let Some(arrivals) = inner.hub.subscribe("notifier") {
+            inner
+                .runtime()
+                .spawn(notify::run(Arc::downgrade(&inner), arrivals));
+        }
         let pump = Arc::clone(&inner);
         inner.runtime().spawn(async move {
             while let Ok(queued) = commands.recv().await {
@@ -280,6 +298,12 @@ impl Host {
             inner,
             _bridge: bridge,
         }
+    }
+
+    /// Notify about arrivals as `[sync]` in `config` says: `notify` and
+    /// `notify_roles`. The defaults until this is called.
+    pub fn notify_with(&self, config: postio_config::SyncConfig) {
+        *self.inner.notify.lock().expect("never poisoned") = config;
     }
 
     /// The verbs each frontend's dispatcher answers, for a frontend that
@@ -347,11 +371,12 @@ impl Host {
     /// A client in this process: `postio-ffi`, the integration suites, and
     /// until the socket exists, the desktop app.
     pub fn connect(&self, kind: ClientKind) -> Client {
-        let (id, events) = self.inner.join(kind);
+        let (id, events, notices) = self.inner.join(kind);
         Client::new(Arc::new(Local {
             inner: Arc::clone(&self.inner),
             client: id,
             events,
+            notices,
         }))
     }
 }
@@ -362,11 +387,21 @@ impl Inner {
     }
 
     /// Register a client and start sorting its events.
-    fn join(&self, kind: ClientKind) -> (ClientId, async_channel::Receiver<EventEnvelope>) {
+    fn join(
+        &self,
+        kind: ClientKind,
+    ) -> (
+        ClientId,
+        async_channel::Receiver<EventEnvelope>,
+        async_channel::Receiver<postio_ui::notify::Notification>,
+    ) {
         let id = ClientId(self.next_client.fetch_add(1, Ordering::Relaxed));
         let state = SharedState::default();
         let verbs = Arc::new(verbs(&self.wiring, &state));
         let (outbox, events) = async_channel::unbounded::<EventEnvelope>();
+        // Bounded, and never waited on: a notification per folder replaces
+        // the one before it, so one a frontend has not read is worth nothing.
+        let (noticed, notices) = async_channel::bounded(NOTICES);
 
         // Everybody's news, from the engines and from every client's verbs.
         let label = format!("client:{kind:?}:{}", id.0).to_lowercase();
@@ -415,11 +450,13 @@ impl Inner {
                 sink,
                 tasks: vec![hearing.abort_handle(), sorting.abort_handle()],
                 drafts: compose::DraftWriter::spawn(self.wiring.database.clone(), self.runtime()),
+                attention: postio_ui::notify::Attention::default(),
+                notices: noticed,
             },
         );
         self.connected.send_modify(|count| *count += 1);
         tracing::info!(client = id.0, ?kind, "a frontend connected");
-        (id, events)
+        (id, events, notices)
     }
 
     /// Forget a client: its events stop, and a command it queued and has
@@ -450,6 +487,17 @@ impl Inner {
                     Resp::Done => Resp::Tracked(invocation),
                     refused => refused,
                 })
+            }
+            Req::Attention(attention) => {
+                if let Some(entry) = self
+                    .clients
+                    .lock()
+                    .expect("never poisoned")
+                    .get_mut(&client)
+                {
+                    entry.attention = attention;
+                }
+                InOrder::Answered(Resp::Done)
             }
             Req::NoteRemoved(mailbox, messages) => {
                 self.wiring.store.note_removed(mailbox, messages);
@@ -543,6 +591,7 @@ impl Inner {
             Req::Send(..)
             | Req::SendTracked(..)
             | Req::NoteRemoved(..)
+            | Req::Attention(_)
             | Req::SaveDraft { .. }
             | Req::QueueSend { .. }
             | Req::DiscardDraft { .. } => {
@@ -1314,6 +1363,7 @@ struct Local {
     inner: Arc<Inner>,
     client: ClientId,
     events: async_channel::Receiver<EventEnvelope>,
+    notices: async_channel::Receiver<postio_ui::notify::Notification>,
 }
 
 impl Drop for Local {
@@ -1365,10 +1415,15 @@ impl Transport for Local {
     fn events(&self) -> async_channel::Receiver<EventEnvelope> {
         self.events.clone()
     }
+
+    fn notifications(&self) -> async_channel::Receiver<postio_ui::notify::Notification> {
+        self.notices.clone()
+    }
 }
 
 pub mod compose;
 pub mod export;
+pub mod notify;
 pub mod onboarding;
 pub mod parts;
 pub mod reading;

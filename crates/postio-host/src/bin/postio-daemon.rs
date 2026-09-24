@@ -130,12 +130,16 @@ fn open(config_path: Option<&std::path::Path>) -> Result<Host, String> {
         .unwrap_or_default();
     let storage_ceiling = config_path.and_then(postio_session::storage_ceiling_at);
 
-    Host::start(database, blobs, |wiring| {
+    let host = Host::start(database, blobs, |wiring| {
         wiring
             .with_mailbox_roles(mailbox_roles)
             .with_backfill(postio_session::backfill_policy(&sync_config))
             .with_watch(postio_session::watch_policy(&sync_config))
             .with_storage_ceiling(storage_ceiling)
             .with_secrets(secrets)
-    })
+    })?;
+    // Which folders' arrivals raise a notification, for whichever frontend
+    // is elected to deliver them.
+    host.notify_with(sync_config);
+    Ok(host)
 }
