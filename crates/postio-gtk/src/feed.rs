@@ -533,8 +533,54 @@ impl Feed {
             Plan::Ignore => {}
             Plan::InsertAtTop(count) => list.inserted_at_top(count),
             Plan::Refetch(messages) => self.refetch(messages),
-            Plan::Reload => self.reload(),
+            Plan::Reload => match event {
+                Event::MessagesRemoved {
+                    mailbox, messages, ..
+                } if inner.paging.borrow().scope()
+                    == Some(postio_model::ListScope::Mailbox(*mailbox))
+                    && list.all_resident(messages) =>
+                {
+                    self.remove_or_reload(*mailbox, messages.clone());
+                }
+                _ => self.reload(),
+            },
         }
+    }
+
+    /// Take rows that left the folder on screen out where they stand, or
+    /// reload when that cannot be done exactly (#1607).
+    ///
+    /// A reload rebuilt every row's widget, dropped every seek mark and read
+    /// page 0 again, to take out rows the list was holding. What has to be
+    /// known first is whether each row really left: a conversation that
+    /// still has a member here stays, drawn from another message, so the
+    /// store is asked for the rows these ids have now. None at all is the
+    /// case this is for -- every one of them gone -- and anything else, or a
+    /// list that moved while the question was out, reloads as before.
+    fn remove_or_reload(&self, mailbox: MailboxId, messages: Vec<MessageId>) {
+        let inner = &self.0;
+        let Some(list) = inner.list.upgrade() else {
+            return;
+        };
+        let future = inner
+            .source
+            .rows_in(postio_model::ListScope::Mailbox(mailbox), messages.clone());
+        let generation = list.generation();
+        let feed = self.clone();
+        glib::spawn_future_local(async move {
+            // POSTIO-GLIB-SAFE: `MessageSource::rows_in`, under the contract
+            // `refetch` states above.
+            let still_here = future.await;
+            let Some(list) = feed.0.list.upgrade() else {
+                return;
+            };
+            let removed = generation == list.generation()
+                && matches!(still_here, Ok(ref rows) if rows.is_empty())
+                && list.remove_in_place(&messages);
+            if !removed {
+                feed.reload();
+            }
+        });
     }
 
     /// A change named these messages. Their rows are patched in place from

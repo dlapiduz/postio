@@ -293,6 +293,50 @@ impl<T: ListRow> ListWindow<T> {
         true
     }
 
+    /// Remove the row at `position`, shifting every row after it up by one.
+    ///
+    /// `false`, with nothing changed, when the row is not resident or a page
+    /// from here on is still on its way -- a page asked for at the old
+    /// offsets would land one row out -- and the caller reloads instead.
+    pub fn remove_at(&mut self, position: u32) -> bool {
+        if position >= self.total {
+            return false;
+        }
+        let page = position / PAGE_SIZE;
+        let index = (position % PAGE_SIZE) as usize;
+        if self.pending.iter().any(|pending| *pending >= page)
+            || !self.pages.get(&page).is_some_and(|rows| index < rows.len())
+        {
+            return false;
+        }
+        self.pages
+            .get_mut(&page)
+            .expect("checked above")
+            .remove(index);
+        self.total -= 1;
+
+        // Each following page that is held gives its first row to the one
+        // before it, for as long as the held pages run on unbroken. The last
+        // of them is then one row short, which `row_at` already treats as a
+        // page to ask for again when that row is wanted (#1165).
+        let mut last = page;
+        while let Some(next) = self.pages.get_mut(&(last + 1)) {
+            if next.is_empty() {
+                break;
+            }
+            let carried = next.remove(0);
+            self.pages
+                .get_mut(&last)
+                .expect("the run is held")
+                .push(carried);
+            last += 1;
+        }
+        // Past a page nobody holds, every row would sit one position out.
+        self.pages.retain(|held, _| *held <= last);
+        self.recent.retain(|held| *held <= last);
+        true
+    }
+
     /// Every row held, in no particular order, asking for nothing.
     ///
     /// For a caller that wants what is already here -- the subset of a
@@ -648,6 +692,84 @@ mod tests {
         for page in [1, 2, 4] {
             assert!(!window.is_pending(page), "page {page} was asked for");
         }
+    }
+
+    fn held(window: &ListWindow<Fixture>, page: u32) -> Vec<i64> {
+        window
+            .pages
+            .get(&page)
+            .map(|rows| rows.iter().map(|row| row.id.get()).collect())
+            .unwrap_or_default()
+    }
+
+    #[test]
+    fn removing_a_row_shifts_the_rows_after_it_up_one() {
+        // #1607: an archive reloaded the whole list -- every widget rebuilt,
+        // every seek mark dropped -- to take out rows it was holding.
+        let mut window: ListWindow<Fixture> = ListWindow::new();
+        window.reset(120);
+        for page in 0..3 {
+            deliver_fresh(&mut window, page, 120);
+        }
+        assert!(window.remove_at(10));
+        assert_eq!(window.total(), 119);
+        assert_eq!(
+            window.peek(10),
+            Some(MessageId::new(12)),
+            "the next row moved up"
+        );
+        assert_eq!(
+            window.peek(49),
+            Some(MessageId::new(51)),
+            "across the page boundary"
+        );
+        assert_eq!(window.peek(118), Some(MessageId::new(120)), "to the end");
+        assert_eq!(held(&window, 2).len(), 19, "the last page is one shorter");
+    }
+
+    #[test]
+    fn pages_past_a_gap_are_dropped_rather_than_left_one_row_out() {
+        let mut window: ListWindow<Fixture> = ListWindow::new();
+        window.reset(250);
+        for page in [0, 1, 3] {
+            deliver_fresh(&mut window, page, 250);
+        }
+        assert!(window.remove_at(5));
+        assert_eq!(window.peek(49), Some(MessageId::new(51)));
+        assert_eq!(
+            held(&window, 1).len(),
+            49,
+            "the page before the gap is short: its last row is in the page nobody holds"
+        );
+        assert!(
+            held(&window, 3).is_empty(),
+            "a page past the gap is misaligned"
+        );
+        let wanted = match window.row_at(99) {
+            Some(Lookup::Missing { request }) => request,
+            _ => Vec::new(),
+        };
+        assert!(
+            wanted.contains(&1),
+            "the short page is asked for again when its row is"
+        );
+    }
+
+    #[test]
+    fn a_removal_waits_for_a_page_already_on_its_way() {
+        let mut window: ListWindow<Fixture> = ListWindow::new();
+        window.reset(120);
+        deliver_fresh(&mut window, 0, 120);
+        assert!(window.note_pending(1));
+        assert!(
+            !window.remove_at(3),
+            "page 1 was asked for at the old offsets"
+        );
+        assert_eq!(window.total(), 120, "and nothing changed");
+        assert!(
+            !window.remove_at(100),
+            "a row not held cannot be removed in place"
+        );
     }
 
     #[test]

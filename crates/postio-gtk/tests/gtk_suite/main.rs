@@ -617,6 +617,10 @@ const CASES: &[(&str, fn())] = &[
         gtk_list_mark_read::another_account_s_changes_do_not_reload_this_sidebar as fn(),
     ),
     (
+        "gtk_list_mark_read::an_archive_of_rows_on_screen_takes_them_out_where_they_stand",
+        gtk_list_mark_read::an_archive_of_rows_on_screen_takes_them_out_where_they_stand as fn(),
+    ),
+    (
         "gtk_list_mark_read::a_removal_is_told_to_the_source_before_the_list_reloads",
         gtk_list_mark_read::a_removal_is_told_to_the_source_before_the_list_reloads as fn(),
     ),
