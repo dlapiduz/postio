@@ -24,6 +24,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use chrono::Utc;
+use postio_model::card::{ImportSummary, Member, ParsedCard, ParsedGroup, ParsedPerson};
 use postio_model::{
     AddressId, AddressMove, Contact, ContactAddress, ContactDetail, ContactId, ContactListRow,
     ContactSource, ContactState, ContactView, EmailAddress, JoinReceipt, JoinSuggestion, Message,
@@ -1338,6 +1339,203 @@ impl ContactRepository<'_> {
         }
     }
 
+    /// Applies a vCard import in one transaction (FR-053, R9): people first,
+    /// so a group card can name them by `UID`, then groups.
+    ///
+    /// A card whose addresses nobody owns is a new person. A card whose
+    /// addresses one person owns is that person, and takes the card's name
+    /// unless the user named them -- which the summary counts. A card whose
+    /// addresses several people own joins them, and the summary lists the
+    /// join. Every card is kept whole in `contacts.vcard` for export.
+    pub async fn apply_import(&self, cards: &[ParsedCard]) -> Result<ImportSummary> {
+        let cards = cards.to_vec();
+        sql::in_scope(self.connection, |transaction| async move {
+            let contacts = ContactRepository::new(&transaction);
+            let mut summary = ImportSummary::default();
+            let mut by_uid: BTreeMap<String, ContactId> = BTreeMap::new();
+            for card in &cards {
+                if let ParsedCard::Person(person) = card {
+                    let id = contacts.import_person(person, &mut summary).await?;
+                    if let Some(uid) = &person.uid {
+                        by_uid.insert(uid.clone(), id);
+                    }
+                }
+            }
+            for card in &cards {
+                if let ParsedCard::Group(group) = card {
+                    import_group(&transaction, group, &by_uid, &mut summary).await?;
+                }
+            }
+            Ok(summary)
+        })
+        .await
+    }
+
+    async fn import_person(
+        &self,
+        card: &ParsedPerson,
+        summary: &mut ImportSummary,
+    ) -> Result<ContactId> {
+        let mut owners: Vec<Contact> = Vec::new();
+        for (address, _) in &card.emails {
+            if let Some(owner) = self.by_address(&address.address).await?
+                && owner.state == ContactState::Live
+                && !owners.iter().any(|o| o.id == owner.id)
+            {
+                owners.push(owner);
+            }
+        }
+        let addresses: Vec<EmailAddress> = card.emails.iter().map(|(a, _)| a.clone()).collect();
+        let card_name = card
+            .name
+            .as_deref()
+            .map(str::trim)
+            .filter(|n| !n.is_empty());
+        let person = match owners.as_slice() {
+            [] => {
+                summary.people_created += 1;
+                self.create(card_name, &addresses).await?
+            }
+            [first, rest @ ..] => {
+                summary.people_updated += 1;
+                // The user's own name for any of them wins over the card's.
+                let chosen = owners.iter().find_map(|o| o.name.clone());
+                if let (Some(chosen), Some(card_name)) = (&chosen, card_name)
+                    && chosen != card_name
+                {
+                    summary.name_conflicts += 1;
+                }
+                if !rest.is_empty() {
+                    let name = chosen
+                        .clone()
+                        .or(card_name.map(str::to_owned))
+                        .unwrap_or_else(|| first.display_name().to_owned());
+                    let others: Vec<ContactId> = rest.iter().map(|o| o.id).collect();
+                    self.join(first.id, &others, &name, None).await?;
+                    summary
+                        .joins
+                        .push(owners.iter().map(|o| o.display_name().to_owned()).collect());
+                } else if chosen.is_none()
+                    && let Some(card_name) = card_name
+                {
+                    sql::execute(
+                        self.connection,
+                        "UPDATE contacts SET name = ?2 WHERE id = ?1",
+                        bind![first.id.get(), card_name],
+                    )
+                    .await?;
+                }
+                for address in &addresses {
+                    self.add_address(first.id, address).await?;
+                }
+                first.id
+            }
+        };
+        // Which of the card's addresses it prefers.
+        if let Some((preferred, _)) = card.emails.iter().find(|(_, p)| *p)
+            && let Some(owned) = self.get(person).await?.and_then(|p| {
+                p.addresses
+                    .iter()
+                    .find(|a| a.address.address.eq_ignore_ascii_case(&preferred.address))
+                    .map(|a| a.id)
+            })
+        {
+            self.set_preferred(person, owned).await?;
+        }
+        sql::execute(
+            self.connection,
+            "UPDATE contacts
+                SET source = CASE WHEN source = 'mail' OR ?6 THEN 'import' ELSE source END,
+                    organization = coalesce(organization, ?2),
+                    note = coalesce(note, ?3),
+                    uid = coalesce(?4, uid), vcard = ?5
+              WHERE id = ?1",
+            bind![
+                person.get(),
+                card.organization.clone(),
+                card.note.clone(),
+                card.uid.clone(),
+                card.raw.clone(),
+                owners.is_empty()
+            ],
+        )
+        .await?;
+        refresh(self.connection, person.get()).await?;
+        Ok(person)
+    }
+
+    /// A person's vCard identity and stored card, if any.
+    pub async fn card_of(&self, person: ContactId) -> Result<(Option<String>, Option<String>)> {
+        let found: Option<(Option<String>, Option<String>)> = sql::first(
+            self.connection,
+            "SELECT uid, vcard FROM contacts WHERE id = ?1",
+            [person.get()],
+            |row| Ok((row.col(0)?, row.col(1)?)),
+        )
+        .await?;
+        found.ok_or(Error::NotFound {
+            entity: "contact",
+            id: person.get(),
+        })
+    }
+
+    /// Every live person in `view`, by id, in list order -- what export
+    /// writes when nothing is selected and nothing filtered (FR-050).
+    pub async fn view_ids(&self, view: ContactView) -> Result<Vec<ContactId>> {
+        sql::all_unbounded(
+            self.connection,
+            &format!(
+                "SELECT c.id FROM contacts c WHERE {} ORDER BY c.sort_key, c.id",
+                view_predicate(view)
+            ),
+            (),
+            |row| Ok(ContactId::new(row.col(0)?)),
+        )
+        .await
+    }
+
+    /// What export writes for each of `ids` that is live: the person, their
+    /// `UID` -- given one now, and kept, if they had none, so a second export
+    /// names them the same -- and their stored card.
+    pub async fn export_people(&self, ids: &[ContactId]) -> Result<Vec<ExportRow>> {
+        let ids = ids.to_vec();
+        sql::in_scope(self.connection, |transaction| async move {
+            let contacts = ContactRepository::new(&transaction);
+            let raw: Vec<i64> = ids.iter().map(|id| id.get()).collect();
+            let people = contacts.people_by_ids(&raw).await?;
+            let mut rows = Vec::with_capacity(people.len());
+            for id in ids {
+                let Some(person) = people.iter().find(|p| p.id == id) else {
+                    continue;
+                };
+                if person.state != ContactState::Live {
+                    continue;
+                }
+                let (uid, vcard) = contacts.card_of(id).await?;
+                let uid = match uid {
+                    Some(uid) => uid,
+                    None => {
+                        let uid = new_uid();
+                        sql::execute(
+                            &transaction,
+                            "UPDATE contacts SET uid = ?2 WHERE id = ?1",
+                            bind![id.get(), uid.clone()],
+                        )
+                        .await?;
+                        uid
+                    }
+                };
+                rows.push(ExportRow {
+                    person: person.clone(),
+                    uid,
+                    vcard,
+                });
+            }
+            Ok(rows)
+        })
+        .await
+    }
+
     /// Who owns `address`, or `None` for nobody.
     pub async fn owner_of_address(&self, address: AddressId) -> Result<Option<ContactId>> {
         Ok(owner_of(self.connection, address)
@@ -1416,6 +1614,114 @@ async fn owner_of(connection: &Connection, address: AddressId) -> Result<Option<
         entity: "address",
         id: address.get(),
     })
+}
+
+/// One person as export writes them.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExportRow {
+    /// The person, with their addresses, preferred first.
+    pub person: Contact,
+    /// Their vCard `UID`.
+    pub uid: String,
+    /// The card they were imported from, if they were.
+    pub vcard: Option<String>,
+}
+
+/// A fresh vCard `UID`: a version 4 UUID from the standard library's
+/// per-process random hash keys, so no generator crate is needed for one
+/// identifier per exported person.
+fn new_uid() -> String {
+    use std::hash::{BuildHasher, Hasher};
+    let half = || {
+        let mut hasher = std::collections::hash_map::RandomState::new().build_hasher();
+        hasher.write_u128(
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_or(0, |d| d.as_nanos()),
+        );
+        hasher.finish()
+    };
+    let bytes = (u128::from(half()) << 64 | u128::from(half())).to_be_bytes();
+    let mut b = bytes;
+    b[6] = (b[6] & 0x0f) | 0x40;
+    b[8] = (b[8] & 0x3f) | 0x80;
+    format!(
+        "urn:uuid:{:02x}{:02x}{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}",
+        b[0],
+        b[1],
+        b[2],
+        b[3],
+        b[4],
+        b[5],
+        b[6],
+        b[7],
+        b[8],
+        b[9],
+        b[10],
+        b[11],
+        b[12],
+        b[13],
+        b[14],
+        b[15]
+    )
+}
+
+/// Makes a group card's group, or finds the one already called that, and
+/// puts its members in it: by `UID` among the cards just imported or the
+/// people already here, or by address.
+async fn import_group(
+    connection: &Connection,
+    card: &ParsedGroup,
+    by_uid: &BTreeMap<String, ContactId>,
+    summary: &mut ImportSummary,
+) -> Result<()> {
+    let groups = super::ContactGroupRepository::new(connection);
+    let existing = groups
+        .list()
+        .await?
+        .into_iter()
+        .find(|g| g.name.eq_ignore_ascii_case(card.name.trim()));
+    let group = match existing {
+        Some(group) => group.id,
+        None => {
+            summary.groups_created += 1;
+            let mut group = postio_model::ContactGroup::new(card.name.trim(), Utc::now());
+            group.uid = card.uid.clone();
+            groups.create(&mut group).await?
+        }
+    };
+    sql::execute(
+        connection,
+        "UPDATE contact_groups SET uid = coalesce(uid, ?2), vcard = ?3 WHERE id = ?1",
+        bind![group.get(), card.uid.clone(), card.raw.clone()],
+    )
+    .await?;
+    let contacts = ContactRepository::new(connection);
+    let mut members = Vec::new();
+    for member in &card.members {
+        let found = match member {
+            Member::Uid(uid) => match by_uid.get(uid) {
+                Some(id) => Some(*id),
+                None => {
+                    sql::first(
+                        connection,
+                        "SELECT id FROM contacts WHERE uid = ?1 AND state = 'live'",
+                        [uid.as_str()],
+                        |row| Ok(ContactId::new(row.col(0)?)),
+                    )
+                    .await?
+                }
+            },
+            Member::Address(address) => contacts
+                .by_address(address)
+                .await?
+                .filter(|p| p.state == ContactState::Live)
+                .map(|p| p.id),
+        };
+        members.extend(found);
+    }
+    groups.add_members(group, &members).await?;
+    Ok(())
 }
 
 /// A person's state.

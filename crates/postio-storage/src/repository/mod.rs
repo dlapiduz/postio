@@ -53,7 +53,7 @@ pub(crate) use contacts::list_statements as contact_list_statements;
 pub(crate) use contacts::release_own_address;
 #[cfg(feature = "test-support")]
 pub(crate) use contacts::suggestion_statements as contact_suggestion_statements;
-pub use contacts::{ContactCursor, ContactRepository};
+pub use contacts::{ContactCursor, ContactRepository, ExportRow};
 pub use cross_account::{
     CrossAccountMove, CrossAccountMoveRepository, MovePhase, NewCrossAccountMove,
 };

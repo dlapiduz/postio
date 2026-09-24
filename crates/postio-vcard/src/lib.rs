@@ -15,75 +15,10 @@
 use std::borrow::Cow;
 
 use postio_model::EmailAddress;
+pub use postio_model::card::{Import, Member, ParsedCard, ParsedGroup, ParsedPerson, Skip};
 use vcard::tree::cst::VcardCst;
 use vcard::tree::line::VcardLine;
 use vcard::tree::param::node::VcardParamNode;
-
-/// What a file held: the cards that read, and the ones that did not.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct Import {
-    /// Every card that could be read, in file order.
-    pub cards: Vec<ParsedCard>,
-    /// Every card that could not, with why.
-    pub skipped: Vec<Skip>,
-}
-
-/// A card that was not imported (FR-054).
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Skip {
-    /// Its position in the file, from zero.
-    pub index: usize,
-    /// Why, for the summary.
-    pub reason: String,
-}
-
-/// One card, as Postio reads it.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ParsedCard {
-    /// A person.
-    Person(ParsedPerson),
-    /// A `KIND:group` card.
-    Group(ParsedGroup),
-}
-
-/// A person's card.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ParsedPerson {
-    /// `UID`.
-    pub uid: Option<String>,
-    /// `FN`.
-    pub name: Option<String>,
-    /// Every `EMAIL`, and whether it is the preferred one; exactly one is.
-    pub emails: Vec<(EmailAddress, bool)>,
-    /// `ORG`.
-    pub organization: Option<String>,
-    /// `NOTE`.
-    pub note: Option<String>,
-    /// The card as it arrived, for `contacts.vcard`.
-    pub raw: String,
-}
-
-/// A group card.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ParsedGroup {
-    /// `UID`.
-    pub uid: Option<String>,
-    /// `FN`.
-    pub name: String,
-    /// Its `MEMBER`s.
-    pub members: Vec<Member>,
-    /// The card as it arrived.
-    pub raw: String,
-}
-
-/// A `MEMBER` of a group card.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Member {
-    /// Another card, by its `UID`.
-    Uid(String),
-    /// An address, from a `mailto:` URI.
-    Address(String),
-}
 
 /// A person as the store hands them to export.
 #[derive(Debug, Clone, Copy)]
