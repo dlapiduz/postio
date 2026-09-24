@@ -48,7 +48,7 @@ startup unaffected (< 500 ms) — gated as counts
 (FR-061); the UI never awaits the network; a store write, event, repaint for
 every edit; never load the whole list
 
-**Scale/Scope**: 20,000 distinct correspondents (SC-001); 24 new commands, one
+**Scale/Scope**: 20,000 distinct correspondents (SC-001); 22 new commands, one
 context, one pane occupant, one search field, one crate, six new/changed
 tables
 
@@ -58,8 +58,8 @@ tables
 
 | Principle | How this plan satisfies it | Status |
 |---|---|---|
-| I. Local-first | Every contacts mutation is a `Command` handled in `postio-session` as store transaction → `ContactsChanged` → repaint; no remote half exists (CardDAV out of scope). Destructive commands (`contact_delete`, `contact_group_delete`) are `Recovery::Undo`, and so is every structural edit (R8) | ✅ |
-| II. Keyboard is a system | 24 commands in `postio-core::registry` with bindings, palette entries and cheat-sheet rows (contracts/commands.md); `Context::Contacts` joins every generated surface; list movement/selection reuse existing commands so cursor ≠ selection holds; `docs/keybindings.md` regenerates | ✅ |
+| I. Local-first | Every contacts mutation is a `Command` handled in `postio-session` as store transaction → `ContactsChanged` → repaint; no remote half exists (CardDAV out of scope). The one destructive command (`contact_delete`, which deletes a person or a group by the focused row) is `Recovery::Undo`, and so is every structural edit (R8) | ✅ |
+| II. Keyboard is a system | 22 commands, each with a default binding, in `postio-core::registry` with bindings, palette entries and cheat-sheet rows (contracts/commands.md); `Context::Contacts` joins every generated surface; list movement/selection reuse existing commands so cursor ≠ selection holds; `docs/keybindings.md` regenerates | ✅ |
 | III. One query language | `with:` is one `Field` + one executor arm in the existing language (contracts/query-with.md); no person-level or second language; half-typed values never error | ✅ |
 | IV. Test-first | Every task names its failing test; tests assert what a person sees — the rendered list row's name, the reader header, the completion popover's rows — not what a layer was handed (quickstart.md) | ✅ |
 | V. Performance | Keyset paging, covering indexes per view, term index for filtering; counting assertions on each contacts read path, on sync's statements per address, and "unchanged" on the message-list page (R2, R5, R7) | ✅ |

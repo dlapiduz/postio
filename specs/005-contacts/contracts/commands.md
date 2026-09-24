@@ -12,7 +12,19 @@ otherwise.
 
 `Context::Contacts` — appended to `Context::ALL`. List-scoped: entered when
 the contacts list or detail has focus, left when it loses it. Key layering
-`[Contacts, Global]`. It must be added to every exhaustive match:
+`[Contacts, Global]`.
+
+**One context, dispatch on the focused row.** The registry scopes commands
+by `Context` only; it has no notion of which row inside a surface has focus.
+So the Contacts surface is one context, and the rows it shows have a kind —
+person, address (in the detail), group, suggestion. A command acts on the
+focused row's kind where that kind gives it a meaning (`contact_delete` on a
+group row deletes the group; `contact_join` on a suggestion row joins that
+pair) and on the *selection* where it acts on several people. A command with
+no meaning for the focused row does nothing and shows a one-line hint naming
+the row it wants. This keeps one binding per verb, which is what
+`bindings_do_not_collide_within_a_context` requires, and needs no new
+`Context` variants (research R10). It must be added to every exhaustive match:
 `postio-ui/src/keymap.rs` (`KeyContext`, its layering, `From<Context>`),
 `postio-ui/src/cheatsheet.rs::heading`, `postio-ffi/src/registry.rs`
 (`UiContext`, both `From`s, the round-trip test),
@@ -28,38 +40,41 @@ the contacts list or detail has focus, left when it loses it. Key layering
 |---|---|---|---|---|---|---|
 | `open_contacts` | Contacts | `g c` | any | | None | FR-001 |
 | `contact_new` | New contact | `n` | Contacts | | Undo | FR-020 |
-| `contact_edit` | Edit contact | `Return` on detail / `e` | Contacts | | Undo | FR-021 |
-| `contact_delete` | Delete contact | `#`, `Delete` | Contacts | ✓ | Undo | FR-023 |
-| `contact_restore` | Restore contact | `r` | Contacts (Deleted view) | | Undo | FR-023a |
-| `contact_join` | Join contacts | `J` | Contacts | | Undo | FR-012/13 |
+| `contact_edit` | Edit contact | `e` | Contacts (person) | | Undo | FR-021 |
+| `contact_delete` | Delete | `#`, `Delete` | Contacts (person or group) | ✓ | Undo | FR-023, FR-040 |
+| `contact_restore` | Restore contact | `r` | Contacts (person in the Deleted view) | | Undo | FR-023a |
+| `contact_join` | Join | `m` | Contacts (selection, or a suggestion) | | Undo | FR-012/13, FR-019 |
 | `contact_add_address` | Add address | `+` | Contacts | | Undo | FR-015 |
-| `contact_detach_address` | Detach address | `-` | Contacts (address focused) | | Undo | FR-014 |
-| `contact_set_preferred` | Use this address first | `*` | Contacts (address focused) | | Undo | FR-016 |
-| `contact_show_mail` | Show mail | `Return` on list / `o` | Contacts | | None | FR-007 |
+| `contact_detach_address` | Detach address | `-` | Contacts (address) | | Undo | FR-014 |
+| `contact_set_preferred` | Use this address first | `*` | Contacts (address) | | Undo | FR-016 |
+| `contact_show_mail` | Show mail | `Return`, `o` | Contacts (person or group) | | None | FR-007 |
 | `contact_compose` | Write to | `c` | Contacts | | None | FR-007 |
 | `contacts_filter` | Filter contacts | `/` | Contacts | | None | FR-004 |
 | `contacts_toggle_everyone` | Everyone from mail | `v e` | Contacts | | None | FR-005 |
 | `contacts_toggle_deleted` | Deleted contacts | `v d` | Contacts | | None | FR-023a |
 | `contacts_suggestions` | Possible duplicates | `v s` | Contacts | | None | FR-019 |
-| `suggestion_accept` | Join these | `J` | Contacts (suggestion focused) | | Undo | FR-019 |
-| `suggestion_dismiss` | Not the same person | `x` | Contacts (suggestion focused) | | None¹ | FR-019 |
+| `suggestion_dismiss` | Not the same person | `X` | Contacts (suggestion) | | None¹ | FR-019 |
 | `contact_group_new` | New group | `g n` | Contacts | | Undo | FR-040 |
-| `contact_group_rename` | Rename group | `R` | Contacts (group focused) | | Undo | FR-040 |
-| `contact_group_delete` | Delete group | `#` | Contacts (group focused) | ✓ | Undo | FR-040 |
+| `contact_group_rename` | Rename group | `R` | Contacts (group) | | Undo | FR-040 |
 | `contact_group_add` | Add to group | `l` | Contacts | | Undo | FR-040 |
 | `contact_group_remove` | Remove from group | `L` | Contacts | | Undo | FR-040 |
-| `contacts_import` | Import vCard | — (palette) | Contacts | | None² | FR-050 |
-| `contacts_export` | Export vCard | — (palette) | Contacts | | None | FR-050 |
+| `contacts_import` | Import vCard | `v i` | Contacts | | None² | FR-050 |
+| `contacts_export` | Export vCard | `v x` | Contacts | | None | FR-050 |
 
 ¹ A dismissal is reversible by nothing but is not destructive (it hides a
 hint, not data), so the registry rule does not apply.
 ² Import only adds; its summary says what it joined (research R9).
 
 Existing list-movement and selection commands (`move_down`/`move_up`,
-`toggle_selection`, `extend_selection_*`, `select_all`, `back`) gain
-`Context::Contacts` in their context sets rather than being duplicated —
-cursor and selection stay distinct (Principle II): `J` joins the *selection*.
-`back` (`Esc`) closes the screen (FR-001).
+`toggle_selection` `x`, `extend_selection_*` `J`/`K`, `select_all`, `back`)
+gain `Context::Contacts` in their context sets rather than being duplicated —
+cursor and selection stay distinct (Principle II): `x` marks, `m` joins the
+*selection*. `back` (`Esc`) closes the screen (FR-001). **`undo` (`u`) gains
+`Context::Contacts`** — it is scoped to message surfaces and Accounts today,
+and every contacts edit is undone with it (FR-025).
+
+Every command has a default binding (Principle II;
+`every_command_has_an_id_a_title_and_a_default_binding`). 22 commands.
 
 ## Invocations (`Command` payloads)
 

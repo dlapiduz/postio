@@ -364,7 +364,8 @@ confirm every property Postio does not model is present byte-for-byte.
   made or imported. *(Maintainer, 2026-09-23: "People I've written to".)*
 - **FR-006**: A person's detail view MUST show their name, every address
   (marking the preferred one), organisation, note, groups, when they were
-  last in touch and how many messages involve them.
+  last in touch and how many distinct messages involve any of their
+  addresses.
 - **FR-007**: "Show mail" MUST open the message list on mail from or to any of
   the person's addresses, and "compose to" MUST open a draft addressed to
   their preferred address. The search it opens MUST be an ordinary query in
@@ -468,7 +469,10 @@ confirm every property Postio does not model is present byte-for-byte.
 - **FR-052**: A card with several `EMAIL` properties MUST import as one
   person with several addresses; a group card MUST import as a group.
 - **FR-053**: An imported address that already belongs to a person MUST be
-  joined with that person, not duplicated.
+  joined with that person, not duplicated. A card whose addresses belong to
+  several existing people joins them into one — the file is the user's
+  deliberate statement that they are one person, which is the user action
+  FR-018 asks for — and the import summary MUST list every such join.
 - **FR-054**: Import MUST skip unreadable cards, report how many and why, and
   import the rest.
 
@@ -488,8 +492,9 @@ confirm every property Postio does not model is present byte-for-byte.
   accounts.
 - **Address**: One email address, compared without regard to letter case.
   Belongs to at most one contact. Carries the evidence the mail provides —
-  how many messages, when last seen, the display name last seen, per account
-  — and whether the user has suppressed it.
+  how many messages, when last seen, the display name last seen, per account.
+  It is suppressed — offered nowhere — while the person it belongs to is
+  deleted.
 - **Join suggestion**: A proposed pair of contacts that may be one person,
   with the evidence for it; accepted, dismissed, or pending. A dismissal is
   remembered.
