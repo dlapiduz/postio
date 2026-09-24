@@ -143,7 +143,8 @@ async fn main_loop(
     let size = terminal.size()?;
     let mut app = App::new((size.width, size.height), keys)
         .with_state(state)
-        .with_allowlist(postio_ui::allowlist::RemoteImageAllowList::load());
+        .with_allowlist(postio_ui::allowlist::RemoteImageAllowList::load())
+        .with_downloads(downloads());
 
     let (inputs, arriving) = async_channel::unbounded::<Input>();
     let mut terminal_events = EventStream::new();
@@ -232,6 +233,22 @@ async fn sidebar_contents(client: &Client, saved: Vec<String>) -> crate::sidebar
     }
 }
 
+/// Where saved parts go: `$XDG_DOWNLOAD_DIR`, else `~/Downloads`, else the
+/// home directory, else here.
+fn downloads() -> std::path::PathBuf {
+    let home = std::env::var_os("HOME").map(std::path::PathBuf::from);
+    std::env::var_os("XDG_DOWNLOAD_DIR")
+        .filter(|dir| !dir.is_empty())
+        .map(std::path::PathBuf::from)
+        .or_else(|| {
+            home.as_ref()
+                .map(|home| home.join("Downloads"))
+                .filter(|dir| dir.is_dir())
+        })
+        .or(home)
+        .unwrap_or_else(|| std::path::PathBuf::from("."))
+}
+
 type Screen = Terminal<CrosstermBackend<io::Stdout>>;
 
 /// Do what `update` asked; `true` to leave.
@@ -259,6 +276,48 @@ fn perform(
                         .map_err(|error| error.message().to_owned());
                     let _ = inputs.send(Input::Unsubscribed(answer)).await;
                 });
+            }
+            Effect::ReadParts(message) => {
+                let client = client.clone();
+                let inputs = inputs.clone();
+                tokio::spawn(async move {
+                    let parts = client
+                        .parts(message)
+                        .await
+                        .map_err(|error| error.message().to_owned());
+                    let _ = inputs.send(Input::Parts { message, parts }).await;
+                });
+            }
+            Effect::SavePart {
+                message,
+                attachment,
+                to,
+            } => {
+                let client = client.clone();
+                let inputs = inputs.clone();
+                tokio::spawn(async move {
+                    let open = to.is_none();
+                    let written = match to {
+                        Some(to) => client.save_part(message, attachment, to).await,
+                        None => client.open_part(message, attachment).await,
+                    }
+                    .map_err(|error| error.message().to_owned());
+                    let _ = inputs.send(Input::PartWritten { written, open }).await;
+                });
+            }
+            Effect::Launch(path) => {
+                // The system's opener, detached, its output away from the
+                // terminal. Where there is none -- a server over SSH -- the
+                // notice has already said where the file is.
+                let launched = std::process::Command::new("xdg-open")
+                    .arg(&path)
+                    .stdin(std::process::Stdio::null())
+                    .stdout(std::process::Stdio::null())
+                    .stderr(std::process::Stdio::null())
+                    .spawn();
+                if let Err(error) = launched {
+                    tracing::info!(%error, "no opener for a part");
+                }
             }
             Effect::SaveAllowlist(list) => {
                 if let Err(error) = list.save() {

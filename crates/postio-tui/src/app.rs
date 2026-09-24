@@ -59,6 +59,20 @@ pub enum Input {
     /// The daemon answered an [`Effect::Unsubscribe`]: the list's name, or
     /// why not.
     Unsubscribed(Result<String, String>),
+    /// A message's parts arrived.
+    Parts {
+        /// Whose.
+        message: postio_model::MessageId,
+        /// Its parts, or why there are none.
+        parts: Result<Vec<postio_model::Attachment>, String>,
+    },
+    /// A part was written, to be opened or just kept.
+    PartWritten {
+        /// Where, or why not.
+        written: Result<std::path::PathBuf, String>,
+        /// Whether it was written to be opened.
+        open: bool,
+    },
     /// What the sidebar holds, read afresh.
     Sidebar(crate::sidebar::Contents),
     /// A list was counted again, after an event said it changed.
@@ -101,6 +115,19 @@ pub enum Effect {
     /// Leave the list this message came from; answer with
     /// [`Input::Unsubscribed`].
     Unsubscribe(postio_model::MessageId),
+    /// Read a message's parts and answer with [`Input::Parts`].
+    ReadParts(postio_model::MessageId),
+    /// Write a part to a file, and answer with [`Input::PartWritten`].
+    SavePart {
+        /// Whose.
+        message: postio_model::MessageId,
+        /// Which.
+        attachment: postio_model::ids::AttachmentId,
+        /// Where; `None` for a private copy to open.
+        to: Option<std::path::PathBuf>,
+    },
+    /// Hand a file to the system's opener.
+    Launch(std::path::PathBuf),
     /// Write the remote-image allow list, which the desktop app reads too.
     SaveAllowlist(postio_ui::allowlist::RemoteImageAllowList),
     /// Send a command to the daemon, aimed with [`App::state`].
@@ -162,6 +189,10 @@ pub struct App {
     resting: Option<postio_model::MessageId>,
     /// The first reader line in view.
     reader_top: usize,
+    /// The part the keyboard is on, in the parts of the message being read.
+    part_cursor: usize,
+    /// Where saved parts go.
+    downloads: std::path::PathBuf,
     /// Senders whose remote images are always allowed, shared with the
     /// desktop app (`postio_ui::allowlist`).
     allowlist: postio_ui::allowlist::RemoteImageAllowList,
@@ -177,6 +208,8 @@ pub enum Focus {
     Sidebar,
     /// The reading pane.
     Reader,
+    /// The parts of the message being read.
+    Parts,
 }
 
 impl std::fmt::Debug for App {
@@ -214,7 +247,20 @@ impl App {
             resting: None,
             reader_top: 0,
             allowlist: postio_ui::allowlist::RemoteImageAllowList::default(),
+            part_cursor: 0,
+            downloads: std::path::PathBuf::from("."),
         }
+    }
+
+    /// The same app, saving parts into `downloads`.
+    pub fn with_downloads(mut self, downloads: std::path::PathBuf) -> App {
+        self.downloads = downloads;
+        self
+    }
+
+    /// The part the keyboard is on.
+    pub fn part_cursor(&self) -> usize {
+        self.part_cursor
     }
 
     /// The same app, honouring `allowlist`.
@@ -280,9 +326,19 @@ impl App {
         match self.focus {
             Focus::List => KeyContext::List,
             Focus::Sidebar => KeyContext::Sidebar,
-            // The conversation, as the desktop reading pane is: where `J`/`K`
-            // walk messages and `O` expands.
-            Focus::Reader => KeyContext::Conversation,
+            // As the desktop reading pane is: a conversation of several is
+            // where `J`/`K` walk messages and `O` expands; a message on its
+            // own is the reader, where `p` shows its parts.
+            Focus::Reader
+                if self
+                    .reading
+                    .as_ref()
+                    .is_some_and(|reading| reading.members.len() > 1) =>
+            {
+                KeyContext::Conversation
+            }
+            Focus::Reader => KeyContext::Reader,
+            Focus::Parts => KeyContext::Parts,
         }
     }
 
@@ -435,7 +491,7 @@ impl App {
             "cycle_pane" => {
                 self.focus = match self.focus {
                     Focus::List => Focus::Reader,
-                    Focus::Reader => Focus::Sidebar,
+                    Focus::Reader | Focus::Parts => Focus::Sidebar,
                     Focus::Sidebar => Focus::List,
                 }
             }
@@ -443,10 +499,25 @@ impl App {
                 self.focus = match self.focus {
                     Focus::List => Focus::Sidebar,
                     Focus::Sidebar => Focus::Reader,
-                    Focus::Reader => Focus::List,
+                    Focus::Reader | Focus::Parts => Focus::List,
                 }
             }
+            "back" if self.focus == Focus::Parts => self.focus = Focus::Reader,
             "back" if self.focus != Focus::List => self.focus = Focus::List,
+            "open_parts" => {
+                if !self.current_attachments().is_empty() {
+                    self.focus = Focus::Parts;
+                    self.part_cursor = 0;
+                }
+            }
+            "next_part" => {
+                let last = self.current_attachments().len().saturating_sub(1);
+                self.part_cursor = (self.part_cursor + 1).min(last);
+            }
+            "prev_part" => self.part_cursor = self.part_cursor.saturating_sub(1),
+            "open_part" => return self.write_parts(false, false),
+            "save_part" => return self.write_parts(true, false),
+            "save_all_parts" => return self.write_parts(true, true),
             "expand_all" => self.toggle_folds(),
             "show_images" => return self.allow_images(false),
             "always_show_images" => return self.allow_images(true),
@@ -501,6 +572,48 @@ impl App {
         self.reading
             .as_ref()
             .map(|reading| reading.layout(chrono::Local::now()))
+    }
+
+    /// The attachments of the member being read, and whose they are.
+    fn current_attachments(&self) -> Vec<(postio_model::MessageId, postio_model::Attachment)> {
+        self.reading
+            .as_ref()
+            .and_then(|reading| reading.members.get(reading.current))
+            .map(|member| {
+                member
+                    .attachments()
+                    .into_iter()
+                    .map(|part| (member.id, part.clone()))
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    /// Open the part under the cursor, or save it -- or every part -- to
+    /// the downloads folder.
+    fn write_parts(&mut self, save: bool, all: bool) -> Vec<Effect> {
+        let parts = self.current_attachments();
+        let chosen: Vec<_> = if all {
+            parts
+        } else {
+            parts.into_iter().skip(self.part_cursor).take(1).collect()
+        };
+        chosen
+            .into_iter()
+            .map(|(message, part)| {
+                let name = part
+                    .filename
+                    .as_deref()
+                    .and_then(|name| std::path::Path::new(name).file_name())
+                    .map(|name| name.to_string_lossy().into_owned())
+                    .unwrap_or_else(|| "part".to_owned());
+                Effect::SavePart {
+                    message,
+                    attachment: part.id,
+                    to: save.then(|| self.downloads.join(name)),
+                }
+            })
+            .collect()
     }
 
     /// Allow the current message's remote images: this once, or from its
@@ -595,6 +708,8 @@ impl App {
                         body: None,
                         held_back: Default::default(),
                         images_allowed: false,
+                        has_attachments: row.attachment,
+                        parts: Vec::new(),
                     }],
                     current: 0,
                 });
@@ -683,6 +798,7 @@ impl App {
             return Vec::new();
         };
         member.body = Some(rendered);
+        let ask_for_parts = member.has_attachments && member.parts.is_empty();
         member.held_back = held_back;
         member.images_allowed = member
             .address
@@ -690,7 +806,11 @@ impl App {
             .is_some_and(|address| self.allowlist.is_allowed(address));
         // Bodies arrive in any order; keep the newest message's header in view.
         self.walk_conversation(0);
-        vec![Effect::Redraw]
+        let mut effects = vec![Effect::Redraw];
+        if ask_for_parts {
+            effects.push(Effect::ReadParts(message));
+        }
+        effects
     }
 
     /// Take in the sidebar's contents, keeping the cursor on the list shown.
@@ -867,6 +987,26 @@ pub fn update(app: &mut App, input: Input) -> Vec<Effect> {
         Input::Host(event) => app.hear(&event),
         Input::Sidebar(contents) => app.fill_sidebar(&contents),
         Input::Rested(message) => app.rested(message),
+        Input::Parts { message, parts } => {
+            if let (Ok(parts), Some(reading)) = (parts, app.reading.as_mut())
+                && let Some(member) = reading
+                    .members
+                    .iter_mut()
+                    .find(|member| member.id == message)
+            {
+                member.parts = parts;
+            }
+            vec![Effect::Redraw]
+        }
+        Input::PartWritten { written, open } => match written {
+            Ok(path) if open => {
+                let mut effects = app.say(&format!("Opening {}", path.display()));
+                effects.push(Effect::Launch(path));
+                effects
+            }
+            Ok(path) => app.say(&format!("Saved {}", path.display())),
+            Err(reason) => app.say(&reason),
+        },
         Input::Unsubscribed(answer) => app.say(&match answer {
             Ok(list) => format!("Asked to leave {list}"),
             Err(reason) => reason,
@@ -1608,6 +1748,103 @@ mod tests {
         );
         update(&mut app, Input::Unsubscribed(Ok("news.example.com".into())));
         assert_eq!(app.notice(), Some("Asked to leave news.example.com"));
+    }
+
+    #[test]
+    fn a_messages_parts_are_listed_and_can_be_opened_or_saved() {
+        let mut app =
+            app((160, 40)).with_downloads(std::path::PathBuf::from("/home/ada/Downloads"));
+        let effects = opened(&mut app, 1);
+        let (generation, page) = effects
+            .iter()
+            .find_map(|effect| match effect {
+                Effect::Fetch {
+                    generation, page, ..
+                } => Some((*generation, *page)),
+                _ => None,
+            })
+            .unwrap();
+        let mut with_a_file = row(0);
+        with_a_file.attachment = true;
+        update(
+            &mut app,
+            Input::Page {
+                generation,
+                page,
+                rows: Ok(Page {
+                    total: 1,
+                    rows: vec![with_a_file],
+                }),
+            },
+        );
+        let message = row(0).id;
+        update(&mut app, Input::Rested(message));
+        let effects = update(
+            &mut app,
+            Input::Body {
+                message,
+                answer: Ok(postio_client::protocol::Body::Ready {
+                    body: postio_model::MessageBody {
+                        text: Some("See attached.".into()),
+                        html: None,
+                    },
+                    encoding_problems: false,
+                }),
+            },
+        );
+        assert!(effects.contains(&Effect::ReadParts(message)), "{effects:?}");
+
+        let mut report = postio_model::Attachment::new(message, "application/pdf", 2_048);
+        report.id = postio_model::ids::AttachmentId::new(4);
+        report.filename = Some("report.pdf".into());
+        update(
+            &mut app,
+            Input::Parts {
+                message,
+                parts: Ok(vec![report]),
+            },
+        );
+        let drawn = reader_text(&app);
+        assert!(drawn.contains("report.pdf"), "{drawn}");
+        assert!(
+            drawn.contains("2.0 KB") || drawn.contains("2 KB"),
+            "{drawn}"
+        );
+
+        update(&mut app, key(KeyCode::Tab, KeyModifiers::NONE));
+        update(&mut app, press('p'));
+        assert_eq!(app.focus(), Focus::Parts);
+        let effects = update(&mut app, key(KeyCode::Enter, KeyModifiers::NONE));
+        assert!(
+            effects.contains(&Effect::SavePart {
+                message,
+                attachment: postio_model::ids::AttachmentId::new(4),
+                to: None,
+            }),
+            "Enter opens: {effects:?}"
+        );
+        let effects = update(&mut app, press('s'));
+        assert!(
+            effects.contains(&Effect::SavePart {
+                message,
+                attachment: postio_model::ids::AttachmentId::new(4),
+                to: Some(std::path::PathBuf::from("/home/ada/Downloads/report.pdf")),
+            }),
+            "s saves to Downloads: {effects:?}"
+        );
+
+        let effects = update(
+            &mut app,
+            Input::PartWritten {
+                written: Ok(std::path::PathBuf::from(
+                    "/run/user/1000/postio/parts/1-4/report.pdf",
+                )),
+                open: true,
+            },
+        );
+        assert!(effects.contains(&Effect::Launch(std::path::PathBuf::from(
+            "/run/user/1000/postio/parts/1-4/report.pdf"
+        ))));
     }
 
     #[test]

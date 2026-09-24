@@ -33,6 +33,23 @@ pub struct Member {
     /// Whether its remote images are allowed: this once, or by sender. The
     /// terminal draws no image either way; this is what the notice says.
     pub images_allowed: bool,
+    /// Whether it has attachments, as its row says; its parts are asked for
+    /// only then.
+    pub has_attachments: bool,
+    /// Its parts, once asked for.
+    pub parts: Vec<postio_model::Attachment>,
+}
+
+impl Member {
+    /// The parts a person would call attachments: named, or not inline.
+    pub fn attachments(&self) -> Vec<&postio_model::Attachment> {
+        self.parts
+            .iter()
+            .filter(|part| {
+                part.filename.is_some() || part.disposition != postio_model::Disposition::Inline
+            })
+            .collect()
+    }
 }
 
 impl Member {
@@ -46,6 +63,8 @@ impl Member {
             body: None,
             held_back: Default::default(),
             images_allowed: false,
+            has_attachments: summary.has_attachments,
+            parts: Vec::new(),
         }
     }
 }
@@ -100,6 +119,14 @@ impl Reading {
                 Some(body) => lines.extend(body.lines()),
                 None => lines.push(Line::raw("…")),
             }
+            for part in member.attachments() {
+                let name = SafeText::new(part.filename.as_deref().unwrap_or(&part.mime_type));
+                lines.push(Line::raw(format!(
+                    "📎 {} · {}",
+                    name.as_str(),
+                    postio_ui::format::human_size(part.size)
+                )));
+            }
         }
         (lines, headers)
     }
@@ -144,6 +171,8 @@ mod tests {
             body: body.map(crate::reader::from_text),
             held_back: Default::default(),
             images_allowed: false,
+            has_attachments: false,
+            parts: Vec::new(),
         }
     }
 
