@@ -276,6 +276,9 @@ fn enums_and_value_objects_round_trip() {
 fn ids_serialize_transparently() {
     assert_eq!(serde_json::to_string(&AccountId::new(4)).unwrap(), "4");
     assert_eq!(serde_json::to_string(&Uid::new(7)).unwrap(), "7");
+    // An address is its own entity now that people own addresses
+    // (specs/005-contacts R1): its id is as opaque as any other.
+    assert_eq!(serde_json::to_string(&AddressId::new(9)).unwrap(), "9");
     assert_eq!(
         serde_json::to_string(&RfcMessageId::new("<a@b>")).unwrap(),
         "\"<a@b>\""

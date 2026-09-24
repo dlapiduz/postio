@@ -47,9 +47,9 @@ plus a row in `crates/postio-app/tests/app_suite/main.rs`'s `CASES`.
 
 ## Phase 1: Setup
 
-- [ ] T001 Create the leaf crate `crates/postio-vcard/` (`Cargo.toml`, `src/lib.rs` with a module doc citing research R9), add it to the workspace members in the root `Cargo.toml`, and depend on `vcard-rs = { version = "=0.4.0", default-features = false, features = ["parser", "base64", "quoted-printable", "encoding-rs"] }` (confirm feature names against the crate's `Cargo.toml` and drop any the parser does not need). Proof: `cargo tree -p postio-vcard -e normal` lists no serde, chrono, tokio or database crate
-- [ ] T002 Add a `postio-vcard` rule to `scripts/checks/check-crate-boundaries.py` banning the database engine (`turso`, and `rusqlite` so the rule survives a rename), `gtk4` and `tokio`, with the check's own test case — mirror how `postio-search` and `postio-body` are declared pure leaves
-- [ ] T003 [P] Add `AddressId` to `crates/postio-model/src/ids.rs` with the `local_id!` macro beside `ContactId` (`:112`), re-export it from `crates/postio-model/src/lib.rs`, and extend `crates/postio-model/tests/model_suite/serde_roundtrip.rs` with it — red first on the missing type
+- [X] T001 Create the leaf crate `crates/postio-vcard/` (`Cargo.toml`, `src/lib.rs` with a module doc citing research R9), add it to the workspace members in the root `Cargo.toml`, and depend on `vcard-rs = { version = "=0.4.0", default-features = false, features = ["parser", "base64", "quoted-printable", "encoding-rs"] }` (confirm feature names against the crate's `Cargo.toml` and drop any the parser does not need). Proof: `cargo tree -p postio-vcard -e normal` lists no serde, chrono, tokio or database crate
+- [X] T002 Add a `postio-vcard` rule to `scripts/checks/check-crate-boundaries.py` banning the database engine (`turso`, and `rusqlite` so the rule survives a rename), `gtk4` and `tokio`, with the check's own test case — mirror how `postio-search` and `postio-body` are declared pure leaves
+- [X] T003 [P] Add `AddressId` to `crates/postio-model/src/ids.rs` with the `local_id!` macro beside `ContactId` (`:112`), re-export it from `crates/postio-model/src/lib.rs`, and extend `crates/postio-model/tests/model_suite/serde_roundtrip.rs` with it — red first on the missing type
 
 ---
 

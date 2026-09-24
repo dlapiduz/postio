@@ -114,6 +114,14 @@ local_id!(
     ContactId
 );
 local_id!(
+    /// Identifies one email address, as the store knows it: one per
+    /// normalised address, whoever it belongs to.
+    ///
+    /// A [`Contact`](crate::Contact) owns one or more of these, and an
+    /// address belongs to at most one contact (specs/005-contacts R1).
+    AddressId
+);
+local_id!(
     /// Identifies a [`Label`](crate::Label).
     LabelId
 );
