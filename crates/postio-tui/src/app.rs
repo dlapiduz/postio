@@ -143,6 +143,8 @@ pub struct App {
     reading: Option<(postio_model::MessageId, crate::reader::Rendered)>,
     /// The message the cursor was last seen resting towards.
     resting: Option<postio_model::MessageId>,
+    /// The first reader line in view.
+    reader_top: usize,
 }
 
 /// Which pane the keyboard is in.
@@ -153,6 +155,8 @@ pub enum Focus {
     List,
     /// The sidebar.
     Sidebar,
+    /// The reading pane.
+    Reader,
 }
 
 impl std::fmt::Debug for App {
@@ -188,7 +192,13 @@ impl App {
             folders: Vec::new(),
             reading: None,
             resting: None,
+            reader_top: 0,
         }
+    }
+
+    /// The first reader line in view.
+    pub fn reader_top(&self) -> usize {
+        self.reader_top
     }
 
     /// The row for `message`, if it is resident.
@@ -245,6 +255,9 @@ impl App {
         match self.focus {
             Focus::List => KeyContext::List,
             Focus::Sidebar => KeyContext::Sidebar,
+            // The conversation, as the desktop reading pane is: where `J`/`K`
+            // walk messages and `O` expands.
+            Focus::Reader => KeyContext::Conversation,
         }
     }
 
@@ -394,13 +407,24 @@ impl App {
                 .select_all(postio_ui::selection::Reach::default()),
             "quit" => return vec![Effect::Quit],
             "focus_sidebar" => self.focus = Focus::Sidebar,
-            "cycle_pane" | "cycle_pane_back" => {
+            "cycle_pane" => {
                 self.focus = match self.focus {
-                    Focus::List => Focus::Sidebar,
+                    Focus::List => Focus::Reader,
+                    Focus::Reader => Focus::Sidebar,
                     Focus::Sidebar => Focus::List,
                 }
             }
-            "back" if self.focus == Focus::Sidebar => self.focus = Focus::List,
+            "cycle_pane_back" => {
+                self.focus = match self.focus {
+                    Focus::List => Focus::Sidebar,
+                    Focus::Sidebar => Focus::Reader,
+                    Focus::Reader => Focus::List,
+                }
+            }
+            "back" if self.focus != Focus::List => self.focus = Focus::List,
+            "expand_all" => self.toggle_folds(),
+            "scroll_reader_down" => self.scroll_reader(1),
+            "scroll_reader_up" => self.scroll_reader(-1),
             "back" => self.selection.clear(),
             "next_folder" => return self.walk_sidebar(1),
             "prev_folder" => return self.walk_sidebar(-1),
@@ -427,6 +451,38 @@ impl App {
         let (quiet, _) = postio_core::bridge::event_channel();
         postio_core::aim::mirror(&self.state, &quiet, &aim);
         vec![Effect::Send(command)]
+    }
+
+    /// Expand every fold in the message, or fold them all again.
+    fn toggle_folds(&mut self) {
+        let Some((_, rendered)) = self.reading.as_mut() else {
+            return;
+        };
+        let any_folded = rendered
+            .blocks
+            .iter()
+            .any(|block| matches!(block, crate::reader::Block::Fold { folded: true, .. }));
+        for block in &mut rendered.blocks {
+            if let crate::reader::Block::Fold { folded, .. } = block {
+                *folded = !any_folded;
+            }
+        }
+    }
+
+    /// Scroll the reader by `pages` screenfuls, overlapping two lines so the
+    /// eye keeps its place.
+    fn scroll_reader(&mut self, pages: isize) {
+        let Some((_, rendered)) = self.reading.as_ref() else {
+            return;
+        };
+        let length = rendered.lines().len();
+        let page = usize::from(self.size.1.saturating_sub(6)).max(1);
+        let step = page.saturating_sub(2).max(1);
+        self.reader_top = if pages >= 0 {
+            (self.reader_top + step * pages.unsigned_abs()).min(length.saturating_sub(1))
+        } else {
+            self.reader_top.saturating_sub(step * pages.unsigned_abs())
+        };
     }
 
     /// The cursor stayed: read the body, if it is still the one under it.
@@ -477,6 +533,7 @@ impl App {
             Err(reason) => crate::reader::from_text(&reason),
         };
         self.reading = Some((message, rendered));
+        self.reader_top = 0;
         vec![Effect::Redraw]
     }
 
@@ -1145,6 +1202,71 @@ mod tests {
             },
         );
         assert!(app.reading().is_none());
+    }
+
+    fn reading_a_long_quoted_reply(app: &mut App) {
+        let opening = opened(app, 5);
+        serve(app, opening);
+        let message = row(0).id;
+        update(app, Input::Rested(message));
+        let mut text = String::from("Top line\n");
+        for n in 0..80 {
+            text.push_str(&format!("line {n}\n"));
+        }
+        text.push_str("> quoted words\n");
+        update(
+            app,
+            Input::Body {
+                message,
+                answer: Ok(postio_client::protocol::Body::Ready {
+                    body: postio_model::MessageBody {
+                        text: Some(text),
+                        html: None,
+                    },
+                    encoding_problems: false,
+                }),
+            },
+        );
+    }
+
+    fn reader_text(app: &App) -> String {
+        app.reading()
+            .unwrap()
+            .1
+            .lines()
+            .iter()
+            .map(|line| {
+                line.spans
+                    .iter()
+                    .map(|span| span.content.to_string())
+                    .collect::<String>()
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    #[test]
+    fn in_the_reader_o_expands_the_quoted_history_and_folds_it_again() {
+        let mut app = app((160, 40));
+        reading_a_long_quoted_reply(&mut app);
+        assert!(!reader_text(&app).contains("quoted words"));
+        update(&mut app, key(KeyCode::Tab, KeyModifiers::NONE));
+        assert_eq!(app.focus(), Focus::Reader);
+        update(&mut app, press('O'));
+        assert!(reader_text(&app).contains("quoted words"), "expanded");
+        update(&mut app, press('O'));
+        assert!(!reader_text(&app).contains("quoted words"), "folded again");
+    }
+
+    #[test]
+    fn space_scrolls_the_reader_a_screen_at_a_time() {
+        let mut app = app((160, 40));
+        reading_a_long_quoted_reply(&mut app);
+        assert_eq!(app.reader_top(), 0);
+        update(&mut app, press(' '));
+        assert!(app.reader_top() > 20, "a screenful: {}", app.reader_top());
+        update(&mut app, key(KeyCode::PageUp, KeyModifiers::NONE));
+        assert_eq!(app.reader_top(), 0);
     }
 
     #[test]
