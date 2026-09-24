@@ -73,6 +73,33 @@ async fn a_draft_round_trips_with_its_recipients_and_attachments() {
 }
 
 #[tokio::test]
+async fn the_markdown_a_draft_was_written_in_survives_saving_and_can_be_dropped() {
+    // specs/005-tui-frontend data-model: the terminal reopens what was typed,
+    // and a save from a frontend that does not write Markdown clears it, so
+    // the terminal then reopens from the HTML rather than stale Markdown.
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    let account = test_support::account(&connection).await;
+    let drafts = DraftRepository::new(&connection);
+
+    let mut draft = a_draft(account.id);
+    draft.body_markdown = Some("Half a **sentence**".to_owned());
+    let id = drafts.save(&mut draft).await.expect("insert");
+    let stored = drafts.get(id).await.expect("get").expect("the draft");
+    assert_eq!(stored.body_markdown.as_deref(), Some("Half a **sentence**"));
+
+    draft.body_markdown = Some("A whole sentence.".to_owned());
+    drafts.save(&mut draft).await.expect("update");
+    let stored = drafts.get(id).await.expect("get").expect("the draft");
+    assert_eq!(stored.body_markdown.as_deref(), Some("A whole sentence."));
+
+    draft.body_markdown = None;
+    drafts.save(&mut draft).await.expect("update");
+    let stored = drafts.get(id).await.expect("get").expect("the draft");
+    assert_eq!(stored.body_markdown, None);
+}
+
+#[tokio::test]
 async fn the_body_of_a_draft_is_stored_inline_and_not_in_the_blob_store() {
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");

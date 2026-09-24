@@ -248,6 +248,9 @@ CREATE TABLE "drafts" (
     -- `repository/drafts.rs`.
     body_text               TEXT,
     body_html               TEXT,
+    -- The Markdown typed in the terminal composer, exactly; NULL when a
+    -- frontend that does not write Markdown saved the draft last.
+    body_markdown           TEXT,
 
     state                   TEXT    NOT NULL DEFAULT 'editing'
                                     CHECK (state IN ('editing', 'queued', 'sending',

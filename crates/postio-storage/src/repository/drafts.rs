@@ -68,7 +68,7 @@ pub struct DraftRepository<'a> {
 const DRAFT_COLUMNS: &str = "\
 id, account_id, identity_id, kind, in_reply_to_message_id, thread_id, subject, body_text,
 body_html, state, uid, uid_validity, mod_seq, remote_id, created_at, updated_at,
-rfc_message_id, forwarded_message_id";
+rfc_message_id, forwarded_message_id, body_markdown";
 
 impl<'a> DraftRepository<'a> {
     /// Borrows a connection.
@@ -107,7 +107,8 @@ impl<'a> DraftRepository<'a> {
                             remote_id = coalesce(?14, remote_id),
                             updated_at = ?15,
                             rfc_message_id = ?16,
-                            forwarded_message_id = ?17
+                            forwarded_message_id = ?17,
+                            body_markdown = ?18
                       WHERE id = ?1",
                     bind![
                         draft.id.get(),
@@ -134,6 +135,7 @@ impl<'a> DraftRepository<'a> {
                         to_millis(draft.updated_at),
                         reservation_for(draft),
                         optional_message(draft.forwarded_from),
+                        draft.body_markdown,
                     ],
                 )
                 .await?;
@@ -150,9 +152,9 @@ impl<'a> DraftRepository<'a> {
                     "INSERT INTO drafts (account_id, identity_id, kind, in_reply_to_message_id,
                                          thread_id, subject, body_text, body_html, state, uid,
                                          uid_validity, mod_seq, remote_id, created_at, updated_at,
-                                         rfc_message_id, forwarded_message_id)
+                                         rfc_message_id, forwarded_message_id, body_markdown)
                      VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15,
-                             ?16, ?17)",
+                             ?16, ?17, ?18)",
                     bind![
                         account_id,
                         optional_identity(draft.identity_id),
@@ -178,6 +180,7 @@ impl<'a> DraftRepository<'a> {
                         to_millis(draft.updated_at),
                         reservation_for(draft),
                         optional_message(draft.forwarded_from),
+                        draft.body_markdown,
                     ],
                 )
                 .await?;
@@ -1187,6 +1190,7 @@ fn read_draft(row: &Row) -> Result<Draft> {
             remote_id: row.col::<Option<String>>(13)?.map(RemoteId::new),
         },
         rfc_message_id: row.col::<Option<String>>(16)?.map(RfcMessageId::new),
+        body_markdown: row.col(18)?,
         created_at: from_millis(row.col(14)?),
         updated_at: from_millis(row.col(15)?),
     })

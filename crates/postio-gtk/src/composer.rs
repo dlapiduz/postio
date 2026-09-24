@@ -1197,6 +1197,10 @@ impl Composer {
         draft.bcc = parse_list(&imp.bcc.text());
         draft.subject = imp.subject.text().to_string();
         draft.body = self.body();
+        // This composer writes HTML, not Markdown: once it holds the body, any
+        // Markdown the terminal left describes a message that no longer
+        // exists, and the terminal reopening from it would undo this edit.
+        draft.body_markdown = None;
         draft
     }
 

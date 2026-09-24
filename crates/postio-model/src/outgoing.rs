@@ -201,7 +201,10 @@ fn assemble(
         // it just always spells its own `Content-Type` as bare
         // `text/plain`; this is that same assignment with the header
         // `flowed_text_part` built instead.
-        builder.text_body = Some(flowed_text_part(text.clone()));
+        builder.text_body = Some(match draft.body_markdown {
+            Some(_) => fixed_text_part(text.clone()),
+            None => flowed_text_part(text.clone()),
+        });
     }
     if let Some(html) = &draft.body.html {
         builder = builder.html_body(html.clone());
@@ -355,6 +358,18 @@ fn flowed_text_part(text: String) -> MbMimePart<'static> {
     )
 }
 
+/// The `text/plain` MIME part for a draft written in Markdown.
+///
+/// Fixed, not flowed: the text is the Markdown as typed (FR-021), whose line
+/// breaks carry meaning -- a list item, a line of code, a hard break -- and a
+/// reader honouring `format=flowed` would join the lines that depend on them.
+fn fixed_text_part(text: String) -> MbMimePart<'static> {
+    MbMimePart::new(
+        MbContentType::new("text/plain").attribute("charset", "utf-8"),
+        MbBodyPart::Text(text.into()),
+    )
+}
+
 /// A non-empty address list, or `None` — mail-builder writes a header even for
 /// an empty list, and a message has no reason to carry an empty `Cc`.
 /// The group name a message with nothing to name is addressed to.
@@ -464,6 +479,49 @@ mod tests {
         // is additive, not a second way to spell the same part.
         let parsed = mime::parse(&built.raw);
         assert_eq!(parsed.body.text.as_deref(), Some("Looking now."));
+    }
+
+    #[test]
+    fn a_draft_written_in_markdown_sends_its_markdown_as_fixed_text() {
+        // FR-021: the text part of a message written in the terminal is the
+        // Markdown as typed. Markdown's line breaks are meaningful -- a
+        // list item, a code line -- so a reader that reflowed it as
+        // format=flowed would join the lines it depends on.
+        let markdown = "- one\n- two\n\n    let x = 1;\n".to_owned();
+        let mut draft = draft();
+        draft.body.text = Some(markdown.clone());
+        draft.body.html = Some("<ul><li>one</li><li>two</li></ul>".to_owned());
+        draft.body_markdown = Some(markdown.clone());
+
+        let built = build(&draft, &identity("ada@example.com"), &[], None);
+        let raw = String::from_utf8_lossy(&built.raw).to_ascii_lowercase();
+
+        assert!(
+            !raw.contains("flowed"),
+            "a markdown text part is fixed: {raw}"
+        );
+        let parsed = mime::parse(&built.raw);
+        // The wire spells line ends CRLF; the lines themselves are the ones typed.
+        let text = parsed.body.text.unwrap_or_default().replace("\r\n", "\n");
+        assert_eq!(text, markdown);
+        assert!(parsed.body.html.is_some(), "the HTML part still travels");
+    }
+
+    #[test]
+    fn a_markdown_draft_with_nothing_to_style_is_text_alone() {
+        // US3 scenario 3: plain words send one text/plain part.
+        let mut draft = draft();
+        draft.body_markdown = Some("Looking now.".to_owned());
+
+        let built = build(&draft, &identity("ada@example.com"), &[], None);
+        let raw = String::from_utf8_lossy(&built.raw).to_ascii_lowercase();
+
+        assert!(!raw.contains("text/html"), "no HTML part: {raw}");
+        assert!(
+            !raw.contains("multipart"),
+            "one part, not an alternative: {raw}"
+        );
+        assert!(!raw.contains("flowed"), "{raw}");
     }
 
     #[test]

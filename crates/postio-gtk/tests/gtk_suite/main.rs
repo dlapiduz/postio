@@ -58,6 +58,7 @@ mod gtk_composer_header;
 mod gtk_composer_inline_image;
 mod gtk_composer_keymap;
 mod gtk_composer_many;
+mod gtk_composer_markdown;
 mod gtk_composer_recipient_select;
 mod gtk_composer_recipients;
 mod gtk_composer_reply;
@@ -1192,6 +1193,10 @@ const CASES: &[(&str, fn())] = &[
     (
         "gtk_composer_confirms::the_composer_asks_before_the_two_things_it_cannot_take_back",
         gtk_composer_confirms::the_composer_asks_before_the_two_things_it_cannot_take_back as fn(),
+    ),
+    (
+        "gtk_composer_markdown::a_draft_the_desktop_saves_carries_no_markdown",
+        gtk_composer_markdown::a_draft_the_desktop_saves_carries_no_markdown as fn(),
     ),
     (
         "gtk_composer_many::a_second_draft_moves_the_first_into_a_window_of_its_own",

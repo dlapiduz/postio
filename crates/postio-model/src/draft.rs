@@ -154,6 +154,17 @@ pub struct Draft {
     pub subject: String,
     /// Body being composed.
     pub body: MessageBody,
+    /// The Markdown the user typed, when the draft was written in the
+    /// terminal composer; `None` when a frontend that does not author
+    /// Markdown saved it last.
+    ///
+    /// `body` still carries what is sent -- this Markdown as the text part and
+    /// its rendering as the HTML part. This is kept beside it so the terminal
+    /// reopens exactly what was typed rather than a translation back from the
+    /// HTML, and so the text part is sent `format=fixed` (see
+    /// [`outgoing::build`](crate::outgoing::build)).
+    #[serde(default)]
+    pub body_markdown: Option<String>,
     /// Attachments added so far. These carry
     /// [`MessageId::UNASSIGNED`](crate::MessageId::UNASSIGNED) as their owner
     /// until the draft becomes a sent message.
@@ -203,6 +214,7 @@ impl Draft {
             bcc: Vec::new(),
             subject: String::new(),
             body: MessageBody::default(),
+            body_markdown: None,
             attachments: Vec::new(),
             state: DraftState::Editing,
             rfc_message_id: None,
