@@ -1,0 +1,342 @@
+//! The client a frontend holds.
+//!
+//! Commands go down, events come up, and list reads are answered by the
+//! store's one owner. [`Client`] implements [`MailStore`], so a frontend
+//! holds it behind the same `Arc<dyn MailStore>` it held when the store was
+//! in-process, and a read site cannot tell the difference (ADR 0041).
+//!
+//! The transport is a trait: the socket in production, channels into an
+//! in-process host for `postio-ffi` and the integration suites, a fake in
+//! the tests below.
+
+use std::future::Future;
+use std::pin::Pin;
+use std::sync::Arc;
+
+use postio_core::{Command, EventEnvelope, InvocationId};
+use postio_model::ListScope;
+use postio_model::ids::{AccountId, MailboxId, MessageId};
+use postio_model::listing::{
+    DraftCounts, ListPage, ListRows, MailStore, MessageSummary, PageRequest, Read, StoreError,
+};
+use postio_model::mailbox::Mailbox;
+
+use crate::counting::Counts;
+use crate::protocol::{Req, Resp};
+
+/// The host is not answering: it exited, or the connection broke.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+#[error("Postio's background service is not answering.")]
+pub struct Disconnected;
+
+/// A command that was not taken.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+pub enum SendError {
+    /// The host's runtime has stopped.
+    #[error("Postio is shutting down and did not take that.")]
+    Stopped,
+    /// The host is not answering.
+    #[error(transparent)]
+    Disconnected(#[from] Disconnected),
+}
+
+/// One request's answer, awaited.
+pub type Call<'a> = Pin<Box<dyn Future<Output = Result<Resp, Disconnected>> + Send + 'a>>;
+
+/// How requests reach the host and events come back.
+pub trait Transport: Send + Sync + 'static {
+    /// Ask, and await the one answer.
+    fn call(&self, request: Req) -> Call<'_>;
+
+    /// Ask without waiting for the answer. For facts a later read acts on,
+    /// said from a synchronous caller.
+    fn post(&self, request: Req);
+
+    /// Every event the host sends this client, in order.
+    fn events(&self) -> async_channel::Receiver<EventEnvelope>;
+}
+
+impl Req {
+    /// The family a round trip is counted under.
+    pub fn family(&self) -> &'static str {
+        match self {
+            Req::Send(_) => "Send",
+            Req::SendTracked(_) => "SendTracked",
+            Req::Page(_) => "Page",
+            Req::Count(_) => "Count",
+            Req::Rows(_) => "Rows",
+            Req::RowsIn(..) => "RowsIn",
+            Req::NoteRemoved(..) => "NoteRemoved",
+            Req::Mailboxes(_) => "Mailboxes",
+            Req::DraftCounts(_) => "DraftCounts",
+        }
+    }
+}
+
+/// What a frontend holds.
+#[derive(Clone)]
+pub struct Client {
+    transport: Arc<dyn Transport>,
+    counts: Arc<Counts>,
+}
+
+impl std::fmt::Debug for Client {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Client").finish_non_exhaustive()
+    }
+}
+
+impl Client {
+    /// A client over `transport`.
+    pub fn new(transport: Arc<dyn Transport>) -> Self {
+        Client {
+            transport,
+            counts: Arc::new(Counts::default()),
+        }
+    }
+
+    /// The round trips this client has made.
+    pub fn counts(&self) -> &Counts {
+        &self.counts
+    }
+
+    /// Every event the host sends this client.
+    pub fn events(&self) -> async_channel::Receiver<EventEnvelope> {
+        self.transport.events()
+    }
+
+    async fn call(&self, request: Req) -> Result<Resp, Disconnected> {
+        self.counts.record(request.family());
+        self.transport.call(request).await
+    }
+
+    /// A read: the answer, or the host's sentence for why there is none.
+    async fn read<T>(
+        &self,
+        request: Req,
+        asked: &str,
+        take: impl FnOnce(Resp) -> Option<T>,
+    ) -> Result<T, StoreError> {
+        match self.call(request).await {
+            Ok(Resp::Failed(error)) => Err(error),
+            Ok(answer) => take(answer).ok_or_else(|| unexpected(asked)),
+            Err(disconnected) => Err(StoreError::new(disconnected.to_string())),
+        }
+    }
+
+    /// Run a command. Its effects arrive as events.
+    pub async fn send(&self, command: Command) -> Result<(), SendError> {
+        match self.call(Req::Send(command)).await? {
+            Resp::Stopped => Err(SendError::Stopped),
+            _ => Ok(()),
+        }
+    }
+
+    /// Run a command and learn the id its events will carry.
+    pub async fn send_tracked(&self, command: Command) -> Result<InvocationId, SendError> {
+        match self.call(Req::SendTracked(command)).await? {
+            Resp::Tracked(id) => Ok(id),
+            _ => Err(SendError::Stopped),
+        }
+    }
+}
+
+/// A read's answer that was not the kind asked for: a bug on one side, said
+/// as a sentence rather than a panic in the reader.
+fn unexpected(asked: &str) -> StoreError {
+    StoreError::new(format!(
+        "Postio's background service gave an unexpected answer to {asked}."
+    ))
+}
+
+impl MailStore for Client {
+    fn list_page(&self, request: PageRequest) -> Read<'_, ListPage> {
+        Box::pin(
+            self.read(Req::Page(request), "a page", |answer| match answer {
+                Resp::Page(page) => Some(page),
+                _ => None,
+            }),
+        )
+    }
+
+    fn list_count(&self, scope: ListScope) -> Read<'_, u32> {
+        Box::pin(
+            self.read(Req::Count(scope), "a count", |answer| match answer {
+                Resp::Count(count) => Some(count),
+                _ => None,
+            }),
+        )
+    }
+
+    fn message_rows(&self, ids: Vec<MessageId>) -> Read<'_, Vec<MessageSummary>> {
+        Box::pin(self.read(Req::Rows(ids), "rows", |answer| match answer {
+            Resp::Rows(rows) => Some(rows),
+            _ => None,
+        }))
+    }
+
+    fn rows_in(&self, scope: ListScope, ids: Vec<MessageId>) -> Read<'_, ListRows> {
+        Box::pin(
+            self.read(Req::RowsIn(scope, ids), "rows", |answer| match answer {
+                Resp::ListRows(rows) => Some(rows),
+                _ => None,
+            }),
+        )
+    }
+
+    fn note_removed(&self, mailbox: MailboxId, messages: Vec<MessageId>) {
+        let request = Req::NoteRemoved(mailbox, messages);
+        self.counts.record(request.family());
+        self.transport.post(request);
+    }
+
+    fn mailboxes(&self, account: AccountId) -> Read<'_, Vec<Mailbox>> {
+        Box::pin(
+            self.read(Req::Mailboxes(account), "folders", |answer| match answer {
+                Resp::Mailboxes(mailboxes) => Some(mailboxes),
+                _ => None,
+            }),
+        )
+    }
+
+    fn draft_counts(&self, account: AccountId) -> Read<'_, DraftCounts> {
+        Box::pin(self.read(
+            Req::DraftCounts(account),
+            "draft counts",
+            |answer| match answer {
+                Resp::DraftCounts(counts) => Some(counts),
+                _ => None,
+            },
+        ))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Mutex;
+
+    use postio_model::listing::MessagePage;
+
+    use super::*;
+
+    /// Records what it was asked and answers from a script, oldest first.
+    struct Fake {
+        asked: Mutex<Vec<Req>>,
+        posted: Mutex<Vec<Req>>,
+        answers: Mutex<Vec<Result<Resp, Disconnected>>>,
+        events: async_channel::Receiver<EventEnvelope>,
+    }
+
+    fn client(answers: Vec<Result<Resp, Disconnected>>) -> (Client, Arc<Fake>) {
+        let (_tx, events) = async_channel::unbounded();
+        let fake = Arc::new(Fake {
+            asked: Mutex::new(Vec::new()),
+            posted: Mutex::new(Vec::new()),
+            answers: Mutex::new(answers),
+            events,
+        });
+        (Client::new(fake.clone()), fake)
+    }
+
+    impl Transport for Fake {
+        fn call(&self, request: Req) -> Call<'_> {
+            self.asked.lock().unwrap().push(request);
+            let answer = self.answers.lock().unwrap().remove(0);
+            Box::pin(async move { answer })
+        }
+        fn post(&self, request: Req) {
+            self.posted.lock().unwrap().push(request);
+        }
+        fn events(&self) -> async_channel::Receiver<EventEnvelope> {
+            self.events.clone()
+        }
+    }
+
+    fn scope() -> ListScope {
+        ListScope::Mailbox(MailboxId::new(2))
+    }
+
+    #[tokio::test]
+    async fn a_page_is_asked_for_and_handed_back() {
+        let page = ListPage::Messages(MessagePage {
+            total: 0,
+            rows: vec![],
+        });
+        let (client, fake) = client(vec![Ok(Resp::Page(page.clone()))]);
+        let request = PageRequest {
+            scope: scope(),
+            offset: 20,
+            limit: 20,
+        };
+        assert_eq!(client.list_page(request).await, Ok(page));
+        assert_eq!(*fake.asked.lock().unwrap(), vec![Req::Page(request)]);
+    }
+
+    #[tokio::test]
+    async fn a_refused_read_keeps_the_hosts_sentence() {
+        let (client, _) = client(vec![Ok(Resp::Failed(StoreError::new(
+            "The store is closed.",
+        )))]);
+        let error = client.list_count(scope()).await.unwrap_err();
+        assert_eq!(error.message(), "The store is closed.");
+    }
+
+    #[tokio::test]
+    async fn a_silent_host_is_said_as_a_sentence_not_a_panic() {
+        let (client, _) = client(vec![Err(Disconnected)]);
+        let error = client.mailboxes(AccountId::new(1)).await.unwrap_err();
+        assert_eq!(
+            error.message(),
+            "Postio's background service is not answering."
+        );
+    }
+
+    #[tokio::test]
+    async fn a_command_is_sent_and_a_stopped_runtime_is_reported() {
+        let (client, fake) = client(vec![Ok(Resp::Done), Ok(Resp::Stopped)]);
+        assert_eq!(client.send(Command::Undo).await, Ok(()));
+        assert_eq!(client.send(Command::Undo).await, Err(SendError::Stopped));
+        assert_eq!(fake.asked.lock().unwrap().len(), 2);
+    }
+
+    #[tokio::test]
+    async fn a_tracked_send_hands_back_the_hosts_id() {
+        let id = InvocationId::next();
+        let (client, _) = client(vec![Ok(Resp::Tracked(id))]);
+        assert_eq!(client.send_tracked(Command::Undo).await, Ok(id));
+    }
+
+    #[tokio::test]
+    async fn a_removal_is_posted_without_waiting() {
+        let (client, fake) = client(vec![]);
+        client.note_removed(MailboxId::new(2), vec![MessageId::new(3)]);
+        assert_eq!(
+            *fake.posted.lock().unwrap(),
+            vec![Req::NoteRemoved(MailboxId::new(2), vec![MessageId::new(3)])]
+        );
+    }
+
+    #[tokio::test]
+    async fn round_trips_are_counted_by_family() {
+        let page = ListPage::Messages(MessagePage {
+            total: 0,
+            rows: vec![],
+        });
+        let (client, _) = client(vec![
+            Ok(Resp::Page(page.clone())),
+            Ok(Resp::Page(page)),
+            Ok(Resp::Count(4)),
+        ]);
+        let request = PageRequest {
+            scope: scope(),
+            offset: 0,
+            limit: 20,
+        };
+        client.list_page(request).await.unwrap();
+        client.list_page(request).await.unwrap();
+        client.list_count(scope()).await.unwrap();
+        assert_eq!(client.counts().of("Page"), 2);
+        assert_eq!(client.counts().of("Count"), 1);
+        assert_eq!(client.counts().of("Body"), 0);
+    }
+}

@@ -12,6 +12,7 @@ repository.workspace = true
 workspace = true
 
 [dependencies]
+async-channel = { workspace = true }
 postio-core.workspace = true
 postio-model.workspace = true
 serde = { workspace = true }
@@ -20,3 +21,6 @@ serde = { workspace = true }
 # formats cannot always read back. Already in the graph (research R2, T008).
 serde_json = { workspace = true }
 thiserror = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt"] }
