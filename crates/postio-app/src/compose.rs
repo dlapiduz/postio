@@ -312,7 +312,7 @@ async fn default_signature(
 /// of their server copy? whose autosave wins?) that #175 chose to leave
 /// unopened for v1 rather than resolve as a side effect of this path. What
 /// changed under #175 is that the reader no longer pretends it is an
-/// ordinary, readable message: [`load_body_or_reason`] recognises `\Draft`
+/// ordinary, readable message: [`load_body_or_reason`](postio_session::reading::load_body_or_reason) recognises `\Draft`
 /// with no local buffer and reports [`postio_gtk::reader::Absent::ForeignDraft`]
 /// instead, whatever the body's own download state is. See
 /// `docs/engineering-notes.md`.
