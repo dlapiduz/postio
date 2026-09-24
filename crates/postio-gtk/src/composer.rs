@@ -4941,6 +4941,9 @@ mod tests {
             Some("ctrl+s".to_string()),
             "the override wins the key"
         );
-        assert_eq!(keys[2], None, "and Save draft shows no hint at all: {keys:?}");
+        assert_eq!(
+            keys[2], None,
+            "and Save draft shows no hint at all: {keys:?}"
+        );
     }
 }
