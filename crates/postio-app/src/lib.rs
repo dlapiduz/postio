@@ -1,8 +1,9 @@
 //! Postio — a local-first, keyboard-first email client.
 //!
 //! This is the composition root: the one crate that knows both halves of the
-//! application exist. It opens the local store, starts the runtime, builds the
-//! GTK frontend, and joins them.
+//! application exist. It reaches the store's owner -- `postio-daemon`, over
+//! its socket (ADR 0041) -- builds the GTK frontend, and joins them. The
+//! integration suites join the same window to an owner in their own process.
 //!
 //! # Why it is its own crate
 //!
@@ -22,9 +23,9 @@
 //! The same order `postio_gtk::app::run` documents, because it is not
 //! arbitrary: a `PangoContext` keeps the font family it has already resolved,
 //! so the embedded faces have to be registered before the first widget exists.
-//! What is added here is the last step — opening the store and handing it to
-//! the window — which happens on `activate`, after the frontend has built its
-//! own.
+//! What is added here is the last step — reaching the store's owner and
+//! handing its client to the window — which happens on `activate`, after the
+//! frontend has built its own.
 
 pub mod add_account;
 pub mod commands;
@@ -66,19 +67,27 @@ use postio_gtk::window::Window;
 use postio_gtk::{app, fonts, style};
 use postio_storage::Store;
 
-/// Open the store, start the runtime, build the window, and join them.
+/// Reach the store's owner, build the window, and join them.
 ///
 /// The binary is a thin `main` over this. It lives in the library half so
 /// that `tests/` can link it: this crate is where the wiring lives, and a
 /// wiring nothing can drive is a wiring nothing can check. See the module
 /// docs for why that mattered enough to restructure the crate.
+///
+/// **This process opens no store** (ADR 0041). `postio-daemon` owns it --
+/// the key, the engines, the upkeep -- so the desktop app and the terminal
+/// can be open on one store at once. The window reaches it through one
+/// client over the daemon's socket, starting the daemon when nothing
+/// answers ([`remote`]). The in-process path the integration suites drive
+/// ([`open_the_store`], [`present`]) is the same window over an owner in
+/// this process.
 pub fn run() -> glib::ExitCode {
     let timeline = Timeline::start();
 
     // Before anything else can have anything to say. Startup is exactly when
-    // a trace is worth having: an account that will not open, a store that
-    // will not migrate and a keyring that will not answer all happen before
-    // there is any UI to report them in.
+    // a trace is worth having: a background service that will not start and
+    // a socket that will not answer both happen before there is any UI to
+    // report them in.
     let config_path = postio_config::paths::config_path().ok();
     let logging = logging::init(
         &config_path
@@ -96,8 +105,8 @@ pub fn run() -> glib::ExitCode {
     // apply with nothing on disk (postio_config::Config::load_from_path says
     // so), so this changes discoverability, not behaviour -- Ctrl+E and a
     // file manager find a real file to read and edit rather than a blank
-    // buffer. Before the watcher below, so there is nothing to race: the
-    // watcher only needs to notice changes from here on, not this one.
+    // buffer. Before the daemon is reached, so the daemon it starts reads
+    // the same file.
     if let Some(path) = config_path.as_deref() {
         match postio_config::Config::seed_if_missing(path) {
             Ok(true) => tracing::info!(path = %path.display(), "seeded a starter config.toml"),
@@ -106,50 +115,36 @@ pub fn run() -> glib::ExitCode {
         }
     }
 
-    // `[sync]`'s notification settings, read once here rather than kept
-    // live — see `notifications::config_at`.
-    let sync_config = config_path
-        .as_deref()
-        .map(notifications::config_at)
-        .unwrap_or_default();
+    // `[sync] attachments`, which the settings panel shows. Everything else
+    // `[sync]`, `[mailboxes]` and `[storage]` say is the daemon's to read.
+    let attachments_eager = postio_session::backfill_policy(
+        &config_path
+            .as_deref()
+            .map(notifications::config_at)
+            .unwrap_or_default(),
+    )
+    .attachments
+        == postio_runtime::AttachmentPolicy::Eager;
 
-    let state = SharedState::default();
+    // Where this process's own work is awaited: client calls that must not
+    // hold the main loop, a part written to disk, a discovery probe. Two
+    // workers, the number the store's owner found enough (#1502).
+    let runtime = match tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(2)
+        .thread_name("postio-frontend")
+        .enable_all()
+        .build()
+    {
+        Ok(runtime) => runtime,
+        Err(error) => {
+            tracing::error!(%error, "Postio could not start its runtime: {error}");
+            return glib::ExitCode::FAILURE;
+        }
+    };
 
-    // An installation has exactly one keyring, and every credential read goes
-    // to the same instance: the store key here, and every account password
-    // through `Wiring::secrets`.
-    let secrets: std::sync::Arc<dyn postio_account::secret::SecretStore> =
-        std::sync::Arc::new(postio_account::secret::KeyringSecretStore::default());
-
-    // `[mailboxes]`, read once here alongside `[sync]` and for the same
-    // reason `notifications::config_at` gives. Which folder this server calls
-    // its archive is settled at discovery, and discovery runs inside the
-    // engine, so this is the moment it has to be known.
-    let mailbox_roles = config_path
-        .as_deref()
-        .map(postio_session::mailbox_roles_at)
-        .unwrap_or_default();
-
-    // `[storage] max_bytes`, read once here for the same reason `[mailboxes]`
-    // is: `reclaim_disk` is spawned from `feed_the_window`, which runs before
-    // anything is watching the file.
-    let storage_ceiling = config_path
-        .as_deref()
-        .and_then(postio_session::storage_ceiling_at);
-
-    let context = Rc::new(Installation {
-        secrets,
-        state,
-        mailbox_roles,
-        sync_config: sync_config.clone(),
-        storage_ceiling,
-        early: std::cell::RefCell::new(None),
-    });
-    // The store starts opening now, before GTK does anything (#1604): the
-    // keyring and the engine's open of an encrypted file need nothing from
-    // the window, and used to wait until it was built and presented. The
-    // first `open_the_store`, from `activate`, takes this open over.
-    context.start_opening();
+    // The daemon starts being reached now, before GTK does anything (#1604):
+    // starting it and its opening of the store need nothing from the window.
+    let reaching = std::cell::RefCell::new(Some(remote::reach_this_users_daemon()));
     if adw::init().is_err() {
         tracing::error!("no display; the UI needs a Wayland or X11 session");
         return glib::ExitCode::FAILURE;
@@ -170,36 +165,29 @@ pub fn run() -> glib::ExitCode {
     }
     timeline.mark(Phase::Styles);
 
-    // What the user is looking at, as the handlers see it. `commands::mirror`
-    // brings it into step with the window in the instant before a command is
-    // sent; nothing else writes it.
-
-    // **The window first, and the store behind it.** Until #1114 this read
-    // the keyring and opened the store here, before `app::build_with` was
-    // called at all -- so there was no application, let alone a window,
-    // until the store had already succeeded or been refused. That is fine
-    // when opening takes 30ms and indefensible when it does not: a schema
-    // migration held a launch on the live install for 12.6s, and a keyring
-    // prompt held another for 28s, both with nothing whatever on screen.
-    //
-    // Nothing about the failure path changes. ADR 0014 Q3 still means a
-    // store that will not open is a hard stop rather than a degraded mode;
-    // what moves is *when* that is decided, and therefore that the refusal
-    // now replaces the content of a window somebody is already looking at
-    // (#404's screen, exactly as before).
-    let opened: Rc<std::cell::RefCell<Option<Opened>>> = Rc::new(std::cell::RefCell::new(None));
-    // Whether `open_or_onboard` has already run for this window (#514): a
-    // second `activate` -- a second launch of a single-instance app just
-    // raises the window -- must not open a second set of engines and feeds
-    // over the first. See `open_or_onboard`'s own doc comment for why it is
-    // the one that checks and sets this, not `present` here.
-    let fed: Rc<std::cell::Cell<bool>> = Rc::new(std::cell::Cell::new(false));
-    // And whether the store is already being opened. `fed` cannot answer
-    // this: it is set at the far end of a chain that only starts once the
-    // store has landed, so a second `activate` arriving during the open
-    // would find it still false and start a second thread, a second runtime
-    // and a second set of engines over the same file.
-    let opening: Rc<std::cell::Cell<bool>> = Rc::new(std::cell::Cell::new(false));
+    // **The window first, and the owner behind it** (#1114): the window is
+    // up while the daemon starts and opens the store, and says what it is
+    // waiting on if that takes long enough to notice.
+    let following = Rc::new(remote::Following {
+        runtime: runtime.handle().clone(),
+        // What the user is looking at, as the owner aims this window's
+        // commands.
+        state: SharedState::default(),
+        attachments_eager,
+        reached: Rc::new(std::cell::RefCell::new(None)),
+        // Whether the window has been opened over the owner (#514): a second
+        // `activate` -- a second launch of a single-instance app just raises
+        // the window -- must not feed it twice.
+        fed: Rc::new(std::cell::Cell::new(false)),
+        again: Box::new(remote::reach_this_users_daemon),
+        on_connected: Box::new({
+            let timeline = timeline.clone();
+            // Marked where the store used to be opened, so a startup trace
+            // still has the phase: reaching the owner is what it waits on.
+            move || timeline.mark(Phase::Store)
+        }),
+        previous: std::cell::RefCell::new(None),
+    });
 
     let application = app::build_with(timeline.clone());
 
@@ -207,59 +195,31 @@ pub fn run() -> glib::ExitCode {
     // already there to be fed. Signal handlers run in the order they were
     // connected, which is the whole of the arrangement.
     application.connect_activate({
-        let opened = Rc::clone(&opened);
-        let context = Rc::clone(&context);
-        let fed = Rc::clone(&fed);
-        let opening = Rc::clone(&opening);
-        let timeline = timeline.clone();
+        let following = Rc::clone(&following);
         move |application| {
-            postio_session::blocking::now(async {
-                let Some(window) = application.active_window().and_downcast::<Window>() else {
-                    return;
-                };
-                // Exists before the first notification can, and re-registering on
-                // a second `activate` (a second launch raising the window) just
-                // replaces it with itself.
-                notifications::install_action(application, &window);
-                if opened.borrow().is_some() {
-                    // A second launch raising a window that already has its mail.
-                    present(&window, &opened, &context, None, &fed).await;
-                    return;
-                }
-                if opening.replace(true) {
-                    return;
-                }
-                open_the_store(&window, &opened, &context, &fed, &timeline);
-            })
+            let Some(window) = application.active_window().and_downcast::<Window>() else {
+                return;
+            };
+            // Exists before the first notification can, and re-registering on
+            // a second `activate` just replaces it with itself.
+            notifications::install_action(application, &window);
+            // The first `activate` follows the reach `run` started; a second
+            // finds it taken and only raises the window.
+            let Some(reaching) = reaching.borrow_mut().take() else {
+                return;
+            };
+            remote::follow(&window, reaching, Rc::clone(&following));
         }
     });
 
     let code = application.run();
 
-    // The sync engines first, and before anything else here: they are the one
-    // thing in this process still writing to the database on a thread of
-    // their own. Letting `main` return with one of them mid-commit leaves a
-    // write torn by the process exit for the store engine to recover -- and
-    // that engine is pre-1.0, so waiting for the pass to finish rather than
-    // trusting its young WAL recovery is why `Engine` keeps its `JoinHandle`.
-    // (Under SQLCipher this was sharper still: a coredump through libcrypto's
-    // atexit teardown, which the pure-Rust engine cannot reproduce.)
-    //
-    // Bounded: `stop_retained` waits a few seconds per engine and gives up
-    // rather than holding a closed window open on a stalled network read.
-    postio_runtime::stop_retained();
-
-    // Taken rather than borrowed: `shutdown` consumes the bridge, and by here
-    // the window is gone and nothing else is going to read this.
-    if let Some(ready) = opened.borrow_mut().take() {
-        // The clean-shutdown marker (#491): a next start that finds it will
-        // leave a parked draft parked instead of recovering it as a crash.
-        //
-        // Blocked on, because the GTK main loop has already returned and
-        // there is nothing left to keep responsive -- this is the last write
-        // of the process.
-        ready.host.stop();
-    }
+    // The window is gone. Dropping the client closes the connection, and
+    // the daemon stops its engines once no frontend has been connected for
+    // its grace period -- nothing here writes to the store, so nothing here
+    // has a write to finish.
+    following.reached.borrow_mut().take();
+    runtime.shutdown_timeout(std::time::Duration::from_secs(1));
     code
 }
 

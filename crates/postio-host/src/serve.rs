@@ -405,7 +405,7 @@ mod tests {
             scope.spawn(|| host.serve(listener, Duration::from_millis(300)));
             let terminal = connect(&endpoint, ClientKind::Tui).expect("connects");
             let desktop = connect(&endpoint, ClientKind::Gtk).expect("connects");
-            world.arrive();
+            crate::notify::tests::arrive(&world);
             let told = |client: &postio_client::Client| {
                 let notices = client.notifications();
                 world.rt.block_on(async {

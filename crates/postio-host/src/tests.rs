@@ -23,7 +23,7 @@ pub(crate) struct World {
     host: Option<Host>,
     inbox: MailboxId,
     message: MessageId,
-    account: postio_model::AccountId,
+    pub(crate) account: postio_model::AccountId,
     database: postio_storage::Store,
     blob_dir: std::path::PathBuf,
     _blobs: tempfile::TempDir,
@@ -104,15 +104,6 @@ impl World {
     /// The message in it.
     pub(crate) fn message(&self) -> MessageId {
         self.message
-    }
-
-    /// The message arrives, as the engine says so.
-    pub(crate) fn arrive(&self) {
-        self.host().wiring().events.emit(Event::NewMail {
-            account: self.account,
-            mailbox: self.inbox,
-            messages: vec![self.message],
-        });
     }
 
     /// A frontend looking at the inbox with the cursor on the message.

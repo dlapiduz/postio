@@ -40,11 +40,10 @@ NEEDLE = "blocking::now("
 # file -> how many `blocking::now(` calls it may hold. May only shrink.
 ALLOWED = {
     "crates/postio-app/src/add_account.rs": 2,
-    # install_resume (2), install_autosave's one-time recovery at mount (1),
-    # recipient suggestions (1).
+    # install_resume (2), install_autosave's one-time recovery at mount (1).
     "crates/postio-app/src/compose.rs": 3,
     "crates/postio-app/src/export.rs": 1,
-    "crates/postio-app/src/lib.rs": 2,
+    "crates/postio-app/src/lib.rs": 1,
     "crates/postio-app/src/onboarding.rs": 1,
     "crates/postio-app/src/orientation.rs": 2,
     "crates/postio-app/src/reading.rs": 1,

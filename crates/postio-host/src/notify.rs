@@ -210,7 +210,7 @@ pub fn decision(
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use std::time::Duration;
 
     use postio_client::Client;
@@ -255,6 +255,15 @@ mod tests {
             Decision::Deliver(notification) => notification,
             Decision::Suppress(reason) => panic!("expected a notification, got {reason:?}"),
         }
+    }
+
+    /// The world's message arrives, as the engine says so.
+    pub(crate) fn arrive(world: &World) {
+        world.host().wiring().events.emit(Event::NewMail {
+            account: world.account,
+            mailbox: world.inbox(),
+            messages: vec![world.message()],
+        });
     }
 
     /// The next notification `client` is asked to deliver, if one comes.
@@ -304,7 +313,7 @@ mod tests {
         let (terminal, _) = world.frontend(ClientKind::Tui);
         let (desktop, _) = world.frontend(ClientKind::Gtk);
 
-        world.arrive();
+        arrive(&world);
         let notification = told(&world, &desktop).expect("the desktop app is told");
         assert_eq!(notification.mailbox, world.inbox());
         assert_eq!(notification.message, Some(world.message()));
@@ -320,7 +329,7 @@ mod tests {
         );
 
         drop(desktop);
-        world.arrive();
+        arrive(&world);
         let notification = told(&world, &terminal).expect("the terminal is told now");
         assert_eq!(notification.mailbox, world.inbox());
     }
@@ -334,7 +343,7 @@ mod tests {
             active: true,
         });
 
-        world.arrive();
+        arrive(&world);
         assert_eq!(told(&world, &desktop), None);
 
         // Behind another application, the same folder is not being watched.
@@ -342,7 +351,7 @@ mod tests {
             showing: Some(world.inbox()),
             active: false,
         });
-        world.arrive();
+        arrive(&world);
         assert!(told(&world, &desktop).is_some());
     }
 
@@ -354,13 +363,13 @@ mod tests {
             ..Default::default()
         });
         let (desktop, _) = world.frontend(ClientKind::Gtk);
-        world.arrive();
+        arrive(&world);
         assert_eq!(told(&world, &desktop), None);
 
         world
             .host()
             .notify_with(postio_config::SyncConfig::default());
-        world.arrive();
+        arrive(&world);
         assert!(
             told(&world, &desktop).is_some(),
             "the inbox is watched by default"

@@ -39,10 +39,26 @@ impl Endpoint {
         Endpoint { dir: dir.into() }
     }
 
-    /// This user's endpoint, from `$XDG_RUNTIME_DIR`.
+    /// This user's endpoint: `$XDG_RUNTIME_DIR/postio`, unless
+    /// `$POSTIO_RUNTIME_DIR` names another -- a scratch run's, so it cannot
+    /// reach the daemon that owns the person's real store.
     pub fn from_env() -> Result<Endpoint, ConnectError> {
-        std::env::var_os("XDG_RUNTIME_DIR")
-            .filter(|dir| !dir.is_empty())
+        Endpoint::from_vars(
+            std::env::var_os("POSTIO_RUNTIME_DIR"),
+            std::env::var_os("XDG_RUNTIME_DIR"),
+        )
+    }
+
+    /// The endpoint `$POSTIO_RUNTIME_DIR` (`postio`) and `$XDG_RUNTIME_DIR`
+    /// (`xdg`) name: the first when it is set, else `postio` under the second.
+    pub fn from_vars(
+        postio: Option<std::ffi::OsString>,
+        xdg: Option<std::ffi::OsString>,
+    ) -> Result<Endpoint, ConnectError> {
+        if let Some(dir) = postio.filter(|dir| !dir.is_empty()) {
+            return Ok(Endpoint::at(dir));
+        }
+        xdg.filter(|dir| !dir.is_empty())
             .map(|dir| Endpoint::at(PathBuf::from(dir).join("postio")))
             .ok_or(ConnectError::NoRuntimeDir)
     }
@@ -444,6 +460,26 @@ mod tests {
         );
         connect(&Endpoint::at(dir.path()), ClientKind::Test).expect("connected");
         daemon.join().unwrap();
+    }
+
+    #[test]
+    fn a_postio_runtime_dir_keeps_an_isolated_run_off_the_users_daemon() {
+        // `scripts/run-isolated.sh` points the store at a scratch directory;
+        // without its own endpoint the window would reach the daemon that
+        // owns the person's real store instead.
+        let endpoint = Endpoint::from_vars(
+            Some("/tmp/scratch/runtime".into()),
+            Some("/run/user/1000".into()),
+        )
+        .expect("an endpoint");
+        assert_eq!(endpoint.dir(), Path::new("/tmp/scratch/runtime"));
+        let endpoint =
+            Endpoint::from_vars(None, Some("/run/user/1000".into())).expect("an endpoint");
+        assert_eq!(endpoint.dir(), Path::new("/run/user/1000/postio"));
+        assert!(matches!(
+            Endpoint::from_vars(Some("".into()), None),
+            Err(ConnectError::NoRuntimeDir)
+        ));
     }
 
     #[test]

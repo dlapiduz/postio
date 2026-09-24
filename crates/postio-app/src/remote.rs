@@ -212,9 +212,23 @@ pub async fn open(
                 let wired = connected.wired.clone();
                 let events = Rc::clone(&connected.events);
                 move || {
-                    postio_session::blocking::now(crate::open_account_for(
-                        &window, &frontend, &state, &wired, &events, &notifier,
-                    ))
+                    let (window, frontend, state, wired, events, notifier) = (
+                        window.clone(),
+                        frontend.clone(),
+                        state.clone(),
+                        wired.clone(),
+                        Rc::clone(&events),
+                        notifier.clone(),
+                    );
+                    glib::spawn_future_local(async move {
+                        let opening = crate::open_account_for(
+                            &window, &frontend, &state, &wired, &events, &notifier,
+                        );
+                        // POSTIO-GLIB-SAFE: every await under this is a
+                        // client call, a oneshot receive the owner answers
+                        // on its own runtime.
+                        opening.await;
+                    });
                 }
             };
             crate::onboarding::install_for(
@@ -308,13 +322,16 @@ pub fn follow(
                 if let Some(previous) = following.previous.borrow_mut().take() {
                     window.set_content(Some(&previous));
                 }
-                let ready = connected(
+                let connecting = connected(
                     client,
                     following.runtime.clone(),
                     following.state.clone(),
                     following.attachments_eager,
-                )
-                .await;
+                );
+                // POSTIO-GLIB-SAFE: the one await under this is a client
+                // call, a oneshot receive the owner answers on its own
+                // runtime; the forwarding is spawned onto `runtime`.
+                let ready = connecting.await;
                 *following.reached.borrow_mut() = Some(ready.clone());
                 // POSTIO-GLIB-SAFE: every await under this is a client call,
                 // a oneshot receive the owner answers on its own runtime.

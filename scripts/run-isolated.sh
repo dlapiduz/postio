@@ -85,6 +85,12 @@ export XDG_CONFIG_HOME="$STATE/config"
 # postio-gtk's tests saw, because a Window builds a Reader that loads it. That
 # cost a p1 nobody could bisect, since the cause was never in the tree.
 export XDG_STATE_HOME="$STATE/state"
+# And the store's owner (ADR 0041): the app reaches `postio-daemon` over a
+# socket in $XDG_RUNTIME_DIR/postio, and a daemon already running there owns
+# the *real* store. Its own endpoint makes this run start a daemon of its own,
+# which opens the scratch store above. Not XDG_RUNTIME_DIR itself: the
+# display and D-Bus sockets live there.
+export POSTIO_RUNTIME_DIR="$STATE/runtime"
 
 # Observability. POSTIO_LOG takes an EnvFilter directive, so `debug` turns
 # everything up and `postio_sync=debug,postio_runtime=debug` turns up just the
@@ -124,6 +130,7 @@ if [ "$SHOT" = 1 ]; then
 fi
 
 echo "building (first run compiles GTK deps; later runs are incremental)…"
-cargo build --release -p postio-app
+# The daemon too: the app starts the one beside it (ADR 0041).
+cargo build --release -p postio-app -p postio-host --bin postio --bin postio-daemon
 echo "running — Ctrl-C to stop"
 exec "$TARGET/release/postio"
