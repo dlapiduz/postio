@@ -202,12 +202,32 @@ impl Host {
     /// `idle`, or until the process is sent SIGTERM, then return. Blocks; call it outside any async context, and
     /// drop the host after it returns.
     pub fn serve(&self, listener: Listener, idle: Duration) {
+        self.serve_until(listener, idle, std::future::pending());
+    }
+
+    /// [`Host::serve`], also returning when `stop` resolves: the way a test
+    /// stops a daemon that still has frontends, as a crash or a `kill`
+    /// stops a real one.
+    pub fn serve_until(
+        &self,
+        listener: Listener,
+        idle: Duration,
+        stop: impl std::future::Future<Output = ()> + Send,
+    ) {
         let inner = Arc::clone(&self.inner);
-        self.inner.runtime().block_on(serve(inner, listener, idle));
+        self.inner
+            .runtime()
+            .block_on(serve(inner, listener, idle, stop));
     }
 }
 
-async fn serve(inner: Arc<Inner>, listener: Listener, idle: Duration) {
+async fn serve(
+    inner: Arc<Inner>,
+    listener: Listener,
+    idle: Duration,
+    stop: impl std::future::Future<Output = ()> + Send,
+) {
+    let mut stop = std::pin::pin!(stop);
     let Listener {
         listener,
         uid,
@@ -249,6 +269,10 @@ async fn serve(inner: Arc<Inner>, listener: Listener, idle: Duration) {
                 }
             } => {
                 tracing::info!("asked to stop");
+                return;
+            }
+            () = &mut stop => {
+                tracing::info!("told to stop");
                 return;
             }
         }

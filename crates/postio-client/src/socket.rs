@@ -21,7 +21,7 @@ use tokio::net::UnixStream;
 use tokio::sync::oneshot;
 
 use crate::Client;
-use crate::api::{Call, Disconnected, Transport};
+use crate::api::{Call, Closed, Disconnected, Transport};
 use crate::protocol::{
     BuildId, ClientId, ClientKind, Frame, Opening, PROTOCOL, Refusal, Req, Resp, read_frame,
     write_frame,
@@ -134,6 +134,9 @@ pub fn connect(endpoint: &Endpoint, kind: ClientKind) -> Result<Client, ConnectE
     let (noticed, notices) = async_channel::bounded::<Notification>(NOTICES);
     let pending: Arc<Mutex<HashMap<u64, oneshot::Sender<Resp>>>> = Arc::default();
     let (handshake, shaken) = std::sync::mpsc::channel::<Result<ClientId, ConnectError>>();
+    // Never sent on: dropped when the connection's thread ends, which is
+    // what `closed` waits for.
+    let (alive, gone) = async_channel::bounded::<()>(1);
 
     let answers = Arc::clone(&pending);
     std::thread::Builder::new()
@@ -152,6 +155,9 @@ pub fn connect(endpoint: &Endpoint, kind: ClientKind) -> Result<Client, ConnectE
             runtime.block_on(run(
                 stream, kind, handshake, to_send, arrived, noticed, answers,
             ));
+            // Last, so every call still waiting has been answered
+            // `Disconnected` before anybody hears the connection is gone.
+            drop(alive);
         })
         .map_err(|error| ConnectError::Broken(error.to_string()))?;
 
@@ -164,6 +170,7 @@ pub fn connect(endpoint: &Endpoint, kind: ClientKind) -> Result<Client, ConnectE
         next: AtomicU64::new(1),
         events,
         notices,
+        gone,
         _client: client,
     })))
 }
@@ -374,6 +381,8 @@ struct Socket {
     next: AtomicU64,
     events: async_channel::Receiver<EventEnvelope>,
     notices: async_channel::Receiver<Notification>,
+    /// Closes when the connection's thread ends.
+    gone: async_channel::Receiver<()>,
     _client: ClientId,
 }
 
@@ -403,6 +412,14 @@ impl Transport for Socket {
 
     fn notifications(&self) -> async_channel::Receiver<Notification> {
         self.notices.clone()
+    }
+
+    fn closed(&self) -> Closed {
+        let gone = self.gone.clone();
+        Box::pin(async move {
+            // Nothing is ever sent: this returns when the sender is dropped.
+            let _ = gone.recv().await;
+        })
     }
 }
 

@@ -46,6 +46,9 @@ pub enum SendError {
 /// One request's answer, awaited.
 pub type Call<'a> = Pin<Box<dyn Future<Output = Result<Resp, Disconnected>> + Send + 'a>>;
 
+/// Resolves once a transport can no longer reach its host.
+pub type Closed = Pin<Box<dyn Future<Output = ()> + Send + 'static>>;
+
 /// How requests reach the host and events come back.
 pub trait Transport: Send + Sync + 'static {
     /// Ask, and await the one answer.
@@ -67,6 +70,14 @@ pub trait Transport: Send + Sync + 'static {
     /// transport that carries none: the channel is closed from the start.
     fn notifications(&self) -> async_channel::Receiver<postio_ui::notify::Notification> {
         async_channel::bounded(1).1
+    }
+
+    /// Resolves when the host can no longer be reached: the connection
+    /// ended, and every call still waiting has been answered
+    /// [`Disconnected`]. Never, for a transport whose host cannot go away
+    /// on its own -- one in this process.
+    fn closed(&self) -> Closed {
+        Box::pin(std::future::pending())
     }
 }
 
@@ -152,16 +163,27 @@ struct ClientEgress(Client);
 impl postio_model::egress::EgressSink for ClientEgress {
     fn record(&self, event: postio_model::egress::EgressEvent) {
         self.0.counts.record("RecordEgress");
-        self.0.transport.post(Req::RecordEgress(event));
+        self.0.transport().post(Req::RecordEgress(event));
     }
 }
 
 /// What a frontend holds.
+///
+/// Every clone shares one connection, and [`Client::reconnect`] replaces
+/// it for all of them at once: a surface holding a clone from before the
+/// host went away reaches the new one without being handed anything.
 #[derive(Clone)]
 pub struct Client {
-    transport: Arc<dyn Transport>,
+    link: Arc<Link>,
     counts: Arc<Counts>,
     state: SharedState,
+}
+
+/// The connection every clone of a client shares.
+struct Link {
+    transport: std::sync::RwLock<Arc<dyn Transport>>,
+    /// How many times the connection has been replaced.
+    swaps: tokio::sync::watch::Sender<u64>,
 }
 
 impl std::fmt::Debug for Client {
@@ -174,7 +196,10 @@ impl Client {
     /// A client over `transport`.
     pub fn new(transport: Arc<dyn Transport>) -> Self {
         Client {
-            transport,
+            link: Arc::new(Link {
+                transport: std::sync::RwLock::new(transport),
+                swaps: tokio::sync::watch::Sender::new(0),
+            }),
             counts: Arc::new(Counts::default()),
             state: SharedState::default(),
         }
@@ -188,6 +213,41 @@ impl Client {
         self
     }
 
+    /// The connection as it is now. Never held across an await: a
+    /// reconnect replaces it underneath.
+    fn transport(&self) -> Arc<dyn Transport> {
+        Arc::clone(&self.link.transport.read().expect("never poisoned"))
+    }
+
+    /// Resolves once the host this client reaches now has gone away: the
+    /// daemon exited, or the connection broke. Every call still waiting has
+    /// been answered [`Disconnected`] by then, and every call after it is.
+    ///
+    /// About the connection current when it is asked: after a
+    /// [`Client::reconnect`], ask again.
+    pub fn closed(&self) -> impl Future<Output = ()> + Send + 'static {
+        self.transport().closed()
+    }
+
+    /// Reach the host through `fresh`'s connection from now on, for this
+    /// client and every clone of it: what a frontend does once the person
+    /// asks it to reconnect. `fresh`'s own state and counts are not taken;
+    /// this client keeps aiming with its own.
+    ///
+    /// Events and notifications are the new connection's: whoever reads
+    /// them asks [`Client::events`] and [`Client::notifications`] again,
+    /// which [`Client::reconnected`] says when to do.
+    pub fn reconnect(&self, fresh: &Client) {
+        let transport = fresh.transport();
+        *self.link.transport.write().expect("never poisoned") = transport;
+        self.link.swaps.send_modify(|swaps| *swaps += 1);
+    }
+
+    /// Changes each time [`Client::reconnect`] replaces the connection.
+    pub fn reconnected(&self) -> tokio::sync::watch::Receiver<u64> {
+        self.link.swaps.subscribe()
+    }
+
     /// The round trips this client has made.
     pub fn counts(&self) -> &Counts {
         &self.counts
@@ -195,33 +255,33 @@ impl Client {
 
     /// Every event the host sends this client.
     pub fn events(&self) -> async_channel::Receiver<EventEnvelope> {
-        self.transport.events()
+        self.transport().events()
     }
 
     /// The desktop notifications this client is asked to deliver: only
     /// ever the elected one's, and each arrival at most once
     /// (`contracts/protocol.md`, Notifications).
     pub fn notifications(&self) -> async_channel::Receiver<postio_ui::notify::Notification> {
-        self.transport.notifications()
+        self.transport().notifications()
     }
 
     /// Ask for `message`'s body ahead of the backfill, because a person
     /// opened it. Posted: the body arrives as `Event::BodyLoaded`.
     pub fn fetch_body(&self, message: MessageId) {
         self.counts.record("FetchBody");
-        self.transport.post(Req::FetchBody(message));
+        self.transport().post(Req::FetchBody(message));
     }
 
     /// `[storage] max_bytes` changed: the host brings the blobs under it.
     pub fn storage_ceiling(&self, max_bytes: Option<u64>) {
         self.counts.record("StorageCeiling");
-        self.transport.post(Req::StorageCeiling(max_bytes));
+        self.transport().post(Req::StorageCeiling(max_bytes));
     }
 
     /// Start syncing every enabled account not syncing yet. Posted.
     pub fn start_sync(&self) {
         self.counts.record("StartSync");
-        self.transport.post(Req::StartSync);
+        self.transport().post(Req::StartSync);
     }
 
     /// The verbs the owner answers: what a window's gestures may be sent
@@ -254,12 +314,12 @@ impl Client {
     /// Posted, never awaited: nothing the frontend does waits on it.
     pub fn attention(&self, attention: postio_ui::notify::Attention) {
         self.counts.record("Attention");
-        self.transport.post(Req::Attention(attention));
+        self.transport().post(Req::Attention(attention));
     }
 
     async fn call(&self, request: Req) -> Result<Resp, Disconnected> {
         self.counts.record(request.family());
-        self.transport.call(request).await
+        self.transport().call(request).await
     }
 
     /// A read: the answer, or the host's sentence for why there is none.
@@ -447,7 +507,7 @@ impl Client {
         take: fn(Resp) -> Option<T>,
     ) -> impl Future<Output = Result<T, StoreError>> + Send + 'static {
         self.counts.record(request.family());
-        let answer = self.transport.call(request);
+        let answer = self.transport().call(request);
         async move {
             match answer.await {
                 Ok(Resp::Failed(error)) => Err(error),
@@ -1090,7 +1150,7 @@ impl MailStore for Client {
     fn note_removed(&self, mailbox: MailboxId, messages: Vec<MessageId>) {
         let request = Req::NoteRemoved(mailbox, messages);
         self.counts.record(request.family());
-        self.transport.post(request);
+        self.transport().post(request);
     }
 
     fn mailboxes(&self, account: AccountId) -> Read<'_, Vec<Mailbox>> {
