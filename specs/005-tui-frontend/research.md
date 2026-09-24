@@ -213,6 +213,18 @@ suspend/resume, `$EDITOR`, images), **zellij** (keyboard protocol), **aerc**
   one more alternate binding and nothing else (FR-005).
 - A test enumerates `registry::all()` and asserts that every command has at
   least one chord a legacy terminal can deliver (SC-001).
+- **Spike T0.2 result (2026-09-23, T006)**: 16 commands had no binding a
+  legacy terminal delivers: `send`, `schedule_send`, `mark_sent`,
+  `retry_send`, `cancel_send`, `attach_file`, `detach_composer`,
+  `copy_fields`, `insert_image`, `italic`, `bullet_list`, `numbered_list`,
+  `insert_link`, `quote_block`, `settings` and `add_account`. They are all
+  `mod+Return`, `mod+shift+…`, `mod+i`, `mod+comma` or `mod+shift+<digit>`.
+  Each gains one **`alt+`** alternate (T017). `alt+` because a legacy
+  terminal sends it as `ESC` and the key, nothing in the registry used `alt`,
+  and the readline `ctrl` chords the modeless composer keeps (FR-022a) would
+  otherwise collide. The GTK frontend uses no mnemonics, so `alt+` there
+  steals nothing. The rule lives in `postio_ui::terminal::legacy_deliverable`,
+  and the enumeration test beside it keeps the list empty.
 - Mouse: click, wheel, `Shift`/`Ctrl`-click and drag, mapped onto
   `SelectionState` and the same commands the keys run. A pane divider is
   dragged as `Down`, `Drag`…, `Up`.

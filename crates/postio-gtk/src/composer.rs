@@ -4919,24 +4919,28 @@ mod tests {
 
     #[test]
     fn a_command_with_no_key_left_shows_no_hint_rather_than_a_blank_one() {
-        // Giving `save_draft` the key `send` has by default leaves one of the
-        // two without a binding -- an explicit `[keys]` entry outranks a
-        // default, so it is `send` that loses it. It must drop its hint
-        // rather than render an empty one, which is the rule
+        // Giving `send` the key `save_draft` has by default leaves Save draft
+        // without a binding -- an explicit `[keys]` entry outranks a
+        // default, and Save draft has no alternate to fall back on. It must
+        // drop its hint rather than render an empty one, which is the rule
         // `reader::actions` already follows. All three of these live in the
         // composer context, so this really is a collision rather than two
         // surfaces harmlessly sharing a key.
+        //
+        // The collision used to run the other way, costing Send its key. Send
+        // now keeps `alt+Return`, the alternate a legacy terminal can deliver
+        // (specs/005-tui-frontend T017), so it no longer ends up keyless.
         let mut overrides = postio_config::KeyBindings::default();
         overrides
             .overrides_mut()
-            .insert("save_draft".to_string(), "mod+Return".to_string());
+            .insert("send".to_string(), "mod+s".to_string());
 
         let keys = keys_of(&Keymap::resolve(&overrides));
         assert_eq!(
-            keys[2],
-            Some("ctrl+Return".to_string()),
+            keys[0],
+            Some("ctrl+s".to_string()),
             "the override wins the key"
         );
-        assert_eq!(keys[0], None, "and Send shows no hint at all: {keys:?}");
+        assert_eq!(keys[2], None, "and Save draft shows no hint at all: {keys:?}");
     }
 }

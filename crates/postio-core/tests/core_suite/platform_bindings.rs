@@ -7,7 +7,9 @@
 //! A *new* command adds a row to it, and that row is added by hand on
 //! purpose: the file exists to catch bindings that moved, so regenerating it
 //! wholesale would let exactly the change it guards against slip in as a
-//! diff nobody reads. `mark_sent ctrl+shift+s` was added for #674.
+//! diff nobody reads. `mark_sent ctrl+shift+s` was added for #674, and the
+//! sixteen `alt+` alternates a legacy terminal can deliver for
+//! `specs/005-tui-frontend` T017.
 
 use postio_config::KeyBindings;
 use postio_config::paths::Platform;

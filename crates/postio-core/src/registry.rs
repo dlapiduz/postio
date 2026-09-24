@@ -757,7 +757,7 @@ static SPECS: &[CommandSpec] = &[
         id: CommandId::Send,
         title: "Send",
         default_binding: "mod+Return",
-        alternate_bindings: &[],
+        alternate_bindings: &["alt+Return"],
         contexts: Context::Composer.as_set(),
         // Not destructive — but it is externally visible and irreversible once
         // the queue drains, so it earns an undo-send window rather than a modal.
@@ -775,7 +775,7 @@ static SPECS: &[CommandSpec] = &[
         // than sending, so it earns its own keystroke rather than a modifier
         // on Send's.
         default_binding: "mod+shift+Return",
-        alternate_bindings: &[],
+        alternate_bindings: &["alt+S"],
         contexts: Context::Composer.as_set(),
         destructive: false,
         // Opening the picker commits nothing; `Recovery::Undo` belongs to
@@ -818,7 +818,7 @@ static SPECS: &[CommandSpec] = &[
         // extension's binding vanishing from the palette rather than as an
         // error. #495's landing caught it.
         default_binding: "mod+shift+m",
-        alternate_bindings: &[],
+        alternate_bindings: &["alt+m"],
         contexts: ctx(&[Context::List, Context::Composer]),
         // It settles a question rather than destroying anything: the mail is
         // either already delivered or it is not, and this changes only what
@@ -841,7 +841,7 @@ static SPECS: &[CommandSpec] = &[
         // `r` alone is not bound, and the extension table takes none of the
         // `mod+shift` range beyond the `s` that #495 caught.
         default_binding: "mod+shift+r",
-        alternate_bindings: &[],
+        alternate_bindings: &["alt+r"],
         // List, because the Outbox and Drafts are lists and that is where a
         // stopped send is looked at. Composer, because the same draft can be
         // open there with its failure showing (#1487).
@@ -859,7 +859,7 @@ static SPECS: &[CommandSpec] = &[
         id: CommandId::CancelSend,
         title: "Cancel send",
         default_binding: "mod+shift+x",
-        alternate_bindings: &[],
+        alternate_bindings: &["alt+x"],
         contexts: ctx(&[Context::List, Context::Composer]),
         // It stops something from happening rather than losing anything: the
         // draft is left editable, which is the state it came from. Opening a
@@ -876,7 +876,7 @@ static SPECS: &[CommandSpec] = &[
         id: CommandId::AttachFile,
         title: "Attach file…",
         default_binding: "mod+shift+a",
-        alternate_bindings: &[],
+        alternate_bindings: &["alt+a"],
         contexts: Context::Composer.as_set(),
         destructive: false,
         recovery: Recovery::None,
@@ -893,7 +893,7 @@ static SPECS: &[CommandSpec] = &[
         // Not next to `ctrl+d`. Discard is the one composer verb that cannot
         // be undone, and a fat-fingered neighbour of it is a draft gone.
         default_binding: "mod+shift+o",
-        alternate_bindings: &[],
+        alternate_bindings: &["alt+o"],
         contexts: Context::Composer.as_set(),
         destructive: false,
         recovery: Recovery::None,
@@ -909,7 +909,7 @@ static SPECS: &[CommandSpec] = &[
         // on, and `c` for the field it names -- which is also what other mail
         // clients bind. `mod+c` is copy and stays copy.
         default_binding: "mod+shift+c",
-        alternate_bindings: &[],
+        alternate_bindings: &["alt+c"],
         contexts: Context::Composer.as_set(),
         destructive: false,
         // Nothing durable changes: this raises and lowers two rows, and it
@@ -927,7 +927,7 @@ static SPECS: &[CommandSpec] = &[
         // Beside `insert_link` on the `mod+shift+<letter>` shelf, because
         // they are the two verbs that put something *into* the text.
         default_binding: "mod+shift+g",
-        alternate_bindings: &[],
+        alternate_bindings: &["alt+g"],
         contexts: Context::Composer.as_set(),
         destructive: false,
         // The editor's own undo takes it back out, like any other edit.
@@ -950,7 +950,7 @@ static SPECS: &[CommandSpec] = &[
         id: CommandId::Italic,
         title: "Italic",
         default_binding: "mod+i",
-        alternate_bindings: &[],
+        alternate_bindings: &["alt+i"],
         contexts: Context::Composer.as_set(),
         destructive: false,
         recovery: Recovery::None,
@@ -962,7 +962,7 @@ static SPECS: &[CommandSpec] = &[
         // The Docs/Gmail convention, and shift dodges nothing here — the
         // digits are free in the composer either way.
         default_binding: "mod+shift+8",
-        alternate_bindings: &[],
+        alternate_bindings: &["alt+8"],
         contexts: Context::Composer.as_set(),
         destructive: false,
         recovery: Recovery::None,
@@ -972,7 +972,7 @@ static SPECS: &[CommandSpec] = &[
         id: CommandId::NumberedList,
         title: "Numbered list",
         default_binding: "mod+shift+7",
-        alternate_bindings: &[],
+        alternate_bindings: &["alt+7"],
         contexts: Context::Composer.as_set(),
         destructive: false,
         recovery: Recovery::None,
@@ -984,7 +984,7 @@ static SPECS: &[CommandSpec] = &[
         // Everywhere else this is ctrl+k, and here ctrl+k is the palette —
         // which is universal or it is not a palette. Shift is the tax.
         default_binding: "mod+shift+k",
-        alternate_bindings: &[],
+        alternate_bindings: &["alt+k"],
         contexts: Context::Composer.as_set(),
         destructive: false,
         recovery: Recovery::None,
@@ -994,7 +994,7 @@ static SPECS: &[CommandSpec] = &[
         id: CommandId::QuoteBlock,
         title: "Quote block",
         default_binding: "mod+shift+9",
-        alternate_bindings: &[],
+        alternate_bindings: &["alt+9"],
         contexts: Context::Composer.as_set(),
         destructive: false,
         recovery: Recovery::None,
@@ -1045,7 +1045,7 @@ static SPECS: &[CommandSpec] = &[
         id: CommandId::Settings,
         title: "Settings",
         default_binding: "mod+comma",
-        alternate_bindings: &[],
+        alternate_bindings: &["alt+comma"],
         // Universal, like the palette it is an alternative to reaching.
         contexts: ContextSet::ANY,
         destructive: false,
@@ -1061,7 +1061,7 @@ static SPECS: &[CommandSpec] = &[
         // is where the desktop already puts "a new one of the thing this
         // application is about".
         default_binding: "mod+shift+n",
-        alternate_bindings: &[],
+        alternate_bindings: &["alt+n"],
         // The same reach `Settings` has, for the reason ADR 0012 Q1 gives:
         // adding an account is a setting, and the folder list is where the
         // account will eventually appear.
