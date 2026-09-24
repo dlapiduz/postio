@@ -159,6 +159,16 @@ async fn main_loop(
     let (inputs, arriving) = async_channel::unbounded::<Input>();
     let (drafts, draft_jobs) = async_channel::unbounded::<Effect>();
     let writer = tokio::spawn(write_drafts(client.clone(), draft_jobs, inputs.clone()));
+    // New mail the daemon elected this terminal to tell about (T022).
+    let notices = client.notifications();
+    let told = inputs.clone();
+    let listening = tokio::spawn(async move {
+        while let Ok(notification) = notices.recv().await {
+            if told.send(Input::Notified(notification)).await.is_err() {
+                return;
+            }
+        }
+    });
     let senders = Senders {
         inputs,
         drafts,
@@ -178,6 +188,7 @@ async fn main_loop(
     // the draft in Drafts (US3 scenario 5). Bounded, so a daemon that has
     // stopped answering cannot hold the terminal hostage.
     drop(senders);
+    listening.abort();
     let _ = tokio::time::timeout(std::time::Duration::from_secs(3), writer).await;
     outcome
 }
@@ -757,6 +768,21 @@ fn perform(
                     let _ = inputs.send(Input::Found { sequence, found }).await;
                 });
             }
+            // The desktop's own notification service, where the session has
+            // one; over SSH there is none, and the status line has said it.
+            // POSTIO-CONSENT: a local notification of mail that arrived,
+            // chosen by the daemon under `[sync]`'s notify rules; nothing
+            // leaves this machine.
+            Effect::DesktopNotify { title, body } => {
+                if std::env::var_os("DBUS_SESSION_BUS_ADDRESS").is_some() {
+                    let _ = std::process::Command::new("notify-send")
+                        .args(["--app-name=Postio", "--", &title, &body])
+                        .stdin(std::process::Stdio::null())
+                        .stdout(std::process::Stdio::null())
+                        .stderr(std::process::Stdio::null())
+                        .spawn();
+                }
+            }
             // Nothing to offer is what a store that cannot be read offers:
             // the finder says "no label matches" either way.
             Effect::ReadLabels(account) => {
@@ -823,6 +849,15 @@ fn perform(
                 });
             }
             Effect::Open(scope) => {
+                // What the person is looking at, so the daemon does not
+                // announce mail arriving in the folder already on screen.
+                client.attention(postio_ui::notify::Attention {
+                    showing: match scope {
+                        ListScope::Mailbox(mailbox) => Some(mailbox),
+                        _ => None,
+                    },
+                    active: true,
+                });
                 let client = client.clone();
                 let inputs = inputs.clone();
                 tokio::spawn(async move {

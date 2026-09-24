@@ -139,6 +139,8 @@ pub enum Input {
         /// Its id, or the sentence for the status line.
         saved: Result<postio_model::DraftId, String>,
     },
+    /// New mail the daemon chose this terminal to tell the person about.
+    Notified(postio_ui::notify::Notification),
     /// The account's labels, for the finder's `+` ([`Effect::ReadLabels`]).
     Labels(Vec<postio_model::Label>),
     /// The account's correspondents, for the finder's `@`
@@ -241,6 +243,14 @@ pub enum Effect {
     Unsubscribe(postio_model::MessageId),
     /// Read a message's parts and answer with [`Input::Parts`].
     ReadParts(postio_model::MessageId),
+    /// Hand a new-mail notice to the desktop's notification service, where
+    /// one is reachable.
+    DesktopNotify {
+        /// What it says first.
+        title: String,
+        /// The rest.
+        body: String,
+    },
     /// Read the account's labels, for the finder's `+`.
     ReadLabels(postio_model::AccountId),
     /// Read the account's correspondents, for the finder's `@`.
@@ -2995,6 +3005,13 @@ pub fn update(app: &mut App, input: Input) -> Vec<Effect> {
             )),
         },
         Input::Found { sequence, found } => app.found(sequence, found),
+        Input::Notified(notification) => {
+            let safe = |text: &str| postio_ui::terminal::SafeText::new(text).to_string();
+            let (title, body) = (safe(&notification.title), safe(&notification.body));
+            let mut effects = app.say(&format!("New mail — {title}: {body}"));
+            effects.push(Effect::DesktopNotify { title, body });
+            effects
+        }
         // Outside text, made safe to draw once, here, as the list's rows are.
         Input::Labels(labels) => {
             app.labels = labels
@@ -3444,6 +3461,37 @@ pub(crate) mod tests {
         composing(&mut app);
         app.composer_command("copy_fields");
         assert!(app.composer().unwrap().shows_extra_recipients());
+    }
+
+    #[test]
+    fn new_mail_the_daemon_elects_this_terminal_for_is_said_and_offered_to_the_desktop() {
+        // T022: with no desktop app open the terminal is the one told; it
+        // says so on the status line, and hands the same words to the
+        // desktop's notification service where there is one.
+        let mut app = app((160, 40));
+        let effects = update(
+            &mut app,
+            Input::Notified(postio_ui::notify::Notification {
+                identifier: "inbox-1".into(),
+                title: "Grace Hopper".into(),
+                body: "Tide gate\u{1b}[2J report".into(),
+                mailbox: MailboxId::new(1),
+                message: None,
+            }),
+        );
+        let notice = app.notice().expect("said on the status line");
+        assert!(notice.contains("Grace Hopper"), "{notice}");
+        assert!(
+            !notice.contains('\u{1b}'),
+            "outside text is made safe: {notice:?}"
+        );
+        assert!(
+            effects.iter().any(|effect| matches!(
+                effect,
+                Effect::DesktopNotify { title, .. } if title == "Grace Hopper"
+            )),
+            "{effects:?}"
+        );
     }
 
     fn composing(app: &mut App) {
