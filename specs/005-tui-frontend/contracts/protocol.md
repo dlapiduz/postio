@@ -112,6 +112,30 @@ notifications loses them rather than stalling its events: at most 16 wait.
   does today, `crates/postio-app/src/lib.rs:243-259`), ends the session
   marker, and exits.
 - `SIGTERM` does the same, immediately.
+- **The daemon going away under a frontend** (it crashed, was killed, or
+  stopped on `SIGTERM` with clients still connected) is learned from the
+  socket, not from the next call: when the connection's reader ends, every
+  pending call is answered `Disconnected` and then `Client::closed()`
+  resolves. The frontend says so and keeps what is on screen, to read:
+  the terminal's status line says "Postio's background service stopped —
+  press R to reconnect" (refresh's key; `F5` too, which a composer does not
+  type), and the desktop replaces the window's content with the unavailable
+  screen, whose "Try again" reruns startup's connect-and-follow path.
+- **Reconnecting is only ever asked for.** It runs `connect_or_start`
+  again, starting a daemon if nothing answers, off the frontend's loop, and
+  `Client::reconnect` swaps the new connection in under every clone of the
+  client, so nothing holding one needs handing a new one; events and
+  notifications are re-subscribed on `Client::reconnected`. What is on
+  screen is then read afresh: the sidebar, the list where it was, the
+  reader. The new connection is a new client to the daemon: its draft
+  writer does not know earlier compositions by generation, so a draft
+  carries the id its first save returned.
+- **Nothing is replayed.** A command or a draft write made while the daemon
+  was gone was answered `Disconnected` and is not retried. The terminal's
+  composer keeps its text and saves it once reconnected; closing, sending
+  or quitting with an unsaved draft while the daemon is gone is held (a
+  quit asks once). A send the daemon had already queued is in its store,
+  and its engine carries it on when it next runs.
 
 ## Observability
 
