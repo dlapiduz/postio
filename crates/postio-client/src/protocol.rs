@@ -376,6 +376,8 @@ pub enum Req {
     /// Start syncing every enabled account that is not syncing yet: the
     /// ones there were at startup, or one a frontend just added.
     StartSync,
+    /// The verbs this owner answers, for a window that offers only those.
+    Wired,
     /// Save an account whose credentials a frontend already proved: the
     /// password to the keyring first, then the row, as the desktop's
     /// first-run screen writes them (`postio_session::onboarding::persist`).
@@ -480,6 +482,8 @@ pub enum Resp {
     Seen(bool),
     /// What a window opens on.
     Startup(StartupRoute),
+    /// The verbs the owner answers.
+    Wired(Vec<postio_core::CommandId>),
     /// A report's text.
     Diagnosis(String),
     /// What discovery found, as the first-run screen shows it.

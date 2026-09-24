@@ -48,6 +48,7 @@ use postio_gtk::onboarding::Onboarding;
 use postio_gtk::window::Window;
 
 use crate::Wiring;
+use crate::frontend::Frontend;
 use crate::onboarding::{JmapOfferSlot, ProbeCancellation, probe, submit};
 
 /// Wire [`CommandId::AddAccount`] to the dialogue.
@@ -56,11 +57,16 @@ use crate::onboarding::{JmapOfferSlot, ProbeCancellation, probe, submit};
 /// verbs over mail, and this one is answered by the composition root, which
 /// is the only place that may build a probe and write an account row.
 pub async fn install(window: &Window, wiring: &Wiring) {
+    install_for(window, &Frontend::in_process(wiring)).await;
+}
+
+/// [`install`], for a window whose store's owner may be another process.
+pub async fn install_for(window: &Window, frontend: &Frontend) {
     // Weak: this handler is stored on the window itself, so a strong clone
     // is a cycle with no third party in it at all (#1072).
     let weak = glib::object::ObjectExt::downgrade(window);
     window.connect_command({
-        let wiring = wiring.clone();
+        let frontend = frontend.clone();
         move |id| {
             postio_session::blocking::now(async {
                 if id == CommandId::AddAccount {
@@ -70,11 +76,11 @@ pub async fn install(window: &Window, wiring: &Wiring) {
                     // Built per opening, not once: a transport is cheap, and one
                     // shared between dialogues would outlive the cancellation
                     // that is supposed to end its work.
-                    open(
+                    open_for(
                         &window,
-                        &wiring,
+                        &frontend,
                         // Discovery probes are outbound connections too (#151).
-                        Arc::new(PimalayaTransport::new().with_egress(wiring.egress.clone())),
+                        Arc::new(PimalayaTransport::new().with_egress(frontend.egress.clone())),
                     )
                     .await;
                 }
@@ -93,6 +99,17 @@ pub async fn install(window: &Window, wiring: &Wiring) {
 pub async fn open(
     window: &Window,
     wiring: &Wiring,
+    transport: Arc<dyn DiscoveryTransport>,
+) -> adw::Dialog {
+    // The write, and reading its row back, are the store owner's (ADR 0041),
+    // asked through a client of this dialogue's own over the same wiring.
+    open_for(window, &Frontend::in_process(wiring), transport).await
+}
+
+/// [`open`], for a window whose store's owner may be another process.
+pub async fn open_for(
+    window: &Window,
+    frontend: &Frontend,
     transport: Arc<dyn DiscoveryTransport>,
 ) -> adw::Dialog {
     let screen = Onboarding::new();
@@ -114,15 +131,12 @@ pub async fn open(
         move |_| cancellation.stop()
     });
 
-    // The write, and reading its row back, are the store owner's (ADR 0041),
-    // asked through a client of this dialogue's own over the same wiring.
-    let client =
-        postio_host::Host::over(wiring.clone()).connect(postio_client::protocol::ClientKind::Gtk);
+    let client = frontend.client.clone();
 
     let jmap = JmapOfferSlot::default();
     screen.connect_probe({
         let screen = screen.clone();
-        let runtime = wiring.runtime.clone();
+        let runtime = frontend.runtime.clone();
         let cancellation = cancellation.clone();
         let jmap = jmap.clone();
         move |address| {
@@ -139,17 +153,17 @@ pub async fn open(
 
     screen.connect_submit({
         let screen = screen.clone();
-        let runtime = wiring.runtime.clone();
+        let runtime = frontend.runtime.clone();
         let cancellation = cancellation.clone();
         let on_saved = {
             let window = window.clone();
-            let wiring = wiring.clone();
+            let frontend = frontend.clone();
             let dialog = dialog.clone();
             let client = client.clone();
             move |address: &str| {
                 postio_session::blocking::now(async {
                     dialog.close();
-                    join(&window, &wiring, &client, address).await;
+                    join(&window, &frontend, &client, address).await;
                 })
             }
         };
@@ -180,12 +194,19 @@ pub async fn open(
 /// is what [`crate::attach_account`] has to start an engine from, it carries
 /// the id only the insert knows, and `onboarding::save` may have *updated*
 /// an account that was already there rather than creating one.
-async fn join(window: &Window, wiring: &Wiring, client: &Client, address: &str) {
+async fn join(window: &Window, frontend: &Frontend, client: &Client, address: &str) {
     let Some(account) = written(client, address).await else {
         // The row was written a moment ago, so this is a store that has
         // stopped answering — which the panes are about to say far more
         // loudly than a toast would.
         tracing::error!("the account was saved and could not be read back");
+        return;
+    };
+    let Some(wiring) = &frontend.wiring else {
+        // The owner is another process, which starts the new account's
+        // sync itself when asked; a refusal is its log's to say.
+        client.start_sync();
+        crate::settings_accounts::refresh(window, frontend, client).await;
         return;
     };
     if let Err(refusal) = crate::attach_account(window, wiring, &account).await {

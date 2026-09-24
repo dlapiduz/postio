@@ -87,6 +87,18 @@ pub async fn install(
     feeds: &Feeds,
     reindexing: Reindexing,
 ) -> Option<View> {
+    install_for(window, &wiring.events, client, feeds, reindexing).await
+}
+
+/// [`install`], for a window whose store's owner may be another process:
+/// `events` is where the window hears a search's own sentences.
+pub async fn install_for(
+    window: &Window,
+    events: &postio_core::bridge::EventSink,
+    client: Client,
+    feeds: &Feeds,
+    reindexing: Reindexing,
+) -> Option<View> {
     // `first_account`'s answer, asked of the host: the first enabled account
     // in creation order, which is the order it lists them in.
     let account = client
@@ -125,7 +137,7 @@ pub async fn install(
         &finder,
         window,
         feeds,
-        wiring,
+        events,
         &client,
         held.clone(),
         order.clone(),
@@ -396,7 +408,7 @@ async fn install_run(
     finder: &Finder,
     window: &Window,
     feeds: &Feeds,
-    wiring: &Wiring,
+    events: &postio_core::bridge::EventSink,
     client: &Client,
     held: Held,
     order: Order,
@@ -412,7 +424,7 @@ async fn install_run(
     };
 
     let client = client.clone();
-    let events = wiring.events.clone();
+    let events = events.clone();
     let view = view.clone();
     let folders = feeds.folders.clone();
     // Weak, because the window owns the finder that owns this handler; a

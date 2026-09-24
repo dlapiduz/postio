@@ -37,6 +37,7 @@ use postio_gtk::window::Window;
 use postio_model::ids::AccountId;
 
 use crate::Wiring;
+use crate::frontend::Frontend;
 use crate::onboarding::{ProbeCancellation, configured, probe, submit};
 
 /// Opens a dialog over `window` letting the user re-enter `id`'s credential
@@ -45,8 +46,13 @@ use crate::onboarding::{ProbeCancellation, configured, probe, submit};
 pub async fn install(window: &Window, wiring: &Wiring, id: AccountId) {
     // The row and the writes are the store owner's (ADR 0041), asked through
     // a client of this dialog's own, over the same wiring.
-    let client =
-        postio_host::Host::over(wiring.clone()).connect(postio_client::protocol::ClientKind::Gtk);
+    install_for(window, &Frontend::in_process(wiring), id).await;
+}
+
+/// [`install`], for a window whose store's owner may be another process:
+/// the row and the writes go through `frontend`'s client.
+pub async fn install_for(window: &Window, frontend: &Frontend, id: AccountId) {
+    let client = frontend.client.clone();
     // POSTIO-GLIB-SAFE: a client call is a oneshot receive; the host answers
     // on its own runtime.
     let Ok(accounts) = client.accounts().await else {
@@ -79,12 +85,12 @@ pub async fn install(window: &Window, wiring: &Wiring, id: AccountId) {
         move |_| cancellation.stop()
     });
     let transport: Arc<dyn DiscoveryTransport> =
-        Arc::new(PimalayaTransport::new().with_egress(wiring.egress.clone()));
+        Arc::new(PimalayaTransport::new().with_egress(frontend.egress.clone()));
 
     let jmap = crate::onboarding::JmapOfferSlot::default();
     screen.connect_probe({
         let screen = screen.clone();
-        let runtime = wiring.runtime.clone();
+        let runtime = frontend.runtime.clone();
         let cancellation = cancellation.clone();
         let jmap = jmap.clone();
         move |address| {
@@ -101,17 +107,17 @@ pub async fn install(window: &Window, wiring: &Wiring, id: AccountId) {
 
     screen.connect_submit({
         let screen = screen.clone();
-        let runtime = wiring.runtime.clone();
+        let runtime = frontend.runtime.clone();
         let cancellation = cancellation.clone();
         let on_saved = {
             let window = window.clone();
-            let wiring = wiring.clone();
+            let frontend = frontend.clone();
             let client = client.clone();
             let dialog = dialog.clone();
             move || {
                 postio_session::blocking::now(async {
                     dialog.close();
-                    crate::settings_accounts::refresh(&window, &wiring, &client).await;
+                    crate::settings_accounts::refresh(&window, &frontend, &client).await;
                 })
             }
         };

@@ -27,6 +27,7 @@ mod conversation_by_default;
 mod conversation_reply_target;
 mod correlation;
 mod cursor_preview;
+mod daemon_window;
 mod decode_notice;
 mod degraded_unified;
 mod drag_out_portal;
@@ -130,6 +131,10 @@ const CASES: &[(&str, fn())] = &[
         "reader_stability::moving_onto_a_thread_draws_it_once_whole_and_under_its_own_header",
         reader_stability::moving_onto_a_thread_draws_it_once_whole_and_under_its_own_header
             as fn(),
+    ),
+    (
+        "daemon_window::a_window_over_the_daemons_socket_shows_its_mail_and_acts_on_it",
+        daemon_window::a_window_over_the_daemons_socket_shows_its_mail_and_acts_on_it as fn(),
     ),
     (
         "escape_after_finder_closed::escape_leaves_search_even_after_the_box_has_closed",

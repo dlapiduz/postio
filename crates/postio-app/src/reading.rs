@@ -101,6 +101,28 @@ pub async fn install(
     feeds: &Feeds,
     showing: Showing,
 ) {
+    install_for(
+        window,
+        wiring.runtime.clone(),
+        wiring.events.clone(),
+        client,
+        feeds,
+        showing,
+    )
+    .await;
+}
+
+/// [`install`], for a window whose store's owner may be another process:
+/// `runtime` is where this pane's own work is awaited, off the main loop,
+/// and `events` where it says what went wrong.
+pub async fn install_for(
+    window: &Window,
+    runtime: tokio::runtime::Handle,
+    events: postio_core::bridge::EventSink,
+    client: Client,
+    feeds: &Feeds,
+    showing: Showing,
+) {
     // See `accounts_to_name`: empty in the single-account case, which is the
     // common one, and then this costs a length check per message.
     let named_accounts: Rc<Vec<(postio_model::AccountId, String)>> =
@@ -149,7 +171,7 @@ pub async fn install(
     // sender's domain), so the banner's words are not sent back.
     window.reader().connect_unsubscribe_activated({
         let client = client.clone();
-        let runtime = wiring.runtime.clone();
+        let runtime = runtime.clone();
         let showing = showing.clone();
         move |_list_identifier| {
             let Some(message) = showing.get() else {
@@ -179,10 +201,10 @@ pub async fn install(
         showing,
         #[strong]
         client,
-        #[strong(rename_to = events)]
-        wiring.events,
-        #[strong(rename_to = runtime)]
-        wiring.runtime,
+        #[strong]
+        events,
+        #[strong]
+        runtime,
         move |node, file| {
             let (Some(attachment), Some(message)) = (node.attachment, showing.get()) else {
                 return;
@@ -226,8 +248,8 @@ pub async fn install(
 
     let opener = Rc::new(PartOpener {
         client: client.clone(),
-        events: wiring.events.clone(),
-        runtime: wiring.runtime.clone(),
+        events: events.clone(),
+        runtime: runtime.clone(),
     });
 
     // `Ret` in the parts panel. `parts::previewable` says images and PDFs are
@@ -272,10 +294,10 @@ pub async fn install(
         showing,
         #[strong]
         client,
-        #[strong(rename_to = events)]
-        wiring.events,
-        #[strong(rename_to = runtime)]
-        wiring.runtime,
+        #[strong]
+        events,
+        #[strong]
+        runtime,
         move |folder| {
             let (Some(message), Some(into)) = (showing.get(), folder.path()) else {
                 return;
@@ -321,7 +343,7 @@ pub async fn install(
     window.parts().connect_export({
         let showing = showing.clone();
         let client = client.clone();
-        let runtime = wiring.runtime.clone();
+        let runtime = runtime.clone();
         std::rc::Rc::new(move |node: postio_gtk::parts::Node| {
             let (client, runtime) = (client.clone(), runtime.clone());
             let message = showing.get();
@@ -345,7 +367,7 @@ pub async fn install(
         })
     });
 
-    let runtime = wiring.runtime.clone();
+    let runtime = runtime.clone();
     // One filler, two ways in.
     //
     // The cursor is the one that matters: `j` and `k` are how a mailbox is

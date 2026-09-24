@@ -89,8 +89,15 @@ pub fn config_at(path: &std::path::Path) -> SyncConfig {
 }
 
 /// Everything `notify` needs that does not change per call.
+///
+/// Empty when the store's owner is another process: that owner decides
+/// every arrival and sends the one frontend it elects a `Notify`
+/// ([`deliver_from`]), so the window's own event drain has nothing to do.
 #[derive(Clone)]
-pub struct Notifier {
+pub struct Notifier(Option<Reads>);
+
+#[derive(Clone)]
+struct Reads {
     database: Store,
     store: Arc<dyn MailStore>,
     runtime: tokio::runtime::Handle,
@@ -106,12 +113,18 @@ impl Notifier {
         runtime: tokio::runtime::Handle,
         config: SyncConfig,
     ) -> Self {
-        Self {
+        Self(Some(Reads {
             database,
             store,
             runtime,
             config,
-        }
+        }))
+    }
+
+    /// A notifier for a window whose store's owner is another process,
+    /// which decides and sends the notifications itself.
+    pub fn from_the_owner() -> Self {
+        Self(None)
     }
 
     /// Notifies about `messages` having arrived in `mailbox`, if `[sync]`
@@ -127,6 +140,9 @@ impl Notifier {
         messages: &[MessageId],
         attention: Attention,
     ) {
+        let Some(reads) = &self.0 else {
+            return;
+        };
         if messages.is_empty() {
             return;
         }
@@ -137,11 +153,11 @@ impl Notifier {
         // The decision is the host's (`postio_host::notify`), the same one a
         // daemon makes for a frontend over its socket.
         let ids: Vec<MessageId> = messages.to_vec();
-        let store = self.store.clone();
-        let database = self.database.clone();
-        let config = self.config.clone();
+        let store = reads.store.clone();
+        let database = reads.database.clone();
+        let config = reads.config.clone();
         let (sender, receiver) = async_channel::bounded(1);
-        self.runtime.spawn(async move {
+        reads.runtime.spawn(async move {
             let decided = postio_host::notify::decide_arrival(
                 &database,
                 store.as_ref(),
@@ -165,6 +181,51 @@ impl Notifier {
             }
         });
     }
+}
+
+/// Deliver every notification the store's owner sends `client`, for as long
+/// as `application` runs, and keep the owner told what the window is
+/// showing so it can hold back mail already on screen.
+///
+/// Only the frontend the owner elected is sent any (`postio_host::notify`),
+/// so two windows on one store raise one notification.
+pub fn deliver_from(
+    application: &gtk::Application,
+    window: &Window,
+    feeds: &postio_gtk::feed::Feeds,
+    client: &postio_client::Client,
+) {
+    let notices = client.notifications();
+    let application = application.downgrade();
+    glib::spawn_future_local(async move {
+        while let Ok(notification) = notices.recv().await {
+            let Some(application) = application.upgrade() else {
+                return;
+            };
+            deliver(&application, &notification);
+        }
+    });
+
+    // Posted when either half changes, never asked at the arrival: the
+    // owner decides without a round trip to this window.
+    let tell = {
+        let client = client.clone();
+        let feeds = feeds.clone();
+        let window = window.downgrade();
+        move || {
+            if let Some(window) = window.upgrade() {
+                client.attention(Attention {
+                    showing: feeds.messages.mailbox(),
+                    active: window.is_active(),
+                });
+            }
+        }
+    };
+    feeds.messages.connect_opened({
+        let tell = tell.clone();
+        move || tell()
+    });
+    window.connect_is_active_notify(move |_| tell());
 }
 
 /// Post a decided notification, replacing the one already showing for its

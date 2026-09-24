@@ -124,8 +124,33 @@ pub async fn install(
     // The writes are the store owner's (ADR 0041). This screen is reached
     // before any window is fed, so it connects its own client, over the
     // same wiring.
-    let client =
-        postio_host::Host::over(wiring.clone()).connect(postio_client::protocol::ClientKind::Gtk);
+    let frontend = crate::frontend::Frontend::in_process(wiring);
+    // Once the account is written, the same sequence `run()`'s `activate`
+    // handler runs when an account is there from the start.
+    let open = {
+        let window = window.clone();
+        let wiring = wiring.clone();
+        move || {
+            postio_session::blocking::now(crate::open_account(
+                &window, &wiring, &state, &wired, &events, &notifier,
+            ))
+        }
+    };
+    install_for(window, &frontend, repairing, transport, opener, open).await;
+}
+
+/// [`install`], for a window whose store's owner may be another process:
+/// the writes go through `frontend`'s client, and `open` is what brings the
+/// window up over the account once it is written.
+pub async fn install_for(
+    window: &Window,
+    frontend: &crate::frontend::Frontend,
+    repairing: Option<Account>,
+    transport: Arc<dyn DiscoveryTransport>,
+    opener: Arc<dyn postio_account::oauth::BrowserOpener>,
+    open: impl Fn() + Clone + 'static,
+) {
+    let client = frontend.client.clone();
     let screen = Onboarding::new();
     let previous = window.content();
     // Under the window's chrome, not instead of it.
@@ -204,7 +229,7 @@ pub async fn install(
 
     screen.connect_probe({
         let screen = screen.clone();
-        let runtime = wiring.runtime.clone();
+        let runtime = frontend.runtime.clone();
         let cancellation = cancellation.clone();
         let offer = offer.clone();
         let jmap = jmap.clone();
@@ -236,13 +261,10 @@ pub async fn install(
     // the user has chosen how far back to sync.
     let finish = {
         let window = window.clone();
-        let wiring = wiring.clone();
         let previous = previous.clone();
         move || {
-            postio_session::blocking::now(async {
-                window.set_content(previous.as_ref());
-                crate::open_account(&window, &wiring, &state, &wired, &events, &notifier).await;
-            })
+            window.set_content(previous.as_ref());
+            open();
         }
     };
     screen.connect_start_sync({
@@ -257,7 +279,7 @@ pub async fn install(
 
     screen.connect_submit({
         let screen = screen.clone();
-        let runtime = wiring.runtime.clone();
+        let runtime = frontend.runtime.clone();
         let cancellation = cancellation.clone();
         // `submit`/`submit_oauth` show the sync-window step and stop —
         // `finish` runs from `connect_start_sync` above once the user picks

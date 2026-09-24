@@ -31,11 +31,13 @@ pub mod commands;
 pub mod compose;
 pub mod export;
 pub mod feed;
+pub mod frontend;
 pub mod notifications;
 pub mod onboarding;
 pub mod orientation;
 pub mod reading;
 mod recipients;
+pub mod remote;
 pub mod search;
 pub mod settings_accounts;
 pub mod settings_credential;
@@ -396,6 +398,27 @@ async fn open_account(
     events: &Rc<std::cell::RefCell<Option<EventStream>>>,
     notifier: &notifications::Notifier,
 ) {
+    open_account_for(
+        window,
+        &frontend::Frontend::in_process(wiring),
+        state,
+        wired,
+        events,
+        notifier,
+    )
+    .await;
+}
+
+/// [`open_account`], for a window whose store's owner may be another
+/// process: the owner there syncs, and is asked to start.
+pub(crate) async fn open_account_for(
+    window: &Window,
+    frontend: &frontend::Frontend,
+    state: &SharedState,
+    wired: &[postio_core::CommandId],
+    events: &Rc<std::cell::RefCell<Option<EventStream>>>,
+    notifier: &notifications::Notifier,
+) {
     // **Storage first, and the network only once there is something to look
     // at.** This read `start_syncing` then `feed_the_window`, so opening the
     // account connected to the server, authenticated and listed its folders
@@ -417,7 +440,7 @@ async fn open_account(
     //
     // The mail is already on disk. Everything below this line reads it, and
     // none of it needs a connection.
-    let Some(Wired { feeds, .. }) = feed_the_window(window, wiring).await else {
+    let Some(Wired { feeds, .. }) = feed_the_window_for(window, frontend).await else {
         return;
     };
 
@@ -426,11 +449,33 @@ async fn open_account(
     // `on_first_frame` and not an idle callback: idle means "when the loop is
     // free", which is a promise about the loop; this needs to mean "once the
     // person can see their mail", which is a promise about the screen.
-    postio_gtk::startup::on_first_frame(window, {
-        let window = window.clone();
-        let wiring = wiring.clone();
-        move || postio_session::blocking::now(start_syncing(&window, &wiring))
-    });
+    match &frontend.wiring {
+        Some(wiring) => postio_gtk::startup::on_first_frame(window, {
+            let window = window.clone();
+            let wiring = wiring.clone();
+            move || postio_session::blocking::now(start_syncing(&window, &wiring))
+        }),
+        // The owner's engines. It started the ones it had when it opened
+        // the store; this asks for any it has not -- an account the
+        // first-run screen just wrote.
+        None => {
+            postio_gtk::startup::on_first_frame(window, {
+                let client = frontend.client.clone();
+                move || client.start_sync()
+            });
+            // The one body the person is waiting for goes to the front of
+            // the backfill, as `fetch_what_is_opened` sends it in-process.
+            window.list().connect_activated({
+                let client = frontend.client.clone();
+                move |row| client.fetch_body(row.id)
+            });
+            // New mail: the owner decides, and tells this window only if it
+            // is the one elected to deliver (`postio_host::notify`).
+            if let Some(application) = window.application() {
+                notifications::deliver_from(&application, window, &feeds, &frontend.client);
+            }
+        }
+    }
     // Every gesture the window produces from here on reaches a real handler.
     // Before this line the keymap, the palette and the selection model all
     // resolved correctly and then handed off to nothing.
@@ -438,7 +483,7 @@ async fn open_account(
         window,
         &feeds,
         state.clone(),
-        wiring.commands.clone(),
+        frontend.commands.clone(),
         wired.to_vec(),
     );
     // Everything either half has to say reaches the panes here: a mailbox the
@@ -478,6 +523,15 @@ pub struct Wired {
 /// would be worse than an empty one. `postio-hiy` is the screen that creates
 /// the first one.
 pub async fn feed_the_window(window: &Window, wiring: &Wiring) -> Option<Wired> {
+    // The window's surfaces read through a client of the store's owner
+    // (ADR 0041). Over this wiring: the host is in this process, and the
+    // client alone keeps it alive.
+    feed_the_window_for(window, &frontend::Frontend::in_process(wiring)).await
+}
+
+/// [`feed_the_window`], for a window whose store's owner may be another
+/// process: every surface reads through `frontend`'s client.
+pub async fn feed_the_window_for(window: &Window, frontend: &frontend::Frontend) -> Option<Wired> {
     // Everything from here to the return is synchronous main-thread work,
     // and the first frame is waiting on all of it. The two marks around it
     // are what let a startup trace say so: before #1479 the whole stretch
@@ -522,11 +576,7 @@ pub async fn feed_the_window(window: &Window, wiring: &Wiring) -> Option<Wired> 
     // one step earlier, for the onboarding branch that never reaches here.
     window.set_store_open(true);
 
-    // The window's surfaces read through a client of the store's owner
-    // (ADR 0041). Over this wiring for now: the host is in this process, and
-    // the client alone keeps it alive.
-    let client =
-        postio_host::Host::over(wiring.clone()).connect(postio_client::protocol::ClientKind::Gtk);
+    let client = frontend.client.clone();
 
     // Every account this window needs to know about, in one read: the one it
     // opens on, the strip's, the scope switch's addresses and the one new
@@ -557,7 +607,10 @@ pub async fn feed_the_window(window: &Window, wiring: &Wiring) -> Option<Wired> 
         "opening account"
     );
 
-    let sources = feed::Sources::new(std::sync::Arc::new(client.clone()), wiring.runtime.clone());
+    let sources = feed::Sources::new(
+        std::sync::Arc::new(client.clone()),
+        frontend.runtime.clone(),
+    );
     let feeds = window.install_feeds(
         account.id,
         account.address.address.as_str(),
@@ -690,7 +743,7 @@ pub async fn feed_the_window(window: &Window, wiring: &Wiring) -> Option<Wired> 
         window,
         composing,
         client.clone(),
-        wiring.runtime.clone(),
+        frontend.runtime.clone(),
         showing.clone(),
         None,
     )
@@ -698,17 +751,25 @@ pub async fn feed_the_window(window: &Window, wiring: &Wiring) -> Option<Wired> 
 
     // The reading pane. After `compose::install`, because the two share the
     // pane and the window wires their swap when the composer is installed.
-    reading::install(window, wiring, client.clone(), &feeds, showing).await;
+    reading::install_for(
+        window,
+        frontend.runtime.clone(),
+        frontend.events.clone(),
+        client.clone(),
+        &feeds,
+        showing,
+    )
+    .await;
 
     // ADR 0012 Q4: the first-run keyboard orientation, after the first sync.
     // Installed here rather than in `postio-gtk` because the two questions
     // it turns on -- has this been seen, and has a sync finished -- are a
     // store read and an engine event, and the view layer has neither.
-    orientation::install(window, &wiring.runtime, client.clone(), &feeds).await;
+    orientation::install(window, &frontend.runtime, client.clone(), &feeds).await;
 
     // Dragging messages out to another application. Nothing is written until
     // a drop actually asks, so this costs nothing until it is used.
-    export::install(window, wiring, client.clone()).await;
+    export::install_for(window, frontend.runtime.clone(), client.clone());
 
     // Which accounts are rebuilding their local search index right now
     // (#981) -- shared between the settings panel, which owns the set, and
@@ -718,7 +779,8 @@ pub async fn feed_the_window(window: &Window, wiring: &Wiring) -> Option<Wired> 
 
     // The settings panel's account rows: enable/disable, remove-with-undo,
     // rebuild-index, and each account's mailbox role map.
-    settings_accounts::install(window, wiring, client.clone(), reindexing.clone(), &feeds).await;
+    settings_accounts::install_for(window, frontend, client.clone(), reindexing.clone(), &feeds)
+        .await;
     // And its connection list: the egress log, auditable (#151).
     settings_egress::install(window, client.clone()).await;
     // The privacy pane's unsubscribe-activation log (#971).
@@ -733,12 +795,12 @@ pub async fn feed_the_window(window: &Window, wiring: &Wiring) -> Option<Wired> 
     // is what this function builds -- an application with no account to feed
     // is already on the first-run screen, where adding a second one is not a
     // question anybody can ask.
-    add_account::install(window, wiring).await;
+    add_account::install_for(window, frontend).await;
 
     // Leaked for the same reason the engine is: the search surfaces live as
     // long as the window, and dropping the `View` here would unhook the
     // handlers that answer the box a moment after they were connected.
-    let search = search::install(window, wiring, client.clone(), &feeds, reindexing)
+    let search = search::install_for(window, &frontend.events, client.clone(), &feeds, reindexing)
         .await
         .map(|view| &*Box::leak(Box::new(view)));
 
@@ -758,13 +820,18 @@ pub async fn feed_the_window(window: &Window, wiring: &Wiring) -> Option<Wired> 
     // journal had the WAL truncation landing 20 ms after the first page was
     // asked for. The indexer's catch-up pass also covers any `BodyLoaded` it
     // was not yet subscribed to hear.
-    let idle = wiring.clone();
-    postio_gtk::startup::on_first_frame(window, move || {
-        let wiring = idle.clone();
-        glib::timeout_add_local_once(IDLE_PASSES_AFTER_FIRST_FRAME, move || {
-            postio_host::maintenance::spawn_idle_passes(&wiring);
+    //
+    // Only where the store's owner is this process: `postio-daemon` runs
+    // them itself, a moment after it opens the store.
+    if let Some(wiring) = &frontend.wiring {
+        let idle = wiring.clone();
+        postio_gtk::startup::on_first_frame(window, move || {
+            let wiring = idle.clone();
+            glib::timeout_add_local_once(IDLE_PASSES_AFTER_FIRST_FRAME, move || {
+                postio_host::maintenance::spawn_idle_passes(&wiring);
+            });
         });
-    });
+    }
 
     // Live `[storage] max_bytes` (#929): the ceiling is read once at startup
     // through `Wiring::storage_ceiling` -- this is the other half. Lowering
@@ -856,9 +923,8 @@ pub async fn attach_account(
     // does, this is where it joins. Read through a client of the store's
     // owner, as the panel reads (ADR 0041); this signature is the one the
     // add-account dialogue and its test call, so it connects its own.
-    let client =
-        postio_host::Host::over(wiring.clone()).connect(postio_client::protocol::ClientKind::Gtk);
-    settings_accounts::refresh(window, wiring, &client).await;
+    let frontend = frontend::Frontend::in_process(wiring);
+    settings_accounts::refresh(window, &frontend, &frontend.client).await;
     Ok(())
 }
 

@@ -229,8 +229,16 @@ pub async fn export_part(
 ///
 /// `client` is the window's: the rows and the writes are its calls.
 pub async fn install(window: &postio_gtk::window::Window, wiring: &crate::Wiring, client: Client) {
-    let runtime = wiring.runtime.clone();
+    install_for(window, wiring.runtime.clone(), client);
+}
 
+/// [`install`], for a window whose store's owner may be another process:
+/// `runtime` is where the writes are awaited, off the main loop.
+pub fn install_for(
+    window: &postio_gtk::window::Window,
+    runtime: tokio::runtime::Handle,
+    client: Client,
+) {
     window
         .list()
         .connect_export(std::rc::Rc::new(move |messages: Vec<MessageId>| {

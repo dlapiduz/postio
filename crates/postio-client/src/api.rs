@@ -138,6 +138,7 @@ impl Req {
             Req::StartupRoute => "StartupRoute",
             Req::RecordEgress(_) => "RecordEgress",
             Req::StartSync => "StartSync",
+            Req::Wired => "Wired",
             Req::SaveAccount { .. } => "SaveAccount",
             Req::SaveOAuthAccount(_) => "SaveOAuthAccount",
         }
@@ -221,6 +222,16 @@ impl Client {
     pub fn start_sync(&self) {
         self.counts.record("StartSync");
         self.transport.post(Req::StartSync);
+    }
+
+    /// The verbs the owner answers: what a window's gestures may be sent
+    /// as, rather than answered "not wired up in this build".
+    pub async fn wired(&self) -> Result<Vec<postio_core::CommandId>, StoreError> {
+        self.read(Req::Wired, "the verbs", |answer| match answer {
+            Resp::Wired(wired) => Some(wired),
+            _ => None,
+        })
+        .await
     }
 
     /// What a window opens on: an account, or the first-run screen.

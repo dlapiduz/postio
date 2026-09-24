@@ -39,9 +39,9 @@ use postio_gtk::settings::{
 };
 use postio_gtk::window::Window;
 use postio_model::ids::AccountId;
-use postio_runtime::AttachmentPolicy;
 
 use crate::Wiring;
+use crate::frontend::Frontend;
 
 /// Accounts whose local search index is being rebuilt right now (#981).
 ///
@@ -65,6 +65,24 @@ pub type Reindexing = Rc<RefCell<HashSet<AccountId>>>;
 pub async fn install(
     window: &Window,
     wiring: &Wiring,
+    client: Client,
+    reindexing: Reindexing,
+    feeds: &Feeds,
+) {
+    install_for(
+        window,
+        &Frontend::over(wiring, client.clone()),
+        client,
+        reindexing,
+        feeds,
+    )
+    .await;
+}
+
+/// [`install`], for a window whose store's owner may be another process.
+pub async fn install_for(
+    window: &Window,
+    frontend: &Frontend,
     client: Client,
     reindexing: Reindexing,
     feeds: &Feeds,
@@ -95,11 +113,11 @@ pub async fn install(
     // viewport height: "read fresh on every open rather than cached" (#871).
     // Nothing else needs these numbers -- they are drawn in this panel and
     // nowhere else.
-    refresh(window, wiring, &client).await;
+    refresh(window, frontend, &client).await;
 
     {
         let weak = glib::object::ObjectExt::downgrade(window);
-        let wiring = wiring.clone();
+        let frontend = frontend.clone();
         let client = client.clone();
         let panel = window.settings();
         gtk::prelude::WidgetExt::connect_visible_notify(&panel, move |panel| {
@@ -108,7 +126,7 @@ pub async fn install(
                     return;
                 }
                 if let Some(window) = weak.upgrade() {
-                    refresh(&window, &wiring, &client).await;
+                    refresh(&window, &frontend, &client).await;
                 }
             })
         });
@@ -122,7 +140,7 @@ pub async fn install(
     let weak = glib::object::ObjectExt::downgrade(window);
     panel.connect_account_enabled_changed({
         let weak = weak.clone();
-        let wiring = wiring.clone();
+        let frontend = frontend.clone();
         let client = client.clone();
         move |id, enabled| {
             postio_session::blocking::now(async {
@@ -136,7 +154,7 @@ pub async fn install(
                     tracing::warn!(%error, "could not change whether an account is enabled");
                 }
                 if let Some(window) = weak.upgrade() {
-                    refresh(&window, &wiring, &client).await;
+                    refresh(&window, &frontend, &client).await;
                 }
             })
         }
@@ -144,7 +162,7 @@ pub async fn install(
 
     panel.connect_account_action({
         let weak = weak.clone();
-        let wiring = wiring.clone();
+        let frontend = frontend.clone();
         let client = client.clone();
         let reindexing = reindexing.clone();
         move |id, action| {
@@ -153,14 +171,14 @@ pub async fn install(
             };
             postio_session::blocking::now(async {
                 match action {
-                    AccountAction::Remove => remove(&window, &wiring, &client, id).await,
+                    AccountAction::Remove => remove(&window, &frontend, &client, id).await,
                     AccountAction::UpdateCredential => {
-                        crate::settings_credential::install(&window, &wiring, id).await
+                        crate::settings_credential::install_for(&window, &frontend, id).await
                     }
                     AccountAction::RebuildIndex => {
-                        rebuild_index(&window, &wiring, &client, &reindexing, id)
+                        rebuild_index(&window, &frontend, &client, &reindexing, id)
                     }
-                    AccountAction::SetDefault => set_default(&window, &wiring, &client, id).await,
+                    AccountAction::SetDefault => set_default(&window, &frontend, &client, id).await,
                 }
             })
         }
@@ -178,13 +196,13 @@ pub async fn install(
     // drawn, since the account has left `reindexing` by then.
     feeds.connect_event({
         let window = window.downgrade();
-        let wiring = wiring.clone();
+        let frontend = frontend.clone();
         let client = client.clone();
         let reindexing = reindexing.clone();
         move |event| match event {
             postio_core::Event::MailboxesChanged { .. } => postio_session::blocking::now(async {
                 if let Some(window) = window.upgrade() {
-                    refresh(&window, &wiring, &client).await;
+                    refresh(&window, &frontend, &client).await;
                 }
             }),
             postio_core::Event::BackfillProgress {
@@ -205,7 +223,7 @@ pub async fn install(
 
     panel.connect_account_edited({
         let weak = weak.clone();
-        let wiring = wiring.clone();
+        let frontend = frontend.clone();
         let client = client.clone();
         move |id, edit| {
             postio_session::blocking::now(async {
@@ -233,7 +251,7 @@ pub async fn install(
                     edit => edit_account(&client, id, edit).await,
                 }
                 if let Some(window) = weak.upgrade() {
-                    refresh(&window, &wiring, &client).await;
+                    refresh(&window, &frontend, &client).await;
                 }
             })
         }
@@ -241,12 +259,12 @@ pub async fn install(
 
     panel.connect_test_connection({
         let weak = weak.clone();
-        let wiring = wiring.clone();
+        let frontend = frontend.clone();
         let client = client.clone();
         move |id| {
             postio_session::blocking::now(async {
                 if let Some(window) = weak.upgrade() {
-                    test_connection(&window, &wiring, &client, id).await;
+                    test_connection(&window, &frontend, &client, id).await;
                 }
             })
         }
@@ -254,12 +272,12 @@ pub async fn install(
 
     panel.connect_signature_saved({
         let weak = weak.clone();
-        let wiring = wiring.clone();
+        let frontend = frontend.clone();
         let client = client.clone();
         move |id, draft| {
             postio_session::blocking::now(async {
                 if let Some(window) = weak.upgrade() {
-                    save_signature(&window, &wiring, &client, id, draft).await;
+                    save_signature(&window, &frontend, &client, id, draft).await;
                 }
             })
         }
@@ -267,11 +285,11 @@ pub async fn install(
 
     panel.connect_signature_deleted({
         let weak = weak.clone();
-        let wiring = wiring.clone();
+        let frontend = frontend.clone();
         move |id, signature| {
             postio_session::blocking::now(async {
                 if let Some(window) = weak.upgrade() {
-                    delete_signature(&window, &wiring, &client, id, signature).await;
+                    delete_signature(&window, &frontend, &client, id, signature).await;
                 }
             })
         }
@@ -290,7 +308,7 @@ pub async fn install(
 /// constraint's own words are not an answer anybody can act on.
 async fn save_signature(
     window: &Window,
-    wiring: &Wiring,
+    frontend: &Frontend,
     client: &Client,
     id: postio_model::ids::AccountId,
     draft: &SignatureDraft,
@@ -304,7 +322,7 @@ async fn save_signature(
         .await;
     match written {
         Ok(()) => {
-            refresh(window, wiring, client).await;
+            refresh(window, frontend, client).await;
             // Back to the account, with the list it now belongs to.
             window.settings().open_account_detail(id);
         }
@@ -323,7 +341,7 @@ async fn save_signature(
 /// picker agree with it without a restart.
 async fn delete_signature(
     window: &Window,
-    wiring: &Wiring,
+    frontend: &Frontend,
     client: &Client,
     id: postio_model::ids::AccountId,
     signature: postio_model::ids::SignatureId,
@@ -332,7 +350,7 @@ async fn delete_signature(
     // on its own runtime.
     match client.delete_signature(signature).await {
         Ok(()) => {
-            refresh(window, wiring, client).await;
+            refresh(window, frontend, client).await;
             window.settings().open_account_detail(id);
         }
         Err(error) => window
@@ -353,7 +371,7 @@ async fn delete_signature(
 /// the main loop must be inside neither.
 async fn test_connection(
     window: &Window,
-    wiring: &Wiring,
+    frontend: &Frontend,
     client: &Client,
     id: postio_model::ids::AccountId,
 ) {
@@ -377,9 +395,9 @@ async fn test_connection(
         }
     };
 
-    let secrets = wiring.secrets.clone();
+    let secrets = frontend.secrets.clone();
     let (sender, receiver) = async_channel::bounded(1);
-    wiring.runtime.spawn(async move {
+    frontend.runtime.spawn(async move {
         // The real connectors: this is the one path that is supposed to
         // dial out. Every test of it hands scripted ones in instead.
         // A connector that will not build is a TLS stack problem, not a
@@ -480,7 +498,7 @@ async fn edit_account(client: &Client, id: postio_model::ids::AccountId, edit: A
 /// a credential update closes, since a repaired account's own submission can
 /// turn `enabled` back on (`onboarding::configure`) and the row should say
 /// so without waiting for the next full refresh.
-pub(crate) async fn refresh(window: &Window, wiring: &Wiring, client: &Client) {
+pub(crate) async fn refresh(window: &Window, frontend: &Frontend, client: &Client) {
     // What each account's mail weighs, read here rather than waited for:
     // `Event::BackfillProgress` carries the same figure, but it only arrives
     // while a backfill is running and this panel is opened at a moment that
@@ -547,9 +565,9 @@ pub(crate) async fn refresh(window: &Window, wiring: &Wiring, client: &Client) {
         .map(|account| (account.id, account.address.address.clone()))
         .collect();
     if !oauth_accounts.is_empty() {
-        let secrets = wiring.secrets.clone();
+        let secrets = frontend.secrets.clone();
         let (sender, receiver) = async_channel::bounded(1);
-        wiring.runtime.spawn(async move {
+        frontend.runtime.spawn(async move {
             let mut expiries = Vec::with_capacity(oauth_accounts.len());
             for (id, address) in oauth_accounts {
                 let key = postio_account::secret::AccountKey::new(address);
@@ -573,10 +591,7 @@ pub(crate) async fn refresh(window: &Window, wiring: &Wiring, client: &Client) {
     let panel = window.settings();
     panel.set_accounts(accounts);
     panel.set_account_mailboxes(mailboxes);
-    panel.set_mail_weights(
-        &weights,
-        wiring.backfill.attachments == AttachmentPolicy::Eager,
-    );
+    panel.set_mail_weights(&weights, frontend.attachments_eager);
 }
 
 /// Marks `id` for removal, refreshes the panel to reflect it immediately,
@@ -584,7 +599,7 @@ pub(crate) async fn refresh(window: &Window, wiring: &Wiring, client: &Client) {
 /// why this is not the global undo stack.
 async fn remove(
     window: &Window,
-    wiring: &Wiring,
+    frontend: &Frontend,
     client: &Client,
     id: postio_model::ids::AccountId,
 ) {
@@ -594,17 +609,17 @@ async fn remove(
         tracing::warn!(%error, "could not mark an account for removal");
         return;
     }
-    refresh(window, wiring, client).await;
+    refresh(window, frontend, client).await;
 
     let restore_window = window.clone();
-    let restore_wiring = wiring.clone();
+    let restore_frontend = frontend.clone();
     let restore_client = client.clone();
     window.show_removable_toast("Account removed", move || {
         postio_session::blocking::now(async {
             if let Err(error) = restore_client.account(AccountOp::Restore(id)).await {
                 tracing::warn!(%error, "could not undo removing an account");
             }
-            refresh(&restore_window, &restore_wiring, &restore_client).await;
+            refresh(&restore_window, &restore_frontend, &restore_client).await;
         })
     });
 }
@@ -621,13 +636,13 @@ async fn remove(
 /// window in which two rows both claim the marker. Nothing here reaches the
 /// network: which account a new message comes from is local state, before
 /// and after.
-async fn set_default(window: &Window, wiring: &Wiring, client: &Client, id: AccountId) {
+async fn set_default(window: &Window, frontend: &Frontend, client: &Client, id: AccountId) {
     // POSTIO-GLIB-SAFE: a client call is a oneshot receive; the host answers
     // on its own runtime.
     if let Err(error) = client.account(AccountOp::SetDefault(id)).await {
         tracing::warn!(%error, "could not set the default account");
     }
-    refresh(window, wiring, client).await;
+    refresh(window, frontend, client).await;
 }
 
 /// Rebuilds `id`'s local search index (#981), reporting progress on its own
@@ -649,7 +664,7 @@ async fn set_default(window: &Window, wiring: &Wiring, client: &Client, id: Acco
 /// mid-rebuild (#981's own "the search surface should say so too").
 fn rebuild_index(
     window: &Window,
-    wiring: &Wiring,
+    frontend: &Frontend,
     client: &Client,
     reindexing: &Reindexing,
     id: AccountId,
@@ -658,7 +673,7 @@ fn rebuild_index(
 
     let (sender, receiver) = async_channel::bounded(1);
     let client = client.clone();
-    wiring.runtime.spawn(async move {
+    frontend.runtime.spawn(async move {
         let _ = sender.send(client.rebuild_index(id).await).await;
     });
 

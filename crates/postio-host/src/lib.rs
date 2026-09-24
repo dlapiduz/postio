@@ -999,6 +999,11 @@ impl Inner {
                 self.wiring.egress.record(event);
                 Resp::Done
             }
+            Req::Wired => Resp::Wired(
+                verbs(&self.wiring, &SharedState::default())
+                    .wired()
+                    .collect(),
+            ),
             Req::StartSync => {
                 start_sync(self.wiring.clone(), Arc::clone(&self.engines)).await;
                 Resp::Done

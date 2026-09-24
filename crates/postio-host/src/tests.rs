@@ -966,6 +966,14 @@ fn the_host_says_which_verbs_a_frontend_can_send_it() {
 }
 
 #[test]
+fn a_frontend_in_another_process_is_told_the_same_verbs() {
+    let world = World::new();
+    let (client, _) = world.frontend(ClientKind::Gtk);
+    let told = world.rt.block_on(client.wired()).expect("an answer");
+    assert_eq!(told, world.host().wired());
+}
+
+#[test]
 fn a_host_over_a_wiring_built_elsewhere_serves_its_store_and_its_news() {
     // T018: the desktop's surfaces and its integration suites build a
     // `Wiring` of their own; a host adopts it rather than opening another.
