@@ -228,7 +228,7 @@ fn a_composer_offering_a_group() -> Option<(Window, Composer)> {
 }
 
 /// Picking a group inserts every member as its own address, not a group
-/// reference (ADR 0007 Q3) — the whole point of expanding at pick time.
+/// reference (specs/005-contacts FR-041) — the whole point of expanding at pick time.
 pub fn accepting_a_group_inserts_every_member() {
     let Some((_window, composer)) = a_composer_offering_a_group() else {
         return;

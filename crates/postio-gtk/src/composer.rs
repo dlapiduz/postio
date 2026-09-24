@@ -490,7 +490,7 @@ type OpenedHandler = Box<dyn Fn()>;
 /// One row of recipient completion: a single address, or a named group that
 /// expands to every one of its members the moment it is accepted.
 ///
-/// ADR 0007 Q3: there is no group address to insert instead — a draft's
+/// specs/005-contacts FR-041: there is no group address to insert instead — a draft's
 /// recipients have to be what the user can see, which is what keeps `Bcc`
 /// honest and stops a draft's recipients from silently changing if someone
 /// edits the group's membership after it was picked.
@@ -4180,7 +4180,7 @@ impl Completion {
         // A contact inserts one address; a group inserts every member as its
         // own address, comma by comma, exactly as if they had been typed
         // individually -- there is no group reference to insert instead
-        // (ADR 0007 Q3).
+        // (specs/005-contacts FR-041).
         let inserted: String = match &candidate {
             RecipientCandidate::Contact(address) => format!("{address}, "),
             RecipientCandidate::Group { members, .. } => members

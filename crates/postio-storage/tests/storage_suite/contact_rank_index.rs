@@ -1,10 +1,11 @@
 //! Contact autocomplete is served by an index, not by sorting the address
 //! book (#990).
 //!
-//! `idx_contacts_rank` was written for the ordering ADR 0007 Q6 originally
-//! described, `(times_seen DESC, last_seen_at DESC)`. #424 changed the
-//! ordering to recency-first and #430 corrected the ADR; the index was not
-//! part of either, so it named an order nothing asked for.
+//! `idx_contacts_rank` was written for the ordering the address-book
+//! decision (its Q6, folded into `specs/005-contacts`) originally described,
+//! `(times_seen DESC, last_seen_at DESC)`. #424 changed the ordering to
+//! recency-first and #430 corrected the decision; the index was not part of
+//! either, so it named an order nothing asked for.
 //!
 //! # Why swapping its columns is not the fix
 //!

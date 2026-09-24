@@ -171,7 +171,7 @@ the text so a test can hold it against every object the old migrations ever
 built: an object leaves the schema only by being named as deliberately
 absent, which makes this a checked requirement rather than a description.
 `contacts` and its groups are there because recipient autocomplete has to
-rank from somewhere ([ADR 0007](decisions/0007-address-book.md)).
+rank from somewhere ([`specs/005-contacts`](../specs/005-contacts/spec.md)).
 
 **Secrets are not among them.** No password and no token is ever written to the
 database or to `config.toml`.
@@ -364,8 +364,9 @@ writing while reading something *else* is the one thing an in-place composer
 genuinely cannot do. It is the same composition either way — the same widget,
 moved — so there is never a second composer to keep in step.
 
-Recipients autocomplete from explicit contacts and from correspondents seen in
-the mailbox ([ADR 0007](decisions/0007-address-book.md)); Cc and Bcc appear on
+Recipients autocomplete from the people in the address book -- one name for
+each person, their preferred address first -- whether the user made them or
+the mail did ([`specs/005-contacts`](../specs/005-contacts/spec.md)); Cc and Bcc appear on
 demand; identities are pickable; drafts autosave; attachments drag and drop.
 
 **The document is Postio's own, not the toolkit's.** The composer edits a
@@ -644,17 +645,18 @@ folders, threads, labels; read/unread, archive, delete, flag, move, snooze;
 HTML and plaintext reading with attachments, quoted-message folding, remote
 images blocked per sender, and one-click unsubscribe on request; rich-text
 compose, reply, reply-all, forward, attachments, drafts, signatures and
-identities, scheduled send, an outbox that sends at most once; contacts and
-contact groups, filled from the mail and completing recipients; local
+identities, scheduled send, an outbox that sends at most once; a Contacts
+screen of people built from the mail -- several addresses to one person,
+joined by hand or from suggestions, edited, deleted and restored -- with
+groups, and vCard import and export that keeps what it does not model; local
 full-text search with operators, an instant search box, and saved searches
 pinned in the sidebar; vim-style navigation, a command palette and
 configurable shortcuts; an encrypted local store, background sync, offline
 reading, undo, desktop notifications.
 
 **Out, deliberately:** Rules — the language is shared and the design is
-[ADR 0008](decisions/0008-filters-and-rules.md), but no rule fires yet. A
-contacts management surface, and vCard import and export — the tables are
-there, the screen is not. Microsoft Graph. PGP and S/MIME, phishing and link
+[ADR 0008](decisions/0008-filters-and-rules.md), but no rule fires yet. CardDAV
+and provider contact sync. Microsoft Graph. PGP and S/MIME, phishing and link
 warnings. Windows. **And AI** — a founding principle, deferred so that core
 mail, search and the keyboard land excellently first. Shipping AI over a
 mediocre mail client would produce a mediocre mail client with AI in it.

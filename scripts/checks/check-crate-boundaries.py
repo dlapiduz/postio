@@ -305,10 +305,10 @@ RULES: dict[str, dict[str, object]] = {
             "postio-model is what the whole workspace waits on to compile, "
             "which is the reason ADR 0004 Q1 rejected putting the composer's "
             "document here -- an HTML parser's dependency weight lands on "
-            "every crate in the tree -- and the reason ADR 0007 admitted the "
-            "vCard parser only because it brings zero dependencies of its "
-            "own. Each of these is the class of dependency one of those ADRs "
-            "argued out; letting any of them back in reopens that argument "
+            "every crate in the tree -- and the reason vCard parsing is a "
+            "crate of its own, postio-vcard, rather than living here "
+            "(specs/005-contacts R9). Each of these is the class of dependency "
+            "that argument keeps out; letting any of them back in reopens it "
             "by accident instead of on purpose."
         ),
     },

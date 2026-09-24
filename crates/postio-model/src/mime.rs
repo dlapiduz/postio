@@ -436,8 +436,8 @@ fn parse_inner(raw: &[u8], headers_only: bool) -> ParsedMessage {
     //
     // Still deliberately silent about the failure at this layer: logging it
     // would mean a `tracing` dependency on the crate the whole workspace waits
-    // on to compile, which CLAUDE.md guards for the reason ADR 0004 Q1 and
-    // ADR 0007 give. The callers that care log it — see `postio-sync`'s
+    // on to compile, which CLAUDE.md guards for the reason ADR 0004 Q1
+    // gives. The callers that care log it — see `postio-sync`'s
     // backfill and `postio-app`'s reading pane.
     let parser = MessageParser::default();
     let parsed = if headers_only {

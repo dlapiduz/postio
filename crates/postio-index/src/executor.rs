@@ -1518,7 +1518,7 @@ fn filter_condition(filter: &Filter) -> (String, Vec<turso::Value>) {
                 turso::Value::Text(value.clone()),
             ],
         ),
-        // ADR 0007 Q3: "from or to any member", resolved against `recipients`
+        // specs/005-contacts FR-042: "from or to any member", resolved against `recipients`
         // by exact address rather than full text -- a group names people by
         // address, not by whatever words happen to appear near their name.
         // An unresolvable group name is an empty member set and therefore

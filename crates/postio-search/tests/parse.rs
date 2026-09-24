@@ -154,7 +154,7 @@ fn account_composes_with_other_operators_and_with_negation() {
 fn group_operator() {
     // Like account:, this stays text: postio-search never resolves a group
     // name to its members -- that needs the store, and postio-index is
-    // where `group:family` becomes an address set (ADR 0007 Q3).
+    // where `group:family` becomes an address set (specs/005-contacts FR-042).
     assert_eq!(
         filters("group:family"),
         vec![Filter::Group("family".into())]
