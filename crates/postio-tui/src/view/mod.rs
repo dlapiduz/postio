@@ -4,6 +4,7 @@
 
 pub mod cheatsheet;
 pub mod composer;
+pub mod first_run;
 pub mod hit;
 pub mod list;
 pub mod palette;
@@ -35,6 +36,11 @@ pub fn draw(frame: &mut Frame, app: &App, theme: &Theme, now: DateTime<Local>) -
                 theme.style(Role::Warning),
             );
             frame.render_widget(line, Rect::new(area.x, area.y, area.width, 1));
+        }
+        Shown::Panes(_) if app.first_run().is_some() => {
+            if let Some(run) = app.first_run() {
+                first_run::draw(frame, area, run, theme);
+            }
         }
         Shown::Panes(panes) => {
             let [body, status] =
@@ -722,6 +728,85 @@ mod tests {
         let mut again = with_sidebar((160, 16)).with_layout(saved);
         reading_something(&mut again);
         assert_eq!(divider(&hits_of(160, 16, &again), 160, 16), after);
+    }
+
+    #[test]
+    fn an_empty_store_opens_on_the_first_run() {
+        // T084: the empty-store screen.
+        use crossterm::event::{KeyCode, KeyEvent};
+        let keys = Keys::new(&postio_core::Keymap::resolve(&Default::default())).0;
+        let mut app = App::new((120, 30), keys);
+        update(
+            &mut app,
+            Input::Sidebar(crate::sidebar::Contents::default()),
+        );
+        let first = screen(120, 30, &app);
+        for wanted in ["Add your first account", "1 / 3", "Address"] {
+            assert!(first.contains(wanted), "{wanted} missing:\n{first}");
+        }
+
+        for c in "ada@fastmail.com".chars() {
+            update(&mut app, Input::Key(KeyEvent::from(KeyCode::Char(c))));
+        }
+        update(&mut app, Input::Key(KeyEvent::from(KeyCode::Enter)));
+        update(
+            &mut app,
+            Input::Discovered(Ok(postio_ui::onboarding::Status::Found(
+                postio_ui::onboarding::Settings {
+                    imap: postio_ui::onboarding::Server {
+                        host: "imap.fastmail.com".into(),
+                        port: 993,
+                        security: postio_model::TransportSecurity::Tls,
+                    },
+                    smtp: postio_ui::onboarding::Server {
+                        host: "smtp.fastmail.com".into(),
+                        port: 465,
+                        security: postio_model::TransportSecurity::Tls,
+                    },
+                    source: "Fastmail".into(),
+                    ..Default::default()
+                },
+            ))),
+        );
+        for c in "secret".chars() {
+            update(&mut app, Input::Key(KeyEvent::from(KeyCode::Char(c))));
+        }
+        let found = screen(120, 30, &app);
+        for wanted in [
+            "imap.fastmail.com:993 · TLS",
+            "Fastmail",
+            "Password",
+            "••••••",
+        ] {
+            assert!(found.contains(wanted), "{wanted} missing:\n{found}");
+        }
+        assert!(
+            !found.contains("secret"),
+            "the password is never drawn:\n{found}"
+        );
+
+        update(&mut app, Input::Key(KeyEvent::from(KeyCode::Enter)));
+        update(
+            &mut app,
+            Input::AccountAdded(Err("The server rejected that address and password.".into())),
+        );
+        let refused = screen(120, 30, &app);
+        assert!(
+            refused.contains("The server rejected that address and password."),
+            "{refused}"
+        );
+
+        update(&mut app, Input::Key(KeyEvent::from(KeyCode::Enter)));
+        update(&mut app, Input::AccountAdded(Ok(())));
+        let window = screen(120, 30, &app);
+        for choice in postio_ui::onboarding::SyncWindow::ALL {
+            assert!(
+                window.contains(choice.label()),
+                "{} missing:\n{window}",
+                choice.label()
+            );
+        }
+        assert!(window.contains("3 / 3"), "{window}");
     }
 
     #[test]

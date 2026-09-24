@@ -327,6 +327,25 @@ pub fn looks_like_an_address(address: &str) -> bool {
     }
 }
 
+/// Writes the chosen sync window (#876) to `[sync].initial_sync_messages`,
+/// touching only that key — the same [`postio_config::patch_sync`] every
+/// other structured write to `[sync]` goes through (#874), so a hand-written
+/// comment elsewhere in the file survives.
+///
+/// A write that fails is logged and otherwise swallowed: the account and its
+/// credential are already saved by the time this runs, and the field's own
+/// default (5,000, [`SyncWindow::LastYear`](SyncWindow::LastYear)'s
+/// own count) is exactly what a fresh install already has, so a failed
+/// write here costs the size the user picked, not the account.
+pub fn write_sync_window(window: SyncWindow) -> postio_config::Result<()> {
+    let path = postio_config::paths::config_path()?;
+    let original = std::fs::read_to_string(&path).unwrap_or_default();
+    let mut config = postio_config::Config::from_toml_str(&original).unwrap_or_default();
+    config.sync.initial_sync_messages = window.message_count();
+    let patched = postio_config::patch_sync(&original, &config.sync)?;
+    postio_config::Config::write_text_to_path(&patched, &path)
+}
+
 /// Without the password: a submission crosses to the daemon over its
 /// socket, and anything that prints one must not print that.
 impl std::fmt::Debug for Submission {

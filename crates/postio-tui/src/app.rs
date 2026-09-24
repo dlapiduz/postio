@@ -71,6 +71,11 @@ pub enum Input {
         /// The body it saved.
         edited: Result<String, String>,
     },
+    /// The daemon answered an [`Effect::Discover`].
+    Discovered(Result<postio_ui::onboarding::Status, String>),
+    /// The daemon answered an [`Effect::AddAccount`]: saved, or the sentence
+    /// for why not.
+    AccountAdded(Result<(), String>),
     /// The mouse did something over what was drawn.
     Pointer(Pointer),
     /// Text was pasted, or files were dropped: a drop arrives as a paste of
@@ -303,6 +308,12 @@ pub enum Effect {
     },
     /// Open the local draft behind a Drafts or Outbox row.
     Resume(postio_model::MessageId),
+    /// Look up a new account's servers.
+    Discover(String),
+    /// Prove and save a new account.
+    AddAccount(Box<postio_ui::onboarding::Submission>),
+    /// Save how far back the first sync reaches.
+    SaveSyncWindow(postio_ui::onboarding::SyncWindow),
     /// Remember the layout for the next run.
     SaveLayout(crate::state::TerminalState),
     /// Open a link with the system's opener, the person having clicked it
@@ -433,6 +444,8 @@ pub struct App {
     dragging: bool,
     /// Whether the mouse is listened to (`[tui].mouse`).
     mouse: bool,
+    /// The first run, while there is no account yet.
+    first_run: Option<crate::first_run::FirstRun>,
 }
 
 /// One section of the cheat sheet as it is drawn: its heading, and each
@@ -515,6 +528,8 @@ pub enum Focus {
     Composer,
     /// The search bar.
     Search,
+    /// The first run, while there is no account.
+    FirstRun,
     /// The command palette, or another of the finder's modes.
     Palette,
 }
@@ -573,6 +588,7 @@ impl App {
             layout: crate::state::TerminalState::default(),
             dragging: false,
             mouse: true,
+            first_run: None,
         }
     }
 
@@ -886,6 +902,42 @@ impl App {
         effects
     }
 
+    /// The first run, while there is no account yet.
+    pub fn first_run(&self) -> Option<&crate::first_run::FirstRun> {
+        self.first_run.as_ref()
+    }
+
+    /// A key in the first run.
+    fn first_run_key(&mut self, key: &KeyEvent) -> Vec<Effect> {
+        // Quitting works here as anywhere; everything else is typed.
+        if let Outcome::Command(id) = self.keys.press(key, KeyContext::Global, true)
+            && id == "quit"
+        {
+            return vec![Effect::Quit];
+        }
+        let Some(first_run) = self.first_run.as_mut() else {
+            return Vec::new();
+        };
+        match first_run.key(*key) {
+            crate::first_run::Asked::Nothing => vec![Effect::Redraw],
+            crate::first_run::Asked::Discover(address) => {
+                vec![Effect::Discover(address), Effect::Redraw]
+            }
+            crate::first_run::Asked::Add(submission) => {
+                vec![Effect::AddAccount(submission), Effect::Redraw]
+            }
+            crate::first_run::Asked::Start(window) => {
+                self.first_run = None;
+                self.focus = Focus::List;
+                vec![
+                    Effect::SaveSyncWindow(window),
+                    Effect::RefreshSidebar,
+                    Effect::Redraw,
+                ]
+            }
+        }
+    }
+
     /// The same app, listening to the mouse or not (`[tui].mouse`). Off, a
     /// click does nothing at all, and the terminal's own selection works.
     pub fn with_mouse(mut self, mouse: bool) -> App {
@@ -1114,7 +1166,7 @@ impl App {
     /// The registry's context for where the keyboard is.
     fn context_of(focus: Focus) -> postio_core::Context {
         match focus {
-            Focus::List | Focus::Palette => postio_core::Context::List,
+            Focus::List | Focus::Palette | Focus::FirstRun => postio_core::Context::List,
             Focus::Search => postio_core::Context::Search,
             Focus::Sidebar => postio_core::Context::Sidebar,
             Focus::Reader => postio_core::Context::Reader,
@@ -1618,6 +1670,7 @@ impl App {
             Focus::Composer => KeyContext::Composer,
             Focus::Search => KeyContext::Search,
             Focus::Palette => KeyContext::Palette,
+            Focus::FirstRun => KeyContext::Global,
         }
     }
 
@@ -1841,7 +1894,7 @@ impl App {
                     Focus::Reader
                 };
                 self.focus = match self.focus {
-                    Focus::List | Focus::Search | Focus::Palette => reader,
+                    Focus::List | Focus::Search | Focus::Palette | Focus::FirstRun => reader,
                     Focus::Reader | Focus::Parts | Focus::Composer => Focus::Sidebar,
                     Focus::Sidebar => Focus::List,
                 }
@@ -1853,7 +1906,9 @@ impl App {
                     Focus::Reader
                 };
                 self.focus = match self.focus {
-                    Focus::List | Focus::Search | Focus::Palette => Focus::Sidebar,
+                    Focus::List | Focus::Search | Focus::Palette | Focus::FirstRun => {
+                        Focus::Sidebar
+                    }
                     Focus::Sidebar => reader,
                     Focus::Reader | Focus::Parts | Focus::Composer => Focus::List,
                 }
@@ -2186,7 +2241,38 @@ impl App {
             .position(|line| line.opens.is_some() && line.opens == self.scope)
             .or_else(|| self.sidebar.iter().position(|line| line.opens.is_some()))
             .unwrap_or(0);
-        vec![Effect::Redraw]
+        if contents.accounts.is_empty() {
+            // No account: the first screen offers to add one rather than
+            // showing an empty shell (US7 scenario 1).
+            if self.first_run.is_none() {
+                self.first_run = Some(crate::first_run::FirstRun::default());
+                self.focus = Focus::FirstRun;
+            }
+            return vec![Effect::Redraw];
+        }
+        // An account arrived from elsewhere -- added on the desktop, say --
+        // while the first run was still asking for one: it is done, unless
+        // it is this run's own account and the last question is still open.
+        if self
+            .first_run
+            .as_ref()
+            .is_some_and(|run| *run.status() != postio_ui::onboarding::Status::SyncWindow)
+        {
+            self.first_run = None;
+            self.focus = Focus::List;
+        }
+        let mut effects = vec![Effect::Redraw];
+        if self.scope.is_none()
+            && self.first_run.is_none()
+            && let Some(inbox) = contents
+                .folders
+                .iter()
+                .find(|folder| folder.role == postio_model::mailbox::MailboxRole::Inbox)
+        {
+            // The first account's mail, once there is some to show.
+            effects.push(Effect::Open(ListScope::Mailbox(inbox.id)));
+        }
+        effects
     }
 
     /// Move the sidebar cursor by `step` rows that open something, and open
@@ -2354,6 +2440,7 @@ pub fn update(app: &mut App, input: Input) -> Vec<Effect> {
             app.cheatsheet = None;
             vec![Effect::Redraw]
         }
+        Input::Key(key) if app.focus == Focus::FirstRun => app.first_run_key(&key),
         Input::Key(key) if app.focus == Focus::Composer => app.composer_key(&key),
         Input::Key(key) if app.focus == Focus::Search => app.search_key(&key),
         Input::Key(key) if app.focus == Focus::Palette => app.palette_key(&key),
@@ -2452,6 +2539,26 @@ pub fn update(app: &mut App, input: Input) -> Vec<Effect> {
             (Some(_), None) => app.say("The draft closed before the image was stored"),
             (None, _) => app.say("The image could not be stored"),
         },
+        Input::Discovered(found) => {
+            if let Some(first_run) = app.first_run.as_mut() {
+                match found {
+                    Ok(status) => first_run.discovered(status),
+                    // Asking failed: type the servers, as when nothing was found.
+                    Err(_) => first_run
+                        .discovered(postio_ui::onboarding::Status::Manual { suggestion: None }),
+                }
+            }
+            vec![Effect::Redraw]
+        }
+        Input::AccountAdded(added) => {
+            if let Some(first_run) = app.first_run.as_mut() {
+                match added {
+                    Ok(()) => first_run.added(),
+                    Err(sentence) => first_run.failed(sentence),
+                }
+            }
+            vec![Effect::Redraw]
+        }
         Input::Pointer(pointer) if app.mouse => app.pointer(pointer),
         Input::Pointer(_) => Vec::new(),
         Input::Paste(pasted) => app.paste(&pasted),
@@ -4039,6 +4146,107 @@ pub(crate) mod tests {
         assert_eq!(app.cursor(), 2, "the keys are untouched");
         update(&mut app, press('x'));
         assert!(app.selection().contains(MessageId::new(3)));
+    }
+
+    fn an_empty_store() -> crate::sidebar::Contents {
+        crate::sidebar::Contents::default()
+    }
+
+    fn fastmail() -> postio_ui::onboarding::Settings {
+        postio_ui::onboarding::Settings {
+            imap: postio_ui::onboarding::Server {
+                host: "imap.fastmail.com".into(),
+                port: 993,
+                security: postio_model::TransportSecurity::Tls,
+            },
+            smtp: postio_ui::onboarding::Server {
+                host: "smtp.fastmail.com".into(),
+                port: 465,
+                security: postio_model::TransportSecurity::Tls,
+            },
+            login: "ada@fastmail.com".into(),
+            source: "Fastmail".into(),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn with_no_account_the_first_screen_offers_to_add_one() {
+        // US7 scenario 1.
+        let mut app = app((160, 40));
+        update(&mut app, Input::Sidebar(an_empty_store()));
+        assert_eq!(app.focus(), Focus::FirstRun);
+        assert!(app.first_run().is_some());
+    }
+
+    #[test]
+    fn an_account_is_found_proved_and_saved_from_the_first_run() {
+        // US7 and T085.
+        use postio_ui::onboarding::{Status, SyncWindow};
+        let mut app = app((160, 40));
+        update(&mut app, Input::Sidebar(an_empty_store()));
+        typing(&mut app, "ada@fastmail.com");
+        let effects = update(&mut app, key(KeyCode::Enter, KeyModifiers::NONE));
+        assert!(
+            effects.contains(&Effect::Discover("ada@fastmail.com".into())),
+            "{effects:?}"
+        );
+        assert_eq!(app.first_run().unwrap().status(), &Status::Probing);
+
+        update(&mut app, Input::Discovered(Ok(Status::Found(fastmail()))));
+        typing(&mut app, "correct horse");
+        let effects = update(&mut app, key(KeyCode::Enter, KeyModifiers::NONE));
+        let submitted = effects
+            .iter()
+            .find_map(|effect| match effect {
+                Effect::AddAccount(submission) => Some((**submission).clone()),
+                _ => None,
+            })
+            .expect("submitted");
+        assert_eq!(submitted.address, "ada@fastmail.com");
+        assert_eq!(submitted.password, "correct horse");
+        assert_eq!(submitted.settings, fastmail());
+        assert_eq!(app.first_run().unwrap().status(), &Status::Connecting);
+
+        // Refused: said as the desktop says it, and the password can be typed
+        // again.
+        update(
+            &mut app,
+            Input::AccountAdded(Err("The server rejected that.".into())),
+        );
+        assert_eq!(
+            app.first_run().unwrap().status().message(),
+            Some("The server rejected that.")
+        );
+        typing(&mut app, "!");
+        let effects = update(&mut app, key(KeyCode::Enter, KeyModifiers::NONE));
+        assert!(
+            effects
+                .iter()
+                .any(|effect| matches!(effect, Effect::AddAccount(_)))
+        );
+
+        update(&mut app, Input::AccountAdded(Ok(())));
+        assert_eq!(app.first_run().unwrap().status(), &Status::SyncWindow);
+        let effects = update(&mut app, press('1'));
+        assert!(
+            effects.contains(&Effect::SaveSyncWindow(SyncWindow::LastMonth)),
+            "{effects:?}"
+        );
+        assert!(effects.contains(&Effect::RefreshSidebar), "{effects:?}");
+        assert!(app.first_run().is_none(), "on to the mail");
+    }
+
+    #[test]
+    fn once_there_is_an_account_its_inbox_opens() {
+        let mut app = app((160, 40));
+        update(&mut app, Input::Sidebar(an_empty_store()));
+        let effects = update(&mut app, Input::Sidebar(sidebar_contents()));
+        assert!(
+            effects.contains(&Effect::Open(ListScope::Mailbox(MailboxId::new(1)))),
+            "{effects:?}"
+        );
+        assert!(app.first_run().is_none());
     }
 
     #[test]

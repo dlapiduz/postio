@@ -16,6 +16,7 @@ pub mod clipboard;
 pub mod composer;
 pub mod conversation;
 pub mod external;
+pub mod first_run;
 pub mod input;
 pub mod layout;
 pub mod paths;

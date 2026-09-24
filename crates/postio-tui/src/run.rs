@@ -574,6 +574,37 @@ fn perform(
                     let _ = inputs.send(Input::PartWritten { written, open }).await;
                 });
             }
+            Effect::Discover(address) => {
+                let client = client.clone();
+                let inputs = inputs.clone();
+                tokio::spawn(async move {
+                    let found = client
+                        .discover(address)
+                        .await
+                        .map_err(|error| error.message().to_owned());
+                    let _ = inputs.send(Input::Discovered(found)).await;
+                });
+            }
+            Effect::AddAccount(submission) => {
+                let client = client.clone();
+                let inputs = inputs.clone();
+                tokio::spawn(async move {
+                    let added = client
+                        .add_account(*submission)
+                        .await
+                        .map_err(|error| error.message().to_owned());
+                    let _ = inputs.send(Input::AccountAdded(added)).await;
+                });
+            }
+            Effect::SaveSyncWindow(window) => {
+                tokio::task::spawn_blocking(move || {
+                    // The account is already saved; a failed write costs the
+                    // depth picked, not the account (as on the desktop).
+                    if let Err(error) = postio_ui::onboarding::write_sync_window(window) {
+                        tracing::warn!(%error, "could not save the sync window");
+                    }
+                });
+            }
             Effect::SaveLayout(layout) => {
                 tokio::task::spawn_blocking(move || {
                     if let Err(error) = layout.save() {

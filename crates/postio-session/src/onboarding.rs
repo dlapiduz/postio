@@ -353,3 +353,5 @@ pub async fn prove(
         )),
     }
 }
+
+pub use postio_ui::onboarding::write_sync_window;

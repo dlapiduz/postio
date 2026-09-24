@@ -57,6 +57,7 @@ use crate::Wiring;
 pub(crate) use postio_session::onboarding::configured;
 use postio_session::onboarding::{
     connection_settings, explain, persist, probe_options, prove, save, status_for,
+    write_sync_window,
 };
 
 /// Whether this installation has an account yet.
@@ -295,25 +296,6 @@ pub async fn install(
             }
         }
     });
-}
-
-/// Writes the chosen sync window (#876) to `[sync].initial_sync_messages`,
-/// touching only that key — the same [`postio_config::patch_sync`] every
-/// other structured write to `[sync]` goes through (#874), so a hand-written
-/// comment elsewhere in the file survives.
-///
-/// A write that fails is logged and otherwise swallowed: the account and its
-/// credential are already saved by the time this runs, and the field's own
-/// default (5,000, [`SyncWindow::LastYear`](postio_gtk::onboarding::SyncWindow::LastYear)'s
-/// own count) is exactly what a fresh install already has, so a failed
-/// write here costs the size the user picked, not the account.
-fn write_sync_window(window: postio_gtk::onboarding::SyncWindow) -> postio_config::Result<()> {
-    let path = postio_config::paths::config_path()?;
-    let original = std::fs::read_to_string(&path).unwrap_or_default();
-    let mut config = postio_config::Config::from_toml_str(&original).unwrap_or_default();
-    config.sync.initial_sync_messages = window.message_count();
-    let patched = postio_config::patch_sync(&original, &config.sync)?;
-    postio_config::Config::write_text_to_path(&patched, &path)
 }
 
 /// The cancel token for the probe currently in flight, if there is one.
