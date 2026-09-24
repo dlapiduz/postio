@@ -38,6 +38,8 @@ pub struct Member {
     pub has_attachments: bool,
     /// Its parts, once asked for.
     pub parts: Vec<postio_model::Attachment>,
+    /// Whom it was written to, To then Cc, once its body has been read.
+    pub recipients: Vec<SafeText>,
 }
 
 impl Member {
@@ -65,6 +67,7 @@ impl Member {
             images_allowed: false,
             has_attachments: summary.has_attachments,
             parts: Vec::new(),
+            recipients: Vec::new(),
         }
     }
 }
@@ -249,6 +252,7 @@ pub(crate) mod tests {
             images_allowed: false,
             has_attachments: false,
             parts: Vec::new(),
+            recipients: Vec::new(),
         }
     }
 

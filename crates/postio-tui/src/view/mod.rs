@@ -1146,8 +1146,88 @@ mod tests {
             "the subject is in the list and heads the reader:\n{screen}"
         );
         assert!(
-            screen.contains("│ Engine notes"),
+            screen.contains("│  Engine notes"),
             "a divider keeps the panes apart:\n{screen}"
+        );
+    }
+
+    #[test]
+    fn the_reader_is_headed_by_who_wrote_to_whom_and_when_and_offers_its_keys() {
+        use chrono::Utc;
+        use postio_ui::paging::Page;
+        use postio_ui::terminal::SafeText;
+        let mut app = with_sidebar((160, 20));
+        let scope = postio_model::ListScope::Mailbox(postio_model::MailboxId::new(1));
+        let effects = update(&mut app, Input::Opened { scope, total: 1 });
+        let (generation, page) = effects
+            .iter()
+            .find_map(|effect| match effect {
+                crate::app::Effect::Fetch {
+                    generation, page, ..
+                } => Some((*generation, *page)),
+                _ => None,
+            })
+            .expect("the first page is asked for");
+        let row = crate::row::Row {
+            id: postio_model::MessageId::new(7),
+            thread: None,
+            is_thread: false,
+            from: SafeText::new("Ada Lovelace"),
+            address: Some("ada@example.com".into()),
+            subject: SafeText::new("Engine notes"),
+            preview: SafeText::new(""),
+            when: Utc.with_ymd_and_hms(2026, 9, 22, 9, 14, 0).unwrap(),
+            unread: false,
+            flagged: false,
+            attachment: false,
+            count: 1,
+        };
+        update(
+            &mut app,
+            Input::Page {
+                generation,
+                page,
+                rows: Ok(Page {
+                    total: 1,
+                    rows: vec![row],
+                }),
+            },
+        );
+        update(&mut app, Input::Rested(postio_model::MessageId::new(7)));
+        update(
+            &mut app,
+            Input::Addressed {
+                message: postio_model::MessageId::new(7),
+                to: vec![
+                    postio_model::EmailAddress::new(None::<String>, "grace@example.net"),
+                    postio_model::EmailAddress::new(Some("Bea"), "bea@example.org"),
+                ],
+            },
+        );
+        let screen = screen(160, 20, &app);
+        let reader: Vec<String> = screen
+            .lines()
+            // What is right of the list's rule.
+            .map(|line| line.rsplit('│').next().unwrap_or_default().to_owned())
+            .collect();
+        let at = |needle: &str| {
+            reader
+                .iter()
+                .position(|line| line.contains(needle))
+                .unwrap_or_else(|| panic!("{needle} missing:\n{screen}"))
+        };
+        let subject = at("Engine notes");
+        let meta = at("ada@example.com → grace@example.net, Bea");
+        assert_eq!(meta, subject + 1, "who under what:\n{screen}");
+        assert!(
+            reader[meta].contains("Tue 22 Sep"),
+            "and when: {}",
+            reader[meta]
+        );
+        let keys = reader.len() - 2;
+        assert!(
+            reader[keys].contains("e reply") && reader[keys].contains("a archive"),
+            "the keys at the foot:\n{screen}"
         );
     }
 

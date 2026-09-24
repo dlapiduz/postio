@@ -114,6 +114,15 @@ pub enum Input {
         /// Its messages, oldest first, or why there are none.
         members: Result<Vec<postio_model::listing::MessageSummary>, String>,
     },
+    /// Whom a message asked for by [`Effect::ReadBody`] was written to:
+    /// its To and then its Cc, for the reader's header. Arrives just before
+    /// its body, from the same read.
+    Addressed {
+        /// Whose.
+        message: postio_model::MessageId,
+        /// Everyone it was sent to, To first.
+        to: Vec<postio_model::EmailAddress>,
+    },
     /// A body asked for by [`Effect::ReadBody`] arrived.
     Body {
         /// Whose.
@@ -2555,6 +2564,7 @@ impl App {
                         images_allowed: false,
                         has_attachments: row.attachment,
                         parts: Vec::new(),
+                        recipients: Vec::new(),
                     }],
                     current: 0,
                 });
@@ -3119,6 +3129,25 @@ pub fn update(app: &mut App, input: Input) -> Vec<Effect> {
             Ok(list) => format!("Asked to leave {list}"),
             Err(reason) => reason,
         }),
+        Input::Addressed { message, to } => {
+            let member = app.reading.as_mut().and_then(|reading| {
+                reading
+                    .members
+                    .iter_mut()
+                    .find(|member| member.id == message)
+            });
+            match member {
+                Some(member) => {
+                    // A header is attacker-controlled like any other.
+                    member.recipients = to
+                        .iter()
+                        .map(|address| postio_ui::terminal::SafeText::new(address.display()))
+                        .collect();
+                    vec![Effect::Redraw]
+                }
+                None => Vec::new(),
+            }
+        }
         Input::Body { message, answer } => app.show(message, answer),
         Input::Conversation { thread, members } => app.conversation(thread, members),
         Input::Recounted { scope, total } => app.recounted(scope, total),

@@ -901,10 +901,24 @@ fn perform(
                 let client = client.clone();
                 let inputs = inputs.clone();
                 tokio::spawn(async move {
-                    let answer = client
-                        .body(message)
+                    // The reading, not just the body: the same one read, and
+                    // the row it was decided from says whom it was sent to.
+                    let reading = client
+                        .readings(vec![message], false)
                         .await
-                        .map_err(|error| error.message().to_owned());
+                        .map_err(|error| error.message().to_owned())
+                        .map(|mut readings| readings.pop());
+                    let answer = match reading {
+                        Ok(Some(reading)) => {
+                            if let Some(row) = reading.row {
+                                let to = row.to.into_iter().chain(row.cc).collect();
+                                let _ = inputs.send(Input::Addressed { message, to }).await;
+                            }
+                            Ok(reading.body)
+                        }
+                        Ok(None) => Ok(postio_client::protocol::Body::Missing),
+                        Err(error) => Err(error),
+                    };
                     let _ = inputs.send(Input::Body { message, answer }).await;
                 });
             }
