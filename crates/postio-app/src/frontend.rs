@@ -1,11 +1,9 @@
-//! What the window's surfaces hold: a client of the store's owner and the
+//! What the window's surfaces hold: a client of the store's host and the
 //! few things beside it that are this process's own.
 //!
-//! In ordinary use the owner is `postio-daemon`, reached over its socket, and
-//! nothing here can open the store (ADR 0041). The integration suites run
-//! the owner in this process instead, over a [`Wiring`] they built; the
-//! surfaces cannot tell the difference, because everything they ask goes
-//! through [`Frontend::client`] either way.
+//! The host is in this process, over the store this process opened (ADR
+//! 0041); the integration suites build it over a [`Wiring`] of their own.
+//! Everything a surface reads or writes goes through [`Frontend::client`].
 
 use std::sync::Arc;
 
@@ -23,7 +21,7 @@ pub struct Frontend {
     /// not hold the main loop, a part written to disk, a probe.
     pub runtime: tokio::runtime::Handle,
     /// What the window hears: a surface's own sentence -- a part that could
-    /// not be saved -- goes here, beside everything the owner says.
+    /// not be saved -- goes here, beside everything the host says.
     pub events: EventSink,
     /// The keyring, for what this process asks of it itself: the
     /// connection test, and the token-expiry line in the settings.
@@ -31,13 +29,13 @@ pub struct Frontend {
     /// Where the connections this process opens itself are recorded: a
     /// discovery probe, a connection test (#151).
     pub egress: Arc<dyn postio_model::egress::EgressSink>,
-    /// Where the window's gestures go: to the owner, in the order made.
+    /// Where the window's gestures go: to the host, in the order made.
     pub commands: postio_core::bridge::CommandSender,
     /// `[sync] attachments = "eager"`, which the settings panel shows.
     pub attachments_eager: bool,
-    /// The store's owner, when it is in this process: the integration
-    /// suites' wiring. `None` over the daemon's socket.
-    pub wiring: Option<Wiring>,
+    /// The store's wiring: what starts an account's engine and the idle
+    /// passes.
+    pub wiring: Wiring,
 }
 
 impl Frontend {
@@ -53,7 +51,7 @@ impl Frontend {
             commands: wiring.commands.clone(),
             attachments_eager: wiring.backfill.attachments
                 == postio_runtime::AttachmentPolicy::Eager,
-            wiring: Some(wiring.clone()),
+            wiring: wiring.clone(),
         }
     }
 

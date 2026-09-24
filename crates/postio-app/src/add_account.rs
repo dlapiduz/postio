@@ -202,14 +202,7 @@ async fn join(window: &Window, frontend: &Frontend, client: &Client, address: &s
         tracing::error!("the account was saved and could not be read back");
         return;
     };
-    let Some(wiring) = &frontend.wiring else {
-        // The owner is another process, which starts the new account's
-        // sync itself when asked; a refusal is its log's to say.
-        client.start_sync();
-        crate::settings_accounts::refresh(window, frontend, client).await;
-        return;
-    };
-    if let Err(refusal) = crate::attach_account(window, wiring, &account).await {
+    if let Err(refusal) = crate::attach_account(window, &frontend.wiring, &account).await {
         // The account exists and is enabled; what it has not got is an
         // engine. Said on screen rather than only logged, because the
         // sentence names the two things the user can do about it and

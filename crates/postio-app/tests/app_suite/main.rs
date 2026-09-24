@@ -27,8 +27,6 @@ mod conversation_by_default;
 mod conversation_reply_target;
 mod correlation;
 mod cursor_preview;
-mod daemon_gone_window;
-mod daemon_window;
 mod decode_notice;
 mod degraded_unified;
 mod drag_out_portal;
@@ -93,6 +91,7 @@ mod startup_behind_the_window;
 mod startup_reads;
 mod startup_repair;
 mod storage_ceiling_wiring;
+mod store_in_use_window;
 mod sync_window;
 mod thread_bodies_in_one_crossing;
 mod thread_bulk_keystroke;
@@ -134,13 +133,9 @@ const CASES: &[(&str, fn())] = &[
             as fn(),
     ),
     (
-        "daemon_gone_window::a_window_whose_daemon_stops_says_so_and_retry_reaches_a_new_one",
-        daemon_gone_window::a_window_whose_daemon_stops_says_so_and_retry_reaches_a_new_one
+        "store_in_use_window::a_store_another_postio_has_open_says_so_and_try_again_opens_it",
+        store_in_use_window::a_store_another_postio_has_open_says_so_and_try_again_opens_it
             as fn(),
-    ),
-    (
-        "daemon_window::a_window_over_the_daemons_socket_shows_its_mail_and_acts_on_it",
-        daemon_window::a_window_over_the_daemons_socket_shows_its_mail_and_acts_on_it as fn(),
     ),
     (
         "escape_after_finder_closed::escape_leaves_search_even_after_the_box_has_closed",
