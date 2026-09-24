@@ -432,21 +432,17 @@ impl<'a> MailboxRepository<'a> {
     /// means for every other folder — so the Drafts badge has to ask
     /// separately for the number a person will actually see there.
     ///
-    /// Bounded, and asserted as such: `idx_messages_send_state` is partial on
-    /// `send_state IS NOT NULL`, so this touches the account's drafts and not
-    /// its mail. The sidebar refreshes on every arrival, so a read that grew
+    /// Bounded, and asserted as such: `idx_messages_send_state` covers
+    /// `(account_id, send_state, deleted_locally)`, so the planner ranges over
+    /// the account's drafts and reads no message row. It was partial on
+    /// `send_state IS NOT NULL` once; this planner will not read a partial
+    /// index, and for a while this walked every row of the account (#1614). The sidebar refreshes on every arrival, so a read that grew
     /// with the mailbox would be paid on the surface redrawn most often
     /// (Principle V; spec 003 SC-008).
     pub async fn draft_counts(&self, account_id: AccountId) -> Result<DraftCounts> {
         sql::one(
             self.connection,
-            "SELECT
-                     coalesce(sum(send_state IN ('queued', 'sending')), 0),
-                     coalesce(sum(send_state IN ('failed', 'unconfirmed')), 0),
-                     coalesce(sum(send_state NOT IN ('queued', 'sending', 'sent')), 0)
-                   FROM messages
-                  WHERE account_id = ?1 AND send_state IS NOT NULL
-                    AND deleted_locally = 0",
+            self.explain_draft_counts(),
             [account_id.get()],
             |row| {
                 Ok(DraftCounts {
@@ -457,6 +453,18 @@ impl<'a> MailboxRepository<'a> {
             },
         )
         .await
+    }
+
+    /// The SQL [`Self::draft_counts`] reads, so a test can ask the planner
+    /// about it.
+    pub fn explain_draft_counts(&self) -> &'static str {
+        "SELECT
+                 coalesce(sum(send_state IN ('queued', 'sending')), 0),
+                 coalesce(sum(send_state IN ('failed', 'unconfirmed')), 0),
+                 coalesce(sum(send_state NOT IN ('queued', 'sending', 'sent')), 0)
+               FROM messages
+              WHERE account_id = ?1 AND send_state IS NOT NULL
+                AND deleted_locally = 0"
     }
 
     /// Every folder's counts in one account, summed.
