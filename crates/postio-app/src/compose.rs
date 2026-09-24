@@ -1093,7 +1093,7 @@ fn mime_type_of(path: &std::path::Path) -> String {
 // `postio_session::reading` (#608): the macOS frontend needs the same six-way
 // answer about why a body is missing, and a second copy of it would reproduce
 // #70's blank column rather than the fix.
-pub(crate) use postio_session::reading::{Body, load_body, load_body_or_reason};
+pub(crate) use postio_session::reading::{Body, load_body};
 
 #[cfg(test)]
 mod tests {
@@ -1120,6 +1120,7 @@ mod tests {
     //! has nothing for `tests/` to link against, so this one cannot move out
     //! the way `postio-gtk`'s toast tests did. See issue #41 and
     //! `scripts/checks/check-no-gtk-init-in-unit-tests.py`.
+    use postio_session::reading::load_body_or_reason;
 
     use gtk::gdk;
 
