@@ -30,6 +30,17 @@ use postio_body::replying::ReplyKind;
 pub enum Input {
     /// The terminal is now this many columns and rows.
     Resize(u16, u16),
+    /// Text was pasted, or files were dropped: a drop arrives as a paste of
+    /// their paths.
+    Paste(String),
+    /// The daemon answered an [`Effect::Attach`]: the stored attachment, or
+    /// nothing when the file could not be read.
+    Attached {
+        /// What was asked to be attached.
+        path: std::path::PathBuf,
+        /// The attachment.
+        attached: Option<postio_model::Attachment>,
+    },
     /// A key was pressed.
     Key(KeyEvent),
     /// A list was opened, and has this many rows.
@@ -203,6 +214,8 @@ pub enum Effect {
         /// When, for a scheduled send.
         at: Option<chrono::DateTime<chrono::Utc>>,
     },
+    /// Store the file at this path as an attachment of the draft.
+    Attach(std::path::PathBuf),
     /// Look up who a recipient being typed could be.
     Recipients {
         /// Whose contacts.
@@ -301,6 +314,8 @@ pub struct App {
     /// The composer's edit count when "send it anyway?" was asked: sending
     /// again with nothing changed is the answer.
     asked_at: Option<u64>,
+    /// The path being typed to attach a file (FR-027), while it is.
+    path_prompt: Option<tui_input::Input>,
 }
 
 /// Which pane the keyboard is in.
@@ -361,6 +376,7 @@ impl App {
             accounts: Vec::new(),
             scheduling: None,
             asked_at: None,
+            path_prompt: None,
         }
     }
 
@@ -508,6 +524,9 @@ impl App {
         if self.scheduling.is_some() {
             return self.schedule_key(key);
         }
+        if self.path_prompt.is_some() {
+            return self.path_key(key);
+        }
         if let Some(composer) = self.composer.as_mut() {
             let before = composer.edits();
             if composer.completion_key(*key) {
@@ -550,6 +569,74 @@ impl App {
                 effects
             }
         }
+    }
+
+    /// The path being typed to attach a file, while it is.
+    pub fn path_prompt(&self) -> Option<&str> {
+        self.path_prompt.as_ref().map(tui_input::Input::value)
+    }
+
+    /// A key in the path prompt: Enter attaches, Tab completes from the
+    /// disk, Escape goes back to writing.
+    fn path_key(&mut self, key: &KeyEvent) -> Vec<Effect> {
+        use crossterm::event::KeyCode;
+        use tui_input::backend::crossterm::EventHandler;
+        let Some(prompt) = self.path_prompt.as_mut() else {
+            return Vec::new();
+        };
+        match key.code {
+            KeyCode::Esc => self.path_prompt = None,
+            KeyCode::Enter => {
+                let typed = prompt.value().trim().to_owned();
+                self.path_prompt = None;
+                if !typed.is_empty() {
+                    return vec![Effect::Attach(crate::paths::expand(&typed)), Effect::Redraw];
+                }
+            }
+            KeyCode::Tab => {
+                let completed = crate::paths::complete(prompt.value());
+                *prompt = tui_input::Input::default().with_value(completed);
+            }
+            _ => {
+                prompt.handle_event(&crossterm::event::Event::Key(*key));
+            }
+        }
+        vec![Effect::Redraw]
+    }
+
+    /// A paste, or a drop, while writing: each file named is attached, a
+    /// file that cannot be is named with why, and anything else is typed
+    /// (US3 scenarios 8, 10, 11).
+    fn paste(&mut self, pasted: &str) -> Vec<Effect> {
+        if let Some(prompt) = self.path_prompt.as_mut() {
+            let joined = format!("{}{}", prompt.value(), pasted.trim());
+            *prompt = tui_input::Input::default().with_value(joined);
+            return vec![Effect::Redraw];
+        }
+        if self.focus != Focus::Composer {
+            return Vec::new();
+        }
+        let mut effects = Vec::new();
+        for item in postio_ui::paste::classify(pasted) {
+            match item {
+                postio_ui::paste::PasteItem::File(path) => effects.push(Effect::Attach(path)),
+                postio_ui::paste::PasteItem::Unreadable { path, reason } => {
+                    let name = crate::paths::name_of(&path);
+                    effects.extend(self.say(&format!("Could not attach {name}: {reason}")));
+                }
+                postio_ui::paste::PasteItem::Text(text) => {
+                    if let Some(composer) = self.composer.as_mut() {
+                        composer.insert(&text);
+                        effects.push(Effect::Autosave {
+                            generation: composer.generation(),
+                            edit: composer.edits(),
+                        });
+                    }
+                }
+            }
+        }
+        effects.push(Effect::Redraw);
+        effects
     }
 
     /// The schedule-send picker's times, while it is open.
@@ -626,6 +713,10 @@ impl App {
     fn composer_command(&mut self, id: &str) -> Vec<Effect> {
         match id {
             "send" => self.send_draft(None),
+            "attach_file" => {
+                self.path_prompt = Some(tui_input::Input::default());
+                vec![Effect::Redraw]
+            }
             "schedule_send" => {
                 self.scheduling = Some(postio_ui::schedule::schedule_presets(chrono::Local::now()));
                 vec![Effect::Redraw]
@@ -1393,6 +1484,24 @@ pub fn update(app: &mut App, input: Input) -> Vec<Effect> {
                 Vec::new()
             }
             Err(reason) => app.say(&reason),
+        },
+        Input::Paste(pasted) => app.paste(&pasted),
+        Input::Attached { path, attached } => match (attached, app.composer.as_mut()) {
+            (Some(attachment), Some(composer)) => {
+                composer.attach(attachment);
+                vec![
+                    Effect::Autosave {
+                        generation: composer.generation(),
+                        edit: composer.edits(),
+                    },
+                    Effect::Redraw,
+                ]
+            }
+            (Some(_), None) => app.say("The draft closed before the file was attached"),
+            (None, _) => app.say(&format!(
+                "Could not attach {}: it could not be read",
+                crate::paths::name_of(&path)
+            )),
         },
         Input::Recipients { prefix, found } => {
             if let Some(composer) = app.composer.as_mut() {
@@ -2172,6 +2281,141 @@ mod tests {
         update(&mut app, key(KeyCode::Esc, KeyModifiers::NONE));
         let composer = app.composer().expect("still composing");
         assert!(composer.suggestions().is_empty());
+    }
+
+    fn attaching(effects: &[Effect]) -> Vec<std::path::PathBuf> {
+        effects
+            .iter()
+            .filter_map(|effect| match effect {
+                Effect::Attach(path) => Some(path.clone()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    fn in_the_body(app: &mut App) {
+        update(app, key(KeyCode::Tab, KeyModifiers::NONE));
+        update(app, key(KeyCode::Tab, KeyModifiers::NONE));
+    }
+
+    #[test]
+    fn dropping_files_attaches_each_and_leaves_the_body_alone() {
+        // US3 scenario 8: a drop arrives as a paste of the files' paths.
+        let dir = tempfile::tempdir().unwrap();
+        let (one, two) = (
+            dir.path().join("plan.pdf"),
+            dir.path().join("site photo.jpg"),
+        );
+        std::fs::write(&one, b"%PDF-").unwrap();
+        std::fs::write(&two, b"\xff\xd8\xff").unwrap();
+        let mut app = app((160, 40));
+        composing(&mut app);
+        in_the_body(&mut app);
+        typing(&mut app, "See attached");
+
+        let dropped = format!("{} '{}'", one.display(), two.display());
+        let effects = update(&mut app, Input::Paste(dropped));
+        assert_eq!(attaching(&effects), vec![one, two], "{effects:?}");
+        assert_eq!(app.composer().unwrap().markdown(), "See attached");
+    }
+
+    #[test]
+    fn pasted_words_are_typed() {
+        // US3 scenario 10: not a path to a file, so it is text.
+        let mut app = app((160, 40));
+        composing(&mut app);
+        in_the_body(&mut app);
+        let effects = update(&mut app, Input::Paste("see /etc/ for details".into()));
+        assert!(attaching(&effects).is_empty());
+        assert_eq!(app.composer().unwrap().markdown(), "see /etc/ for details");
+    }
+
+    #[test]
+    fn a_path_that_cannot_be_read_is_named_and_changes_nothing() {
+        // US3 scenario 11.
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = app((160, 40));
+        composing(&mut app);
+        in_the_body(&mut app);
+        let before = app.composer().unwrap().draft();
+        let effects = update(&mut app, Input::Paste(dir.path().display().to_string()));
+        assert!(attaching(&effects).is_empty());
+        let notice = app.notice().expect("told").to_owned();
+        assert!(
+            notice.contains(
+                &dir.path()
+                    .file_name()
+                    .unwrap()
+                    .to_string_lossy()
+                    .into_owned()
+            ),
+            "{notice}"
+        );
+        let after = app.composer().unwrap().draft();
+        assert_eq!(after.body, before.body);
+        assert_eq!(after.attachments, before.attachments);
+    }
+
+    #[test]
+    fn a_stored_file_is_listed_on_the_draft() {
+        let mut app = app((160, 40));
+        composing(&mut app);
+        let mut stored =
+            postio_model::Attachment::new(MessageId::UNASSIGNED, "application/pdf", 12_288);
+        stored.filename = Some("fixture.pdf".into());
+        let effects = update(
+            &mut app,
+            Input::Attached {
+                path: "fixture.pdf".into(),
+                attached: Some(stored.clone()),
+            },
+        );
+        let composer = app.composer().unwrap();
+        assert_eq!(composer.draft().attachments, vec![stored]);
+        assert!(
+            effects
+                .iter()
+                .any(|effect| matches!(effect, Effect::Autosave { .. })),
+            "an attachment is an edit: {effects:?}"
+        );
+
+        update(
+            &mut app,
+            Input::Attached {
+                path: "/gone/away.pdf".into(),
+                attached: None,
+            },
+        );
+        assert!(
+            app.notice().unwrap().contains("away.pdf"),
+            "{:?}",
+            app.notice()
+        );
+    }
+
+    #[test]
+    fn a_file_can_be_attached_by_typing_its_path() {
+        // T064 (FR-027): a path prompt, with Tab completing from the disk.
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("fixture.pdf"), b"%PDF-").unwrap();
+        let mut app = app((160, 40));
+        composing(&mut app);
+        update(&mut app, key(KeyCode::Char('a'), KeyModifiers::ALT));
+        assert_eq!(app.path_prompt(), Some(""), "the prompt is open");
+
+        typing(&mut app, &format!("{}/fix", dir.path().display()));
+        update(&mut app, key(KeyCode::Tab, KeyModifiers::NONE));
+        let completed = dir.path().join("fixture.pdf").display().to_string();
+        assert_eq!(app.path_prompt(), Some(completed.as_str()));
+
+        let effects = update(&mut app, key(KeyCode::Enter, KeyModifiers::NONE));
+        assert_eq!(attaching(&effects), vec![dir.path().join("fixture.pdf")]);
+        assert_eq!(app.path_prompt(), None);
+        assert_eq!(
+            app.composer().unwrap().markdown(),
+            "",
+            "the path was not typed into the draft"
+        );
     }
 
     #[test]

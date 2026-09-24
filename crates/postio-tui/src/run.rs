@@ -255,6 +255,7 @@ async fn drive(
             event = terminal_events.next() => match event {
                 Some(Ok(TerminalEvent::Key(key))) => Input::Key(key),
                 Some(Ok(TerminalEvent::Resize(width, height))) => Input::Resize(width, height),
+                Some(Ok(TerminalEvent::Paste(pasted))) => Input::Paste(pasted),
                 Some(Ok(_)) => continue,
                 Some(Err(error)) => return Err(error),
                 None => return Ok(()),
@@ -423,6 +424,14 @@ fn perform(
             | Effect::DiscardDraft { .. }
             | Effect::QueueSend { .. }) => {
                 let _ = drafts.try_send(effect);
+            }
+            Effect::Attach(path) => {
+                let client = client.clone();
+                let inputs = inputs.clone();
+                tokio::spawn(async move {
+                    let attached = client.attach(path.clone()).await.ok().flatten();
+                    let _ = inputs.send(Input::Attached { path, attached }).await;
+                });
             }
             Effect::Recipients { account, prefix } => {
                 let client = client.clone();

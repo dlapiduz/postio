@@ -165,10 +165,10 @@ the queued bytes (quickstart §3).
 - [ ] T058 [US3] `$EDITOR` handoff through `term::with_suspended` with a `0600` file in `$XDG_RUNTIME_DIR/postio/`, deleted on return. Test first: US3 scenario 6 with a fake editor script that appends a line; the file is gone afterwards
 - [X] T059 [US3] Send with `Ctrl+Enter` (and its legacy alternate from T017) through `QueueSend`; scheduled send through `QueueSend{at}`. Test first: US3 scenario 7 — offline send lands in the Outbox at once, and one submission reaches the mock when it comes online. *(The Outbox half is `postio-host`'s queue test and the app's send tests; the at-most-once submission against the mock is proven with two clients in T082.)*
 - [X] T060 [P] [US3] Write `postio_ui::paste::classify` in `crates/postio-ui/src/paste.rs` per data-model.md: `file://` URIs, shell quoting and escapes, newline/space separation, existence and readability checks. Tests first: prose that looks like a path is `Text`; an unreadable absolute path is `Unreadable`
-- [ ] T061 [US3] Drop and paste in the composer: `Event::Paste` → `classify` → attach, notice, or insert. Tests first: US3 scenarios 8, 10 and 11
+- [X] T061 [US3] Drop and paste in the composer: `Event::Paste` → `classify` → attach, notice, or insert. Tests first: US3 scenarios 8, 10 and 11
 - [ ] T062 [US3] Write `crates/postio-tui/src/clipboard.rs`: image read on the paste key via arboard, then `wl-paste`, then `xclip`, never otherwise; `AttachBytes{inline:true}` and `![image](cid:…)` at the cursor; "Clipboard unavailable here" when none. Tests first with a fake clipboard: US3 scenario 9; the clipboard is read zero times while typing
 - [ ] T063 [US3] Pop-out equivalent: the pop-out command moves the composer to a tab (FR-003). Test first: the same draft id is in the tab, and the reading pane returns to the reader
-- [ ] T064 [US3] Attaching by typed path (FR-027) through a path prompt with completion. Test first: attaching `./fixture.pdf` lists it with its size
+- [X] T064 [US3] Attaching by typed path (FR-027) through a path prompt with completion. Test first: attaching `./fixture.pdf` lists it with its size
 
 ---
 

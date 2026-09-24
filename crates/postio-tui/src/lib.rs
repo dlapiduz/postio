@@ -16,6 +16,7 @@ pub mod composer;
 pub mod conversation;
 pub mod input;
 pub mod layout;
+pub mod paths;
 pub mod reader;
 pub mod row;
 pub mod run;

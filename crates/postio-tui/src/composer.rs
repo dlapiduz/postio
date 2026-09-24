@@ -264,6 +264,17 @@ impl Composer {
         self.edits
     }
 
+    /// The files this draft carries.
+    pub fn attachments(&self) -> &[postio_model::Attachment] {
+        &self.draft.attachments
+    }
+
+    /// Carry `attachment`, already stored by the daemon.
+    pub fn attach(&mut self, attachment: postio_model::Attachment) {
+        self.draft.attachments.push(attachment);
+        self.edits += 1;
+    }
+
     /// Who the recipient being typed could be, best first.
     pub fn suggestions(&self) -> &[RecipientCandidate] {
         &self.suggestions

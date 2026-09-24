@@ -63,11 +63,16 @@ pub fn draw(frame: &mut Frame, app: &App, theme: &Theme, now: DateTime<Local>) {
                                 frame,
                                 *area,
                                 writing,
-                                app.focus() == Focus::Composer && app.scheduling().is_none(),
+                                app.focus() == Focus::Composer
+                                    && app.scheduling().is_none()
+                                    && app.path_prompt().is_none(),
                                 theme,
                             );
                             if let Some(times) = app.scheduling() {
                                 composer::draw_schedule(frame, *area, times, theme, now);
+                            }
+                            if let Some(typed) = app.path_prompt() {
+                                composer::draw_path_prompt(frame, *area, typed, theme);
                             }
                         } else if let Some(reading) = app.reading() {
                             reader::draw(
@@ -285,6 +290,47 @@ mod tests {
             "{screen}"
         );
         assert!(!screen.contains('\u{1b}'), "{screen:?}");
+    }
+
+    #[test]
+    fn a_drafts_files_are_listed_with_their_sizes() {
+        let mut app = with_sidebar((160, 16));
+        let mut draft = postio_model::Draft::new(postio_model::AccountId::new(1));
+        let mut pdf = postio_model::Attachment::new(
+            postio_model::MessageId::UNASSIGNED,
+            "application/pdf",
+            12_288,
+        );
+        // A forward carries the sender's file names.
+        pdf.filename = Some("fixture\u{1b}]0;x\u{7}.pdf".into());
+        draft.attachments = vec![pdf];
+        app.compose(draft);
+        let screen = screen(160, 16, &app);
+        let listed = screen
+            .lines()
+            .find(|line| line.contains("fixture"))
+            .unwrap_or_else(|| panic!("not listed:\n{screen}"));
+        assert!(
+            listed.contains(&postio_ui::format::human_size(12_288)),
+            "{listed}"
+        );
+        assert!(!screen.contains('\u{1b}'), "{screen:?}");
+    }
+
+    #[test]
+    fn the_path_prompt_is_drawn_while_it_is_open() {
+        let mut app = with_sidebar((160, 16));
+        app.compose(postio_model::Draft::new(postio_model::AccountId::new(1)));
+        update(
+            &mut app,
+            Input::Key(crossterm::event::KeyEvent::new(
+                crossterm::event::KeyCode::Char('a'),
+                crossterm::event::KeyModifiers::ALT,
+            )),
+        );
+        update(&mut app, Input::Paste("~/fixture.pdf".into()));
+        let screen = screen(160, 16, &app);
+        assert!(screen.contains("Attach: ~/fixture.pdf"), "{screen}");
     }
 
     #[test]

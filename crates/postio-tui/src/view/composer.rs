@@ -81,6 +81,38 @@ pub fn draw(frame: &mut Frame, area: Rect, composer: &Composer, focused: bool, t
         y += 1;
     }
     let mut height = (area.y + area.height).saturating_sub(y);
+    // The draft's files, under the body: each by name and size, the way the
+    // desktop lists them. A forwarded file's name is the sender's.
+    let files = composer.attachments();
+    let shown = files.len().min(ATTACHMENTS);
+    let mut listed: Vec<Line> = files[..shown]
+        .iter()
+        .map(|file| {
+            let name = SafeText::new(file.display_name());
+            Line::from(vec![
+                Span::styled("📎 ", theme.style(Role::Dim)),
+                Span::styled(name.as_str().to_owned(), theme.style(Role::Text)),
+                Span::styled(
+                    format!("  {}", postio_ui::format::human_size(file.size)),
+                    theme.style(Role::Dim),
+                ),
+            ])
+        })
+        .collect();
+    if files.len() > shown {
+        listed.push(Line::styled(
+            format!("   and {} more", files.len() - shown),
+            theme.style(Role::Dim),
+        ));
+    }
+    let needed = u16::try_from(listed.len()).unwrap_or(u16::MAX);
+    if needed > 0 && height > needed {
+        height -= needed;
+        for (offset, line) in listed.into_iter().enumerate() {
+            let row = y + height + u16::try_from(offset).unwrap_or(u16::MAX);
+            frame.render_widget(line, Rect::new(area.x, row, area.width, 1));
+        }
+    }
     // A reply's quote, folded to one line under the body: it is sent, it is
     // not edited here, and it would otherwise push what is being written off
     // the screen.
@@ -104,6 +136,10 @@ pub fn draw(frame: &mut Frame, area: Rect, composer: &Composer, focused: bool, t
     }
     frame.render_widget(composer.body(), Rect::new(area.x, y, area.width, height));
 }
+
+/// How many of a draft's files are listed by name before the rest are
+/// counted.
+const ATTACHMENTS: usize = 4;
 
 /// How many suggestions are shown at once.
 const SUGGESTIONS: usize = 5;
@@ -184,4 +220,46 @@ pub fn draw_schedule(
         frame.render_widget(ratatui::widgets::Clear, row);
         frame.render_widget(line, row);
     }
+}
+
+/// The path prompt (FR-027), over the last row of the composer, with the
+/// terminal's cursor at its end.
+pub fn draw_path_prompt(frame: &mut Frame, area: Rect, typed: &str, theme: &Theme) {
+    let area = Rect::new(
+        area.x + 2,
+        area.y,
+        area.width.saturating_sub(2),
+        area.height,
+    );
+    if area.height == 0 {
+        return;
+    }
+    let row = Rect::new(area.x, area.y + area.height - 1, area.width, 1);
+    // What was typed or pasted here is the person's own, but a paste can
+    // carry anything.
+    let typed = SafeText::new(typed);
+    let label = "Attach: ";
+    let line = Line::from(vec![
+        Span::styled(
+            label,
+            theme.style(Role::Accent).add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(
+            fit(
+                typed.as_str(),
+                usize::from(area.width).saturating_sub(label.len()),
+            ),
+            theme.style(Role::Text),
+        ),
+    ]);
+    frame.render_widget(ratatui::widgets::Clear, row);
+    frame.render_widget(line, row);
+    let column = unicode_width::UnicodeWidthStr::width(typed.as_str()) + label.len();
+    frame.set_cursor_position(Position::new(
+        row.x
+            + u16::try_from(column)
+                .unwrap_or(u16::MAX)
+                .min(row.width.saturating_sub(1)),
+        row.y,
+    ));
 }
