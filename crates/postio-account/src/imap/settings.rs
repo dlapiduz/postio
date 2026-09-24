@@ -128,7 +128,7 @@ impl ConnectionSettings {
                 reason: "no IMAP host is configured for this account".to_owned(),
             });
         }
-        if self.security == TransportSecurity::None && !is_loopback(&self.host) {
+        if self.security == TransportSecurity::None && !postio_model::net::is_loopback(&self.host) {
             return Err(BackendError::Tls {
                 host: self.host.clone(),
                 reason: "refusing to send credentials over an unencrypted connection; \
@@ -149,15 +149,6 @@ impl fmt::Debug for ConnectionSettings {
             .field("connect_timeout", &self.connect_timeout)
             .finish()
     }
-}
-
-/// Whether `host` names this machine.
-fn is_loopback(host: &str) -> bool {
-    let host = host.trim().trim_start_matches('[').trim_end_matches(']');
-    host.eq_ignore_ascii_case("localhost")
-        || host == "127.0.0.1"
-        || host == "::1"
-        || host.starts_with("127.")
 }
 
 #[cfg(test)]
