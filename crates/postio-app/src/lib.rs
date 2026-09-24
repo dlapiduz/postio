@@ -1496,8 +1496,8 @@ pub async fn startup_route(
     secrets: &dyn postio_account::secret::SecretStore,
 ) -> Startup {
     match postio_host::startup::route(database, secrets).await {
-        postio_client::protocol::StartupRoute::Ready(account) => Startup::Ready(account),
-        postio_client::protocol::StartupRoute::Onboard(account) => Startup::Onboard(account),
+        postio_host::startup::StartupRoute::Ready(account) => Startup::Ready(account),
+        postio_host::startup::StartupRoute::Onboard(account) => Startup::Onboard(account),
     }
 }
 

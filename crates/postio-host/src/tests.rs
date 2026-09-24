@@ -932,14 +932,6 @@ fn the_host_says_which_verbs_a_frontend_can_send_it() {
 }
 
 #[test]
-fn a_frontend_in_another_process_is_told_the_same_verbs() {
-    let world = World::new();
-    let (client, _) = world.frontend(ClientKind::Gtk);
-    let told = world.rt.block_on(client.wired()).expect("an answer");
-    assert_eq!(told, world.host().wired());
-}
-
-#[test]
 fn a_host_over_a_wiring_built_elsewhere_serves_its_store_and_its_news() {
     // T018: the desktop's surfaces and its integration suites build a
     // `Wiring` of their own; a host adopts it rather than opening another.
@@ -1605,13 +1597,13 @@ fn a_browser_sign_in_a_frontend_completed_is_saved_with_its_endpoints() {
 #[test]
 fn a_window_is_told_to_repair_an_account_the_keyring_has_no_password_for() {
     let world = World::new();
-    let (client, _) = world.frontend(ClientKind::Gtk);
-    let route = world
-        .rt
-        .block_on(client.startup_route())
-        .expect("an answer");
+    let wiring = world.host().wiring();
+    let route = world.rt.block_on(crate::startup::route(
+        &wiring.database,
+        wiring.secrets.as_ref(),
+    ));
     match route {
-        postio_client::protocol::StartupRoute::Onboard(Some(account)) => {
+        crate::startup::StartupRoute::Onboard(Some(account)) => {
             assert_eq!(account.address.address, "test@example.com");
         }
         other => panic!("a row with no credential is not an account to open: {other:?}"),
@@ -1633,13 +1625,13 @@ fn a_window_opens_on_an_account_whose_password_the_keyring_has() {
             &Password::new("app-specific"),
         ))
         .expect("stored");
-    let (client, _) = world.frontend(ClientKind::Gtk);
-    let route = world
-        .rt
-        .block_on(client.startup_route())
-        .expect("an answer");
+    let wiring = world.host().wiring();
+    let route = world.rt.block_on(crate::startup::route(
+        &wiring.database,
+        wiring.secrets.as_ref(),
+    ));
     assert!(
-        matches!(route, postio_client::protocol::StartupRoute::Ready(_)),
+        matches!(route, crate::startup::StartupRoute::Ready(_)),
         "{route:?}"
     );
 }
@@ -1657,26 +1649,6 @@ fn eventually<T>(world: &World, mut read: impl FnMut() -> Option<T>) -> T {
             tokio::time::sleep(Duration::from_millis(50)).await;
         });
     }
-}
-
-#[test]
-fn a_connection_a_frontend_made_itself_reaches_the_egress_log() {
-    use postio_model::egress::{EgressEvent, EgressOutcome, EgressSubsystem};
-    let world = World::new();
-    let (client, _) = world.frontend(ClientKind::Gtk);
-    client.egress().record(EgressEvent {
-        at: chrono::DateTime::from_timestamp(1_790_000_000, 0).expect("a time"),
-        subsystem: EgressSubsystem::Discovery,
-        account: None,
-        host: "autoconfig.example.test".into(),
-        port: 443,
-        outcome: EgressOutcome::Connected,
-    });
-    let host = eventually(&world, || {
-        let entries = world.rt.block_on(client.egress_log(10)).expect("the log");
-        entries.first().map(|entry| entry.host.clone())
-    });
-    assert_eq!(host, "autoconfig.example.test");
 }
 
 #[test]
@@ -1884,13 +1856,12 @@ fn a_storage_ceiling_evicts_the_oldest_blobs_over_it_and_keeps_what_fits() {
 }
 
 #[test]
-fn start_sync_asked_twice_gives_the_account_one_engine() {
-    // `Req::StartSync`: a frontend may ask once its first frame is up, and
-    // the app has usually started the engines already.
+fn start_syncing_asked_twice_gives_the_account_one_engine() {
+    // A frontend asks once its first frame is up, and an account added
+    // later asks again: the account still gets one engine.
     let mock = server_with_one_message();
     let world = syncing_world(mock.clone());
     let (client, _) = world.frontend(ClientKind::Gtk);
-    let (other, _) = world.frontend(ClientKind::Tui);
     let running = || {
         world
             .host()
@@ -1909,11 +1880,11 @@ fn start_sync_asked_twice_gives_the_account_one_engine() {
     assert!(running().is_empty(), "nothing syncs until it is asked to");
     assert!(mock.header_fetches().is_empty());
 
-    // Two frontends at once, then one again once it is running.
-    client.start_sync();
-    other.start_sync();
+    // Twice at once, then again once it is running.
+    world.host().start_syncing();
+    world.host().start_syncing();
     eventually(&world, || row_titled(&world, &client, "Tide gate"));
-    client.start_sync();
+    world.host().start_syncing();
     world
         .rt
         .block_on(async { tokio::time::sleep(Duration::from_millis(500)).await });

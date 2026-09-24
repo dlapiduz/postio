@@ -1015,23 +1015,6 @@ impl Inner {
                 maintenance::enforce_ceiling(&self.wiring, max_bytes);
                 Resp::Done
             }
-            Req::StartupRoute => Resp::Startup(
-                startup::route(&self.wiring.database, self.wiring.secrets.as_ref()).await,
-            ),
-            Req::RecordEgress(event) => {
-                use postio_model::egress::EgressSink;
-                self.wiring.egress.record(event);
-                Resp::Done
-            }
-            Req::Wired => Resp::Wired(
-                verbs(&self.wiring, &SharedState::default())
-                    .wired()
-                    .collect(),
-            ),
-            Req::StartSync => {
-                start_sync(self.wiring.clone(), Arc::clone(&self.engines)).await;
-                Resp::Done
-            }
             Req::DraftCounts(account) => store
                 .draft_counts(account)
                 .await

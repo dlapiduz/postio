@@ -126,24 +126,9 @@ impl Req {
             Req::RetireOrientation => "RetireOrientation",
             Req::FetchBody(_) => "FetchBody",
             Req::StorageCeiling(_) => "StorageCeiling",
-            Req::StartupRoute => "StartupRoute",
-            Req::RecordEgress(_) => "RecordEgress",
-            Req::StartSync => "StartSync",
-            Req::Wired => "Wired",
             Req::SaveAccount { .. } => "SaveAccount",
             Req::SaveOAuthAccount(_) => "SaveOAuthAccount",
         }
-    }
-}
-
-/// A frontend's egress sink: each connection it makes is posted to the
-/// store's owner, which writes the log.
-struct ClientEgress(Client);
-
-impl postio_model::egress::EgressSink for ClientEgress {
-    fn record(&self, event: postio_model::egress::EgressEvent) {
-        self.0.counts.record("RecordEgress");
-        self.0.transport.post(Req::RecordEgress(event));
     }
 }
 
@@ -200,37 +185,6 @@ impl Client {
     pub fn storage_ceiling(&self, max_bytes: Option<u64>) {
         self.counts.record("StorageCeiling");
         self.transport.post(Req::StorageCeiling(max_bytes));
-    }
-
-    /// Start syncing every enabled account not syncing yet. Posted.
-    pub fn start_sync(&self) {
-        self.counts.record("StartSync");
-        self.transport.post(Req::StartSync);
-    }
-
-    /// The verbs the owner answers: what a window's gestures may be sent
-    /// as, rather than answered "not wired up in this build".
-    pub async fn wired(&self) -> Result<Vec<postio_core::CommandId>, StoreError> {
-        self.read(Req::Wired, "the verbs", |answer| match answer {
-            Resp::Wired(wired) => Some(wired),
-            _ => None,
-        })
-        .await
-    }
-
-    /// What a window opens on: an account, or the first-run screen.
-    pub async fn startup_route(&self) -> Result<crate::protocol::StartupRoute, StoreError> {
-        self.read(Req::StartupRoute, "where to start", |answer| match answer {
-            Resp::Startup(route) => Some(route),
-            _ => None,
-        })
-        .await
-    }
-
-    /// Where a frontend's own outbound connections are recorded: the
-    /// host's egress log, one posted request per connection.
-    pub fn egress(&self) -> Arc<dyn postio_model::egress::EgressSink> {
-        Arc::new(ClientEgress(self.clone()))
     }
 
     async fn call(&self, request: Req) -> Result<Resp, Disconnected> {

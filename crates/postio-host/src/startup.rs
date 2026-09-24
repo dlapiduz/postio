@@ -4,7 +4,6 @@
 //! keyring (ADR 0041); moved here from the desktop app so every frontend is
 //! routed by the same rule.
 
-use postio_client::protocol::StartupRoute;
 use postio_storage::Store;
 
 /// Deletes every account "Remove" (in the settings panel, #464) has marked
@@ -27,6 +26,19 @@ async fn reap_pending_accounts(database: &Store) {
     {
         tracing::error!(%error, "could not reap an account marked for removal: {error}");
     }
+}
+
+/// What a window opens on, as the store's owner decides it.
+///
+/// An account is something to open only when the store holds a row **and**
+/// the keyring gives up a password for it; otherwise the first-run screen,
+/// prefilled from the row when there is one.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum StartupRoute {
+    /// Open it: there is a row, and a password to authenticate with.
+    Ready(Box<postio_model::Account>),
+    /// Show the first-run screen; `Some` is a repair of this account.
+    Onboard(Option<Box<postio_model::Account>>),
 }
 
 /// Decide which of the two startup does.
