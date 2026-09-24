@@ -8,6 +8,7 @@ use ratatui::text::{Line, Span};
 use crate::sidebar;
 use crate::theme::{Role, Theme};
 use crate::view::fit;
+use crate::view::hit::{Hits, Target};
 
 /// Draw `lines` into `area`, marking `cursor`; `focused` when the keyboard is
 /// in the sidebar.
@@ -18,6 +19,7 @@ pub fn draw(
     cursor: usize,
     focused: bool,
     theme: &Theme,
+    hits: &mut Hits,
 ) {
     let width = usize::from(area.width);
     // Keep the cursor in view in a long sidebar.
@@ -27,6 +29,9 @@ pub fn draw(
         let y = area.y + u16::try_from(offset).unwrap_or(u16::MAX);
         let row = Rect::new(area.x, y, area.width, 1);
         frame.render_widget(one(line, index == cursor, focused, width, theme), row);
+        if !line.heading {
+            hits.add(row, Target::Sidebar(index));
+        }
     }
 }
 

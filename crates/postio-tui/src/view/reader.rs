@@ -7,21 +7,27 @@ use ratatui::text::Line;
 
 use chrono::{DateTime, Local};
 
-use crate::conversation::Reading;
+use crate::app::App;
 use crate::row::Row;
 use crate::theme::{Role, Theme};
 use crate::view::fit;
+use crate::view::hit::{Hits, Target};
 
-/// Draw `row`'s header and what is being read into `area`, from line `top`.
+/// Draw what `app` is reading into `area`: its row's header, then the
+/// message from the line the reader is scrolled to.
 pub fn draw(
     frame: &mut Frame,
     area: Rect,
-    row: Option<&Row>,
-    reading: &Reading,
-    top: usize,
+    app: &App,
     theme: &Theme,
     now: DateTime<Local>,
+    hits: &mut Hits,
 ) {
+    let Some(reading) = app.reading() else {
+        return;
+    };
+    let row: Option<&Row> = app.row(reading.row);
+    let top = app.reader_top();
     // A divider and a space between the list and the reader: without them the
     // list's date runs straight into the subject.
     for y in area.y..area.y + area.height {
@@ -36,6 +42,10 @@ pub fn draw(
         area.width.saturating_sub(2),
         area.height,
     );
+    hits.add(
+        Rect::new(area.x - 2, area.y, 1, area.height),
+        Target::Divider,
+    );
     let width = usize::from(area.width);
     let mut lines: Vec<Line> = Vec::new();
     if let Some(row) = row {
@@ -49,9 +59,13 @@ pub fn draw(
         ));
         lines.push(Line::default());
     }
+    let header = lines.len();
     lines.extend(reading.layout(now).0.into_iter().skip(top));
     for (offset, line) in lines.into_iter().take(usize::from(area.height)).enumerate() {
         let y = area.y + u16::try_from(offset).unwrap_or(u16::MAX);
-        frame.render_widget(line, Rect::new(area.x, y, area.width, 1));
+        let row = Rect::new(area.x, y, area.width, 1);
+        frame.render_widget(line, row);
+        let target = offset.checked_sub(header).map(|index| top + index);
+        hits.add(row, Target::Reader(target));
     }
 }

@@ -15,6 +15,7 @@ use ratatui::text::{Line, Span};
 use crate::row::Row;
 use crate::theme::{Role, Theme};
 use crate::view::fit;
+use crate::view::hit::{Hits, Target};
 
 /// One visible line of the list.
 pub struct Visible<'a> {
@@ -32,12 +33,24 @@ const DATE: usize = 9;
 const FROM: usize = 20;
 
 /// Draw `rows` into `area`, one per line.
-pub fn draw(frame: &mut Frame, area: Rect, rows: &[Visible], theme: &Theme, now: DateTime<Local>) {
+/// `first` is the list position of the first row, for what a click on each
+/// row means.
+pub fn draw(
+    frame: &mut Frame,
+    area: Rect,
+    rows: &[Visible],
+    first: u32,
+    theme: &Theme,
+    now: DateTime<Local>,
+    hits: &mut Hits,
+) {
     let width = usize::from(area.width);
     for (offset, visible) in rows.iter().take(usize::from(area.height)).enumerate() {
         let y = area.y + u16::try_from(offset).unwrap_or(u16::MAX);
         let line_area = Rect::new(area.x, y, area.width, 1);
         frame.render_widget(line(visible, width, theme, now), line_area);
+        let position = first.saturating_add(u32::try_from(offset).unwrap_or(u32::MAX));
+        hits.add(line_area, Target::Row(position));
     }
 }
 
@@ -143,7 +156,17 @@ mod tests {
         let now = Local.with_ymd_and_hms(2026, 9, 23, 12, 0, 0).unwrap();
         let mut terminal = Terminal::new(TestBackend::new(70, rows.len() as u16)).unwrap();
         terminal
-            .draw(|frame| draw(frame, frame.area(), rows, &theme, now))
+            .draw(|frame| {
+                draw(
+                    frame,
+                    frame.area(),
+                    rows,
+                    0,
+                    &theme,
+                    now,
+                    &mut Hits::default(),
+                );
+            })
             .unwrap();
         let buffer = terminal.backend().buffer().clone();
         (0..buffer.area.height)

@@ -536,6 +536,11 @@ impl App {
         self
     }
 
+    /// The list position of the first row in view.
+    pub fn top(&self) -> u32 {
+        self.top
+    }
+
     /// The first reader line in view.
     pub fn reader_top(&self) -> usize {
         self.reader_top
@@ -2264,7 +2269,7 @@ pub fn update(app: &mut App, input: Input) -> Vec<Effect> {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use chrono::{TimeZone, Utc};
     use crossterm::event::{KeyCode, KeyEventKind, KeyEventState, KeyModifiers};
     use postio_model::{MailboxId, MessageId};
@@ -2287,7 +2292,7 @@ mod tests {
         })
     }
 
-    fn row(position: u32) -> Row {
+    pub(crate) fn row(position: u32) -> Row {
         Row {
             id: MessageId::new(i64::from(position) + 1),
             thread: None,

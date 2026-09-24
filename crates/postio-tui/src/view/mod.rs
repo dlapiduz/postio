@@ -4,6 +4,7 @@
 
 pub mod cheatsheet;
 pub mod composer;
+pub mod hit;
 pub mod list;
 pub mod palette;
 pub mod reader;
@@ -22,8 +23,9 @@ use crate::layout::{Pane, Shown};
 const SIDEBAR: u16 = 26;
 use crate::theme::{Role, Theme};
 
-/// Draw the whole screen.
-pub fn draw(frame: &mut Frame, app: &App, theme: &Theme, now: DateTime<Local>) {
+/// Draw the whole screen, and answer what is where on it, for the mouse.
+pub fn draw(frame: &mut Frame, app: &App, theme: &Theme, now: DateTime<Local>) -> hit::Hits {
+    let mut hits = hit::Hits::default();
     let area = frame.area();
     match app.shown() {
         Shown::TooSmall { needs } => {
@@ -58,6 +60,7 @@ pub fn draw(frame: &mut Frame, app: &App, theme: &Theme, now: DateTime<Local>) {
                     app.preview_shown(),
                     app.scheduling().is_none() && app.path_prompt().is_none(),
                     theme,
+                    &mut hits,
                 );
                 if let Some(times) = app.scheduling() {
                     composer::draw_schedule(frame, body, times, theme, now);
@@ -77,6 +80,7 @@ pub fn draw(frame: &mut Frame, app: &App, theme: &Theme, now: DateTime<Local>) {
                             cursor,
                             app.focus() == Focus::Sidebar,
                             theme,
+                            &mut hits,
                         );
                     }
                     Pane::List => {
@@ -92,7 +96,15 @@ pub fn draw(frame: &mut Frame, app: &App, theme: &Theme, now: DateTime<Local>) {
                             ),
                             None => *area,
                         };
-                        list::draw(frame, list_area, &app.visible(), theme, now);
+                        list::draw(
+                            frame,
+                            list_area,
+                            &app.visible(),
+                            app.top(),
+                            theme,
+                            now,
+                            &mut hits,
+                        );
                     }
                     Pane::Reader => {
                         if let Some(writing) = app.composer().filter(|_| !app.showing_reader()) {
@@ -105,6 +117,7 @@ pub fn draw(frame: &mut Frame, app: &App, theme: &Theme, now: DateTime<Local>) {
                                     && app.scheduling().is_none()
                                     && app.path_prompt().is_none(),
                                 theme,
+                                &mut hits,
                             );
                             if let Some(times) = app.scheduling() {
                                 composer::draw_schedule(frame, *area, times, theme, now);
@@ -112,16 +125,8 @@ pub fn draw(frame: &mut Frame, app: &App, theme: &Theme, now: DateTime<Local>) {
                             if let Some(typed) = app.path_prompt() {
                                 composer::draw_path_prompt(frame, *area, typed, theme);
                             }
-                        } else if let Some(reading) = app.reading() {
-                            reader::draw(
-                                frame,
-                                *area,
-                                app.row(reading.row),
-                                reading,
-                                app.reader_top(),
-                                theme,
-                                now,
-                            );
+                        } else {
+                            reader::draw(frame, *area, app, theme, now, &mut hits);
                         }
                     }
                 }
@@ -138,16 +143,20 @@ pub fn draw(frame: &mut Frame, app: &App, theme: &Theme, now: DateTime<Local>) {
             if app.composer_detached() && !tab {
                 words = format!("✎ A draft is open — c goes back to it · {words}");
             }
+            // Over everything: a click there lands on nothing underneath.
             if let Some(open) = app.palette() {
                 palette::draw(frame, area, &open, theme);
+                hits.add(area, hit::Target::Overlay);
             }
             if let Some(sections) = app.cheat_sheet() {
                 cheatsheet::draw(frame, area, &sections, theme);
+                hits.add(area, hit::Target::Overlay);
             }
             let words = fit(&words, usize::from(status.width));
             frame.render_widget(Line::styled(words, theme.style(Role::Dim)), status);
         }
     }
+    hits
 }
 
 /// `text`, cut to at most `width` terminal columns, ending in `…` when cut.
@@ -196,7 +205,9 @@ mod tests {
             .unwrap();
         let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
         terminal
-            .draw(|frame| draw(frame, app, &theme, now))
+            .draw(|frame| {
+                draw(frame, app, &theme, now);
+            })
             .unwrap();
         let buffer = terminal.backend().buffer().clone();
         (0..buffer.area.height)
@@ -390,7 +401,9 @@ mod tests {
             .unwrap();
         let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
         terminal
-            .draw(|frame| draw(frame, app, &theme, now))
+            .draw(|frame| {
+                draw(frame, app, &theme, now);
+            })
             .unwrap();
         terminal.backend().buffer().clone()
     }
@@ -589,6 +602,60 @@ mod tests {
 
     fn screen_of_size(app: &App, width: u16, height: u16) -> String {
         screen(width, height, app)
+    }
+
+    fn hits_of(width: u16, height: u16, app: &App) -> hit::Hits {
+        let theme = Theme::new(Colour::None, Background::Unknown, &Default::default()).0;
+        let now = chrono::Local
+            .with_ymd_and_hms(2026, 9, 23, 12, 0, 0)
+            .unwrap();
+        let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
+        let mut hits = hit::Hits::default();
+        terminal
+            .draw(|frame| hits = draw(frame, app, &theme, now))
+            .unwrap();
+        hits
+    }
+
+    #[test]
+    fn a_click_on_the_third_list_row_is_that_row() {
+        // T070.
+        use postio_ui::paging::Page;
+        let mut app = with_sidebar((160, 16));
+        let effects = update(
+            &mut app,
+            Input::Opened {
+                scope: postio_model::ListScope::Mailbox(postio_model::MailboxId::new(1)),
+                total: 5,
+            },
+        );
+        let generation = effects
+            .iter()
+            .find_map(|effect| match effect {
+                crate::app::Effect::Fetch { generation, .. } => Some(*generation),
+                _ => None,
+            })
+            .expect("a page asked for");
+        let rows = (0..5).map(crate::app::tests::row).collect();
+        update(
+            &mut app,
+            Input::Page {
+                generation,
+                page: 0,
+                rows: Ok(Page { rows, total: 5 }),
+            },
+        );
+        let screen = screen(160, 16, &app);
+        let (y, line) = screen
+            .lines()
+            .enumerate()
+            .find(|(_, line)| line.contains("Message 2"))
+            .unwrap_or_else(|| panic!("no third row:\n{screen}"));
+        let x = u16::try_from(line.chars().position(|c| c == 'M').unwrap()).unwrap();
+        let hit = hits_of(160, 16, &app)
+            .at(x, u16::try_from(y).unwrap())
+            .expect("something is there");
+        assert_eq!(hit.target, hit::Target::Row(2));
     }
 
     #[test]

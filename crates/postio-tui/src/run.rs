@@ -716,9 +716,10 @@ fn perform(
     Ok(flow)
 }
 
-fn draw(terminal: &mut Screen, app: &App, theme: &Theme) -> io::Result<()> {
-    terminal.draw(|frame| crate::view::draw(frame, app, theme, chrono::Local::now()))?;
-    Ok(())
+fn draw(terminal: &mut Screen, app: &App, theme: &Theme) -> io::Result<crate::view::hit::Hits> {
+    let mut hits = crate::view::hit::Hits::default();
+    terminal.draw(|frame| hits = crate::view::draw(frame, app, theme, chrono::Local::now()))?;
+    Ok(hits)
 }
 
 #[cfg(test)]

@@ -10,6 +10,7 @@ use postio_ui::terminal::SafeText;
 use crate::composer::{Composer, Field};
 use crate::theme::{Role, Theme};
 use crate::view::fit;
+use crate::view::hit::{Hits, Target};
 
 /// The width of the field labels, so the values line up.
 const LABEL: u16 = 9;
@@ -23,6 +24,7 @@ pub fn draw(
     preview: Option<postio_config::Preview>,
     focused: bool,
     theme: &Theme,
+    hits: &mut Hits,
 ) {
     for y in area.y..area.y + area.height {
         frame.render_widget(
@@ -70,6 +72,10 @@ pub fn draw(
             Span::styled(value, theme.style(Role::Text)),
         ]);
         frame.render_widget(line, Rect::new(area.x, y, area.width, 1));
+        hits.add(
+            Rect::new(area.x, y, area.width, 1),
+            Target::ComposerField(field),
+        );
         if focused && here {
             let column = u16::try_from(composer.cursor_in(field)).unwrap_or(u16::MAX);
             frame.set_cursor_position(Position::new(area.x + LABEL + column.min(value_width), y));
@@ -142,6 +148,7 @@ pub fn draw(
         return;
     }
     let body = Rect::new(area.x, y, area.width, height);
+    hits.add(body, Target::ComposerBody);
     match preview {
         None => frame.render_widget(composer.body(), body),
         Some(postio_config::Preview::Toggle) => draw_preview(frame, body, composer),
