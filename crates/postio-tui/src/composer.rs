@@ -344,7 +344,7 @@ impl Composer {
         &self.draft.attachments
     }
 
-    /// Carry `attachment`, already stored by the daemon.
+    /// Carry `attachment`, already stored by the host.
     pub fn attach(&mut self, attachment: postio_model::Attachment) {
         self.draft.attachments.push(attachment);
         self.edits += 1;

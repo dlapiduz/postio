@@ -574,6 +574,13 @@ pub async fn open_store_at_reporting(
             tracing::error!(path = %path.display(), "the store will not decrypt with this key");
             return Err(error.to_string());
         }
+        // Another Postio -- the desktop app or the terminal -- has it open.
+        // Its own sentence says what to do, so nothing goes in front of it
+        // either.
+        Err(error @ postio_storage::Error::InUse) => {
+            tracing::warn!(path = %path.display(), "the store is open in another process");
+            return Err(error.to_string());
+        }
         Err(error) => {
             tracing::error!(path = %path.display(), %error, "cannot open the store: {error}");
             // The sentence goes back to the caller as well as to the log,

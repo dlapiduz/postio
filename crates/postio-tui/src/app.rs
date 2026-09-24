@@ -1,9 +1,9 @@
 //! The terminal frontend's state, and the one function that changes it.
 //!
 //! `update` takes an [`Input`] and returns the [`Effect`]s it asks for --
-//! a request of the daemon, a redraw, quitting -- and does no I/O itself.
+//! a request of the host, a redraw, quitting -- and does no I/O itself.
 //! That is what lets every behaviour be driven by synthetic input in a test,
-//! with no terminal and no daemon (research R11).
+//! with no terminal and no host (research R11).
 //!
 //! # The list is a window
 //!
@@ -53,20 +53,15 @@ pub enum Pointer {
     },
 }
 
-/// Something that happened, from the terminal or from the daemon.
+/// Something that happened, from the terminal or from the host.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Input {
     /// The terminal is now this many columns and rows.
     Resize(u16, u16),
-    /// The daemon went away: the connection to it ended.
-    Disconnected,
-    /// An [`Effect::Reconnect`] finished: connected again, or the sentence
-    /// for why not.
-    Reconnected(Result<(), String>),
     /// The clipboard answered an [`Effect::ReadClipboardImage`]: a PNG,
     /// no image, or why it could not be read.
     ClipboardImage(Result<Option<Vec<u8>>, String>),
-    /// The daemon stored an [`Effect::InlineImage`]: the inline part, or
+    /// The host stored an [`Effect::InlineImage`]: the inline part, or
     /// nothing when it could not.
     InlineStored(Option<postio_model::Attachment>),
     /// `config.toml` came back from the person's editor, and was read again.
@@ -78,12 +73,12 @@ pub enum Input {
         /// The body it saved.
         edited: Result<String, String>,
     },
-    /// The daemon answered an [`Effect::BeginOAuth`]: where the sign-in
+    /// The host answered an [`Effect::BeginOAuth`]: where the sign-in
     /// waits for the person, or why it could not begin.
     Consent(Result<postio_ui::onboarding::BrowserSignIn, String>),
-    /// The daemon answered an [`Effect::Discover`].
+    /// The host answered an [`Effect::Discover`].
     Discovered(Result<postio_ui::onboarding::Status, String>),
-    /// The daemon answered an [`Effect::AddAccount`]: saved, or the sentence
+    /// The host answered an [`Effect::AddAccount`]: saved, or the sentence
     /// for why not.
     AccountAdded(Result<(), String>),
     /// The mouse did something over what was drawn.
@@ -91,7 +86,7 @@ pub enum Input {
     /// Text was pasted, or files were dropped: a drop arrives as a paste of
     /// their paths.
     Paste(String),
-    /// The daemon answered an [`Effect::Attach`]: the stored attachment, or
+    /// The host answered an [`Effect::Attach`]: the stored attachment, or
     /// nothing when the file could not be read.
     Attached {
         /// What was asked to be attached.
@@ -108,7 +103,7 @@ pub enum Input {
         /// How many rows it has.
         total: u32,
     },
-    /// The daemon said something happened.
+    /// The host said something happened.
     Host(postio_core::Event),
     /// The cursor has rested on `message` since [`Effect::Rest`] asked.
     Rested(postio_model::MessageId),
@@ -126,7 +121,7 @@ pub enum Input {
         /// The body, or why there is none.
         answer: Result<postio_client::protocol::Body, String>,
     },
-    /// The daemon answered an [`Effect::Unsubscribe`]: the list's name, or
+    /// The host answered an [`Effect::Unsubscribe`]: the list's name, or
     /// why not.
     Unsubscribed(Result<String, String>),
     /// An [`Effect::Autosave`]'s time is up.
@@ -136,7 +131,7 @@ pub enum Input {
         /// How many edits it had when it asked.
         edit: u64,
     },
-    /// The daemon answered an [`Effect::SaveDraft`]: the draft's id, or why
+    /// The host answered an [`Effect::SaveDraft`]: the draft's id, or why
     /// it could not be saved.
     DraftSaved {
         /// Which composition.
@@ -144,36 +139,36 @@ pub enum Input {
         /// Its id, or the sentence for the status line.
         saved: Result<postio_model::DraftId, String>,
     },
-    /// New mail the daemon chose this terminal to tell the person about.
+    /// New mail worth telling the person about, as the host decided it.
     Notified(postio_ui::notify::Notification),
     /// The account's labels, for the finder's `+` ([`Effect::ReadLabels`]).
     Labels(Vec<postio_model::Label>),
     /// The account's correspondents, for the finder's `@`
     /// ([`Effect::ReadCorrespondents`]).
     Correspondents(Vec<postio_model::Contact>),
-    /// The daemon answered an [`Effect::Search`].
+    /// The host answered an [`Effect::Search`].
     Found {
         /// Which question it answers.
         sequence: u64,
         /// What matched, nothing when the store could not be read, or why
-        /// the daemon could not be asked.
+        /// the host could not be asked.
         found: Result<Option<postio_client::protocol::Found>, String>,
     },
-    /// The daemon answered an [`Effect::Recipients`].
+    /// The host answered an [`Effect::Recipients`].
     Recipients {
         /// What was looked up.
         prefix: String,
         /// Who it could be, best first.
         found: Vec<postio_model::contact_group::RecipientCandidate>,
     },
-    /// The daemon answered an [`Effect::QueueSend`].
+    /// The host answered an [`Effect::QueueSend`].
     Queued {
         /// When it was scheduled for, if it was.
         at: Option<chrono::DateTime<chrono::Utc>>,
         /// Whether it was queued, or why not.
         queued: Result<(), String>,
     },
-    /// The daemon answered an [`Effect::Resume`]: the draft behind the row,
+    /// The host answered an [`Effect::Resume`]: the draft behind the row,
     /// taken back from the Outbox if it was queued; nothing when there is no
     /// local draft or its send has already started.
     Resumed {
@@ -182,7 +177,7 @@ pub enum Input {
         /// Why its last send failed, for a draft that did.
         failure: Option<String>,
     },
-    /// The daemon answered an [`Effect::ReplySource`]: the message and its
+    /// The host answered an [`Effect::ReplySource`]: the message and its
     /// account, or nothing when it could not be read.
     ReplySource {
         /// Which draft to start.
@@ -229,9 +224,6 @@ pub enum Input {
 pub enum Effect {
     /// Draw a frame.
     Redraw,
-    /// Reach the daemon again, starting it if nothing answers, and answer
-    /// with [`Input::Reconnected`].
-    Reconnect,
     /// Leave.
     Quit,
     /// Wait [`READ_REST`], then answer with [`Input::Rested`].
@@ -283,7 +275,7 @@ pub enum Effect {
         /// How many edits it has now.
         edit: u64,
     },
-    /// Save a draft through the daemon's draft writer.
+    /// Save a draft through the host's draft writer.
     SaveDraft {
         /// Which composition.
         generation: u64,
@@ -375,7 +367,7 @@ pub enum Effect {
         /// The message.
         message: postio_model::MessageId,
     },
-    /// Send a command to the daemon, aimed with [`App::state`].
+    /// Send a command to the host, aimed with [`App::state`].
     Send(postio_core::Command),
     /// Read a page of the list and answer with [`Input::Page`].
     Fetch {
@@ -408,21 +400,6 @@ const MINIMUM_READER: u16 = 24;
 /// The narrowest the rest of the screen may be left by a drag.
 const MINIMUM_LIST: u16 = 40;
 
-/// The daemon is gone: what the terminal is doing about it.
-#[derive(Debug, Default)]
-struct Gone {
-    /// A reconnect is under way.
-    reconnecting: bool,
-    /// Why the last reconnect failed.
-    why_not: Option<String>,
-    /// A draft is open that nothing can save until the daemon is back.
-    holding: bool,
-    /// Quitting was asked once with such a draft open: again leaves.
-    quit_asked: bool,
-    /// What the status line says, kept in step with the rest.
-    sentence: String,
-}
-
 /// Everything the terminal frontend knows.
 pub struct App {
     size: (u16, u16),
@@ -444,9 +421,6 @@ pub struct App {
     /// What the status line says about the last thing done: the undo offer,
     /// a refusal, an error.
     notice: Option<String>,
-    /// The daemon went away and has not been reached again. While it is,
-    /// the status line says so above anything else.
-    gone: Option<Gone>,
     /// Where the keyboard is.
     focus: Focus,
     /// The sidebar's lines.
@@ -457,7 +431,7 @@ pub struct App {
     correspondents: Vec<postio_model::Contact>,
     /// The sidebar line the keyboard is on.
     sidebar_cursor: usize,
-    /// Each account's sync status, folded from the daemon's events.
+    /// Each account's sync status, folded from the host's events.
     trackers: postio_ui::status::Trackers,
     /// Which account the list on screen belongs to.
     account: Option<postio_model::AccountId>,
@@ -684,7 +658,6 @@ impl App {
             selection: postio_ui::selection::SelectionState::new(),
             scope: None,
             notice: None,
-            gone: None,
             focus: Focus::List,
             sidebar: Vec::new(),
             sidebar_cursor: 0,
@@ -843,10 +816,6 @@ impl App {
     /// written, and dropping a composition nothing was written in, by the
     /// desktop's own rule (`postio_model::draft::closing`).
     fn close_composer(&mut self) -> Vec<Effect> {
-        if self.holding_a_draft() {
-            self.tell_gone();
-            return vec![Effect::Redraw];
-        }
         let mut effects = Vec::new();
         if let Some(composer) = self.composer.take() {
             let generation = composer.generation();
@@ -1832,7 +1801,7 @@ impl App {
         self.run_search()
     }
 
-    /// Ask the daemon the question now in the bar; an empty bar puts the
+    /// Ask the host the question now in the bar; an empty bar puts the
     /// folder back.
     fn run_search(&mut self) -> Vec<Effect> {
         let account = self.account.map_or(
@@ -1934,10 +1903,6 @@ impl App {
     /// it: nobody to send to, or a question to ask first (FR-018, FR-057),
     /// asked once and answered by sending again.
     fn send_draft(&mut self, at: Option<chrono::DateTime<chrono::Utc>>) -> Vec<Effect> {
-        if self.holding_a_draft() {
-            self.tell_gone();
-            return vec![Effect::Redraw];
-        }
         let Some(composer) = self.composer.as_ref() else {
             return Vec::new();
         };
@@ -2060,147 +2025,7 @@ impl App {
 
     /// What the status line says about the last thing done.
     pub fn notice(&self) -> Option<&str> {
-        match &self.gone {
-            Some(gone) => Some(&gone.sentence),
-            None => self.notice.as_deref(),
-        }
-    }
-
-    /// The daemon went away: say so, and keep saying it until it is back.
-    ///
-    /// Nothing reconnects on its own: the person asks, with refresh's key
-    /// (the canvas' own retry key, `R`). What is on screen stays, to read.
-    fn disconnected(&mut self) -> Vec<Effect> {
-        if self.gone.is_none() {
-            self.gone = Some(Gone::default());
-        }
-        self.tell_gone();
-        vec![Effect::Redraw]
-    }
-
-    /// Refresh's key, as the status line names it: a single key when it
-    /// has one, `R` by default.
-    fn reconnect_key(&self) -> String {
-        let bindings = self.keys.keymap().bindings(postio_core::CommandId::Refresh);
-        bindings
-            .iter()
-            .find(|binding| binding.chars().count() == 1)
-            .or_else(|| bindings.first())
-            .cloned()
-            .unwrap_or_else(|| "R".to_owned())
-    }
-
-    /// Bring the status line's sentence in step with what is happening.
-    fn tell_gone(&mut self) {
-        let key = self.reconnect_key();
-        let Some(gone) = self.gone.as_mut() else {
-            return;
-        };
-        gone.sentence = if gone.reconnecting {
-            "Reconnecting to Postio's background service…".to_owned()
-        } else if let Some(why) = &gone.why_not {
-            let why = postio_ui::terminal::SafeText::new(why).to_string();
-            format!("Could not reconnect: {why} — press {key} to try again")
-        } else if gone.quit_asked {
-            format!(
-                "This draft cannot be saved until Postio reconnects — quit again to leave \
-                 without it, or press {key} to reconnect"
-            )
-        } else if gone.holding {
-            format!(
-                "Postio's background service stopped, so this draft stays open until it is \
-                 back — press {key} to reconnect"
-            )
-        } else {
-            format!("Postio's background service stopped — press {key} to reconnect")
-        };
-    }
-
-    /// Whether `key` asks to reconnect: refresh's key, which in a text
-    /// field only counts when it is not a letter that field would type.
-    fn asks_to_reconnect(&self, key: &KeyEvent) -> bool {
-        let Some(chord) = crate::input::chord_of(key) else {
-            return false;
-        };
-        let chord = chord.to_string();
-        let typing = self.path_prompt.is_some()
-            || matches!(
-                self.focus,
-                Focus::Composer | Focus::Search | Focus::Palette | Focus::FirstRun
-            );
-        self.keys
-            .keymap()
-            .bindings(postio_core::CommandId::Refresh)
-            .iter()
-            .any(|binding| *binding == chord && !(typing && binding.chars().count() == 1))
-    }
-
-    /// Ask the loop to reach the daemon again, once at a time.
-    fn reconnect(&mut self) -> Vec<Effect> {
-        let Some(gone) = self.gone.as_mut() else {
-            return Vec::new();
-        };
-        if gone.reconnecting {
-            return Vec::new();
-        }
-        gone.reconnecting = true;
-        gone.why_not = None;
-        self.tell_gone();
-        vec![Effect::Reconnect, Effect::Redraw]
-    }
-
-    /// A reconnect finished. Connected, everything on screen is read again
-    /// from the daemon now there -- the sidebar, the list where it was
-    /// scrolled, the reader -- and an open draft is saved, since nothing
-    /// could save it while the daemon was gone.
-    fn reconnected(&mut self, result: Result<(), String>) -> Vec<Effect> {
-        if let Err(why) = result {
-            if let Some(gone) = self.gone.as_mut() {
-                gone.reconnecting = false;
-                gone.why_not = Some(why);
-            }
-            self.tell_gone();
-            return vec![Effect::Redraw];
-        }
-        self.gone = None;
-        let mut effects = vec![Effect::RefreshSidebar];
-        if let Some(scope) = self.scope {
-            effects.push(Effect::Recount(scope));
-        }
-        if let Some(reading) = &self.reading {
-            effects.extend(
-                reading
-                    .members
-                    .iter()
-                    .map(|member| Effect::ReadBody(member.id)),
-            );
-        }
-        if let Some(composer) = &self.composer {
-            let draft = composer.draft();
-            if postio_model::draft::closing(&draft) == postio_model::draft::Closing::Keep {
-                effects.push(Effect::SaveDraft {
-                    generation: composer.generation(),
-                    draft: Box::new(draft),
-                });
-            }
-        }
-        effects.extend(self.say("Reconnected to Postio's background service"));
-        effects
-    }
-
-    /// Whether an open draft has something in it that only the daemon can
-    /// keep, while there is no daemon: closing it now would lose it.
-    fn holding_a_draft(&mut self) -> bool {
-        if self.gone.is_none() {
-            return false;
-        }
-        let keep = self.composer.as_ref().is_some_and(|composer| {
-            postio_model::draft::closing(&composer.draft()) == postio_model::draft::Closing::Keep
-        });
-        if keep && let Some(gone) = self.gone.as_mut() {
-            gone.holding = true;
-        }
-        keep
+        self.notice.as_deref()
     }
 
     /// Put `sentence` on the status line. Through `SafeText`: these are
@@ -2343,18 +2168,6 @@ impl App {
                 .selection
                 .select_all(postio_ui::selection::Reach::default()),
             "quit" => {
-                // With the daemon gone, a draft cannot be saved on the way
-                // out: say so once, and leave on the second ask.
-                if self.holding_a_draft() {
-                    if let Some(gone) = self.gone.as_mut()
-                        && !gone.quit_asked
-                    {
-                        gone.quit_asked = true;
-                        self.tell_gone();
-                        return vec![Effect::Redraw];
-                    }
-                    return vec![Effect::Quit];
-                }
                 // What is being written is saved on the way out.
                 let mut effects = if self.composer.is_some() {
                     self.close_composer()
@@ -2887,7 +2700,7 @@ impl App {
         }
     }
 
-    /// The daemon said something happened.
+    /// The host said something happened.
     ///
     /// What a command said about itself goes on the status line; what
     /// changed in the store goes through the same paging plan the desktop
@@ -3012,9 +2825,6 @@ pub fn update(app: &mut App, input: Input) -> Vec<Effect> {
             app.size = (width, height);
             vec![Effect::Redraw]
         }
-        Input::Disconnected => app.disconnected(),
-        Input::Reconnected(result) => app.reconnected(result),
-        Input::Key(key) if app.gone.is_some() && app.asks_to_reconnect(&key) => app.reconnect(),
         // Any key puts the cheat sheet away; it is something to read.
         Input::Key(_) if app.cheatsheet.is_some() => {
             app.cheatsheet = None;
@@ -3329,7 +3139,7 @@ pub(crate) mod tests {
         }
     }
 
-    /// Answer every fetch the way the daemon would, with rows for its range;
+    /// Answer every fetch the way the host would, with rows for its range;
     /// return how many fetches there were.
     fn serve(app: &mut App, effects: Vec<Effect>) -> usize {
         let mut fetched = 0;
@@ -3373,7 +3183,7 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn a_resize_changes_what_is_shown_and_asks_the_daemon_nothing() {
+    fn a_resize_changes_what_is_shown_and_asks_the_host_nothing() {
         let mut app = app((160, 40));
         let asked = app.requested();
 
@@ -3654,7 +3464,7 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn new_mail_the_daemon_elects_this_terminal_for_is_said_and_offered_to_the_desktop() {
+    fn new_mail_worth_telling_is_said_and_offered_to_the_desktop() {
         // T022: with no desktop app open the terminal is the one told; it
         // says so on the status line, and hands the same words to the
         // desktop's notification service where there is one.
@@ -5467,7 +5277,7 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn the_status_line_says_offline_until_the_daemon_says_otherwise() {
+    fn the_status_line_says_offline_until_the_host_says_otherwise() {
         let mut app = app((160, 40));
         update(&mut app, Input::Sidebar(sidebar_contents()));
         let opening = opened(&mut app, 3);
@@ -5956,132 +5766,6 @@ pub(crate) mod tests {
                 .iter()
                 .any(|effect| matches!(effect, Effect::Fetch { page: 0, .. })),
             "{effects:?}"
-        );
-    }
-
-    /// What the status line says while the daemon is gone.
-    const GONE: &str = "Postio's background service stopped — press R to reconnect";
-
-    fn reconnects(effects: &[Effect]) -> usize {
-        effects
-            .iter()
-            .filter(|effect| matches!(effect, Effect::Reconnect))
-            .count()
-    }
-
-    #[test]
-    fn the_daemon_going_is_said_and_r_asks_to_reconnect_once() {
-        let mut app = app((160, 40));
-        let opening = opened(&mut app, 3);
-        serve(&mut app, opening);
-
-        let effects = update(&mut app, Input::Disconnected);
-        assert!(effects.contains(&Effect::Redraw), "{effects:?}");
-        assert_eq!(app.notice(), Some(GONE));
-        // Whatever else is said meanwhile, the status line keeps saying it.
-        update(
-            &mut app,
-            Input::Host(postio_core::Event::Error {
-                message: "Postio's background service is not answering.".into(),
-            }),
-        );
-        assert_eq!(app.notice(), Some(GONE));
-
-        let effects = update(&mut app, press('R'));
-        assert_eq!(reconnects(&effects), 1, "{effects:?}");
-        assert!(
-            !effects
-                .iter()
-                .any(|effect| matches!(effect, Effect::Send(_))),
-            "R reconnects rather than sending a refresh nobody can answer: {effects:?}"
-        );
-        let again = update(&mut app, press('R'));
-        assert_eq!(reconnects(&again), 0, "one reconnect at a time: {again:?}");
-    }
-
-    #[test]
-    fn r_is_the_refresh_it_always_was_while_the_daemon_is_there() {
-        let mut app = app((160, 40));
-        let opening = opened(&mut app, 3);
-        serve(&mut app, opening);
-        let effects = update(&mut app, press('R'));
-        assert_eq!(reconnects(&effects), 0, "{effects:?}");
-    }
-
-    #[test]
-    fn a_reconnect_reads_again_what_is_on_screen() {
-        let mut app = app((160, 40));
-        let opening = opened(&mut app, 3);
-        serve(&mut app, opening);
-        let reading = update(&mut app, Input::Rested(MessageId::new(1)));
-        assert!(reading.contains(&Effect::ReadBody(MessageId::new(1))));
-        update(&mut app, Input::Disconnected);
-        update(&mut app, press('R'));
-
-        let effects = update(&mut app, Input::Reconnected(Ok(())));
-
-        assert!(effects.contains(&Effect::RefreshSidebar), "{effects:?}");
-        assert!(
-            effects.contains(&Effect::Recount(ListScope::Mailbox(MailboxId::new(1)))),
-            "the list: {effects:?}"
-        );
-        assert!(
-            effects.contains(&Effect::ReadBody(MessageId::new(1))),
-            "the reader: {effects:?}"
-        );
-        assert_ne!(app.notice(), Some(GONE));
-        let effects = update(&mut app, press('R'));
-        assert_eq!(reconnects(&effects), 0, "connected again: {effects:?}");
-    }
-
-    #[test]
-    fn a_reconnect_that_fails_says_why_and_can_be_asked_again() {
-        let mut app = app((160, 40));
-        update(&mut app, Input::Disconnected);
-        update(&mut app, press('R'));
-
-        update(
-            &mut app,
-            Input::Reconnected(Err("Postio's background service did not start".into())),
-        );
-
-        let notice = app.notice().expect("said").to_owned();
-        assert!(notice.contains("did not start"), "{notice}");
-        assert!(notice.contains("press R"), "{notice}");
-        let effects = update(&mut app, press('R'));
-        assert_eq!(reconnects(&effects), 1, "{effects:?}");
-    }
-
-    #[test]
-    fn a_draft_written_while_the_daemon_is_gone_stays_and_is_saved_after() {
-        let mut app = app((160, 40));
-        composing(&mut app);
-        update(&mut app, Input::Disconnected);
-        for typed in "ada@example.com".chars() {
-            update(&mut app, press(typed));
-        }
-
-        // Neither Escape nor a quit throws away what nobody can save.
-        let effects = update(&mut app, key(KeyCode::Esc, KeyModifiers::NONE));
-        assert!(saves(&effects).is_empty(), "{effects:?}");
-        assert!(app.composer().is_some(), "Escape kept the draft open");
-        let effects = update(&mut app, key(KeyCode::Char('q'), KeyModifiers::CONTROL));
-        assert!(!effects.contains(&Effect::Quit), "{effects:?}");
-        assert!(app.composer().is_some(), "a quit kept the draft open");
-        // F5 is refresh's own key, and types nothing in a composer.
-        let effects = update(&mut app, key(KeyCode::F(5), KeyModifiers::NONE));
-        assert_eq!(reconnects(&effects), 1, "{effects:?}");
-
-        let effects = update(&mut app, Input::Reconnected(Ok(())));
-
-        let saved = saves(&effects);
-        assert_eq!(saved.len(), 1, "saved once connected again: {effects:?}");
-        assert_eq!(saved[0].to[0].address, "ada@example.com");
-        assert_eq!(
-            app.composer()
-                .expect("still composing")
-                .value(crate::composer::Field::To),
-            "ada@example.com"
         );
     }
 }

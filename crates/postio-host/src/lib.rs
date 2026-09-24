@@ -342,6 +342,68 @@ impl Host {
         Ok(Host::serving(wiring, hub.sink(), Some(bridge)))
     }
 
+    /// Read the store key, open the store, and start a host over it, wired
+    /// as `config.toml` at `config_path` asks: what an app does before it
+    /// shows anything, in its own process.
+    ///
+    /// `report` hears each wait before it starts -- the keyring, then the
+    /// store's own stages -- so a frontend can say what it is waiting on.
+    /// Blocks the calling thread for all of it. `Err` is a sentence for a
+    /// person: a keyring that will not answer, or a store that will not open
+    /// -- among them [`postio_storage::Error::InUse`], another Postio having
+    /// it open.
+    pub fn open(
+        config_path: Option<&std::path::Path>,
+        secrets: Arc<dyn postio_account::secret::SecretStore>,
+        report: &dyn Fn(postio_ui::list_state::Waiting),
+    ) -> Result<Host, String> {
+        use postio_ui::list_state::Waiting;
+
+        report(Waiting::Keyring);
+        let key = postio_session::store_key_blocking(secrets.as_ref())
+            .map_err(|error| error.to_string())?;
+        let (database, blobs) = {
+            // Its own runtime, dropped before the host's exists: opening the
+            // store is async, and nothing else is running yet to host it.
+            let runtime = tokio::runtime::Builder::new_multi_thread()
+                .worker_threads(1)
+                .enable_all()
+                .build()
+                .map_err(|error| {
+                    format!("Postio could not start the worker that opens its store: {error}")
+                })?;
+            runtime.block_on(postio_session::open_store_reporting(&key, &|stage| {
+                report(match stage {
+                    postio_session::Opening::Store => Waiting::Store,
+                    postio_session::Opening::Migrating => Waiting::Migrating,
+                    postio_session::Opening::Indexing => Waiting::Indexing,
+                })
+            }))?
+        };
+
+        let sync_config = config_path
+            .and_then(|path| std::fs::read_to_string(path).ok())
+            .and_then(|text| postio_config::Config::from_toml_str(&text).ok())
+            .map(|config| config.sync)
+            .unwrap_or_default();
+        let mailbox_roles = config_path
+            .map(postio_session::mailbox_roles_at)
+            .unwrap_or_default();
+        let storage_ceiling = config_path.and_then(postio_session::storage_ceiling_at);
+
+        let host = Host::start(database, blobs, |wiring| {
+            wiring
+                .with_mailbox_roles(mailbox_roles)
+                .with_backfill(postio_session::backfill_policy(&sync_config))
+                .with_watch(postio_session::watch_policy(&sync_config))
+                .with_storage_ceiling(storage_ceiling)
+                .with_secrets(secrets)
+        })?;
+        // Which folders' arrivals are worth a notification.
+        host.notify_with(sync_config);
+        Ok(host)
+    }
+
     /// Adopt a wiring built elsewhere -- the desktop app's, or an
     /// integration suite's -- rather than opening the store again: its
     /// runtime, its event hub, its engines' slot.
@@ -393,6 +455,34 @@ impl Host {
     /// `notify_roles`. The defaults until this is called.
     pub fn notify_with(&self, config: postio_config::SyncConfig) {
         *self.inner.notify.lock().expect("never poisoned") = config;
+    }
+
+    /// Whether `messages` arriving in `mailbox` is worth a notification, and
+    /// what it says, while the person's `attention` is where it is:
+    /// [`notify::decide_arrival`] under `[sync]` as [`Host::notify_with`]
+    /// last set it. Read on the host's runtime; the answer is awaited
+    /// anywhere.
+    pub fn notification(
+        &self,
+        mailbox: postio_model::MailboxId,
+        messages: Vec<postio_model::MessageId>,
+        attention: postio_ui::notify::Attention,
+    ) -> impl std::future::Future<Output = Option<postio_ui::notify::Notification>> + Send + 'static
+    {
+        let inner = Arc::clone(&self.inner);
+        let deciding = self.inner.runtime().spawn(async move {
+            let config = inner.notify.lock().expect("never poisoned").clone();
+            notify::decide_arrival(
+                &inner.wiring.database,
+                inner.wiring.store.as_ref(),
+                &config,
+                mailbox,
+                &messages,
+                attention,
+            )
+            .await
+        });
+        async move { deciding.await.ok().flatten() }
     }
 
     /// The verbs each frontend's dispatcher answers, for a frontend that

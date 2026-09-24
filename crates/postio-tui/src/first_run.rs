@@ -4,7 +4,7 @@
 //! The desktop's first-run screen, in a terminal: the same three steps, the
 //! same states (`postio_ui::onboarding::Status`), the same sentences. What is
 //! typed is kept here; finding the servers and proving the password are the
-//! daemon's (`Req::Discover`, `Req::AddAccount`), which do it as the desktop
+//! host's (`Req::Discover`, `Req::AddAccount`), which do it as the desktop
 //! does.
 
 use crossterm::event::{KeyCode, KeyEvent};
@@ -235,7 +235,7 @@ impl FirstRun {
         self.status = status;
     }
 
-    /// The daemon could not be asked, or said no.
+    /// The host could not be asked, or said no.
     pub fn failed(&mut self, sentence: String) {
         self.sign_in = None;
         self.field = if self.browser() {

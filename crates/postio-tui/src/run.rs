@@ -1,18 +1,24 @@
-//! The binary's life: connect, enter the terminal, loop, leave.
+//! The binary's life: open the store, enter the terminal, loop, leave.
 //!
 //! Everything that decides is [`crate::app::update`]; this only carries
-//! inputs to it and does the effects it asks for -- the terminal, the daemon,
+//! inputs to it and does the effects it asks for -- the terminal, the host,
 //! a timer. Nothing here is tested with a real terminal: what is tested is
 //! what it hands `update`, and what `update` hands back.
+//!
+//! The terminal opens the store itself, in this process, as the desktop app
+//! does: one Postio at a time has it, and whichever starts second is told to
+//! close the other (specs/005-tui-frontend). Everything the terminal reads or
+//! writes still goes through a [`Client`] of a [`Host`] in this process.
 
 use std::io;
 use std::process::ExitCode;
+use std::sync::Arc;
 
 use crossterm::event::{Event as TerminalEvent, EventStream};
 use futures_util::StreamExt;
 use postio_client::Client;
 use postio_client::protocol::ClientKind;
-use postio_client::socket::{ConnectError, Endpoint, connect_or_start, daemon_path};
+use postio_host::Host;
 use postio_model::ListScope;
 use postio_model::listing::{MailStore, PageRequest};
 use postio_model::mailbox::MailboxRole;
@@ -26,35 +32,34 @@ use crate::input::Keys;
 use crate::term::{Mode, Session, Stdout};
 use crate::theme::Theme;
 
-/// The sentence a frontend says when it cannot reach the daemon.
-pub fn refusal(error: &ConnectError) -> String {
-    format!("postio-tui: {error}")
-}
+/// How long after the store opens its upkeep starts -- the body index, the
+/// header repair, the disk reclaim: the desktop app's delay after its first
+/// frame, so the first pages have the runtime to themselves.
+const IDLE_PASSES_AFTER_OPENING: std::time::Duration = std::time::Duration::from_millis(750);
 
-/// Connect to the daemon at `endpoint`, starting it if nothing answers.
-pub fn connect(endpoint: &Endpoint) -> Result<Client, String> {
-    // What the daemon is waiting on, in the desktop's words, one line per
-    // change: a keyring prompt can hold it for half a minute.
-    let mut say_so = |opening: postio_client::protocol::Opening| {
-        let (title, _) = postio_ui::list_state::describe_wait(opening.into());
+/// Open the store with the key `secrets` holds and start its host here,
+/// saying on stderr what it waits on, one line per change: a keyring prompt
+/// can hold it for half a minute.
+///
+/// `Err` is the line to print before exiting: among them, when the desktop
+/// app or another terminal already has the store, the sentence saying to
+/// close it.
+pub fn open(
+    config_path: Option<&std::path::Path>,
+    secrets: Arc<dyn postio_account::secret::SecretStore>,
+) -> Result<Host, String> {
+    let say_so = |waiting: postio_ui::list_state::Waiting| {
+        let (title, _) = postio_ui::list_state::describe_wait(waiting);
         eprintln!("{title}…");
     };
-    connect_or_start(endpoint, ClientKind::Tui, &daemon_path(), &mut say_so)
-        .map_err(|error| refusal(&error))
-}
-
-/// Reach the daemon again once the person asks, starting it if nothing
-/// answers: the same path startup takes, saying nothing on the way -- the
-/// screen is the terminal's, and the status line says what is happening.
-fn reach_again(endpoint: &Endpoint) -> Result<Client, String> {
-    connect_or_start(endpoint, ClientKind::Tui, &daemon_path(), &mut |_| {})
-        .map_err(|error| error.to_string())
+    Host::open(config_path, secrets, &say_so).map_err(|sentence| format!("postio-tui: {sentence}"))
 }
 
 /// The whole program.
 pub fn run() -> ExitCode {
-    let config = postio_config::paths::config_path()
-        .ok()
+    let config_path = postio_config::paths::config_path().ok();
+    let config = config_path
+        .as_deref()
         .and_then(|path| std::fs::read_to_string(path).ok())
         .and_then(|text| postio_config::Config::from_toml_str(&text).ok())
         .unwrap_or_default();
@@ -68,24 +73,26 @@ pub fn run() -> ExitCode {
         eprintln!("postio-tui: {problem}");
     }
 
-    // What the daemon aims this frontend's commands with. The app mirrors its
+    // What the host aims this frontend's commands with. The app mirrors its
     // selection into it before each command; the client snapshots it.
     let state = postio_core::SharedState::default();
 
-    let endpoint = match Endpoint::from_env() {
-        Ok(endpoint) => endpoint,
-        Err(error) => {
-            eprintln!("{}", refusal(&error));
-            return ExitCode::FAILURE;
-        }
-    };
-    let client = match connect(&endpoint) {
-        Ok(client) => client.with_state(state.clone()),
+    // Before the alternate screen: a store that will not open -- another
+    // Postio has it, the keyring said no -- is a sentence left on the
+    // terminal the person typed into, and a non-zero exit.
+    let host = match open(
+        config_path.as_deref(),
+        Arc::new(postio_account::secret::KeyringSecretStore::default()),
+    ) {
+        Ok(host) => host,
         Err(sentence) => {
             eprintln!("{sentence}");
             return ExitCode::FAILURE;
         }
     };
+    host.start_syncing();
+    host.start_idle_passes_after(IDLE_PASSES_AFTER_OPENING);
+    let client = host.connect(ClientKind::Tui).with_state(state.clone());
 
     let runtime = match tokio::runtime::Builder::new_current_thread()
         .enable_all()
@@ -117,8 +124,8 @@ pub fn run() -> ExitCode {
 
     let saved = crate::config_file::pinned(&config);
     let outcome = runtime.block_on(main_loop(
+        &host,
         client,
-        endpoint,
         keys,
         theme,
         state,
@@ -128,6 +135,11 @@ pub fn run() -> ExitCode {
     ));
     let _ = session.leave(&mut Stdout);
     session.publish();
+    // The engines first, then the clean-shutdown mark: the store is closed
+    // before this process ends, as the desktop app closes it.
+    drop(runtime);
+    host.stop();
+    drop(host);
     match outcome {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => {
@@ -150,8 +162,8 @@ async fn first_scope(client: &Client) -> Option<ListScope> {
 
 #[allow(clippy::too_many_arguments)]
 async fn main_loop(
+    host: &Host,
     client: Client,
-    endpoint: Endpoint,
     keys: Keys,
     theme: Theme,
     state: postio_core::SharedState,
@@ -175,33 +187,12 @@ async fn main_loop(
     let (inputs, arriving) = async_channel::unbounded::<Input>();
     let (drafts, draft_jobs) = async_channel::unbounded::<Effect>();
     let writer = tokio::spawn(write_drafts(client.clone(), draft_jobs, inputs.clone()));
-    // New mail the daemon elected this terminal to tell about (T022), from
-    // whichever daemon is there: a reconnect is a new connection's channel.
-    let told = inputs.clone();
-    let listening = tokio::spawn({
-        let client = client.clone();
-        async move {
-            let mut reconnected = client.reconnected();
-            loop {
-                let notices = client.notifications();
-                while let Ok(notification) = notices.recv().await {
-                    if told.send(Input::Notified(notification)).await.is_err() {
-                        return;
-                    }
-                }
-                if reconnected.changed().await.is_err() {
-                    return;
-                }
-            }
-        }
-    });
-    let (reached, reaching) = async_channel::unbounded::<Result<Client, String>>();
     let senders = Senders {
         inputs,
         drafts,
         saved,
-        endpoint,
-        reached,
+        host,
+        attention: std::sync::Mutex::new(postio_ui::notify::Attention::default()),
     };
     let outcome = drive(
         &client,
@@ -209,16 +200,14 @@ async fn main_loop(
         &mut terminal,
         &theme,
         &arriving,
-        &reaching,
         &senders,
         session,
     )
     .await;
     // What was written is saved before leaving: quitting mid-sentence leaves
-    // the draft in Drafts (US3 scenario 5). Bounded, so a daemon that has
+    // the draft in Drafts (US3 scenario 5). Bounded, so a store that has
     // stopped answering cannot hold the terminal hostage.
     drop(senders);
-    listening.abort();
     let _ = tokio::time::timeout(std::time::Duration::from_secs(3), writer).await;
     outcome
 }
@@ -286,8 +275,8 @@ fn pointer(
 }
 
 /// Draft writes, sent one at a time in the order they were made. A save
-/// spawned on a task of its own could reach the daemon after the one made
-/// after it; the daemon keeps order among what arrives, not what was meant.
+/// spawned on a task of its own could reach the host after the one made
+/// after it; the host keeps order among what arrives, not what was meant.
 async fn write_drafts(
     client: Client,
     jobs: async_channel::Receiver<Effect>,
@@ -355,15 +344,33 @@ async fn resume(client: &Client, message: postio_model::MessageId) -> Input {
 
 /// Where the loop's work reports back: inputs for `update`, and draft
 /// writes for `write_drafts`.
-struct Senders {
+struct Senders<'a> {
     inputs: async_channel::Sender<Input>,
     drafts: async_channel::Sender<Effect>,
     /// The pinned saved searches' names, for the sidebar.
     saved: Vec<crate::sidebar::Saved>,
-    /// Where the daemon is reached, again after it went away.
-    endpoint: Endpoint,
-    /// Where a reconnect's new connection, or why there is none, goes.
-    reached: async_channel::Sender<Result<Client, String>>,
+    /// The store's host, which decides whether new mail is worth saying.
+    host: &'a Host,
+    /// What the person is looking at, so mail arriving in the folder
+    /// already on screen is not announced.
+    attention: std::sync::Mutex<postio_ui::notify::Attention>,
+}
+
+/// Ask whether `messages` arriving in `mailbox` is worth telling the person
+/// about, off the loop, and answer with [`Input::Notified`] if it is.
+fn tell(
+    senders: &Senders<'_>,
+    mailbox: postio_model::MailboxId,
+    messages: Vec<postio_model::MessageId>,
+) {
+    let attention = *senders.attention.lock().expect("never poisoned");
+    let deciding = senders.host.notification(mailbox, messages, attention);
+    let inputs = senders.inputs.clone();
+    tokio::spawn(async move {
+        if let Some(notification) = deciding.await {
+            let _ = inputs.send(Input::Notified(notification)).await;
+        }
+    });
 }
 
 /// What the loop does after performing a batch of effects.
@@ -384,23 +391,17 @@ enum Flow {
     },
 }
 
-#[allow(clippy::too_many_arguments)]
 async fn drive(
     client: &Client,
     app: &mut App,
     terminal: &mut Screen,
     theme: &Theme,
     arriving: &async_channel::Receiver<Input>,
-    reaching: &async_channel::Receiver<Result<Client, String>>,
-    senders: &Senders,
+    senders: &Senders<'_>,
     session: &mut Session,
 ) -> io::Result<()> {
     let mut terminal_events = EventStream::new();
-    let mut host_events = client.events();
-    // The daemon going away is said, not left for the next call to fail
-    // on; what is on screen stays, to read, until the person reconnects.
-    let mut gone = Box::pin(client.closed());
-    let mut disconnected = false;
+    let host_events = client.events();
 
     // What is where on the screen, as last drawn: what a click lands on.
     let mut hits = crate::view::hit::Hits::default();
@@ -429,29 +430,16 @@ async fn drive(
                 Some(Err(error)) => return Err(error),
                 None => return Ok(()),
             },
-            () = &mut gone, if !disconnected => {
-                disconnected = true;
-                Input::Disconnected
-            }
-            heard = host_events.recv(), if !disconnected => match heard {
-                Ok(envelope) => Input::Host(envelope.event),
-                Err(_) => {
-                    disconnected = true;
-                    Input::Disconnected
+            heard = host_events.recv() => match heard {
+                Ok(envelope) => {
+                    if let postio_core::Event::NewMail { mailbox, messages, .. } = &envelope.event {
+                        tell(senders, *mailbox, messages.clone());
+                    }
+                    Input::Host(envelope.event)
                 }
-            },
-            reached = reaching.recv() => match reached {
-                // Every clone of the client -- the draft writer's, each
-                // read in flight -- reaches the new daemon from here on.
-                Ok(Ok(fresh)) => {
-                    client.reconnect(&fresh);
-                    host_events = client.events();
-                    gone = Box::pin(client.closed());
-                    disconnected = false;
-                    Input::Reconnected(Ok(()))
-                }
-                Ok(Err(why)) => Input::Reconnected(Err(why)),
-                Err(_) => continue,
+                // The host stopped: nothing on screen can be trusted to
+                // change any more, so leave rather than show a frozen mailbox.
+                Err(_) => return Err(io::Error::other("Postio's store stopped answering.")),
             },
             arrived = arriving.recv() => match arrived {
                 Ok(input) => input,
@@ -577,7 +565,7 @@ fn perform(
     app: &mut App,
     terminal: &mut Screen,
     theme: &Theme,
-    senders: &Senders,
+    senders: &Senders<'_>,
     effects: Vec<Effect>,
     hits: &mut crate::view::hit::Hits,
 ) -> io::Result<Flow> {
@@ -585,8 +573,8 @@ fn perform(
         inputs,
         drafts,
         saved,
-        endpoint,
-        reached,
+        attention,
+        ..
     } = senders;
     let mut redraw = false;
     let mut flow = Flow::Go;
@@ -618,15 +606,6 @@ fn perform(
                 });
             }
             Effect::Redraw => redraw = true,
-            Effect::Reconnect => {
-                // Off the loop: starting a daemon waits on it, and a keyring
-                // prompt has held that for half a minute.
-                let endpoint = endpoint.clone();
-                let reached = reached.clone();
-                tokio::task::spawn_blocking(move || {
-                    let _ = reached.send_blocking(reach_again(&endpoint));
-                });
-            }
             Effect::ReplySource { kind, message } => {
                 let client = client.clone();
                 let inputs = inputs.clone();
@@ -840,7 +819,7 @@ fn perform(
             // The desktop's own notification service, where the session has
             // one; over SSH there is none, and the status line has said it.
             // POSTIO-CONSENT: a local notification of mail that arrived,
-            // chosen by the daemon under `[sync]`'s notify rules; nothing
+            // chosen under `[sync]`'s notify rules; nothing
             // leaves this machine.
             Effect::DesktopNotify { title, body } => {
                 if std::env::var_os("DBUS_SESSION_BUS_ADDRESS").is_some() {
@@ -918,15 +897,15 @@ fn perform(
                 });
             }
             Effect::Open(scope) => {
-                // What the person is looking at, so the daemon does not
-                // announce mail arriving in the folder already on screen.
-                client.attention(postio_ui::notify::Attention {
+                // What the person is looking at, so mail arriving in the
+                // folder already on screen is not announced.
+                *attention.lock().expect("never poisoned") = postio_ui::notify::Attention {
                     showing: match scope {
                         ListScope::Mailbox(mailbox) => Some(mailbox),
                         _ => None,
                     },
                     active: true,
-                });
+                };
                 let client = client.clone();
                 let inputs = inputs.clone();
                 tokio::spawn(async move {
@@ -1038,8 +1017,6 @@ fn draw(terminal: &mut Screen, app: &App, theme: &Theme) -> io::Result<crate::vi
 
 #[cfg(test)]
 mod tests {
-    use postio_client::protocol::{BuildId, Frame, Refusal, read_frame, write_frame};
-
     use super::*;
 
     #[test]
@@ -1052,34 +1029,5 @@ mod tests {
             base64(b"https://example.com/a?b"),
             "aHR0cHM6Ly9leGFtcGxlLmNvbS9hP2I="
         );
-    }
-
-    #[test]
-    fn a_daemon_of_another_build_is_said_naming_both_versions() {
-        let dir = tempfile::tempdir().unwrap();
-        let endpoint = Endpoint::at(dir.path());
-        let listener = std::os::unix::net::UnixListener::bind(endpoint.socket()).unwrap();
-        let daemon = std::thread::spawn(move || {
-            let runtime = tokio::runtime::Builder::new_current_thread()
-                .enable_all()
-                .build()
-                .unwrap();
-            runtime.block_on(async move {
-                listener.set_nonblocking(true).unwrap();
-                let listener = tokio::net::UnixListener::from_std(listener).unwrap();
-                let (mut stream, _) = listener.accept().await.unwrap();
-                read_frame(&mut stream).await.unwrap();
-                let refusal = Frame::Refused(Refusal::VersionMismatch {
-                    host: BuildId("0.2.9+old".into()),
-                    client: BuildId::current(),
-                });
-                write_frame(&mut stream, &refusal).await.unwrap();
-            });
-        });
-        let sentence = connect(&endpoint).unwrap_err();
-        assert!(sentence.starts_with("postio-tui: "), "{sentence}");
-        assert!(sentence.contains("0.2.9+old"), "{sentence}");
-        assert!(sentence.contains(&BuildId::current().0), "{sentence}");
-        daemon.join().unwrap();
     }
 }

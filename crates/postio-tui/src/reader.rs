@@ -1,6 +1,6 @@
 //! A message, as lines a terminal can draw.
 //!
-//! The body arrives from the daemon as the store holds it. The reader's own
+//! The body arrives from the host as the store holds it. The reader's own
 //! rules -- reader view or original, the sanitiser, quote folding -- are
 //! `postio_ui::reader::document`'s and `postio_body`'s, the same ones the
 //! desktop and macOS readers apply; then `postio_body::markdown::from_html`,
