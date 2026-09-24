@@ -90,7 +90,35 @@ pub enum Refusal {
         client: BuildId,
     },
     /// The host is still opening the store; try again shortly.
-    Starting,
+    Starting(Opening),
+}
+
+/// What a starting daemon is waiting on, so a frontend can say so: the
+/// desktop named these waits when it opened the store itself (#1114).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Opening {
+    /// The keyring, for the store's key; it may be showing a prompt.
+    Keyring,
+    /// Opening the store file.
+    Store,
+    /// Bringing the store's schema up to date.
+    Migrating,
+    /// Rebuilding what can be rebuilt, such as the search index.
+    Indexing,
+}
+
+/// The same wait, in the words both frontends use for it
+/// (`postio_ui::list_state::describe_wait`).
+impl From<Opening> for postio_ui::list_state::Waiting {
+    fn from(opening: Opening) -> Self {
+        use postio_ui::list_state::Waiting;
+        match opening {
+            Opening::Keyring => Waiting::Keyring,
+            Opening::Store => Waiting::Store,
+            Opening::Migrating => Waiting::Migrating,
+            Opening::Indexing => Waiting::Indexing,
+        }
+    }
 }
 
 /// A request a frontend makes of the host. Each is answered by exactly one
@@ -989,7 +1017,7 @@ mod tests {
 
     #[test]
     fn a_partial_frame_is_not_yet_a_frame() {
-        let bytes = encode(&Frame::Refused(Refusal::Starting));
+        let bytes = encode(&Frame::Refused(Refusal::Starting(Opening::Keyring)));
         assert!(bytes.len() > 4, "a frame has a body: {bytes:?}");
         assert!(
             decode(&bytes[..bytes.len() - 1])

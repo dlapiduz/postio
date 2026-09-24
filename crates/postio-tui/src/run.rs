@@ -33,7 +33,12 @@ pub fn refusal(error: &ConnectError) -> String {
 
 /// Connect to the daemon at `endpoint`, starting it if nothing answers.
 pub fn connect(endpoint: &Endpoint) -> Result<Client, String> {
-    let mut say_so = || eprintln!("Opening your mailbox…");
+    // What the daemon is waiting on, in the desktop's words, one line per
+    // change: a keyring prompt can hold it for half a minute.
+    let mut say_so = |opening: postio_client::protocol::Opening| {
+        let (title, _) = postio_ui::list_state::describe_wait(opening.into());
+        eprintln!("{title}…");
+    };
     connect_or_start(endpoint, ClientKind::Tui, &daemon_path(), &mut say_so)
         .map_err(|error| refusal(&error))
 }

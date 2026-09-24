@@ -113,22 +113,76 @@ fn read_frame_blocking(stream: &mut std::os::unix::net::UnixStream) -> Option<Fr
     decode(&bytes).ok().flatten().map(|(frame, _)| frame)
 }
 
+/// How far a starting daemon has got: what it is waiting on, until it is
+/// ready. Shared between the thread opening the store and the one telling
+/// arriving frontends to wait.
+#[derive(Debug)]
+pub struct Starting {
+    stage: std::sync::atomic::AtomicU8,
+    ready: AtomicBool,
+}
+
+impl Default for Starting {
+    fn default() -> Self {
+        Starting::new()
+    }
+}
+
+impl Starting {
+    /// Waiting on the keyring, which is always first.
+    pub fn new() -> Self {
+        Starting {
+            stage: std::sync::atomic::AtomicU8::new(0),
+            ready: AtomicBool::new(false),
+        }
+    }
+
+    /// Now waiting on `opening`.
+    pub fn set(&self, opening: postio_client::protocol::Opening) {
+        use postio_client::protocol::Opening;
+        let stage = match opening {
+            Opening::Keyring => 0,
+            Opening::Store => 1,
+            Opening::Migrating => 2,
+            Opening::Indexing => 3,
+        };
+        self.stage.store(stage, Ordering::Relaxed);
+    }
+
+    /// The store is open: stop answering "starting".
+    pub fn ready(&self) {
+        self.ready.store(true, Ordering::Relaxed);
+    }
+
+    fn opening(&self) -> postio_client::protocol::Opening {
+        use postio_client::protocol::Opening;
+        match self.stage.load(Ordering::Relaxed) {
+            0 => Opening::Keyring,
+            1 => Opening::Store,
+            2 => Opening::Migrating,
+            _ => Opening::Indexing,
+        }
+    }
+}
+
 impl Listener {
-    /// Answer every hello with [`Refusal::Starting`] until `ready` is set:
-    /// the frontends that arrive while the store is opening wait rather than
-    /// start a second daemon.
-    pub fn answer_starting_until(&self, ready: &AtomicBool) {
+    /// Answer every hello with [`Refusal::Starting`], saying what the store's
+    /// open is waiting on, until `progress` is ready: the frontends that
+    /// arrive meanwhile wait rather than start a second daemon.
+    pub fn answer_starting_until(&self, progress: &Starting) {
         use std::io::Write;
         if self.listener.set_nonblocking(true).is_err() {
             return;
         }
-        while !ready.load(Ordering::Relaxed) {
+        while !progress.ready.load(Ordering::Relaxed) {
             match self.listener.accept() {
                 Ok((mut stream, _)) => {
                     let _ = stream.set_nonblocking(false);
                     let _ = stream.set_read_timeout(Some(Duration::from_secs(1)));
                     if let Some(Frame::Hello { .. }) = read_frame_blocking(&mut stream) {
-                        let _ = stream.write_all(&encode(&Frame::Refused(Refusal::Starting)));
+                        let _ = stream.write_all(&encode(&Frame::Refused(Refusal::Starting(
+                            progress.opening(),
+                        ))));
                     }
                 }
                 Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
@@ -336,23 +390,34 @@ mod tests {
     }
 
     #[test]
-    fn while_the_store_opens_a_frontend_is_told_to_wait() {
+    fn while_the_store_opens_a_frontend_is_told_to_wait_and_on_what() {
+        use postio_client::protocol::Opening;
         let dir = tempfile::tempdir().unwrap();
         let endpoint = Endpoint::at(dir.path().join("postio"));
         let listener = bind(&endpoint).expect("binds");
-        let ready = Arc::new(AtomicBool::new(false));
+        let progress = Arc::new(Starting::new());
         let answering = {
-            let ready = Arc::clone(&ready);
+            let progress = Arc::clone(&progress);
             std::thread::spawn(move || {
-                listener.answer_starting_until(&ready);
+                listener.answer_starting_until(&progress);
                 listener
             })
         };
         // Starting, not "not running": a frontend waits through this rather
-        // than starting a second daemon or giving up.
+        // than starting a second daemon or giving up -- and says what it is
+        // waiting for, as the desktop did when it opened the store itself.
         let error = connect(&endpoint, ClientKind::Test).unwrap_err();
-        assert!(matches!(error, ConnectError::Starting), "{error}");
-        ready.store(true, Ordering::Relaxed);
+        assert!(
+            matches!(error, ConnectError::Starting(Opening::Keyring)),
+            "{error:?}"
+        );
+        progress.set(Opening::Migrating);
+        let error = connect(&endpoint, ClientKind::Test).unwrap_err();
+        assert!(
+            matches!(error, ConnectError::Starting(Opening::Migrating)),
+            "{error:?}"
+        );
+        progress.ready();
         answering.join().unwrap();
     }
 

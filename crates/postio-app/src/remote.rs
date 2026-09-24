@@ -67,8 +67,8 @@ pub fn reach(endpoint: Endpoint, daemon: std::path::PathBuf) -> async_channel::R
                 &endpoint,
                 ClientKind::Gtk,
                 &daemon,
-                &mut || {
-                    let _ = sender.send_blocking(Reaching::Waiting(Waiting::Store));
+                &mut |opening| {
+                    let _ = sender.send_blocking(Reaching::Waiting(Waiting::from(opening)));
                 },
             );
             let _ = sender.send_blocking(Reaching::Done(

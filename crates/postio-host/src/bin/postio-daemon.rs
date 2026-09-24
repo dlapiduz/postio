@@ -8,7 +8,6 @@
 //! taken and exits at once, leaving the first alone.
 
 use std::process::ExitCode;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use postio_client::socket::Endpoint;
@@ -82,12 +81,12 @@ fn main() -> ExitCode {
         }
     };
 
-    let ready = AtomicBool::new(false);
+    let progress = postio_host::serve::Starting::new();
     let host = std::thread::scope(|scope| {
-        scope.spawn(|| listener.answer_starting_until(&ready));
-        let host = open(config_path.as_deref());
+        scope.spawn(|| listener.answer_starting_until(&progress));
+        let host = open(config_path.as_deref(), &progress);
         // Whatever happened, the frontends waiting on "starting" stop waiting.
-        ready.store(true, Ordering::Relaxed);
+        progress.ready();
         host
     });
     let host = match host {
@@ -111,7 +110,12 @@ fn main() -> ExitCode {
 }
 
 /// Read the key, open the store, and wire it as `config.toml` asks.
-fn open(config_path: Option<&std::path::Path>) -> Result<Host, String> {
+fn open(
+    config_path: Option<&std::path::Path>,
+    progress: &postio_host::serve::Starting,
+) -> Result<Host, String> {
+    use postio_client::protocol::Opening;
+    progress.set(Opening::Keyring);
     let secrets: std::sync::Arc<dyn postio_account::secret::SecretStore> =
         std::sync::Arc::new(postio_account::secret::KeyringSecretStore::default());
     let key = postio_session::store_key_blocking(secrets.as_ref()).map_err(|e| e.to_string())?;
@@ -125,7 +129,13 @@ fn open(config_path: Option<&std::path::Path>) -> Result<Host, String> {
             .map_err(|error| {
                 format!("Postio could not start the worker that opens its store: {error}")
             })?;
-        runtime.block_on(postio_session::open_store_reporting(&key, &|_| {}))?
+        runtime.block_on(postio_session::open_store_reporting(&key, &|stage| {
+            progress.set(match stage {
+                postio_session::Opening::Store => Opening::Store,
+                postio_session::Opening::Migrating => Opening::Migrating,
+                postio_session::Opening::Indexing => Opening::Indexing,
+            })
+        }))?
     };
 
     let sync_config = config_path
