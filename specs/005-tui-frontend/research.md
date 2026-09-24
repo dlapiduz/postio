@@ -85,6 +85,21 @@ makes. `postio-gtk` and `postio-ui` never name the store, so they are
 unaffected. This decision outlives the feature and binds all later work, so it
 is recorded as **ADR 0041** (Proposed on this branch).
 
+**Spike T0.3 result (2026-09-23, T007)**: the daemon adds two costs to a
+cold start, and both are small. Starting a process of the daemon's size is
+**1.8 ms at the floor and 2.2 ms median** over 50 runs. That is
+`target/release/postio-diag`: 28 MB, the same store/runtime graph, 5 shared
+libraries, tokio runtime included. A Unix-socket connect plus a 64/512-byte
+round trip is **19 µs floor, 20 µs median** over 200. The costs that were
+already there dominate: the `store` phase (keyring, open, index) measures
+26–148 ms (`docs/PERFORMANCE.md`, and 30.8 ms on the 81,000-message
+account), and it moves from the frontend into the daemon unchanged. So a
+cold terminal start is roughly exec (~2 ms) plus store (≤ 150 ms) plus the
+first page plus the terminal's own setup, well inside 500 ms. No spike branch
+was needed: the one new cost was measurable with a binary that already
+exists. The nightly measurement (T094) keeps it honest once the daemon is
+real.
+
 ### R1a. Undo across two frontends
 
 **Decision (default, flagged to the maintainer)**: The daemon keeps one undo

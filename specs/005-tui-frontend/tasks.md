@@ -60,7 +60,7 @@ Commits end `Refs: specs/005-tui-frontend` and the task id — never
 
 - [X] T005 **Spike T0.1** — in `crates/postio-body/tests/body_suite/markdown_corpus.rs`, run `htmd` over the sanitised HTML of every corpus message and assert contracts/markdown.md's `from_html` promises (no tag, no script text, no `javascript:`, no remote URL in an image position; tables survive as GFM tables). Record pass/fail per message in research.md R5. **If it fails, T040 writes the html5ever walk instead of wrapping htmd**
 - [X] T006 **Spike T0.2** — in `crates/postio-ui/src/terminal.rs` (the classifier lives in `postio-ui`, which `postio-core` cannot depend on), enumerate `registry::all()` and list every command whose default and alternate bindings are all undeliverable by a legacy (non-kitty-protocol) terminal. Record the list in research.md R4. **T017 adds an alternate for each**
-- [ ] T007 **Spike T0.3** — on `spike/daemon-cold-start` (not this branch), measure fork+exec of a minimal daemon, then keyring, then store open against the reference mailbox, overlapped with a ratatui startup; record the numbers in research.md R1. If cold start exceeds 500 ms, record which step and stop for a re-think before T020
+- [X] T007 **Spike T0.3** — measured with the existing `postio-diag` release binary rather than a spike branch (research R1): measure fork+exec of a minimal daemon, then keyring, then store open against the reference mailbox, overlapped with a ratatui startup; record the numbers in research.md R1. If cold start exceeds 500 ms, record which step and stop for a re-think before T020
 
 ### Host and client, in-process (GTK unchanged)
 
