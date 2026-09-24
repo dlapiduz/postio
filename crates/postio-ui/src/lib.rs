@@ -13,6 +13,7 @@
 
 pub mod account;
 pub mod cheatsheet;
+pub mod contacts;
 pub mod conversation;
 pub mod dwell;
 pub mod editor;
