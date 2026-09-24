@@ -350,6 +350,18 @@ first sync.
   the shared toolkit-free layers, and consumed by both. Logic currently held
   only in the desktop view layer that the terminal frontend needs MUST move
   to a shared layer, not be copied.
+- **FR-005**: No functionality may be removed from, or degraded in, the GTK
+  desktop app or the macOS frontend. Moving logic into a shared layer MUST
+  leave both behaving exactly as before, and their existing test suites MUST
+  pass unchanged except for import paths — a test that has to be weakened to
+  pass is evidence of a regression, not of a refactor.
+- **FR-006**: The terminal frontend MUST be built on established, maintained
+  terminal-application building blocks — for the screen and input, Markdown
+  rendering and editing, text input, clipboard, and terminal capability
+  detection — and on patterns proven in widely used terminal applications,
+  rather than on components written from scratch. Writing one of these
+  ourselves requires a stated reason why no existing one fits, recorded in
+  the plan. This is the same rule "Pimalaya first" sets for protocols.
 
 **Reading**
 
@@ -511,6 +523,11 @@ first sync.
   (2026-09-23). How two processes coordinate on one encrypted store, and which
   of them runs sync, is the plan's to decide; the current desktop app is
   single-instance within itself and has not been built for a second process.
-- **The desktop app is unchanged in behaviour.** Refactoring it to share
-  logic with the terminal frontend is in scope; changing what it does is not.
-- The macOS read-only slice (ADR 0019) is not affected.
+- **Reuse over invention** (maintainer, 2026-09-23: *"I dont want to
+  reinvent the wheel here"*). The plan surveys what existing terminal
+  applications and libraries already do — layout, mouse handling, Markdown
+  display, in-terminal text editing, drop and paste, `$EDITOR` handoff — and
+  adopts it. Which libraries is the plan's decision, not this spec's.
+- **Nothing is taken away from the other frontends** (maintainer, same day).
+  Refactoring the GTK app and the macOS frontend to share logic with the
+  terminal frontend is in scope; changing what either does is not (FR-005).
