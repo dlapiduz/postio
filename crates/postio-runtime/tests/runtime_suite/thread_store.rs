@@ -524,3 +524,47 @@ async fn a_message_list_s_rows_cost_the_same_however_many() {
         fifty.statements, one.statements
     );
 }
+
+#[tokio::test]
+async fn the_unified_list_is_counted_once_while_nothing_moves() {
+    // #1610: the unified view counted every conversation of every account on
+    // every page -- the folder count's correlated shape, over all of them --
+    // where a folder is counted once and kept while its witness holds.
+    let (store, account, inbox, database) = store(300, 3).await;
+    let before = postio_runtime::store::unified_counted();
+    let mut total = 0;
+    for page in 0..3 {
+        total = store
+            .thread_page(request(ListScope::Unified, page * 20, 20))
+            .await
+            .expect("a unified page")
+            .total;
+    }
+    assert_eq!(
+        postio_runtime::store::unified_counted() - before,
+        1,
+        "three pages of an unchanged unified list counted it more than once"
+    );
+
+    // And mail arriving is counted, not served from what was true before.
+    {
+        let connection = database.connect().await.expect("a connection");
+        let mut message = postio_model::Message::new(account, inbox, chrono::Utc::now());
+        message.subject = Some("a new conversation".to_owned());
+        let id = postio_storage::repository::MessageRepository::new(&connection)
+            .create(&mut message)
+            .await
+            .expect("a message");
+        // In a conversation of its own, as threading files every delivery.
+        let mut thread = postio_model::Thread::new(account);
+        let threads = postio_storage::repository::ThreadRepository::new(&connection);
+        threads.create(&mut thread).await.expect("a thread");
+        threads.add_message(thread.id, id).await.expect("joined");
+    }
+    let after = store
+        .thread_page(request(ListScope::Unified, 0, 20))
+        .await
+        .expect("a unified page")
+        .total;
+    assert_eq!(after, total + 1, "a new conversation went uncounted");
+}
