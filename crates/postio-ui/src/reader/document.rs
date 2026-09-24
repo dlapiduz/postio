@@ -647,7 +647,10 @@ pub fn suits_reader_view(body: &MessageBody) -> bool {
     body.html
         .as_deref()
         .filter(|html| !html.trim().is_empty())
-        .is_some_and(reader_view::reads_as_bulk)
+        .is_some_and(|html| {
+            crate::reader::cost::bump(&crate::reader::cost::BULK_JUDGED, 1);
+            reader_view::reads_as_bulk(html)
+        })
 }
 
 /// The class the facts block is drawn with.
@@ -923,6 +926,8 @@ pub fn content_security_policy(remote: RemoteImages) -> String {
 #[derive(Debug, Default)]
 pub struct RenderCache {
     held: std::collections::HashMap<String, Held>,
+    /// Each message's reader-view verdict, and the body it was reached for.
+    judged: std::collections::HashMap<String, (MessageBody, bool)>,
 }
 
 #[derive(Debug)]
@@ -963,11 +968,29 @@ impl RenderCache {
         rendered
     }
 
+    /// [`suits_reader_view`] for the message `scope`.
+    ///
+    /// The same parse the sanitiser's cache spares, asked before it: whether
+    /// a message is bulk decides how it renders, so a redraw asked it of
+    /// every message in the thread before the cache could answer anything.
+    pub fn suits_reader_view(&mut self, scope: &str, body: &MessageBody) -> bool {
+        if let Some((judged, verdict)) = self.judged.get(scope)
+            && judged == body
+        {
+            return *verdict;
+        }
+        let verdict = suits_reader_view(body);
+        self.judged
+            .insert(scope.to_owned(), (body.clone(), verdict));
+        verdict
+    }
+
     /// Forget every message but these: the thread on screen is what the
     /// cache is for, and a message that left it is not drawn again.
     pub fn keep_only<'a>(&mut self, scopes: impl IntoIterator<Item = &'a str>) {
         let keep: std::collections::HashSet<&str> = scopes.into_iter().collect();
         self.held.retain(|scope, _| keep.contains(scope.as_str()));
+        self.judged.retain(|scope, _| keep.contains(scope.as_str()));
     }
 
     /// How many messages the cache holds.
@@ -990,6 +1013,33 @@ mod render_cache_tests {
             text: None,
             html: Some(html.to_owned()),
         }
+    }
+
+    #[test]
+    fn a_message_is_judged_for_reader_view_once_until_its_body_changes() {
+        // A conversation redraw asked of every message whether it is bulk
+        // mail -- an html5ever parse of the whole body -- on the main thread,
+        // each time anything queued a redraw, outside the cache that already
+        // spared the sanitiser the same repeat.
+        let mut cache = RenderCache::default();
+        let newsletter = body("<table><tr><td>Weekly digest</td></tr></table>");
+        let before = crate::test_support::bulk_judged();
+        let first = cache.suits_reader_view("7", &newsletter);
+        let again = cache.suits_reader_view("7", &newsletter);
+        assert_eq!(first, again);
+        assert_eq!(
+            crate::test_support::bulk_judged() - before,
+            1,
+            "judged twice"
+        );
+
+        let changed = body("<p>A reply, in full.</p>");
+        cache.suits_reader_view("7", &changed);
+        assert_eq!(
+            crate::test_support::bulk_judged() - before,
+            2,
+            "a new body is a new question"
+        );
     }
 
     #[test]
