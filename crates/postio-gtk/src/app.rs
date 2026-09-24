@@ -169,6 +169,8 @@ pub fn build_with_id(timeline: Timeline, application_id: &str) -> adw::Applicati
         // (#1479).
         window.set_timeline(timeline.clone());
         crate::config::install(&window);
+        // Nothing unless `postio_gtk::jank` is enabled; see the module.
+        crate::jank::install(&window);
         // Installed here, unconditionally, rather than left to whoever wires
         // storage into it: the `win.compose` action and the `c` binding must
         // exist even when there is no store or no account yet, the same way

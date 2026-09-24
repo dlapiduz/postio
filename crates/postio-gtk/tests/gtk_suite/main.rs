@@ -90,6 +90,7 @@ mod gtk_folder_reload_scope;
 mod gtk_folder_sections;
 mod gtk_go_to;
 mod gtk_identity;
+mod gtk_jank;
 mod gtk_keymap_lazy;
 mod gtk_layout_intent;
 mod gtk_list_focus_return;
@@ -1038,6 +1039,10 @@ const CASES: &[(&str, fn())] = &[
     (
         "gtk_accelerators::menu_items_carry_parseable_accelerators",
         gtk_accelerators::menu_items_carry_parseable_accelerators as fn(),
+    ),
+    (
+        "gtk_jank::a_blocked_main_loop_is_reported_with_the_action_before_it",
+        gtk_jank::a_blocked_main_loop_is_reported_with_the_action_before_it as fn(),
     ),
     (
         "gtk_capture::a_window_the_compositor_never_showed_is_an_error",

@@ -2189,6 +2189,7 @@ impl Window {
     /// compiler while being equal to the user, which is the whole shape of
     /// ADR 0002.
     fn run_action(&self, id: ActionId) {
+        crate::jank::note_action(id);
         // **Refuse out loud rather than be swallowed** (#1114). A window is
         // on screen before its store is, and a key bound to something that
         // reads mail cannot run there -- but a key that silently does

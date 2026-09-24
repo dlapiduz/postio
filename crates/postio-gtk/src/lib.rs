@@ -76,6 +76,7 @@ pub mod feed;
 pub mod finder;
 pub mod fonts;
 pub mod header;
+pub mod jank;
 pub mod keymap;
 pub mod list;
 pub mod list_state;
