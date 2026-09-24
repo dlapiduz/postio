@@ -63,6 +63,9 @@ pub struct Composer {
     /// How many times what would be saved has changed, so a save that was
     /// asked for before the last edit knows it is stale.
     edits: u64,
+    /// The first body line the last frame showed: the textarea's own
+    /// scroll, mirrored, since it does not say where it scrolled to.
+    body_top: std::cell::Cell<u16>,
     /// Who the recipient being typed could be, best first.
     suggestions: Vec<RecipientCandidate>,
     /// The suggestion the keyboard is on.
@@ -148,6 +151,7 @@ impl Composer {
             identities: Vec::new(),
             identity: 0,
             edits: 0,
+            body_top: std::cell::Cell::new(0),
             suggestions: Vec::new(),
             suggestion: 0,
             asking: None,
@@ -286,6 +290,37 @@ impl Composer {
             (None, Some(text)) => crate::reader::from_text(&text),
             (None, None) => crate::reader::Rendered::default(),
         }
+    }
+
+    /// The body is being drawn `height` lines tall: which of its lines is at
+    /// the top. The textarea's own rule -- it scrolls only when the cursor
+    /// would leave the view -- mirrored, so a click can be placed.
+    pub fn body_top(&self, height: u16) -> u16 {
+        let row = u16::try_from(self.body.cursor().0).unwrap_or(u16::MAX);
+        let top = self.body_top.get();
+        let top = if row < top {
+            row
+        } else if height > 0 && row >= top + height {
+            row + 1 - height
+        } else {
+            top
+        };
+        self.body_top.set(top);
+        top
+    }
+
+    /// Put the cursor where a click landed in the body: `row` lines and
+    /// `column` columns into what was drawn.
+    pub fn click_body(&mut self, row: u16, column: u16) {
+        self.field = Field::Body;
+        let row = self.body_top.get().saturating_add(row);
+        self.body
+            .move_cursor(ratatui_textarea::CursorMove::Jump(row, column));
+    }
+
+    /// Put the keyboard in `field`.
+    pub fn focus_field(&mut self, field: Field) {
+        self.field = field;
     }
 
     /// The files this draft carries.
@@ -817,6 +852,22 @@ pub(crate) mod tests {
             identity(2, "gh@example.org", false),
         ]);
         assert_eq!(composer.value(Field::From), "gh@example.org");
+    }
+
+    #[test]
+    fn a_click_in_a_scrolled_body_lands_on_the_line_shown_there() {
+        let mut draft = Draft::new(AccountId::new(1));
+        let lines: Vec<String> = (0..50).map(|line| format!("line {line}")).collect();
+        draft.body_markdown = Some(lines.join("\n"));
+        let mut composer = Composer::new(1, draft);
+        composer.click_body(0, 0);
+        for _ in 0..45 {
+            composer.type_key(key(KeyCode::Down, KeyModifiers::NONE));
+        }
+        // Drawn ten lines tall with the cursor on line 45: lines 36 to 45.
+        assert_eq!(composer.body_top(10), 36);
+        composer.click_body(2, 3);
+        assert_eq!(composer.body().cursor(), (38, 3));
     }
 
     #[test]

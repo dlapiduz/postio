@@ -150,6 +150,8 @@ pub fn draw(
     }
     let body = Rect::new(area.x, y, area.width, height);
     hits.add(body, Target::ComposerBody);
+    // Where the textarea will have scrolled to, for where a click lands.
+    composer.body_top(height);
     match preview {
         None => frame.render_widget(composer.body(), body),
         Some(postio_config::Preview::Toggle) => draw_preview(frame, body, composer),

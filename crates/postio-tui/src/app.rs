@@ -954,9 +954,17 @@ impl App {
                         None => vec![Effect::Redraw],
                     }
                 }
-                Target::ComposerBody | Target::ComposerField(_) => {
-                    if self.composer.is_some() {
+                Target::ComposerBody => {
+                    if let Some(composer) = self.composer.as_mut() {
                         self.focus = Focus::Composer;
+                        composer.click_body(hit.row, hit.column);
+                    }
+                    vec![Effect::Redraw]
+                }
+                Target::ComposerField(field) => {
+                    if let Some(composer) = self.composer.as_mut() {
+                        self.focus = Focus::Composer;
+                        composer.focus_field(field);
                     }
                     vec![Effect::Redraw]
                 }
@@ -3976,6 +3984,30 @@ pub(crate) mod tests {
             second.contains(&Effect::OpenLink("https://example.com/report".into())),
             "{second:?}"
         );
+    }
+
+    #[test]
+    fn a_click_in_the_body_puts_the_cursor_there() {
+        // T075: column 5 of body line 2.
+        let mut app = app((160, 40));
+        let mut draft = postio_model::Draft::new(postio_model::AccountId::new(1));
+        draft.body_markdown = Some("First line\nSecond line here\nThird".into());
+        app.compose(draft);
+        update(
+            &mut app,
+            Input::Pointer(Pointer::Click {
+                hit: crate::view::hit::Hit {
+                    target: crate::view::hit::Target::ComposerBody,
+                    column: 5,
+                    row: 1,
+                },
+                ctrl: false,
+                shift: false,
+            }),
+        );
+        let composer = app.composer().unwrap();
+        assert_eq!(composer.field(), crate::composer::Field::Body);
+        assert_eq!(composer.body().cursor(), (1, 5));
     }
 
     #[test]
