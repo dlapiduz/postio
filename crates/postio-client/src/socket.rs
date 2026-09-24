@@ -71,6 +71,9 @@ pub enum ConnectError {
     /// Nothing is listening.
     #[error("Postio's background service is not running.")]
     NotRunning,
+    /// The daemon is there, and still opening the store.
+    #[error("Postio's background service is still opening your mailbox.")]
+    Starting,
     /// The daemon is a different build.
     #[error(
         "Postio's background service is version {host}, and this is version {client}. \
@@ -176,10 +179,9 @@ async fn run(
             let _ = handshake.send(Err(ConnectError::VersionMismatch { host, client }));
             return;
         }
-        // Still opening the store: as good as not running yet, which is what
-        // `connect_or_start` waits through.
+        // Still opening the store, which `connect_or_start` waits through.
         Ok(Some(Frame::Refused(Refusal::Starting))) => {
-            let _ = handshake.send(Err(ConnectError::NotRunning));
+            let _ = handshake.send(Err(ConnectError::Starting));
             return;
         }
         Ok(other) => {
@@ -230,15 +232,29 @@ async fn run(
     writing.abort();
 }
 
-/// Connect, starting `daemon` first if nothing answers, and waiting up to two
-/// seconds for it.
+/// How long a daemon may say "starting" before a frontend gives up on it:
+/// longer than the slowest real start seen, a 28-second keyring prompt.
+pub const STARTING_PATIENCE: Duration = Duration::from_secs(120);
+
+/// How long a daemon just spawned may take to answer at all.
+pub const SPAWN_PATIENCE: Duration = Duration::from_secs(2);
+
+/// Connect, starting `daemon` first if nothing answers.
+///
+/// Waits [`SPAWN_PATIENCE`] for a daemon it started to answer at all, and
+/// [`STARTING_PATIENCE`] for one that answers "starting" -- which is the
+/// store opening, a keyring prompt, a schema to bring up to date. `waiting`
+/// is called once, the first time the daemon says it is starting, so a
+/// frontend can say what it is waiting for.
 pub fn connect_or_start(
     endpoint: &Endpoint,
     kind: ClientKind,
     daemon: &Path,
+    waiting: &mut dyn FnMut(),
 ) -> Result<Client, ConnectError> {
     match connect(endpoint, kind) {
         Err(ConnectError::NotRunning) => {}
+        Err(ConnectError::Starting) => return wait_for_start(endpoint, kind, waiting),
         other => return other,
     }
     std::fs::create_dir_all(endpoint.dir())
@@ -256,7 +272,7 @@ pub fn connect_or_start(
     command
         .spawn()
         .map_err(|error| ConnectError::Start(format!("{}: {error}", daemon.display())))?;
-    let deadline = Instant::now() + Duration::from_secs(2);
+    let deadline = Instant::now() + SPAWN_PATIENCE;
     let mut pause = Duration::from_millis(5);
     loop {
         match connect(endpoint, kind) {
@@ -267,6 +283,29 @@ pub fn connect_or_start(
             Err(ConnectError::NotRunning) => {
                 return Err(ConnectError::Start(
                     "it did not answer within two seconds".to_owned(),
+                ));
+            }
+            Err(ConnectError::Starting) => return wait_for_start(endpoint, kind, waiting),
+            other => return other,
+        }
+    }
+}
+
+/// Wait through "starting", up to [`STARTING_PATIENCE`].
+fn wait_for_start(
+    endpoint: &Endpoint,
+    kind: ClientKind,
+    waiting: &mut dyn FnMut(),
+) -> Result<Client, ConnectError> {
+    waiting();
+    let deadline = Instant::now() + STARTING_PATIENCE;
+    loop {
+        std::thread::sleep(Duration::from_millis(100));
+        match connect(endpoint, kind) {
+            Err(ConnectError::Starting) if Instant::now() < deadline => {}
+            Err(ConnectError::Starting) => {
+                return Err(ConnectError::Start(
+                    "it was still opening the mailbox after two minutes".to_owned(),
                 ));
             }
             other => return other,

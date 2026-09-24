@@ -330,9 +330,10 @@ mod tests {
                 listener
             })
         };
-        // `NotRunning` is how the client reads "starting": keep waiting.
+        // Starting, not "not running": a frontend waits through this rather
+        // than starting a second daemon or giving up.
         let error = connect(&endpoint, ClientKind::Test).unwrap_err();
-        assert!(matches!(error, ConnectError::NotRunning), "{error}");
+        assert!(matches!(error, ConnectError::Starting), "{error}");
         ready.store(true, Ordering::Relaxed);
         answering.join().unwrap();
     }

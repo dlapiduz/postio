@@ -33,7 +33,9 @@ pub fn refusal(error: &ConnectError) -> String {
 
 /// Connect to the daemon at `endpoint`, starting it if nothing answers.
 pub fn connect(endpoint: &Endpoint) -> Result<Client, String> {
-    connect_or_start(endpoint, ClientKind::Tui, &daemon_path()).map_err(|error| refusal(&error))
+    let mut say_so = || eprintln!("Opening your mailbox…");
+    connect_or_start(endpoint, ClientKind::Tui, &daemon_path(), &mut say_so)
+        .map_err(|error| refusal(&error))
 }
 
 /// The whole program.
