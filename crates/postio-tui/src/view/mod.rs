@@ -63,6 +63,7 @@ pub fn draw(frame: &mut Frame, app: &App, theme: &Theme, now: DateTime<Local>) {
                                 frame,
                                 *area,
                                 writing,
+                                app.preview_shown(),
                                 app.focus() == Focus::Composer
                                     && app.scheduling().is_none()
                                     && app.path_prompt().is_none(),
@@ -331,6 +332,84 @@ mod tests {
         update(&mut app, Input::Paste("~/fixture.pdf".into()));
         let screen = screen(160, 16, &app);
         assert!(screen.contains("Attach: ~/fixture.pdf"), "{screen}");
+    }
+
+    fn buffer(width: u16, height: u16, app: &App) -> ratatui::buffer::Buffer {
+        let theme = Theme::new(Colour::None, Background::Unknown, &Default::default()).0;
+        let now = chrono::Local
+            .with_ymd_and_hms(2026, 9, 23, 12, 0, 0)
+            .unwrap();
+        let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
+        terminal
+            .draw(|frame| draw(frame, app, &theme, now))
+            .unwrap();
+        terminal.backend().buffer().clone()
+    }
+
+    fn writing_bold(app: &mut App) {
+        let mut draft = postio_model::Draft::new(postio_model::AccountId::new(1));
+        draft.body_markdown = Some("Some **bold** words".into());
+        app.compose(draft);
+    }
+
+    #[test]
+    fn the_preview_shows_bold_where_the_source_says_so() {
+        // T057, toggle mode: one key swaps the text for the message as it
+        // will arrive.
+        let mut app = with_sidebar((160, 16));
+        writing_bold(&mut app);
+        update(
+            &mut app,
+            Input::Key(crossterm::event::KeyEvent::new(
+                crossterm::event::KeyCode::Char('p'),
+                crossterm::event::KeyModifiers::ALT,
+            )),
+        );
+        let drawn = buffer(160, 16, &app);
+        let screen = screen(160, 16, &app);
+        assert!(!screen.contains("**bold**"), "{screen}");
+        let (x, y) = (0..drawn.area.height)
+            .find_map(|y| {
+                let line: String = (0..drawn.area.width)
+                    .map(|x| drawn[(x, y)].symbol().to_owned())
+                    .collect();
+                line.find("Some bold words").map(|at| {
+                    let column = line[..at].chars().count() + "Some ".len();
+                    (u16::try_from(column).unwrap(), y)
+                })
+            })
+            .unwrap_or_else(|| panic!("no preview:\n{screen}"));
+        assert!(
+            drawn[(x, y)]
+                .modifier
+                .contains(ratatui::style::Modifier::BOLD),
+            "`bold` is not drawn bold"
+        );
+
+        update(
+            &mut app,
+            Input::Key(crossterm::event::KeyEvent::new(
+                crossterm::event::KeyCode::Char('p'),
+                crossterm::event::KeyModifiers::ALT,
+            )),
+        );
+        assert!(
+            screen_of(&app).contains("**bold**"),
+            "the same key goes back"
+        );
+    }
+
+    fn screen_of(app: &App) -> String {
+        screen(160, 16, app)
+    }
+
+    #[test]
+    fn split_mode_shows_the_text_and_the_preview_side_by_side() {
+        let mut app = with_sidebar((160, 16)).with_preview(postio_config::tui::Preview::Split);
+        writing_bold(&mut app);
+        let screen = screen(160, 16, &app);
+        assert!(screen.contains("**bold**"), "{screen}");
+        assert!(screen.contains("Some bold words"), "{screen}");
     }
 
     #[test]

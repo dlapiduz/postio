@@ -16,7 +16,14 @@ const LABEL: u16 = 9;
 
 /// Draw `composer` into `area`; with `focused`, the terminal's cursor goes
 /// where the next letter will land.
-pub fn draw(frame: &mut Frame, area: Rect, composer: &Composer, focused: bool, theme: &Theme) {
+pub fn draw(
+    frame: &mut Frame,
+    area: Rect,
+    composer: &Composer,
+    preview: Option<postio_config::Preview>,
+    focused: bool,
+    theme: &Theme,
+) {
     for y in area.y..area.y + area.height {
         frame.render_widget(
             Line::styled("│", theme.style(Role::Dim)),
@@ -134,7 +141,40 @@ pub fn draw(frame: &mut Frame, area: Rect, composer: &Composer, focused: bool, t
     if height == 0 {
         return;
     }
-    frame.render_widget(composer.body(), Rect::new(area.x, y, area.width, height));
+    let body = Rect::new(area.x, y, area.width, height);
+    match preview {
+        None => frame.render_widget(composer.body(), body),
+        Some(postio_config::Preview::Toggle) => draw_preview(frame, body, composer),
+        Some(postio_config::Preview::Split) => {
+            let half = body.width / 2;
+            frame.render_widget(
+                composer.body(),
+                Rect::new(body.x, body.y, half, body.height),
+            );
+            for row in body.y..body.y + body.height {
+                frame.render_widget(
+                    Line::styled("│", theme.style(Role::Dim)),
+                    Rect::new(body.x + half, row, 1, 1),
+                );
+            }
+            let right = Rect::new(
+                body.x + half + 2,
+                body.y,
+                body.width.saturating_sub(half + 2),
+                body.height,
+            );
+            draw_preview(frame, right, composer);
+        }
+    }
+}
+
+/// The message as it will arrive, from its top, in `area`.
+fn draw_preview(frame: &mut Frame, area: Rect, composer: &Composer) {
+    let lines = composer.preview().lines();
+    for (offset, line) in lines.into_iter().take(usize::from(area.height)).enumerate() {
+        let row = area.y + u16::try_from(offset).unwrap_or(u16::MAX);
+        frame.render_widget(line, Rect::new(area.x, row, area.width, 1));
+    }
 }
 
 /// How many of a draft's files are listed by name before the rest are

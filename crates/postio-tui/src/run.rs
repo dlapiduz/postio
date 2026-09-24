@@ -108,7 +108,15 @@ pub fn run() -> ExitCode {
         .filter(|(_, filter)| filter.pinned)
         .map(|(key, filter)| filter.name.clone().unwrap_or_else(|| key.clone()))
         .collect();
-    let outcome = runtime.block_on(main_loop(client, keys, theme, state, saved, &mut session));
+    let outcome = runtime.block_on(main_loop(
+        client,
+        keys,
+        theme,
+        state,
+        saved,
+        config.tui.preview,
+        &mut session,
+    ));
     let _ = session.leave(&mut Stdout);
     session.publish();
     match outcome {
@@ -137,6 +145,7 @@ async fn main_loop(
     theme: Theme,
     state: postio_core::SharedState,
     saved: Vec<String>,
+    preview: postio_config::Preview,
     session: &mut Session,
 ) -> io::Result<()> {
     let backend = CrosstermBackend::new(io::stdout());
@@ -145,7 +154,8 @@ async fn main_loop(
     let mut app = App::new((size.width, size.height), keys)
         .with_state(state)
         .with_allowlist(postio_ui::allowlist::RemoteImageAllowList::load())
-        .with_downloads(downloads());
+        .with_downloads(downloads())
+        .with_preview(preview);
 
     let (inputs, arriving) = async_channel::unbounded::<Input>();
     let (drafts, draft_jobs) = async_channel::unbounded::<Effect>();

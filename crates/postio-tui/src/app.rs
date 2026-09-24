@@ -331,6 +331,10 @@ pub struct App {
     asked_at: Option<u64>,
     /// The path being typed to attach a file (FR-027), while it is.
     path_prompt: Option<tui_input::Input>,
+    /// How the composer shows its preview (`[tui].preview`).
+    preview: postio_config::Preview,
+    /// Whether the preview is showing.
+    previewing: bool,
 }
 
 /// Which pane the keyboard is in.
@@ -392,6 +396,8 @@ impl App {
             scheduling: None,
             asked_at: None,
             path_prompt: None,
+            preview: postio_config::Preview::default(),
+            previewing: false,
         }
     }
 
@@ -459,6 +465,18 @@ impl App {
         self.focus
     }
 
+    /// The same app, showing the composer's preview as `preview` says.
+    pub fn with_preview(mut self, preview: postio_config::Preview) -> App {
+        self.preview = preview;
+        self
+    }
+
+    /// How the preview is shown, when it is: instead of the text, or beside
+    /// it; `None` when it is not showing.
+    pub fn preview_shown(&self) -> Option<postio_config::Preview> {
+        self.previewing.then_some(self.preview)
+    }
+
     /// The draft being written, if one is.
     pub fn composer(&self) -> Option<&crate::composer::Composer> {
         self.composer.as_ref()
@@ -479,6 +497,8 @@ impl App {
         );
         self.focus = Focus::Composer;
         self.requested.front = crate::layout::Pane::Reader;
+        // Side by side is shown from the start; the toggle starts on the text.
+        self.previewing = self.preview == postio_config::Preview::Split;
         vec![Effect::Redraw]
     }
 
@@ -728,6 +748,10 @@ impl App {
     fn composer_command(&mut self, id: &str) -> Vec<Effect> {
         match id {
             "send" => self.send_draft(None),
+            "toggle_preview" => {
+                self.previewing = !self.previewing;
+                vec![Effect::Redraw]
+            }
             "edit_externally" => match &self.composer {
                 Some(composer) => vec![Effect::EditExternally {
                     generation: composer.generation(),

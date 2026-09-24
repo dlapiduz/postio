@@ -277,6 +277,17 @@ impl Composer {
         self.edits += 1;
     }
 
+    /// The message as it will arrive, drawn by the reader: the HTML part
+    /// when there is one, else the text part (FR-021).
+    pub fn preview(&self) -> crate::reader::Rendered {
+        let body = body_of(&self.markdown(), &self.quote);
+        match (body.html, body.text) {
+            (Some(html), _) => crate::reader::from_html(&html),
+            (None, Some(text)) => crate::reader::from_text(&text),
+            (None, None) => crate::reader::Rendered::default(),
+        }
+    }
+
     /// The files this draft carries.
     pub fn attachments(&self) -> &[postio_model::Attachment] {
         &self.draft.attachments
