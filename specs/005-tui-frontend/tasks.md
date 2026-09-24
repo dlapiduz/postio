@@ -88,13 +88,13 @@ Commits end `Refs: specs/005-tui-frontend` and the task id — never
 ### Terminal foundations
 
 - [X] T025 [P] Write `crates/postio-ui/src/terminal.rs`: `SafeText::new(&str)` stripping C0 (except `\n`,`\t`), C1, ESC, DEL and bidi overrides/isolates, replacing each with a visible glyph; `SafeText` is the only way to build a span from mail text. Test first with the escape sequences of quickstart §5
-- [ ] T026 [P] Write `crates/postio-tui/src/app.rs`: `App` state per data-model.md "Terminal session" and a pure `update(&mut App, Event) -> Effects`; `Effects` are client calls, redraw, quit. Test first: `Resize` changes the layout without any client call
+- [X] T026 [P] Write `crates/postio-tui/src/app.rs`: `App` state per data-model.md "Terminal session" and a pure `update(&mut App, Event) -> Effects`; `Effects` are client calls, redraw, quit. Test first: `Resize` changes the layout without any client call
 - [ ] T027 [P] Write `crates/postio-tui/src/input.rs`: crossterm `KeyEvent` → `postio_ui::keymap::Chord` feeding `Resolver::from_commands` with `[keys]` overrides (as `postio-ffi/src/session.rs:299` does). Test first: a `[keys]` override of `archive` is honoured
 - [ ] T028 [P] Write `crates/postio-tui/src/term.rs`: enter/leave (raw mode, alternate screen, mouse, bracketed paste, keyboard flags), a panic hook that restores, SIGTSTP/SIGCONT handling, and `with_suspended(|| …)` for `$EDITOR`. Test first against a recording backend: leave restores every mode entered, in reverse order
 - [ ] T029 [P] Write `crates/postio-tui/src/caps.rs`: `TerminalCaps` detection (`NO_COLOR`, `COLORTERM`, `supports_keyboard_enhancement`, colorsaurus background with timeout), run before raw mode, with a reserved slot for the image-protocol query (research R8). Test first: `NO_COLOR=1` yields `colour: None` whatever `COLORTERM` says
 - [ ] T030 [P] Write `crates/postio-tui/src/theme.rs`: the colour-role table of data-model.md resolved from `[tui.colors]`, the true-colour accent from `postio_ui::tokens` (never retyped) for Selection and Focus only, ANSI indices otherwise, attributes under `NO_COLOR`. Test first: under `NO_COLOR` no cell in a rendered list has a colour
 - [ ] T031 Add `[tui]` and `[tui.colors]` to `crates/postio-config` with validation and live reload; test first: an unknown role is a reported problem, not a crash
-- [ ] T032 Write `crates/postio-tui/src/layout.rs`: the width table of contracts/tui-surface.md, requested vs shown panes (ADR 0024's rule). Test first: at 60 columns only one pane is shown and the requested set is unchanged; at 40×10 the "Terminal too small" screen
+- [X] T032 Write `crates/postio-tui/src/layout.rs`: the width table of contracts/tui-surface.md, requested vs shown panes (ADR 0024's rule). Test first: at 60 columns only one pane is shown and the requested set is unchanged; at 40×10 the "Terminal too small" screen
 
 **Checkpoint**: GTK runs as a daemon client with `app_suite` green and
 unchanged; macOS is unchanged; the terminal crate has its loop, input, theme
