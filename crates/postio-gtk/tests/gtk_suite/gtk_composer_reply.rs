@@ -90,12 +90,12 @@ pub fn e_shift_e_and_f_open_reply_reply_all_and_forward() {
     );
 
     // ── A source with nothing to offer: also nothing ─────────────────────
-    composer.connect_reply_source(|| None);
+    composer.connect_reply_source(|answer| answer(None));
     press(&window, "e");
     assert!(!composer.is_open());
 
     // ── A real source: e replies ──────────────────────────────────────────
-    composer.connect_reply_source(|| Some((a_message(), an_account())));
+    composer.connect_reply_source(|answer| answer(Some((a_message(), an_account()))));
     press(&window, "e");
     assert!(composer.is_open(), "e opens a reply");
     let draft = composer.draft();

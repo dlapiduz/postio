@@ -103,7 +103,7 @@ pub fn replying_to_a_tracking_link_shows_the_notice_and_a_same_domain_link_does_
     // ── a foreign tracking link is flagged ─────────────────────────────────
     composer.connect_reply_source({
         let source = html_only_message("shop.example.org", "click.tracker.example.org");
-        move || Some((source.clone(), an_account()))
+        move |answer| answer(Some((source.clone(), an_account())))
     });
     press(&window, "e");
     assert!(composer.is_open());
@@ -123,7 +123,7 @@ pub fn replying_to_a_tracking_link_shows_the_notice_and_a_same_domain_link_does_
     // ── a link to the sender's own domain is not flagged ───────────────────
     composer.connect_reply_source({
         let source = html_only_message("shop.example.org", "shop.example.org");
-        move || Some((source.clone(), an_account()))
+        move |answer| answer(Some((source.clone(), an_account())))
     });
     press(&window, "e");
     assert!(composer.is_open());

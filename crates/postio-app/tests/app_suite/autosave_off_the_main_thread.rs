@@ -11,6 +11,7 @@
 
 use crate::settle_until;
 
+use gtk::prelude::*;
 use gtk::{gdk, glib};
 use postio_app::{Wiring, feed_the_window};
 use postio_core::bridge::{Bridge, event_channel, handler_fn};
@@ -101,6 +102,79 @@ pub fn autosave_writes_off_the_main_thread_and_keeps_one_row() {
             })
             .await,
             "closing an emptied composer left its autosaved row behind"
+        );
+    });
+}
+
+pub fn opening_a_draft_or_a_reply_reads_nothing_on_the_main_thread() {
+    // #1608, the other half: the composer asked "what does a new draft sign
+    // with" and "what is `e` replying to" through seams the app answered
+    // with `blocking::now` store reads on the GTK thread -- two cold
+    // connections, five statements and a body decode in front of a reply.
+    crate::gtk_case(async {
+        let state_dir = tempfile::tempdir().expect("a state directory");
+        // SAFETY: first statement of a single-threaded test.
+        unsafe { std::env::set_var("XDG_STATE_HOME", state_dir.path()) };
+        if adw::init().is_err() || gdk::Display::default().is_none() {
+            eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
+            return;
+        }
+        let display = gdk::Display::default().unwrap();
+        fonts::install().expect("the embedded fonts should install");
+        style::install(&display);
+        app::install_icons(&display);
+
+        let database = test_support::memory().await;
+        seed_small(&database, 9).await;
+        let directory = tempfile::tempdir().expect("a blob directory");
+        let blobs = BlobStore::open(
+            directory.path().to_path_buf(),
+            &postio_storage::test_support::blob_keys(),
+        )
+        .expect("a blob store");
+        let (bridge, _replies) = Bridge::new(handler_fn(|_, _| async {})).expect("a runtime");
+        let (sink, _events) = event_channel();
+        let wiring = Wiring::new(
+            database.clone(),
+            blobs,
+            bridge.handle(),
+            sink,
+            bridge.commands(),
+        );
+        let window = Window::default();
+        window.present();
+        while glib::MainContext::default().iteration(false) {}
+        let _ = feed_the_window(&window, &wiring).await;
+        let list = window.list();
+        assert!(
+            settle_until(async || list.model().n_items() > 0).await,
+            "the seeded store should fill the list"
+        );
+        let composer = window.composer();
+
+        let counts = counted(|| {
+            let _ = gtk::prelude::WidgetExt::activate_action(&window, "win.compose", None);
+        });
+        assert!(composer.is_open(), "`c` opened the composer");
+        assert_eq!(
+            counts.statements, 0,
+            "opening a new draft ran {} statements on the GTK thread",
+            counts.statements
+        );
+        composer.close();
+        while glib::MainContext::default().iteration(false) {}
+
+        let counts = counted(|| {
+            window.handle_key(gdk::Key::e, gdk::ModifierType::empty());
+        });
+        assert_eq!(
+            counts.statements, 0,
+            "asking to reply ran {} statements on the GTK thread",
+            counts.statements
+        );
+        assert!(
+            settle_until(async || composer.is_open()).await,
+            "`e` never opened a reply to the message on screen"
         );
     });
 }

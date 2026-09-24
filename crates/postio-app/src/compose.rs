@@ -82,7 +82,7 @@ pub async fn install(
     composer.set_account(account);
     install_mailto(window, &composer, account);
     install_identities(window, &composer, &database, account).await;
-    install_signature_default(&composer, window, database.clone(), account);
+    install_signature_default(&composer, window, database.clone(), account, &runtime);
 
     let writer = DraftWriter::spawn(database.clone(), account, &runtime);
     let last_id = install_autosave(&composer, database.clone(), account, &writer);
@@ -90,7 +90,7 @@ pub async fn install(
     install_send_later(&composer, &writer, Rc::clone(&last_id));
     install_resume(window, &composer, database.clone(), last_id);
     install_recipient_suggestions(&composer, database.clone(), account).await;
-    install_reply_source(&composer, database, showing).await;
+    install_reply_source(&composer, database, showing, &runtime);
     install_attach(&composer, blobs.clone(), runtime.clone());
     install_inline_image(&composer, blobs.clone(), runtime).await;
     install_attachment_bytes(&composer, blobs);
@@ -234,35 +234,59 @@ fn install_signature_default(
     window: &Window,
     database: Store,
     account: AccountId,
+    runtime: &tokio::runtime::Handle,
 ) {
     let sidebar = window.sidebar();
-    composer.connect_signature_default(move || {
-        postio_session::blocking::now(async {
-            let connection = database
-                .connect()
-                .await
-                .map_err(|error| tracing::warn!(%error, "could not resolve a default signature"))
-                .ok()?;
-            let account_default = AccountRepository::new(&connection)
-                .get(account)
-                .await
-                .ok()
-                .flatten()?
-                .default_signature_id;
-            // Spelled out rather than chained: `and_then` takes a closure,
-            // and a closure cannot await.
-            let mailbox_signature = match sidebar.selected() {
-                Some(id) => MailboxRepository::new(&connection)
-                    .get(id)
-                    .await
-                    .ok()
-                    .flatten()
-                    .and_then(|mailbox| mailbox.signature_id),
-                None => None,
-            };
-            signature_default::resolve(mailbox_signature, account_default)
-        })
+    let runtime = runtime.clone();
+    composer.connect_signature_default(move |answer| {
+        // Which mailbox is selected is the sidebar's, read here; the two
+        // store reads run on the runtime and the answer lands back on the
+        // main context (#1608).
+        let selected = sidebar.selected();
+        let database = database.clone();
+        let (sender, resolved) = async_channel::bounded(1);
+        runtime.spawn(async move {
+            let _ = sender
+                .send(default_signature(&database, account, selected).await)
+                .await;
+        });
+        glib::spawn_future_local(async move {
+            // POSTIO-GLIB-SAFE: a channel receive; the reads ran on the runtime.
+            answer(resolved.recv().await.ok().flatten());
+        });
     });
+}
+
+/// The signature a new draft for `account` starts with: the selected
+/// mailbox's override, else the account's default, else none.
+async fn default_signature(
+    database: &Store,
+    account: AccountId,
+    selected: Option<MailboxId>,
+) -> Option<postio_model::SignatureId> {
+    let connection = database
+        .read()
+        .await
+        .map_err(|error| tracing::warn!(%error, "could not resolve a default signature"))
+        .ok()?;
+    let account_default = AccountRepository::new(&connection)
+        .get(account)
+        .await
+        .ok()
+        .flatten()?
+        .default_signature_id;
+    // Spelled out rather than chained: `and_then` takes a closure, and a
+    // closure cannot await.
+    let mailbox_signature = match selected {
+        Some(id) => MailboxRepository::new(&connection)
+            .get(id)
+            .await
+            .ok()
+            .flatten()
+            .and_then(|mailbox| mailbox.signature_id),
+        None => None,
+    };
+    signature_default::resolve(mailbox_signature, account_default)
 }
 
 /// Activating a draft's row in the Drafts folder opens it in the composer.
@@ -951,40 +975,56 @@ fn resolved_address(contact: &postio_model::Contact) -> EmailAddress {
 /// message", updated by different signals, can only ever be one signal away
 /// from disagreeing; reading `showing` is the version of this that has no
 /// second copy to drift.
-async fn install_reply_source(
+fn install_reply_source(
     composer: &Composer,
     database: Store,
     showing: crate::reading::Showing,
+    runtime: &tokio::runtime::Handle,
 ) {
-    composer.connect_reply_source(move || {
-        postio_session::blocking::now(async {
-            // `None` is ordinary: `e` on a window nobody has read from yet is
-            // nothing to reply to, not an error. It is logged all the same,
-            // because the *other* way to reach here is a miswiring, and #325
-            // spent its whole life indistinguishable from working software.
-            let Some(id) = showing.get() else {
-                tracing::debug!("reply asked for with no message in the reading pane");
-                return None;
-            };
-            let connection = database
-                .connect()
-                .await
-                .map_err(|error| tracing::warn!(%error, "could not open a reply source"))
-                .ok()?;
-            let mut message = MessageRepository::new(&connection)
-                .get(id)
-                .await
-                .ok()
-                .flatten()?;
-            message.body = load_body(&connection, id).await;
-            let account = AccountRepository::new(&connection)
-                .get(message.account_id)
-                .await
-                .ok()
-                .flatten()?;
-            Some((message, account))
-        })
+    let runtime = runtime.clone();
+    composer.connect_reply_source(move |answer| {
+        let Some(id) = showing.get() else {
+            tracing::debug!("reply asked for with no message in the reading pane");
+            answer(None);
+            return;
+        };
+        // The message, its body and its account are read on the runtime and
+        // the reply opens when they land (#1608): they were read on the GTK
+        // thread, two connections and a body decode in front of the composer.
+        let database = database.clone();
+        let (sender, found) = async_channel::bounded(1);
+        runtime.spawn(async move {
+            let _ = sender.send(reply_source(&database, id).await).await;
+        });
+        glib::spawn_future_local(async move {
+            // POSTIO-GLIB-SAFE: a channel receive; the reads ran on the runtime.
+            answer(found.recv().await.ok().flatten());
+        });
     });
+}
+
+/// The message `id` with its body, and the account it belongs to.
+async fn reply_source(
+    database: &Store,
+    id: MessageId,
+) -> Option<(postio_model::Message, postio_model::Account)> {
+    let connection = database
+        .read()
+        .await
+        .map_err(|error| tracing::warn!(%error, "could not open a reply source"))
+        .ok()?;
+    let mut message = MessageRepository::new(&connection)
+        .get(id)
+        .await
+        .ok()
+        .flatten()?;
+    message.body = load_body(&connection, id).await;
+    let account = AccountRepository::new(&connection)
+        .get(message.account_id)
+        .await
+        .ok()
+        .flatten()?;
+    Some((message, account))
 }
 
 /// Writes a chosen or dropped file into `blobs` without blocking the

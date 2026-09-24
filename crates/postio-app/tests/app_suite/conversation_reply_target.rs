@@ -176,8 +176,10 @@ pub fn the_conversations_verbs_answer_the_message_they_name() {
         // this is deliberately checked *again* below from an older focus, where
         // the two answers differ.
         press(&window, "e");
+        // The reply's source is read on the runtime (#1608), so the composer
+        // opens when the read lands rather than inside the key press.
         assert!(
-            composer.is_open(),
+            settle_until(async || composer.is_open()).await,
             "`e` on an open conversation answered nothing"
         );
         assert_eq!(
@@ -193,8 +195,10 @@ pub fn the_conversations_verbs_answer_the_message_they_name() {
         // aiming this at the newest would pass whether or not the scope-to-id
         // mapping worked at all.
         window.conversation().test_click_reply(oldest);
-        settle();
-        assert!(composer.is_open(), "a per-message Reply opened nothing");
+        assert!(
+            settle_until(async || composer.is_open()).await,
+            "a per-message Reply opened nothing"
+        );
         assert_eq!(
             composer.draft().in_reply_to,
             Some(oldest),
@@ -218,7 +222,10 @@ pub fn the_conversations_verbs_answer_the_message_they_name() {
             .header()
             .actions()
             .press(postio_core::CommandId::Reply);
-        settle();
+        assert!(
+            settle_until(async || composer.is_open()).await,
+            "the conversation bar's Reply opened nothing"
+        );
         assert_eq!(
             composer.draft().in_reply_to,
             Some(newest),
@@ -237,6 +244,10 @@ pub fn the_conversations_verbs_answer_the_message_they_name() {
         window.conversation().focus_message(middle);
         settle();
         press(&window, "e");
+        assert!(
+            settle_until(async || composer.is_open()).await,
+            "`e` on a focused message opened nothing"
+        );
         assert_eq!(
             composer.draft().in_reply_to,
             Some(middle),
