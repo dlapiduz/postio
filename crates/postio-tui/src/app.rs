@@ -2261,6 +2261,19 @@ impl App {
                     return vec![Effect::Resume(message)];
                 }
             }
+            // Opening is the reader's own business, not a store verb: the
+            // row under the cursor is read if it is not already, and the
+            // keyboard goes into it (in front, where only one pane fits).
+            "open_message" => {
+                let Some(message) = self.cursor_message() else {
+                    return Vec::new();
+                };
+                let mut effects = self.rested(message);
+                self.focus = Focus::Reader;
+                self.requested.front = crate::layout::Pane::Reader;
+                effects.push(Effect::Redraw);
+                return effects;
+            }
             // One composition at a time, as the desktop's `c` does with a
             // composer already open: it goes back to it.
             "compose" if self.composer.is_some() => {
@@ -3679,6 +3692,30 @@ pub(crate) mod tests {
         update(&mut app, ctrl('b'));
         assert_eq!(panes(&app), vec![Pane::List, Pane::Reader]);
         assert_eq!(app.focus(), Focus::List);
+    }
+
+    #[test]
+    fn open_message_reads_the_row_and_puts_the_keyboard_in_the_reader() {
+        // It fell through to the dispatcher, which answered that it was not
+        // wired up; opening is the reader's own business.
+        let mut app = app((160, 40));
+        let opening = opened(&mut app, 3);
+        serve(&mut app, opening);
+        let effects = app.command("open_message");
+        assert!(
+            !effects
+                .iter()
+                .any(|effect| matches!(effect, Effect::Send(_))),
+            "{effects:?}"
+        );
+        assert!(
+            effects.contains(&Effect::ReadBody(MessageId::new(1)))
+                || app
+                    .reading()
+                    .is_some_and(|reading| reading.row == MessageId::new(1)),
+            "the message under the cursor is what the reader shows: {effects:?}"
+        );
+        assert_eq!(app.focus(), Focus::Reader);
     }
 
     fn composing(app: &mut App) {
