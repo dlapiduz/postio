@@ -159,6 +159,10 @@ pub async fn apply(
             );
             window.show_action_completed(message, false);
         }
+        // The address book changed: the Contacts screen, if it is up, reads
+        // its view again. The list repaints itself (`Paging::plan`) and the
+        // reader its header (`reading::install`) when names moved.
+        Event::ContactsChanged { .. } => window.contacts().refresh(),
         // Rows that have left the mailbox cannot stay selected: the next
         // action would be aimed at mail that is no longer there.
         Event::MessagesRemoved { .. } => window.list().clear_selection(),

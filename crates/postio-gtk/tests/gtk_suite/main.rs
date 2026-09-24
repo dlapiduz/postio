@@ -195,6 +195,10 @@ const CASES: &[(&str, fn())] = &[
         gtk_contacts_pane::a_draft_open_underneath_waits_for_contacts_to_close,
     ),
     (
+        "gtk_contacts_pane::a_refresh_asks_again_and_keeps_the_cursor_where_it_was",
+        gtk_contacts_pane::a_refresh_asks_again_and_keeps_the_cursor_where_it_was,
+    ),
+    (
         "gtk_conversation::dropping_a_conversation_releases_its_pane",
         gtk_conversation::dropping_a_conversation_releases_its_pane as fn(),
     ),

@@ -591,11 +591,24 @@ pub async fn install(window: &Window, wiring: &Wiring, feeds: &Feeds, showing: S
         let parts = Rc::clone(&parts);
         let window = window.downgrade();
         move |event| {
-            let postio_core::Event::BodyLoaded { message, .. } = event else {
+            let Some(window) = window.upgrade() else {
                 return;
             };
-            if let Some(window) = window.upgrade() {
-                parts.body_arrived(&window, *message);
+            match event {
+                postio_core::Event::BodyLoaded { message, .. } => {
+                    parts.body_arrived(&window, *message);
+                }
+                // A person was named, joined or split: the header on screen
+                // may now owe a different name (FR-032). Read it again the
+                // way an arriving body is -- same message, same document.
+                postio_core::Event::ContactsChanged {
+                    names_changed: true,
+                } => {
+                    if let Some(message) = parts.showing.get() {
+                        parts.body_arrived(&window, message);
+                    }
+                }
+                _ => {}
             }
         }
     });
@@ -1237,6 +1250,7 @@ impl Fill {
                     envelope.subject.as_deref(),
                     envelope.date,
                 );
+                reader.set_sender_as_sent(envelope.as_sent.as_deref());
             }
             match loaded.body {
                 crate::compose::Body::Ready {
@@ -1485,7 +1499,25 @@ async fn load(connection: &postio_storage::Checkout, message: MessageId, offline
         .send_state(message)
         .await
         .unwrap_or_default();
-    let envelope = fetched.map(Envelope::from);
+    // The names the user gave these addresses' owners (FR-032): one
+    // statement, and the message keeps the header's own words beside them.
+    let names = match &fetched {
+        Some(message) => {
+            let addresses: Vec<String> = message
+                .from
+                .iter()
+                .chain(&message.to)
+                .chain(&message.cc)
+                .map(|address| address.address.clone())
+                .collect();
+            postio_storage::repository::ContactRepository::new(connection)
+                .user_names(&addresses)
+                .await
+                .unwrap_or_default()
+        }
+        None => Default::default(),
+    };
+    let envelope = fetched.map(|message| Envelope::of(message, &names));
     Loaded {
         body,
         content_type,
@@ -1630,6 +1662,9 @@ fn paint(
             envelope.subject.as_deref(),
             envelope.date,
         );
+        window
+            .reader()
+            .set_sender_as_sent(envelope.as_sent.as_deref());
         // Whose mail this is. Silent with one account, because
         // `named_accounts` is empty then and there is nothing to say (#185).
         let named = named_accounts
@@ -1765,18 +1800,26 @@ struct Envelope {
     to: Vec<EmailAddress>,
     cc: Vec<EmailAddress>,
     subject: Option<String>,
+    /// The sender as the mail carried it, when `from` shows the user's name
+    /// for them instead (specs/005-contacts FR-032).
+    as_sent: Option<String>,
     /// The sender's own `Date`, falling back to when the server received it
     /// -- always known -- for the rare message with no `Date` header at all.
     date: chrono::DateTime<chrono::Utc>,
 }
 
-impl From<Message> for Envelope {
-    fn from(message: Message) -> Self {
+impl Envelope {
+    /// `message`'s header, with `names` -- the user's, by normalised
+    /// address -- in place of the display names they replace.
+    fn of(message: Message, names: &std::collections::HashMap<String, String>) -> Self {
+        use postio_ui::reader::header::{as_sent, with_user_names};
+        let from = with_user_names(&message.from, names);
         Self {
             account: message.account_id,
-            from: message.from,
-            to: message.to,
-            cc: message.cc,
+            as_sent: as_sent(&from, &message.from),
+            from,
+            to: with_user_names(&message.to, names),
+            cc: with_user_names(&message.cc, names),
             subject: message.subject,
             date: message.date.unwrap_or(message.received_at),
         }

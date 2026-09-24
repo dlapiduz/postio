@@ -22,6 +22,7 @@ mod compose_detach;
 mod compose_recipients;
 mod compose_typing;
 mod composer_warm;
+mod contact_name_in_list_and_reader;
 mod contacts_screen;
 mod conversation_body_arrives;
 mod conversation_by_default;
@@ -252,6 +253,10 @@ const CASES: &[(&str, fn())] = &[
     (
         "command_wiring::every_command_id_is_handled_locally_or_wired_to_the_bus",
         command_wiring::every_command_id_is_handled_locally_or_wired_to_the_bus as fn(),
+    ),
+    (
+        "contact_name_in_list_and_reader::a_joined_persons_name_reaches_the_list_and_the_reader",
+        contact_name_in_list_and_reader::a_joined_persons_name_reaches_the_list_and_the_reader,
     ),
     (
         "contacts_screen::g_c_shows_the_people_from_the_mail_and_esc_returns",

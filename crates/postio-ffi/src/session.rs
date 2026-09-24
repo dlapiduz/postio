@@ -2580,6 +2580,17 @@ impl Session {
                     self.fetch(generation, page);
                 }
             }
+            // A person was named: every resident row may read differently,
+            // and none moved.
+            postio_ui::paging::Plan::Repaint => {
+                let (generation, pages) = {
+                    let list = self.list.lock().expect("list lock");
+                    (list.generation(), list.resident_pages())
+                };
+                for page in pages {
+                    self.fetch(generation, page);
+                }
+            }
             postio_ui::paging::Plan::Reload => {
                 let Some(scope) = self.scope_in_view() else {
                     return;

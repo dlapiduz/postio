@@ -45,8 +45,8 @@ use postio_core::{
 use postio_model::ids::DraftId;
 use postio_model::mailbox::MailboxRole;
 use postio_model::{
-    AccountId, AddressId, ContactId, DraftState, Flag, FlagSet, LabelId, MailboxId, Message, MessageId, Operation,
-    OperationTarget, ThreadId,
+    AccountId, AddressId, ContactId, DraftState, Flag, FlagSet, LabelId, MailboxId, Message,
+    MessageId, Operation, OperationTarget, ThreadId,
 };
 use postio_storage::repository::{
     ColumnFlag, ContactRepository, DraftRepository, FlagSource, LabelRepository, MailboxRepository,
@@ -2304,9 +2304,7 @@ fn contact_failure(error: postio_storage::Error) -> CommandError {
         postio_storage::Error::NotFound { .. } => {
             CommandError::rejected("That contact is no longer here")
         }
-        postio_storage::Error::ForbiddenTransition { reason, .. } => {
-            CommandError::rejected(reason)
-        }
+        postio_storage::Error::ForbiddenTransition { reason, .. } => CommandError::rejected(reason),
         other => store_failure(other),
     }
 }
@@ -5773,14 +5771,21 @@ mod tests {
                 .await
                 .expect("join");
             let events = world.drained().await;
-            assert_eq!(changed(&events), Some(true), "a join changes whose name mail shows");
+            assert_eq!(
+                changed(&events),
+                Some(true),
+                "a join changes whose name mail shows"
+            );
             assert!(events.contains(&Event::ActionCompleted {
                 description: "Joined contacts".into(),
                 undoable: true,
             }));
             let joined = get(&world, work).await.expect("ada");
             assert_eq!(joined.addresses.len(), 2);
-            assert_eq!(get(&world, home).await.expect("home").state, ContactState::Merged);
+            assert_eq!(
+                get(&world, home).await.expect("home").state,
+                ContactState::Merged
+            );
 
             world.run(Command::Undo).await.expect("undo");
             assert_eq!(

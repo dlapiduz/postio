@@ -26,8 +26,8 @@ use std::path::PathBuf;
 use std::str::FromStr;
 
 use postio_model::{
-    AccountId, AddressId, ContactId, ContactState, DraftId, EmailAddress, JoinReceipt, LabelId, MailboxId,
-    MailboxRole, MessageId, OperationRange, ThreadId,
+    AccountId, AddressId, ContactId, ContactState, DraftId, EmailAddress, JoinReceipt, LabelId,
+    MailboxId, MailboxRole, MessageId, OperationRange, ThreadId,
 };
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 

@@ -571,6 +571,13 @@ impl Feed {
                 }
                 _ => self.reload(),
             },
+            Plan::Repaint => {
+                for page in list.resident_pages() {
+                    if !list.is_pending(page) {
+                        inner.clone().request(page);
+                    }
+                }
+            }
         }
     }
 

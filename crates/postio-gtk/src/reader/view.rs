@@ -1329,6 +1329,18 @@ impl Reader {
         self.header.set_message(from, to, cc, subject, date);
     }
 
+    /// The sender as the mail carried it, when the header shows the user's
+    /// name for them instead. See [`MessageHeader::set_as_sent`].
+    pub fn set_sender_as_sent(&self, as_sent: Option<&str>) {
+        self.header.set_as_sent(as_sent);
+    }
+
+    /// The sender line's "as sent" text, for tests.
+    #[doc(hidden)]
+    pub fn sender_as_sent(&self) -> Option<String> {
+        self.header.sender_as_sent()
+    }
+
     /// Names the account the message on screen arrived in, or hides the line.
     ///
     /// See [`MessageHeader::set_account`] for why the reading pane is where

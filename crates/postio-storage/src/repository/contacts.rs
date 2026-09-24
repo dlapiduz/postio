@@ -25,8 +25,8 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use chrono::Utc;
 use postio_model::{
-    AddressId, Contact, ContactAddress, ContactDetail, ContactId, ContactListRow, ContactSource,
-    AddressMove, ContactState, ContactView, EmailAddress, JoinReceipt, Message, PersonFields,
+    AddressId, AddressMove, Contact, ContactAddress, ContactDetail, ContactId, ContactListRow,
+    ContactSource, ContactState, ContactView, EmailAddress, JoinReceipt, Message, PersonFields,
 };
 
 use super::{from_millis, to_millis};
@@ -869,7 +869,11 @@ impl ContactRepository<'_> {
     /// person owns, becomes theirs; one a live person owns is refused with
     /// [`Error::AddressOwned`], naming who, so the caller can offer to move it
     /// (FR-015).
-    pub async fn add_address(&self, person: ContactId, address: &EmailAddress) -> Result<AddressId> {
+    pub async fn add_address(
+        &self,
+        person: ContactId,
+        address: &EmailAddress,
+    ) -> Result<AddressId> {
         sql::in_scope(self.connection, |transaction| async move {
             let (id, owner) = address_and_owner(&transaction, address).await?;
             match &owner {
@@ -1004,7 +1008,9 @@ impl ContactRepository<'_> {
             )
             .await?;
             let emptied = match previous {
-                Some(previous) => settle_after_losing_addresses(&transaction, previous, None).await?,
+                Some(previous) => {
+                    settle_after_losing_addresses(&transaction, previous, None).await?
+                }
                 None => None,
             };
             Ok(AddressMove {
@@ -1064,12 +1070,26 @@ async fn owner_of(connection: &Connection, address: AddressId) -> Result<Option<
 
 /// A person's editable fields, for a receipt or an inverse.
 async fn fields(connection: &Connection, person: ContactId) -> Result<PersonFields> {
-    type Row = (Option<String>, Option<String>, Option<String>, String, Option<i64>);
+    type Row = (
+        Option<String>,
+        Option<String>,
+        Option<String>,
+        String,
+        Option<i64>,
+    );
     let row: Option<Row> = sql::first(
         connection,
         "SELECT name, organization, note, source, preferred_address FROM contacts WHERE id = ?1",
         [person.get()],
-        |row| Ok((row.col(0)?, row.col(1)?, row.col(2)?, row.col(3)?, row.col(4)?)),
+        |row| {
+            Ok((
+                row.col(0)?,
+                row.col(1)?,
+                row.col(2)?,
+                row.col(3)?,
+                row.col(4)?,
+            ))
+        },
     )
     .await?;
     let Some((name, organization, note, source, preferred)) = row else {

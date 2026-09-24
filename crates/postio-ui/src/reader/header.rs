@@ -148,6 +148,30 @@ pub fn address_list(addresses: &[EmailAddress]) -> String {
         .join(", ")
 }
 
+/// `addresses` with each display name replaced by the one the user gave the
+/// address's owner (specs/005-contacts FR-032), looked up by normalised
+/// address -- never by the name, which is what a forger controls.
+pub fn with_user_names(
+    addresses: &[EmailAddress],
+    names: &std::collections::HashMap<String, String>,
+) -> Vec<EmailAddress> {
+    addresses
+        .iter()
+        .map(|address| match names.get(&address.address.to_lowercase()) {
+            Some(name) => EmailAddress::new(Some(name.as_str()), address.address.as_str()),
+            None => address.clone(),
+        })
+        .collect()
+}
+
+/// The sender exactly as the mail carried it, when the user's names changed
+/// what the header shows -- FR-032's other half: the substitute is a
+/// convenience, and the header's own words stay one look away.
+pub fn as_sent(shown: &[EmailAddress], raw: &[EmailAddress]) -> Option<String> {
+    let raw_line = address_list(raw);
+    (address_list(shown) != raw_line).then(|| format!("As sent: {raw_line}"))
+}
+
 /// The subject as the header shows it, or [`NO_SUBJECT`].
 pub fn subject_text(subject: Option<&str>) -> String {
     subject
@@ -365,6 +389,44 @@ pub fn actions(keymap: &Keymap) -> Vec<(ReaderAction, Option<String>)> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_named_persons_addresses_take_the_users_name_and_nothing_else_does() {
+        use super::{EmailAddress, with_user_names};
+        let names = std::collections::HashMap::from([(
+            "ada@work.example".to_owned(),
+            "Ada Lovelace".to_owned(),
+        )]);
+        let shown = with_user_names(
+            &[
+                EmailAddress::new(Some("A. L."), "Ada@Work.example"),
+                EmailAddress::new(Some("Ada Lovelace"), "not-ada@example.net"),
+            ],
+            &names,
+        );
+        assert_eq!(shown[0].name.as_deref(), Some("Ada Lovelace"));
+        assert_eq!(
+            shown[0].address, "Ada@Work.example",
+            "the address is untouched"
+        );
+        assert_eq!(
+            shown[1].name.as_deref(),
+            Some("Ada Lovelace"),
+            "a stranger keeps his own header, whatever it claims"
+        );
+    }
+
+    #[test]
+    fn the_header_as_sent_is_offered_only_when_it_differs() {
+        use super::{EmailAddress, as_sent};
+        let raw = [EmailAddress::new(Some("A. L."), "ada@work.example")];
+        let named = [EmailAddress::new(Some("Ada Lovelace"), "ada@work.example")];
+        assert_eq!(
+            as_sent(&named, &raw).as_deref(),
+            Some("As sent: A. L. <ada@work.example>")
+        );
+        assert_eq!(as_sent(&raw, &raw), None, "nothing was substituted");
+    }
+
     #[test]
     fn the_three_composing_verbs_act_on_the_latest_message() {
         for verb in [

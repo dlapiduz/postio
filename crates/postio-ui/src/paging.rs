@@ -112,6 +112,9 @@ pub enum Plan<'a> {
     /// The membership or the order moved: drop everything cached and ask
     /// again, keeping the scroll position.
     Reload,
+    /// Every resident row may read differently -- a person was named -- but
+    /// none moved: re-read the pages that are resident, and only those.
+    Repaint,
 }
 
 /// How many times one page may be re-asked for after a failed read.
@@ -217,6 +220,14 @@ impl Paging {
     /// reacted to all of it would repaint on every keystroke in the composer.
     pub fn plan<'a>(&self, event: &'a Event) -> Plan<'a> {
         let (reaction, messages): (Reaction, &[MessageId]) = match event {
+            Event::ContactsChanged { names_changed } => {
+                let showing = self.scope.is_some() || self.results.is_some();
+                return if *names_changed && showing {
+                    Plan::Repaint
+                } else {
+                    Plan::Ignore
+                };
+            }
             Event::NewMail {
                 account,
                 mailbox,
@@ -301,6 +312,29 @@ mod tests {
         let mut paging = Paging::default();
         paging.open(ListScope::Mailbox(INBOX));
         paging
+    }
+
+    #[test]
+    fn a_name_change_repaints_what_is_on_screen_and_nothing_else() {
+        // The user named a person: every resident row may carry the name,
+        // and none moved (specs/005-contacts FR-032, T052). A change that
+        // could not have touched a name costs the list nothing.
+        let names = Event::ContactsChanged {
+            names_changed: true,
+        };
+        let quiet = Event::ContactsChanged {
+            names_changed: false,
+        };
+        assert_eq!(inbox().plan(&names), Plan::Repaint);
+        assert_eq!(inbox().plan(&quiet), Plan::Ignore);
+        let mut results = Paging::default();
+        results.show_results(ids(1..4));
+        assert_eq!(results.plan(&names), Plan::Repaint, "search hits too");
+        assert_eq!(
+            Paging::default().plan(&names),
+            Plan::Ignore,
+            "a list showing nothing has nothing to repaint"
+        );
     }
 
     fn new_mail(mailbox: MailboxId, count: i64) -> Event {

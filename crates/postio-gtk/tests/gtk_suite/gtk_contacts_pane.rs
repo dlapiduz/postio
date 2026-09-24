@@ -185,3 +185,61 @@ pub fn a_draft_open_underneath_waits_for_contacts_to_close() {
 
     window.destroy();
 }
+
+pub fn a_refresh_asks_again_and_keeps_the_cursor_where_it_was() {
+    // The address book changed under the screen -- a join, a rename -- so
+    // the app asks it to read its view again. The person the user was on
+    // stays under the cursor: a refresh is not a new list.
+    if adw::init().is_err() || gdk::Display::default().is_none() {
+        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
+        return;
+    }
+    let display = gdk::Display::default().unwrap();
+    fonts::install().expect("the embedded fonts should install");
+    style::install(&display);
+
+    let window = Window::default();
+    window.present();
+    pump();
+    let pane = window.contacts();
+    let queries: Rc<RefCell<u32>> = Rc::default();
+    pane.connect_query({
+        let pane = pane.downgrade();
+        let queries = queries.clone();
+        move |_view, _filter| {
+            *queries.borrow_mut() += 1;
+            if let Some(pane) = pane.upgrade() {
+                pane.reset(3);
+            }
+        }
+    });
+    pane.connect_page({
+        let pane = pane.downgrade();
+        move |_view, generation, page| {
+            if let Some(pane) = pane.upgrade() {
+                pane.deliver(generation, page, people(), 3);
+            }
+        }
+    });
+    window.act(Command::OpenContacts);
+    pump();
+    // The list's own arrow keys walk it (contracts/commands.md); this is
+    // where they land.
+    pane.set_cursor(2);
+    pump();
+    assert_eq!(
+        pane.cursor_person().map(|row| row.name).as_deref(),
+        Some("Katherine Johnson")
+    );
+
+    pane.refresh();
+    pump();
+    assert_eq!(*queries.borrow(), 2, "asked again");
+    assert_eq!(
+        pane.cursor_person().map(|row| row.name).as_deref(),
+        Some("Katherine Johnson"),
+        "and the cursor stayed on her"
+    );
+
+    window.destroy();
+}

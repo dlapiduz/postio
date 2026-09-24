@@ -73,6 +73,9 @@ mod imp {
         /// The person the detail was last asked for, so a delivery that does
         /// not move the cursor does not ask again.
         pub asked: Cell<Option<Option<ContactId>>>,
+        /// Where the next reset puts the cursor, when a refresh asked it to
+        /// stay rather than start the list over.
+        pub keep: Cell<Option<u32>>,
     }
 
     #[glib::object_subclass]
@@ -477,10 +480,16 @@ impl ContactsPane {
         self.imp().asked.set(None);
         let generation = self.model().reset(total);
         self.show_counts(total);
+        let at = self
+            .imp()
+            .keep
+            .take()
+            .unwrap_or(0)
+            .min(total.saturating_sub(1));
         if total > 0
             && let Some(selection) = self.imp().selection.borrow().as_ref()
         {
-            selection.set_selected(0);
+            selection.set_selected(at);
         }
         self.cursor_moved();
         generation
@@ -610,6 +619,31 @@ impl ContactsPane {
                 self.redraw_rows();
             }
             _ => {}
+        }
+    }
+
+    /// Reads the view again, for an address book that changed under it,
+    /// keeping the cursor at the position it had.
+    pub fn refresh(&self) {
+        if !self.is_open() {
+            return;
+        }
+        let at = self
+            .imp()
+            .selection
+            .borrow()
+            .as_ref()
+            .map(|selection| selection.selected())
+            .filter(|at| *at != gtk::INVALID_LIST_POSITION);
+        self.imp().keep.set(at);
+        self.query_changed();
+    }
+
+    /// Puts the cursor on the row at `position`, as the arrow keys do.
+    #[doc(hidden)]
+    pub fn set_cursor(&self, position: u32) {
+        if let Some(selection) = self.imp().selection.borrow().as_ref() {
+            selection.set_selected(position);
         }
     }
 

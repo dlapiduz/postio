@@ -431,6 +431,28 @@ impl MessageHeader {
         self.subject.label().to_string()
     }
 
+    /// The sender exactly as the mail carried it, when the name shown is
+    /// the one the user gave (specs/005-contacts FR-032), or `None` when
+    /// they are the same. On the sender line's tooltip and in its accessible
+    /// description, so the header's own words are one look -- or one screen
+    /// reader query -- away.
+    pub fn set_as_sent(&self, as_sent: Option<&str>) {
+        self.sender.set_tooltip_text(as_sent);
+        match as_sent {
+            Some(text) => self
+                .sender
+                .update_property(&[gtk::accessible::Property::Description(text)]),
+            None => self
+                .sender
+                .reset_property(gtk::AccessibleProperty::Description),
+        }
+    }
+
+    /// The sender line's "as sent" text, for tests.
+    pub fn sender_as_sent(&self) -> Option<String> {
+        self.sender.tooltip_text().map(|text| text.to_string())
+    }
+
     /// The sender line as currently shown, for tests.
     pub fn sender_label(&self) -> String {
         self.sender.label().to_string()

@@ -9,8 +9,7 @@
 use chrono::{DateTime, TimeZone, Utc};
 
 use postio_model::{
-    Account, ContactGroup, ContactId, ContactSource, ContactState, EmailAddress, MailboxId,
-    Message,
+    Account, ContactGroup, ContactId, ContactSource, ContactState, EmailAddress, MailboxId, Message,
 };
 use postio_storage::Connection;
 use postio_storage::repository::{ContactGroupRepository, ContactRepository};
@@ -24,7 +23,12 @@ fn address(name: Option<&str>, email: &str) -> EmailAddress {
     EmailAddress::new(name, email)
 }
 
-async fn setup() -> (postio_storage::Store, postio_storage::Checkout, Account, MailboxId) {
+async fn setup() -> (
+    postio_storage::Store,
+    postio_storage::Checkout,
+    Account,
+    MailboxId,
+) {
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
     let (account, inbox) = test_support::account_with_inbox(&connection).await;
@@ -113,11 +117,21 @@ async fn a_join_keeps_every_address_sighting_group_and_note() {
     assert_eq!(addresses(&ada), ["ada@home.example", "ada@work.example"]);
     assert_eq!(ada.times_seen, 5, "both addresses' sightings, summed");
     assert_eq!(ada.written, 2, "written-to survives the join");
-    assert_eq!(ada.name.as_deref(), Some("Ada Lovelace"), "every join ends with a name");
+    assert_eq!(
+        ada.name.as_deref(),
+        Some("Ada Lovelace"),
+        "every join ends with a name"
+    );
     assert_eq!(ada.source, ContactSource::User, "a join is the user's act");
     assert_eq!(ada.note.as_deref(), Some("met at the conference"));
     assert_eq!(
-        groups.members(family).await.expect("members").iter().map(|c| c.id).collect::<Vec<_>>(),
+        groups
+            .members(family)
+            .await
+            .expect("members")
+            .iter()
+            .map(|c| c.id)
+            .collect::<Vec<_>>(),
         [work.id],
         "the survivor inherits the absorbed person's groups"
     );
@@ -148,15 +162,34 @@ async fn unjoining_puts_both_people_back_exactly() {
     let contacts = ContactRepository::new(&connection);
 
     let receipt = contacts
-        .join(work.id, &[home.id], "Ada Lovelace", Some("Analytical Engines"))
+        .join(
+            work.id,
+            &[home.id],
+            "Ada Lovelace",
+            Some("Analytical Engines"),
+        )
         .await
         .expect("join");
     contacts.unjoin(&receipt).await.expect("unjoin");
 
-    assert_eq!(get(&connection, work.id).await, before_work, "the survivor, as it was");
-    assert_eq!(get(&connection, home.id).await, before_home, "the absorbed, as it was");
     assert_eq!(
-        groups.members(family).await.expect("members").iter().map(|c| c.id).collect::<Vec<_>>(),
+        get(&connection, work.id).await,
+        before_work,
+        "the survivor, as it was"
+    );
+    assert_eq!(
+        get(&connection, home.id).await,
+        before_home,
+        "the absorbed, as it was"
+    );
+    assert_eq!(
+        groups
+            .members(family)
+            .await
+            .expect("members")
+            .iter()
+            .map(|c| c.id)
+            .collect::<Vec<_>>(),
         [home.id],
         "the membership the join added is taken back, and only that one"
     );
@@ -188,11 +221,18 @@ async fn detaching_an_address_gives_it_a_person_of_its_own_with_its_history() {
     assert_ne!(detached, work.id);
     assert_eq!(addresses(&split), ["ada@old.example"]);
     assert_eq!(split.times_seen, 4, "it carries its own sighting history");
-    assert_eq!(get(&connection, work.id).await.times_seen, 3, "and the other keeps its own");
+    assert_eq!(
+        get(&connection, work.id).await.times_seen,
+        3,
+        "and the other keeps its own"
+    );
 
     let last = get(&connection, work.id).await.addresses[0].id;
     let refused = contacts.detach_address(last).await;
-    assert!(refused.is_err(), "a person keeps at least one address -- delete instead");
+    assert!(
+        refused.is_err(),
+        "a person keeps at least one address -- delete instead"
+    );
 }
 
 #[tokio::test]
@@ -213,9 +253,17 @@ async fn releasing_an_added_address_leaves_it_nobodys() {
 
     assert_eq!(released.previous, Some(ada));
     assert_eq!(released.emptied, None, "ada still has her first address");
-    assert_eq!(get(&connection, ada).await, before, "ada, as before the add");
+    assert_eq!(
+        get(&connection, ada).await,
+        before,
+        "ada, as before the add"
+    );
     assert!(
-        contacts.by_address("ada@home.example").await.expect("lookup").is_none(),
+        contacts
+            .by_address("ada@home.example")
+            .await
+            .expect("lookup")
+            .is_none(),
         "nobody owns the released address"
     );
 }
@@ -236,7 +284,11 @@ async fn an_address_is_never_owned_twice() {
         .await;
     match refused {
         Err(postio_storage::Error::AddressOwned { owner, .. }) => {
-            assert_eq!(owner, grace.id.get(), "the refusal names who has it (FR-015)")
+            assert_eq!(
+                owner,
+                grace.id.get(),
+                "the refusal names who has it (FR-015)"
+            )
         }
         other => panic!("expected AddressOwned, got {other:?}"),
     }
@@ -245,7 +297,13 @@ async fn an_address_is_never_owned_twice() {
         .add_address(ada, &address(None, "ada@home.example"))
         .await
         .expect("an address nobody owns");
-    assert!(get(&connection, ada).await.addresses.iter().any(|a| a.id == new));
+    assert!(
+        get(&connection, ada)
+            .await
+            .addresses
+            .iter()
+            .any(|a| a.id == new)
+    );
 
     // "Move it": the owner lets go, and a person left with nothing is folded
     // away -- kept, so an undo has someone to give the address back to.
@@ -303,7 +361,10 @@ async fn the_preferred_address_is_one_of_the_persons_own() {
     let ada = contacts
         .create(
             Some("Ada"),
-            &[address(None, "ada@work.example"), address(None, "ada@home.example")],
+            &[
+                address(None, "ada@work.example"),
+                address(None, "ada@home.example"),
+            ],
         )
         .await
         .expect("ada");
@@ -319,7 +380,10 @@ async fn the_preferred_address_is_one_of_the_persons_own() {
         .expect("home")
         .id;
 
-    let previous = contacts.set_preferred(ada, home).await.expect("prefer home");
+    let previous = contacts
+        .set_preferred(ada, home)
+        .await
+        .expect("prefer home");
     assert_ne!(previous, home);
     assert_eq!(get(&connection, ada).await.preferred, home);
     assert_eq!(
