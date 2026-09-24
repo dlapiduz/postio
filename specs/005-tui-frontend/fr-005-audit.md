@@ -35,11 +35,12 @@ and changed none:
 
 The only other changes are their rows in each suite's `main.rs`.
 
-## Unit tests that moved with their code: identical
+## Unit tests that moved with their code
 
-Two desktop modules moved to the shared, toolkit-free layer (FR-004), and
-their tests moved with them. Each test's body at the merge base and at the
-branch head is byte-for-byte identical.
+Three desktop modules moved with their tests: two to the shared,
+toolkit-free layer (FR-004), and the notification decision to the host,
+which now chooses the one frontend that notifies (T022). Every body is
+byte-for-byte identical but the one noted below the table.
 
 | Tests | Were in | Now in |
 |---|---|---|
