@@ -74,11 +74,11 @@ use gtk::{gdk, gio, glib};
 use postio_body::Placement;
 use postio_core::{CommandId, Context, Keymap};
 use postio_model::address::{current_entry, format_list, parse_list};
+use postio_model::signature;
 use postio_model::{
     Account, AccountId, Attachment, Draft, DraftKind, EmailAddress, Identity, IdentityId, Message,
     MessageBody, Signature, SignatureId,
 };
-use postio_model::{reply, signature};
 
 use crate::shell::Pane;
 use crate::widgets::keyhint;
@@ -566,111 +566,16 @@ type AttachHandler = Box<dyn Fn(std::path::PathBuf, AttachReady)>;
 /// are the only commands this maps, and only when the composer is not
 /// already open — replying to a reply in progress is not a thing.
 fn reply_draft(id: CommandId, source: &Message, account: &Account) -> Option<Draft> {
-    match id {
-        CommandId::Reply => Some(reply::reply(source, account, quoted_body(source, false))),
-        CommandId::ReplyAll => Some(reply::reply_all(
-            source,
-            account,
-            quoted_body(source, false),
-        )),
-        CommandId::Forward => Some(reply::forward(source, account, quoted_body(source, true))),
-        _ => None,
-    }
-}
-
-/// The body a reply or forward starts from, done in the crate that has both
-/// halves.
-///
-/// Rich in both renderings: the HTML half is what the editor opens
-/// (`document_of` prefers it), and the text half keeps the `> ` convention
-/// every mail client expects.
-///
-/// A **reply** quotes what the reader showed (ADR 0033): the original's
-/// sanitised markup, through [`postio_body::quote_of`], so a table and a
-/// colour reach the quote instead of being narrowed away. The security
-/// property is unchanged and lives in that constructor — remote images
-/// blocked whatever the reader was allowed, and the reader's own permitted
-/// set rather than a second one.
-///
-/// A **forward** still goes through the parsed [`postio_body::Document`].
-/// It presents the whole message as the body of a new one rather than as a
-/// quotation inside a reply, so it is the *user's* content once sent, and
-/// `Block::Quoted` is specifically the thing that is not that. Bringing the
-/// two together is #1483.
-fn quoted_body(source: &Message, forward: bool) -> MessageBody {
-    let rich = if forward {
-        // The same carried content a reply gets (#1483). The asymmetry was
-        // never decided -- a forward flattened its content only because ADR
-        // 0033 happened to be about replies -- so forwarding a table-based
-        // newsletter reduced it to a column of text while replying to the
-        // same message kept it. What stays different is the presentation: a
-        // forward is not a quote and is not wrapped as one.
-        let carried = postio_body::quote_of(
-            source.body.html.as_deref(),
-            &forward_text(source),
-            QUOTE_SCOPE,
-        );
-        postio_body::forwarded(&carried, &reply::forward_header(source))
-    } else {
-        // The text half still goes through `source_document` when there is
-        // no markup, because that is where `format=flowed` is unwrapped
-        // (#456): handing `quote_of` the raw `text/plain` would quote a
-        // sender's soft wrap back at them as line breaks they never typed.
-        // With markup present the text part is the sender's own alternative
-        // and is taken as written.
-        let text = match source.body.html {
-            Some(_) => source.body.text.clone().unwrap_or_default(),
-            None => source_document(source).to_text(),
-        };
-        let quoted = postio_body::quote_of(source.body.html.as_deref(), &text, QUOTE_SCOPE);
-        postio_body::quoted_reply(&quoted, &reply::attribution(source))
+    let kind = match id {
+        CommandId::Reply => ReplyKind::Reply,
+        CommandId::ReplyAll => ReplyKind::ReplyAll,
+        CommandId::Forward => ReplyKind::Forward,
+        _ => return None,
     };
-    let (text, html) = postio_body::render(&rich);
-    MessageBody {
-        text: Some(text),
-        html: Some(html),
-    }
+    Some(postio_body::replying::reply_draft(kind, source, account))
 }
 
-/// The scope a reply's quoted styles are rewritten under: the parser's own
-/// word, so a round trip through the editor does not renumber anything.
-use postio_body::parse::QUOTE_SCOPE;
-
-/// The plain half a forward carries.
-///
-/// The same rule a reply's uses: the sender's own text alternative when there
-/// is one, and otherwise the flowed-aware narrowing of what they sent, so a
-/// `format=flowed` message is not quoted back with breaks nobody typed
-/// (#456).
-fn forward_text(source: &Message) -> String {
-    match source.body.html {
-        Some(_) => source.body.text.clone().unwrap_or_default(),
-        None => source_document(source).to_text(),
-    }
-}
-
-/// The document `source`'s body means — the markup the reader showed when
-/// there is markup, the plain text otherwise.
-///
-/// The plain-text fallback goes through [`Document::from_flowed_text`]
-/// rather than [`Document::from_text`] exactly when `source` itself
-/// declared `format=flowed` (#456): unwrapping unconditionally would take
-/// an ordinary sender's own short lines as soft breaks and join them, and
-/// never unwrapping would show a `format=flowed` sender's wrapped sentence
-/// — including this app's own past sends — as line breaks nobody typed.
-///
-/// [`Document::from_flowed_text`]: postio_body::Document::from_flowed_text
-/// [`Document::from_text`]: postio_body::Document::from_text
-fn source_document(source: &Message) -> postio_body::Document {
-    match (&source.body.html, &source.body.text) {
-        (Some(html), _) => postio_body::parse(html),
-        (None, Some(text)) if source.text_is_flowed => {
-            postio_body::Document::from_flowed_text(text)
-        }
-        (None, Some(text)) => postio_body::Document::from_text(text),
-        (None, None) => postio_body::Document::new(),
-    }
-}
+use postio_body::replying::{ReplyKind, source_document};
 
 mod imp {
     use super::*;
