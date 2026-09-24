@@ -202,7 +202,7 @@ pub fn reply_forward_and_reply_all_act_on_the_message_under_the_cursor() {
         );
         press(&window, "e", gdk::ModifierType::empty());
         assert!(
-            composer.is_open(),
+            crate::settle_until(async || composer.is_open()).await,
             "`e` answered nothing, though the pane was showing a message"
         );
         assert_eq!(
@@ -237,7 +237,10 @@ pub fn reply_forward_and_reply_all_act_on_the_message_under_the_cursor() {
              replying to it"
         );
         press(&window, "e", gdk::ModifierType::empty());
-        assert!(composer.is_open(), "`e` after Return opened nothing");
+        assert!(
+            crate::settle_until(async || composer.is_open()).await,
+            "`e` after Return opened nothing"
+        );
         assert_eq!(
             composer.draft().in_reply_to,
             Some(activated),
@@ -262,7 +265,7 @@ pub fn reply_forward_and_reply_all_act_on_the_message_under_the_cursor() {
 
         press(&window, "e", gdk::ModifierType::empty());
         assert!(
-            composer.is_open(),
+            crate::settle_until(async || composer.is_open()).await,
             "`e` on the message in the reading pane did nothing. The composer's \
              reply source is fed by activation — Enter or a double click — and \
              the pane is fed by the cursor, so replying while reading normally \
@@ -302,7 +305,10 @@ pub fn reply_forward_and_reply_all_act_on_the_message_under_the_cursor() {
         )
         .await;
         press(&window, "E", gdk::ModifierType::SHIFT_MASK);
-        assert!(composer.is_open(), "`E` did not open a reply-all (#325)");
+        assert!(
+            crate::settle_until(async || composer.is_open()).await,
+            "`E` did not open a reply-all (#325)"
+        );
         let draft = composer.draft();
         assert_eq!(draft.kind, DraftKind::ReplyAll);
         assert_eq!(draft.in_reply_to, Some(replied_all_to));
@@ -331,7 +337,10 @@ pub fn reply_forward_and_reply_all_act_on_the_message_under_the_cursor() {
         )
         .await;
         press(&window, "f", gdk::ModifierType::empty());
-        assert!(composer.is_open(), "`f` did not open a forward (#325)");
+        assert!(
+            crate::settle_until(async || composer.is_open()).await,
+            "`f` did not open a forward (#325)"
+        );
         let draft = composer.draft();
         assert_eq!(draft.kind, DraftKind::Forward);
         assert!(
