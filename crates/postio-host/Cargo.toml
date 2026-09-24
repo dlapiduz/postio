@@ -33,6 +33,7 @@ tokio = { workspace = true, features = ["io-util", "macros", "net", "rt", "rt-mu
 tracing = { workspace = true }
 
 [dev-dependencies]
+async-trait = { workspace = true }
 postio-body.workspace = true
 tracing-subscriber = { workspace = true, features = ["fmt", "env-filter"] }
 postio-index.workspace = true

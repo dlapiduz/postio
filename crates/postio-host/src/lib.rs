@@ -53,6 +53,9 @@ pub struct Host {
 
 struct Inner {
     wiring: Wiring,
+    /// What each address's last probe offered for JMAP, for the submission
+    /// that follows it.
+    offers: Mutex<HashMap<String, Option<postio_account::discovery::JmapOffer>>>,
     hub: EventHub,
     clients: Mutex<HashMap<ClientId, Entry>>,
     next_client: AtomicU64,
@@ -162,6 +165,7 @@ impl Host {
             next_client: AtomicU64::new(1),
             queue,
             connected: tokio::sync::watch::Sender::new(0),
+            offers: Mutex::new(HashMap::new()),
         });
         let pump = Arc::clone(&inner);
         bridge.handle().spawn(async move {
@@ -464,6 +468,11 @@ impl Inner {
                 Resp::Attached(stored)
             }
             Req::Search(search) => Resp::Found(self.search(search).await),
+            Req::Discover(address) => Resp::Onboarding(Box::new(self.discover(&address).await)),
+            Req::AddAccount(submission) => match self.add_account(*submission).await {
+                Ok(()) => Resp::Done,
+                Err(sentence) => Resp::Failed(postio_model::listing::StoreError::new(sentence)),
+            },
             Req::Diagnose(report) => {
                 let file = self
                     .wiring
@@ -549,6 +558,92 @@ impl Inner {
                 .await
                 .map_or_else(Resp::Failed, Resp::DraftCounts),
         }
+    }
+
+    /// What discovery finds for `address`, as the first-run screen shows it:
+    /// the desktop's probe, options and reading of it
+    /// (`postio_session::onboarding`). What the probe offered for JMAP is
+    /// kept for the submission that follows.
+    async fn discover(&self, address: &str) -> postio_ui::onboarding::Status {
+        let probe = postio_account::discovery::Probe::with_options(
+            self.wiring.discovery.clone(),
+            postio_session::onboarding::probe_options(),
+        );
+        let cancel = postio_account::discovery::CancelToken::new();
+        match probe.run(address, &cancel).await {
+            Ok(report) => {
+                let jmap = report.settings().and_then(|settings| {
+                    (settings.backends.first().map(String::as_str) == Some("jmap"))
+                        .then(|| settings.jmap.clone())
+                        .flatten()
+                });
+                self.offers
+                    .lock()
+                    .expect("never poisoned")
+                    .insert(address.to_ascii_lowercase(), jmap);
+                postio_session::onboarding::status_for(&report)
+            }
+            Err(error) => {
+                tracing::info!(%error, "autoconfig found nothing");
+                postio_ui::onboarding::Status::Manual { suggestion: None }
+            }
+        }
+    }
+
+    /// Prove `submission`'s credentials, save the account, and start its
+    /// sync: the desktop's order, so a refused sign-in writes nothing. The
+    /// error is the first-run screen's sentence.
+    async fn add_account(
+        &self,
+        submission: postio_ui::onboarding::Submission,
+    ) -> Result<(), String> {
+        let jmap = self
+            .offers
+            .lock()
+            .expect("never poisoned")
+            .get(&submission.address.to_ascii_lowercase())
+            .cloned()
+            .flatten();
+        let backend = match &self.wiring.mail {
+            // Handed a mail server (a test's), the proof is signing in to it.
+            Some(mail) => postio_account::backend::MailBackend::connect(mail.backend.as_ref())
+                .await
+                .map(|_| postio_model::account::Backend::Imap)
+                .map_err(|error| postio_session::onboarding::explain(&error))?,
+            None => postio_session::onboarding::prove(&submission, jmap.as_ref()).await?,
+        };
+        postio_session::onboarding::persist(
+            &self.wiring.database,
+            self.wiring.secrets.as_ref(),
+            &submission,
+            backend,
+        )
+        .await?;
+        // Its engine, and only its: the others are already running.
+        let connection = self
+            .wiring
+            .database
+            .connect()
+            .await
+            .map_err(|error| format!("Postio could not read its local store: {error}"))?;
+        let account = postio_storage::repository::AccountRepository::new(&connection)
+            .list()
+            .await
+            .map_err(|error| format!("Postio could not read its local store: {error}"))?
+            .into_iter()
+            .find(|account| {
+                account
+                    .address
+                    .address
+                    .eq_ignore_ascii_case(&submission.address)
+            });
+        if let Some(account) = account
+            && let Some(engine) = postio_session::engine::start(&account, &self.wiring)
+        {
+            postio_runtime::retain(engine.clone());
+            self.wiring.engine.fill(engine);
+        }
+        Ok(())
     }
 
     /// A search, as the desktop's bar runs it: every folder but drafts,

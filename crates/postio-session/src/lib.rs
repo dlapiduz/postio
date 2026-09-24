@@ -355,6 +355,10 @@ pub struct Wiring {
     /// rather than the network, and it can only do that if the transport is
     /// handed in rather than built inside `engine::start`.
     pub mail: Option<MailOverride>,
+    /// Where a new account's servers are looked up: the network, in the
+    /// application. A part, like `mail`, so a test can answer from the
+    /// provider table without dialing.
+    pub discovery: Arc<dyn postio_account::discovery::DiscoveryTransport>,
 }
 
 /// A mail transport handed to the engine instead of the account's own.
@@ -396,6 +400,7 @@ impl Wiring {
             watch: postio_sync::WatchPolicy::default(),
             storage_ceiling: None,
             mail: None,
+            discovery: Arc::new(postio_account::discovery::PimalayaTransport::new()),
         }
     }
 
@@ -449,6 +454,15 @@ impl Wiring {
     /// for every account rather than the servers their settings name.
     pub fn with_mail(mut self, mail: MailOverride) -> Self {
         self.mail = Some(mail);
+        self
+    }
+
+    /// The same wiring, looking up new accounts' servers through `discovery`.
+    pub fn with_discovery(
+        mut self,
+        discovery: Arc<dyn postio_account::discovery::DiscoveryTransport>,
+    ) -> Self {
+        self.discovery = discovery;
         self
     }
 }

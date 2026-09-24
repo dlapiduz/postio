@@ -23,6 +23,7 @@ postio-core = { version = "0.3.0", path = "../postio-core" }
 # what a result set turned out to be; neither is a toolkit's business (#1157).
 postio-search = { version = "0.3.0", path = "../postio-search" }
 postio-model = { version = "0.3.0", path = "../postio-model" }
+serde = { workspace = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }

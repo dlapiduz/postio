@@ -197,6 +197,11 @@ pub enum Req {
     Search(Search),
     /// One of `postio-diag`'s reports, by name.
     Diagnose(String),
+    /// Look up the servers for a new account's address.
+    Discover(String),
+    /// Prove a new account's credentials and save it (the password goes to
+    /// the keyring and nowhere else).
+    AddAccount(Box<postio_ui::onboarding::Submission>),
     /// Store pasted image bytes as an inline part.
     InlineImage {
         /// The image.
@@ -257,6 +262,8 @@ pub enum Resp {
     Found(Option<Found>),
     /// A report's text.
     Diagnosis(String),
+    /// What discovery found, as the first-run screen shows it.
+    Onboarding(Box<postio_ui::onboarding::Status>),
     /// The read could not be answered; the sentence is for the user.
     Failed(StoreError),
 }

@@ -36,7 +36,7 @@ pub fn step_of(status: &Status) -> &'static str {
 /// genuine article. So what this screen can offer instead is an honest
 /// account of what is happening while the browser is open, which is what
 /// this carries (ADR 0006 Q3, `Design/screens/23`).
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct BrowserSignIn {
     /// Whose consent screen the browser was sent to — `Microsoft`, `Google`.
     pub provider: String,
@@ -74,7 +74,7 @@ pub fn plain_scope(scope: &str) -> String {
 }
 
 /// One server, as the screen shows it.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct Server {
     /// Hostname.
     pub host: String,
@@ -99,7 +99,7 @@ impl Server {
 }
 
 /// What Postio found, or what the user typed in instead.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct Settings {
     /// Where mail is read from.
     pub imap: Server,
@@ -124,7 +124,7 @@ pub struct Settings {
 }
 
 /// Everything the composition root needs to create the account.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct Submission {
     /// The address mail arrives at.
     pub address: String,
@@ -147,7 +147,7 @@ pub struct Submission {
 /// sign-in flow presents to the provider. Postio ships no client of its
 /// own until #195 clears review, so these come from the user's provider
 /// console.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct OAuthClientSubmission {
     /// The client id, public by definition on a native app.
     pub client_id: String,
@@ -157,7 +157,7 @@ pub struct OAuthClientSubmission {
 }
 
 /// Where the screen is in the one step it has.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum Status {
     /// Nothing typed yet.
     #[default]
@@ -238,7 +238,7 @@ impl Status {
 /// (discovery does not report message counts). `LastYear`'s count matches
 /// that field's own default, so picking it changes nothing a fresh install
 /// would not already do.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
 pub enum SyncWindow {
     /// Roughly a month of ordinary mail.
     LastMonth,
@@ -324,5 +324,34 @@ pub fn looks_like_an_address(address: &str) -> bool {
                 && !domain.ends_with('.')
         }
         None => false,
+    }
+}
+
+/// Without the password: a submission crosses to the daemon over its
+/// socket, and anything that prints one must not print that.
+impl std::fmt::Debug for Submission {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("Submission")
+            .field("address", &self.address)
+            .field("name", &self.name)
+            .field("password", &"<withheld>")
+            .field("settings", &self.settings)
+            .field("oauth_client", &self.oauth_client)
+            .finish()
+    }
+}
+
+/// Without the client secret, for the same reason.
+impl std::fmt::Debug for OAuthClientSubmission {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("OAuthClientSubmission")
+            .field("client_id", &self.client_id)
+            .field(
+                "client_secret",
+                &self.client_secret.as_ref().map(|_| "<withheld>"),
+            )
+            .finish()
     }
 }

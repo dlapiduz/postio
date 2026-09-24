@@ -92,6 +92,8 @@ impl Req {
             Req::InlineImage { .. } => "InlineImage",
             Req::Search(_) => "Search",
             Req::Diagnose(_) => "Diagnose",
+            Req::Discover(_) => "Discover",
+            Req::AddAccount(_) => "AddAccount",
         }
     }
 }
@@ -414,6 +416,35 @@ impl Client {
             Resp::Diagnosis(text) => Some(text),
             _ => None,
         })
+        .await
+    }
+
+    /// What discovery finds for a new account's `address`.
+    pub async fn discover(
+        &self,
+        address: String,
+    ) -> Result<postio_ui::onboarding::Status, StoreError> {
+        self.read(Req::Discover(address), "discovery", |answer| match answer {
+            Resp::Onboarding(status) => Some(*status),
+            _ => None,
+        })
+        .await
+    }
+
+    /// Prove and save a new account. The error is the sentence the first-run
+    /// screen shows.
+    pub async fn add_account(
+        &self,
+        submission: postio_ui::onboarding::Submission,
+    ) -> Result<(), StoreError> {
+        self.read(
+            Req::AddAccount(Box::new(submission)),
+            "a new account",
+            |answer| match answer {
+                Resp::Done => Some(()),
+                _ => None,
+            },
+        )
         .await
     }
 
