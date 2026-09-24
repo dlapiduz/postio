@@ -47,9 +47,16 @@ impl std::error::Error for FontError {}
 /// Unpack the embedded faces and register them with the default font map.
 ///
 /// Returns the paths that were handed to Pango, in bundle order.
+///
+/// After `gtk::init`: the map is the one GTK's own widgets draw with, read
+/// through a throwaway label rather than through `pangocairo`, which this
+/// crate depended on for this one call.
 pub fn install() -> Result<Vec<PathBuf>, FontError> {
-    let font_map = pangocairo::FontMap::default();
-    install_into(font_map.upcast_ref::<pango::FontMap>())
+    let font_map = gtk::prelude::WidgetExt::pango_context(&gtk::Label::new(None)).font_map();
+    match font_map {
+        Some(font_map) => install_into(&font_map),
+        None => Ok(Vec::new()),
+    }
 }
 
 /// As [`install`], for a font map you own — used by the tests.

@@ -211,8 +211,7 @@ impl WriteGate {
             // The future is created and *enabled* before the state is read,
             // which is what closes the lost-wake-up window: a permit released
             // between the read and the await still counts.
-            let waiting = self.inner.free.notified();
-            tokio::pin!(waiting);
+            let mut waiting = std::pin::pin!(self.inner.free.notified());
             waiting.as_mut().enable();
 
             {
