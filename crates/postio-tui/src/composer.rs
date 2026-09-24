@@ -12,7 +12,7 @@
 //! style sends no HTML at all.
 
 use crossterm::event::{KeyCode, KeyEvent};
-use postio_body::markdown;
+use postio_body::{Block, Document, Inline, Presentation, markdown};
 use postio_model::{Draft, MessageBody};
 use postio_ui::terminal::SafeText;
 use ratatui_textarea::TextArea;
@@ -22,6 +22,8 @@ use tui_input::backend::crossterm::EventHandler;
 /// Which part of the composer the keyboard is in.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Field {
+    /// Which of the account's addresses it goes from, when it has several.
+    From,
     /// `To`.
     To,
     /// `Cc`, once shown.
@@ -51,6 +53,12 @@ pub struct Composer {
     /// Whether `Cc` and `Bcc` are shown. Shown from the start when the draft
     /// already has some, so reopening one never hides a recipient.
     extra_recipients: bool,
+    /// A reply's quote or a forward's message, sent after what is typed.
+    quote: Vec<Block>,
+    /// The addresses the account can send as.
+    identities: Vec<postio_model::Identity>,
+    /// Which of them this goes from.
+    identity: usize,
 }
 
 impl std::fmt::Debug for Composer {
@@ -70,13 +78,27 @@ impl Composer {
     /// and otherwise from its HTML, translated (data-model.md,
     /// `drafts.body_markdown`), and otherwise from its text.
     pub fn new(generation: u64, draft: Draft) -> Self {
-        let markdown = match (&draft.body_markdown, &draft.body.html, &draft.body.text) {
+        // A reply's quote -- and a forward's message -- is kept whole and
+        // apart from what is typed (data-model.md, Composer): it is somebody
+        // else's HTML, carried as the desktop carries it (ADR 0033), and
+        // Markdown would narrow it. Everything from the first quote on is it.
+        let document = draft.body.html.as_deref().map(postio_body::parse);
+        let (head, quote) = match document {
+            Some(document) => {
+                let split = document
+                    .blocks
+                    .iter()
+                    .position(|block| matches!(block, Block::Quoted(_)))
+                    .unwrap_or(document.blocks.len());
+                let mut blocks = document.blocks;
+                let quote = blocks.split_off(split);
+                (Some(Document { blocks }), quote)
+            }
+            None => (None, Vec::new()),
+        };
+        let markdown = match (&draft.body_markdown, head, &draft.body.text) {
             (Some(markdown), _, _) => markdown.clone(),
-            // Trimmed: a document's Markdown ends its last block with a line
-            // break, which the editor would show as an empty last line.
-            (None, Some(html), _) => markdown::from_document(&postio_body::parse(html))
-                .trim_end_matches('\n')
-                .to_owned(),
+            (None, Some(head), _) => markdown_of(head),
             (None, None, Some(text)) => text.clone(),
             (None, None, None) => String::new(),
         };
@@ -112,8 +134,40 @@ impl Composer {
             },
             field,
             extra_recipients,
+            quote,
+            identities: Vec::new(),
+            identity: 0,
             draft,
         }
+    }
+
+    /// The same composer, sending as one of `identities`: the one the draft
+    /// names (a reply answers as the address it was sent to), else the
+    /// account's default. With more than one, a new message starts by
+    /// showing which.
+    pub fn with_identities(mut self, identities: Vec<postio_model::Identity>) -> Self {
+        self.identity = self
+            .draft
+            .identity_id
+            .and_then(|wanted| identities.iter().position(|identity| identity.id == wanted))
+            .or_else(|| identities.iter().position(|identity| identity.is_default))
+            .unwrap_or(0);
+        self.identities = identities;
+        if self.shows_identities() && self.field == Field::To {
+            self.field = Field::From;
+        }
+        self
+    }
+
+    /// Whether there is a choice of address to send as.
+    pub fn shows_identities(&self) -> bool {
+        self.identities.len() > 1
+    }
+
+    /// How many lines the kept quote is, for its folded summary; none when
+    /// there is no quote.
+    pub fn quote_lines(&self) -> usize {
+        quote_text(&self.quote).lines().count()
     }
 
     /// Which composition this is.
@@ -155,9 +209,22 @@ impl Composer {
                 self.field = self.step(1);
                 return true;
             }
+            // In From there is nothing to type: the arrows and space choose.
+            KeyCode::Left | KeyCode::Up if self.field == Field::From => {
+                self.identity = self
+                    .identity
+                    .checked_sub(1)
+                    .unwrap_or(self.identities.len().saturating_sub(1));
+                return true;
+            }
+            KeyCode::Right | KeyCode::Down | KeyCode::Char(' ') if self.field == Field::From => {
+                self.identity = (self.identity + 1) % self.identities.len().max(1);
+                return true;
+            }
             _ => {}
         }
         match self.field {
+            Field::From => false,
             Field::Body => self.body.input(key),
             field => {
                 let event = crossterm::event::Event::Key(key);
@@ -171,17 +238,15 @@ impl Composer {
     /// The field `by` steps from the one the keyboard is in, over the
     /// fields that are shown, wrapping.
     fn step(&self, by: isize) -> Field {
-        let shown: &[Field] = if self.extra_recipients {
-            &[
-                Field::To,
-                Field::Cc,
-                Field::Bcc,
-                Field::Subject,
-                Field::Body,
-            ]
-        } else {
-            &[Field::To, Field::Subject, Field::Body]
-        };
+        let mut shown = Vec::with_capacity(6);
+        if self.shows_identities() {
+            shown.push(Field::From);
+        }
+        shown.push(Field::To);
+        if self.extra_recipients {
+            shown.extend([Field::Cc, Field::Bcc]);
+        }
+        shown.extend([Field::Subject, Field::Body]);
         let at = shown
             .iter()
             .position(|field| *field == self.field)
@@ -195,7 +260,7 @@ impl Composer {
             Field::Cc => Some(&mut self.cc),
             Field::Bcc => Some(&mut self.bcc),
             Field::Subject => Some(&mut self.subject),
-            Field::Body => None,
+            Field::From | Field::Body => None,
         }
     }
 
@@ -235,6 +300,10 @@ impl Composer {
             Field::Cc => self.cc.value(),
             Field::Bcc => self.bcc.value(),
             Field::Subject => self.subject.value(),
+            Field::From => self
+                .identities
+                .get(self.identity)
+                .map_or("", |identity| identity.address.address.as_str()),
             Field::Body => "",
         }
     }
@@ -246,7 +315,7 @@ impl Composer {
             Field::Cc => self.cc.visual_cursor(),
             Field::Bcc => self.bcc.visual_cursor(),
             Field::Subject => self.subject.visual_cursor(),
-            Field::Body => 0,
+            Field::From | Field::Body => 0,
         }
     }
 
@@ -262,28 +331,98 @@ impl Composer {
         draft.cc = postio_model::address::parse_list(self.cc.value());
         draft.bcc = postio_model::address::parse_list(self.bcc.value());
         draft.subject = self.subject.value().to_owned();
+        if let Some(identity) = self.identities.get(self.identity) {
+            draft.identity_id = Some(identity.id);
+        }
         let markdown = self.markdown();
-        draft.body = body_of(&markdown);
+        draft.body = body_of(&markdown, &self.quote);
         draft.body_markdown = Some(markdown);
         draft
     }
 }
 
-/// What a body of Markdown sends: the Markdown as its text part (FR-021),
-/// and its rendering as the HTML part when there is anything to style.
-pub fn body_of(markdown: &str) -> MessageBody {
-    if markdown.trim().is_empty() {
+/// What a body of Markdown, followed by `quote`, sends: the Markdown and
+/// then the quote's text as the text part (FR-021), and the rendering of
+/// both as the HTML part when there is anything to style.
+pub fn body_of(markdown: &str, quote: &[Block]) -> MessageBody {
+    if markdown.trim().is_empty() && quote.is_empty() {
         return MessageBody::default();
     }
-    let document = markdown::to_document(markdown);
+    let mut document = markdown::to_document(markdown);
+    document.blocks.extend(quote.iter().cloned());
+    let quoted = quote_text(quote);
+    let text = match (markdown.trim().is_empty(), quoted.is_empty()) {
+        (_, true) => markdown.to_owned(),
+        (true, false) => quoted,
+        (false, false) => format!("{}\n\n{quoted}", markdown.trim_end()),
+    };
     MessageBody {
-        text: Some(markdown.to_owned()),
+        text: Some(text),
         html: (!document.is_plain_text()).then(|| postio_body::render(&document).1),
     }
 }
 
+/// The text half of a kept quote: a reply's with `> ` before every line, as
+/// every mail client expects; a forward's as it is, since it is not a
+/// quotation but the message itself.
+fn quote_text(quote: &[Block]) -> String {
+    let mut out = Vec::new();
+    for block in quote {
+        match block {
+            Block::Quoted(quoted) if quoted.presentation() == Presentation::Quote => {
+                out.push(
+                    quoted
+                        .text()
+                        .lines()
+                        .map(|line| {
+                            if line.is_empty() {
+                                ">".to_owned()
+                            } else {
+                                format!("> {line}")
+                            }
+                        })
+                        .collect::<Vec<_>>()
+                        .join("\n"),
+                );
+            }
+            Block::Quoted(quoted) => out.push(quoted.text().to_owned()),
+            other => out.push(
+                Document {
+                    blocks: vec![other.clone()],
+                }
+                .to_text(),
+            ),
+        }
+    }
+    out.join("\n\n")
+}
+
+/// The Markdown for what comes before a quote.
+///
+/// A reply opens with an empty paragraph for the caret above the
+/// attribution; here that is an empty first line, so what is typed goes
+/// above the attribution rather than into it.
+fn markdown_of(head: Document) -> String {
+    let caret = matches!(
+        head.blocks.first(),
+        Some(Block::Paragraph(inlines)) if inlines.as_slice() == [Inline::Break]
+    );
+    let rest = Document {
+        blocks: head.blocks.into_iter().skip(usize::from(caret)).collect(),
+    };
+    // Trimmed: a document's Markdown ends its last block with a line break,
+    // which the editor would show as an empty last line.
+    let markdown = markdown::from_document(&rest);
+    let markdown = markdown.trim_end_matches('\n');
+    if caret {
+        format!("\n\n{markdown}")
+    } else {
+        markdown.to_owned()
+    }
+}
+
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use crossterm::event::{KeyEventKind, KeyEventState, KeyModifiers};
     use postio_model::{AccountId, EmailAddress};
 
@@ -358,7 +497,7 @@ mod tests {
     #[test]
     fn plain_words_send_no_html() {
         // US3 scenario 3.
-        let body = body_of("Just words.\n\nTwo paragraphs of them.");
+        let body = body_of("Just words.\n\nTwo paragraphs of them.", &[]);
         assert!(body.html.is_none(), "{:?}", body.html);
         assert_eq!(
             body.text.as_deref(),
@@ -368,7 +507,7 @@ mod tests {
 
     #[test]
     fn an_empty_body_sends_nothing() {
-        assert_eq!(body_of(""), MessageBody::default());
+        assert_eq!(body_of("", &[]), MessageBody::default());
     }
 
     #[test]
@@ -426,6 +565,121 @@ mod tests {
             "{markdown:?}"
         );
         assert!(markdown.starts_with("one\ntwo"), "{markdown:?}");
+    }
+
+    /// A message from Ada saying "Hello **there**", and the account it came to.
+    pub(crate) fn a_message_and_its_account() -> (postio_model::Message, postio_model::Account) {
+        let mut account = postio_model::Account::new(
+            "grace",
+            EmailAddress::new(Some("Grace"), "grace@example.net"),
+        );
+        account.id = AccountId::new(1);
+        let mut message = postio_model::Message::new(
+            account.id,
+            postio_model::MailboxId::new(1),
+            chrono::Utc::now(),
+        );
+        message.from = vec![EmailAddress::new(Some("Ada"), "ada@example.com")];
+        message.to = vec![EmailAddress::new(Some("Grace"), "grace@example.net")];
+        message.subject = Some("Tide gate".to_owned());
+        message.body.text = Some("Hello there".to_owned());
+        message.body.html = Some("<p>Hello <b>there</b></p>".to_owned());
+        (message, account)
+    }
+
+    fn a_reply() -> Draft {
+        let (message, account) = a_message_and_its_account();
+        postio_body::replying::reply_draft(
+            postio_body::replying::ReplyKind::Reply,
+            &message,
+            &account,
+        )
+    }
+
+    #[test]
+    fn a_reply_keeps_the_quote_apart_from_what_is_typed_and_sends_it() {
+        let mut composer = Composer::new(1, a_reply());
+        assert_eq!(
+            composer.field(),
+            Field::Body,
+            "a reply is already addressed"
+        );
+        assert!(
+            !composer.markdown().contains("Hello"),
+            "the quote is not in the editor: {:?}",
+            composer.markdown()
+        );
+        assert!(composer.quote_lines() > 0, "but it is kept");
+
+        composer.insert("Thanks!");
+        let draft = composer.draft();
+        let html = draft.body.html.expect("a quote is HTML");
+        assert!(
+            html.contains("<blockquote") && html.contains("there"),
+            "{html}"
+        );
+        let text = draft.body.text.expect("a text part");
+        assert!(text.starts_with("Thanks!"), "{text:?}");
+        assert!(text.contains("> Hello there"), "{text:?}");
+        assert_eq!(draft.to[0].address, "ada@example.com");
+        assert_eq!(draft.subject, "Re: Tide gate");
+    }
+
+    #[test]
+    fn a_reply_written_here_reopens_with_its_quote() {
+        let mut composer = Composer::new(1, a_reply());
+        composer.insert("Thanks!");
+        let saved = composer.draft();
+
+        let reopened = Composer::new(2, saved.clone());
+        assert_eq!(reopened.markdown(), composer.markdown());
+        assert_eq!(reopened.draft().body, saved.body);
+    }
+
+    fn identity(id: i64, address: &str, default: bool) -> postio_model::Identity {
+        let mut identity = postio_model::Identity::new(
+            AccountId::new(1),
+            EmailAddress::new(None::<String>, address),
+        );
+        identity.id = postio_model::ids::IdentityId::new(id);
+        identity.is_default = default;
+        identity
+    }
+
+    #[test]
+    fn an_account_with_several_addresses_asks_which_one_to_send_as() {
+        let mut composer = fresh().with_identities(vec![
+            identity(1, "grace@example.net", true),
+            identity(2, "gh@example.org", false),
+        ]);
+        assert_eq!(composer.field(), Field::From);
+        assert_eq!(composer.value(Field::From), "grace@example.net");
+        composer.type_key(key(KeyCode::Right, KeyModifiers::NONE));
+        assert_eq!(composer.value(Field::From), "gh@example.org");
+        assert_eq!(
+            composer.draft().identity_id,
+            Some(postio_model::ids::IdentityId::new(2))
+        );
+        tab(&mut composer);
+        assert_eq!(composer.field(), Field::To);
+    }
+
+    #[test]
+    fn one_address_needs_no_asking() {
+        let composer = fresh().with_identities(vec![identity(1, "grace@example.net", true)]);
+        assert_eq!(composer.field(), Field::To);
+        assert!(!composer.shows_identities());
+    }
+
+    #[test]
+    fn a_reply_keeps_the_identity_it_was_answered_as() {
+        let mut draft = Draft::new(AccountId::new(1));
+        draft.identity_id = Some(postio_model::ids::IdentityId::new(2));
+        let composer = Composer::new(1, draft).with_identities(vec![
+            identity(1, "grace@example.net", true),
+            identity(2, "gh@example.org", false),
+        ]);
+        assert_eq!(composer.value(Field::From), "gh@example.org");
     }
 
     #[test]

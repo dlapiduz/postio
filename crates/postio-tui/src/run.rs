@@ -266,6 +266,19 @@ fn perform(
         match effect {
             Effect::Quit => return Ok(true),
             Effect::Redraw => redraw = true,
+            Effect::ReplySource { kind, message } => {
+                let client = client.clone();
+                let inputs = inputs.clone();
+                tokio::spawn(async move {
+                    let found = client
+                        .reply_source(message)
+                        .await
+                        .ok()
+                        .flatten()
+                        .map(Box::new);
+                    let _ = inputs.send(Input::ReplySource { kind, found }).await;
+                });
+            }
             Effect::Unsubscribe(message) => {
                 let client = client.clone();
                 let inputs = inputs.clone();

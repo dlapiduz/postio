@@ -207,6 +207,20 @@ mod tests {
     }
 
     #[test]
+    fn a_reply_shows_its_quote_folded_under_the_body() {
+        let mut app = with_sidebar((160, 16));
+        let found = crate::composer::tests::a_message_and_its_account();
+        app.compose(postio_body::replying::reply_draft(
+            postio_body::replying::ReplyKind::Reply,
+            &found.0,
+            &found.1,
+        ));
+        let screen = screen(160, 16, &app);
+        assert!(screen.contains("▸ Quoted message"), "{screen}");
+        assert!(!screen.contains("Hello there"), "folded:\n{screen}");
+    }
+
+    #[test]
     fn a_hostile_subject_in_the_composer_reaches_the_screen_harmless() {
         let mut app = with_sidebar((160, 16));
         let mut draft = postio_model::Draft::new(postio_model::AccountId::new(1));

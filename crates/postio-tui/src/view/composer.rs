@@ -27,7 +27,11 @@ pub fn draw(frame: &mut Frame, area: Rect, composer: &Composer, focused: bool, t
         area.width.saturating_sub(2),
         area.height,
     );
-    let mut fields = vec![(Field::To, "To")];
+    let mut fields = Vec::new();
+    if composer.shows_identities() {
+        fields.push((Field::From, "From"));
+    }
+    fields.push((Field::To, "To"));
     if composer.shows_extra_recipients() {
         fields.push((Field::Cc, "Cc"));
         fields.push((Field::Bcc, "Bcc"));
@@ -71,14 +75,27 @@ pub fn draw(frame: &mut Frame, area: Rect, composer: &Composer, focused: bool, t
         );
         y += 1;
     }
-    let body = Rect::new(
-        area.x,
-        y,
-        area.width,
-        (area.y + area.height).saturating_sub(y),
-    );
-    if body.height == 0 {
+    let mut height = (area.y + area.height).saturating_sub(y);
+    // A reply's quote, folded to one line under the body: it is sent, it is
+    // not edited here, and it would otherwise push what is being written off
+    // the screen.
+    let quoted = composer.quote_lines();
+    if quoted > 0 && height > 1 {
+        height -= 1;
+        let summary = match quoted {
+            1 => "▸ Quoted message, 1 line".to_owned(),
+            lines => format!("▸ Quoted message, {lines} lines"),
+        };
+        frame.render_widget(
+            Line::styled(
+                fit(&summary, usize::from(area.width)),
+                theme.style(Role::Quote),
+            ),
+            Rect::new(area.x, y + height, area.width, 1),
+        );
+    }
+    if height == 0 {
         return;
     }
-    frame.render_widget(composer.body(), body);
+    frame.render_widget(composer.body(), Rect::new(area.x, y, area.width, height));
 }

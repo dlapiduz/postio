@@ -23,6 +23,7 @@ use crate::input::Keys;
 use crate::layout::{self, Requested, Shown};
 use crate::row::Row;
 use crate::view::list::Visible;
+use postio_body::replying::ReplyKind;
 
 /// Something that happened, from the terminal or from the daemon.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -59,6 +60,14 @@ pub enum Input {
     /// The daemon answered an [`Effect::Unsubscribe`]: the list's name, or
     /// why not.
     Unsubscribed(Result<String, String>),
+    /// The daemon answered an [`Effect::ReplySource`]: the message and its
+    /// account, or nothing when it could not be read.
+    ReplySource {
+        /// Which draft to start.
+        kind: ReplyKind,
+        /// The message and its account.
+        found: Option<Box<(postio_model::Message, postio_model::Account)>>,
+    },
     /// A message's parts arrived.
     Parts {
         /// Whose.
@@ -130,6 +139,13 @@ pub enum Effect {
     Launch(std::path::PathBuf),
     /// Write the remote-image allow list, which the desktop app reads too.
     SaveAllowlist(postio_ui::allowlist::RemoteImageAllowList),
+    /// Read the message a reply or forward starts from, and its account.
+    ReplySource {
+        /// Which draft to start.
+        kind: ReplyKind,
+        /// The message.
+        message: postio_model::MessageId,
+    },
     /// Send a command to the daemon, aimed with [`App::state`].
     Send(postio_core::Command),
     /// Read a page of the list and answer with [`Input::Page`].
@@ -201,6 +217,8 @@ pub struct App {
     /// How many compositions this frontend has started: each is named by the
     /// next, for the host's draft writer.
     compositions: u64,
+    /// Every account, for the addresses a composer can send as.
+    accounts: Vec<postio_model::Account>,
 }
 
 /// Which pane the keyboard is in.
@@ -258,6 +276,7 @@ impl App {
             downloads: std::path::PathBuf::from("."),
             composer: None,
             compositions: 0,
+            accounts: Vec::new(),
         }
     }
 
@@ -334,7 +353,15 @@ impl App {
     /// keyboard.
     pub fn compose(&mut self, draft: postio_model::Draft) -> Vec<Effect> {
         self.compositions += 1;
-        self.composer = Some(crate::composer::Composer::new(self.compositions, draft));
+        let identities = self
+            .accounts
+            .iter()
+            .find(|account| account.id == draft.account_id)
+            .map(|account| account.identities.clone())
+            .unwrap_or_default();
+        self.composer = Some(
+            crate::composer::Composer::new(self.compositions, draft).with_identities(identities),
+        );
         self.focus = Focus::Composer;
         self.requested.front = crate::layout::Pane::Reader;
         vec![Effect::Redraw]
@@ -553,6 +580,30 @@ impl App {
                 .selection
                 .select_all(postio_ui::selection::Reach::default()),
             "quit" => return vec![Effect::Quit],
+            "reply" | "reply_all" | "forward" => {
+                let kind = match id {
+                    "reply" => ReplyKind::Reply,
+                    "reply_all" => ReplyKind::ReplyAll,
+                    _ => ReplyKind::Forward,
+                };
+                // What is being read, as the desktop's reply reads what its
+                // reading pane shows (#325); the row under the cursor when
+                // nothing is open yet.
+                let message = self
+                    .reading
+                    .as_ref()
+                    .and_then(|reading| reading.members.get(reading.current))
+                    .map(|member| member.id)
+                    .or_else(|| self.cursor_message());
+                if let Some(message) = message {
+                    return vec![Effect::ReplySource { kind, message }];
+                }
+            }
+            "compose" => {
+                if let Some(account) = self.account {
+                    return self.compose(postio_model::Draft::new(account));
+                }
+            }
             "focus_sidebar" => self.focus = Focus::Sidebar,
             "cycle_pane" => {
                 // The composer is the reading pane while it is open.
@@ -894,6 +945,7 @@ impl App {
     fn fill_sidebar(&mut self, contents: &crate::sidebar::Contents) -> Vec<Effect> {
         self.sidebar = crate::sidebar::lines(contents);
         self.folders = contents.folders.clone();
+        self.accounts = contents.accounts.clone();
         for account in &contents.accounts {
             self.trackers.note_last_sync(account.id, &contents.folders);
         }
@@ -1084,6 +1136,12 @@ pub fn update(app: &mut App, input: Input) -> Vec<Effect> {
             }
             Ok(path) => app.say(&format!("Saved {}", path.display())),
             Err(reason) => app.say(&reason),
+        },
+        Input::ReplySource { kind, found } => match found.map(|found| *found) {
+            Some((message, account)) => {
+                app.compose(postio_body::replying::reply_draft(kind, &message, &account))
+            }
+            None => app.say("That message could not be read to reply to"),
         },
         Input::Unsubscribed(answer) => app.say(&match answer {
             Ok(list) => format!("Asked to leave {list}"),
@@ -1411,6 +1469,62 @@ mod tests {
         update(&mut app, key(KeyCode::Esc, KeyModifiers::NONE));
         assert_eq!(app.focus(), Focus::List, "Escape leaves the composer");
         assert!(app.composer().is_none());
+    }
+
+    #[test]
+    fn a_reply_opens_filled_and_escape_goes_back_to_the_same_row() {
+        // US3 scenario 1.
+        let mut app = app((160, 40));
+        let opening = opened(&mut app, 3);
+        serve(&mut app, opening);
+        update(&mut app, press('j'));
+        let row = app.cursor();
+
+        let effects = update(&mut app, press('e'));
+        let asked = effects.iter().find_map(|effect| match effect {
+            Effect::ReplySource { kind, message } => Some((*kind, *message)),
+            _ => None,
+        });
+        assert_eq!(
+            asked,
+            Some((postio_body::replying::ReplyKind::Reply, MessageId::new(2))),
+            "{effects:?}"
+        );
+
+        let found = crate::composer::tests::a_message_and_its_account();
+        update(
+            &mut app,
+            Input::ReplySource {
+                kind: postio_body::replying::ReplyKind::Reply,
+                found: Some(Box::new(found)),
+            },
+        );
+        assert_eq!(app.focus(), Focus::Composer);
+        let composer = app.composer().expect("composing");
+        assert_eq!(
+            composer.value(crate::composer::Field::To),
+            "Ada <ada@example.com>"
+        );
+        assert_eq!(
+            composer.value(crate::composer::Field::Subject),
+            "Re: Tide gate"
+        );
+
+        update(&mut app, key(KeyCode::Esc, KeyModifiers::NONE));
+        assert_eq!(app.focus(), Focus::List);
+        assert_eq!(app.cursor(), row, "back where they were");
+    }
+
+    #[test]
+    fn a_new_message_starts_empty_from_the_account_on_screen() {
+        let mut app = app((160, 40));
+        update(&mut app, Input::Sidebar(sidebar_contents()));
+        let opening = opened(&mut app, 3);
+        serve(&mut app, opening);
+        update(&mut app, press('c'));
+        let composer = app.composer().expect("composing");
+        assert_eq!(composer.field(), crate::composer::Field::To);
+        assert_eq!(composer.draft().account_id, postio_model::AccountId::new(1));
     }
 
     #[test]
