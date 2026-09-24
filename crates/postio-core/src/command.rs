@@ -145,6 +145,8 @@ command_ids! {
     CopyFields => "copy_fields",
     /// Put a picture in the body, where it is written rather than beside it.
     InsertImage => "insert_image",
+    /// Hand the body to the person's own editor, and take it back.
+    EditExternally => "edit_externally",
     /// Make the selection bold, or un-bold it.
     Bold => "bold",
     /// Make the selection italic, or straighten it.
@@ -640,6 +642,11 @@ pub enum Command {
     /// reached it, which meant it was absent from the palette and the `?`
     /// sheet and unreachable by anyone who does neither.
     InsertImage,
+    /// Hand the body to the person's own editor (`$EDITOR`) and take back
+    /// what it saved (specs/005-tui-frontend FR-022). Where the body is not
+    /// text an editor can open -- the desktop's rich editor -- the frontend
+    /// says so.
+    EditExternally,
     /// Make the selection bold, or un-bold it.
     Bold,
     /// Make the selection italic, or straighten it.
@@ -902,6 +909,7 @@ impl Command {
             Command::DetachComposer => CommandId::DetachComposer,
             Command::CopyFields => CommandId::CopyFields,
             Command::InsertImage => CommandId::InsertImage,
+            Command::EditExternally => CommandId::EditExternally,
             Command::Bold => CommandId::Bold,
             Command::Italic => CommandId::Italic,
             Command::BulletList => CommandId::BulletList,
@@ -1026,6 +1034,7 @@ impl Command {
             CommandId::DetachComposer => Command::DetachComposer,
             CommandId::CopyFields => Command::CopyFields,
             CommandId::InsertImage => Command::InsertImage,
+            CommandId::EditExternally => Command::EditExternally,
             CommandId::Bold => Command::Bold,
             CommandId::Italic => Command::Italic,
             CommandId::BulletList => Command::BulletList,

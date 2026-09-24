@@ -2453,6 +2453,13 @@ impl Window {
             // The close button, from the keyboard: closing the last window
             // ends the application exactly as the button always did.
             CommandId::Quit => self.close(),
+            // The terminal's composer hands its Markdown to `$EDITOR`. This
+            // one edits a rich document in place and has no text an editor
+            // could open and give back, so it says so rather than doing
+            // nothing where the key was pressed.
+            CommandId::EditExternally => self.composer().set_status(
+                "this composer edits in place — the terminal one hands its text to $EDITOR",
+            ),
             CommandId::Search => self.open_finder(Mode::Search),
             // The header button already flips this property directly
             // (`window.rs`, `sidebar_toggle.connect_toggled`); this is the

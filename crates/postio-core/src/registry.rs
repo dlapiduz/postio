@@ -935,6 +935,20 @@ static SPECS: &[CommandSpec] = &[
         requires: MAIL,
     },
     CommandSpec {
+        id: CommandId::EditExternally,
+        title: "Edit in external editor",
+        // `e` for editor, on the composer's `mod+shift+<letter>` shelf;
+        // plain `mod+e` is Edit config everywhere.
+        default_binding: "mod+shift+e",
+        alternate_bindings: &["alt+e"],
+        contexts: Context::Composer.as_set(),
+        destructive: false,
+        // The body comes back as the editor saved it; the composer's own
+        // undo takes the change back.
+        recovery: Recovery::None,
+        requires: MAIL,
+    },
+    CommandSpec {
         id: CommandId::Bold,
         title: "Bold",
         default_binding: "mod+b",

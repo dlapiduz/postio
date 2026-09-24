@@ -86,6 +86,7 @@ command from inside a text field.
 | `ctrl+shift+o` or `alt+o` | Detach composer | Composer |  | `detach_composer` |
 | `ctrl+shift+c` or `alt+c` | Cc and Bcc | Composer |  | `copy_fields` |
 | `ctrl+shift+g` or `alt+g` | Insert image… | Composer |  | `insert_image` |
+| `ctrl+shift+e` or `alt+e` | Edit in external editor | Composer |  | `edit_externally` |
 | `ctrl+b` | Bold | Composer |  | `bold` |
 | `ctrl+i` or `alt+i` | Italic | Composer |  | `italic` |
 | `ctrl+shift+8` or `alt+8` | Bulleted list | Composer |  | `bullet_list` |
