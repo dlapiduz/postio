@@ -49,6 +49,7 @@ decision stands as of 0.4.0 (2026-09-14).
 | [0038](0038-the-store-is-turso-not-sqlcipher.md) | The store is Turso, and ADR 0014 keeps its threat model | Built |
 | [0039](0039-the-composer-is-a-native-surface-over-the-document.md) | The composer is a native surface over the document | Decided; supersedes 0003 Q2, nothing built yet |
 | [0040](0040-the-store-keeps-few-connections-maintains-its-counts-and-budgets-its-index.md) | The store keeps few connections, maintains its counts, and budgets its index | Proposed; the connection half (§1) landed with #1602, the rest awaits the maintainer |
+| [0041](0041-one-process-owns-the-store.md) | One process owns the store; frontends are its clients | Proposed with `specs/005-tui-frontend`; nothing built yet |
 
 ## Writing one
 

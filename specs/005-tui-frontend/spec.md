@@ -401,8 +401,9 @@ first sync.
 **Writing**
 
 - **FR-020**: The composer MUST accept Markdown and MUST translate it into
-  Postio's own composer document, so that the outgoing bytes are produced by
-  the same generator the desktop composer uses.
+  Postio's own composer document, so that the outgoing HTML part is produced
+  by the same generator the desktop composer uses. (The plain-text part is the
+  one deliberate difference: FR-021.)
 - **FR-021**: A message that uses formatting MUST be sent as multipart with a
   plain-text part (the Markdown as written) and an HTML part generated from
   the document; a message that uses none MUST be sent as plain text only.
@@ -523,9 +524,10 @@ first sync.
 - **SC-005**: Across every HTML message in the corpus, the terminal reader
   shows zero raw tags, zero script content, zero unrequested network requests
   and zero terminal control sequences from message content.
-- **SC-006**: A message composed in Markdown and sent from the terminal is
-  indistinguishable to its recipient from the same content composed in the
-  desktop app.
+- **SC-006**: A message composed in Markdown and sent from the terminal
+  shows its recipient, in an HTML client, exactly what the same content
+  composed in the desktop app shows — the HTML parts are byte-identical — and,
+  in a plain-text client, the Markdown the sender wrote.
 - **SC-007**: With both frontends open on one store, an action in either is
   visible in the other within one second, and across a scripted session of
   mixed actions no message is sent twice and no remote operation is performed
