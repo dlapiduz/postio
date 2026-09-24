@@ -55,3 +55,22 @@ leaves LLVM mapped (radeon still brings it), and narrowing the loader to
 one driver means naming the user's hardware in the manifest, which Postio
 cannot know. Cairo would drop ~16 MB more by giving up the GPU. None of it
 was worth it.
+
+## Addendum, 2026-09-24: the reader's cache model and GPU policy
+
+#1603 asked for both, measured on the app. A scratch `gtk_suite` case built
+the application's own `Reader`, drew forty table-heavy newsletters into it
+one after another, and read the resident size of its WebKit processes, two
+runs per arm, toggling one setting on the shared reader context:
+
+| setting | web process | network process |
+|---|---|---|
+| default (`CacheModel::WebBrowser`, acceleration on demand) | 135 MB | 52 MB |
+| `CacheModel::DocumentViewer` | **153 MB** | 52 MB |
+| `HardwareAccelerationPolicy::Never` | 135 MB | 52 MB |
+
+`DocumentViewer` is the setting mail clients are usually told to use, and
+here it cost 18 MB more, reproducibly. The acceleration policy made no
+difference on the headless compositor, which renders in software either
+way, so this says nothing about a real GPU -- but nothing here argues for
+changing it. Both stay at the default.
