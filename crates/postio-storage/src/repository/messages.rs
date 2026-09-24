@@ -1757,6 +1757,33 @@ impl<'a> MessageRepository<'a> {
         Ok(changed > 0)
     }
 
+    /// What fetching a body learned about the row that is not the body: a
+    /// preview, if the row had none, and where the raw bytes went, if they
+    /// were kept.
+    ///
+    /// The body fetch's write, in place of [`update`](Self::update). `update`
+    /// rewrites the whole row and deletes and re-inserts every recipient,
+    /// attachment and label -- a statement per name on the message, on every
+    /// body of a first sync, to store two columns. A `preview` already on the
+    /// row is kept; a `None` raw blob leaves the column as it was.
+    pub async fn set_fetched(
+        &self,
+        id: MessageId,
+        preview: Option<&str>,
+        raw_blob: Option<&BlobId>,
+    ) -> Result<()> {
+        sql::execute(
+            self.connection,
+            "UPDATE messages
+                SET preview = coalesce(preview, ?2),
+                    raw_blob_id = coalesce(?3, raw_blob_id)
+              WHERE id = ?1",
+            bind![id.get(), preview, raw_blob.map(BlobId::as_str)],
+        )
+        .await?;
+        Ok(())
+    }
+
     /// Messages in `mailbox_id` whose text is local and whose payloads are
     /// not — the backlog `AttachmentPolicy::Eager` drains.
     ///

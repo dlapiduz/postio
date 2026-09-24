@@ -2767,3 +2767,73 @@ async fn a_message_too_large_for_the_budget_is_not_batched() {
         "nothing should have been asked for at all"
     );
 }
+
+// ---------------------------------------------------------------------------
+// What a body costs the store
+// ---------------------------------------------------------------------------
+
+/// A message addressed to `recipients` people, `n` seconds into the timeline.
+fn addressed(n: u32, recipients: usize) -> Vec<u8> {
+    let to = (0..recipients)
+        .map(|r| format!("reader{r}@example.net"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!(
+        "From: Ada Lovelace <ada@example.com>\r\n\
+         To: {to}\r\n\
+         Subject: Note {n}\r\n\
+         Message-ID: <addressed-{n}@example.com>\r\n\
+         Content-Type: text/plain; charset=utf-8\r\n\
+         \r\n\
+         The body of note {n}.\r\n"
+    )
+    .into_bytes()
+}
+
+/// Storing a body writes the body, not the message again.
+///
+/// A fetched body used to be stored by writing the whole row back --
+/// `MessageRepository::update`, which deletes and re-inserts every recipient,
+/// attachment and label -- when all the fetch had changed was the preview
+/// and where the raw bytes are. Every body of a first sync paid for its
+/// header twice, and a message to a long list paid per name on it.
+#[tokio::test]
+async fn storing_a_body_costs_the_same_however_many_recipients() {
+    let inbox = MockMailbox::new(INBOX)
+        .uid_validity(UidValidity::new(VALIDITY))
+        .message(MockMessage::new(addressed(1, 1)).with_internal_date(at(1)))
+        .message(MockMessage::new(addressed(2, 40)).with_internal_date(at(2)));
+    let backend = MockBackend::builder().mailbox(inbox).build();
+    backend.connect().await.expect("connect");
+    let local = local().await;
+    let rows = headers(&local, &backend).await;
+
+    let mut costs = Vec::new();
+    for &(id, uid) in &rows {
+        let counts = test_support::counting::counted_async(|| async {
+            let outcome = fetch_body(
+                &local.connection,
+                &local.blobs,
+                &backend,
+                &request(&local.inbox, id, uid, 1_024),
+                BackfillPolicy::default().max_inline_bytes,
+                None,
+                &CancelToken::new(),
+            )
+            .await
+            .expect("fetch");
+            assert!(matches!(outcome, Outcome::Stored { .. }));
+        })
+        .await;
+        costs.push(counts.statements);
+    }
+    eprintln!("  body statements: {costs:?} for 1 and 40 recipients");
+
+    assert_eq!(
+        costs[0], costs[1],
+        "a body for a message to forty people cost {} statements against {} \
+         for one to a single person: storing a body is writing the message \
+         again",
+        costs[1], costs[0],
+    );
+}
