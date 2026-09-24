@@ -398,6 +398,12 @@ pub fn contact_list_statements() -> Vec<(&'static str, String)> {
     crate::repository::contact_list_statements()
 }
 
+/// The statements the contact suggestions read issues, for the budget that
+/// asks the planner about them.
+pub fn contact_suggestion_statements() -> Vec<String> {
+    crate::repository::contact_suggestion_statements()
+}
+
 #[cfg(test)]
 mod sweep_tests {
     use std::time::{Duration, SystemTime};

@@ -197,13 +197,13 @@ dismissal is permanent.
 
 ### Tests first (observe each red)
 
-- [ ] T060 [P] [US4] `crates/postio-storage/tests/storage_suite/contact_suggestions.rs`: two live people with the same `name_key` are suggested with their per-address counts; a reply-candidate pair is suggested; a dismissed pair is never suggested again, after more mail, and after either side joins a third person; nothing is ever joined without a command; the suggestions read has a counting budget (no full scan)
-- [ ] T061 [P] [US4] `crates/postio-sync/tests/sync_suite/reply_candidates.rs` (register in `main.rs`): a reply from Y to the user's message sent only to X records candidate (X, Y); a reply from X records nothing; a reply to someone else's message records nothing
+- [X] T060 [P] [US4] `crates/postio-storage/tests/storage_suite/contact_suggestions.rs`: two live people with the same `name_key` are suggested with their per-address counts; a reply-candidate pair is suggested; a dismissed pair is never suggested again, after more mail, and after either side joins a third person; nothing is ever joined without a command; the suggestions read has a counting budget (no full scan)
+- [X] T061 [P] [US4] (revised: unit tests beside `record` in `crates/postio-sync/src/contacts.rs`, the layer that is reachable) a reply from Y to the user's message sent only to X records candidate (X, Y); a reply from X records nothing; a reply to someone else's message records nothing
 
 ### Implementation
 
-- [ ] T062 [US4] Record reply candidates at sync in `crates/postio-sync/src/contacts.rs` using the parent threading already resolved in `commit_batch`/`incremental`; write `contact_join_candidates` in `crates/postio-storage/src/repository/contacts.rs`. Makes T061 green
-- [ ] T063 [US4] Implement `suggestions(limit)` (name-key self-join ∪ candidates, minus dismissed address pairs, live people only) and `dismiss(a, b)` — which writes the pair of the two people's preferred addresses; the read hides a suggestion when *any* dismissed pair spans the two people (data-model.md), which is what keeps it dismissed across later joins — in `crates/postio-storage/src/repository/contacts.rs`. Makes T060 green
+- [X] T062 [US4] Record reply candidates at sync in `crates/postio-sync/src/contacts.rs` using the parent threading already resolved in `commit_batch`/`incremental`; write `contact_join_candidates` in `crates/postio-storage/src/repository/contacts.rs`. Makes T061 green
+- [X] T063 [US4] Implement `suggestions(limit)` (name-key self-join ∪ candidates, minus dismissed address pairs, live people only) and `dismiss(a, b)` — which writes the pair of the two people's preferred addresses; the read hides a suggestion when *any* dismissed pair spans the two people (data-model.md), which is what keeps it dismissed across later joins — in `crates/postio-storage/src/repository/contacts.rs`. Makes T060 green
 - [ ] T064 [US4] Add `DismissSuggestion`; register `contacts_suggestions` and `suggestion_dismiss` (`X`); make `contact_join` (`m`) on a suggestion-kind row open the join dialog for that pair; build the suggestions view in `crates/postio-gtk/src/contacts/suggestions.rs` showing the evidence; an `app_suite` case `crates/postio-app/tests/app_suite/contacts_suggestions.rs` that joins one with `m` (then `u`) and dismisses one with `X`
 
 ---
