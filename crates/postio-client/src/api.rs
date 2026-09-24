@@ -83,6 +83,8 @@ impl Req {
             Req::QueueSend { .. } => "QueueSend",
             Req::DiscardDraft { .. } => "DiscardDraft",
             Req::Recipients { .. } => "Recipients",
+            Req::Correspondents(_) => "Correspondents",
+            Req::Labels(_) => "Labels",
             Req::ReplySource(_) => "ReplySource",
             Req::DraftBehind(_) => "DraftBehind",
             Req::CancelSend(_) => "CancelSend",
@@ -313,6 +315,31 @@ impl Client {
         let request = Req::Recipients { account, prefix };
         self.read(request, "recipients", |answer| match answer {
             Resp::Recipients(found) => Some(found),
+            _ => None,
+        })
+        .await
+    }
+
+    /// The account's correspondents, for the finder's `@`.
+    pub async fn correspondents(
+        &self,
+        account: AccountId,
+    ) -> Result<Vec<postio_model::Contact>, StoreError> {
+        self.read(
+            Req::Correspondents(account),
+            "correspondents",
+            |answer| match answer {
+                Resp::Correspondents(found) => Some(found),
+                _ => None,
+            },
+        )
+        .await
+    }
+
+    /// The account's labels, for the finder's `+`.
+    pub async fn labels(&self, account: AccountId) -> Result<Vec<postio_model::Label>, StoreError> {
+        self.read(Req::Labels(account), "labels", |answer| match answer {
+            Resp::Labels(found) => Some(found),
             _ => None,
         })
         .await

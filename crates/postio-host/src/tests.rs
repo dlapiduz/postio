@@ -746,3 +746,46 @@ fn a_frontend_disables_removes_and_restores_an_account_through_the_daemon() {
         .block_on(client.account(AccountOp::SetDefault(account)))
         .expect("made the default");
 }
+
+#[test]
+fn the_finder_is_told_the_accounts_correspondents_and_labels() {
+    // T066: `@` and `+` offer what the store knows, read through the daemon.
+    let world = World::new();
+    let (client, _) = world.frontend(ClientKind::Tui);
+    let account = world.rt.block_on(client.accounts()).expect("accounts")[0].id;
+    world.rt.block_on(async {
+        let connection = world.database.connect().await.expect("a connection");
+        postio_storage::repository::ContactRepository::new(&connection)
+            .record(
+                Some(account),
+                &postio_model::EmailAddress::new(None::<String>, "grace@example.test"),
+                Utc::now(),
+            )
+            .await
+            .expect("a correspondent");
+        postio_storage::repository::LabelRepository::new(&connection)
+            .create(&mut postio_model::Label::new(account, "Receipts"))
+            .await
+            .expect("a label");
+    });
+
+    let correspondents = world
+        .rt
+        .block_on(client.correspondents(account))
+        .expect("correspondents");
+    assert_eq!(
+        correspondents
+            .iter()
+            .map(|contact| contact.address.address.as_str())
+            .collect::<Vec<_>>(),
+        ["grace@example.test"]
+    );
+    let labels = world.rt.block_on(client.labels(account)).expect("labels");
+    assert_eq!(
+        labels
+            .iter()
+            .map(|label| label.name.as_str())
+            .collect::<Vec<_>>(),
+        ["Receipts"]
+    );
+}

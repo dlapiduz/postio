@@ -484,6 +484,12 @@ impl Inner {
             Req::Recipients { account, prefix } => {
                 Resp::Recipients(compose::recipients(&self.wiring.database, account, &prefix).await)
             }
+            Req::Correspondents(account) => {
+                Resp::Correspondents(compose::correspondents(&self.wiring.database, account).await)
+            }
+            Req::Labels(account) => {
+                Resp::Labels(compose::labels(&self.wiring.database, account).await)
+            }
             Req::ReplySource(message) => Resp::ReplySource(
                 compose::reply_source(&self.wiring.database, message)
                     .await

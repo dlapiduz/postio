@@ -176,6 +176,10 @@ pub enum Req {
         /// What has been typed.
         prefix: String,
     },
+    /// The account's correspondents, for the finder's `@`.
+    Correspondents(AccountId),
+    /// The account's labels, for the finder's `+` and the label picker.
+    Labels(AccountId),
     /// The message a reply or forward is built from, and its account.
     ReplySource(MessageId),
     /// The local draft behind a Drafts row, if there is one.
@@ -259,6 +263,10 @@ pub enum Resp {
     Queued(Option<MailboxId>),
     /// Recipient suggestions, best first.
     Recipients(Vec<RecipientCandidate>),
+    /// Correspondents, most often seen first.
+    Correspondents(Vec<postio_model::Contact>),
+    /// Labels, by name.
+    Labels(Vec<postio_model::Label>),
     /// A reply's source message and its account.
     ReplySource(Option<Box<(postio_model::Message, Account)>>),
     /// A draft, or none.

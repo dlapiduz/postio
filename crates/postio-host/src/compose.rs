@@ -409,6 +409,40 @@ pub async fn default_signature(
     signature_default::resolve(mailbox_signature, account_default)
 }
 
+/// How many correspondents the finder's `@` can offer: the desktop's bound,
+/// there to stop a pathological store rather than to page a normal one.
+const CORRESPONDENT_LIMIT: u32 = 50_000;
+
+/// The account's correspondents, as the desktop's `@` reads them. Empty,
+/// and logged, when the store cannot be read.
+pub async fn correspondents(database: &Store, account: AccountId) -> Vec<postio_model::Contact> {
+    let found = async {
+        let connection = database.read().await?;
+        ContactRepository::new(&connection)
+            .search(Some(account), "", CORRESPONDENT_LIMIT)
+            .await
+    };
+    found.await.unwrap_or_else(|error| {
+        tracing::warn!(%error, "could not read the correspondents");
+        Vec::new()
+    })
+}
+
+/// The account's labels, by name. Empty, and logged, when the store cannot
+/// be read.
+pub async fn labels(database: &Store, account: AccountId) -> Vec<postio_model::Label> {
+    let found = async {
+        let connection = database.read().await?;
+        postio_storage::repository::LabelRepository::new(&connection)
+            .list(account)
+            .await
+    };
+    found.await.unwrap_or_else(|error| {
+        tracing::warn!(%error, "could not read the labels");
+        Vec::new()
+    })
+}
+
 /// Recipient completion: contact groups whose name matches `prefix`, then
 /// contacts ranked by [`ContactRepository::search`] — groups first, since a
 /// group is a deliberate choice the user is more likely typing towards.
