@@ -2080,9 +2080,12 @@ impl App {
         self.list.total()
     }
 
-    /// How many list rows fit: everything but the status line.
+    /// How many list rows fit: the screen but for its top bar and status
+    /// line, two lines to a row.
     pub fn list_height(&self) -> u32 {
-        u32::from(self.size.1.saturating_sub(1))
+        u32::from(
+            self.size.1.saturating_sub(crate::layout::CHROME_ROWS) / crate::layout::LIST_ROW_LINES,
+        )
     }
 
     /// The rows in view, for drawing. Reads only what is resident.
@@ -3239,6 +3242,22 @@ pub(crate) mod tests {
             app.shown(),
             Shown::Panes(vec![Pane::Sidebar, Pane::List, Pane::Reader]),
             "widening brings the sidebar back"
+        );
+    }
+
+    #[test]
+    fn the_list_holds_as_many_two_line_rows_as_fit_under_the_top_bar() {
+        // 42 rows: the top bar and the status line take two, and each list
+        // row two more.
+        assert_eq!(app((160, 42)).list_height(), 20);
+        assert_eq!(app((160, 16)).list_height(), 7);
+        let mut app = app((160, 16));
+        let opening = opened(&mut app, 100);
+        serve(&mut app, opening);
+        assert_eq!(
+            app.visible().len(),
+            7,
+            "the rows drawn are the rows that fit"
         );
     }
 

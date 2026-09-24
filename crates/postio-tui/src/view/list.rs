@@ -1,23 +1,26 @@
 //! The message list.
 //!
 //! Only the rows in view are drawn, from the window's resident pages; a row
-//! whose page is still on its way is a blank line, and asking for it is
-//! `App`'s business, not the drawing's (Principle V: never a whole mailbox).
+//! whose page is still on its way is blank, and asking for it is `App`'s
+//! business, not the drawing's (Principle V: never a whole mailbox).
 //!
-//! Every state has a mark that is not a colour (`contracts/tui-surface.md`
-//! §Colour roles): `›` the cursor, `▌` selected, `●` unread, `⚑` flagged.
+//! A row is two lines, the compact form of the desktop's cards: marks, the
+//! sender and the time over the subject and its preview. Every state has a
+//! mark that is not a colour (`contracts/tui-surface.md` §Colour roles): `▌`
+//! the cursor, `✓` selected, `●` unread, `⚑` flagged, `⎘` attachments.
 
 use chrono::{DateTime, Local};
 use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::text::{Line, Span};
+use unicode_width::UnicodeWidthStr;
 
 use crate::row::Row;
 use crate::theme::{Role, Theme};
 use crate::view::fit;
 use crate::view::hit::{Hits, Target};
 
-/// One visible line of the list.
+/// One visible row of the list.
 pub struct Visible<'a> {
     /// The row, or `None` while its page is on its way.
     pub row: Option<&'a Row>,
@@ -27,12 +30,15 @@ pub struct Visible<'a> {
     pub selected: bool,
 }
 
+/// Lines per row.
+pub const LINES: u16 = crate::layout::LIST_ROW_LINES;
 /// Width of the date column.
 const DATE: usize = 9;
-/// Width of the sender column.
-const FROM: usize = 20;
+/// Where the sender and the subject start: after the cursor's bar, the
+/// selection's mark, and the three state marks.
+const TEXT: usize = 7;
 
-/// Draw `rows` into `area`, one per line.
+/// Draw `rows` into `area`, two lines each.
 /// `first` is the list position of the first row, for what a click on each
 /// row means.
 pub fn draw(
@@ -45,75 +51,99 @@ pub fn draw(
     hits: &mut Hits,
 ) {
     let width = usize::from(area.width);
-    for (offset, visible) in rows.iter().take(usize::from(area.height)).enumerate() {
-        let y = area.y + u16::try_from(offset).unwrap_or(u16::MAX);
-        let line_area = Rect::new(area.x, y, area.width, 1);
-        frame.render_widget(line(visible, width, theme, now), line_area);
+    let fits = usize::from(area.height / LINES);
+    for (offset, visible) in rows.iter().take(fits).enumerate() {
+        let y = area.y + u16::try_from(offset).unwrap_or(u16::MAX) * LINES;
+        let rect = Rect::new(area.x, y, area.width, LINES);
+        if visible.selected {
+            frame
+                .buffer_mut()
+                .set_style(rect, theme.style(Role::Selection));
+        } else if visible.cursor && visible.row.is_some() {
+            frame
+                .buffer_mut()
+                .set_style(rect, theme.style(Role::Surface));
+        }
+        let (top, bottom) = lines(visible, width, theme, now);
+        frame.render_widget(top, Rect::new(area.x, y, area.width, 1));
+        frame.render_widget(bottom, Rect::new(area.x, y + 1, area.width, 1));
         let position = first.saturating_add(u32::try_from(offset).unwrap_or(u32::MAX));
-        hits.add(line_area, Target::Row(position));
+        hits.add(rect, Target::Row(position));
     }
 }
 
-/// One row as a line of `width` columns: gutter, marks, sender, subject and
-/// preview, date at the right edge.
-fn line<'a>(visible: &Visible, width: usize, theme: &Theme, now: DateTime<Local>) -> Line<'a> {
+/// One row as its two lines of `width` columns: marks, sender and date, then
+/// subject and preview under the sender.
+fn lines<'a>(
+    visible: &Visible,
+    width: usize,
+    theme: &Theme,
+    now: DateTime<Local>,
+) -> (Line<'a>, Line<'a>) {
     let Some(row) = visible.row else {
-        return Line::default();
+        return (Line::default(), Line::default());
     };
-    let gutter = match (visible.cursor, visible.selected) {
-        (true, true) => "›▌",
-        (true, false) => "› ",
-        (false, true) => " ▌",
-        (false, false) => "  ",
-    };
-    let unread = if row.unread { "●" } else { " " };
-    let flagged = if row.flagged { "⚑" } else { " " };
-    let date = postio_ui::row::timestamp(row.when, now);
-
-    // gutter 2, marks 2, a space, sender, a space, …, a space, date.
-    let fixed = 2 + 2 + 1 + FROM + 1 + 1 + DATE;
-    let middle = width.saturating_sub(fixed);
-    let from = fit(row.from.as_str(), FROM);
-    let from_pad = FROM.saturating_sub(unicode_width::UnicodeWidthStr::width(from.as_str()));
-    let count = if row.count > 1 {
-        format!(" ({})", row.count)
-    } else {
-        String::new()
-    };
-    let subject = format!("{}{count}", row.subject.as_str());
-    let subject = fit(&subject, middle);
-    let subject_width = unicode_width::UnicodeWidthStr::width(subject.as_str());
-    let preview = fit(
-        &format!(" — {}", row.preview.as_str()),
-        middle.saturating_sub(subject_width),
+    let bar = Span::styled(
+        if visible.cursor { "▌" } else { " " },
+        theme.style(Role::Focus),
     );
-    let used = subject_width + unicode_width::UnicodeWidthStr::width(preview.as_str());
-    let pad = middle.saturating_sub(used);
-    let date = format!("{date:>DATE$}");
-
+    let chosen = Span::styled(
+        if visible.selected { "✓" } else { " " },
+        theme.style(Role::Accent),
+    );
+    let mark = |on: bool, glyph: &'static str, role: Role| {
+        Span::styled(if on { glyph } else { " " }, theme.style(role))
+    };
     let emphasis = if row.unread {
         theme.style(Role::Unread)
     } else {
         theme.style(Role::Text)
     };
-    let base = if visible.selected {
-        theme.style(Role::Selection)
+
+    // Line one: the sender, and the date at the right edge.
+    let date = format!("{:>DATE$}", postio_ui::row::timestamp(row.when, now));
+    let room = width.saturating_sub(TEXT + DATE + 2);
+    let count = if row.count > 1 {
+        format!(" ({})", row.count)
     } else {
-        ratatui::style::Style::default()
+        String::new()
     };
-    Line::from(vec![
-        Span::styled(gutter, theme.style(Role::Focus)),
-        Span::styled(unread, theme.style(Role::Unread)),
-        Span::styled(flagged, theme.style(Role::Flagged)),
+    let from = fit(row.from.as_str(), room.saturating_sub(count.width()));
+    let count = fit(&count, room.saturating_sub(from.width()));
+    let pad = room.saturating_sub(from.width() + count.width());
+    let top = Line::from(vec![
+        bar.clone(),
+        chosen.clone(),
+        Span::raw(" "),
+        mark(row.unread, "●", Role::Accent),
+        mark(row.flagged, "⚑", Role::Flagged),
+        mark(row.attachment, "⎘", Role::Dim),
         Span::raw(" "),
         Span::styled(from, emphasis),
-        Span::raw(" ".repeat(from_pad + 1)),
-        Span::styled(subject, emphasis),
-        Span::styled(preview, theme.style(Role::Dim)),
+        Span::styled(count, theme.style(Role::Dim)),
         Span::raw(" ".repeat(pad + 1)),
         Span::styled(date, theme.style(Role::Dim)),
-    ])
-    .style(base)
+    ]);
+
+    // Line two: the subject, and as much of the preview as is left.
+    let room = width.saturating_sub(TEXT + 1);
+    let subject = fit(row.subject.as_str(), room);
+    let preview = if row.preview.as_str().is_empty() {
+        String::new()
+    } else {
+        fit(
+            &format!(" — {}", row.preview.as_str()),
+            room.saturating_sub(subject.width()),
+        )
+    };
+    let bottom = Line::from(vec![
+        bar,
+        chosen,
+        Span::raw(" ".repeat(TEXT - 2)),
+        Span::styled(subject, emphasis),
+        Span::styled(preview, theme.style(Role::Dim)),
+    ]);
+    (top, bottom)
 }
 
 #[cfg(test)]
@@ -123,6 +153,8 @@ mod tests {
     use postio_ui::terminal::SafeText;
     use ratatui::Terminal;
     use ratatui::backend::TestBackend;
+
+    use ratatui::style::Modifier;
 
     use super::*;
     use crate::caps::{Background, Colour};
@@ -151,10 +183,11 @@ mod tests {
             .collect()
     }
 
-    fn render_cells(rows: &[Visible]) -> Vec<Vec<String>> {
-        let theme = Theme::new(Colour::None, Background::Unknown, &Default::default()).0;
+    fn buffer(rows: &[Visible], colour: Colour) -> (ratatui::buffer::Buffer, Theme) {
+        let theme = Theme::new(colour, Background::Dark, &Default::default()).0;
         let now = Local.with_ymd_and_hms(2026, 9, 23, 12, 0, 0).unwrap();
-        let mut terminal = Terminal::new(TestBackend::new(70, rows.len() as u16)).unwrap();
+        let height = u16::try_from(rows.len() * 2).unwrap();
+        let mut terminal = Terminal::new(TestBackend::new(70, height)).unwrap();
         terminal
             .draw(|frame| {
                 draw(
@@ -168,7 +201,12 @@ mod tests {
                 );
             })
             .unwrap();
-        let buffer = terminal.backend().buffer().clone();
+        (terminal.backend().buffer().clone(), theme)
+    }
+
+    /// Each row's two lines, as cells.
+    fn render_cells(rows: &[Visible]) -> Vec<Vec<String>> {
+        let (buffer, _) = buffer(rows, Colour::None);
         (0..buffer.area.height)
             .map(|y| {
                 (0..buffer.area.width)
@@ -193,7 +231,7 @@ mod tests {
                 selected: false,
             })
             .collect();
-        let cells = render_cells(&visible);
+        let cells: Vec<Vec<String>> = render_cells(&visible).into_iter().step_by(2).collect();
         // The date is the same text on each row; it must start at the same
         // cell on each. By cell, not by string index: a wide character is
         // its symbol plus an empty continuation cell.
@@ -214,10 +252,9 @@ mod tests {
 
     #[test]
     fn every_state_has_a_mark_that_is_not_a_colour() {
-        let rows = [
-            row(1, "Ada", "Unread and flagged", true, true),
-            row(2, "Bea", "Read", false, false),
-        ];
+        let mut marked = row(1, "Ada", "Unread and flagged", true, true);
+        marked.attachment = true;
+        let rows = [marked, row(2, "Bea", "Read", false, false)];
         let lines = render(&[
             Visible {
                 row: Some(&rows[0]),
@@ -230,21 +267,79 @@ mod tests {
                 selected: false,
             },
         ]);
+        let first = format!("{}{}", lines[0], lines[1]);
+        let plain = format!("{}{}", lines[2], lines[3]);
+        // The cursor's bar on both of its lines.
+        assert!(lines[0].starts_with('▌'), "{:?}", lines[0]);
+        assert!(lines[1].starts_with('▌'), "{:?}", lines[1]);
+        for mark in ['✓', '●', '⚑', '⎘'] {
+            assert!(first.contains(mark), "{mark} missing: {first:?}");
+        }
+        for mark in ['▌', '✓', '●', '⚑', '⎘'] {
+            assert!(!plain.contains(mark), "{mark} on a plain row: {plain:?}");
+        }
+    }
+
+    #[test]
+    fn the_cursor_row_is_tinted_on_both_its_lines() {
+        let rows = [
+            row(1, "Ada", "Here", false, false),
+            row(2, "Bea", "Not here", false, false),
+        ];
+        let visible = [
+            Visible {
+                row: Some(&rows[0]),
+                cursor: true,
+                selected: false,
+            },
+            Visible {
+                row: Some(&rows[1]),
+                cursor: false,
+                selected: false,
+            },
+        ];
+        // With colour, the raised surface, every cell of both lines.
+        let (drawn, theme) = buffer(&visible, Colour::TrueColor);
+        let surface = theme.style(Role::Surface).bg.expect("a tint");
+        for y in 0..2 {
+            for x in 0..drawn.area.width {
+                assert_eq!(drawn[(x, y)].bg, surface, "({x}, {y}) is not tinted");
+            }
+        }
+        for y in 2..4 {
+            assert_ne!(drawn[(10, y)].bg, surface, "the next row is not");
+        }
+        // Without, reverse video, the same way.
+        let (drawn, _) = buffer(&visible, Colour::None);
+        for y in 0..2 {
+            for x in 0..drawn.area.width {
+                assert!(
+                    drawn[(x, y)].modifier.contains(Modifier::REVERSED),
+                    "({x}, {y}) is not reversed"
+                );
+            }
+        }
+        assert!(!drawn[(10, 2)].modifier.contains(Modifier::REVERSED));
+    }
+
+    #[test]
+    fn a_row_is_its_sender_and_time_over_its_subject_and_preview() {
+        let rows = [row(1, "Ada Lovelace", "Engine notes", true, false)];
+        let lines = render(&[Visible {
+            row: Some(&rows[0]),
+            cursor: false,
+            selected: false,
+        }]);
         assert!(
-            lines[0].starts_with('›') || lines[0].contains('›'),
+            lines[0].contains("Ada Lovelace") && lines[0].trim_end().ends_with("Sun"),
             "{:?}",
             lines[0]
         );
-        assert!(lines[0].contains('▌'), "{:?}", lines[0]);
-        assert!(lines[0].contains('●'), "{:?}", lines[0]);
-        assert!(lines[0].contains('⚑'), "{:?}", lines[0]);
-        for mark in ['›', '▌', '●', '⚑'] {
-            assert!(
-                !lines[1].contains(mark),
-                "{mark} on a plain row: {:?}",
-                lines[1]
-            );
-        }
+        assert!(
+            lines[1].contains("Engine notes — and a preview"),
+            "{:?}",
+            lines[1]
+        );
     }
 
     #[test]
@@ -255,5 +350,6 @@ mod tests {
             selected: false,
         }]);
         assert_eq!(lines[0].trim(), "");
+        assert_eq!(lines[1].trim(), "");
     }
 }
