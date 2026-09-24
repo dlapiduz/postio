@@ -55,6 +55,10 @@ pub fn run() -> ExitCode {
         eprintln!("postio-tui: {problem}");
     }
 
+    // What the daemon aims this frontend's commands with. The app mirrors its
+    // selection into it before each command; the client snapshots it.
+    let state = postio_core::SharedState::default();
+
     let endpoint = match Endpoint::from_env() {
         Ok(endpoint) => endpoint,
         Err(error) => {
@@ -63,7 +67,7 @@ pub fn run() -> ExitCode {
         }
     };
     let client = match connect(&endpoint) {
-        Ok(client) => client,
+        Ok(client) => client.with_state(state.clone()),
         Err(sentence) => {
             eprintln!("{sentence}");
             return ExitCode::FAILURE;
@@ -98,7 +102,7 @@ pub fn run() -> ExitCode {
     };
     session.publish();
 
-    let outcome = runtime.block_on(main_loop(client, keys, theme));
+    let outcome = runtime.block_on(main_loop(client, keys, theme, state));
     let _ = session.leave(&mut Stdout);
     session.publish();
     match outcome {
@@ -121,11 +125,16 @@ async fn first_scope(client: &Client) -> Option<ListScope> {
     Some(ListScope::Mailbox(inbox.id))
 }
 
-async fn main_loop(client: Client, keys: Keys, theme: Theme) -> io::Result<()> {
+async fn main_loop(
+    client: Client,
+    keys: Keys,
+    theme: Theme,
+    state: postio_core::SharedState,
+) -> io::Result<()> {
     let backend = CrosstermBackend::new(io::stdout());
     let mut terminal = Terminal::new(backend)?;
     let size = terminal.size()?;
-    let mut app = App::new((size.width, size.height), keys);
+    let mut app = App::new((size.width, size.height), keys).with_state(state);
 
     let (inputs, arriving) = async_channel::unbounded::<Input>();
     let mut terminal_events = EventStream::new();
@@ -176,6 +185,14 @@ fn perform(
         match effect {
             Effect::Quit => return Ok(true),
             Effect::Redraw => redraw = true,
+            Effect::Send(command) => {
+                let client = client.clone();
+                tokio::spawn(async move {
+                    if let Err(error) = client.send(command).await {
+                        tracing::warn!(%error, "a command was not taken: {error}");
+                    }
+                });
+            }
             Effect::Fetch {
                 generation,
                 page,

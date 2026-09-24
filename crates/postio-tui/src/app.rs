@@ -56,6 +56,8 @@ pub enum Effect {
     Redraw,
     /// Leave.
     Quit,
+    /// Send a command to the daemon, aimed with [`App::state`].
+    Send(postio_core::Command),
     /// Read a page of the list and answer with [`Input::Page`].
     Fetch {
         /// The list's generation now; a page for an older one is dropped.
@@ -78,6 +80,13 @@ pub struct App {
     cursor: u32,
     /// The first row in view.
     top: u32,
+    /// What the host aims this frontend's commands with; the client sends
+    /// a snapshot of it with each one (ADR 0041).
+    state: postio_core::SharedState,
+    /// What is marked.
+    selection: postio_ui::selection::SelectionState,
+    /// The list being shown.
+    scope: Option<ListScope>,
 }
 
 impl std::fmt::Debug for App {
@@ -101,7 +110,21 @@ impl App {
             paging: Paging::default(),
             cursor: 0,
             top: 0,
+            state: postio_core::SharedState::default(),
+            selection: postio_ui::selection::SelectionState::new(),
+            scope: None,
         }
+    }
+
+    /// The same app, mirroring into `state`: the one the client snapshots.
+    pub fn with_state(mut self, state: postio_core::SharedState) -> App {
+        self.state = state;
+        self
+    }
+
+    /// The state the client snapshots with each command.
+    pub fn state(&self) -> postio_core::SharedState {
+        self.state.clone()
     }
 
     /// What the user asked to see.
@@ -139,7 +162,10 @@ impl App {
                     .peek(position)
                     .and_then(|message| self.list.row_of(message)),
                 cursor: position == self.cursor,
-                selected: false,
+                selected: self
+                    .list
+                    .peek(position)
+                    .is_some_and(|message| self.selection.contains(message)),
             })
             .collect()
     }
@@ -178,7 +204,17 @@ impl App {
             .collect()
     }
 
+    /// The message the cursor is on, if its row is here.
+    fn cursor_message(&self) -> Option<postio_model::MessageId> {
+        self.list.peek(self.cursor)
+    }
+
     /// Run a command the keymap resolved to.
+    ///
+    /// Moving and marking are this frontend's own: they change what is on
+    /// screen and nothing in the store. Everything else is aimed by
+    /// `postio_core::aim` -- the rule every frontend shares for what a verb
+    /// acts on -- mirrored into [`App::state`], and sent.
     fn command(&mut self, id: &str) -> Vec<Effect> {
         let last = self.list.total().saturating_sub(1);
         match id {
@@ -186,15 +222,63 @@ impl App {
             "prev_message" => self.move_to(self.cursor.saturating_sub(1)),
             "first_message" => self.move_to(0),
             "last_message" => self.move_to(last),
+            "toggle_selection" => {
+                if let Some(message) = self.cursor_message() {
+                    self.selection.toggle(message);
+                }
+            }
+            "extend_selection_down" | "extend_selection_up" => {
+                let anchor = self.cursor_message();
+                if self.selection.anchor().is_none()
+                    && let Some(anchor) = anchor
+                {
+                    self.selection.select_only(anchor);
+                }
+                let next = if id == "extend_selection_down" {
+                    self.cursor.saturating_add(1)
+                } else {
+                    self.cursor.saturating_sub(1)
+                };
+                self.move_to(next);
+                if let Some(message) = self.cursor_message() {
+                    self.selection.extend_to(message);
+                }
+            }
+            "select_all" => self
+                .selection
+                .select_all(postio_ui::selection::Reach::default()),
             "quit" => return vec![Effect::Quit],
-            _ => return Vec::new(),
+            other => return self.send(other),
         }
         vec![Effect::Redraw]
+    }
+
+    /// Aim a verb at what the user is looking at, and send it.
+    fn send(&mut self, id: &str) -> Vec<Effect> {
+        let Ok(id) = id.parse::<postio_core::CommandId>() else {
+            return Vec::new();
+        };
+        let selection = self.selection.selection();
+        let aim = postio_core::aim::Aim {
+            scope: self
+                .scope
+                .and_then(|scope| postio_core::aim::view_scope(scope, &[])),
+            selection: &selection,
+            cursor: self.cursor_message(),
+            rows: &self.list,
+        };
+        let command = postio_core::aim::command_for(id, &aim);
+        let (quiet, _) = postio_core::bridge::event_channel();
+        postio_core::aim::mirror(&self.state, &quiet, &aim);
+        vec![Effect::Send(command)]
     }
 
     /// A list opened: show it from the top.
     fn open(&mut self, scope: ListScope, total: u32) -> Vec<Effect> {
         self.paging.open(scope);
+        self.scope = Some(scope);
+        // A selection is relative to the list it was made in.
+        self.selection.clear();
         self.list.reset(total);
         self.cursor = 0;
         self.top = 0;
@@ -410,6 +494,66 @@ mod tests {
         assert_eq!(app.cursor(), 0, "g g is the first row");
         update(&mut app, press('G'));
         assert_eq!(app.cursor(), 2, "G is the last");
+    }
+
+    fn mark(app: &mut App, position: u32) {
+        while app.cursor() < position {
+            update(app, press('j'));
+        }
+        update(app, press('x'));
+    }
+
+    #[test]
+    fn a_verb_acts_on_what_is_marked_not_where_the_cursor_is() {
+        // US1 scenario 3: three marked, the cursor on a fourth.
+        let mut app = app((120, 30));
+        let opening = opened(&mut app, 10);
+        serve(&mut app, opening);
+        for position in [1, 2, 3] {
+            mark(&mut app, position);
+        }
+        update(&mut app, press('j'));
+        assert_eq!(app.cursor(), 4);
+
+        let effects = update(&mut app, press('a'));
+
+        let sent: Vec<_> = effects
+            .iter()
+            .filter(|effect| matches!(effect, Effect::Send(_)))
+            .collect();
+        assert_eq!(sent.len(), 1, "{effects:?}");
+        let marked: Vec<MessageId> = [1, 2, 3].map(|position| row(position).id).to_vec();
+        assert_eq!(
+            app.state()
+                .read(|state| state.resolve(&postio_core::MessageTarget::Selection)),
+            Some(postio_core::Resolved::Messages(marked)),
+            "the host would archive the three marked rows"
+        );
+    }
+
+    #[test]
+    fn with_nothing_marked_a_verb_acts_on_the_cursor_row() {
+        let mut app = app((120, 30));
+        let opening = opened(&mut app, 10);
+        serve(&mut app, opening);
+        update(&mut app, press('j'));
+        update(&mut app, press('a'));
+        assert_eq!(
+            app.state()
+                .read(|state| state.resolve(&postio_core::MessageTarget::Selection)),
+            Some(postio_core::Resolved::Messages(vec![row(1).id]))
+        );
+    }
+
+    #[test]
+    fn marked_rows_are_drawn_as_marked() {
+        let mut app = app((120, 30));
+        let opening = opened(&mut app, 10);
+        serve(&mut app, opening);
+        mark(&mut app, 2);
+        let visible = app.visible();
+        assert!(visible[2].selected);
+        assert!(!visible[1].selected);
     }
 
     #[test]
