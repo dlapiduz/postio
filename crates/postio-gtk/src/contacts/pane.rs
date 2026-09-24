@@ -20,8 +20,10 @@ use std::rc::Rc;
 use adw::prelude::*;
 use adw::subclass::prelude::*;
 use gtk::glib;
-use postio_core::{CommandId, Context};
-use postio_model::{ContactDetail, ContactId, ContactListRow, ContactView};
+use postio_core::{Command, CommandId, ContactAddressAction, ContactJoinAction, Context};
+use postio_model::{AddressId, ContactDetail, ContactId, ContactListRow, ContactView};
+
+use super::join::JoinPanel;
 
 use super::model::{ContactItem, ContactPageSource, ContactsModel};
 use super::row::ContactRowView;
@@ -39,6 +41,8 @@ type ViewHandler = Box<dyn Fn(ContactView, String)>;
 type PageHandler = Box<dyn Fn(ContactView, u64, u32)>;
 type PersonHandler = Box<dyn Fn(ContactId)>;
 type CursorHandler = Box<dyn Fn(Option<ContactId>)>;
+type PeopleHandler = Box<dyn Fn(Vec<ContactId>)>;
+type TypedHandler = Box<dyn Fn(ContactId, String)>;
 
 mod imp {
     use super::*;
@@ -76,6 +80,23 @@ mod imp {
         /// Where the next reset puts the cursor, when a refresh asked it to
         /// stay rather than start the list over.
         pub keep: Cell<Option<u32>>,
+        /// The detail column's pages: the person, the join panel, the
+        /// address entry.
+        pub side: gtk::Stack,
+        pub join: JoinPanel,
+        /// Who a join shown in the panel would join, as marked when `m` was
+        /// pressed.
+        pub joining: RefCell<Vec<ContactId>>,
+        pub join_into: Cell<Option<ContactId>>,
+        pub address_panel: gtk::Box,
+        pub address_entry: gtk::Entry,
+        pub address_prompt: gtk::Label,
+        /// Whose address the entry is adding.
+        pub adding: Cell<Option<ContactId>>,
+        /// An owned address the prompt is asking to move, and to whom.
+        pub moving: Cell<Option<(AddressId, ContactId)>>,
+        pub join_asked_handlers: RefCell<Vec<PeopleHandler>>,
+        pub add_address_handlers: RefCell<Vec<TypedHandler>>,
     }
 
     #[glib::object_subclass]
@@ -236,7 +257,8 @@ impl ContactsPane {
         let body = gtk::Box::new(gtk::Orientation::Horizontal, 0);
         body.set_vexpand(true);
         body.append(&column);
-        body.append(&imp.detail);
+        self.build_side();
+        body.append(&imp.side);
 
         // Side by side while the pane is wide enough for both; stacked, the
         // list over the detail, when it is not (research R10). Measured on the
@@ -405,6 +427,7 @@ impl ContactsPane {
         if !self.is_open() {
             return;
         }
+        self.close_side();
         let Some(window) = self.imp().window.upgrade() else {
             return;
         };
@@ -582,7 +605,12 @@ impl ContactsPane {
             return;
         }
         match id {
-            CommandId::Back => self.close(),
+            CommandId::Back => self.back(),
+            // `Return` answers whichever panel is up before it shows mail.
+            CommandId::ContactShowMail if self.join_open() => self.confirm_join(),
+            CommandId::ContactShowMail if self.imp().moving.get().is_some() => {
+                self.confirm_moving()
+            }
             CommandId::ContactsFilter => {
                 self.imp().filter.grab_focus();
             }
@@ -620,6 +648,261 @@ impl ContactsPane {
             }
             _ => {}
         }
+    }
+
+    // -- Joining, and a person's addresses (User Story 2) ------------------
+
+    fn build_side(&self) {
+        let imp = self.imp();
+        imp.side.set_vexpand(true);
+        imp.side.set_hhomogeneous(false);
+        imp.side.add_named(&imp.detail, Some("detail"));
+        imp.side.add_named(imp.join.widget(), Some("join"));
+
+        imp.address_panel
+            .set_orientation(gtk::Orientation::Vertical);
+        imp.address_panel.set_spacing(8);
+        imp.address_panel.add_css_class("postio-contact-detail");
+        let title = gtk::Label::new(Some("Add an address"));
+        title.set_xalign(0.0);
+        title.add_css_class("postio-contact-name");
+        imp.address_entry
+            .set_placeholder_text(Some("name@example.com"));
+        imp.address_entry
+            .update_property(&[gtk::accessible::Property::Label("Address to add")]);
+        imp.address_prompt.set_xalign(0.0);
+        imp.address_prompt.set_wrap(true);
+        imp.address_prompt.add_css_class("postio-contact-facts");
+        imp.address_panel.append(&title);
+        imp.address_panel.append(&imp.address_entry);
+        imp.address_panel.append(&imp.address_prompt);
+        imp.side.add_named(&imp.address_panel, Some("address"));
+        imp.side.set_visible_child_name("detail");
+
+        imp.address_entry.connect_activate(glib::clone!(
+            #[weak(rename_to = pane)]
+            self,
+            move |entry| pane.submit_address(&entry.text())
+        ));
+    }
+
+    /// Answers a command whose payload is "ask the user": the join panel,
+    /// the address entry, or the focused address. The window sends these
+    /// here instead of to the bus, which would only reject half a request.
+    pub fn ask(&self, command: &Command) {
+        if !self.is_open() {
+            return;
+        }
+        match command {
+            Command::ContactJoin(ContactJoinAction::Ask) => self.ask_join(),
+            Command::ContactAddAddress(ContactAddressAction::Ask) => self.ask_address(),
+            Command::ContactDetachAddress { address: None } => match self.focused_address() {
+                Some(address) => self.act(Command::ContactDetachAddress {
+                    address: Some(address),
+                }),
+                None => self.say("Choose an address in the detail first"),
+            },
+            Command::ContactSetPreferred { address: None, .. } => {
+                let person = self.imp().detail.detail().map(|d| d.person.id);
+                match (person, self.focused_address()) {
+                    (Some(person), Some(address)) => self.act(Command::ContactSetPreferred {
+                        person: Some(person),
+                        address: Some(address),
+                    }),
+                    _ => self.say("Choose an address in the detail first"),
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn act(&self, command: Command) {
+        if let Some(window) = self.imp().window.upgrade() {
+            window.act(command);
+        }
+    }
+
+    fn focused_address(&self) -> Option<AddressId> {
+        self.imp().detail.focused_address()
+    }
+
+    fn ask_join(&self) {
+        let marked = self.marked();
+        if marked.len() < 2 {
+            self.say("Mark two or more people to join (x)");
+            return;
+        }
+        self.say("");
+        self.imp().joining.replace(marked.clone());
+        for handler in self.imp().join_asked_handlers.borrow().iter() {
+            handler(marked.clone());
+        }
+    }
+
+    /// Called with the marked people when `m` asks to join them; the answer
+    /// is [`show_join`](Self::show_join) with what they could be called.
+    pub fn connect_join_asked(&self, handler: impl Fn(Vec<ContactId>) + 'static) {
+        self.imp()
+            .join_asked_handlers
+            .borrow_mut()
+            .push(Box::new(handler));
+    }
+
+    /// Shows the join panel in the detail column, the preselected name
+    /// under the keyboard.
+    pub fn show_join(&self, choices: postio_ui::contacts::JoinChoices) {
+        let imp = self.imp();
+        if imp.joining.borrow().is_empty() {
+            imp.joining.replace(self.marked());
+        }
+        imp.join_into.set(Some(choices.into));
+        imp.join.set_choices(&choices);
+        imp.side.set_visible_child_name("join");
+        imp.join.focus();
+    }
+
+    /// Whether the join panel is up.
+    pub fn join_open(&self) -> bool {
+        self.imp().side.visible_child_name().as_deref() == Some("join")
+    }
+
+    /// The names the join panel offers, in order.
+    pub fn join_names(&self) -> Vec<String> {
+        self.imp().join.names()
+    }
+
+    /// The organisations the join panel asks about; empty with no conflict.
+    pub fn join_organizations(&self) -> Vec<String> {
+        self.imp().join.organizations()
+    }
+
+    fn confirm_join(&self) {
+        let imp = self.imp();
+        let (Some(into), Some(name)) = (imp.join_into.get(), imp.join.name()) else {
+            return;
+        };
+        let others: Vec<ContactId> = imp
+            .joining
+            .take()
+            .into_iter()
+            .filter(|id| *id != into)
+            .collect();
+        let organization = imp.join.organization();
+        self.close_side();
+        imp.marks.borrow_mut().clear();
+        self.redraw_rows();
+        self.act(Command::ContactJoin(ContactJoinAction::Join {
+            into,
+            others,
+            name,
+            organization,
+        }));
+    }
+
+    /// Puts the keyboard on the detail's address at `position`.
+    pub fn focus_address(&self, position: usize) {
+        self.imp().detail.focus_address(position);
+    }
+
+    fn ask_address(&self) {
+        let Some(person) = self.imp().detail.detail().map(|d| d.person.id) else {
+            self.say("Choose someone first");
+            return;
+        };
+        let imp = self.imp();
+        imp.adding.set(Some(person));
+        imp.moving.set(None);
+        imp.address_entry.set_text("");
+        imp.address_entry.set_visible(true);
+        imp.address_prompt.set_text("Return to add · Esc to cancel");
+        imp.side.set_visible_child_name("address");
+        imp.address_entry.grab_focus();
+    }
+
+    /// Called with the person and the typed address when one is added; the
+    /// app acts the add, or asks [`confirm_move`](Self::confirm_move) when
+    /// someone else has it.
+    pub fn connect_add_address(&self, handler: impl Fn(ContactId, String) + 'static) {
+        self.imp()
+            .add_address_handlers
+            .borrow_mut()
+            .push(Box::new(handler));
+    }
+
+    /// Whether the address entry is up.
+    pub fn address_entry_open(&self) -> bool {
+        self.imp().side.visible_child_name().as_deref() == Some("address")
+            && WidgetExt::is_visible(&self.imp().address_entry)
+    }
+
+    /// Submits `text` as the entry's `Return` does.
+    pub fn submit_address(&self, text: &str) {
+        let text = text.trim();
+        let Some(person) = self.imp().adding.take() else {
+            return;
+        };
+        if text.is_empty() {
+            self.imp().adding.set(Some(person));
+            return;
+        }
+        self.close_side();
+        for handler in self.imp().add_address_handlers.borrow().iter() {
+            handler(person, text.to_owned());
+        }
+    }
+
+    /// Asks whether to take `address` -- typed as `text`, owned by `owner`
+    /// -- for `to` (FR-015): an address has one owner, and taking it from a
+    /// person the user can see is theirs to decide.
+    pub fn confirm_move(&self, address: AddressId, text: &str, owner: &str, to: ContactId) {
+        let imp = self.imp();
+        imp.moving.set(Some((address, to)));
+        imp.address_entry.set_visible(false);
+        imp.address_prompt.set_text(&format!(
+            "{text} belongs to {owner}. Return moves it here · Esc keeps it there"
+        ));
+        imp.side.set_visible_child_name("address");
+        self.focus_list();
+    }
+
+    /// The move prompt, while it is up.
+    pub fn move_prompt(&self) -> Option<String> {
+        self.imp()
+            .moving
+            .get()
+            .map(|_| self.imp().address_prompt.text().to_string())
+    }
+
+    fn confirm_moving(&self) {
+        let Some((address, to)) = self.imp().moving.take() else {
+            return;
+        };
+        self.close_side();
+        self.act(Command::ContactAddAddress(ContactAddressAction::Put {
+            address,
+            to: Some(to),
+            revive: None,
+        }));
+    }
+
+    /// `Esc`: a panel if one is up, the screen otherwise.
+    pub fn back(&self) {
+        if self.imp().side.visible_child_name().as_deref() != Some("detail") {
+            self.close_side();
+            self.focus_list();
+        } else {
+            self.close();
+        }
+    }
+
+    fn close_side(&self) {
+        let imp = self.imp();
+        imp.joining.replace(Vec::new());
+        imp.join_into.set(None);
+        imp.adding.set(None);
+        imp.moving.set(None);
+        imp.address_entry.set_visible(true);
+        imp.side.set_visible_child_name("detail");
     }
 
     /// Reads the view again, for an address book that changed under it,
@@ -678,6 +961,12 @@ impl ContactsPane {
         if person.is_none() {
             self.imp().detail.set_detail(None);
         }
+    }
+
+    /// Says `text` in the hint line under the list -- for an answer the app
+    /// had to find out, like an address that does not parse.
+    pub fn tell(&self, text: &str) {
+        self.say(text);
     }
 
     fn say(&self, text: &str) {

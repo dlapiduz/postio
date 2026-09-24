@@ -2552,7 +2552,7 @@ impl Window {
             CommandId::Back if self.cheatsheet().is_visible() => self.close_cheatsheet(),
             // Before the finder and the list: Contacts covers them, and `Esc`
             // is about the screen the person is looking at.
-            CommandId::Back if self.contacts_open() => self.contacts().close(),
+            CommandId::Back if self.contacts_open() => self.contacts().back(),
             // Through `press_escape`, not `close_finder` directly (#1011):
             // this is the path that runs once the keyboard has moved off
             // the search entry onto the list to read a result, and
@@ -3156,6 +3156,21 @@ impl Window {
                 }
                 None => list.activate_cursor(),
             }
+            return;
+        }
+        // The Contacts verbs' "ask the user" payloads, the same shape as the
+        // move and the label above: the screen asks -- the join panel, the
+        // address entry -- or reads the focused address, and acts the answer
+        // back through here (specs/005-contacts). Never the bus, which could
+        // only reject half a request.
+        if matches!(
+            command,
+            postio_core::Command::ContactJoin(postio_core::ContactJoinAction::Ask)
+                | postio_core::Command::ContactAddAddress(postio_core::ContactAddressAction::Ask)
+                | postio_core::Command::ContactDetachAddress { address: None }
+                | postio_core::Command::ContactSetPreferred { address: None, .. }
+        ) {
+            self.contacts().ask(&command);
             return;
         }
         // A command the window answers itself — closing an overlay, moving

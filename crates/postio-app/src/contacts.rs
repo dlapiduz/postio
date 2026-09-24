@@ -13,6 +13,7 @@ use std::rc::Rc;
 
 use gtk::glib;
 use gtk::prelude::*;
+use postio_core::{Command, ContactAddressAction};
 use postio_gtk::window::Window;
 use postio_model::{AccountId, ContactId, ContactView, Draft};
 use postio_session::Wiring;
@@ -251,6 +252,117 @@ pub async fn install(window: &Window, wiring: &Wiring, account: AccountId) {
                 )];
                 window.contacts().close();
                 window.composer().open(draft);
+            });
+        }
+    });
+
+    install_edits(window, wiring);
+}
+
+/// `m`: what the marked people could be called, read from the store and
+/// decided by `join_name_choices`; `+`: an address added, or -- when a live
+/// person has it -- the question whether to move it (FR-012, FR-015).
+fn install_edits(window: &Window, wiring: &Wiring) {
+    let pane = window.contacts();
+    pane.connect_join_asked({
+        let pane = pane.downgrade();
+        let database = wiring.database.clone();
+        let runtime = wiring.runtime.clone();
+        move |people| {
+            let answer = ask(&database, &runtime, move |connection| async move {
+                let contacts = ContactRepository::new(&connection);
+                let mut found = Vec::with_capacity(people.len());
+                for id in people {
+                    match contacts.get(id).await {
+                        Ok(Some(person)) => found.push(person),
+                        Ok(None) => {}
+                        Err(error) => {
+                            tracing::warn!(%error, "could not read a contact to join");
+                            return None;
+                        }
+                    }
+                }
+                Some(found)
+            });
+            let pane = pane.clone();
+            glib::spawn_future_local(async move {
+                let Ok(Some(people)) = answer.recv().await else {
+                    return;
+                };
+                let Some(pane) = pane.upgrade() else {
+                    return;
+                };
+                if people.len() < 2 {
+                    pane.tell("Those people are no longer here to join");
+                    return;
+                }
+                pane.show_join(postio_ui::contacts::join_name_choices(&people));
+            });
+        }
+    });
+
+    pane.connect_add_address({
+        let window = window.downgrade();
+        let database = wiring.database.clone();
+        let runtime = wiring.runtime.clone();
+        move |person, text| {
+            let Some(window) = window.upgrade() else {
+                return;
+            };
+            let parsed = postio_model::address::parse_list(&text);
+            let [typed] = parsed.as_slice() else {
+                window.contacts().tell("That is not one address");
+                return;
+            };
+            if !typed.is_plausible() {
+                window.contacts().tell("That does not look like an address");
+                return;
+            }
+            let typed = postio_model::EmailAddress::new(None::<String>, typed.address.clone());
+            let lookup = typed.address.clone();
+            let answer = ask(&database, &runtime, move |connection| async move {
+                ContactRepository::new(&connection)
+                    .by_address(&lookup)
+                    .await
+                    .map_err(|error| tracing::warn!(%error, "could not look an address up"))
+                    .ok()
+            });
+            let window = window.downgrade();
+            glib::spawn_future_local(async move {
+                let Ok(Some(owner)) = answer.recv().await else {
+                    return;
+                };
+                let Some(window) = window.upgrade() else {
+                    return;
+                };
+                match owner {
+                    // Someone the user can see has it: theirs to decide.
+                    Some(owner)
+                        if owner.id != person
+                            && owner.state == postio_model::ContactState::Live =>
+                    {
+                        let normalized = typed.address.to_lowercase();
+                        let Some(owned) = owner
+                            .addresses
+                            .iter()
+                            .find(|a| a.address.address.to_lowercase() == normalized)
+                        else {
+                            return;
+                        };
+                        window.contacts().confirm_move(
+                            owned.id,
+                            &typed.address,
+                            owner.display_name(),
+                            person,
+                        );
+                    }
+                    // Nobody, a deleted person (it moves, FR-024), or already
+                    // theirs: the store answers.
+                    _ => window.act(Command::ContactAddAddress(ContactAddressAction::Add {
+                        person,
+                        address: typed,
+                    })),
+                }
             });
         }
     });

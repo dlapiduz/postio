@@ -20,7 +20,7 @@ mod imp {
     pub struct DetailView {
         pub name: gtk::Label,
         pub organization: gtk::Label,
-        pub addresses: gtk::Box,
+        pub addresses: gtk::ListBox,
         pub facts: gtk::Label,
         pub groups: gtk::Label,
         pub note: gtk::Label,
@@ -89,9 +89,12 @@ impl DetailView {
             label.set_selectable(false);
             label.add_css_class(class);
         }
-        imp.addresses.set_orientation(gtk::Orientation::Vertical);
-        imp.addresses.set_spacing(2);
+        // Rows the keyboard can land on: `-` and `*` act on the address
+        // that has it (contracts/commands.md, "dispatch on the focused row").
+        imp.addresses.set_selection_mode(gtk::SelectionMode::Browse);
         imp.addresses.add_css_class("postio-contact-addresses");
+        imp.addresses
+            .update_property(&[gtk::accessible::Property::Label("Addresses")]);
 
         let show_mail = gtk::Button::with_label("Show mail");
         show_mail.add_css_class("postio-contact-action");
@@ -139,9 +142,7 @@ impl DetailView {
     /// Shows `detail`, or the empty state for no one.
     pub fn set_detail(&self, detail: Option<ContactDetail>) {
         let imp = self.imp();
-        while let Some(child) = imp.addresses.first_child() {
-            imp.addresses.remove(&child);
-        }
+        imp.addresses.remove_all();
         let Some(detail) = detail else {
             for widget in [
                 imp.name.upcast_ref::<gtk::Widget>(),
@@ -224,14 +225,44 @@ impl DetailView {
     /// The addresses as drawn, for a test that reads what a person would see.
     pub fn address_lines(&self) -> Vec<String> {
         let mut lines = Vec::new();
-        let mut child = self.imp().addresses.first_child();
-        while let Some(widget) = child {
-            if let Some(label) = widget.downcast_ref::<gtk::Label>() {
+        let mut index = 0;
+        while let Some(row) = self.imp().addresses.row_at_index(index) {
+            if let Some(label) = row.child().and_downcast::<gtk::Label>() {
                 lines.push(label.text().to_string());
             }
-            child = widget.next_sibling();
+            index += 1;
         }
         lines
+    }
+
+    /// Puts the keyboard on the address at `position`.
+    pub fn focus_address(&self, position: usize) {
+        let addresses = &self.imp().addresses;
+        if let Some(row) = i32::try_from(position)
+            .ok()
+            .and_then(|at| addresses.row_at_index(at))
+        {
+            addresses.select_row(Some(&row));
+            row.grab_focus();
+        }
+    }
+
+    /// The address the keyboard is on, when it is on one: what `-` and `*`
+    /// act on. `None` while the keyboard is anywhere else, so a key pressed
+    /// in the list never acts on an address the user cannot see chosen.
+    pub fn focused_address(&self) -> Option<postio_model::AddressId> {
+        let imp = self.imp();
+        let row = imp.addresses.selected_row()?;
+        let within = imp.addresses.focus_child().is_some() || row.has_focus();
+        if !within {
+            return None;
+        }
+        let detail = imp.detail.borrow();
+        let person = &detail.as_ref()?.person;
+        person
+            .addresses
+            .get(usize::try_from(row.index()).ok()?)
+            .map(|owned| owned.id)
     }
 
     /// The facts line as drawn.

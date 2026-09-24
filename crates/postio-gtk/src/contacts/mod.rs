@@ -8,11 +8,13 @@
 //! `postio_ui::contacts`.
 
 pub mod detail;
+pub mod join;
 pub mod model;
 pub mod pane;
 pub mod row;
 
 pub use detail::DetailView;
+pub use join::JoinPanel;
 pub use model::{ContactItem, ContactPageSource, ContactsModel};
 pub use pane::{CONTACTS_OPEN_CLASS, ContactsPane};
 pub use row::ContactRowView;

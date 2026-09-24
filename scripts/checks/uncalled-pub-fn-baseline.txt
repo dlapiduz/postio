@@ -22,7 +22,6 @@ advertises_special_use            # crates/postio-account/src/imap/dispatch.rs:2
 back_depth                        # crates/postio-core/src/state.rs:478
 backfill_policy_at                # crates/postio-session/src/lib.rs:92
 backfill_progress                 # crates/postio-runtime/src/engine.rs:595
-by_address                        # crates/postio-storage/src/repository/contacts.rs:99
 can_redo                          # crates/postio-body/src/edit.rs:118
 check_budget                      # crates/postio-core/src/perf_budget.rs:65
 closing_after                     # crates/postio-account/src/imap/transport.rs:634

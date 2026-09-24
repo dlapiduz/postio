@@ -67,6 +67,7 @@ mod gtk_composer_size;
 mod gtk_composer_toolbar;
 mod gtk_composer_tracking_notice;
 mod gtk_composer_warm;
+mod gtk_contacts_join;
 mod gtk_contacts_pane;
 mod gtk_conversation;
 mod gtk_cursor_preview;
@@ -185,6 +186,22 @@ const CASES: &[(&str, fn())] = &[
     (
         "gtk_sidebar_contacts_row::walking_to_the_contacts_row_opens_contacts",
         gtk_sidebar_contacts_row::walking_to_the_contacts_row_opens_contacts,
+    ),
+    (
+        "gtk_contacts_join::m_joins_the_marked_people_under_the_preselected_name",
+        gtk_contacts_join::m_joins_the_marked_people_under_the_preselected_name,
+    ),
+    (
+        "gtk_contacts_join::esc_cancels_a_join_and_leaves_the_screen_up",
+        gtk_contacts_join::esc_cancels_a_join_and_leaves_the_screen_up,
+    ),
+    (
+        "gtk_contacts_join::detach_and_preferred_act_on_the_focused_address",
+        gtk_contacts_join::detach_and_preferred_act_on_the_focused_address,
+    ),
+    (
+        "gtk_contacts_join::plus_adds_a_typed_address_and_asks_before_taking_one",
+        gtk_contacts_join::plus_adds_a_typed_address_and_asks_before_taking_one,
     ),
     (
         "gtk_contacts_pane::contacts_takes_the_pane_and_esc_gives_it_back",
