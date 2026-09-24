@@ -2,8 +2,9 @@
 //!
 //! The terminal's own palette for everything -- so Postio looks at home in
 //! whatever theme the user chose -- and, on a true-colour terminal, Postio's
-//! accent for the selected row and the focus, read from the generated design
-//! tokens and never retyped (clarified 2026-09-23, FR-054). Under `NO_COLOR`
+//! accent for accents, the selected row and the focus, read from the generated design
+//! tokens and never retyped (clarified 2026-09-23, FR-054); the raised
+//! `Surface` is a shade of that same accent. Under `NO_COLOR`
 //! there is no colour at all and every state keeps a mark that is not a
 //! colour (`contracts/tui-surface.md` §Colour roles). Any role can be
 //! overridden in `[tui.colors]`.
@@ -44,11 +45,14 @@ pub enum Role {
     Warning,
     /// Something worked.
     Success,
+    /// A raised background: the row under the cursor, the open folder, the
+    /// search field. A tint of the accent where the terminal can draw one.
+    Surface,
 }
 
 impl Role {
     /// Every role, for enumeration and validation.
-    pub const ALL: [Role; 13] = [
+    pub const ALL: [Role; 14] = [
         Role::Text,
         Role::Dim,
         Role::Accent,
@@ -62,6 +66,7 @@ impl Role {
         Role::Error,
         Role::Warning,
         Role::Success,
+        Role::Surface,
     ];
 
     /// The role's name in `[tui.colors]`.
@@ -80,6 +85,7 @@ impl Role {
             Role::Error => "error",
             Role::Warning => "warning",
             Role::Success => "success",
+            Role::Surface => "surface",
         }
     }
 }
@@ -117,7 +123,7 @@ impl Theme {
                 Some(colour) => {
                     let style = styles.entry(*role).or_default();
                     *style = match role {
-                        Role::Selection => style.bg(colour),
+                        Role::Selection | Role::Surface => style.bg(colour),
                         _ => style.fg(colour),
                     };
                 }
@@ -145,7 +151,7 @@ fn base(role: Role, colour: Colour, background: Background) -> Style {
     let plain = Style::default();
     if colour == Colour::None {
         return match role {
-            Role::Selection => plain.add_modifier(Modifier::REVERSED),
+            Role::Selection | Role::Surface => plain.add_modifier(Modifier::REVERSED),
             Role::Unread | Role::Focus | Role::Error | Role::Warning => {
                 plain.add_modifier(Modifier::BOLD)
             }
@@ -154,18 +160,32 @@ fn base(role: Role, colour: Colour, background: Background) -> Style {
             Role::Text | Role::Accent | Role::Flagged | Role::Code | Role::Success => plain,
         };
     }
-    let accent = (colour == Colour::TrueColor).then(|| {
-        let (light, dark) = postio_ui::tokens::accent_rgb();
-        let (r, g, b) = match background {
-            Background::Light => light,
-            Background::Dark | Background::Unknown => dark,
-        };
-        Color::Rgb(r, g, b)
-    });
+    let (light, dark) = postio_ui::tokens::accent_rgb();
+    let on_light = background == Background::Light;
+    let rgb = if on_light { light } else { dark };
+    let accent = (colour == Colour::TrueColor).then_some(Color::Rgb(rgb.0, rgb.1, rgb.2));
+    let surface = match colour {
+        // The accent, mostly given way to the ground it sits on: a quarter
+        // of it over black on a dark terminal, an eighth over white on a
+        // light one -- the desktop's selected card, in a terminal.
+        Colour::TrueColor if on_light => {
+            let mix = |c: u8| (u16::from(c) + 7 * 255).div_ceil(8) as u8;
+            Color::Rgb(mix(rgb.0), mix(rgb.1), mix(rgb.2))
+        }
+        Colour::TrueColor => {
+            let mix = |c: u8| (u16::from(c) / 4) as u8;
+            Color::Rgb(mix(rgb.0), mix(rgb.1), mix(rgb.2))
+        }
+        // The grey ramp's near-ground steps.
+        Colour::Ansi256 if on_light => Color::Indexed(254),
+        Colour::Ansi256 => Color::Indexed(236),
+        _ if on_light => Color::Gray,
+        _ => Color::DarkGray,
+    };
     match role {
         Role::Text => plain,
         Role::Dim | Role::Quote => plain.fg(Color::DarkGray),
-        Role::Accent => plain.fg(Color::Blue),
+        Role::Accent => plain.fg(accent.unwrap_or(Color::Blue)),
         Role::Selection => plain.bg(accent.unwrap_or(Color::Blue)).fg(Color::White),
         Role::Focus => plain
             .fg(accent.unwrap_or(Color::Cyan))
@@ -176,6 +196,7 @@ fn base(role: Role, colour: Colour, background: Background) -> Style {
         Role::Code => plain.fg(Color::Cyan),
         Role::Error => plain.fg(Color::Red),
         Role::Success => plain.fg(Color::Green),
+        Role::Surface => plain.bg(surface),
     }
 }
 
@@ -221,14 +242,18 @@ mod tests {
     }
 
     #[test]
-    fn true_colour_uses_postios_accent_for_selection_and_focus_only() {
+    fn true_colour_uses_postios_accent_for_accent_selection_focus_and_surface_only() {
         let (theme, _) = theme(Colour::TrueColor, &[]);
         let (_, dark) = postio_ui::tokens::accent_rgb();
         let accent = Color::Rgb(dark.0, dark.1, dark.2);
         assert_eq!(theme.style(Role::Selection).bg, Some(accent));
         assert_eq!(theme.style(Role::Focus).fg, Some(accent));
+        assert_eq!(theme.style(Role::Accent).fg, Some(accent));
         for role in Role::ALL {
-            if !matches!(role, Role::Selection | Role::Focus) {
+            if !matches!(
+                role,
+                Role::Selection | Role::Focus | Role::Accent | Role::Surface
+            ) {
                 let style = theme.style(role);
                 assert!(
                     !matches!(style.fg, Some(Color::Rgb(..)))
@@ -237,6 +262,45 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn the_surface_is_a_tint_at_every_depth_and_reversed_without_colour() {
+        let (none, _) = theme(Colour::None, &[]);
+        assert!(
+            none.style(Role::Surface)
+                .add_modifier
+                .contains(Modifier::REVERSED),
+            "the cursor row still reads as one without colour"
+        );
+        for depth in [Colour::Ansi16, Colour::Ansi256] {
+            let bg = theme(depth, &[]).0.style(Role::Surface).bg;
+            assert!(
+                bg.is_some() && !matches!(bg, Some(Color::Rgb(..))),
+                "{depth:?}: {bg:?}"
+            );
+        }
+        // On true colour, a shade of the accent: its channels keep the
+        // accent's order, far darker on a dark terminal and far lighter on
+        // a light one.
+        let (light, dark) = postio_ui::tokens::accent_rgb();
+        for (background, accent) in [(Background::Dark, dark), (Background::Light, light)] {
+            let (theme, _) = Theme::new(Colour::TrueColor, background, &Default::default());
+            let Some(Color::Rgb(r, g, b)) = theme.style(Role::Surface).bg else {
+                panic!("{background:?}: no tint");
+            };
+            assert!(r <= g && g <= b, "blue like the accent: {r} {g} {b}");
+            match background {
+                Background::Light => assert!(r > accent.0 && b > accent.2),
+                _ => assert!(r < accent.0 / 2 && b < accent.2 / 2),
+            }
+        }
+        let (overridden, _) = theme(Colour::Ansi16, &[("surface", "#102030")]);
+        assert_eq!(
+            overridden.style(Role::Surface).bg,
+            Some(Color::Rgb(0x10, 0x20, 0x30)),
+            "a surface is a background, and [tui.colors] sets it"
+        );
     }
 
     #[test]

@@ -124,7 +124,9 @@ The output of `postio_ui::paste::classify(text)`, a pure function.
 ### Colour roles
 
 `Text`, `Dim`, `Accent`, `Selection`, `Focus`, `Unread`, `Flagged`, `Link`,
-`Quote`, `Code`, `Error`, `Warning`, `Success`. Each resolves as follows:
-config override, else the true-colour accent (only `Selection` and `Focus`),
-else an ANSI palette index, else, under `NO_COLOR`, an attribute (bold,
-reverse, underline, dim).
+`Quote`, `Code`, `Error`, `Warning`, `Success`, `Surface`. Each resolves as
+follows: config override, else the true-colour accent (`Accent`, `Selection`
+and `Focus`; `Surface` is a shade of it), else an ANSI palette index, else,
+under `NO_COLOR`, an attribute (bold, reverse, underline, dim). `Surface` is a
+background -- the cursor row, the open folder, the search field -- and so is
+`Selection`; an override sets theirs, and every other role's foreground.
