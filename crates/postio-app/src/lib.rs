@@ -57,8 +57,7 @@ use std::rc::Rc;
 
 use adw::prelude::*;
 use gtk::{gdk, glib};
-use postio_core::bridge::{Bridge, EventHub, EventStream};
-use postio_core::dispatch::Dispatcher;
+use postio_core::bridge::EventStream;
 use postio_core::state::SharedState;
 use postio_gtk::startup::{Phase, Timeline};
 use postio_gtk::window::Window;
@@ -257,8 +256,7 @@ pub fn run() -> glib::ExitCode {
         // Blocked on, because the GTK main loop has already returned and
         // there is nothing left to keep responsive -- this is the last write
         // of the process.
-        postio_session::blocking::now(postio_session::end_session(&ready.wiring.database));
-        ready.bridge.shutdown();
+        ready.host.stop();
     }
     code
 }
@@ -1213,9 +1211,9 @@ pub struct Opened {
     /// one queue and exactly one reader of it — and `activate` can fire again
     /// when a second launch raises the window.
     pub events: Rc<std::cell::RefCell<Option<EventStream>>>,
-    /// The tokio threads every read is polled on. Held to the end of `run`,
-    /// which is what shuts it down.
-    pub bridge: postio_core::bridge::Bridge,
+    /// The store's owner, and the runtime every read is polled on. Held to
+    /// the end of `run`, which is what stops it.
+    pub host: postio_host::Host,
 }
 
 /// What the opening thread has to say, in the order it says it.
@@ -1377,85 +1375,74 @@ pub fn open_the_store(
     });
 }
 
-/// Worker threads for the bridge runtime.
-///
-/// What runs here is I/O-bound command handling: the sync engine has a
-/// thread and a runtime of its own, GTK owns the UI thread, and the store
-/// has its own pool. Tokio's default is one worker per logical CPU -- eight
-/// parked threads on an eight-core machine for work that two absorb, and
-/// more on bigger ones. Thread count is also memory shape: glibc opens up
-/// to `8 x cores` malloc arenas as threads contend, and an arena keeps a
-/// burst's allocations after the burst ends (#1502).
-const BRIDGE_WORKER_THREADS: usize = 2;
-
-/// The blocking pool's ceiling.
-///
-/// Its users are the background passes spawned after first frame -- the
-/// body index catch-up and the dictionary trainer among them -- and the
-/// odd synchronous store read. Eight lets them run beside each other while
-/// stopping the pool from climbing toward tokio's default of 512 during a
-/// burst. Tokio parks an idle blocking thread and drops it after ten
-/// seconds, so this bounds the peak, not the idle count.
-const BRIDGE_BLOCKING_THREADS: usize = 8;
-
-/// Build the bus, the runtime and the wiring over a store that is already
-/// open.
+/// Start the store's owner over a store that is already open, and connect
+/// the window to it as a client.
 ///
 /// The half of startup that is main-thread work rather than I/O, split out
-/// when the other half moved to a thread (#1114): none of what it builds is
-/// `Send`, and none of it is slow — the cost this function has is the cost of
-/// starting a tokio runtime, which is microseconds beside a schema migration.
+/// when the other half moved to a thread (#1114): none of it is slow -- the
+/// cost this function has is the cost of starting a tokio runtime, which is
+/// microseconds beside a schema migration.
 fn assemble(
     database: Store,
     blobs: postio_storage::BlobStore,
     context: &Installation,
 ) -> Result<Opened, String> {
-    // Filled in when the window is fed and an engine actually starts, which
-    // is later than this and may not happen at all. `Refresh` reads it at the
-    // moment it is pressed.
-    let engine = refresh::EngineSlot::default();
-    let builder = actions::wire(
-        Dispatcher::builder(),
-        actions::Actions::new(database.clone(), context.state.clone()),
-    );
-    let bus = refresh::wire(builder, engine.clone(), context.state.clone()).build();
-    let wired: Vec<postio_core::CommandId> = bus.wired().collect();
-
-    // Every producer's events, and every consumer's view of them. The bus's
-    // handlers and the sync engine are two producers; the window is one
-    // subscriber, and ADR 0013 exists so that an MCP server can be a second
-    // one without stealing the window's repaints.
-    let hub = EventHub::new();
-    // The engine is not a command handler, so the bridge never hands it a
-    // sink; it holds one of its own on the same hub.
-    let sink = hub.sink();
-    let bridge = Bridge::builder()
-        .worker_threads(BRIDGE_WORKER_THREADS)
-        .max_blocking_threads(BRIDGE_BLOCKING_THREADS)
-        .build_with_events(bus, hub.sink())
-        .map_err(|error| {
-            tracing::error!(%error, "no runtime, so no mail: {error}");
-            format!("Postio could not start its runtime: {error}")
-        })?;
-
-    let wiring = Wiring {
-        engine,
-        ..Wiring::new(database, blobs, bridge.handle(), sink, bridge.commands())
+    // The store's owner (ADR 0041): its runtime, its event hub, its engines'
+    // slot and a dispatcher per frontend. In this process until the desktop
+    // reaches a daemon over the socket; the window is its client either way.
+    let host = postio_host::Host::start(database, blobs, |wiring| {
+        wiring
             .with_mailbox_roles(context.mailbox_roles.clone())
             .with_backfill(postio_session::backfill_policy(&context.sync_config))
             .with_watch(postio_session::watch_policy(&context.sync_config))
             .with_storage_ceiling(context.storage_ceiling)
             .with_secrets(context.secrets.clone())
-    };
+    })
+    .map_err(|error| {
+        tracing::error!(error, "no runtime, so no mail: {error}");
+        error
+    })?;
+    // Aimed with the window's own state, which the host is sent a snapshot
+    // of with every command -- the selection a verb acts on is the one on
+    // this screen, not another frontend's.
+    let client = host
+        .connect(postio_client::protocol::ClientKind::Gtk)
+        .with_state(context.state.clone());
+    let runtime = host.wiring().runtime.clone();
+
+    // The window's commands: sent as they always were, through a
+    // `CommandSender`, and passed to the client in the order they came.
+    let (commands, queued) = postio_core::bridge::command_channel();
+    runtime.spawn({
+        let client = client.clone();
+        async move {
+            while let Some(command) = queued.recv().await {
+                if client.send(command).await.is_err() {
+                    return;
+                }
+            }
+        }
+    });
+    // And what it hears: everybody's news, and what its own commands said
+    // about themselves, which only this client is told.
+    let (sink, stream) = postio_core::bridge::event_channel();
+    let arriving = client.events();
+    runtime.spawn(async move {
+        while let Ok(envelope) = arriving.recv().await {
+            if !sink.emit(envelope.event) {
+                return;
+            }
+        }
+    });
 
     Ok(Opened {
-        wiring,
-        wired,
-        // One subscription rather than the `Vec<Option<EventStream>>` this
-        // used to be: fan-in is the hub's now, so the window no longer
-        // collects a stream per producer by hand.
-        events: Rc::new(std::cell::RefCell::new(Some(hub.subscribe("window")))),
-        bridge,
+        wiring: Wiring {
+            commands,
+            ..host.wiring().clone()
+        },
+        wired: host.wired(),
+        events: Rc::new(std::cell::RefCell::new(Some(stream))),
+        host,
     })
 }
 
