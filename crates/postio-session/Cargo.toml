@@ -47,7 +47,7 @@ tracing-subscriber = { workspace = true, features = ["ansi", "env-filter"] }
 # the application would hold (#1606).
 mimalloc = "0.1"
 # The patience dial (#842), so the indexer test's wait scales with the machine.
-postio-test-support.workspace = true
+postio-test-support = { workspace = true, features = ["logs"] }
 # Throwaway migrated databases, so a verb is an ordinary function over a real
 # schema rather than something only a running application can exercise. This
 # is the whole argument for the crate: the verbs are testable without a

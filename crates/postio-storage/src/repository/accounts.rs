@@ -796,4 +796,3 @@ fn parse_security(value: &str, column: &'static str) -> Result<TransportSecurity
 fn optional_signature_id(id: Option<SignatureId>) -> Option<i64> {
     id.filter(|id| id.is_assigned()).map(SignatureId::get)
 }
-

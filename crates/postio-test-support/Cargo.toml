@@ -12,6 +12,11 @@ repository.workspace = true
 # `time` only: `settle_until_async` backs off with `tokio::time::sleep`, because a
 # thread sleep in an async waiter parks a runtime worker.
 tokio = { workspace = true, features = ["time"] }
+# Behind `logs`: the capturing writer tests read log lines back through.
+tracing-subscriber = { workspace = true, optional = true }
+
+[features]
+logs = ["dep:tracing-subscriber"]
 
 [lints]
 workspace = true

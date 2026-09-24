@@ -39,6 +39,8 @@
 //! the GTK crates and another for everyone else.
 
 pub mod cpu;
+#[cfg(feature = "logs")]
+pub mod logs;
 
 use std::time::{Duration, Instant};
 

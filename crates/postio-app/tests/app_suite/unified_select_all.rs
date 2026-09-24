@@ -27,9 +27,10 @@
 // the environment. This test sets it before the app under test starts, which
 // is the one moment it is sound. The crate's library code forbids `unsafe`.
 
+use crate::settle;
 use crate::settle_until;
+use gtk::gdk;
 use gtk::prelude::*;
-use gtk::{gdk, glib};
 use postio_app::{commands, feed_the_window};
 use postio_core::bridge::{Bridge, event_channel};
 use postio_core::state::SharedState;
@@ -42,10 +43,6 @@ use postio_session::{Wiring, actions};
 use postio_storage::repository::{MessageRepository, MessageSet};
 use postio_storage::seed::{seed_extra_account, seed_small};
 use postio_storage::{BlobStore, Store, test_support};
-
-fn settle() {
-    while glib::MainContext::default().iteration(false) {}
-}
 
 /// How many of `account`'s messages are still outside `archive`.
 ///

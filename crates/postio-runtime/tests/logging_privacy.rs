@@ -26,8 +26,7 @@
 //! hostname they chose to connect to. None of them says anything about who
 //! wrote to them or what was said.
 
-use std::io;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 use postio_account::backend::{MockBackend, MockMailbox, MockMessage};
 use postio_model::MailboxRole;
@@ -37,33 +36,7 @@ use postio_storage::seed::seed_small;
 use postio_storage::{BlobStore, test_support};
 
 /// A writer every `tracing` line lands in, so a test can read them back.
-#[derive(Clone, Default)]
-struct Captured(Arc<Mutex<Vec<u8>>>);
-
-impl Captured {
-    fn text(&self) -> String {
-        String::from_utf8_lossy(&self.0.lock().expect("not poisoned")).into_owned()
-    }
-}
-
-impl io::Write for Captured {
-    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        self.0.lock().expect("not poisoned").extend_from_slice(buf);
-        Ok(buf.len())
-    }
-
-    fn flush(&mut self) -> io::Result<()> {
-        Ok(())
-    }
-}
-
-impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for Captured {
-    type Writer = Captured;
-
-    fn make_writer(&'a self) -> Self::Writer {
-        self.clone()
-    }
-}
+use postio_test_support::logs::Captured;
 
 /// Every string in the store that would be a leak if it appeared in a log.
 ///

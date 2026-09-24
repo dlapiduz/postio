@@ -673,33 +673,7 @@ mod tests {
 
     /// Somewhere for a test subscriber to write, so an assertion can be about
     /// what came out rather than about the filter that was built.
-    #[derive(Clone, Default)]
-    struct Captured(std::sync::Arc<std::sync::Mutex<Vec<u8>>>);
-
-    impl Captured {
-        fn text(&self) -> String {
-            String::from_utf8_lossy(&self.0.lock().expect("not poisoned")).into_owned()
-        }
-    }
-
-    impl std::io::Write for Captured {
-        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-            self.0.lock().expect("not poisoned").extend_from_slice(buf);
-            Ok(buf.len())
-        }
-
-        fn flush(&mut self) -> std::io::Result<()> {
-            Ok(())
-        }
-    }
-
-    impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for Captured {
-        type Writer = Captured;
-
-        fn make_writer(&'a self) -> Self::Writer {
-            self.clone()
-        }
-    }
+    use postio_test_support::logs::Captured;
 
     #[test]
     fn a_missing_config_file_still_yields_a_usable_level() {

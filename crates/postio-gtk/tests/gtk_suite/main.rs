@@ -1524,6 +1524,31 @@ pub fn settle_until(what: &str, done: impl Fn() -> bool) {
     );
 }
 
+/// A plain, read message at `position`, the row the list and selection
+/// tests page through.
+pub fn row(position: u32) -> postio_gtk::list::Row {
+    postio_gtk::list::Row {
+        id: postio_model::ids::MessageId::new(position as i64 + 1),
+        thread: None,
+        from: Some(postio_model::address::EmailAddress::new(
+            Some("Ada Lovelace"),
+            "ada@example.com",
+        )),
+        subject: Some(format!("Note {position}")),
+        preview: Some("…".into()),
+        received_at: chrono::TimeZone::with_ymd_and_hms(&chrono::Utc, 2026, 8, 23, 9, 0, 0)
+            .unwrap(),
+        seen: true,
+        flagged: false,
+        answered: false,
+        send_state: None,
+        send_at: None,
+        has_attachments: false,
+        thread_count: 1,
+        participants: Vec::new(),
+    }
+}
+
 /// Turn the main loop a fixed number of times, draining it each time.
 ///
 /// There were 26 copies of this across the suite in nine variants: 40, 50,
