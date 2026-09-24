@@ -32,11 +32,14 @@ The invariants (see CLAUDE.md, "Architectural invariants"):
   * ``postio-ui`` must not depend on ``gtk4``/``libadwaita``/``webkit6`` or the
     engine. It is the toolkit-free presentation logic every frontend shares
     (ADR 0019), and its own ``lib.rs`` says this check holds it to that.
-  * ``postio-client`` and ``postio-tui`` must not depend on a toolkit, the
-    engine, or ``io-imap``. Exactly one process opens the store and a frontend
-    is its client (ADR 0041); the terminal frontend is also required to be
-    small (``specs/005-tui-frontend`` FR-051), and a store engine or a toolkit
-    in its graph is how it would stop being either.
+  * ``postio-client`` must not depend on a toolkit, the engine, or
+    ``io-imap``: it is the vocabulary between a frontend and the store's host
+    (ADR 0041), and every frontend links it.
+  * ``postio-tui`` must not depend on a toolkit or WebKit. It opens the store
+    itself -- one app at a time has it, the terminal or the desktop app (ADR
+    0041) -- so the engine and the protocol are in its graph by design; a
+    toolkit is how it would stop being small (``specs/005-tui-frontend``
+    FR-051).
 
 Not enforced here: ADR 0001's rule that ``postio-sync`` never reaches
 ``io-imap``/``io-sasl``. Cargo unifies features workspace-wide, so
@@ -122,9 +125,10 @@ RULES: dict[str, dict[str, object]] = {
         ],
         "why": (
             "postio-client is what a frontend holds: commands down, events "
-            "up, reads answered by the store's one owner (ADR 0041). The "
-            "engine here would let a frontend open the store itself, which "
-            "is the second writer that ADR exists to rule out."
+            "up, reads answered by the store's host (ADR 0041). It is the "
+            "vocabulary every frontend links, the macOS one included, so the "
+            "engine or a toolkit here would be in all of them; the store is "
+            "opened by postio-host, never through this crate."
         ),
     },
     "postio-tui": {
@@ -141,14 +145,12 @@ RULES: dict[str, dict[str, object]] = {
             "webkit6-sys",
             "rusqlite",
             "libsqlite3-sys",
-            "turso",
-            "turso_core",
-            "io-imap",
         ],
         "why": (
-            "postio-tui is a client of the store's one owner (ADR 0041) and "
-            "must stay small (specs/005-tui-frontend FR-051): no toolkit, no "
-            "WebKit, no engine and no protocol in its graph."
+            "postio-tui opens the store itself when no other Postio has it "
+            "(ADR 0041), so the engine and the protocol are in its graph on "
+            "purpose. It must stay small (specs/005-tui-frontend FR-051): no "
+            "toolkit and no WebKit."
         ),
     },
     "postio-ffi": {

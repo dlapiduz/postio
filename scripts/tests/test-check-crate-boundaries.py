@@ -322,17 +322,27 @@ def main() -> int:
             must_mention=("postio-config", "rusqlite"),
         )
 
-        # 15-17. The terminal frontend opens no store and links no toolkit:
-        # the store has one owner (ADR 0041), and the frontend's size is a
-        # requirement (specs/005-tui-frontend FR-051).
+        # 15-17. The terminal frontend links no toolkit: its size is a
+        # requirement (specs/005-tui-frontend FR-051). It does open the store
+        # itself -- one app at a time has it (ADR 0041) -- so the engine is
+        # allowed in its graph.
         check_case(
-            "postio-tui gains a direct turso dependency",
+            "postio-tui gains a direct gtk4 dependency",
+            build_fixture(
+                tmp_path / "tui-gtk4",
+                tui_deps='gtk4 = { path = "../../vendor/gtk4" }\n',
+            ),
+            expected_status=1,
+            must_mention=("postio-tui", "gtk4"),
+        )
+        check_case(
+            "postio-tui may link the store engine",
             build_fixture(
                 tmp_path / "tui-turso",
                 tui_deps='turso = { path = "../../vendor/turso" }\n',
             ),
-            expected_status=1,
-            must_mention=("postio-tui", "turso"),
+            expected_status=0,
+            must_mention=("postio-tui",),
         )
         check_case(
             "postio-client reaches gtk4 through another crate",
