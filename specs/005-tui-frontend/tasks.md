@@ -196,8 +196,8 @@ palette against the registry.
 store.
 
 - [X] T070 [US5] Hit testing in `crates/postio-tui/src/view/hit.rs`: each frame records rects → targets; mouse events resolve against the last frame. Test first: a click on the third list row resolves to that row
-- [ ] T071 [US5] List and sidebar clicks, `Ctrl`+click toggle, `Shift`+click extend. Tests first: US5 scenario 1
-- [ ] T072 [US5] Wheel scrolls only the pane under the pointer. Test first: US5 scenario 2
+- [X] T071 [US5] List and sidebar clicks, `Ctrl`+click toggle, `Shift`+click extend. Tests first: US5 scenario 1
+- [X] T072 [US5] Wheel scrolls only the pane under the pointer. Test first: US5 scenario 2
 - [ ] T073 [US5] Links, fold markers, placeholders and attachments respond to clicks (same commands as keys). Test first: a click on a fold marker expands it
 - [ ] T074 [US5] Pane divider drag (Down, Drag…, Up) with widths persisted in window state. Test first: dragging 10 columns right widens the list by 10 and survives a restart
 - [ ] T075 [US5] Click to place the cursor in the composer via `screen_to_data` + `CursorMove::Jump`. Test first: clicking column 5 of body line 2 puts the cursor there

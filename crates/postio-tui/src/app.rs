@@ -25,6 +25,27 @@ use crate::row::Row;
 use crate::view::list::Visible;
 use postio_body::replying::ReplyKind;
 
+/// What the mouse did, resolved against the last frame drawn.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Pointer {
+    /// A left click.
+    Click {
+        /// What was under it.
+        hit: crate::view::hit::Hit,
+        /// Whether Ctrl was held: toggle, rather than move.
+        ctrl: bool,
+        /// Whether Shift was held: extend, rather than move.
+        shift: bool,
+    },
+    /// A turn of the wheel.
+    Wheel {
+        /// What was under the pointer.
+        hit: crate::view::hit::Hit,
+        /// Towards the end, rather than the start.
+        down: bool,
+    },
+}
+
 /// Something that happened, from the terminal or from the daemon.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Input {
@@ -43,6 +64,8 @@ pub enum Input {
         /// The body it saved.
         edited: Result<String, String>,
     },
+    /// The mouse did something over what was drawn.
+    Pointer(Pointer),
     /// Text was pasted, or files were dropped: a drop arrives as a paste of
     /// their paths.
     Paste(String),
@@ -303,6 +326,9 @@ pub const READ_REST: std::time::Duration = std::time::Duration::from_millis(120)
 /// How long the typing has to pause before a draft is saved: the desktop
 /// composer's autosave interval.
 pub const AUTOSAVE: std::time::Duration = std::time::Duration::from_millis(1500);
+
+/// How many lines one turn of the wheel scrolls.
+const WHEEL: isize = 3;
 
 /// Everything the terminal frontend knows.
 pub struct App {
@@ -827,6 +853,97 @@ impl App {
         }
         effects.push(Effect::Redraw);
         effects
+    }
+
+    /// What is marked.
+    pub fn selection(&self) -> &postio_ui::selection::SelectionState {
+        &self.selection
+    }
+
+    /// A mouse event, on what it landed on: the same things the keys do.
+    fn pointer(&mut self, pointer: Pointer) -> Vec<Effect> {
+        use crate::view::hit::Target;
+        match pointer {
+            Pointer::Click { hit, ctrl, shift } => match hit.target {
+                Target::Row(position) => {
+                    self.focus = Focus::List;
+                    let message = self.list.peek(position);
+                    match (ctrl, shift, message) {
+                        (true, _, Some(message)) => self.selection.toggle(message),
+                        (false, true, Some(_)) => {
+                            // Every row from the anchor -- where the marking
+                            // started, else the cursor -- to the one clicked.
+                            let anchor = self
+                                .selection
+                                .anchor()
+                                .and_then(|anchor| self.list.position_of(anchor))
+                                .unwrap_or(self.cursor);
+                            if self.selection.anchor().is_none()
+                                && let Some(start) = self.cursor_message()
+                            {
+                                self.selection.select_only(start);
+                            }
+                            let (from, to) = (anchor.min(position), anchor.max(position));
+                            let over: Vec<_> =
+                                (from..=to).filter_map(|at| self.list.peek(at)).collect();
+                            self.selection.extend_over(over);
+                        }
+                        _ => self.move_to(position),
+                    }
+                    vec![Effect::Redraw]
+                }
+                Target::Sidebar(index) => {
+                    self.focus = Focus::Sidebar;
+                    self.sidebar_cursor = index;
+                    // Landing on it by the mouse does what landing on it by
+                    // the keys does.
+                    self.walk_sidebar(0)
+                }
+                Target::Reader(_) => {
+                    if self.reading.is_some() {
+                        self.focus = Focus::Reader;
+                    }
+                    vec![Effect::Redraw]
+                }
+                Target::ComposerBody | Target::ComposerField(_) => {
+                    if self.composer.is_some() {
+                        self.focus = Focus::Composer;
+                    }
+                    vec![Effect::Redraw]
+                }
+                Target::Divider | Target::Overlay => Vec::new(),
+            },
+            Pointer::Wheel { hit, down } => {
+                let lines: isize = if down { WHEEL } else { -WHEEL };
+                match hit.target {
+                    Target::Row(_) => self.scroll_list(lines),
+                    Target::Reader(_) => self.scroll_reader_lines(lines),
+                    _ => return Vec::new(),
+                }
+                vec![Effect::Redraw]
+            }
+        }
+    }
+
+    /// Scroll the list by `lines`, keeping the cursor on a row in view.
+    fn scroll_list(&mut self, lines: isize) {
+        let height = self.list_height().max(1);
+        let last_top = self.list.total().saturating_sub(height);
+        let top = i64::from(self.top) + lines as i64;
+        self.top = u32::try_from(top.clamp(0, i64::from(last_top))).unwrap_or(0);
+        self.cursor = self.cursor.clamp(self.top, self.top + height - 1);
+    }
+
+    /// Scroll what is being read by `lines`.
+    fn scroll_reader_lines(&mut self, lines: isize) {
+        let Some((layout, _)) = self.reader_layout() else {
+            return;
+        };
+        let length = layout.len();
+        self.reader_top = self
+            .reader_top
+            .saturating_add_signed(lines)
+            .min(length.saturating_sub(1));
     }
 
     /// The same app, knowing the terminal delivers every chord.
@@ -2196,6 +2313,7 @@ pub fn update(app: &mut App, input: Input) -> Vec<Effect> {
             (Some(_), None) => app.say("The draft closed before the image was stored"),
             (None, _) => app.say("The image could not be stored"),
         },
+        Input::Pointer(pointer) => app.pointer(pointer),
         Input::Paste(pasted) => app.paste(&pasted),
         Input::Attached { path, attached } => match (attached, app.composer.as_mut()) {
             (Some(attachment), Some(composer)) => {
@@ -3568,6 +3686,114 @@ pub(crate) mod tests {
             effects.contains(&Effect::Open(ListScope::Mailbox(MailboxId::new(2)))),
             "{effects:?}"
         );
+    }
+
+    fn click(target: crate::view::hit::Target, ctrl: bool, shift: bool) -> Input {
+        Input::Pointer(Pointer::Click {
+            hit: crate::view::hit::Hit {
+                target,
+                column: 0,
+                row: 0,
+            },
+            ctrl,
+            shift,
+        })
+    }
+
+    fn wheel(target: crate::view::hit::Target, down: bool) -> Input {
+        Input::Pointer(Pointer::Wheel {
+            hit: crate::view::hit::Hit {
+                target,
+                column: 0,
+                row: 0,
+            },
+            down,
+        })
+    }
+
+    #[test]
+    fn a_click_moves_the_cursor_and_ctrl_or_shift_select_without_moving_the_reader() {
+        // US5 scenario 1.
+        use crate::view::hit::Target;
+        let mut app = app((160, 40));
+        let opening = opened(&mut app, 8);
+        serve(&mut app, opening);
+
+        let effects = update(&mut app, click(Target::Row(2), false, false));
+        assert_eq!(app.cursor(), 2);
+        assert_eq!(app.focus(), Focus::List);
+        assert!(
+            rests(&effects).contains(&MessageId::new(3)),
+            "the reader follows: {effects:?}"
+        );
+
+        update(&mut app, click(Target::Row(4), false, true));
+        assert_eq!(
+            app.cursor(),
+            2,
+            "shift-click leaves the cursor, and the reader, alone"
+        );
+        for position in [2, 3, 4] {
+            assert!(
+                app.selection().contains(MessageId::new(position + 1)),
+                "shift-click extends from the cursor over {position}"
+            );
+        }
+
+        update(&mut app, click(Target::Row(6), true, false));
+        assert_eq!(
+            app.cursor(),
+            2,
+            "ctrl-click leaves the cursor, and the reader, alone"
+        );
+        assert!(app.selection().contains(MessageId::new(7)));
+        assert!(
+            app.selection().contains(MessageId::new(3)),
+            "and keeps what was marked"
+        );
+    }
+
+    #[test]
+    fn a_click_in_the_sidebar_opens_that_folder() {
+        use crate::view::hit::Target;
+        let mut app = app((160, 40));
+        update(&mut app, Input::Sidebar(sidebar_contents()));
+        let opening = opened(&mut app, 3);
+        serve(&mut app, opening);
+        let (lines, _) = app.sidebar();
+        let archive = lines
+            .iter()
+            .position(|line| line.label.as_str() == "Archive")
+            .expect("listed");
+        let effects = update(&mut app, click(Target::Sidebar(archive), false, false));
+        assert!(
+            effects.contains(&Effect::Open(ListScope::Mailbox(MailboxId::new(2)))),
+            "{effects:?}"
+        );
+    }
+
+    #[test]
+    fn the_wheel_scrolls_the_pane_under_the_pointer_and_nothing_else() {
+        // US5 scenario 2.
+        use crate::view::hit::Target;
+        let mut app = app((160, 20));
+        let opening = opened(&mut app, 200);
+        serve(&mut app, opening);
+        let reading = crate::conversation::Reading {
+            row: MessageId::new(1),
+            members: vec![crate::conversation::tests::member_with_lines(1, 120)],
+            current: 0,
+        };
+        app.reading = Some(reading);
+
+        update(&mut app, wheel(Target::Reader(Some(0)), true));
+        assert!(app.reader_top() > 0, "the reader scrolled");
+        assert_eq!(app.top(), 0, "the list did not");
+
+        let reader_top = app.reader_top();
+        update(&mut app, wheel(Target::Row(0), true));
+        assert!(app.top() > 0, "the list scrolled");
+        assert_eq!(app.reader_top(), reader_top, "the reader did not");
     }
 
     #[test]

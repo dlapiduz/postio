@@ -157,7 +157,7 @@ impl Reading {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use chrono::TimeZone;
 
     use super::*;
@@ -174,6 +174,12 @@ mod tests {
             has_attachments: false,
             parts: Vec::new(),
         }
+    }
+
+    /// A message whose body is `lines` lines long.
+    pub(crate) fn member_with_lines(id: i64, lines: usize) -> Member {
+        let body: Vec<String> = (0..lines).map(|line| format!("line {line}")).collect();
+        member(id, "Ada", Some(&body.join("\n")))
     }
 
     fn text(lines: &[Line]) -> Vec<String> {

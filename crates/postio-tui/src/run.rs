@@ -180,6 +180,25 @@ async fn main_loop(
     outcome
 }
 
+/// A mouse event as the app hears it: what it landed on in the last frame.
+fn pointer(
+    mouse: &crossterm::event::MouseEvent,
+    hits: &crate::view::hit::Hits,
+) -> Option<crate::app::Pointer> {
+    use crossterm::event::{KeyModifiers, MouseButton, MouseEventKind};
+    let hit = hits.at(mouse.column, mouse.row)?;
+    match mouse.kind {
+        MouseEventKind::Down(MouseButton::Left) => Some(crate::app::Pointer::Click {
+            hit,
+            ctrl: mouse.modifiers.contains(KeyModifiers::CONTROL),
+            shift: mouse.modifiers.contains(KeyModifiers::SHIFT),
+        }),
+        MouseEventKind::ScrollDown => Some(crate::app::Pointer::Wheel { hit, down: true }),
+        MouseEventKind::ScrollUp => Some(crate::app::Pointer::Wheel { hit, down: false }),
+        _ => None,
+    }
+}
+
 /// Draft writes, sent one at a time in the order they were made. A save
 /// spawned on a task of its own could reach the daemon after the one made
 /// after it; the daemon keeps order among what arrives, not what was meant.
@@ -268,16 +287,18 @@ async fn drive(
     let mut terminal_events = EventStream::new();
     let host_events = client.events();
 
+    // What is where on the screen, as last drawn: what a click lands on.
+    let mut hits = crate::view::hit::Hits::default();
     let contents = sidebar_contents(client, senders.saved.clone()).await;
     let _ = update(app, Input::Sidebar(contents));
     if let Some(scope) = first_scope(client).await {
         let total = client.list_count(scope).await.unwrap_or(0);
         let effects = update(app, Input::Opened { scope, total });
-        if let Flow::Quit = perform(client, app, terminal, theme, senders, effects)? {
+        if let Flow::Quit = perform(client, app, terminal, theme, senders, effects, &mut hits)? {
             return Ok(());
         }
     }
-    draw(terminal, app, theme)?;
+    hits = draw(terminal, app, theme)?;
 
     loop {
         let input = tokio::select! {
@@ -285,6 +306,10 @@ async fn drive(
                 Some(Ok(TerminalEvent::Key(key))) => Input::Key(key),
                 Some(Ok(TerminalEvent::Resize(width, height))) => Input::Resize(width, height),
                 Some(Ok(TerminalEvent::Paste(pasted))) => Input::Paste(pasted),
+                Some(Ok(TerminalEvent::Mouse(mouse))) => match pointer(&mouse, &hits) {
+                    Some(pointer) => Input::Pointer(pointer),
+                    None => continue,
+                },
                 Some(Ok(_)) => continue,
                 Some(Err(error)) => return Err(error),
                 None => return Ok(()),
@@ -301,7 +326,7 @@ async fn drive(
             },
         };
         let effects = update(app, input);
-        match perform(client, app, terminal, theme, senders, effects)? {
+        match perform(client, app, terminal, theme, senders, effects, &mut hits)? {
             Flow::Go => {}
             Flow::Quit => return Ok(()),
             Flow::Edit {
@@ -430,6 +455,7 @@ fn perform(
     theme: &Theme,
     senders: &Senders,
     effects: Vec<Effect>,
+    hits: &mut crate::view::hit::Hits,
 ) -> io::Result<Flow> {
     let Senders {
         inputs,
@@ -711,7 +737,7 @@ fn perform(
         }
     }
     if redraw {
-        draw(terminal, app, theme)?;
+        *hits = draw(terminal, app, theme)?;
     }
     Ok(flow)
 }
