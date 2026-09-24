@@ -43,7 +43,27 @@ pub fn draw(frame: &mut Frame, app: &App, theme: &Theme, now: DateTime<Local>) {
                 })
                 .collect();
             let areas = Layout::horizontal(widths).split(body);
-            for (pane, area) in panes.iter().zip(areas.iter()) {
+            // A draft in a tab of its own has the whole screen while it is
+            // in front, as the desktop's composer window would.
+            let tab = app.composer_detached() && app.focus() == Focus::Composer;
+            let drawn: &[Pane] = if tab { &[] } else { &panes };
+            if tab && let Some(writing) = app.composer() {
+                composer::draw(
+                    frame,
+                    body,
+                    writing,
+                    app.preview_shown(),
+                    app.scheduling().is_none() && app.path_prompt().is_none(),
+                    theme,
+                );
+                if let Some(times) = app.scheduling() {
+                    composer::draw_schedule(frame, body, times, theme, now);
+                }
+                if let Some(typed) = app.path_prompt() {
+                    composer::draw_path_prompt(frame, body, typed, theme);
+                }
+            }
+            for (pane, area) in drawn.iter().zip(areas.iter()) {
                 match pane {
                     Pane::Sidebar => {
                         let (lines, cursor) = app.sidebar();
@@ -58,7 +78,7 @@ pub fn draw(frame: &mut Frame, app: &App, theme: &Theme, now: DateTime<Local>) {
                     }
                     Pane::List => list::draw(frame, *area, &app.visible(), theme, now),
                     Pane::Reader => {
-                        if let Some(writing) = app.composer() {
+                        if let Some(writing) = app.composer().filter(|_| !app.showing_reader()) {
                             composer::draw(
                                 frame,
                                 *area,
@@ -93,11 +113,14 @@ pub fn draw(frame: &mut Frame, app: &App, theme: &Theme, now: DateTime<Local>) {
                 1 => "1 conversation".to_owned(),
                 total => format!("{total} conversations"),
             };
-            let words = match (app.notice(), app.sync_line()) {
+            let mut words = match (app.notice(), app.sync_line()) {
                 (Some(notice), _) => notice.to_owned(),
                 (None, Some(sync)) => format!("{sync} · {count}"),
                 (None, None) => count,
             };
+            if app.composer_detached() && !tab {
+                words = format!("✎ A draft is open — c goes back to it · {words}");
+            }
             let words = fit(&words, usize::from(status.width));
             frame.render_widget(Line::styled(words, theme.style(Role::Dim)), status);
         }
@@ -410,6 +433,34 @@ mod tests {
         let screen = screen(160, 16, &app);
         assert!(screen.contains("**bold**"), "{screen}");
         assert!(screen.contains("Some bold words"), "{screen}");
+    }
+
+    #[test]
+    fn a_detached_draft_has_the_screen_and_the_mail_says_it_is_open() {
+        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+        let mut app = with_sidebar((160, 16));
+        let mut draft = postio_model::Draft::new(postio_model::AccountId::new(1));
+        draft.subject = "Tide gate".into();
+        app.compose(draft);
+        update(
+            &mut app,
+            Input::Key(KeyEvent::new(KeyCode::Char('o'), KeyModifiers::ALT)),
+        );
+        let tab = screen(160, 16, &app);
+        assert!(
+            !tab.contains("Inbox"),
+            "the draft's tab has the whole screen:\n{tab}"
+        );
+        assert!(tab.contains("Tide gate"), "{tab}");
+
+        update(&mut app, Input::Key(KeyEvent::from(KeyCode::Esc)));
+        let mail = screen(160, 16, &app);
+        assert!(mail.contains("Inbox"), "{mail}");
+        assert!(
+            !mail.contains("Subject"),
+            "the reading pane is the reader's:\n{mail}"
+        );
+        assert!(mail.contains("A draft is open"), "{mail}");
     }
 
     #[test]

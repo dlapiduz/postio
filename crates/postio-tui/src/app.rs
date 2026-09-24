@@ -335,6 +335,9 @@ pub struct App {
     preview: postio_config::Preview,
     /// Whether the preview is showing.
     previewing: bool,
+    /// Whether the draft is in a tab of its own rather than the reading
+    /// pane: the desktop's composer window (FR-003).
+    detached: bool,
 }
 
 /// Which pane the keyboard is in.
@@ -398,6 +401,7 @@ impl App {
             path_prompt: None,
             preview: postio_config::Preview::default(),
             previewing: false,
+            detached: false,
         }
     }
 
@@ -477,6 +481,17 @@ impl App {
         self.previewing.then_some(self.preview)
     }
 
+    /// Whether the draft is in a tab of its own.
+    pub fn composer_detached(&self) -> bool {
+        self.detached
+    }
+
+    /// Whether the reading pane shows what is being read, rather than the
+    /// draft.
+    pub fn showing_reader(&self) -> bool {
+        self.composer.is_none() || self.detached
+    }
+
     /// The draft being written, if one is.
     pub fn composer(&self) -> Option<&crate::composer::Composer> {
         self.composer.as_ref()
@@ -497,6 +512,7 @@ impl App {
         );
         self.focus = Focus::Composer;
         self.requested.front = crate::layout::Pane::Reader;
+        self.detached = false;
         // Side by side is shown from the start; the toggle starts on the text.
         self.previewing = self.preview == postio_config::Preview::Split;
         vec![Effect::Redraw]
@@ -519,6 +535,26 @@ impl App {
                     generation,
                     known: draft.id.is_assigned().then_some(draft.id),
                 }),
+            }
+        }
+        self.detached = false;
+        self.focus = Focus::List;
+        self.requested.front = crate::layout::Pane::List;
+        effects.push(Effect::Redraw);
+        effects
+    }
+
+    /// Out of the draft's tab and back to the mail, the draft still open
+    /// there and saved as it stands.
+    fn leave_draft_tab(&mut self) -> Vec<Effect> {
+        let mut effects = Vec::new();
+        if let Some(composer) = &self.composer {
+            let draft = composer.draft();
+            if postio_model::draft::closing(&draft) == postio_model::draft::Closing::Keep {
+                effects.push(Effect::SaveDraft {
+                    generation: composer.generation(),
+                    draft: Box::new(draft),
+                });
             }
         }
         self.focus = Focus::List;
@@ -769,7 +805,14 @@ impl App {
             }
             // Escape. The draft is not lost by leaving: it is autosaved, a row
             // in Drafts, as the desktop's Esc parks one.
+            "back" if self.detached => self.leave_draft_tab(),
             "back" | "discard_draft" => self.close_composer(),
+            // The desktop moves its composer into a window of its own; here
+            // it is a tab, and the reading pane goes back to the reader.
+            "detach_composer" => {
+                self.detached = !self.detached;
+                vec![Effect::Redraw]
+            }
             // Everything else the composer context reaches -- quitting, the
             // palette -- means what it means anywhere.
             _ => self.command(id),
@@ -981,6 +1024,15 @@ impl App {
                     return vec![Effect::Resume(message)];
                 }
             }
+            // One composition at a time, as the desktop's `c` does with a
+            // composer already open: it goes back to it.
+            "compose" if self.composer.is_some() => {
+                self.focus = Focus::Composer;
+                if !self.detached {
+                    self.requested.front = crate::layout::Pane::Reader;
+                }
+                return vec![Effect::Redraw];
+            }
             "compose" => {
                 if let Some(account) = self.account {
                     return self.compose(postio_model::Draft::new(account));
@@ -989,7 +1041,7 @@ impl App {
             "focus_sidebar" => self.focus = Focus::Sidebar,
             "cycle_pane" => {
                 // The composer is the reading pane while it is open.
-                let reader = if self.composer.is_some() {
+                let reader = if self.composer.is_some() && !self.detached {
                     Focus::Composer
                 } else {
                     Focus::Reader
@@ -1001,7 +1053,7 @@ impl App {
                 }
             }
             "cycle_pane_back" => {
-                let reader = if self.composer.is_some() {
+                let reader = if self.composer.is_some() && !self.detached {
                     Focus::Composer
                 } else {
                     Focus::Reader
@@ -2530,6 +2582,59 @@ mod tests {
             "Looking now.\n\nFound it.",
             "a failed edit changes nothing"
         );
+    }
+
+    fn alt(c: char) -> Input {
+        key(KeyCode::Char(c), KeyModifiers::ALT)
+    }
+
+    #[test]
+    fn a_popped_out_draft_keeps_its_id_and_the_reader_comes_back() {
+        // T063 (FR-003): the desktop's composer window is a tab here.
+        let mut app = app((160, 40));
+        let opening = opened(&mut app, 3);
+        serve(&mut app, opening);
+        let mut draft = postio_model::Draft::new(postio_model::AccountId::new(1));
+        draft.id = postio_model::DraftId::new(5);
+        draft.to = vec![postio_model::EmailAddress::new(
+            None::<String>,
+            "grace@example.net",
+        )];
+        app.compose(draft);
+        let generation = app.composer().unwrap().generation();
+
+        update(&mut app, alt('o'));
+        assert!(app.composer_detached());
+        assert_eq!(app.focus(), Focus::Composer, "the draft's tab is in front");
+
+        let effects = update(&mut app, key(KeyCode::Esc, KeyModifiers::NONE));
+        assert_eq!(app.focus(), Focus::List, "back to the mail");
+        let composer = app.composer().expect("the draft is still open in its tab");
+        assert_eq!(composer.draft().id, postio_model::DraftId::new(5));
+        assert!(
+            saves(&effects).len() == 1,
+            "saved on the way out of the tab: {effects:?}"
+        );
+        assert!(
+            app.showing_reader(),
+            "the reading pane is the reader's again"
+        );
+
+        update(&mut app, press('c'));
+        assert_eq!(
+            app.focus(),
+            Focus::Composer,
+            "c goes back to the open draft"
+        );
+        assert_eq!(
+            app.composer().unwrap().generation(),
+            generation,
+            "not a new one"
+        );
+
+        update(&mut app, alt('o'));
+        assert!(!app.composer_detached(), "and the same key puts it back");
+        assert!(!app.showing_reader());
     }
 
     #[test]
