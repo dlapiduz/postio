@@ -222,6 +222,39 @@ pub fn decode(bytes: &[u8]) -> Result<Option<(Frame, usize)>, FrameError> {
     Ok(Some((serde_json::from_slice(body)?, end)))
 }
 
+/// Read one frame from `reader`; `None` at a clean end of stream.
+pub async fn read_frame<R>(reader: &mut R) -> Result<Option<Frame>, FrameError>
+where
+    R: tokio::io::AsyncRead + Unpin,
+{
+    use tokio::io::AsyncReadExt;
+    let mut prefix = [0u8; 4];
+    match reader.read_exact(&mut prefix).await {
+        Ok(_) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::UnexpectedEof => return Ok(None),
+        Err(_) => return Err(FrameError::Truncated),
+    }
+    let length = u32::from_be_bytes(prefix);
+    if length > MAX_FRAME {
+        return Err(FrameError::TooLarge(length));
+    }
+    let mut body = vec![0u8; length as usize];
+    reader
+        .read_exact(&mut body)
+        .await
+        .map_err(|_| FrameError::Truncated)?;
+    Ok(Some(serde_json::from_slice(&body)?))
+}
+
+/// Write one frame to `writer`.
+pub async fn write_frame<W>(writer: &mut W, frame: &Frame) -> std::io::Result<()>
+where
+    W: tokio::io::AsyncWrite + Unpin,
+{
+    use tokio::io::AsyncWriteExt;
+    writer.write_all(&encode(frame)).await
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

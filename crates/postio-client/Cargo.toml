@@ -21,6 +21,12 @@ serde = { workspace = true }
 # formats cannot always read back. Already in the graph (research R2, T008).
 serde_json = { workspace = true }
 thiserror = { workspace = true }
+# The socket: its I/O runs on a runtime of the client's own, on its own
+# thread, so a caller on any executor -- GTK's main loop, the terminal's
+# tokio -- can hold a client.
+tokio = { workspace = true, features = ["io-util", "net", "rt", "sync", "time"] }
+tracing = { workspace = true }
 
 [dev-dependencies]
+tempfile = { workspace = true }
 tokio = { workspace = true, features = ["macros", "rt"] }

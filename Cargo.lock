@@ -3642,8 +3642,10 @@ dependencies = [
  "postio-model",
  "serde",
  "serde_json",
+ "tempfile",
  "thiserror",
  "tokio",
+ "tracing",
 ]
 
 [[package]]

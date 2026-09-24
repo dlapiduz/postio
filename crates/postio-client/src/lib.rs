@@ -10,3 +10,4 @@ pub mod counting;
 pub mod protocol;
 
 pub use api::{Client, Disconnected, SendError, Transport};
+pub mod socket;
