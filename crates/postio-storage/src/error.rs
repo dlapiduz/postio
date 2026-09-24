@@ -240,6 +240,17 @@ impl Error {
     }
 }
 
+/// A storage failure, phrased for whoever asked for the read.
+///
+/// Lives here rather than beside the read trait because both types belong
+/// to other crates from `postio-runtime`'s side (`StoreError` moved to
+/// `postio-model` so a frontend in another process can name it, ADR 0041).
+impl From<Error> for postio_model::listing::StoreError {
+    fn from(error: Error) -> Self {
+        postio_model::listing::StoreError::new(error.to_string())
+    }
+}
+
 #[cfg(test)]
 mod busy_tests {
     use super::*;
@@ -254,16 +265,5 @@ mod busy_tests {
     fn any_other_error_is_not() {
         assert!(!Error::Engine(turso::Error::QueryReturnedNoRows).is_busy());
         assert!(!Error::WrongStoreKey.is_busy());
-    }
-}
-
-/// A storage failure, phrased for whoever asked for the read.
-///
-/// Lives here rather than beside the read trait because both types belong
-/// to other crates from `postio-runtime`'s side (`StoreError` moved to
-/// `postio-model` so a frontend in another process can name it, ADR 0041).
-impl From<Error> for postio_model::listing::StoreError {
-    fn from(error: Error) -> Self {
-        postio_model::listing::StoreError::new(error.to_string())
     }
 }
