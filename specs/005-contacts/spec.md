@@ -70,6 +70,15 @@ What does *not* survive is Q1's "identity is the normalised address" at the
 level of the contact: the address remains the identity of a *sighting*, and
 the contact becomes the thing that owns sightings.
 
+## Clarifications
+
+### Session 2026-09-23
+
+- Q: When a person is picked in the `@` finder or "show mail" runs, is the search a `contact:` term resolved at search time, or the person's addresses written out? → A: The addresses written out, at the moment of picking (no `contact:` field).
+- Q: Does a join of people with no user-set name give the joined person a name that then shows everywhere? → A: Yes — every join ends with a name, picked from the names the addresses were seen with (most recent preselected) or typed; it counts as user-set.
+- Q: Which people does an export with no selection contain? → A: Exactly the people the list currently shows (its filter and the "everyone from mail" toggle included); never suppressed people.
+- Q: After the undo window, can deleted people be seen and brought back? → A: Yes — a "Deleted" filter on the Contacts list shows them, and a "restore" command returns one whole, history included.
+
 ## User Scenarios & Testing *(mandatory)*
 
 ### User Story 1 - See the people I correspond with (Priority: P1)
@@ -137,10 +146,11 @@ history.
 1. **Given** two people in the list, **When** the user marks both and invokes
    "join", **Then** one person remains holding both addresses, the sighting
    history of both addresses is preserved, and the list redraws at once.
-2. **Given** a join of two people who both had a name the user set, **When**
-   the join happens, **Then** the user is asked which name to keep, and no
-   other field is silently discarded — notes are kept together, both
-   organisations are offered.
+2. **Given** a join of two or more people, **When** the join happens,
+   **Then** the user picks the joined person's name — from the names the
+   user set and the display names the addresses were seen with, the most
+   recent preselected — or types one; no other field is silently discarded —
+   notes are kept together, both organisations are offered.
 3. **Given** a person was just joined, **When** the user presses `u`,
    **Then** the join is undone and both original people return exactly as
    they were.
@@ -195,7 +205,11 @@ they are absent from the list, completion and the finder.
    earlier sighting history is kept.
 5. **Given** a person was just deleted, **When** the user presses `u`,
    **Then** the person returns with all their addresses and details.
-6. **Given** any edit, **When** it is made, **Then** it is visible
+6. **Given** a person was deleted in an earlier session, **When** the user
+   shows the Deleted filter and invokes "restore" on them, **Then** they
+   return exactly as before, with the sighting history gathered while
+   deleted, and are offered in completion again.
+7. **Given** any edit, **When** it is made, **Then** it is visible
    immediately and needs no network.
 
 ---
@@ -278,7 +292,10 @@ confirm every property Postio does not model is present byte-for-byte.
    one person afterwards, with the card's details and the address's history.
 3. **Given** a group card, **When** it is imported, **Then** a group appears
    rather than a person.
-4. **Given** an imported contact, **When** it is exported, **Then** every
+4. **Given** the default list view and no selection, **When** the user
+   exports, **Then** the file holds the people the list shows — made,
+   imported and written-to — and no one known only from received mail.
+5. **Given** an imported contact, **When** it is exported, **Then** every
    property Postio does not model is reproduced verbatim, and the file is
    vCard 4.0.
 
@@ -300,9 +317,10 @@ confirm every property Postio does not model is present byte-for-byte.
   person: joining two people keeps every group either belonged to.
 - **Joining a suppressed address.** Adding a suppressed address to a person
   lifts the suppression — the user has said they want it.
-- **Deleting a person made of mail-derived and user-made addresses.** Every
-  mail-derived address is suppressed; user-made details go; undo restores
-  all of it.
+- **Deleting a person made of mail-derived and user-made addresses.** The
+  person is hidden, not destroyed: every mail-derived address is suppressed,
+  and the person's details and addresses are kept so undo, or "restore" from
+  the Deleted filter, returns all of it.
 - **Same address seen through two accounts.** It is one address owned by at
   most one person; the per-account sightings are kept apart as evidence.
 - **Address case and form.** Addresses that differ only in letter case are
@@ -311,6 +329,10 @@ confirm every property Postio does not model is present byte-for-byte.
   recently seen display name, then the preferred address.
 - **A very large store.** Tens of thousands of correspondents: the list opens
   and scrolls within the performance budgets, and is never loaded whole.
+- **A saved search made from a person.** Because picking a person writes
+  their addresses into the query, a search pinned from it names the
+  addresses as they were; joining or detaching an address later does not
+  change it. The user re-picks the person to refresh it.
 - **Detaching the last address.** A person must keep at least one address;
   detaching the last one is refused with the reason (use delete instead).
 - **A malformed vCard.** Import skips cards it cannot read, says how many it
@@ -343,7 +365,10 @@ confirm every property Postio does not model is present byte-for-byte.
   last in touch and how many messages involve them.
 - **FR-007**: "Show mail" MUST open the message list on mail from or to any of
   the person's addresses, and "compose to" MUST open a draft addressed to
-  their preferred address.
+  their preferred address. The search it opens MUST be an ordinary query in
+  the existing language naming each of the person's addresses at that
+  moment, visible and editable in the search bar; no person-level search
+  field is added.
 
 **People and addresses**
 
@@ -354,9 +379,12 @@ confirm every property Postio does not model is present byte-for-byte.
 - **FR-012**: The user MUST be able to join two or more people into one; the
   result MUST keep every address, every address's sighting history, every
   group membership, and every note.
-- **FR-013**: When joined people have conflicting user-set names or
-  organisations, the user MUST choose which to keep; nothing the user entered
-  may be discarded without their choice.
+- **FR-013**: Every join MUST end with a name for the joined person: the user
+  picks one of the user-set names and display names the addresses were seen
+  with (the most recently seen preselected, so confirming is one keystroke)
+  or types one, and it is thereafter a user-set name (FR-021, FR-032). When
+  joined people have conflicting organisations the user MUST choose which to
+  keep; nothing the user entered may be discarded without their choice.
 - **FR-014**: The user MUST be able to detach an address from a person, making
   it a person of its own with its own history; detaching a person's last
   address MUST be refused with the reason.
@@ -385,6 +413,11 @@ confirm every property Postio does not model is present byte-for-byte.
 - **FR-023**: Deleting a person MUST remove them from the list, composer
   completion and the `@` finder; every mail-derived address among theirs MUST
   stay suppressed so later mail does not bring them back.
+- **FR-023a**: The Contacts list MUST offer a "Deleted" filter showing deleted
+  people, and a "restore" command that returns one exactly as it was before
+  deletion — name, organisation, note, every address with its history, and
+  group memberships — and lifts the suppression of its addresses. Deleted
+  people appear nowhere else (FR-023).
 - **FR-024**: Creating a person with, or adding to a person, a suppressed
   address MUST lift its suppression and keep its earlier history.
 - **FR-025**: Join, detach, delete and edit MUST each be undoable with `u`,
@@ -400,7 +433,7 @@ confirm every property Postio does not model is present byte-for-byte.
   mail.
 - **FR-031**: The `@` finder MUST find a person by any of their addresses or
   their name, and picking one MUST search mail from or to all of their
-  addresses.
+  addresses, written out as in FR-007.
 - **FR-032**: When the user has set a person's name, the message list, the
   conversation view and the reader MUST show that name for any of the
   person's addresses in place of the header's display name; the reader's
@@ -421,7 +454,10 @@ confirm every property Postio does not model is present byte-for-byte.
 **vCard**
 
 - **FR-050**: The user MUST be able to import a `.vcf` file (vCard 3.0 or
-  4.0) and export all contacts, or a selection, as vCard 4.0.
+  4.0) and export as vCard 4.0 either a selection or, with nothing selected,
+  exactly the people the list currently shows — its typed filter and the
+  "everyone from mail" toggle included. Suppressed (deleted) people MUST
+  never be exported.
 - **FR-051**: Every property Postio does not model MUST be kept verbatim on
   import and reproduced verbatim on export.
 - **FR-052**: A card with several `EMAIL` properties MUST import as one
@@ -467,8 +503,9 @@ confirm every property Postio does not model is present byte-for-byte.
 - **SC-003**: A person with several addresses appears exactly once in the
   list, once in completion and once in the `@` finder, and "show mail"
   returns 100% of the messages involving any of their addresses.
-- **SC-004**: A user can join two duplicate people in three keystrokes or
-  fewer from the list, and undo it in one.
+- **SC-004**: A user can join two duplicate people, including confirming the
+  preselected name, in four keystrokes or fewer from the list, and undo it
+  in one.
 - **SC-005**: A deleted mail-derived person stays absent after any number of
   further messages from their addresses.
 - **SC-006**: A vCard file imported and exported again reproduces every
