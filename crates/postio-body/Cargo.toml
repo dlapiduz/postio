@@ -22,6 +22,9 @@ html5ever = "0.39.0"
 htmd = "0.5.5"
 markup5ever_rcdom = "0.39.0"
 postio-model = { workspace = true }
+# Markdown to the composer's document, for the terminal composer
+# (specs/005-tui-frontend research R6).
+pulldown-cmark = { version = "0.13", default-features = false }
 
 [dev-dependencies]
 postio-model = { workspace = true, features = ["test-corpus"] }

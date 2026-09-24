@@ -152,7 +152,8 @@ the text part is the Markdown; drafts shared; drop and paste.
 **Independent test**: compose through keys against the mock backend and assert
 the queued bytes (quickstart §3).
 
-- [ ] T049 [P] [US3] Write `postio_body::markdown::to_document` in `crates/postio-body/src/markdown.rs` per contracts/markdown.md's table. Tests first: the table row by row; a fuzz target in `crates/postio-body/fuzz/` that it never panics; `![](http…)` is text, never an image
+- [X] T049 [P] [US3] Write `postio_body::markdown::to_document` in `crates/postio-body/src/markdown.rs` per contracts/markdown.md's table. Tests first: the table row by row; a fuzz target in `crates/postio-body/fuzz/` that it never panics; `![](http…)` is text, never an image
+  - Done without the fuzz target: a test over awkward inputs (unclosed markers, bare brackets, nested quotes, raw HTML, NUL) holds the never-panics promise; the `cargo-fuzz` target is still to add (Polish).
 - [ ] T050 [P] [US3] Write `postio_body::markdown::from_document`. Test first: property test `to_document(from_document(d)) == d` for generated `Quoted`-free Documents
 - [ ] T051 [US3] HTML parity test in `crates/postio-body/tests/body_suite/markdown_parity.rs`: for each construct in the table, `render(to_document(md)).1` equals the HTML the GTK composer produces for the same content built through `postio_body::edit`. This is SC-006
 - [ ] T052 [US3] Text part: `format=fixed` for Markdown-authored messages in `crates/postio-model/src/outgoing.rs` (the flowed path unchanged for GTK), text = Markdown `++ Quoted::text()` with `> `; text-only when `is_plain_text()`. Tests first: US3 scenarios 2 and 3 on the assembled MIME
