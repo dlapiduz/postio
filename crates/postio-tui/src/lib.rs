@@ -11,4 +11,5 @@
 //! asserted on the rendered buffer, which is what a person sees.
 
 pub mod app;
+pub mod input;
 pub mod layout;
