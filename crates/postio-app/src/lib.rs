@@ -220,24 +220,28 @@ pub fn run() -> glib::ExitCode {
         let opening = Rc::clone(&opening);
         let timeline = timeline.clone();
         move |application| {
-            postio_session::blocking::now(async {
-                let Some(window) = application.active_window().and_downcast::<Window>() else {
-                    return;
-                };
-                // Exists before the first notification can, and re-registering on
-                // a second `activate` (a second launch raising the window) just
-                // replaces it with itself.
-                notifications::install_action(application, &window);
-                if opened.borrow().is_some() {
-                    // A second launch raising a window that already has its mail.
+            let Some(window) = application.active_window().and_downcast::<Window>() else {
+                return;
+            };
+            // Exists before the first notification can, and re-registering on
+            // a second `activate` (a second launch raising the window) just
+            // replaces it with itself.
+            notifications::install_action(application, &window);
+            if opened.borrow().is_some() {
+                // A second launch raising a window that already has its mail.
+                let (opened, context, fed) =
+                    (Rc::clone(&opened), Rc::clone(&context), Rc::clone(&fed));
+                glib::spawn_future_local(async move {
+                    // POSTIO-GLIB-SAFE: `fed` is already set, so this returns
+                    // without reading anything.
                     present(&window, &opened, &context, None, &fed).await;
-                    return;
-                }
-                if opening.replace(true) {
-                    return;
-                }
-                open_the_store(&window, &opened, &context, &fed, &timeline);
-            })
+                });
+                return;
+            }
+            if opening.replace(true) {
+                return;
+            }
+            open_the_store(&window, &opened, &context, &fed, &timeline);
         }
     });
 
