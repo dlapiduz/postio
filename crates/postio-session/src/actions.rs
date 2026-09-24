@@ -405,20 +405,33 @@ impl Actions {
     ) -> Result<Option<String>, CommandError> {
         use postio_storage::repository::{CrossAccountMoveRepository, MovePhase};
 
-        let (mut connection, _permit) = self.connect().await?;
         // `done` included: a move that *finished* is exactly the one
         // somebody is most likely to take back, and the forward path never
         // had a reason to look at one (#531).
+        const OPEN: [MovePhase; 4] = [
+            MovePhase::Copying,
+            MovePhase::Unconfirmed,
+            MovePhase::Confirmed,
+            MovePhase::Done,
+        ];
+        // Asked on a read turn first. Nearly every undo is a flag, a snooze
+        // or a same-account move with no saga at all, and taking the writer
+        // to find that out made each of them wait for it twice -- once here,
+        // once for the inverse (#1607).
+        {
+            let reader = self.database.read().await.map_err(store_failure)?;
+            let open = CrossAccountMoveRepository::new(&reader.checkout())
+                .for_sources(messages, &OPEN)
+                .await
+                .map_err(store_failure)?;
+            if open.is_empty() {
+                return Ok(None);
+            }
+        }
+
+        let (mut connection, _permit) = self.connect().await?;
         let sagas = CrossAccountMoveRepository::new(&connection)
-            .for_sources(
-                messages,
-                &[
-                    MovePhase::Copying,
-                    MovePhase::Unconfirmed,
-                    MovePhase::Confirmed,
-                    MovePhase::Done,
-                ],
-            )
+            .for_sources(messages, &OPEN)
             .await
             .map_err(store_failure)?;
         if sagas.is_empty() {
@@ -2916,7 +2929,15 @@ mod tests {
             .expect("flag");
         let _ = world.drained().await;
 
+        let before = postio_storage::test_support::gate_log::interactive_requested_here();
         world.run(Command::Undo).await.expect("undo");
+        // #1607: the saga probe took a permit of its own before the inverse
+        // took another, so a flag undo waited for the writer twice.
+        assert_eq!(
+            postio_storage::test_support::gate_log::interactive_requested_here() - before,
+            1,
+            "a flag undo asked for the writer more than once"
+        );
 
         assert!(!world.flags_of(message).await.is_flagged());
         assert!(matches!(
