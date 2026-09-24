@@ -16,9 +16,9 @@
 //! # Remove is local to its own toast, not the undo stack
 //!
 //! [`postio_gtk::window::Window::show_removable_toast`] is a narrower undo
-//! for exactly this case, wired straight to
-//! [`postio_storage::repository::AccountRepository::restore`] rather than
-//! through the global stack. `u` *does* reach it, as of #471: removal is a
+//! for exactly this case, wired straight to the store owner's
+//! [`AccountOp::Restore`] rather than through the global stack. `u` *does*
+//! reach it, as of #471: removal is a
 //! command now, with `Recovery::Undo`, and `u` in `Context::Accounts`
 //! activates the showing toast. Context-local state, context-local binding;
 //! the global stack still never holds an account removal. Marking is instant; the actual delete only
@@ -31,6 +31,8 @@ use std::rc::Rc;
 
 use gtk::glib;
 use gtk::prelude::*;
+use postio_client::Client;
+use postio_client::protocol::{AccountField, AccountOp};
 use postio_gtk::feed::Feeds;
 use postio_gtk::settings::{
     AccountAction, AccountEdit, AccountMailboxes, ConnectionStatus, SignatureDraft,
@@ -38,10 +40,6 @@ use postio_gtk::settings::{
 use postio_gtk::window::Window;
 use postio_model::ids::AccountId;
 use postio_runtime::AttachmentPolicy;
-use postio_storage::repository::{
-    AccountRepository, MailboxRepository, MailboxRoleRepository, MessageRepository,
-    SignatureRepository,
-};
 
 use crate::Wiring;
 
@@ -59,7 +57,18 @@ pub type Reindexing = Rc<RefCell<HashSet<AccountId>>>;
 /// through [`crate::settings_credential::install`], which needs the runtime
 /// and the secret store `wiring` carries alongside the database),
 /// rebuild-index, and each account's mailbox role map.
-pub async fn install(window: &Window, wiring: &Wiring, reindexing: Reindexing, feeds: &Feeds) {
+///
+/// Every read and write is the store owner's, through `client` (ADR 0041);
+/// `wiring` is left for what stays on this side -- the runtime, the keyring
+/// the token-expiry line reads, and the connection test, which is the one
+/// thing here that dials out and does so where the person pressed it.
+pub async fn install(
+    window: &Window,
+    wiring: &Wiring,
+    client: Client,
+    reindexing: Reindexing,
+    feeds: &Feeds,
+) {
     // **Not on the startup path, and not merely deferred.**
     //
     // `refresh` reads every account's `footprint` -- `count(*)` and
@@ -86,11 +95,12 @@ pub async fn install(window: &Window, wiring: &Wiring, reindexing: Reindexing, f
     // viewport height: "read fresh on every open rather than cached" (#871).
     // Nothing else needs these numbers -- they are drawn in this panel and
     // nowhere else.
-    refresh(window, wiring).await;
+    refresh(window, wiring, &client).await;
 
     {
         let weak = glib::object::ObjectExt::downgrade(window);
         let wiring = wiring.clone();
+        let client = client.clone();
         let panel = window.settings();
         gtk::prelude::WidgetExt::connect_visible_notify(&panel, move |panel| {
             postio_session::blocking::now(async {
@@ -98,7 +108,7 @@ pub async fn install(window: &Window, wiring: &Wiring, reindexing: Reindexing, f
                     return;
                 }
                 if let Some(window) = weak.upgrade() {
-                    refresh(&window, &wiring).await;
+                    refresh(&window, &wiring, &client).await;
                 }
             })
         });
@@ -113,17 +123,20 @@ pub async fn install(window: &Window, wiring: &Wiring, reindexing: Reindexing, f
     panel.connect_account_enabled_changed({
         let weak = weak.clone();
         let wiring = wiring.clone();
+        let client = client.clone();
         move |id, enabled| {
             postio_session::blocking::now(async {
-                if let Ok(connection) = wiring.database.connect().await
-                    && let Err(error) = AccountRepository::new(&connection)
-                        .set_enabled(id, enabled)
-                        .await
-                {
+                // POSTIO-GLIB-SAFE: a client call is a oneshot receive; the
+                // host answers on its own runtime.
+                let op = AccountOp::SetEnabled {
+                    account: id,
+                    enabled,
+                };
+                if let Err(error) = client.account(op).await {
                     tracing::warn!(%error, "could not change whether an account is enabled");
                 }
                 if let Some(window) = weak.upgrade() {
-                    refresh(&window, &wiring).await;
+                    refresh(&window, &wiring, &client).await;
                 }
             })
         }
@@ -132,6 +145,7 @@ pub async fn install(window: &Window, wiring: &Wiring, reindexing: Reindexing, f
     panel.connect_account_action({
         let weak = weak.clone();
         let wiring = wiring.clone();
+        let client = client.clone();
         let reindexing = reindexing.clone();
         move |id, action| {
             let Some(window) = weak.upgrade() else {
@@ -139,12 +153,14 @@ pub async fn install(window: &Window, wiring: &Wiring, reindexing: Reindexing, f
             };
             postio_session::blocking::now(async {
                 match action {
-                    AccountAction::Remove => remove(&window, &wiring, id).await,
+                    AccountAction::Remove => remove(&window, &wiring, &client, id).await,
                     AccountAction::UpdateCredential => {
                         crate::settings_credential::install(&window, &wiring, id).await
                     }
-                    AccountAction::RebuildIndex => rebuild_index(&window, &wiring, &reindexing, id),
-                    AccountAction::SetDefault => set_default(&window, &wiring, id).await,
+                    AccountAction::RebuildIndex => {
+                        rebuild_index(&window, &wiring, &client, &reindexing, id)
+                    }
+                    AccountAction::SetDefault => set_default(&window, &wiring, &client, id).await,
                 }
             })
         }
@@ -153,24 +169,44 @@ pub async fn install(window: &Window, wiring: &Wiring, reindexing: Reindexing, f
     // A role mapping, a discovery pass, a folder renamed on the server: any
     // of them changes what the Mailboxes group has to offer, and all of them
     // say so the same way.
+    //
+    // And a rebuild's progress (#981): the store's owner announces each
+    // reading as `BackfillProgress` on the account's own id. While this
+    // window has a rebuild of that account outstanding the reading is
+    // drawn on its row; the row clears when the rebuild's own answer comes
+    // back (`rebuild_index`), and a reading that lands after that is not
+    // drawn, since the account has left `reindexing` by then.
     feeds.connect_event({
         let window = window.downgrade();
         let wiring = wiring.clone();
-        move |event| {
-            postio_session::blocking::now(async {
-                if !matches!(event, postio_core::Event::MailboxesChanged { .. }) {
-                    return;
-                }
+        let client = client.clone();
+        let reindexing = reindexing.clone();
+        move |event| match event {
+            postio_core::Event::MailboxesChanged { .. } => postio_session::blocking::now(async {
                 if let Some(window) = window.upgrade() {
-                    refresh(&window, &wiring).await;
+                    refresh(&window, &wiring, &client).await;
                 }
-            })
+            }),
+            postio_core::Event::BackfillProgress {
+                account,
+                done,
+                total,
+                ..
+            } if reindexing.borrow().contains(account) => {
+                if let Some(window) = window.upgrade() {
+                    window
+                        .settings()
+                        .set_reindex_progress(*account, Some((*done, *total)));
+                }
+            }
+            _ => {}
         }
     });
 
     panel.connect_account_edited({
         let weak = weak.clone();
         let wiring = wiring.clone();
+        let client = client.clone();
         move |id, edit| {
             postio_session::blocking::now(async {
                 match edit {
@@ -194,10 +230,10 @@ pub async fn install(window: &Window, wiring: &Wiring, reindexing: Reindexing, f
                         // being emitted.
                         return;
                     }
-                    edit => edit_account(&wiring, id, edit).await,
+                    edit => edit_account(&client, id, edit).await,
                 }
                 if let Some(window) = weak.upgrade() {
-                    refresh(&window, &wiring).await;
+                    refresh(&window, &wiring, &client).await;
                 }
             })
         }
@@ -206,10 +242,11 @@ pub async fn install(window: &Window, wiring: &Wiring, reindexing: Reindexing, f
     panel.connect_test_connection({
         let weak = weak.clone();
         let wiring = wiring.clone();
+        let client = client.clone();
         move |id| {
             postio_session::blocking::now(async {
                 if let Some(window) = weak.upgrade() {
-                    test_connection(&window, &wiring, id).await;
+                    test_connection(&window, &wiring, &client, id).await;
                 }
             })
         }
@@ -218,10 +255,11 @@ pub async fn install(window: &Window, wiring: &Wiring, reindexing: Reindexing, f
     panel.connect_signature_saved({
         let weak = weak.clone();
         let wiring = wiring.clone();
+        let client = client.clone();
         move |id, draft| {
             postio_session::blocking::now(async {
                 if let Some(window) = weak.upgrade() {
-                    save_signature(&window, &wiring, id, draft).await;
+                    save_signature(&window, &wiring, &client, id, draft).await;
                 }
             })
         }
@@ -233,7 +271,7 @@ pub async fn install(window: &Window, wiring: &Wiring, reindexing: Reindexing, f
         move |id, signature| {
             postio_session::blocking::now(async {
                 if let Some(window) = weak.upgrade() {
-                    delete_signature(&window, &wiring, id, signature).await;
+                    delete_signature(&window, &wiring, &client, id, signature).await;
                 }
             })
         }
@@ -246,76 +284,33 @@ pub async fn install(window: &Window, wiring: &Wiring, reindexing: Reindexing, f
 /// model, the store, the composer's picker, #979's default row -- existed and
 /// worked, and there was no way to become a user who had any.
 ///
-/// A refused write goes back to the editor rather than to a log.
-/// `idx_signatures_name` is a unique index on `(account_id, name)`, so a
-/// second "Work" fails, and "UNIQUE constraint failed: signatures.account_id,
-/// signatures.name" is not an answer anybody can act on.
+/// A refused write goes back to the editor rather than to a log, in the
+/// words the store's owner chose for it: `idx_signatures_name` is a unique
+/// index on `(account_id, name)`, so a second "Work" fails, and the
+/// constraint's own words are not an answer anybody can act on.
 async fn save_signature(
     window: &Window,
     wiring: &Wiring,
+    client: &Client,
     id: postio_model::ids::AccountId,
     draft: &SignatureDraft,
 ) {
-    let Ok(connection) = wiring.database.connect().await else {
-        return;
-    };
-    let signatures = SignatureRepository::new(&connection);
-    let written = match draft.id {
-        Some(existing) => {
-            let mut signature = postio_model::Signature::new(&draft.name, &draft.text);
-            signature.id = existing;
-            // The rich variant is left exactly as it was: this editor is
-            // text-only (#1086), and rewriting `html` to `None` here would
-            // quietly discard a signature somebody else's tooling wrote.
-            if let Some(previous) = existing_signature(&connection, id, existing).await {
-                signature.html = previous.html;
-            }
-            signatures.update(&signature).await
-        }
-        None => {
-            let mut signature = postio_model::Signature::new(&draft.name, &draft.text);
-            signatures.create(id, &mut signature).await.map(|_| ())
-        }
-    };
-    drop(connection);
-
+    // One call: the host keeps the rich variant this text-only editor does
+    // not show (#1086), rather than rewriting it to `None`.
+    // POSTIO-GLIB-SAFE: a client call is a oneshot receive; the host answers
+    // on its own runtime.
+    let written = client
+        .save_signature(id, draft.id, draft.name.clone(), draft.text.clone())
+        .await;
     match written {
         Ok(()) => {
-            refresh(window, wiring).await;
+            refresh(window, wiring, client).await;
             // Back to the account, with the list it now belongs to.
             window.settings().open_account_detail(id);
         }
         Err(error) => window
             .settings()
-            .set_signature_error(Some(explain_signature_failure(&draft.name, &error))),
-    }
-}
-
-/// The stored signature `id` currently is, so an edit keeps the fields this
-/// editor does not show.
-async fn existing_signature(
-    connection: &postio_storage::Checkout,
-    account: postio_model::ids::AccountId,
-    id: postio_model::ids::SignatureId,
-) -> Option<postio_model::Signature> {
-    SignatureRepository::new(connection)
-        .list_for_account(account)
-        .await
-        .ok()?
-        .into_iter()
-        .find(|signature| signature.id == id)
-}
-
-/// A store refusal, as the person who typed it needs to read it.
-fn explain_signature_failure(name: &str, error: &postio_storage::Error) -> String {
-    let raw = error.to_string();
-    // The only refusal this form can produce today, and the only one worth
-    // recognising: anything else is a real fault and its own text is more
-    // use than a guess at what it meant.
-    if raw.contains("UNIQUE") || raw.contains("constraint") {
-        format!("This account already has a signature called “{name}”")
-    } else {
-        raw
+            .set_signature_error(Some(error.message().to_owned())),
     }
 }
 
@@ -329,24 +324,20 @@ fn explain_signature_failure(name: &str, error: &postio_storage::Error) -> Strin
 async fn delete_signature(
     window: &Window,
     wiring: &Wiring,
+    client: &Client,
     id: postio_model::ids::AccountId,
     signature: postio_model::ids::SignatureId,
 ) {
-    let Ok(connection) = wiring.database.connect().await else {
-        return;
-    };
-    let removed = SignatureRepository::new(&connection)
-        .delete(signature)
-        .await;
-    drop(connection);
-    match removed {
-        Ok(_) => {
-            refresh(window, wiring).await;
+    // POSTIO-GLIB-SAFE: a client call is a oneshot receive; the host answers
+    // on its own runtime.
+    match client.delete_signature(signature).await {
+        Ok(()) => {
+            refresh(window, wiring, client).await;
             window.settings().open_account_detail(id);
         }
         Err(error) => window
             .settings()
-            .set_signature_error(Some(error.to_string())),
+            .set_signature_error(Some(error.message().to_owned())),
     }
 }
 
@@ -360,12 +351,19 @@ async fn delete_signature(
 /// comes back over an `async_channel`, the same crossing `search.rs` and
 /// `feed.rs` make: `rusqlite` is blocking and a connect is a round trip, and
 /// the main loop must be inside neither.
-async fn test_connection(window: &Window, wiring: &Wiring, id: postio_model::ids::AccountId) {
-    let Ok(connection) = wiring.database.connect().await else {
+async fn test_connection(
+    window: &Window,
+    wiring: &Wiring,
+    client: &Client,
+    id: postio_model::ids::AccountId,
+) {
+    // POSTIO-GLIB-SAFE: a client call is a oneshot receive; the host answers
+    // on its own runtime.
+    let Ok(accounts) = client.accounts().await else {
         return;
     };
-    let account = match AccountRepository::new(&connection).get(id).await {
-        Ok(Some(account)) => account,
+    let account = match accounts.into_iter().find(|account| account.id == id) {
+        Some(account) => account,
         // The row went away between the press and here. The panel is already
         // showing "Testing…", so it has to be told something.
         _ => {
@@ -378,7 +376,6 @@ async fn test_connection(window: &Window, wiring: &Wiring, id: postio_model::ids
             return;
         }
     };
-    drop(connection);
 
     let secrets = wiring.secrets.clone();
     let (sender, receiver) = async_channel::bounded(1);
@@ -449,33 +446,25 @@ fn as_result(reachability: postio_session::reachability::Reachability) -> Result
 /// Applies one field's new value to `id`'s stored account (#880).
 ///
 /// An account is database state, not `config.toml` preference (ADR 0005
-/// Q6b), so this reads the current row, changes the one field the detail
-/// view reported, and writes the whole thing back through
-/// [`AccountRepository::update`] — the same read-mutate-write shape
-/// `remove`'s `mark_pending_deletion` skips only because it is a single
-/// column with its own dedicated method.
-async fn edit_account(wiring: &Wiring, id: postio_model::ids::AccountId, edit: AccountEdit) {
-    let Ok(connection) = wiring.database.connect().await else {
-        return;
-    };
-    let repository = AccountRepository::new(&connection);
-    let Ok(Some(mut account)) = repository.get(id).await else {
-        return;
-    };
-    match edit {
-        AccountEdit::DisplayName(value) => account.display_name = value,
-        AccountEdit::ImapHost(value) => account.incoming.host = value,
-        AccountEdit::ImapPort(value) => account.incoming.port = value,
-        AccountEdit::SmtpHost(value) => account.outgoing.host = value,
-        AccountEdit::SmtpPort(value) => account.outgoing.port = value,
+/// Q6b), so the store's owner reads the current row, changes the one field
+/// the detail view reported, and writes the whole thing back.
+async fn edit_account(client: &Client, id: postio_model::ids::AccountId, edit: AccountEdit) {
+    let field = match edit {
+        AccountEdit::DisplayName(value) => AccountField::DisplayName(value),
+        AccountEdit::ImapHost(value) => AccountField::ImapHost(value),
+        AccountEdit::ImapPort(value) => AccountField::ImapPort(value),
+        AccountEdit::SmtpHost(value) => AccountField::SmtpHost(value),
+        AccountEdit::SmtpPort(value) => AccountField::SmtpPort(value),
         // #979. `Option` all the way through: an account may have
         // signatures and prefer none of them, which is what the composer
         // reads as "use the identity's own".
-        AccountEdit::DefaultSignature(value) => account.default_signature_id = value,
+        AccountEdit::DefaultSignature(value) => AccountField::DefaultSignature(value),
         // Handled as a command before this is reached; it writes no column.
         AccountEdit::MailboxRole(..) => return,
-    }
-    if let Err(error) = repository.update(&mut account).await {
+    };
+    // POSTIO-GLIB-SAFE: a client call is a oneshot receive; the host answers
+    // on its own runtime.
+    if let Err(error) = client.edit_account(id, field).await {
         tracing::warn!(%error, "could not save an account detail edit");
     }
 }
@@ -491,242 +480,135 @@ async fn edit_account(wiring: &Wiring, id: postio_model::ids::AccountId, edit: A
 /// a credential update closes, since a repaired account's own submission can
 /// turn `enabled` back on (`onboarding::configure`) and the row should say
 /// so without waiting for the next full refresh.
-pub(crate) async fn refresh(window: &Window, wiring: &Wiring) {
-    let Ok(connection) = wiring.database.read().await else {
-        return;
-    };
-    match AccountRepository::new(&connection).list().await {
-        // `list()` (unlike `list_enabled()`) has no reason to hide a
-        // *disabled* account from settings -- that is exactly where you go
-        // to re-enable one. A row pending removal is different: it is on
-        // its way out, and showing it here would let it be removed twice
-        // or re-enabled out from under the toast that is about to reap it.
-        Ok(accounts) => {
-            let accounts: Vec<_> = accounts
-                .into_iter()
-                .filter(|account| !account.pending_deletion)
-                .collect();
-            // What each account's mail weighs, read here rather than waited
-            // for: `Event::BackfillProgress` carries the same figure, but it
-            // only arrives while a backfill is running and this panel is
-            // opened at a moment that has nothing to do with one. The same
-            // trade `sidebar_backfill::refresh` makes -- re-read rather than
-            // wait for an event that may never come (#411).
-            // **Only when the panel is on screen.** `footprint` is
-            // `count(*)` and `sum(size)` over every message an account has,
-            // and on a real store that is 1.48s -- which at startup is spent
-            // before the first frame, for a figure drawn in a panel that may
-            // never be opened. Measured: startup 2474ms with it, ~1400ms
-            // without.
-            //
-            // The rows themselves stay unconditional: names, enabled state
-            // and token expiry are cheap, and several wirings read them
-            // without opening anything. It is the weights alone that cost,
-            // and `install` refreshes again when the panel is shown -- the
-            // same trade `Window::open_settings` already makes for the allow
-            // list and the viewport height, "read fresh on every open rather
-            // than cached" (#871).
-            let showing = gtk::prelude::WidgetExt::is_visible(&window.settings());
-            let messages = MessageRepository::new(&connection);
-            let weights: Vec<_> = accounts
-                .iter()
-                .filter(|_| showing)
-                .filter_map(|account| {
-                    postio_session::blocking::now(async {
-                        let footprint = messages
-                            .footprint(account.id)
-                            .await
-                            .inspect_err(
-                                |error| tracing::warn!(%error, "could not measure an account's mail"),
-                            )
-                            .ok()?;
-                        Some((
-                            account.id,
-                            postio_core::event::MailFootprint {
-                                total_bytes: footprint.total_bytes,
-                                attachment_bytes: footprint.attachment_bytes,
-                                local_bytes: footprint.local_bytes,
-                                complete: footprint.complete,
-                            },
-                        ))
-
-                    })
-                })
-                .collect();
-            // The account row's own token-validity line (#878, on top of
-            // #870's persistence): only an account that signed in through
-            // Postio's own OAuth client has anything persisted to read --
-            // a password account has no such thing, and an account fed by
-            // an external broker never had this module write one either
-            // (`OwnClientTokenSource::persist_expiry`'s own doc explains
-            // why). The keyring read is async and this function is not, so
-            // it crosses the runtime the same way `onboarding::submit`'s
-            // credential test does, and lands back through the same panel
-            // `set_accounts`/`set_mail_weights` already update.
-            let oauth_accounts: Vec<_> = accounts
-                .iter()
-                .filter(|account| account.oauth.is_some())
-                .map(|account| (account.id, account.address.address.clone()))
-                .collect();
-            if !oauth_accounts.is_empty() {
-                let secrets = wiring.secrets.clone();
-                let (sender, receiver) = async_channel::bounded(1);
-                wiring.runtime.spawn(async move {
-                    let mut expiries = Vec::with_capacity(oauth_accounts.len());
-                    for (id, address) in oauth_accounts {
-                        let key = postio_account::secret::AccountKey::new(address);
-                        let expiry = postio_account::oauth::token_source::stored_expiry(
-                            secrets.as_ref(),
-                            &key,
-                        )
-                        .await;
-                        expiries.push((id, expiry));
-                    }
-                    let _ = sender.send(expiries).await;
-                });
-                glib::spawn_future_local({
-                    let window = window.clone();
-                    async move {
-                        if let Ok(expiries) = receiver.recv().await {
-                            window.settings().set_token_expiries(&expiries);
-                        }
-                    }
-                });
-            }
-
-            let panel = window.settings();
-            // A loop rather than `map().collect()`: the read awaits, and a
-            // closure cannot.
-            let mut mailboxes = Vec::with_capacity(accounts.len());
-            for account in accounts.iter() {
-                mailboxes.push((account.id, account_mailboxes(&connection, account.id).await));
-            }
-            panel.set_accounts(accounts);
-            panel.set_account_mailboxes(mailboxes);
-            panel.set_mail_weights(
-                &weights,
-                wiring.backfill.attachments == AttachmentPolicy::Eager,
-            );
+pub(crate) async fn refresh(window: &Window, wiring: &Wiring, client: &Client) {
+    // What each account's mail weighs, read here rather than waited for:
+    // `Event::BackfillProgress` carries the same figure, but it only arrives
+    // while a backfill is running and this panel is opened at a moment that
+    // has nothing to do with one. The same trade `sidebar_backfill` makes --
+    // re-read rather than wait for an event that may never come (#411).
+    //
+    // **Only when the panel is on screen.** `footprint` is `count(*)` and
+    // `sum(size)` over every message an account has, and on a real store
+    // that is 1.48s -- which at startup is spent before the first frame, for
+    // a figure drawn in a panel that may never be opened. Measured: startup
+    // 2474ms with it, ~1400ms without.
+    //
+    // The rows themselves stay unconditional: names, enabled state and token
+    // expiry are cheap, and several wirings read them without opening
+    // anything. It is the weights alone that cost, and `install` refreshes
+    // again when the panel is shown -- the same trade `Window::open_settings`
+    // already makes for the allow list and the viewport height, "read fresh
+    // on every open rather than cached" (#871).
+    let showing = gtk::prelude::WidgetExt::is_visible(&window.settings());
+    // One call for the whole panel: every account the settings show (a
+    // disabled one included -- this is where it is enabled again -- and one
+    // pending removal left out, since it is on its way out), each with its
+    // folders and role map (ADR 0035), and its weight when `showing`.
+    // POSTIO-GLIB-SAFE: a client call is a oneshot receive; the host answers
+    // on its own runtime.
+    let shown = match client.account_settings(showing).await {
+        Ok(shown) => shown,
+        Err(error) => {
+            tracing::warn!(%error, "could not read the accounts to show");
+            return;
         }
-        Err(error) => tracing::warn!(%error, "could not read the accounts to show"),
-    }
-}
-
-/// One account's folders and role map, for the detail view's Mailboxes
-/// group (ADR 0035).
-///
-/// Three reads rather than one, because the group answers three questions:
-/// what folders there are to choose from, what the user has already chosen,
-/// and what each role resolves to as things stand. The third is what lets
-/// "Automatic" name the folder it picked, and it comes from `by_role` -- the
-/// same lookup the send path files a copy through, so the label cannot
-/// disagree with where mail actually goes.
-async fn account_mailboxes(
-    connection: &postio_storage::Checkout,
-    account: postio_model::ids::AccountId,
-) -> AccountMailboxes {
-    let mailboxes = MailboxRepository::new(connection);
-    let folders = mailboxes
-        .list_for_account(account)
-        .await
-        .unwrap_or_default()
-        .into_iter()
-        .filter(|mailbox| mailbox.selectable)
-        .map(|mailbox| mailbox.path)
+    };
+    let weights: Vec<_> = shown
+        .iter()
+        .filter_map(|entry| entry.weight.map(|weight| (entry.account.id, weight)))
         .collect();
-    let chosen = MailboxRoleRepository::new(connection)
-        .for_account(account)
-        .await
-        .unwrap_or_default();
-    let resolved = [
-        postio_model::MailboxRole::Sent,
-        postio_model::MailboxRole::Archive,
-        postio_model::MailboxRole::Drafts,
-        postio_model::MailboxRole::Trash,
-        postio_model::MailboxRole::Junk,
-    ]
-    .into_iter()
-    .filter_map(|role| {
-        postio_session::blocking::now(async {
-            mailboxes
-                .by_role(account, role)
-                .await
-                .ok()
-                .flatten()
-                .map(|mailbox| (role, mailbox.path))
-        })
-    })
-    .collect();
-    let refused = MailboxRoleRepository::new(connection)
-        .refusals(account)
-        .await
-        .unwrap_or_default();
-    AccountMailboxes {
-        folders,
-        chosen,
-        resolved,
-        refused,
+    let mut accounts = Vec::with_capacity(shown.len());
+    let mut mailboxes = Vec::with_capacity(shown.len());
+    for entry in shown {
+        mailboxes.push((
+            entry.account.id,
+            AccountMailboxes {
+                folders: entry.folders,
+                chosen: entry.chosen,
+                resolved: entry.resolved,
+                refused: entry.refused,
+            },
+        ));
+        accounts.push(entry.account);
     }
+
+    // The account row's own token-validity line (#878, on top of #870's
+    // persistence): only an account that signed in through Postio's own
+    // OAuth client has anything persisted to read -- a password account has
+    // no such thing, and an account fed by an external broker never had this
+    // module write one either (`OwnClientTokenSource::persist_expiry`'s own
+    // doc explains why). The keyring read is async and this function is
+    // not, so it crosses the runtime the same way `onboarding::submit`'s
+    // credential test does, and lands back through the same panel
+    // `set_accounts`/`set_mail_weights` already update.
+    let oauth_accounts: Vec<_> = accounts
+        .iter()
+        .filter(|account| account.oauth.is_some())
+        .map(|account| (account.id, account.address.address.clone()))
+        .collect();
+    if !oauth_accounts.is_empty() {
+        let secrets = wiring.secrets.clone();
+        let (sender, receiver) = async_channel::bounded(1);
+        wiring.runtime.spawn(async move {
+            let mut expiries = Vec::with_capacity(oauth_accounts.len());
+            for (id, address) in oauth_accounts {
+                let key = postio_account::secret::AccountKey::new(address);
+                let expiry =
+                    postio_account::oauth::token_source::stored_expiry(secrets.as_ref(), &key)
+                        .await;
+                expiries.push((id, expiry));
+            }
+            let _ = sender.send(expiries).await;
+        });
+        glib::spawn_future_local({
+            let window = window.clone();
+            async move {
+                if let Ok(expiries) = receiver.recv().await {
+                    window.settings().set_token_expiries(&expiries);
+                }
+            }
+        });
+    }
+
+    let panel = window.settings();
+    panel.set_accounts(accounts);
+    panel.set_account_mailboxes(mailboxes);
+    panel.set_mail_weights(
+        &weights,
+        wiring.backfill.attachments == AttachmentPolicy::Eager,
+    );
 }
 
 /// Marks `id` for removal, refreshes the panel to reflect it immediately,
 /// and offers a toast whose own button restores it — see the module doc for
 /// why this is not the global undo stack.
-async fn remove(window: &Window, wiring: &Wiring, id: postio_model::ids::AccountId) {
-    let database = &wiring.database;
-    let Ok(connection) = database.connect().await else {
+async fn remove(
+    window: &Window,
+    wiring: &Wiring,
+    client: &Client,
+    id: postio_model::ids::AccountId,
+) {
+    // POSTIO-GLIB-SAFE: a client call is a oneshot receive; the host answers
+    // on its own runtime.
+    if let Err(error) = client.account(AccountOp::Remove(id)).await {
+        tracing::warn!(%error, "could not mark an account for removal");
         return;
-    };
-    match AccountRepository::new(&connection)
-        .mark_pending_deletion(id)
-        .await
-    {
-        Ok(true) => {}
-        Ok(false) => return,
-        Err(error) => {
-            tracing::warn!(%error, "could not mark an account for removal");
-            return;
-        }
     }
-    drop(connection);
-    refresh(window, wiring).await;
+    refresh(window, wiring, client).await;
 
     let restore_window = window.clone();
     let restore_wiring = wiring.clone();
+    let restore_client = client.clone();
     window.show_removable_toast("Account removed", move || {
         postio_session::blocking::now(async {
-            if let Ok(connection) = restore_wiring.database.connect().await
-                && let Err(error) = AccountRepository::new(&connection).restore(id).await
-            {
+            if let Err(error) = restore_client.account(AccountOp::Restore(id)).await {
                 tracing::warn!(%error, "could not undo removing an account");
             }
-            refresh(&restore_window, &restore_wiring).await;
+            refresh(&restore_window, &restore_wiring, &restore_client).await;
         })
     });
 }
 
-/// Rebuilds `id`'s local search index (#981), reporting progress on its own
-/// row as it runs and clearing the line the moment it is done.
-///
-/// `postio_session::reindex_account` runs on the blocking pool -- it is
-/// synchronous SQLite that decompresses a body or parses a block per
-/// message, exactly like the two catch-up passes it wraps. Its own
-/// `on_progress` callback therefore also runs there, where a GTK call would
-/// be unsound; every reading it reports crosses to the main context over a
-/// channel, the same shape [`refresh`]'s own token-expiry read already
-/// uses for the same reason.
-///
-/// Also announced as an [`postio_core::Event::BackfillProgress`] on the
-/// account's own account id -- the maintainer's own design for #981: one
-/// progress channel, not two. The settings row is driven off the direct
-/// channel rather than that event, though, because nothing here can tell a
-/// rebuild's report apart from a real backfill's inside the event itself,
-/// and "Rebuilding search index" would be the wrong words for the other one.
-///
-/// `reindexing` gains `id` for as long as the rebuild runs and loses it the
-/// moment the channel says it is over -- what [`crate::search`] reads to
-/// raise a search outcome's own corpus caveat while this account's index is
-/// mid-rebuild (#981's own "the search surface should say so too").
 /// Make `id` the account new messages come from (#960).
 ///
 /// A single local write and then a redraw, the shape
@@ -739,49 +621,56 @@ async fn remove(window: &Window, wiring: &Wiring, id: postio_model::ids::Account
 /// window in which two rows both claim the marker. Nothing here reaches the
 /// network: which account a new message comes from is local state, before
 /// and after.
-async fn set_default(window: &Window, wiring: &Wiring, id: AccountId) {
-    if let Ok(connection) = wiring.database.connect().await
-        && let Err(error) = AccountRepository::new(&connection).set_default(id).await
-    {
+async fn set_default(window: &Window, wiring: &Wiring, client: &Client, id: AccountId) {
+    // POSTIO-GLIB-SAFE: a client call is a oneshot receive; the host answers
+    // on its own runtime.
+    if let Err(error) = client.account(AccountOp::SetDefault(id)).await {
         tracing::warn!(%error, "could not set the default account");
     }
-    refresh(window, wiring).await;
+    refresh(window, wiring, client).await;
 }
 
-fn rebuild_index(window: &Window, wiring: &Wiring, reindexing: &Reindexing, id: AccountId) {
+/// Rebuilds `id`'s local search index (#981), reporting progress on its own
+/// row as it runs and clearing the line the moment it is done.
+///
+/// The rebuild is the store owner's: one call, answered when it is over,
+/// asked on the runtime and answered over a channel. Its readings arrive
+/// meanwhile as [`postio_core::Event::BackfillProgress`] on the account's
+/// own id -- the maintainer's own design for #981: one progress channel,
+/// not two -- and [`install`] draws them on this row while `reindexing`
+/// holds the account. A real backfill of the same account running at the
+/// same moment reports on the same id, so its readings would be drawn here
+/// too for as long as the rebuild lasts; before the move the row had a
+/// channel of its own and could not confuse them.
+///
+/// `reindexing` gains `id` for as long as the rebuild runs and loses it the
+/// moment the answer says it is over -- what [`crate::search`] reads to
+/// raise a search outcome's own corpus caveat while this account's index is
+/// mid-rebuild (#981's own "the search surface should say so too").
+fn rebuild_index(
+    window: &Window,
+    wiring: &Wiring,
+    client: &Client,
+    reindexing: &Reindexing,
+    id: AccountId,
+) {
     reindexing.borrow_mut().insert(id);
 
-    let database = wiring.database.clone();
-    let events = wiring.events.clone();
-    let (sender, receiver) = async_channel::unbounded::<Option<(u32, u32)>>();
+    let (sender, receiver) = async_channel::bounded(1);
+    let client = client.clone();
     wiring.runtime.spawn(async move {
-        let result = postio_session::reindex_account(&database, id, |done, total| {
-            events.emit(postio_core::Event::BackfillProgress {
-                account: id,
-                done,
-                total,
-                footprint: None,
-            });
-            let _ = sender.send_blocking(Some((done, total)));
-        });
-        if let Err(error) = result.await {
-            tracing::warn!(%error, "could not rebuild an account's local search index");
-        }
-        let _ = sender.send_blocking(None);
+        let _ = sender.send(client.rebuild_index(id).await).await;
     });
 
     glib::spawn_future_local({
         let window = window.clone();
         let reindexing = reindexing.clone();
         async move {
-            while let Ok(progress) = receiver.recv().await {
-                let over = progress.is_none();
-                window.settings().set_reindex_progress(id, progress);
-                if over {
-                    reindexing.borrow_mut().remove(&id);
-                    break;
-                }
+            if let Ok(Err(error)) = receiver.recv().await {
+                tracing::warn!(%error, "could not rebuild an account's local search index");
             }
+            reindexing.borrow_mut().remove(&id);
+            window.settings().set_reindex_progress(id, None);
         }
     });
 }

@@ -1,25 +1,22 @@
 //! Feeds the settings panel's connection list from the egress log (#151).
 //!
 //! The panel draws the rows (`SettingsPanel::set_egress`) without knowing
-//! anything reads a database — the same split `settings_accounts.rs`
+//! anything reads a store — the same split `settings_accounts.rs`
 //! follows. Refreshed when the settings command runs, so the list a person
 //! opens is current rather than a snapshot from launch.
 
 use gtk::glib;
 use gtk::prelude::*;
+use postio_client::Client;
 use postio_gtk::window::Window;
-use postio_storage::Store;
-use postio_storage::repository::EgressLogRepository;
-
-use crate::Wiring;
 
 /// How many connections the panel lists. An audit surface, not an archive:
 /// the store keeps everything, and the newest screenful answers "what has
 /// this thing been talking to".
 const EGRESS_ROWS: u32 = 50;
 
-/// Wire the settings panel's connection list to the store.
-pub async fn install(window: &Window, wiring: &Wiring) {
+/// Wire the settings panel's connection list to the store's owner.
+pub async fn install(window: &Window, client: Client) {
     // Not read now: the panel is hidden at startup, and `map` below reads it
     // the moment it is shown -- a read here was the first frame waiting on
     // fifty rows nobody could see.
@@ -31,25 +28,21 @@ pub async fn install(window: &Window, wiring: &Wiring) {
     // (#1072).
     let weak = glib::object::ObjectExt::downgrade(window);
     window.settings().connect_map({
-        let database = wiring.database.clone();
         move |_| {
             postio_session::blocking::now(async {
                 if let Some(window) = weak.upgrade() {
-                    refresh(&window, &database).await;
+                    refresh(&window, &client).await;
                 }
             })
         }
     });
 }
 
-async fn refresh(window: &Window, database: &Store) {
-    let Ok(connection) = database.read().await else {
-        return;
-    };
-    match EgressLogRepository::new(&connection)
-        .recent(EGRESS_ROWS)
-        .await
-    {
+/// One call: the newest screenful, read by the store's owner.
+async fn refresh(window: &Window, client: &Client) {
+    // POSTIO-GLIB-SAFE: a client call is a oneshot receive; the host answers
+    // on its own runtime.
+    match client.egress_log(EGRESS_ROWS).await {
         Ok(entries) => window.settings().set_egress(entries),
         Err(error) => tracing::warn!(%error, "could not read the egress log"),
     }

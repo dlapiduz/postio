@@ -41,20 +41,25 @@ use adw::prelude::*;
 use gtk::glib;
 use postio_account::cancel::CancelToken;
 use postio_account::discovery::{DiscoveryTransport, Probe};
+use postio_client::Client;
 use postio_core::CommandId;
 use postio_core::bridge::EventStream;
 use postio_core::state::SharedState;
 use postio_gtk::onboarding::{BrowserSignIn, Onboarding, Status, Submission};
 use postio_gtk::window::Window;
 use postio_model::Account;
+#[cfg(test)]
 use postio_storage::Store;
+#[cfg(test)]
 use postio_storage::repository::AccountRepository;
 
 use crate::Wiring;
 pub(crate) use postio_session::onboarding::configured;
+#[cfg(test)]
+use postio_session::onboarding::persist;
 use postio_session::onboarding::{
-    SignInError, connection_settings, persist, persist_oauth, probe_options, prove, provider_name,
-    run_sign_in, status_for, write_sync_window,
+    SignInError, connection_settings, probe_options, prove, provider_name, run_sign_in, status_for,
+    write_sync_window,
 };
 
 /// Whether this installation has an account yet.
@@ -62,6 +67,10 @@ use postio_session::onboarding::{
 /// A store that cannot be read counts as "no account": the screen is the only
 /// way forward from there anyway, and refusing to show it would leave a
 /// window with nothing in it and no way to fix that.
+///
+/// Only its test reads it: which screen a launch opens on is
+/// `startup_route`'s question, answered at the composition root.
+#[cfg(test)]
 pub async fn needed(database: &Store) -> bool {
     let Ok(connection) = database.connect().await else {
         return true;
@@ -112,6 +121,11 @@ pub async fn install(
     transport: Arc<dyn DiscoveryTransport>,
     opener: Arc<dyn postio_account::oauth::BrowserOpener>,
 ) {
+    // The writes are the store owner's (ADR 0041). This screen is reached
+    // before any window is fed, so it connects its own client, over the
+    // same wiring.
+    let client =
+        postio_host::Host::over(wiring.clone()).connect(postio_client::protocol::ClientKind::Gtk);
     let screen = Onboarding::new();
     let previous = window.content();
     // Under the window's chrome, not instead of it.
@@ -243,7 +257,7 @@ pub async fn install(
 
     screen.connect_submit({
         let screen = screen.clone();
-        let wiring = wiring.clone();
+        let runtime = wiring.runtime.clone();
         let cancellation = cancellation.clone();
         // `submit`/`submit_oauth` show the sync-window step and stop —
         // `finish` runs from `connect_start_sync` above once the user picks
@@ -275,7 +289,8 @@ pub async fn install(
                 *sign_in_cancel.borrow_mut() = Some(cancel.clone());
                 submit_oauth(
                     &screen,
-                    &wiring,
+                    &runtime,
+                    &client,
                     submission.clone(),
                     offer,
                     cancel,
@@ -285,7 +300,8 @@ pub async fn install(
             } else {
                 submit(
                     &screen,
-                    &wiring,
+                    &runtime,
+                    &client,
                     submission.clone(),
                     jmap.borrow().clone(),
                     on_saved.clone(),
@@ -437,9 +453,13 @@ pub(crate) fn probe_with_offer(
 ///
 /// `on_saved` runs once, only after the credential and the account row are
 /// both written -- never on a failed probe or a failed connection test.
+///
+/// The proof runs here, where the person is; the two writes are the store
+/// owner's, asked through `client` (`Client::save_account`).
 pub(crate) fn submit(
     screen: &Onboarding,
-    wiring: &Wiring,
+    runtime: &tokio::runtime::Handle,
+    client: &Client,
     submission: Submission,
     jmap: Option<postio_account::discovery::JmapOffer>,
     on_saved: impl Fn() + 'static,
@@ -448,13 +468,14 @@ pub(crate) fn submit(
 
     let (sender, receiver) = async_channel::bounded(1);
     let proving = submission.clone();
-    wiring.runtime.spawn(async move {
+    runtime.spawn(async move {
         let _ = sender.send(prove(&proving, jmap.as_ref()).await).await;
     });
 
     glib::spawn_future_local({
         let screen = screen.clone();
-        let wiring = wiring.clone();
+        let runtime = runtime.clone();
+        let client = client.clone();
         async move {
             let answer = match receiver.recv().await {
                 Ok(answer) => answer,
@@ -471,18 +492,17 @@ pub(crate) fn submit(
             // Only now, with the credentials known good. Writing either half
             // first would leave a broken account behind every failed attempt.
             //
-            // Both writes go over to the runtime together and answer over a
-            // channel — the same crossing the connection test above makes,
-            // and for the same reason: the keyring is a tokio future and this
-            // is the glib main context. See [`persist`] for the order they
-            // happen in and why it is that way round.
+            // Both writes are one request to the store's owner, asked on the
+            // runtime and answered over a channel — the same crossing the
+            // connection test above makes. See
+            // `postio_session::onboarding::persist` for the order they happen
+            // in and why it is that way round.
             let (sender, receiver) = async_channel::bounded(1);
-            let database = wiring.database.clone();
-            let secrets = wiring.secrets.clone();
             let written = submission.clone();
-            wiring.runtime.spawn(async move {
+            runtime.spawn(async move {
+                let saved = client.save_account(written, backend).await;
                 let _ = sender
-                    .send(persist(&database, secrets.as_ref(), &written, backend).await)
+                    .send(saved.map_err(|error| error.message().to_owned()))
                     .await;
             });
             let stored = receiver.recv().await.unwrap_or_else(|_| {
@@ -508,16 +528,18 @@ pub(crate) fn submit(
 /// the screen's Cancel button and `Esc`. A cancelled attempt returns the
 /// screen to the settings it was showing, because the user changed their
 /// mind — that is not a failure and must not read as one.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn submit_oauth(
     screen: &Onboarding,
-    wiring: &Wiring,
+    runtime: &tokio::runtime::Handle,
+    client: &Client,
     submission: Submission,
     offer: postio_account::discovery::OAuthOffer,
     cancel: CancelToken,
     opener: Arc<dyn postio_account::oauth::BrowserOpener>,
     on_saved: impl Fn() + 'static,
 ) {
-    let Some(client) = submission.oauth_client.clone() else {
+    let Some(oauth_client) = submission.oauth_client.clone() else {
         return;
     };
     // What the browser is about to be asked to approve, so the screen can
@@ -568,14 +590,22 @@ pub(crate) fn submit_oauth(
     let flow_cancel = cancel.clone();
     let scopes = offer.scopes.clone();
     let refresh_lifetime = offer.refresh_token_lifetime_days;
-    wiring.runtime.spawn(async move {
-        let answer = run_sign_in(&settings, &client, &offer, opener.as_ref(), &flow_cancel).await;
+    runtime.spawn(async move {
+        let answer = run_sign_in(
+            &settings,
+            &oauth_client,
+            &offer,
+            opener.as_ref(),
+            &flow_cancel,
+        )
+        .await;
         let _ = sender.send(answer).await;
     });
 
     glib::spawn_future_local({
         let screen = screen.clone();
-        let wiring = wiring.clone();
+        let runtime = runtime.clone();
+        let client = client.clone();
         async move {
             let answer = match receiver.recv().await {
                 Ok(answer) => answer,
@@ -596,25 +626,29 @@ pub(crate) fn submit_oauth(
                 }
             };
 
+            // The tokens go to the store's owner, which writes them to the
+            // keyring and the row to the store, in
+            // `postio_session::onboarding::persist_oauth`'s order.
+            let grant = postio_client::protocol::OAuthGrant {
+                submission: submission.clone(),
+                authorize_url: endpoints.authorize.to_string(),
+                token_url: endpoints.token.to_string(),
+                scopes: scopes.clone(),
+                refresh_token_lifetime_days: refresh_lifetime,
+                access_token: tokens.access_token.expose().to_owned(),
+                refresh_token: tokens
+                    .refresh_token
+                    .as_ref()
+                    .map(|token| token.expose().to_owned()),
+                expires_in: tokens.expires_in,
+                token_type: tokens.token_type,
+                scope: tokens.scope,
+            };
             let (sender, receiver) = async_channel::bounded(1);
-            let database = wiring.database.clone();
-            let secrets = wiring.secrets.clone();
-            let written = submission.clone();
-            let scopes = scopes.clone();
-            wiring.runtime.spawn(async move {
+            runtime.spawn(async move {
+                let saved = client.save_oauth_account(grant).await;
                 let _ = sender
-                    .send(
-                        persist_oauth(
-                            &database,
-                            secrets,
-                            &written,
-                            &endpoints,
-                            &scopes,
-                            refresh_lifetime,
-                            tokens,
-                        )
-                        .await,
-                    )
+                    .send(saved.map_err(|error| error.message().to_owned()))
                     .await;
             });
             let stored = receiver.recv().await.unwrap_or_else(|_| {

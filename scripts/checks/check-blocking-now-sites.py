@@ -49,10 +49,10 @@ ALLOWED = {
     "crates/postio-app/src/orientation.rs": 2,
     "crates/postio-app/src/reading.rs": 1,
     "crates/postio-app/src/search.rs": 1,
-    "crates/postio-app/src/settings_accounts.rs": 11,
+    "crates/postio-app/src/settings_accounts.rs": 9,
     "crates/postio-app/src/settings_credential.rs": 1,
     "crates/postio-app/src/settings_egress.rs": 1,
-    "crates/postio-app/src/settings_privacy.rs": 3,
+    "crates/postio-app/src/settings_privacy.rs": 1,
     "crates/postio-app/src/sidebar_backfill.rs": 1,
 }
 

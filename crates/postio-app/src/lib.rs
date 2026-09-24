@@ -694,7 +694,7 @@ pub async fn feed_the_window(window: &Window, wiring: &Wiring) -> Option<Wired> 
     // Installed here rather than in `postio-gtk` because the two questions
     // it turns on -- has this been seen, and has a sync finished -- are a
     // store read and an engine event, and the view layer has neither.
-    orientation::install(window, wiring, &feeds).await;
+    orientation::install(window, &wiring.runtime, client.clone(), &feeds).await;
 
     // Dragging messages out to another application. Nothing is written until
     // a drop actually asks, so this costs nothing until it is used.
@@ -708,15 +708,15 @@ pub async fn feed_the_window(window: &Window, wiring: &Wiring) -> Option<Wired> 
 
     // The settings panel's account rows: enable/disable, remove-with-undo,
     // rebuild-index, and each account's mailbox role map.
-    settings_accounts::install(window, wiring, reindexing.clone(), &feeds).await;
+    settings_accounts::install(window, wiring, client.clone(), reindexing.clone(), &feeds).await;
     // And its connection list: the egress log, auditable (#151).
-    settings_egress::install(window, wiring).await;
+    settings_egress::install(window, client.clone()).await;
     // The privacy pane's unsubscribe-activation log (#971).
-    settings_privacy::install(window, wiring).await;
+    settings_privacy::install(window, client.clone()).await;
 
     // A folder's own context menu: skip/resume background backfill (ADR
     // 0016, #350).
-    sidebar_backfill::install(window, wiring).await;
+    sidebar_backfill::install(window, client.clone()).await;
 
     // *Add account*, from the palette or its binding. Here rather than in
     // `open_account` because it is a surface over the shell, and the shell
@@ -1062,8 +1062,12 @@ pub async fn attach_account(
     }
     // The surfaces that list accounts, now that there is one more. Nothing
     // else reads the account table while the window is up; when something
-    // does, this is where it joins.
-    settings_accounts::refresh(window, wiring).await;
+    // does, this is where it joins. Read through a client of the store's
+    // owner, as the panel reads (ADR 0041); this signature is the one the
+    // add-account dialogue and its test call, so it connects its own.
+    let client =
+        postio_host::Host::over(wiring.clone()).connect(postio_client::protocol::ClientKind::Gtk);
+    settings_accounts::refresh(window, wiring, &client).await;
     Ok(())
 }
 

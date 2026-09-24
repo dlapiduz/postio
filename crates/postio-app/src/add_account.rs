@@ -42,10 +42,10 @@ use std::sync::Arc;
 
 use adw::prelude::*;
 use postio_account::discovery::{DiscoveryTransport, PimalayaTransport};
+use postio_client::Client;
 use postio_core::CommandId;
 use postio_gtk::onboarding::Onboarding;
 use postio_gtk::window::Window;
-use postio_storage::repository::AccountRepository;
 
 use crate::Wiring;
 use crate::onboarding::{JmapOfferSlot, ProbeCancellation, probe, submit};
@@ -114,6 +114,11 @@ pub async fn open(
         move |_| cancellation.stop()
     });
 
+    // The write, and reading its row back, are the store owner's (ADR 0041),
+    // asked through a client of this dialogue's own over the same wiring.
+    let client =
+        postio_host::Host::over(wiring.clone()).connect(postio_client::protocol::ClientKind::Gtk);
+
     let jmap = JmapOfferSlot::default();
     screen.connect_probe({
         let screen = screen.clone();
@@ -134,16 +139,17 @@ pub async fn open(
 
     screen.connect_submit({
         let screen = screen.clone();
-        let wiring = wiring.clone();
+        let runtime = wiring.runtime.clone();
         let cancellation = cancellation.clone();
         let on_saved = {
             let window = window.clone();
             let wiring = wiring.clone();
             let dialog = dialog.clone();
+            let client = client.clone();
             move |address: &str| {
                 postio_session::blocking::now(async {
                     dialog.close();
-                    join(&window, &wiring, address).await;
+                    join(&window, &wiring, &client, address).await;
                 })
             }
         };
@@ -155,7 +161,8 @@ pub async fn open(
             let on_saved = on_saved.clone();
             submit(
                 &screen,
-                &wiring,
+                &runtime,
+                &client,
                 submission.clone(),
                 jmap.borrow().clone(),
                 move || on_saved(&address),
@@ -173,8 +180,8 @@ pub async fn open(
 /// is what [`crate::attach_account`] has to start an engine from, it carries
 /// the id only the insert knows, and `onboarding::save` may have *updated*
 /// an account that was already there rather than creating one.
-async fn join(window: &Window, wiring: &Wiring, address: &str) {
-    let Some(account) = written(wiring, address).await else {
+async fn join(window: &Window, wiring: &Wiring, client: &Client, address: &str) {
+    let Some(account) = written(client, address).await else {
         // The row was written a moment ago, so this is a store that has
         // stopped answering — which the panes are about to say far more
         // loudly than a toast would.
@@ -193,10 +200,11 @@ async fn join(window: &Window, wiring: &Wiring, address: &str) {
 }
 
 /// The account row for `address`, however it was written.
-async fn written(wiring: &Wiring, address: &str) -> Option<postio_model::Account> {
-    let connection = wiring.database.connect().await.ok()?;
-    AccountRepository::new(&connection)
-        .list()
+async fn written(client: &Client, address: &str) -> Option<postio_model::Account> {
+    // POSTIO-GLIB-SAFE: a client call is a oneshot receive; the host answers
+    // on its own runtime.
+    client
+        .accounts()
         .await
         .ok()?
         .into_iter()

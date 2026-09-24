@@ -35,7 +35,6 @@ use postio_account::discovery::{DiscoveryTransport, PimalayaTransport};
 use postio_gtk::onboarding::{Onboarding, Status};
 use postio_gtk::window::Window;
 use postio_model::ids::AccountId;
-use postio_storage::repository::AccountRepository;
 
 use crate::Wiring;
 use crate::onboarding::{ProbeCancellation, configured, probe, submit};
@@ -44,13 +43,18 @@ use crate::onboarding::{ProbeCancellation, configured, probe, submit};
 /// (and, since the same form carries them, its server settings). Does
 /// nothing if the account is gone by the time this runs.
 pub async fn install(window: &Window, wiring: &Wiring, id: AccountId) {
-    let Ok(connection) = wiring.database.connect().await else {
+    // The row and the writes are the store owner's (ADR 0041), asked through
+    // a client of this dialog's own, over the same wiring.
+    let client =
+        postio_host::Host::over(wiring.clone()).connect(postio_client::protocol::ClientKind::Gtk);
+    // POSTIO-GLIB-SAFE: a client call is a oneshot receive; the host answers
+    // on its own runtime.
+    let Ok(accounts) = client.accounts().await else {
         return;
     };
-    let Ok(Some(account)) = AccountRepository::new(&connection).get(id).await else {
+    let Some(account) = accounts.into_iter().find(|account| account.id == id) else {
         return;
     };
-    drop(connection);
 
     let screen = Onboarding::new();
     screen.set_address(&account.address.address);
@@ -97,16 +101,17 @@ pub async fn install(window: &Window, wiring: &Wiring, id: AccountId) {
 
     screen.connect_submit({
         let screen = screen.clone();
-        let wiring = wiring.clone();
+        let runtime = wiring.runtime.clone();
         let cancellation = cancellation.clone();
         let on_saved = {
             let window = window.clone();
             let wiring = wiring.clone();
+            let client = client.clone();
             let dialog = dialog.clone();
             move || {
                 postio_session::blocking::now(async {
                     dialog.close();
-                    crate::settings_accounts::refresh(&window, &wiring).await;
+                    crate::settings_accounts::refresh(&window, &wiring, &client).await;
                 })
             }
         };
@@ -114,7 +119,8 @@ pub async fn install(window: &Window, wiring: &Wiring, id: AccountId) {
             cancellation.stop();
             submit(
                 &screen,
-                &wiring,
+                &runtime,
+                &client,
                 submission.clone(),
                 jmap.borrow().clone(),
                 on_saved.clone(),
