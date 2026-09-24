@@ -4,8 +4,8 @@
 //! whose page is still on its way is blank, and asking for it is `App`'s
 //! business, not the drawing's (Principle V: never a whole mailbox).
 //!
-//! A row is two lines, the compact form of the desktop's cards: marks, the
-//! sender and the time over the subject and its preview. Every state has a
+//! A row is two lines and a faint rule, the compact form of the desktop's
+//! cards: marks, the sender and the time over the subject and its preview. Every state has a
 //! mark that is not a colour (`contracts/tui-surface.md` §Colour roles): `▌`
 //! the cursor, `✓` selected, `●` unread, `⚑` flagged, `⎘` attachments.
 
@@ -38,7 +38,7 @@ const DATE: usize = 9;
 /// selection's mark, and the three state marks.
 const TEXT: usize = 7;
 
-/// Draw `rows` into `area`, two lines each.
+/// Draw `rows` into `area`, two lines and a rule each.
 /// `first` is the list position of the first row, for what a click on each
 /// row means.
 pub fn draw(
@@ -55,22 +55,27 @@ pub fn draw(
     for (offset, visible) in rows.iter().take(fits).enumerate() {
         let y = area.y + u16::try_from(offset).unwrap_or(u16::MAX) * LINES;
         let rect = Rect::new(area.x, y, area.width, LINES);
-        // The cursor is the tint across the row; a selection is a stripe
-        // of its own colour in the gutter, so a cursor inside a selection
-        // is still told apart from the rows around it.
+        // The cursor is the tint across the row's words; a selection is a
+        // mark of its own colour in the gutter, so a cursor inside a
+        // selection is still told apart from the rows around it.
         if visible.cursor && visible.row.is_some() {
-            frame
-                .buffer_mut()
-                .set_style(rect, theme.style(Role::Surface));
+            frame.buffer_mut().set_style(
+                Rect::new(area.x, y, area.width, 2),
+                theme.style(Role::Surface),
+            );
         }
         let (top, bottom) = lines(visible, width, theme, now);
         frame.render_widget(top, Rect::new(area.x, y, area.width, 1));
         frame.render_widget(bottom, Rect::new(area.x, y + 1, area.width, 1));
-        if visible.selected && area.width > 2 {
-            frame.buffer_mut().set_style(
-                Rect::new(area.x + 1, y, 2, LINES),
-                theme.style(Role::Selection),
+        // A faint rule between rows: a little air, and where one ends.
+        if visible.row.is_some() && area.width > 2 {
+            let rule = Line::styled(
+                format!(" {}", "─".repeat(width.saturating_sub(2))),
+                theme
+                    .style(Role::Dim)
+                    .add_modifier(ratatui::style::Modifier::DIM),
             );
+            frame.render_widget(rule, Rect::new(area.x, y + 2, area.width, 1));
         }
         let position = first.saturating_add(u32::try_from(offset).unwrap_or(u32::MAX));
         hits.add(rect, Target::Row(position));
@@ -92,7 +97,17 @@ fn lines<'a>(
         if visible.cursor { "▌" } else { " " },
         theme.style(Role::Focus),
     );
-    let chosen = Span::raw(if visible.selected { "✓" } else { " " });
+    let mark_style = selection_mark(theme);
+    let chosen = if visible.selected {
+        Span::styled("✓", mark_style)
+    } else {
+        Span::raw(" ")
+    };
+    let chosen_below = if visible.selected {
+        Span::styled("▎", mark_style)
+    } else {
+        Span::raw(" ")
+    };
     let mark = |on: bool, glyph: &'static str, role: Role| {
         Span::styled(if on { glyph } else { " " }, theme.style(role))
     };
@@ -140,11 +155,24 @@ fn lines<'a>(
     };
     let bottom = Line::from(vec![
         bar,
-        Span::raw(" ".repeat(TEXT - 1)),
+        chosen_below,
+        Span::raw(" ".repeat(TEXT - 2)),
         Span::styled(subject, emphasis),
         Span::styled(preview, theme.style(Role::Dim)),
     ]);
     (top, bottom)
+}
+
+/// A selection's mark: the selection's colour as the mark's own, rather than
+/// a block behind it; without colour, the role's reversal.
+fn selection_mark(theme: &Theme) -> ratatui::style::Style {
+    let selection = theme.style(Role::Selection);
+    match selection.bg {
+        Some(colour) => ratatui::style::Style::default()
+            .fg(colour)
+            .add_modifier(ratatui::style::Modifier::BOLD),
+        None => selection,
+    }
 }
 
 #[cfg(test)]
@@ -187,7 +215,7 @@ mod tests {
     fn buffer(rows: &[Visible], colour: Colour) -> (ratatui::buffer::Buffer, Theme) {
         let theme = Theme::new(colour, Background::Dark, &Default::default()).0;
         let now = Local.with_ymd_and_hms(2026, 9, 23, 12, 0, 0).unwrap();
-        let height = u16::try_from(rows.len() * 2).unwrap();
+        let height = u16::try_from(rows.len() * usize::from(LINES)).unwrap();
         let mut terminal = Terminal::new(TestBackend::new(70, height)).unwrap();
         terminal
             .draw(|frame| {
@@ -232,7 +260,10 @@ mod tests {
                 selected: false,
             })
             .collect();
-        let cells: Vec<Vec<String>> = render_cells(&visible).into_iter().step_by(2).collect();
+        let cells: Vec<Vec<String>> = render_cells(&visible)
+            .into_iter()
+            .step_by(usize::from(LINES))
+            .collect();
         // The date is the same text on each row; it must start at the same
         // cell on each. By cell, not by string index: a wide character is
         // its symbol plus an empty continuation cell.
@@ -345,7 +376,7 @@ mod tests {
         let focus = theme.style(Role::Focus).fg.expect("the cursor's accent");
         assert_ne!(selection, surface, "a selection is not the cursor's tint");
         assert_ne!(selection, focus, "nor the cursor bar's colour");
-        let line = |at: u16| at * 2;
+        let line = |at: u16| at * LINES;
         // The cursor row: tinted across, on both lines, with its bar.
         for y in [line(2), line(2) + 1] {
             assert_eq!(drawn[(10, y)].bg, surface, "the cursor row, line {y}");
@@ -364,10 +395,19 @@ mod tests {
             }
         }
         // All three still marked, the cursor's row included, in the
-        // selection's colour.
+        // selection's colour -- a mark, not a block behind it.
         for at in 1..=3 {
             assert_eq!(drawn[(1, line(at))].symbol(), "✓", "row {at}");
-            assert_eq!(drawn[(1, line(at))].bg, selection, "row {at}");
+            assert_eq!(drawn[(1, line(at))].fg, selection, "row {at}");
+            assert_ne!(drawn[(1, line(at))].bg, selection, "row {at} has no block");
+            assert_eq!(drawn[(1, line(at) + 1)].symbol(), "▎", "row {at}, line two");
+        }
+        // The rows are set apart by a faint rule, which the cursor's tint
+        // does not reach.
+        for at in 0..5 {
+            let rule = line(at) + 2;
+            assert_eq!(drawn[(10, rule)].symbol(), "─", "after row {at}");
+            assert_ne!(drawn[(10, rule)].bg, surface, "after row {at}");
         }
         for at in [0, 4] {
             assert_ne!(drawn[(1, line(at))].symbol(), "✓", "row {at} is not marked");

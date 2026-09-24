@@ -832,14 +832,15 @@ mod tests {
             .at(x, u16::try_from(y).unwrap())
             .expect("something is there");
         assert_eq!(hit.target, hit::Target::Row(2));
-        // A row is two lines, and a click on either is on it.
+        // A row is two lines and the rule under them, and a click on any of
+        // the three is on it.
         let lines_of_row_2 = (0..16u16)
             .filter(|row| {
                 hits.at(x, *row)
                     .is_some_and(|hit| hit.target == hit::Target::Row(2))
             })
             .count();
-        assert_eq!(lines_of_row_2, 2, "both of the row's lines are the row");
+        assert_eq!(lines_of_row_2, 3, "all of the row's lines are the row");
     }
 
     fn divider(hits: &hit::Hits, width: u16, height: u16) -> u16 {

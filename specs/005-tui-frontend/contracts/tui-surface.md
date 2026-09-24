@@ -60,7 +60,8 @@ Inside the panes, the canvas's PLATE 1b in a terminal: a top bar across the
 width (the search field, which *is* the search once one is open, and the
 cheat sheet's and compose's keys from the keymap); the sidebar headed by each
 account's address, with the sync state at its foot; list rows of two lines
-(marks, sender and time over subject and preview); the reader headed by its
+(marks, sender and time over subject and preview) with a faint rule under
+each; the reader headed by its
 subject and `from → to, cc · date`, its body wrapped to the pane, and the
 reply and archive keys at its foot; dim rules between panes; and a status line
 of notices on the left and the count on the right. The palette and the cheat
@@ -116,7 +117,7 @@ selected and focus each also have a non-colour mark:
 | Flagged | `⚑` column |
 | Attachments | `⎘` column |
 | Cursor | `▌` bar and the `Surface` tint across both lines (reverse without colour) |
-| Selected | `✓` in a gutter stripe of `Selection`'s own colour (reverse without colour) |
+| Selected | `✓` over `▎` in the gutter, in `Selection`'s own colour (reversed without colour) |
 | Open folder | `▌` bar and the `Surface` tint |
 | Notice | `✕` for a failure, `✓` for a success |
 

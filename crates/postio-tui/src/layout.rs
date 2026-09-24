@@ -52,8 +52,8 @@ pub enum Shown {
 
 /// Rows the screen gives to the top bar and the status line.
 pub const CHROME_ROWS: u16 = 2;
-/// Lines one list row takes.
-pub const LIST_ROW_LINES: u16 = 2;
+/// Lines one list row takes: two of words, and a faint rule under them.
+pub const LIST_ROW_LINES: u16 = 3;
 
 /// Narrower than this, or shorter, and nothing is drawn but the sentence.
 pub const MINIMUM: (u16, u16) = (50, 12);

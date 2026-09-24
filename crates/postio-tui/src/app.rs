@@ -3329,17 +3329,17 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn the_list_holds_as_many_two_line_rows_as_fit_under_the_top_bar() {
+    fn the_list_holds_as_many_rows_as_fit_under_the_top_bar() {
         // 42 rows: the top bar and the status line take two, and each list
-        // row two more.
-        assert_eq!(app((160, 42)).list_height(), 20);
-        assert_eq!(app((160, 16)).list_height(), 7);
+        // row three more -- two of words and a faint rule.
+        assert_eq!(app((160, 42)).list_height(), 13);
+        assert_eq!(app((160, 16)).list_height(), 4);
         let mut app = app((160, 16));
         let opening = opened(&mut app, 100);
         serve(&mut app, opening);
         assert_eq!(
             app.visible().len(),
-            7,
+            4,
             "the rows drawn are the rows that fit"
         );
     }
