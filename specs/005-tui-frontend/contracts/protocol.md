@@ -58,22 +58,26 @@ outcome arrives later as `Event`s.
 
 ### `Req` families
 
-The API surface. Each maps to logic that exists today; the source is noted.
+The API surface as built. `crates/postio-client/src/protocol.rs` is the
+authority; `Req::family()` names each variant's family for the round-trip
+counts. Each is answered by logic that already existed, moved into the host
+rather than rewritten.
 
-| Family | Requests | Moved from |
+| Family | Requests | Answered from |
 |---|---|---|
-| Commands | `Send(Command)`, `SendTracked(Command)` → `Accepted \| Refused(reason)` | `postio_core::bridge::CommandSender` |
-| Scopes and lists | `OpenScope(Scope)`, `Page { scope, offset, limit }`, `Count(scope)`, `Rows(ids)`, `Mailboxes`, `DraftCounts`, `ThreadPage`/`ThreadCount` | `MailStore` (`crates/postio-runtime/src/store/mod.rs:266`) |
-| Reading | `Conversation(thread)`, `Body(message)` → `Body \| Reason`, `ResolveCid(message, cid)`, `Parts(message)`, `SavePart { part, path }`, `OpenPart(part)` → a temp path, `AllowRemoteImages(sender)`, `ActivateUnsubscribe(message)` | `postio-app/src/reading.rs`, `postio-session/src/reading.rs`, `postio-gtk/src/reader/allowlist.rs` |
-| Search | `Search { query, scope, order }`, `Facets`, `Suggest(prefix)` | `postio-session/src/search.rs`, `postio-app/src/search.rs` |
-| Compose | `NewDraft(kind: New\|Reply\|ReplyAll\|Forward, source)`, `SaveDraft(DraftBody)`, `DeleteDraft`, `QueueSend { draft, at: Option<Time> }`, `CancelSend`, `Identities`, `Signature(identity)`, `Recipients(prefix)`, `AttachFile(path)`, `AttachBytes { name, mime, bytes, inline: bool }` | `postio-app/src/compose.rs`, `postio-gtk/src/composer.rs:586-680` |
-| Accounts | `Discover(address)`, `AddAccount(…)`, `BeginOAuth(account)` → `{ consent_url }`, `OAuthStatus`, `RemoveAccount`, `Credentials(…)` | `postio-app/src/onboarding.rs`, `settings_accounts.rs`, `settings_credential.rs` |
-| Settings | `Settings`, `PatchSettings(patch)` | `postio-ffi/src/settings.rs`, `postio_ui::settings` |
-| Status | `SyncStatus`, `Egress` | `postio_ui::status`, `settings_egress.rs` |
+| Commands | `Send(Command, aim)`, `SendTracked(Command, aim)` | the per-client dispatcher over `postio_session::actions` |
+| Lists | `Page`, `Count`, `Rows`, `RowsIn`, `NoteRemoved`, `Mailboxes`, `DraftCounts`, `Accounts` | `MailStore` |
+| Reading | `Body`, `Conversation`, `Readings`, `ThreadReadings`, `StoredBody`, `InlinePart`, `Unsubscribe`, `Parts`, `SavePart`, `SaveParts`, `OpenPart`, `ExportMessages` | `postio-host/src/{reading,parts,export}.rs` |
+| Search | `Search`, `SearchHits`, `Facets`, `Correspondents`, `Labels` | `postio-host/src/search.rs` over `postio_session::search` |
+| Compose | `SaveDraft`, `QueueSend`, `DiscardDraft`, `RecoverDraft`, `DraftBehind`, `CancelSend`, `SendFailure`, `Recipients`, `ReplySource`, `DefaultSignature`, `Attach { path, mime_type }`, `InlineImage`, `AttachmentBytes` | `postio-host/src/compose.rs`, one `DraftWriter` per client |
+| Accounts | `Discover`, `AddAccount`, `SaveAccount`, `SaveOAuthAccount`, `BeginOAuth`, `FinishOAuth`, `CancelOAuth`, `Account(AccountOp)`, `EditAccount`, `RebuildIndex` | `postio-host/src/onboarding.rs`, `postio_session::onboarding` |
+| Settings | `AccountSettings`, `SaveSignature`, `DeleteSignature`, `SetBackfillExcluded`, `EgressLog`, `PrivacyLog`, `OrientationSeen`, `RetireOrientation` | `postio-host/src/settings.rs` |
+| Diagnostics | `Diagnose(report)` | `postio_session::diag` |
 
-`DraftBody` carries `markdown: Option<String>`, `text`, `html:
-Option<String>`, headers and attachment refs. The host stores what it is
-given and does not re-derive it.
+The terminal's settings are its `config.toml` (edited in `$EDITOR` at the
+section) plus the account commands, so the `Settings`/`PatchSettings` pair
+first planned here was not needed. A draft carries `body_markdown` when it
+was typed as Markdown; the host stores what it is given and derives nothing.
 
 ### Undo
 
