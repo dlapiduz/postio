@@ -522,7 +522,27 @@ pub async fn feed_the_window(window: &Window, wiring: &Wiring) -> Option<Wired> 
     // one step earlier, for the onboarding branch that never reaches here.
     window.set_store_open(true);
 
-    let Some(account) = first_account(&wiring.database).await else {
+    // The window's surfaces read through a client of the store's owner
+    // (ADR 0041). Over this wiring for now: the host is in this process, and
+    // the client alone keeps it alive.
+    let client =
+        postio_host::Host::over(wiring.clone()).connect(postio_client::protocol::ClientKind::Gtk);
+
+    // Every account this window needs to know about, in one read: the one it
+    // opens on, the strip's, the scope switch's addresses and the one new
+    // mail is written from. Enabled ones only, in creation order -- the
+    // order the host lists them in, and `AppState::accounts`' too.
+    let enabled: Vec<postio_model::Account> = match client.accounts().await {
+        Ok(accounts) => accounts
+            .into_iter()
+            .filter(|account| account.enabled)
+            .collect(),
+        Err(error) => {
+            tracing::error!(%error, "cannot read the accounts: {error}");
+            Vec::new()
+        }
+    };
+    let Some(account) = enabled.first().cloned() else {
         tracing::info!(
             "no account configured; opening empty (see the provision example, or postio-hiy)"
         );
@@ -537,11 +557,6 @@ pub async fn feed_the_window(window: &Window, wiring: &Wiring) -> Option<Wired> 
         "opening account"
     );
 
-    // The window's surfaces read through a client of the store's owner
-    // (ADR 0041). Over this wiring for now: the host is in this process, and
-    // the client alone keeps it alive.
-    let client =
-        postio_host::Host::over(wiring.clone()).connect(postio_client::protocol::ClientKind::Gtk);
     let sources = feed::Sources::new(std::sync::Arc::new(client.clone()), wiring.runtime.clone());
     let feeds = window.install_feeds(
         account.id,
@@ -560,14 +575,13 @@ pub async fn feed_the_window(window: &Window, wiring: &Wiring) -> Option<Wired> 
     //
     // Absent below two accounts — `set_accounts` decides that, not this — so
     // for everybody with one account this is a length check and nothing on
-    // screen changes. The order is `enabled_accounts`' own, which is
+    // screen changes. The order is the host's own listing, which is
     // ascending id, the same order `AppState::accounts` uses: the hue is the
     // position, so it has to be the same list in both places or an account
     // changes colour depending on which surface is drawing it.
-    let named: Vec<(postio_model::AccountId, String)> = enabled_accounts(&wiring.database)
-        .await
-        .into_iter()
-        .map(|account| (account.id, account.display_name))
+    let named: Vec<(postio_model::AccountId, String)> = enabled
+        .iter()
+        .map(|account| (account.id, account.display_name.clone()))
         .collect();
     //
     // `offer_unified: true` since `ListScope::Unified` gave the row somewhere
@@ -609,10 +623,9 @@ pub async fn feed_the_window(window: &Window, wiring: &Wiring) -> Option<Wired> 
         let sidebar = glib::object::ObjectExt::downgrade(&window.sidebar());
         let window_for_scope = glib::object::ObjectExt::downgrade(window);
         let ids: Vec<postio_model::AccountId> = named.iter().map(|(id, _)| *id).collect();
-        let addresses: Vec<(postio_model::AccountId, String)> = enabled_accounts(&wiring.database)
-            .await
-            .into_iter()
-            .map(|account| (account.id, account.address.address))
+        let addresses: Vec<(postio_model::AccountId, String)> = enabled
+            .iter()
+            .map(|account| (account.id, account.address.address.clone()))
             .collect();
         move |scope| {
             // What is available follows the scope wherever it goes, so this
@@ -668,21 +681,21 @@ pub async fn feed_the_window(window: &Window, wiring: &Wiring) -> Option<Wired> 
     // The account a new message comes from is the one marked default, which
     // is not necessarily the one the window opened on (#960, #1161): the
     // marker means "new messages come from here" and nothing about order.
-    let composing = postio_session::composing_account(&wiring.database)
-        .await
-        .map(|chosen| chosen.id)
-        .unwrap_or(account.id);
-    compose::install(
+    // `postio_session::composing_account`'s rule, over the list already read.
+    let composing = enabled
+        .iter()
+        .find(|candidate| candidate.is_default)
+        .map_or(account.id, |chosen| chosen.id);
+    // The window's own client: the host tells every frontend a send moved a
+    // row, and this window hears it, so the composer announces nothing
+    // itself.
+    compose::install_with(
         window,
         composing,
-        wiring.database.clone(),
-        wiring.blobs.clone(),
+        client.clone(),
         wiring.runtime.clone(),
         showing.clone(),
-        {
-            let feeds = feeds.clone();
-            std::rc::Rc::new(move |event: &postio_core::Event| feeds.apply(event))
-        },
+        None,
     )
     .await;
 

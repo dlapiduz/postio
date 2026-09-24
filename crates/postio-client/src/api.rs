@@ -93,6 +93,7 @@ impl Req {
             Req::DiscardDraft { .. } => "DiscardDraft",
             Req::Recipients { .. } => "Recipients",
             Req::Correspondents(_) => "Correspondents",
+            Req::RecipientDirectory(_) => "RecipientDirectory",
             Req::Labels(_) => "Labels",
             Req::ReplySource(_) => "ReplySource",
             Req::DraftBehind(_) => "DraftBehind",
@@ -435,6 +436,22 @@ impl Client {
             Resp::Recipients(found) => Some(found),
             _ => None,
         })
+        .await
+    }
+
+    /// Everything recipient completion can offer `account`, read once.
+    pub async fn recipient_directory(
+        &self,
+        account: AccountId,
+    ) -> Result<crate::protocol::RecipientDirectory, StoreError> {
+        self.read(
+            Req::RecipientDirectory(account),
+            "the recipient directory",
+            |answer| match answer {
+                Resp::RecipientDirectory(found) => Some(found),
+                _ => None,
+            },
+        )
         .await
     }
 

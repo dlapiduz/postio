@@ -224,6 +224,9 @@ pub enum Req {
     },
     /// The account's correspondents, for the finder's `@`.
     Correspondents(AccountId),
+    /// Everything recipient completion can offer for an account, read once
+    /// so each keystroke is answered from memory rather than by a query.
+    RecipientDirectory(AccountId),
     /// The account's labels, for the finder's `+` and the label picker.
     Labels(AccountId),
     /// The message a reply or forward is built from, and its account.
@@ -419,6 +422,8 @@ pub enum Resp {
     Recipients(Vec<RecipientCandidate>),
     /// Correspondents, most often seen first.
     Correspondents(Vec<postio_model::Contact>),
+    /// What recipient completion can offer.
+    RecipientDirectory(RecipientDirectory),
     /// Labels, by name.
     Labels(Vec<postio_model::Label>),
     /// A reply's source message and its account.
@@ -952,4 +957,16 @@ mod tests {
         bytes.extend_from_slice(b"{}");
         assert!(matches!(decode(&bytes), Err(FrameError::TooLarge(_))));
     }
+}
+
+/// What recipient completion can offer an account: its groups, each with
+/// its members' addresses, and its contacts in the order the store ranks
+/// them. A group with no members is left out, since it would expand to
+/// nothing.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct RecipientDirectory {
+    /// Named groups with their members' addresses, in the store's order.
+    pub groups: Vec<(String, Vec<postio_model::EmailAddress>)>,
+    /// Contacts, best first.
+    pub contacts: Vec<postio_model::Contact>,
 }

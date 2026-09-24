@@ -2,10 +2,11 @@
 //! and what the composer reads to fill itself in.
 //!
 //! Moved out of `postio-app` (specs/005-tui-frontend T015) so the desktop and
-//! the terminal save a draft the same way. The desktop keeps its own ordering
-//! (`DraftWriter`, #1608) and calls these; the terminal reaches them through
-//! the Compose [`Req`](postio_client::protocol::Req)s. What stays in the app
-//! is the GTK half: the composer's signals, and `gio`'s MIME sniff.
+//! the terminal save a draft the same way. Both reach them through the
+//! Compose [`Req`](postio_client::protocol::Req)s, and each client's draft
+//! writes go through a [`DraftWriter`] of its own, in the order it made them
+//! (#1608). What stays in a frontend is its own half: the desktop's composer
+//! signals, and `gio`'s MIME sniff.
 //!
 //! Every function here logs and answers `None` or an error rather than
 //! panicking: a composer that cannot read a contact still lets the user type
@@ -472,6 +473,37 @@ pub async fn correspondents(database: &Store, account: AccountId) -> Vec<postio_
     found.await.unwrap_or_else(|error| {
         tracing::warn!(%error, "could not read the correspondents");
         Vec::new()
+    })
+}
+
+/// Everything recipient completion can offer `account`, on one warm reader:
+/// what the desktop's composer holds in memory so each keystroke is a lookup
+/// rather than a query. Empty, and logged, when the store cannot be read.
+pub async fn recipient_directory(
+    database: &Store,
+    account: AccountId,
+) -> postio_client::protocol::RecipientDirectory {
+    let found = async {
+        let connection = database.read().await?;
+        let groups = ContactGroupRepository::new(&connection);
+        let mut named = Vec::new();
+        for group in groups.list(Some(account)).await? {
+            let members = groups.members(group.id).await?;
+            if !members.is_empty() {
+                named.push((group.name, members.iter().map(resolved_address).collect()));
+            }
+        }
+        let contacts = ContactRepository::new(&connection)
+            .search(Some(account), "", CORRESPONDENT_LIMIT)
+            .await?;
+        Ok::<_, postio_storage::Error>(postio_client::protocol::RecipientDirectory {
+            groups: named,
+            contacts,
+        })
+    };
+    found.await.unwrap_or_else(|error| {
+        tracing::warn!(%error, "could not read the recipient directory");
+        Default::default()
     })
 }
 

@@ -551,6 +551,9 @@ impl Inner {
             Req::Recipients { account, prefix } => {
                 Resp::Recipients(compose::recipients(&self.wiring.database, account, &prefix).await)
             }
+            Req::RecipientDirectory(account) => Resp::RecipientDirectory(
+                compose::recipient_directory(&self.wiring.database, account).await,
+            ),
             Req::Correspondents(account) => {
                 Resp::Correspondents(compose::correspondents(&self.wiring.database, account).await)
             }
