@@ -69,6 +69,7 @@ pub mod capture;
 pub mod cheatsheet;
 pub mod composer;
 pub mod config;
+pub mod contacts;
 pub mod conversation;
 pub mod drag_out;
 pub mod editor;
