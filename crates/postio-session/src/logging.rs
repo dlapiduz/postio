@@ -206,9 +206,8 @@ impl Logging {
 /// file that will not parse yields the default, which is the same answer a
 /// first run gets.
 pub fn config_at(path: &Path) -> LoggingConfig {
-    std::fs::read_to_string(path)
+    Config::load_from_path(path)
         .ok()
-        .and_then(|text| Config::from_toml_str(&text).ok())
         .map(|config| config.logging)
         .unwrap_or_default()
 }

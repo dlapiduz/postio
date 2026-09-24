@@ -34,7 +34,7 @@ pub const QUOTE_CLASS: &str = "postio-quote";
 /// Named here rather than imported so this crate does not depend on the body
 /// crate for one string; the two are asserted equal in `postio-gtk`, which
 /// sees both.
-pub const QUOTED_MARKER: &str = "data-postio-quoted";
+pub use postio_body::document::QUOTED_MARKER;
 
 /// How the surface is drawn: the numbers a frontend owns and this module does
 /// not guess.
@@ -115,8 +115,7 @@ pub fn editor_ground(dark: bool) -> &'static str {
 /// The dark half of the palette, restated so it applies without the engine
 /// agreeing about the scheme.
 fn dark_tokens_restated() -> String {
-    const PALETTE: &str = include_str!("../../data/reader-tokens.css");
-    const DARK_BLOCK: &str = "@media (prefers-color-scheme: dark)";
+    use crate::reader::document::{DARK_BLOCK, PALETTE};
 
     let (_, dark) = PALETTE
         .split_once(DARK_BLOCK)

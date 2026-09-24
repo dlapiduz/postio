@@ -265,7 +265,10 @@ first_at, last_at";
 /// as `{alias}.{MEMBER}` or bare `{MEMBER}`, so the snooze half is written
 /// without an alias of its own — `snoozed_until` names no other table in
 /// any query here, so it resolves the same way regardless.
-const MEMBER: &str = "deleted_locally = 0 AND (snoozed_until IS NULL OR snoozed_until <= (strftime('%s','now') * 1000))";
+///
+/// The same predicate the folder counts keep, so the list and its counts
+/// cannot drift apart: [`super::VISIBLE`].
+const MEMBER: &str = super::VISIBLE;
 
 /// How many rows a folder's thread list has: one per conversation the
 /// folder holds, plus one per message it holds that belongs to no

@@ -1450,7 +1450,7 @@ impl Plan {
                         thread_id: row.col::<Option<i64>>(1)?.map(ThreadId::new),
                         mailbox_id: MailboxId::new(row.col(2)?),
                         subject: row.col(3)?,
-                        received_at: from_millis(row.col(4)?),
+                        received_at: postio_storage::repository::from_millis(row.col(4)?),
                         from_name: row.col(5)?,
                         from_address: row.col(6)?,
                         sender_times_seen: row.col::<Option<i64>>(7)?.unwrap_or(0),
@@ -1735,10 +1735,6 @@ fn day_start_millis(date: NaiveDate) -> i64 {
         .expect("midnight always exists")
         .and_utc()
         .timestamp_millis()
-}
-
-fn from_millis(millis: i64) -> DateTime<Utc> {
-    DateTime::from_timestamp_millis(millis).unwrap_or_default()
 }
 
 #[cfg(test)]

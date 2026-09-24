@@ -243,7 +243,7 @@ pub enum Block {
 /// A `data-` attribute so it is valid HTML and so the editor's own DOM keeps
 /// it across a round trip. It carries no content: it says only "the parser
 /// should hand this back to `quote_of` rather than narrowing it".
-pub(crate) const QUOTED_MARKER: &str = "data-postio-quoted";
+pub const QUOTED_MARKER: &str = "data-postio-quoted";
 
 /// A message body, as it is edited.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]

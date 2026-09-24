@@ -84,9 +84,8 @@ pub fn install_action(application: &impl IsA<gio::ActionMap>, window: &Window) {
 /// this small does not need to change without restarting the app, and
 /// `logging::config_at` is the pattern this mirrors for the same reason.
 pub fn config_at(path: &std::path::Path) -> SyncConfig {
-    std::fs::read_to_string(path)
+    postio_config::Config::load_from_path(path)
         .ok()
-        .and_then(|text| postio_config::Config::from_toml_str(&text).ok())
         .map(|config| config.sync)
         .unwrap_or_default()
 }

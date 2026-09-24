@@ -76,6 +76,17 @@ use chrono::{DateTime, Utc};
 
 use crate::error::{Error, Result};
 
+/// What counts as a message for the sidebar: one that the list would show.
+///
+/// A message hidden pending a remote delete or a snooze not yet due is not
+/// in the list, so counting it would put a number on screen the user cannot
+/// reconcile with what they see. `snoozed_until` is compared against
+/// SQLite's own clock rather than a bound parameter, matching the trigger
+/// this mirrors (migration 0021) — both are the cached-count half of the
+/// same two-tier arrangement the live list query (`where_clause`) is the
+/// other half of.
+pub(crate) const VISIBLE: &str = "deleted_locally = 0 AND (snoozed_until IS NULL OR snoozed_until <= (strftime('%s','now') * 1000))";
+
 /// A timestamp as the schema stores it: milliseconds since the Unix epoch, UTC.
 pub(crate) fn to_millis(at: DateTime<Utc>) -> i64 {
     at.timestamp_millis()
@@ -86,7 +97,7 @@ pub(crate) fn to_millis(at: DateTime<Utc>) -> i64 {
 /// A value the database cannot represent as a timestamp is clamped rather than
 /// dropped: it came out of a row, so something is there, and refusing to show
 /// the message would be worse than showing it with an odd date.
-pub(crate) fn from_millis(millis: i64) -> DateTime<Utc> {
+pub fn from_millis(millis: i64) -> DateTime<Utc> {
     DateTime::from_timestamp_millis(millis).unwrap_or(if millis < 0 {
         DateTime::<Utc>::MIN_UTC
     } else {

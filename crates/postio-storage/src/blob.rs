@@ -70,6 +70,8 @@
 //! ```
 
 mod format;
+/// The zstd level every stored body and blob is compressed at.
+pub(crate) use format::LEVEL as format_level;
 mod seal;
 
 use std::collections::HashSet;

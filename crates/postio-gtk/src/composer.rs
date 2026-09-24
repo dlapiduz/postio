@@ -650,12 +650,9 @@ fn quoted_body(source: &Message, forward: bool) -> MessageBody {
     }
 }
 
-/// The scope a reply's quoted styles are rewritten under.
-///
-/// One reply holds one quote, so this only has to be unique within the draft
-/// rather than globally — and `postio_body::parse` uses the same word coming
-/// back, so a round trip through the editor does not renumber anything.
-const QUOTE_SCOPE: &str = "quote";
+/// The scope a reply's quoted styles are rewritten under: the parser's own
+/// word, so a round trip through the editor does not renumber anything.
+use postio_body::parse::QUOTE_SCOPE;
 
 /// The plain half a forward carries.
 ///
