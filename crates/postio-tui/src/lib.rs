@@ -12,6 +12,7 @@
 
 pub mod app;
 pub mod caps;
+pub mod clipboard;
 pub mod composer;
 pub mod conversation;
 pub mod external;

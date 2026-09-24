@@ -34,6 +34,11 @@ pulldown-cmark = { version = "0.13", default-features = false }
 # Drawing (research R3). No calendar widget, no macros.
 ratatui = { version = "0.30.2", default-features = false, features = ["crossterm_0_29", "layout-cache"] }
 tokio = { workspace = true, features = ["macros", "rt", "sync", "time"] }
+# An image off the clipboard, on the paste key only (research R7).
+# `image-data` brings `image` with its PNG codec and nothing else; the
+# clipboard's pixels are encoded with that same crate.
+arboard = { version = "3.6", default-features = false, features = ["image-data", "wayland-data-control"] }
+image = { version = "0.25", default-features = false, features = ["png"] }
 # The composer's body: a modeless multi-line editor (research R8, FR-022a).
 ratatui-textarea = { version = "0.9.2", default-features = false, features = ["crossterm"] }
 # The composer's one-line fields: To, Cc, Bcc, Subject.

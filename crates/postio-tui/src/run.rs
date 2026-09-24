@@ -497,6 +497,21 @@ fn perform(
             | Effect::QueueSend { .. }) => {
                 let _ = drafts.try_send(effect);
             }
+            Effect::ReadClipboardImage => {
+                let inputs = inputs.clone();
+                tokio::task::spawn_blocking(move || {
+                    let read = crate::clipboard::read(&mut crate::clipboard::system());
+                    let _ = inputs.send_blocking(Input::ClipboardImage(read));
+                });
+            }
+            Effect::InlineImage { bytes, mime_type } => {
+                let client = client.clone();
+                let inputs = inputs.clone();
+                tokio::spawn(async move {
+                    let stored = client.inline_image(bytes, mime_type).await.ok().flatten();
+                    let _ = inputs.send(Input::InlineStored(stored)).await;
+                });
+            }
             Effect::Attach(path) => {
                 let client = client.clone();
                 let inputs = inputs.clone();

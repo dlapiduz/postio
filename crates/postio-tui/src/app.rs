@@ -30,6 +30,12 @@ use postio_body::replying::ReplyKind;
 pub enum Input {
     /// The terminal is now this many columns and rows.
     Resize(u16, u16),
+    /// The clipboard answered an [`Effect::ReadClipboardImage`]: a PNG,
+    /// no image, or why it could not be read.
+    ClipboardImage(Result<Option<Vec<u8>>, String>),
+    /// The daemon stored an [`Effect::InlineImage`]: the inline part, or
+    /// nothing when it could not.
+    InlineStored(Option<postio_model::Attachment>),
     /// The external editor exited: what it saved, or why not.
     Edited {
         /// Which composition.
@@ -228,6 +234,15 @@ pub enum Effect {
         generation: u64,
         /// The body, as typed.
         markdown: String,
+    },
+    /// Read an image off the clipboard: on the paste key, never otherwise.
+    ReadClipboardImage,
+    /// Store pasted image bytes as an inline part of the draft.
+    InlineImage {
+        /// The image.
+        bytes: Vec<u8>,
+        /// Its type.
+        mime_type: String,
     },
     /// Store the file at this path as an attachment of the draft.
     Attach(std::path::PathBuf),
@@ -795,6 +810,10 @@ impl App {
                 }],
                 None => Vec::new(),
             },
+            // The desktop's Insert image opens a chooser; a terminal's own
+            // paste carries text only, so this is where an image is asked
+            // for -- the one place the clipboard is read (FR-026).
+            "insert_image" => vec![Effect::ReadClipboardImage],
             "attach_file" => {
                 self.path_prompt = Some(tui_input::Input::default());
                 vec![Effect::Redraw]
@@ -1596,6 +1615,35 @@ pub fn update(app: &mut App, input: Input) -> Vec<Effect> {
             }
             (Ok(_), _) => app.say("The draft closed while it was in the editor"),
             (Err(reason), _) => app.say(&format!("The editor did not save: {reason}")),
+        },
+        Input::ClipboardImage(read) => match read {
+            Ok(Some(bytes)) => vec![Effect::InlineImage {
+                bytes,
+                mime_type: "image/png".to_owned(),
+            }],
+            Ok(None) => app.say("There is no image on the clipboard"),
+            Err(reason) => app.say(&reason),
+        },
+        Input::InlineStored(stored) => match (stored, app.composer.as_mut()) {
+            (Some(image), Some(composer)) => {
+                let label = image
+                    .content_id
+                    .as_deref()
+                    .map(|id| format!("![image](cid:{id})"));
+                composer.attach(image);
+                if let Some(label) = label {
+                    composer.insert(&label);
+                }
+                vec![
+                    Effect::Autosave {
+                        generation: composer.generation(),
+                        edit: composer.edits(),
+                    },
+                    Effect::Redraw,
+                ]
+            }
+            (Some(_), None) => app.say("The draft closed before the image was stored"),
+            (None, _) => app.say("The image could not be stored"),
         },
         Input::Paste(pasted) => app.paste(&pasted),
         Input::Attached { path, attached } => match (attached, app.composer.as_mut()) {
@@ -2635,6 +2683,76 @@ mod tests {
         update(&mut app, alt('o'));
         assert!(!app.composer_detached(), "and the same key puts it back");
         assert!(!app.showing_reader());
+    }
+
+    fn reads_the_clipboard(effects: &[Effect]) -> usize {
+        effects
+            .iter()
+            .filter(|effect| matches!(effect, Effect::ReadClipboardImage))
+            .count()
+    }
+
+    #[test]
+    fn typing_never_reads_the_clipboard() {
+        // T062 / FR-026: only the paste key does.
+        let mut app = app((160, 40));
+        composing(&mut app);
+        in_the_body(&mut app);
+        let effects = typing(&mut app, "Here is the photo: ");
+        assert_eq!(reads_the_clipboard(&effects), 0);
+        let effects = update(&mut app, Input::Paste("some words".into()));
+        assert_eq!(
+            reads_the_clipboard(&effects),
+            0,
+            "a text paste is not a read"
+        );
+    }
+
+    #[test]
+    fn a_pasted_image_goes_in_where_the_cursor_is() {
+        // US3 scenario 9.
+        let mut app = app((160, 40));
+        composing(&mut app);
+        in_the_body(&mut app);
+        typing(&mut app, "Photo: ");
+        let effects = update(&mut app, alt('g'));
+        assert_eq!(reads_the_clipboard(&effects), 1, "{effects:?}");
+
+        let png = b"\x89PNG\r\n\x1a\nrest".to_vec();
+        let effects = update(&mut app, Input::ClipboardImage(Ok(Some(png.clone()))));
+        assert!(
+            effects.contains(&Effect::InlineImage {
+                bytes: png,
+                mime_type: "image/png".into()
+            }),
+            "{effects:?}"
+        );
+
+        let mut stored = postio_model::Attachment::new(MessageId::UNASSIGNED, "image/png", 12);
+        stored.disposition = postio_model::attachment::Disposition::Inline;
+        stored.content_id = Some("abc@postio.invalid".into());
+        update(&mut app, Input::InlineStored(Some(stored.clone())));
+        let composer = app.composer().unwrap();
+        assert_eq!(
+            composer.markdown(),
+            "Photo: ![image](cid:abc@postio.invalid)"
+        );
+        assert_eq!(composer.attachments(), &[stored]);
+        let html = composer.draft().body.html.expect("an image is HTML");
+        assert!(html.contains("cid:abc@postio.invalid"), "{html}");
+    }
+
+    #[test]
+    fn no_clipboard_says_so_and_no_image_says_so() {
+        let mut app = app((160, 40));
+        composing(&mut app);
+        update(
+            &mut app,
+            Input::ClipboardImage(Err(crate::clipboard::UNAVAILABLE.into())),
+        );
+        assert_eq!(app.notice(), Some(crate::clipboard::UNAVAILABLE));
+        update(&mut app, Input::ClipboardImage(Ok(None)));
+        assert_eq!(app.notice(), Some("There is no image on the clipboard"));
     }
 
     #[test]
