@@ -383,6 +383,10 @@ const CASES: &[(&str, fn())] = &[
         search_index::a_store_that_predates_body_indexing_catches_up as fn(),
     ),
     (
+        "search_index::the_idle_passes_wait_for_the_first_frame",
+        search_index::the_idle_passes_wait_for_the_first_frame as fn(),
+    ),
+    (
         "search_index::opening_the_window_indexes_local_bodies_without_being_asked",
         search_index::opening_the_window_indexes_local_bodies_without_being_asked as fn(),
     ),
