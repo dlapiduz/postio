@@ -2548,7 +2548,7 @@ impl Composer {
         name.set_hexpand(true);
         name.set_ellipsize(pango::EllipsizeMode::Middle);
 
-        let mut meta_text = format_size(attachment.size);
+        let mut meta_text = postio_ui::format::human_size(attachment.size);
         if attachment.size >= LARGE_ATTACHMENT_BYTES {
             meta_text.push_str(" — large");
         }
@@ -3814,20 +3814,6 @@ fn field_label(text: &str) -> gtk::Label {
     // The entry it labels already carries the same name.
     label.set_accessible_role(gtk::AccessibleRole::Presentation);
     label
-}
-
-/// A human size for an attachment row: `812 B`, `48 KB`, `3.2 MB`.
-fn format_size(bytes: u64) -> String {
-    const KIB: f64 = 1024.0;
-    const MIB: f64 = KIB * 1024.0;
-    let bytes = bytes as f64;
-    if bytes >= MIB {
-        format!("{:.1} MB", bytes / MIB)
-    } else if bytes >= KIB {
-        format!("{:.0} KB", bytes / KIB)
-    } else {
-        format!("{bytes:.0} B")
-    }
 }
 
 /// A preset must land at least this far ahead of `now` to be offered as
