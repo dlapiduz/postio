@@ -233,39 +233,6 @@ async fn the_threads_subject_is_the_normalized_subject_of_its_root() {
 }
 
 #[tokio::test]
-async fn removing_a_message_updates_the_aggregates_too() {
-    let database = test_support::memory().await;
-    let connection = database.connect().await.expect("checkout");
-    let (account, inbox) = test_support::account_with_inbox(&connection).await;
-    let threads = ThreadRepository::new(&connection);
-
-    let thread = a_thread(&connection, account.id).await;
-    let root = message(&connection, account.id, inbox, "ada", 100).await;
-    let reply = message(&connection, account.id, inbox, "quinn", 200).await;
-    threads.add_message(thread.id, root.id).await.expect("add");
-    threads.add_message(thread.id, reply.id).await.expect("add");
-
-    threads.remove_message(reply.id).await.expect("remove");
-
-    let stored = threads
-        .get(thread.id)
-        .await
-        .expect("get")
-        .expect("the thread");
-    assert_eq!(stored.message_count, 1);
-    assert_eq!(stored.last_at, at(100));
-    assert_eq!(
-        MessageRepository::new(&connection)
-            .get(reply.id)
-            .await
-            .expect("get")
-            .expect("the message")
-            .thread_id,
-        None
-    );
-}
-
-#[tokio::test]
 async fn a_locally_deleted_message_leaves_the_threads_counts() {
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");

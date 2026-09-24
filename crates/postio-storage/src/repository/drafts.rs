@@ -586,15 +586,6 @@ impl<'a> DraftRepository<'a> {
         Ok(drafts)
     }
 
-    /// The drafts belonging to a thread, so the composer can appear inline.
-    pub async fn in_thread(&self, thread_id: ThreadId) -> Result<Vec<Draft>> {
-        self.query(
-            "WHERE thread_id = ?1 ORDER BY updated_at DESC, id DESC",
-            [thread_id.get()],
-        )
-        .await
-    }
-
     /// Records where the draft's server copy landed, or that it has none.
     ///
     /// See [`ServerCopyLocation`] for what "where" means since #543.
