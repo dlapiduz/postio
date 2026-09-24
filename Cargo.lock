@@ -4476,6 +4476,7 @@ dependencies = [
  "postio-config",
  "postio-core",
  "postio-model",
+ "postio-search",
  "postio-ui",
  "pulldown-cmark",
  "ratatui",

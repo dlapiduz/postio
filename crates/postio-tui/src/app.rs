@@ -99,6 +99,14 @@ pub enum Input {
         /// Its id, or the sentence for the status line.
         saved: Result<postio_model::DraftId, String>,
     },
+    /// The daemon answered an [`Effect::Search`].
+    Found {
+        /// Which question it answers.
+        sequence: u64,
+        /// What matched, nothing when the store could not be read, or why
+        /// the daemon could not be asked.
+        found: Result<Option<postio_client::protocol::Found>, String>,
+    },
     /// The daemon answered an [`Effect::Recipients`].
     Recipients {
         /// What was looked up.
@@ -246,6 +254,13 @@ pub enum Effect {
     },
     /// Store the file at this path as an attachment of the draft.
     Attach(std::path::PathBuf),
+    /// Run a search; its answer comes back as [`Input::Found`].
+    Search {
+        /// Which question this is, so an older answer can be dropped.
+        sequence: u64,
+        /// The search.
+        search: postio_client::protocol::Search,
+    },
     /// Look up who a recipient being typed could be.
     Recipients {
         /// Whose contacts.
@@ -353,6 +368,17 @@ pub struct App {
     /// Whether the draft is in a tab of its own rather than the reading
     /// pane: the desktop's composer window (FR-003).
     detached: bool,
+    /// The search bar, while it is open.
+    search: Option<SearchBar>,
+}
+
+/// The search bar: what is typed, which question is outstanding, and what
+/// the last answer turned out to be.
+#[derive(Debug, Default)]
+struct SearchBar {
+    input: tui_input::Input,
+    pacer: postio_ui::search::Pacer,
+    outcome: Option<postio_ui::search::Outcome>,
 }
 
 /// Which pane the keyboard is in.
@@ -369,6 +395,8 @@ pub enum Focus {
     Parts,
     /// The composer, in the reading pane.
     Composer,
+    /// The search bar.
+    Search,
 }
 
 impl std::fmt::Debug for App {
@@ -417,6 +445,7 @@ impl App {
             preview: postio_config::Preview::default(),
             previewing: false,
             detached: false,
+            search: None,
         }
     }
 
@@ -725,6 +754,180 @@ impl App {
         effects
     }
 
+    /// What is typed in the search bar, while it is open.
+    pub fn search_query(&self) -> Option<&str> {
+        self.search.as_ref().map(|bar| bar.input.value())
+    }
+
+    /// Where the caret is in the search bar, in characters.
+    pub fn search_caret(&self) -> usize {
+        self.search.as_ref().map_or(0, |bar| bar.input.cursor())
+    }
+
+    /// The operators in the query, as chips: Postio's query language, read
+    /// back as it is typed (`postio_ui::search`).
+    pub fn search_chips(&self) -> Vec<postio_ui::search::Chip> {
+        self.search_query()
+            .map(|query| {
+                postio_ui::search::chips(&postio_search::parse(
+                    query,
+                    chrono::Local::now().date_naive(),
+                ))
+            })
+            .unwrap_or_default()
+    }
+
+    /// What the last search turned out to be, as the desktop says it.
+    pub fn search_readout(&self) -> Option<String> {
+        let outcome = self.search.as_ref()?.outcome.as_ref()?;
+        Some(postio_ui::search::readout(outcome))
+    }
+
+    /// Open the search bar, over the list.
+    fn open_search(&mut self) -> Vec<Effect> {
+        if self.search.is_none() {
+            self.search = Some(SearchBar::default());
+        }
+        self.focus = Focus::Search;
+        vec![Effect::Redraw]
+    }
+
+    /// Close the search bar and put the folder back where it was.
+    fn close_search(&mut self) -> Vec<Effect> {
+        let mut effects = vec![Effect::Redraw];
+        self.search = None;
+        self.focus = Focus::List;
+        if self.paging.close_results() {
+            self.list.reset(0);
+            self.cursor = 0;
+            self.top = 0;
+            if let Some(scope) = self.scope {
+                effects.push(Effect::Recount(scope));
+            }
+        }
+        effects
+    }
+
+    /// A key in the search bar: typed, with Backspace taking a whole chip
+    /// (`postio_ui::search::backspace`), Enter going down to the results,
+    /// and Escape closing the bar.
+    fn search_key(&mut self, key: &KeyEvent) -> Vec<Effect> {
+        use crossterm::event::KeyCode;
+        use tui_input::backend::crossterm::EventHandler;
+        match self.keys.press(key, KeyContext::Search, true) {
+            Outcome::Command(id) if id == "back" => return self.close_search(),
+            Outcome::Command(id) => return self.command(&id),
+            Outcome::Pending(_) => return Vec::new(),
+            Outcome::Unhandled => {}
+        }
+        let Some(bar) = self.search.as_mut() else {
+            return Vec::new();
+        };
+        let before = bar.input.value().to_owned();
+        match key.code {
+            KeyCode::Enter => {
+                self.focus = Focus::List;
+                return vec![Effect::Redraw];
+            }
+            KeyCode::Backspace => {
+                let parsed = postio_search::parse(&before, chrono::Local::now().date_naive());
+                let caret = before
+                    .char_indices()
+                    .nth(bar.input.cursor())
+                    .map_or(before.len(), |(at, _)| at);
+                match postio_ui::search::backspace(&parsed, caret) {
+                    postio_ui::search::Backspace::PopChip { query, caret, .. } => {
+                        let chars = query[..caret].chars().count();
+                        bar.input = tui_input::Input::default().with_value(query);
+                        bar.input.handle(tui_input::InputRequest::SetCursor(chars));
+                    }
+                    postio_ui::search::Backspace::Ordinary => {
+                        bar.input.handle_event(&crossterm::event::Event::Key(*key));
+                    }
+                }
+            }
+            _ => {
+                bar.input.handle_event(&crossterm::event::Event::Key(*key));
+            }
+        }
+        if bar.input.value() == before {
+            return vec![Effect::Redraw];
+        }
+        self.run_search()
+    }
+
+    /// Ask the daemon the question now in the bar; an empty bar puts the
+    /// folder back.
+    fn run_search(&mut self) -> Vec<Effect> {
+        let account = self.account.map_or(
+            postio_model::AccountScope::Unified,
+            postio_model::AccountScope::Account,
+        );
+        let Some(bar) = self.search.as_mut() else {
+            return Vec::new();
+        };
+        let query = bar.input.value().to_owned();
+        if query.trim().is_empty() {
+            bar.pacer.abandon();
+            bar.outcome = None;
+            let mut effects = vec![Effect::Redraw];
+            if self.paging.close_results() {
+                self.list.reset(0);
+                self.cursor = 0;
+                self.top = 0;
+                if let Some(scope) = self.scope {
+                    effects.push(Effect::Recount(scope));
+                }
+            }
+            return effects;
+        }
+        let sequence = bar.pacer.issue();
+        vec![
+            Effect::Search {
+                sequence,
+                search: postio_client::protocol::Search {
+                    account,
+                    query,
+                    newest_first: false,
+                },
+            },
+            Effect::Redraw,
+        ]
+    }
+
+    /// An answer to a search: shown in the list if it is still the question.
+    fn found(
+        &mut self,
+        sequence: u64,
+        found: Result<Option<postio_client::protocol::Found>, String>,
+    ) -> Vec<Effect> {
+        let Some(bar) = self.search.as_mut() else {
+            return Vec::new();
+        };
+        if !bar.pacer.accepts(sequence) {
+            return Vec::new();
+        }
+        match found {
+            Ok(Some(found)) => {
+                bar.outcome = Some(postio_ui::search::Outcome {
+                    hits: found.hits,
+                    capped: found.capped,
+                    elapsed: found.elapsed,
+                    corpus_complete: found.corpus_complete,
+                    unreachable: Vec::new(),
+                });
+                let total = self.paging.show_results(found.ids);
+                self.selection.clear();
+                self.list.reset(total);
+                self.cursor = 0;
+                self.top = 0;
+                vec![Effect::Redraw]
+            }
+            Ok(None) => self.say("The search could not be run"),
+            Err(reason) => self.say(&reason),
+        }
+    }
+
     /// The schedule-send picker's times, while it is open.
     pub fn scheduling(&self) -> Option<&[(&'static str, chrono::DateTime<chrono::Local>)]> {
         self.scheduling.as_ref().map(|times| times.as_slice())
@@ -862,6 +1065,7 @@ impl App {
             Focus::Reader => KeyContext::Reader,
             Focus::Parts => KeyContext::Parts,
             Focus::Composer => KeyContext::Composer,
+            Focus::Search => KeyContext::Search,
         }
     }
 
@@ -1058,6 +1262,7 @@ impl App {
                 }
             }
             "focus_sidebar" => self.focus = Focus::Sidebar,
+            "search" => return self.open_search(),
             "cycle_pane" => {
                 // The composer is the reading pane while it is open.
                 let reader = if self.composer.is_some() && !self.detached {
@@ -1066,7 +1271,7 @@ impl App {
                     Focus::Reader
                 };
                 self.focus = match self.focus {
-                    Focus::List => reader,
+                    Focus::List | Focus::Search => reader,
                     Focus::Reader | Focus::Parts | Focus::Composer => Focus::Sidebar,
                     Focus::Sidebar => Focus::List,
                 }
@@ -1078,7 +1283,7 @@ impl App {
                     Focus::Reader
                 };
                 self.focus = match self.focus {
-                    Focus::List => Focus::Sidebar,
+                    Focus::List | Focus::Search => Focus::Sidebar,
                     Focus::Sidebar => reader,
                     Focus::Reader | Focus::Parts | Focus::Composer => Focus::List,
                 }
@@ -1562,6 +1767,7 @@ pub fn update(app: &mut App, input: Input) -> Vec<Effect> {
             vec![Effect::Redraw]
         }
         Input::Key(key) if app.focus == Focus::Composer => app.composer_key(&key),
+        Input::Key(key) if app.focus == Focus::Search => app.search_key(&key),
         Input::Key(key) => match app.keys.press(&key, app.key_context(), false) {
             Outcome::Command(id) => app.command(&id),
             Outcome::Pending(_) | Outcome::Unhandled => Vec::new(),
@@ -1663,6 +1869,7 @@ pub fn update(app: &mut App, input: Input) -> Vec<Effect> {
                 crate::paths::name_of(&path)
             )),
         },
+        Input::Found { sequence, found } => app.found(sequence, found),
         Input::Recipients { prefix, found } => {
             if let Some(composer) = app.composer.as_mut() {
                 composer.offer(&prefix, found);
@@ -2753,6 +2960,121 @@ mod tests {
         assert_eq!(app.notice(), Some(crate::clipboard::UNAVAILABLE));
         update(&mut app, Input::ClipboardImage(Ok(None)));
         assert_eq!(app.notice(), Some("There is no image on the clipboard"));
+    }
+
+    fn searches(effects: &[Effect]) -> Vec<(u64, String)> {
+        effects
+            .iter()
+            .filter_map(|effect| match effect {
+                Effect::Search { sequence, search } => Some((*sequence, search.query.clone())),
+                _ => None,
+            })
+            .collect()
+    }
+
+    fn found(ids: &[i64]) -> postio_client::protocol::Found {
+        postio_client::protocol::Found {
+            ids: ids.iter().copied().map(MessageId::new).collect(),
+            hits: ids.len() as u64,
+            capped: false,
+            corpus_complete: true,
+            elapsed: std::time::Duration::from_millis(11),
+        }
+    }
+
+    #[test]
+    fn a_search_runs_on_every_key_and_a_half_typed_operator_is_no_error() {
+        // US4 scenario 1.
+        let mut app = app((160, 40));
+        let opening = opened(&mut app, 3);
+        serve(&mut app, opening);
+        update(&mut app, press('/'));
+        assert_eq!(app.focus(), Focus::Search);
+
+        let mut asked = Vec::new();
+        for c in "from:ada is:".chars() {
+            asked.extend(searches(&update(&mut app, press(c))));
+        }
+        assert_eq!(asked.len(), "from:ada is:".len(), "one search per key");
+        assert!(
+            asked.windows(2).all(|pair| pair[0].0 < pair[1].0),
+            "each newer than the last"
+        );
+        assert_eq!(asked.last().unwrap().1, "from:ada is:");
+        let chips = app.search_chips();
+        assert!(
+            chips
+                .iter()
+                .any(|chip| chip.label == "from:ada" && chip.complete)
+        );
+        assert!(
+            chips
+                .iter()
+                .any(|chip| chip.label == "is:" && !chip.complete),
+            "a half-typed operator is a chip in progress, not an error: {chips:?}"
+        );
+
+        for c in "unread".chars() {
+            update(&mut app, press(c));
+        }
+        let latest = searches(&update(&mut app, press(' '))).last().unwrap().0;
+        update(
+            &mut app,
+            Input::Found {
+                sequence: latest - 1,
+                found: Ok(Some(found(&[9]))),
+            },
+        );
+        assert_ne!(app.total(), 1, "an answer to an older question is dropped");
+        let effects = update(
+            &mut app,
+            Input::Found {
+                sequence: latest,
+                found: Ok(Some(found(&[3, 1]))),
+            },
+        );
+        assert_eq!(app.total(), 2);
+        assert!(
+            effects.iter().any(|effect| matches!(
+                effect,
+                Effect::Fetch {
+                    fetch: Fetch::Hits { .. },
+                    ..
+                }
+            )),
+            "the hits are read: {effects:?}"
+        );
+        assert_eq!(app.search_readout().as_deref(), Some("2 hits · 11 ms"));
+    }
+
+    #[test]
+    fn backspace_takes_a_whole_chip_and_escape_puts_the_folder_back() {
+        let mut app = app((160, 40));
+        let opening = opened(&mut app, 3);
+        serve(&mut app, opening);
+        update(&mut app, press('/'));
+        for c in "tide from:ada".chars() {
+            update(&mut app, press(c));
+        }
+        let asked = searches(&update(
+            &mut app,
+            key(KeyCode::Backspace, KeyModifiers::NONE),
+        ));
+        assert_eq!(app.search_query(), Some("tide"));
+        update(
+            &mut app,
+            Input::Found {
+                sequence: asked.last().expect("asked again").0,
+                found: Ok(Some(found(&[2]))),
+            },
+        );
+        assert_eq!(app.total(), 1, "the results replaced the folder");
+
+        let effects = update(&mut app, key(KeyCode::Esc, KeyModifiers::NONE));
+        assert_eq!(app.focus(), Focus::List);
+        assert_eq!(app.search_query(), None);
+        let scope = ListScope::Mailbox(MailboxId::new(1));
+        assert!(effects.contains(&Effect::Recount(scope)), "{effects:?}");
     }
 
     #[test]

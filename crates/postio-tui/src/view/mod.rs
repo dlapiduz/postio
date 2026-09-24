@@ -5,6 +5,7 @@
 pub mod composer;
 pub mod list;
 pub mod reader;
+pub mod search;
 pub mod sidebar;
 
 use chrono::{DateTime, Local};
@@ -76,7 +77,21 @@ pub fn draw(frame: &mut Frame, app: &App, theme: &Theme, now: DateTime<Local>) {
                             theme,
                         );
                     }
-                    Pane::List => list::draw(frame, *area, &app.visible(), theme, now),
+                    Pane::List => {
+                        let list_area = match app.search_query() {
+                            Some(query) => search::draw(
+                                frame,
+                                *area,
+                                query,
+                                app.search_caret(),
+                                app.search_readout().as_deref(),
+                                app.focus() == Focus::Search,
+                                theme,
+                            ),
+                            None => *area,
+                        };
+                        list::draw(frame, list_area, &app.visible(), theme, now);
+                    }
                     Pane::Reader => {
                         if let Some(writing) = app.composer().filter(|_| !app.showing_reader()) {
                             composer::draw(
@@ -461,6 +476,44 @@ mod tests {
             "the reading pane is the reader's:\n{mail}"
         );
         assert!(mail.contains("A draft is open"), "{mail}");
+    }
+
+    #[test]
+    fn the_search_bar_sits_over_the_list_with_its_readout() {
+        let mut app = with_sidebar((160, 16));
+        update(
+            &mut app,
+            Input::Key(crossterm::event::KeyEvent::from(
+                crossterm::event::KeyCode::Char('/'),
+            )),
+        );
+        for c in "from:ada tide".chars() {
+            update(
+                &mut app,
+                Input::Key(crossterm::event::KeyEvent::from(
+                    crossterm::event::KeyCode::Char(c),
+                )),
+            );
+        }
+        update(
+            &mut app,
+            Input::Found {
+                sequence: 13,
+                found: Ok(Some(postio_client::protocol::Found {
+                    ids: vec![postio_model::MessageId::new(4)],
+                    hits: 1,
+                    capped: false,
+                    corpus_complete: false,
+                    elapsed: std::time::Duration::from_millis(7),
+                })),
+            },
+        );
+        let screen = screen(160, 16, &app);
+        let bar = screen
+            .lines()
+            .find(|line| line.contains("/ from:ada tide"))
+            .unwrap_or_else(|| panic!("no bar:\n{screen}"));
+        assert!(bar.contains("1 hit · 7 ms · still syncing"), "{bar}");
     }
 
     #[test]

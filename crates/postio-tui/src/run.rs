@@ -520,6 +520,17 @@ fn perform(
                     let _ = inputs.send(Input::Attached { path, attached }).await;
                 });
             }
+            Effect::Search { sequence, search } => {
+                let client = client.clone();
+                let inputs = inputs.clone();
+                tokio::spawn(async move {
+                    let found = client
+                        .search(search)
+                        .await
+                        .map_err(|error| error.message().to_owned());
+                    let _ = inputs.send(Input::Found { sequence, found }).await;
+                });
+            }
             Effect::Recipients { account, prefix } => {
                 let client = client.clone();
                 let inputs = inputs.clone();
