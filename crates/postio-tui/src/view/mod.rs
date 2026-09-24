@@ -230,7 +230,10 @@ mod tests {
                 accounts: vec![account],
                 folders: vec![inbox],
                 counts: Vec::new(),
-                saved: vec!["Unread from Ada".into()],
+                saved: vec![crate::sidebar::Saved {
+                    name: "Unread from Ada".into(),
+                    query: "from:ada is:unread".into(),
+                }],
             }),
         );
         app

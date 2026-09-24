@@ -139,7 +139,7 @@ async fn main_loop(
     keys: Keys,
     theme: Theme,
     state: postio_core::SharedState,
-    saved: Vec<String>,
+    saved: Vec<crate::sidebar::Saved>,
     preview: postio_config::Preview,
     session: &mut Session,
 ) -> io::Result<()> {
@@ -238,7 +238,7 @@ struct Senders {
     inputs: async_channel::Sender<Input>,
     drafts: async_channel::Sender<Effect>,
     /// The pinned saved searches' names, for the sidebar.
-    saved: Vec<String>,
+    saved: Vec<crate::sidebar::Saved>,
 }
 
 /// What the loop does after performing a batch of effects.
@@ -340,7 +340,7 @@ async fn drive(
 /// Through `patch_filters`, which rewrites only `[filters]`: a whole-file
 /// reserialization would drop a hand-written comment or reorder every other
 /// section (#885).
-fn save_search(query: &str) -> Result<Vec<String>, String> {
+fn save_search(query: &str) -> Result<Vec<crate::sidebar::Saved>, String> {
     let path = postio_config::paths::config_path().map_err(|error| error.to_string())?;
     let original = std::fs::read_to_string(&path).unwrap_or_default();
     let mut config = postio_config::Config::from_toml_str(&original).unwrap_or_default();
@@ -352,26 +352,32 @@ fn save_search(query: &str) -> Result<Vec<String>, String> {
     Ok(pinned(&config))
 }
 
-/// The pinned saved searches' names as `config.toml` says now.
-fn pinned_now() -> Option<Vec<String>> {
+/// The pinned saved searches as `config.toml` says now.
+fn pinned_now() -> Option<Vec<crate::sidebar::Saved>> {
     let path = postio_config::paths::config_path().ok()?;
     let text = std::fs::read_to_string(path).ok()?;
     Some(pinned(&postio_config::Config::from_toml_str(&text).ok()?))
 }
 
-/// The pinned saved searches' names, in the sidebar's order.
-fn pinned(config: &postio_config::Config) -> Vec<String> {
+/// The pinned saved searches, in the sidebar's order.
+fn pinned(config: &postio_config::Config) -> Vec<crate::sidebar::Saved> {
     config
         .filters
         .iter()
         .filter(|(_, filter)| filter.pinned)
-        .map(|(key, filter)| filter.name.clone().unwrap_or_else(|| key.clone()))
+        .map(|(key, filter)| crate::sidebar::Saved {
+            name: filter.name.clone().unwrap_or_else(|| key.clone()),
+            query: filter.query.clone(),
+        })
         .collect()
 }
 
 /// What the sidebar holds: every account, its folders, and the counts its
 /// views draw.
-async fn sidebar_contents(client: &Client, saved: Vec<String>) -> crate::sidebar::Contents {
+async fn sidebar_contents(
+    client: &Client,
+    saved: Vec<crate::sidebar::Saved>,
+) -> crate::sidebar::Contents {
     let accounts = client.accounts().await.unwrap_or_default();
     let mut folders = Vec::new();
     let mut counts = Vec::new();

@@ -20,8 +20,17 @@ pub struct Contents {
     pub folders: Vec<Mailbox>,
     /// Each account's view counts.
     pub counts: Vec<(AccountId, ViewCounts)>,
-    /// The saved searches pinned to the sidebar, by name.
-    pub saved: Vec<String>,
+    /// The saved searches pinned to the sidebar.
+    pub saved: Vec<Saved>,
+}
+
+/// A saved search from `config.toml`'s `[filters]`.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Saved {
+    /// What the sidebar calls it.
+    pub name: String,
+    /// The query it runs.
+    pub query: String,
 }
 
 /// One line of the sidebar.
@@ -33,6 +42,8 @@ pub struct Line {
     pub count: Option<u32>,
     /// The list it opens; `None` for a heading.
     pub opens: Option<ListScope>,
+    /// The saved search it runs, for a saved search's line.
+    pub searches: Option<String>,
     /// Whether it is a heading rather than a row.
     pub heading: bool,
 }
@@ -64,18 +75,19 @@ pub fn lines(contents: &Contents) -> Vec<Line> {
                 label: SafeText::new(&display_name(mailbox, &folders)),
                 count: count_for(mailbox),
                 opens: Some(opens(account.id, mailbox)),
+                searches: None,
                 heading: false,
             });
         }
     }
     if !contents.saved.is_empty() {
         lines.push(heading("Saved searches"));
-        for name in &contents.saved {
-            // Opening one is search's work (US4); until then it is listed.
+        for saved in &contents.saved {
             lines.push(Line {
-                label: SafeText::new(name),
+                label: SafeText::new(&saved.name),
                 count: None,
                 opens: None,
+                searches: Some(saved.query.clone()),
                 heading: false,
             });
         }
@@ -88,6 +100,7 @@ fn heading(text: &str) -> Line {
         label: SafeText::new(text),
         count: None,
         opens: None,
+        searches: None,
         heading: true,
     }
 }
@@ -143,7 +156,10 @@ mod tests {
                     ..Default::default()
                 },
             )],
-            saved: vec!["Unread from Ada".into()],
+            saved: vec![Saved {
+                name: "Unread from Ada".into(),
+                query: "from:ada is:unread".into(),
+            }],
         }
     }
 

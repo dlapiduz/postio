@@ -1936,7 +1936,7 @@ impl App {
             .sidebar
             .iter()
             .enumerate()
-            .filter(|(_, line)| line.opens.is_some())
+            .filter(|(_, line)| line.opens.is_some() || line.searches.is_some())
             .map(|(index, _)| index)
             .collect();
         let Some(here) = openable
@@ -1947,6 +1947,16 @@ impl App {
         };
         let there = here.saturating_add_signed(step).min(openable.len() - 1);
         self.sidebar_cursor = openable[there];
+        if let Some(query) = self.sidebar[self.sidebar_cursor].searches.clone() {
+            // A saved search is a search: the bar holds its query, and the
+            // results take the list, from the same executor the desktop's
+            // saved search runs through.
+            self.search = Some(SearchBar {
+                input: tui_input::Input::default().with_value(query),
+                ..SearchBar::default()
+            });
+            return self.run_search();
+        }
         match self.sidebar[self.sidebar_cursor].opens {
             Some(scope) if Some(scope) != self.scope => vec![Effect::Redraw, Effect::Open(scope)],
             _ => vec![Effect::Redraw],
@@ -2031,6 +2041,9 @@ impl App {
 
     /// A list opened: show it from the top.
     fn open(&mut self, scope: ListScope, total: u32) -> Vec<Effect> {
+        // A folder opened is a search left, as it is on the desktop.
+        self.search = None;
+        self.paging.close_results();
         self.paging.open(scope);
         self.scope = Some(scope);
         self.account = self.account_of(scope);
@@ -3635,6 +3648,32 @@ mod tests {
 
         update(&mut app, key(KeyCode::Esc, KeyModifiers::NONE));
         assert_eq!(app.focus(), Focus::List, "Escape goes back to the list");
+    }
+
+    #[test]
+    fn a_saved_search_in_the_sidebar_runs_its_query() {
+        // US4 scenario 3: the desktop's saved search, run by the same search.
+        let mut app = app((160, 40));
+        let mut contents = sidebar_contents();
+        contents.saved = vec![crate::sidebar::Saved {
+            name: "Unread from Ada".into(),
+            query: "from:ada is:unread".into(),
+        }];
+        update(&mut app, Input::Sidebar(contents));
+        let opening = opened(&mut app, 3);
+        serve(&mut app, opening);
+        update(&mut app, press('g'));
+        update(&mut app, press('f'));
+        let mut asked = Vec::new();
+        for _ in 0..20 {
+            asked.extend(searches(&update(&mut app, press('j'))));
+        }
+        assert_eq!(
+            asked.last().map(|(_, query)| query.as_str()),
+            Some("from:ada is:unread"),
+            "{asked:?}"
+        );
+        assert_eq!(app.search_query(), Some("from:ada is:unread"));
     }
 
     #[test]
