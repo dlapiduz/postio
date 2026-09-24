@@ -23,6 +23,8 @@ use postio_config::Density;
 use postio_model::{ContactListRow, EmailAddress};
 use postio_ui::row::Metrics;
 
+use crate::row::IconLookup;
+
 /// One role's resolved paint.
 #[derive(Clone, Debug)]
 struct Ink {
@@ -43,6 +45,8 @@ struct Palette {
     cursor_bg: gdk::RGBA,
     selected_bg: gdk::RGBA,
     hover_bg: gdk::RGBA,
+    checked_mark: gdk::RGBA,
+    check: Option<gtk::IconPaintable>,
 }
 
 impl Palette {
@@ -81,6 +85,8 @@ impl Palette {
             cursor_bg: paint(&["postio-row-ground", "selected"]),
             selected_bg: paint(&["postio-row-ground", "checked"]),
             hover_bg: paint(&["postio-row-ground", "hover"]),
+            checked_mark: paint(&["postio-row-ground", "check-mark"]),
+            check: probe.display().pipe_icon("object-select-symbolic"),
         };
         probe.set_css_classes(&[]);
         palette
@@ -244,6 +250,11 @@ impl ContactRowView {
     }
 
     /// Whether this row is in the selection a join would act on.
+    /// Whether the row is drawn as marked.
+    pub fn is_marked(&self) -> bool {
+        self.imp().selected.get()
+    }
+
     pub fn set_selected(&self, selected: bool) {
         if self.imp().selected.replace(selected) != selected {
             self.queue_draw();
@@ -350,25 +361,58 @@ impl ContactRowView {
             snapshot.restore();
         };
 
-        // The chip: initials of the name the list shows.
+        // The chip: initials of the name the list shows -- or, for a person
+        // in the selection, the check the message row puts in the same
+        // square. The two grounds are a step apart in light and the same in
+        // dark (canvas 3c), so the check is what says "marked".
         let chip = rect(metrics.inset, metrics.pad_y, metrics.avatar, metrics.avatar);
+        if selected {
+            snapshot.append_color(&palette.cursor_edge, &chip);
+        }
         snapshot.append_border(
             &gsk::RoundedRect::from_rect(chip, 0.0),
             &[1.0; 4],
-            &[palette.hairline; 4],
+            &[if selected {
+                palette.cursor_edge
+            } else {
+                palette.hairline
+            }; 4],
         );
-        let initials = postio_ui::row::initials(Some(&EmailAddress::new(
-            Some(row.name.clone()),
-            row.preferred.clone().unwrap_or_default(),
-        )));
-        let avatar = self.layout(&palette.avatar[tone], &initials);
-        let (aw, ah) = avatar.pixel_size();
-        text(
-            &avatar,
-            &palette.avatar[tone].color,
-            metrics.inset + (metrics.avatar - aw as f32) / 2.0,
-            metrics.pad_y + (metrics.avatar - ah as f32) / 2.0,
-        );
+        match (selected, &palette.check) {
+            (true, Some(check)) => {
+                let size = (metrics.avatar * 0.62).round();
+                let inset = ((metrics.avatar - size) / 2.0).round();
+                snapshot.save();
+                snapshot.translate(&graphene::Point::new(
+                    metrics.inset + inset,
+                    metrics.pad_y + inset,
+                ));
+                check.snapshot_symbolic(
+                    snapshot,
+                    size as f64,
+                    size as f64,
+                    &[palette.checked_mark],
+                );
+                snapshot.restore();
+            }
+            // No check glyph in the theme: an empty filled square, never
+            // initials that would say the one thing the mark overrides.
+            (true, None) => {}
+            (false, _) => {
+                let initials = postio_ui::row::initials(Some(&EmailAddress::new(
+                    Some(row.name.clone()),
+                    row.preferred.clone().unwrap_or_default(),
+                )));
+                let avatar = self.layout(&palette.avatar[tone], &initials);
+                let (aw, ah) = avatar.pixel_size();
+                text(
+                    &avatar,
+                    &palette.avatar[tone].color,
+                    metrics.inset + (metrics.avatar - aw as f32) / 2.0,
+                    metrics.pad_y + (metrics.avatar - ah as f32) / 2.0,
+                );
+            }
+        }
 
         // The name, with the mark beside it for the address book.
         let made = postio_ui::contacts::is_made(row.source);

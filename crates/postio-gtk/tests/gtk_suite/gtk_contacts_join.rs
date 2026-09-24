@@ -113,11 +113,19 @@ pub fn m_joins_the_marked_people_under_the_preselected_name() {
         "an Ask is the pane's to answer, never a join"
     );
 
-    // `x`, down, `x`, `m`.
+    // `x`, down, `x`, `m` -- and each mark is drawn as it is made.
     pane.dispatch(CommandId::ToggleSelection);
+    pump();
+    assert_eq!(
+        pane.marks_drawn(),
+        ["Ada at work"],
+        "x draws its mark at once"
+    );
     pane.set_cursor(1);
     pump();
     pane.dispatch(CommandId::ToggleSelection);
+    pump();
+    assert_eq!(pane.marks_drawn(), ["Ada at home", "Ada at work"]);
     window.act(Command::ContactJoin(ContactJoinAction::Ask));
     pump();
     assert_eq!(

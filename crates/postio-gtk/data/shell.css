@@ -2424,3 +2424,66 @@ button.postio-compose-more {
 .postio-contact-action {
   margin-top: var(--postio-space-3);
 }
+
+/* Every panel in the detail column gives up its width when the column
+   stacks under the list, not only the person's detail. */
+.postio-contacts-side.stacked .postio-contact-detail {
+  min-width: 0;
+  box-shadow: inset 0 1px var(--postio-hairline);
+}
+
+/* The short lists the screen offers -- its groups, the suggested pairs, a
+   person's addresses, a panel's choices -- in the list's own measure and
+   the selection's own colours, so choosing reads like moving the cursor. */
+.postio-contact-groups-list,
+.postio-contact-suggestions,
+.postio-contact-choices,
+.postio-contact-addresses {
+  background: none;
+}
+
+.postio-contact-groups-caption {
+  font-family: var(--postio-font-mono);
+  font-size: 0.75rem;
+  color: var(--postio-dim);
+  padding: var(--postio-space-2) var(--postio-space-6) 0;
+}
+
+.postio-contact-groups-list {
+  box-shadow: inset 0 -1px var(--postio-hairline);
+  padding-bottom: var(--postio-space-1);
+}
+
+.postio-contact-groups-list row,
+.postio-contact-suggestions row {
+  padding: var(--postio-space-2) var(--postio-space-6);
+}
+
+.postio-contact-suggestions row {
+  box-shadow: inset 0 -1px var(--postio-hairline);
+}
+
+.postio-contact-choices row,
+.postio-contact-addresses row {
+  padding: var(--postio-space-1) var(--postio-space-2);
+  border-radius: var(--postio-radius-sm);
+}
+
+.postio-contact-groups-list row:selected,
+.postio-contact-suggestions row:selected,
+.postio-contact-choices row:selected,
+.postio-contact-addresses row:selected {
+  background: var(--postio-selected-bg);
+  color: var(--postio-selected-fg);
+}
+
+.postio-contact-groups-list row:selected,
+.postio-contact-suggestions row:selected {
+  box-shadow: inset 3px 0 var(--postio-selected-border);
+}
+
+.postio-contact-group,
+.postio-contact-suggestion {
+  font-family: var(--postio-font-body);
+  font-size: 0.9204rem;
+}

@@ -141,6 +141,25 @@ async fn populate(
     let report = postio_storage::seed::seed_small_with_bodies(&database, 11).await;
     let account = report.account.id;
     stamp_as_just_synced(&database, &report).await;
+    // A group of two of the seed's people, so the Contacts screen has one to
+    // draw above them (specs/005-contacts FR-040).
+    {
+        let connection = database.connect().await.expect("a connection");
+        let people: Vec<_> = postio_storage::repository::ContactRepository::new(&connection)
+            .people(2)
+            .await
+            .expect("the seed's people")
+            .iter()
+            .map(|person| person.id)
+            .collect();
+        let groups = postio_storage::repository::ContactGroupRepository::new(&connection);
+        let mut crew = postio_model::ContactGroup::new("Harbour crew", chrono::Utc::now());
+        let crew = groups.create(&mut crew).await.expect("a group");
+        groups
+            .add_members(crew, &people)
+            .await
+            .expect("its members");
+    }
     // Every shot is a first run otherwise -- the store is made here and
     // thrown away -- so the first-run orientation would sit across the top
     // of the compose shot, the settings shot and every other one. `demo
@@ -1183,6 +1202,25 @@ fn main() -> glib::ExitCode {
     // from mail rather than the people the user wrote to.
     if flag("contacts") {
         show_contacts(&window, flag("everyone"));
+        // `join`: the first two people marked and `m` pressed, so the join
+        // panel is what the detail column shows.
+        if flag("join") {
+            let pane = window.contacts();
+            settle(&window);
+            pane.dispatch(postio_core::CommandId::ToggleSelection);
+            pane.set_cursor(1);
+            settle(&window);
+            pane.dispatch(postio_core::CommandId::ToggleSelection);
+            window.act(postio_core::Command::ContactJoin(
+                postio_core::ContactJoinAction::Ask,
+            ));
+        }
+        // `suggestions`: possible duplicates in place of the people.
+        if flag("suggestions") {
+            window
+                .contacts()
+                .dispatch(postio_core::CommandId::ContactsSuggestions);
+        }
     }
     window.present();
 

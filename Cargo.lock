@@ -3545,6 +3545,7 @@ dependencies = [
  "postio-storage",
  "postio-test-support",
  "postio-ui",
+ "postio-vcard",
  "serde-xml-rs",
  "tempfile",
  "tokio",

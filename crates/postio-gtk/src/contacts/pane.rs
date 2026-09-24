@@ -147,6 +147,7 @@ mod imp {
         pub suggestions_asked_handlers: RefCell<Vec<UnitHandler>>,
         /// The groups, above the people; the one the keyboard is on shows
         /// its members in the list (FR-040).
+        pub groups_caption: gtk::Label,
         pub groups_box: gtk::ListBox,
         pub groups: RefCell<Vec<postio_model::ContactGroup>>,
         pub shown_group: Cell<Option<ContactGroupId>>,
@@ -340,6 +341,12 @@ impl ContactsPane {
                 }
             }
         ));
+        imp.groups_caption.set_text("Groups");
+        imp.groups_caption.set_xalign(0.0);
+        imp.groups_caption
+            .add_css_class("postio-contact-groups-caption");
+        imp.groups_caption.set_visible(false);
+        column.append(&imp.groups_caption);
         column.append(&imp.groups_box);
         column.append(&scroller);
         column.append(&imp.empty);
@@ -386,9 +393,12 @@ impl ContactsPane {
             body,
             #[weak(rename_to = detail)]
             imp.detail,
+            #[weak(rename_to = side)]
+            imp.side,
             move |_| {
                 body.set_orientation(gtk::Orientation::Vertical);
                 detail.set_stacked(true);
+                side.add_css_class("stacked");
             }
         ));
         narrow.connect_unapply(glib::clone!(
@@ -396,9 +406,12 @@ impl ContactsPane {
             body,
             #[weak(rename_to = detail)]
             imp.detail,
+            #[weak(rename_to = side)]
+            imp.side,
             move |_| {
                 body.set_orientation(gtk::Orientation::Horizontal);
                 detail.set_stacked(false);
+                side.remove_css_class("stacked");
             }
         ));
         adaptive.add_breakpoint(narrow);
@@ -768,10 +781,16 @@ impl ContactsPane {
                 if self.suggestions_open() {
                     self.imp().lists.set_visible_child_name("people");
                     self.show_view_text();
+                    // The detail is the person under the cursor's again.
+                    self.imp().asked.set(None);
+                    self.cursor_moved();
                     self.focus_list();
                 } else {
                     self.imp().lists.set_visible_child_name("suggestions");
                     self.imp().title.set_text("Possible duplicates");
+                    // A pair's evidence is on its row; the person the list
+                    // had under the cursor is nothing to do with it.
+                    self.imp().detail.set_detail(None);
                     self.ask_suggestions();
                 }
             }
@@ -841,6 +860,7 @@ impl ContactsPane {
     fn build_side(&self) {
         let imp = self.imp();
         imp.side.set_vexpand(true);
+        imp.side.add_css_class("postio-contacts-side");
         imp.side.set_hhomogeneous(false);
         imp.side.add_named(&imp.detail, Some("detail"));
         imp.side.add_named(imp.join.widget(), Some("join"));
@@ -1262,6 +1282,7 @@ impl ContactsPane {
             imp.groups_box.append(&label);
         }
         imp.groups_box.set_visible(!groups.is_empty());
+        imp.groups_caption.set_visible(!groups.is_empty());
         // The group on screen stays selected if it is still there.
         let shown = imp.shown_group.get();
         match shown.and_then(|id| groups.iter().position(|g| g.id == id)) {
@@ -1738,6 +1759,33 @@ impl ContactsPane {
         }
     }
 
+    /// The names of the rows drawn marked, sorted, for a test that reads
+    /// what a person would see.
+    #[doc(hidden)]
+    pub fn marks_drawn(&self) -> Vec<String> {
+        fn walk(widget: &gtk::Widget, out: &mut Vec<String>) {
+            if let Some(view) = widget.downcast_ref::<ContactRowView>() {
+                if view.is_marked()
+                    && let Some(row) = view.row()
+                {
+                    out.push(row.name);
+                }
+                return;
+            }
+            let mut child = widget.first_child();
+            while let Some(next) = child {
+                walk(&next, out);
+                child = next.next_sibling();
+            }
+        }
+        let mut found = Vec::new();
+        if let Some(list) = self.imp().list.borrow().as_ref() {
+            walk(list.upcast_ref(), &mut found);
+        }
+        found.sort();
+        found
+    }
+
     /// Puts the cursor on the row at `position`, as the arrow keys do.
     #[doc(hidden)]
     pub fn set_cursor(&self, position: u32) {
@@ -1792,13 +1840,19 @@ impl ContactsPane {
     }
 
     fn redraw_rows(&self) {
-        if let Some(list) = self.imp().list.borrow().as_ref() {
-            // Rebinding visible rows is how the marks reach them: the marks
-            // are the pane's, not the model's.
-            let model = self.model();
-            let total = model.n_items();
-            model.items_changed(0, total, total);
-            let _ = list;
+        // The marks are the pane's, not the model's, so no row's data
+        // changed and nothing rebinds on its own: a model-wide
+        // `items_changed` handing back the same objects lets the list keep
+        // every bound row exactly as drawn. Each bound item is told instead.
+        let bound: Vec<ContactItem> = self
+            .imp()
+            .watched
+            .borrow()
+            .values()
+            .map(|(item, _)| item.clone())
+            .collect();
+        for item in bound {
+            item.touch();
         }
     }
 

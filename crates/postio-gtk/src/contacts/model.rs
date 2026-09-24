@@ -88,6 +88,12 @@ impl ContactItem {
 
     /// Calls `on_change` whenever the row is filled or replaced. The handler
     /// is the caller's to disconnect when a recycled list item moves on.
+    /// Asks whatever draws this item to draw it again: for a change the
+    /// row's data does not carry, like being marked.
+    pub fn touch(&self) {
+        self.emit_by_name::<()>("changed", &[]);
+    }
+
     pub fn connect_changed(&self, on_change: impl Fn(&Self) + 'static) -> glib::SignalHandlerId {
         self.connect_local("changed", false, move |values| {
             if let Some(item) = values.first().and_then(|value| value.get::<Self>().ok()) {

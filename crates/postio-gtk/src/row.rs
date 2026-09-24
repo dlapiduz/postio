@@ -332,7 +332,7 @@ impl Palette {
 }
 
 /// The attachment paperclip, from the icon theme.
-trait IconLookup {
+pub(crate) trait IconLookup {
     fn pipe_icon(&self, name: &str) -> Option<gtk::IconPaintable>;
 
     /// A hover action's glyph, at the size one is drawn.
