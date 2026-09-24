@@ -1311,7 +1311,7 @@ impl<'a> ThreadRepository<'a> {
             Some(mailbox) => {
                 sql::one(
                     self.connection,
-                    &folder_count_sql(),
+                    &self.explain_count_of(),
                     [mailbox.get()],
                     |row| row.col(0),
                 )
