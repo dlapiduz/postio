@@ -322,4 +322,4 @@ pub use local::LocalStore;
 /// How many threaded-folder counts this process has issued. For tests — see
 /// the counter's own documentation in `sqlite`.
 #[doc(hidden)]
-pub use local::folders_counted;
+pub use local::{folders_counted, unified_counted};

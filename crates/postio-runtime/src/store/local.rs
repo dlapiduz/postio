@@ -51,6 +51,9 @@ pub struct LocalStore {
     /// any one account's, and two windows sharing marks would each clear the
     /// other's -- or, where their totals happened to match, seek with one.
     unified_marks: Arc<Mutex<Marks<ThreadCursor>>>,
+    /// The unified list's length, and what the store looked like when it
+    /// was counted -- see [`unified_total`].
+    unified_count: Arc<Mutex<Option<(UnifiedWitness, u32)>>>,
     /// The last threaded count of a folder, and the cheap number it was taken
     /// against. See [`CountedFolder`].
     folder_counts: Arc<Mutex<HashMap<MailboxId, CountedFolder>>>,
@@ -133,6 +136,59 @@ static FOLDERS_COUNTED: AtomicU64 = AtomicU64::new(0);
 #[doc(hidden)]
 pub fn folders_counted() -> u64 {
     FOLDERS_COUNTED.load(Ordering::Relaxed)
+}
+
+/// How many times this process has counted the unified list. For tests.
+///
+/// The sibling of [`folders_counted`], for the count #1610 found paid on
+/// every page of the unified view.
+#[doc(hidden)]
+pub fn unified_counted() -> u64 {
+    UNIFIED_COUNTED.load(Ordering::Relaxed)
+}
+
+static UNIFIED_COUNTED: AtomicU64 = AtomicU64::new(0);
+
+/// The cheap facts the unified count is allowed to outlive: every folder's
+/// message total, how far any folder has synced, and how many accounts are
+/// in view. The unified list's `Witness`, for the same trade and the same
+/// reasons (#1610) -- plus the accounts, because the list leaves disabled
+/// ones out and turning one off moves no folder.
+type UnifiedWitness = (i64, i64, i64);
+
+/// The unified list's length, from the cache while nothing it is made of has
+/// moved.
+///
+/// The count groups every conversation of every account against every other
+/// account's -- the folder count's correlated shape, over all of them -- and
+/// the unified view paid it in front of every page.
+async fn unified_total(
+    connection: &Checkout,
+    cache: &Mutex<Option<(UnifiedWitness, u32)>>,
+    threads: &ThreadRepository<'_>,
+) -> Result<u32, postio_storage::Error> {
+    let witness: UnifiedWitness = postio_storage::sql::one(
+        connection,
+        "SELECT coalesce(sum(total_count), 0),
+                (SELECT coalesce(max(highest_mod_seq), 0) FROM sync_state),
+                (SELECT count(*) FROM accounts WHERE enabled = 1 AND pending_deletion = 0)
+           FROM mailboxes",
+        (),
+        |row| {
+            use postio_storage::sql::RowExt as _;
+            Ok((row.col(0)?, row.col(1)?, row.col(2)?))
+        },
+    )
+    .await?;
+    if let Some((held, total)) = *cache.lock().expect("not poisoned")
+        && held == witness
+    {
+        return Ok(total);
+    }
+    UNIFIED_COUNTED.fetch_add(1, Ordering::Relaxed);
+    let total = threads.unified_count().await?;
+    *cache.lock().expect("not poisoned") = Some((witness, total));
+    Ok(total)
 }
 
 /// A folder's thread count, from the cache when the folder has not moved.
@@ -295,6 +351,7 @@ impl LocalStore {
             marks: Arc::new(Mutex::new(Marks::default())),
             thread_marks: Arc::new(Mutex::new(Marks::default())),
             unified_marks: Arc::new(Mutex::new(Marks::default())),
+            unified_count: Arc::new(Mutex::new(None)),
             folder_counts: Arc::new(Mutex::new(HashMap::new())),
             removals: Arc::new(Mutex::new(Vec::new())),
         }
@@ -474,9 +531,10 @@ impl LocalStore {
     /// short.
     async fn read_unified_page(&self, request: PageRequest) -> Result<ThreadPage, StoreError> {
         let marks = self.unified_marks.clone();
+        let cache = self.unified_count.clone();
         self.read(move |connection| async move {
             let threads = ThreadRepository::new(&connection);
-            let total = threads.unified_count().await?;
+            let total = unified_total(&connection, &cache, &threads).await?;
 
             let start = {
                 let mut marks = marks.lock().expect("not poisoned");
@@ -514,9 +572,11 @@ impl LocalStore {
 
     async fn read_thread_count(&self, scope: ListScope) -> Result<u32, StoreError> {
         if matches!(scope, ListScope::Unified) {
+            let cache = self.unified_count.clone();
             return self
                 .read(move |connection| async move {
-                    Ok(ThreadRepository::new(&connection).unified_count().await?)
+                    let threads = ThreadRepository::new(&connection);
+                    Ok(unified_total(&connection, &cache, &threads).await?)
                 })
                 .await;
         }
