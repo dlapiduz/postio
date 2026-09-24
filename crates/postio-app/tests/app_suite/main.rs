@@ -181,6 +181,11 @@ const CASES: &[(&str, fn())] = &[
             as fn(),
     ),
     (
+        "autosave_off_the_main_thread::opening_a_draft_or_a_reply_reads_nothing_on_the_main_thread",
+        autosave_off_the_main_thread::opening_a_draft_or_a_reply_reads_nothing_on_the_main_thread
+            as fn(),
+    ),
+    (
         "autosave_off_the_main_thread::autosave_writes_off_the_main_thread_and_keeps_one_row",
         autosave_off_the_main_thread::autosave_writes_off_the_main_thread_and_keeps_one_row
             as fn(),

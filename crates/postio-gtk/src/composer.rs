@@ -518,14 +518,28 @@ type RecipientSuggestions = Box<dyn Fn(&str) -> Vec<RecipientCandidate>>;
 /// of a reading pane or a selection of its own. `None` means there is nothing
 /// to reply to right now (nothing open, or nothing to send as), in which case
 /// the keystroke does nothing rather than opening a broken composer.
-type ReplySourceProvider = Box<dyn Fn() -> Option<(Message, Account)>>;
+///
+/// The answer comes through a callback rather than a return value (#1608):
+/// finding the message and its body is a store read, and the composer must
+/// not wait for one on the thread that draws. A provider that has the answer
+/// in hand may call it at once.
+type ReplySourceProvider = Box<dyn Fn(ReplyAnswer)>;
+
+/// How a [`ReplySourceProvider`] hands back its answer, exactly once.
+pub type ReplyAnswer = Box<dyn FnOnce(Option<(Message, Account)>)>;
 
 /// Answers "what should a brand-new draft sign with, before the identity's
 /// own?" (#394) — the composer has no notion of which mailbox the sidebar has
 /// selected, so whatever tracks that resolves the precedence and hands back
 /// only the answer. `None` means neither the mailbox nor the account has an
 /// opinion, and the picker stays on the identity's own signature.
-type SignatureDefaultProvider = Box<dyn Fn() -> Option<SignatureId>>;
+///
+/// Answered through a callback, like [`ReplySourceProvider`] and for the same
+/// reason (#1608).
+type SignatureDefaultProvider = Box<dyn Fn(SignatureAnswer)>;
+
+/// How a [`SignatureDefaultProvider`] hands back its answer, exactly once.
+pub type SignatureAnswer = Box<dyn FnOnce(Option<SignatureId>)>;
 
 /// What [`Composer::connect_attach`] hands its result to, exactly once:
 /// `Some` with the finished attachment, `None` to reject the file (unreadable,
@@ -1378,15 +1392,26 @@ impl Composer {
     /// draft's choice (#394).
     fn open_new_draft(&self) {
         self.open(Draft::new(self.account()));
-        let resolved = self
-            .imp()
-            .signature_default
-            .borrow()
-            .as_ref()
-            .and_then(|provider| provider());
-        let selected = resolved.is_some_and(|id| self.select_signature(id));
-        if !selected {
-            self.imp().signature.set_selected(0);
+        let generation = self.generation();
+        let weak = self.downgrade();
+        let answer: SignatureAnswer = Box::new(move |resolved| {
+            let Some(composer) = weak.upgrade() else {
+                return;
+            };
+            // For the composition it was asked for, and no other: an answer
+            // that arrives after the composer moved on names nothing here.
+            if composer.generation() != generation {
+                return;
+            }
+            let selected = resolved.is_some_and(|id| composer.select_signature(id));
+            if !selected {
+                composer.imp().signature.set_selected(0);
+            }
+        });
+        let provider = self.imp().signature_default.borrow();
+        match provider.as_ref() {
+            Some(provider) => provider(answer),
+            None => answer(None),
         }
     }
 
@@ -1728,10 +1753,7 @@ impl Composer {
     ///
     /// The composer holds no reading-pane state of its own; whatever tracks
     /// the message currently on screen connects this once, at mount time.
-    pub fn connect_reply_source(
-        &self,
-        provider: impl Fn() -> Option<(Message, Account)> + 'static,
-    ) {
+    pub fn connect_reply_source(&self, provider: impl Fn(ReplyAnswer) + 'static) {
         *self.imp().reply_source.borrow_mut() = Some(Box::new(provider));
     }
 
@@ -1742,7 +1764,7 @@ impl Composer {
     /// `None` from the composer's own reads — nothing registered here, or the
     /// provider itself answering `None` — leaves the picker on the identity's
     /// own signature, exactly as it already was without this seam.
-    pub fn connect_signature_default(&self, provider: impl Fn() -> Option<SignatureId> + 'static) {
+    pub fn connect_signature_default(&self, provider: impl Fn(SignatureAnswer) + 'static) {
         *self.imp().signature_default.borrow_mut() = Some(Box::new(provider));
     }
 
@@ -2196,12 +2218,21 @@ impl Composer {
     /// source has nothing to offer — `e` with no message open is not an
     /// error, it is nothing to reply to.
     fn open_reply(&self, id: CommandId) {
-        let found = self
-            .imp()
-            .reply_source
-            .borrow()
-            .as_ref()
-            .and_then(|provider| provider());
+        let weak = self.downgrade();
+        let answer: ReplyAnswer = Box::new(move |found| {
+            if let Some(composer) = weak.upgrade() {
+                composer.reply_with(id, found);
+            }
+        });
+        let provider = self.imp().reply_source.borrow();
+        if let Some(provider) = provider.as_ref() {
+            provider(answer);
+        }
+    }
+
+    /// [`open_reply`](Self::open_reply)'s second half, once the source has
+    /// answered.
+    fn reply_with(&self, id: CommandId, found: Option<(Message, Account)>) {
         let Some((source, account)) = found else {
             return;
         };
