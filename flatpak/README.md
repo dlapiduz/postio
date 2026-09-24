@@ -3,6 +3,36 @@
 `dev.postio.Postio.json` builds Postio against the GNOME 50 runtime. It is
 the manifest a Flathub submission would use as-is.
 
+`dev.postio.PostioTui.json` builds the terminal frontend, `postio-tui`,
+against the plain freedesktop runtime: no GTK and no WebKit, which is most of
+why it is the smaller package. Flathub does not take console-only
+applications, so it is published as a release bundle only.
+
+## One store, two packages
+
+Both packages ship `postio-daemon`, the one process that opens the store
+([ADR 0041](../docs/decisions/0041-one-process-owns-the-store.md)), beside
+their frontend. Both grant the same three host directories:
+- `xdg-data/postio` for the store;
+- `xdg-config/postio` for `config.toml`;
+- `xdg-run/postio` for the daemon's socket.
+
+Postio reads the host's XDG directories inside a sandbox rather than the
+per-app ones under `~/.var/app`. So with both installed, the desktop app and
+the terminal show the same mailbox, and whichever starts first starts the
+daemon. `packaging.rs` in `postio-tui`'s tests fails if either manifest
+drops one of the grants or the daemon.
+
+The two bundles must come from the same release. The daemon refuses a client
+from a different build, and says which two versions disagree.
+
+**An existing desktop Flatpak's mail is not moved.** Its store used to live
+under `~/.var/app/dev.postio.Postio/data/postio`. It now lives at
+`~/.local/share/postio`, the same place a source install and the terminal
+use, and Postio syncs it again there. There are no installs this has to be
+gentle with (the constitution's no-backwards-compatibility rule), and the
+old directory can be deleted.
+
 ## One-time setup
 
 ```bash
@@ -40,6 +70,16 @@ one has no such test yet, so regenerate it right before building.
 ```bash
 flatpak-builder --user --install --force-clean flatpak/build-dir flatpak/dev.postio.Postio.json
 flatpak run dev.postio.Postio
+
+flatpak-builder --user --install --force-clean flatpak/build-dir-tui flatpak/dev.postio.PostioTui.json
+flatpak run dev.postio.PostioTui
+```
+
+`flatpak run dev.postio.PostioTui` is a lot to type at a shell prompt. An
+alias does it:
+
+```bash
+alias postio-tui='flatpak run dev.postio.PostioTui'
 ```
 
 The `postio` module's source is `type: dir` pointing at the repository root
@@ -91,5 +131,11 @@ magick -background none crates/postio-gtk/data/icons/scalable/apps/dev.postio.Po
 | `--share=ipc`, `--socket=wayland`, `--socket=fallback-x11`, `--device=dri` | GTK4/WebKitGTK windowing and GPU rendering |
 | `--talk-name=org.freedesktop.secrets` | Secret Service keyring, where account passwords live (never in `config.toml`) |
 | `--filesystem=xdg-download` | Saving attachments directly; ordinary file *choosers* go through the portal and need no static permission |
+| `--filesystem=xdg-data/postio:create`, `xdg-config/postio:create`, `xdg-run/postio:create` | The store, `config.toml` and the daemon's socket, shared with the other Postio package (above) |
+
+The terminal package asks for the same, less the GPU, plus
+`--talk-name=org.freedesktop.Notifications` for new-mail notices. It keeps
+the Wayland and X11 sockets only to read an image off the clipboard when you
+paste one.
 
 [flatpak/flatpak-builder-tools]: https://github.com/flatpak/flatpak-builder-tools

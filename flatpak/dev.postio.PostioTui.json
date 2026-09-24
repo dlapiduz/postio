@@ -1,0 +1,57 @@
+{
+    "app-id": "dev.postio.PostioTui",
+    "runtime": "org.freedesktop.Platform",
+    "runtime-version": "25.08",
+    "sdk": "org.freedesktop.Sdk",
+    "sdk-extensions": [
+        "org.freedesktop.Sdk.Extension.rust-stable"
+    ],
+    "command": "postio-tui",
+    "finish-args": [
+        "--share=ipc",
+        "--share=network",
+        "--socket=fallback-x11",
+        "--socket=wayland",
+        "--talk-name=org.freedesktop.secrets",
+        "--talk-name=org.freedesktop.Notifications",
+        "--filesystem=xdg-data/postio:create",
+        "--filesystem=xdg-config/postio:create",
+        "--filesystem=xdg-run/postio:create",
+        "--filesystem=xdg-download"
+    ],
+    "build-options": {
+        "append-path": "/usr/lib/sdk/rust-stable/bin",
+        "env": {
+            "CARGO_HOME": "/run/build/postio-tui/cargo",
+            "CARGO_NET_OFFLINE": "true",
+            "CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER": "cc",
+            "CC": "cc",
+            "RUSTC_WRAPPER": "",
+            "CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUSTFLAGS": "-C linker-flavor=gcc"
+        }
+    },
+    "modules": [
+        {
+            "name": "postio-tui",
+            "buildsystem": "simple",
+            "build-commands": [
+                "cargo --offline build --profile release-tui --package postio-tui --bin postio-tui",
+                "cargo --offline build --release --package postio-host --bin postio-daemon",
+                "install -Dm755 target/release-tui/postio-tui /app/bin/postio-tui",
+                "install -Dm755 target/release/postio-daemon /app/bin/postio-daemon"
+            ],
+            "sources": [
+                {
+                    "type": "dir",
+                    "path": "..",
+                    "skip": [
+                        "target",
+                        ".git",
+                        "flatpak"
+                    ]
+                },
+                "cargo-sources.json"
+            ]
+        }
+    ]
+}
