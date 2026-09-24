@@ -29,6 +29,11 @@ postio-body.workspace = true
 postio-config.workspace = true
 postio-core.workspace = true
 postio-account.workspace = true
+# The store's one owner, run in this process: nothing else can share the
+# store on macOS, so the frontend is the host's client without a socket
+# (ADR 0041). Its commands and list reads go through that client.
+postio-client.workspace = true
+postio-host.workspace = true
 postio-runtime.workspace = true
 postio-ui.workspace = true
 postio-model.workspace = true
