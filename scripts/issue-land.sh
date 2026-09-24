@@ -261,6 +261,18 @@ done
 # `scripts/worktree-reap.sh` is how it empties. Refused below the floor,
 # said out loud below four times the floor.
 DISK_FLOOR_GB="${POSTIO_LAND_DISK_FLOOR_GB:-4}"
+
+# Every landing reclaims what finished worktrees hold, before measuring
+# (maintainer, 2026-09-24). The disk filled twice that day with trees whose
+# branches had merged -- 30 GB of build output each -- and the reaper only
+# ever reported them. Its rules keep anything uncommitted, anything recent
+# and every unlanded commit; only what it actually frees is printed.
+# POSTIO_LAND_REAP=0 skips it.
+REAPER="$(dirname "${BASH_SOURCE[0]}")/worktree-reap.sh"
+if [ "${POSTIO_LAND_REAP:-1}" = 1 ] && [ -x "$REAPER" ]; then
+    timeout 120 "$REAPER" --reap 2>/dev/null | grep -E '^(dropped|removed) ' || true
+fi
+
 FREE_KB=$(df -Pk "$TREE" 2>/dev/null | awk 'NR==2 { print $4 }')
 if [ -n "${FREE_KB:-}" ]; then
     FREE_GB=$((FREE_KB / 1024 / 1024))
