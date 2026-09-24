@@ -22,18 +22,12 @@ const PALETTE_SURFACES: &[Context] = &[
     Context::Conversation,
     Context::Parts,
     Context::Composer,
+    Context::Accounts,
 ];
 
 /// Commands whose surface the terminal does not have yet, each with the task
 /// that brings it. Taking a name off this list is how that task proves it.
-const NOT_YET: &[(&str, &str)] = &[
-    ("toggle_account_enabled", "T087: settings"),
-    ("remove_account", "T087: settings"),
-    ("update_credential", "T087: settings"),
-    ("rebuild_account_index", "T087: settings"),
-    ("set_default_account", "T087: settings"),
-    ("map_mailbox_role", "T087: settings"),
-];
+const NOT_YET: &[(&str, &str)] = &[];
 
 /// `chord` as a terminal reports it.
 fn key_event(chord: &Chord) -> KeyEvent {

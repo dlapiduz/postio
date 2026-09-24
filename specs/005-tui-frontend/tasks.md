@@ -235,7 +235,7 @@ through the local transport.
 - [X] T084 [US7] Write `crates/postio-tui/src/view/onboarding.rs`: with no accounts, the first screen offers to add one (US7 scenario 1). Test first: the empty-store snapshot
 - [X] T085 [US7] Discovery and password / app-password flows through `Discover` and `AddAccount`, with the human error sentences of `onboarding::explain`. Test first: a wrong password shows the same sentence GTK shows
 - [ ] T086 [US7] OAuth: `BeginOAuth` returns the consent URL; show it in full, copy via OSC 52, open only on activation; the daemon's loopback completes it. Test first: US7 scenario 2 — nothing is opened or fetched until the user acts
-- [ ] T087 [US7] Write `crates/postio-tui/src/view/settings.rs` generated from `postio_ui::settings` sections over `Settings`/`PatchSettings`. Test first: every section GTK shows is present (enumerated from `postio_ui::settings`, not listed by hand)
+- [X] T087 [US7] Write `crates/postio-tui/src/view/settings.rs` generated from `postio_ui::settings` sections over `Settings`/`PatchSettings`. Test first: every section GTK shows is present (enumerated from `postio_ui::settings`, not listed by hand). *(Sections, file editing in `$EDITOR` at the section, and the account commands are in. `M` sends MapMailboxRole with nothing chosen, so it asks; the terminal's role-and-folder picker is still to come.)*
 - [X] T088 [US7] US7 scenario 3: a setting changed in the terminal is picked up live by a running GTK client (through the daemon's config reload). Test first in `two_clients.rs`. *(The desktop watches `config.toml` itself with `postio_config::watch::ConfigWatcher`, so no daemon reload is needed: the test puts that watcher on a file the terminal writes, in `postio-tui`'s `config_file`.)*
 
 ---

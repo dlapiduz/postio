@@ -51,6 +51,8 @@ pub struct FirstRun {
     field: Field,
     /// The servers, once found or typed.
     settings: Option<Settings>,
+    /// Signing in again to an account that exists, not adding one.
+    repair: bool,
 }
 
 /// Without the password, which nothing prints.
@@ -76,11 +78,32 @@ impl Default for FirstRun {
             outgoing: Input::default(),
             field: Field::Address,
             settings: None,
+            repair: false,
         }
     }
 }
 
 impl FirstRun {
+    /// Signing in again to `account`, whose password the keyring no longer
+    /// has or has wrong: its servers as saved, the password to type.
+    pub fn repair(account: &postio_model::Account) -> Self {
+        let settings = postio_ui::onboarding::configured(account);
+        FirstRun {
+            status: Status::Reauthenticate(settings.clone()),
+            address: Input::default().with_value(account.address.address.clone()),
+            name: Input::default().with_value(account.display_name.clone()),
+            field: Field::Password,
+            settings: Some(settings),
+            repair: true,
+            ..FirstRun::default()
+        }
+    }
+
+    /// Whether this is a sign-in again rather than a first account.
+    pub fn repairing(&self) -> bool {
+        self.repair
+    }
+
     /// Where the first run is.
     pub fn status(&self) -> &Status {
         &self.status

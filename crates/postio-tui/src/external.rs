@@ -75,6 +75,23 @@ pub fn edit(markdown: &str, directory: &Path, editor: &str) -> io::Result<String
     Ok(edited.trim_end_matches('\n').to_owned())
 }
 
+/// Run `editor` on the file at `path` itself -- `config.toml`, say -- at
+/// line `line` when there is one: `+N` is what vi, vim, nano and emacs take.
+pub fn edit_in_place(path: &Path, line: Option<usize>, editor: &str) -> io::Result<()> {
+    let at = line.map(|line| format!(" +{line}")).unwrap_or_default();
+    let status = std::process::Command::new("sh")
+        .arg("-c")
+        .arg(format!("{editor}{at} \"$1\""))
+        .arg("sh")
+        .arg(path)
+        .status()?;
+    if status.success() {
+        Ok(())
+    } else {
+        Err(io::Error::other(format!("{editor} exited with {status}")))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::os::unix::fs::PermissionsExt;
@@ -128,6 +145,34 @@ mod tests {
         let drafts = scratch.path().join("postio");
         assert!(edit("words", &drafts, "false").is_err());
         assert_eq!(std::fs::read_dir(&drafts).unwrap().count(), 0);
+    }
+
+    #[test]
+    fn a_file_is_edited_where_it_is_at_the_line_asked() {
+        let scratch = tempfile::tempdir().unwrap();
+        let config = scratch.path().join("config.toml");
+        std::fs::write(&config, "[ui]\n").unwrap();
+        let script = scratch.path().join("editor");
+        std::fs::write(
+            &script,
+            format!(
+                "#!/bin/sh\necho \"$1\" > '{}'\nprintf 'theme = \"dark\"\\n' >> \"$2\"\n",
+                scratch.path().join("asked").display()
+            ),
+        )
+        .unwrap();
+        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+        edit_in_place(&config, Some(3), &script.display().to_string()).unwrap();
+        assert_eq!(
+            std::fs::read_to_string(scratch.path().join("asked"))
+                .unwrap()
+                .trim(),
+            "+3"
+        );
+        assert_eq!(
+            std::fs::read_to_string(&config).unwrap(),
+            "[ui]\ntheme = \"dark\"\n"
+        );
     }
 
     #[test]

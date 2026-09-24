@@ -189,39 +189,6 @@ fn configure(account: &mut Account, submission: &Submission) {
     account.enabled = true;
 }
 
-/// What the screen shows for an account the store already has.
-///
-/// The inverse of [`configure`]: a repair is asking for a password, not for
-/// server settings, so the ones the account was signed in with last time are
-/// what it offers. `source` names where they came from because the card
-/// shows it, and "entered by hand" — what an empty form falls back to —
-/// would be a lie the second time round.
-pub fn configured(account: &Account) -> Settings {
-    let server = |config: &postio_model::account::ServerConfig| Server {
-        host: config.host.clone(),
-        port: config.port,
-        security: config.security,
-    };
-    Settings {
-        imap: server(&account.incoming),
-        smtp: server(&account.outgoing),
-        login: account.incoming.username.clone(),
-        requires_app_password: false,
-        note: None,
-        help_url: None,
-        // A repair signs in the way the account did: an OAuth account's
-        // repair is a fresh browser sign-in, not a password prompt for a
-        // password that never existed (#534).
-        oauth_sign_in: account.oauth.is_some()
-            || matches!(
-                account.auth,
-                postio_model::account::AuthMethod::OAuth2
-                    | postio_model::account::AuthMethod::XOAuth2
-            ),
-        source: "saved with this account".to_owned(),
-    }
-}
-
 /// What the screen shows, from what the probe found.
 pub fn shown(settings: &AccountSettings) -> Settings {
     let server = |server: &postio_account::discovery::ServerSettings| Server {
@@ -355,3 +322,5 @@ pub async fn prove(
 }
 
 pub use postio_ui::onboarding::write_sync_window;
+
+pub use postio_ui::onboarding::configured;

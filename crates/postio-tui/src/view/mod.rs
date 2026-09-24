@@ -10,6 +10,7 @@ pub mod list;
 pub mod palette;
 pub mod reader;
 pub mod search;
+pub mod settings;
 pub mod sidebar;
 
 use chrono::{DateTime, Local};
@@ -36,6 +37,12 @@ pub fn draw(frame: &mut Frame, app: &App, theme: &Theme, now: DateTime<Local>) -
                 theme.style(Role::Warning),
             );
             frame.render_widget(line, Rect::new(area.x, area.y, area.width, 1));
+        }
+        Shown::Panes(_) if app.settings().is_some() && app.first_run().is_none() => {
+            settings::draw(frame, area, app, theme);
+            if let Some(open) = app.palette() {
+                palette::draw(frame, area, &open, theme);
+            }
         }
         Shown::Panes(_) if app.first_run().is_some() => {
             if let Some(run) = app.first_run() {
@@ -807,6 +814,39 @@ mod tests {
             );
         }
         assert!(window.contains("3 / 3"), "{window}");
+    }
+
+    #[test]
+    fn the_settings_show_every_section_and_the_accounts() {
+        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+        let mut app = with_sidebar((160, 30));
+        update(
+            &mut app,
+            Input::Key(KeyEvent::new(KeyCode::Char(','), KeyModifiers::ALT)),
+        );
+        let screen = screen(160, 30, &app);
+        for group in postio_ui::settings::Group::ALL {
+            assert!(
+                screen.contains(group.label()),
+                "{} missing:\n{screen}",
+                group.label()
+            );
+        }
+        for section in postio_ui::settings::Section::ALL {
+            assert!(
+                screen.contains(section.label()),
+                "{} missing:\n{screen}",
+                section.label()
+            );
+        }
+        assert!(
+            screen.contains(postio_ui::settings::Section::Accounts.description()),
+            "{screen}"
+        );
+        assert!(
+            screen.contains("ada@example.com"),
+            "the accounts are listed:\n{screen}"
+        );
     }
 
     #[test]

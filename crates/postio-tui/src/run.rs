@@ -311,6 +311,9 @@ enum Flow {
     Go,
     /// Leave.
     Quit,
+    /// Hand the terminal to the person's editor on `config.toml`, at a
+    /// section, then read the file again.
+    EditConfig(Option<postio_ui::settings::Section>),
     /// Hand the terminal to the external editor, then carry on.
     Edit {
         /// Which composition.
@@ -374,6 +377,35 @@ async fn drive(
         match perform(client, app, terminal, theme, senders, effects, &mut hits)? {
             Flow::Go => {}
             Flow::Quit => return Ok(()),
+            Flow::EditConfig(section) => {
+                let Some(path) = crate::config_file::path() else {
+                    let _ = senders.inputs.try_send(Input::ConfigEdited(Err(
+                        "There is no config.toml here".into(),
+                    )));
+                    continue;
+                };
+                let text = crate::config_file::text(&path);
+                // Lines count from one for an editor.
+                let line = section
+                    .and_then(|section| postio_ui::settings::find_section(&text, section))
+                    .map(|line| line + 1);
+                drop(terminal_events);
+                let edited = session
+                    .suspended(&mut Stdout, || {
+                        crate::external::edit_in_place(&path, line, &crate::external::editor())
+                    })?
+                    .map_err(|error| error.to_string());
+                session.publish();
+                terminal_events = EventStream::new();
+                terminal.clear()?;
+                // New bindings take effect now, as the desktop's do.
+                if let Ok(config) =
+                    postio_config::Config::from_toml_str(&crate::config_file::text(&path))
+                {
+                    app.rekey(Keys::new(&postio_core::Keymap::resolve(&config.keys)).0);
+                }
+                let _ = senders.inputs.try_send(Input::ConfigEdited(edited));
+            }
             Flow::Edit {
                 generation,
                 markdown,
@@ -482,6 +514,21 @@ fn perform(
                     generation,
                     markdown,
                 };
+            }
+            Effect::EditConfig(section) => flow = Flow::EditConfig(section),
+            Effect::Account(op) => {
+                let client = client.clone();
+                let inputs = inputs.clone();
+                tokio::spawn(async move {
+                    // Done needs no word: every sidebar hears of the change.
+                    if let Err(error) = client.account(op).await {
+                        let _ = inputs
+                            .send(Input::Host(postio_core::Event::Error {
+                                message: error.message().to_owned(),
+                            }))
+                            .await;
+                    }
+                });
             }
             Effect::Redraw => redraw = true,
             Effect::ReplySource { kind, message } => {

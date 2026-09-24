@@ -64,6 +64,8 @@ pub enum Input {
     /// The daemon stored an [`Effect::InlineImage`]: the inline part, or
     /// nothing when it could not.
     InlineStored(Option<postio_model::Attachment>),
+    /// `config.toml` came back from the person's editor, and was read again.
+    ConfigEdited(Result<(), String>),
     /// The external editor exited: what it saved, or why not.
     Edited {
         /// Which composition.
@@ -308,6 +310,10 @@ pub enum Effect {
     },
     /// Open the local draft behind a Drafts or Outbox row.
     Resume(postio_model::MessageId),
+    /// Edit `config.toml` in the person's own editor, at a section.
+    EditConfig(Option<postio_ui::settings::Section>),
+    /// Change an account, as the settings' account commands do.
+    Account(postio_client::protocol::AccountOp),
     /// Look up a new account's servers.
     Discover(String),
     /// Prove and save a new account.
@@ -446,6 +452,8 @@ pub struct App {
     mouse: bool,
     /// The first run, while there is no account yet.
     first_run: Option<crate::first_run::FirstRun>,
+    /// The settings, while they are open.
+    settings: Option<crate::settings::Settings>,
 }
 
 /// One section of the cheat sheet as it is drawn: its heading, and each
@@ -530,6 +538,8 @@ pub enum Focus {
     Search,
     /// The first run, while there is no account.
     FirstRun,
+    /// The settings.
+    Settings,
     /// The command palette, or another of the finder's modes.
     Palette,
 }
@@ -589,6 +599,7 @@ impl App {
             dragging: false,
             mouse: true,
             first_run: None,
+            settings: None,
         }
     }
 
@@ -902,6 +913,105 @@ impl App {
         effects
     }
 
+    /// Take up the keys `config.toml` binds now, after it was edited.
+    pub fn rekey(&mut self, keys: Keys) {
+        self.keys = keys;
+    }
+
+    /// The settings, while they are open.
+    pub fn settings(&self) -> Option<&crate::settings::Settings> {
+        self.settings.as_ref()
+    }
+
+    /// The accounts the settings list, in the sidebar's order.
+    pub fn accounts(&self) -> &[postio_model::Account] {
+        &self.accounts
+    }
+
+    /// A key in the settings: the arrows walk the sections, Enter edits
+    /// the one under the cursor, Tab goes into the accounts, where the
+    /// registry's account commands act on the account under the cursor.
+    fn settings_key(&mut self, key: &KeyEvent) -> Vec<Effect> {
+        use crossterm::event::KeyCode;
+        let Some(settings) = self.settings.as_mut() else {
+            return Vec::new();
+        };
+        let count = self.accounts.len();
+        if !settings.in_accounts() {
+            match key.code {
+                KeyCode::Up | KeyCode::Char('k') => settings.step(-1),
+                KeyCode::Down | KeyCode::Char('j') => settings.step(1),
+                KeyCode::Tab => settings.set_in_accounts(true),
+                KeyCode::Enter if settings.current() == postio_ui::settings::Section::Accounts => {
+                    settings.set_in_accounts(true);
+                }
+                KeyCode::Enter => return vec![Effect::EditConfig(Some(settings.current()))],
+                _ => {
+                    if let Outcome::Command(id) = self.keys.press(key, KeyContext::Global, false) {
+                        return self.settings_command(&id);
+                    }
+                }
+            }
+            return vec![Effect::Redraw];
+        }
+        match key.code {
+            KeyCode::Up | KeyCode::Char('k') => settings.step_account(-1, count),
+            KeyCode::Down | KeyCode::Char('j') => settings.step_account(1, count),
+            KeyCode::Tab | KeyCode::BackTab => settings.set_in_accounts(false),
+            _ => {
+                return match self.keys.press(key, KeyContext::Accounts, false) {
+                    Outcome::Command(id) => self.settings_command(&id),
+                    Outcome::Pending(_) | Outcome::Unhandled => Vec::new(),
+                };
+            }
+        }
+        vec![Effect::Redraw]
+    }
+
+    /// A command in the settings: the account commands on the account under
+    /// the cursor, `undo` for a removal, Escape to leave.
+    fn settings_command(&mut self, id: &str) -> Vec<Effect> {
+        use postio_client::protocol::AccountOp;
+        let Some(settings) = self.settings.as_mut() else {
+            return Vec::new();
+        };
+        let account = self
+            .accounts
+            .get(settings.account(self.accounts.len()))
+            .cloned();
+        let op = match (id, &account) {
+            ("back", _) => {
+                self.settings = None;
+                self.focus = Focus::List;
+                return vec![Effect::Redraw];
+            }
+            ("undo", _) => settings.take_removed().map(AccountOp::Restore),
+            ("toggle_account_enabled", Some(account)) => Some(AccountOp::SetEnabled {
+                account: account.id,
+                enabled: !account.enabled,
+            }),
+            ("remove_account", Some(account)) => {
+                settings.removed(account.id);
+                let mut effects =
+                    self.say(&format!("{} removed — u to undo", account.display_name));
+                effects.push(Effect::Account(AccountOp::Remove(account.id)));
+                return effects;
+            }
+            ("set_default_account", Some(account)) => Some(AccountOp::SetDefault(account.id)),
+            ("rebuild_account_index", Some(account)) => Some(AccountOp::RebuildIndex(account.id)),
+            ("update_credential", Some(account)) => {
+                self.first_run = Some(crate::first_run::FirstRun::repair(account));
+                self.focus = Focus::FirstRun;
+                return vec![Effect::Redraw];
+            }
+            _ => return self.command(id),
+        };
+        match op {
+            Some(op) => vec![Effect::Account(op), Effect::Redraw],
+            None => Vec::new(),
+        }
+    }
+
     /// The first run, while there is no account yet.
     pub fn first_run(&self) -> Option<&crate::first_run::FirstRun> {
         self.first_run.as_ref()
@@ -1167,6 +1277,7 @@ impl App {
     fn context_of(focus: Focus) -> postio_core::Context {
         match focus {
             Focus::List | Focus::Palette | Focus::FirstRun => postio_core::Context::List,
+            Focus::Settings => postio_core::Context::Accounts,
             Focus::Search => postio_core::Context::Search,
             Focus::Sidebar => postio_core::Context::Sidebar,
             Focus::Reader => postio_core::Context::Reader,
@@ -1316,6 +1427,7 @@ impl App {
                 return match chosen {
                     Some(PaletteAction::Run(postio_core::ActionId::Builtin(id))) => match from {
                         Focus::Composer => self.composer_command(id.as_str()),
+                        Focus::Settings => self.settings_command(id.as_str()),
                         _ => self.command(id.as_str()),
                     },
                     Some(PaletteAction::Run(other)) => {
@@ -1671,6 +1783,7 @@ impl App {
             Focus::Search => KeyContext::Search,
             Focus::Palette => KeyContext::Palette,
             Focus::FirstRun => KeyContext::Global,
+            Focus::Settings => KeyContext::Accounts,
         }
     }
 
@@ -1870,6 +1983,11 @@ impl App {
             "search" => return self.open_search(),
             "command_palette" => return self.open_palette(Finding::Commands),
             "cheat_sheet" => self.cheatsheet = Some(self.focus),
+            "settings" => {
+                self.settings = Some(crate::settings::Settings::default());
+                self.focus = Focus::Settings;
+            }
+            "edit_config" => return vec![Effect::EditConfig(None)],
             "toggle_result_order" => {
                 if let Some(bar) = self.search.as_mut() {
                     bar.newest_first = !bar.newest_first;
@@ -1894,7 +2012,11 @@ impl App {
                     Focus::Reader
                 };
                 self.focus = match self.focus {
-                    Focus::List | Focus::Search | Focus::Palette | Focus::FirstRun => reader,
+                    Focus::List
+                    | Focus::Search
+                    | Focus::Palette
+                    | Focus::FirstRun
+                    | Focus::Settings => reader,
                     Focus::Reader | Focus::Parts | Focus::Composer => Focus::Sidebar,
                     Focus::Sidebar => Focus::List,
                 }
@@ -1906,9 +2028,11 @@ impl App {
                     Focus::Reader
                 };
                 self.focus = match self.focus {
-                    Focus::List | Focus::Search | Focus::Palette | Focus::FirstRun => {
-                        Focus::Sidebar
-                    }
+                    Focus::List
+                    | Focus::Search
+                    | Focus::Palette
+                    | Focus::FirstRun
+                    | Focus::Settings => Focus::Sidebar,
                     Focus::Sidebar => reader,
                     Focus::Reader | Focus::Parts | Focus::Composer => Focus::List,
                 }
@@ -2441,6 +2565,7 @@ pub fn update(app: &mut App, input: Input) -> Vec<Effect> {
             vec![Effect::Redraw]
         }
         Input::Key(key) if app.focus == Focus::FirstRun => app.first_run_key(&key),
+        Input::Key(key) if app.focus == Focus::Settings => app.settings_key(&key),
         Input::Key(key) if app.focus == Focus::Composer => app.composer_key(&key),
         Input::Key(key) if app.focus == Focus::Search => app.search_key(&key),
         Input::Key(key) if app.focus == Focus::Palette => app.palette_key(&key),
@@ -2553,6 +2678,16 @@ pub fn update(app: &mut App, input: Input) -> Vec<Effect> {
         Input::AccountAdded(added) => {
             if let Some(first_run) = app.first_run.as_mut() {
                 match added {
+                    Ok(()) if first_run.repairing() => {
+                        // Signed in again: back where it was asked from.
+                        app.first_run = None;
+                        app.focus = if app.settings.is_some() {
+                            Focus::Settings
+                        } else {
+                            Focus::List
+                        };
+                        return app.say("Signed in again");
+                    }
                     Ok(()) => first_run.added(),
                     Err(sentence) => first_run.failed(sentence),
                 }
@@ -2561,6 +2696,14 @@ pub fn update(app: &mut App, input: Input) -> Vec<Effect> {
         }
         Input::Pointer(pointer) if app.mouse => app.pointer(pointer),
         Input::Pointer(_) => Vec::new(),
+        Input::ConfigEdited(edited) => {
+            let mut effects = match edited {
+                Ok(()) => app.say("Saved — config.toml is read again"),
+                Err(reason) => app.say(&format!("The editor did not save: {reason}")),
+            };
+            effects.push(Effect::RefreshSidebar);
+            effects
+        }
         Input::Paste(pasted) => app.paste(&pasted),
         Input::Attached { path, attached } => match (attached, app.composer.as_mut()) {
             (Some(attachment), Some(composer)) => {
@@ -4247,6 +4390,101 @@ pub(crate) mod tests {
             "{effects:?}"
         );
         assert!(app.first_run().is_none());
+    }
+
+    fn in_settings(app: &mut App) {
+        update(app, Input::Sidebar(sidebar_contents()));
+        let opening = opened(app, 3);
+        serve(app, opening);
+        update(app, key(KeyCode::Char(','), KeyModifiers::ALT));
+        assert_eq!(app.focus(), Focus::Settings);
+    }
+
+    #[test]
+    fn settings_list_every_section_the_desktop_does() {
+        // T087: enumerated from postio_ui::settings, not listed by hand.
+        let mut app = app((160, 40));
+        in_settings(&mut app);
+        let shown: Vec<&str> = app
+            .settings()
+            .expect("open")
+            .sections()
+            .iter()
+            .map(|section| section.label())
+            .collect();
+        let expected: Vec<&str> = postio_ui::settings::Section::ALL
+            .iter()
+            .map(|section| section.label())
+            .collect();
+        assert_eq!(shown, expected);
+    }
+
+    #[test]
+    fn enter_on_a_section_edits_the_file_there() {
+        let mut app = app((160, 40));
+        in_settings(&mut app);
+        update(&mut app, key(KeyCode::Down, KeyModifiers::NONE));
+        let effects = update(&mut app, key(KeyCode::Enter, KeyModifiers::NONE));
+        assert!(
+            effects.contains(&Effect::EditConfig(Some(
+                postio_ui::settings::Section::Filters
+            ))),
+            "{effects:?}"
+        );
+    }
+
+    #[test]
+    fn the_account_commands_change_the_account_under_the_cursor() {
+        use postio_client::protocol::AccountOp;
+        let mut app = app((160, 40));
+        in_settings(&mut app);
+        let account = postio_model::AccountId::new(1);
+        // Into the account list.
+        update(&mut app, key(KeyCode::Tab, KeyModifiers::NONE));
+        let ops = |effects: Vec<Effect>| -> Vec<AccountOp> {
+            effects
+                .into_iter()
+                .filter_map(|effect| match effect {
+                    Effect::Account(op) => Some(op),
+                    _ => None,
+                })
+                .collect()
+        };
+        assert_eq!(
+            ops(update(&mut app, key(KeyCode::Enter, KeyModifiers::NONE))),
+            vec![AccountOp::SetEnabled {
+                account,
+                enabled: false
+            }]
+        );
+        assert_eq!(
+            ops(update(&mut app, press('m'))),
+            vec![AccountOp::SetDefault(account)]
+        );
+        assert_eq!(
+            ops(update(&mut app, press('r'))),
+            vec![AccountOp::RebuildIndex(account)]
+        );
+        assert_eq!(
+            ops(update(&mut app, press('d'))),
+            vec![AccountOp::Remove(account)]
+        );
+        assert_eq!(
+            ops(update(&mut app, press('u'))),
+            vec![AccountOp::Restore(account)],
+            "undo takes the removal back"
+        );
+
+        update(&mut app, press('c'));
+        let repair = app.first_run().expect("the sign-in, again");
+        assert!(matches!(
+            repair.status(),
+            postio_ui::onboarding::Status::Reauthenticate(_)
+        ));
+        assert_eq!(
+            repair.value(crate::first_run::Field::Address),
+            "ada@example.com"
+        );
     }
 
     #[test]
