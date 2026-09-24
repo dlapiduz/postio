@@ -102,6 +102,7 @@ pub fn draw(frame: &mut Frame, app: &App, theme: &Theme, now: DateTime<Local>) -
                             lines,
                             cursor,
                             app.focus() == Focus::Sidebar,
+                            app.sync_lines(),
                             theme,
                             &mut hits,
                         );
@@ -146,7 +147,10 @@ pub fn draw(frame: &mut Frame, app: &App, theme: &Theme, now: DateTime<Local>) -
                 1 => "1 conversation".to_owned(),
                 total => format!("{total} conversations"),
             };
-            let mut words = match (app.notice(), app.sync_line()) {
+            // The sync state sits at the foot of the sidebar when there is
+            // one on screen, and here when there is not.
+            let sync = app.sync_line().filter(|_| !drawn.contains(&Pane::Sidebar));
+            let mut words = match (app.notice(), sync) {
                 (Some(notice), _) => notice.to_owned(),
                 (None, Some(sync)) => format!("{sync} · {count}"),
                 (None, None) => count,
@@ -983,21 +987,90 @@ mod tests {
     fn a_wide_terminal_draws_the_sidebar_beside_the_list() {
         let app = with_sidebar((160, 12));
         let screen = screen(160, 12, &app);
-        for wanted in [
-            "Inbox",
-            "Flagged",
-            "Snoozed",
-            "Saved searches",
-            "Unread from Ada",
-        ] {
+        for wanted in ["Inbox", "Flagged", "Snoozed", "Unread from Ada"] {
             assert!(screen.contains(wanted), "{wanted} missing:\n{screen}");
         }
+        // A heading is set in capitals, as the canvas sets it.
+        assert!(
+            screen.contains("SAVED SEARCHES"),
+            "the saved searches' heading is missing:\n{screen}"
+        );
         assert!(
             screen
                 .lines()
                 .any(|line| line.contains("Inbox") && line.contains('4')),
             "{screen}"
         );
+    }
+
+    #[test]
+    fn the_sidebar_is_headed_by_the_account_and_marks_the_open_folder() {
+        let app = with_sidebar((160, 16));
+        let screen = screen(160, 16, &app);
+        let sidebar: Vec<String> = screen
+            .lines()
+            .map(|line| line.chars().take(26).collect())
+            .collect();
+        assert!(
+            sidebar
+                .iter()
+                .any(|line| line.replace(' ', "").contains("ADA@EXAMPLE.COM")),
+            "the account's address heads its folders:\n{screen}"
+        );
+        let inbox = sidebar
+            .iter()
+            .find(|line| line.contains("Inbox"))
+            .unwrap_or_else(|| panic!("no Inbox:\n{screen}"));
+        assert!(
+            inbox.starts_with('▌'),
+            "the open folder has a bar: {inbox:?}"
+        );
+        assert!(
+            inbox.trim_end_matches('│').trim_end().ends_with('4'),
+            "its count at the right: {inbox:?}"
+        );
+        // Every row between the top bar and the status line.
+        assert!(
+            sidebar[1..sidebar.len() - 1]
+                .iter()
+                .all(|line| line.ends_with('│')),
+            "a rule keeps the sidebar apart:\n{screen}"
+        );
+    }
+
+    #[test]
+    fn the_sync_state_sits_at_the_foot_of_the_sidebar() {
+        let inbox = postio_model::ListScope::Mailbox(postio_model::MailboxId::new(1));
+        let mut app = with_sidebar((160, 16));
+        update(
+            &mut app,
+            Input::Opened {
+                scope: inbox,
+                total: 0,
+            },
+        );
+        let (state, detail) = app.sync_lines().expect("an account is shown");
+        let screen = screen(160, 16, &app);
+        let lines: Vec<&str> = screen.lines().collect();
+        let foot = |line: &str| line.chars().take(26).collect::<String>();
+        assert!(foot(lines[13]).contains(&state), "{screen}");
+        assert!(foot(lines[14]).contains(&detail), "{screen}");
+        assert!(
+            !lines[15].contains(&state),
+            "not on the status line as well:\n{screen}"
+        );
+
+        // Without the sidebar, the status line still says it.
+        let mut narrow = with_sidebar((100, 16));
+        update(
+            &mut narrow,
+            Input::Opened {
+                scope: inbox,
+                total: 0,
+            },
+        );
+        let screen = screen_of_size(&narrow, 100, 16);
+        assert!(screen.lines().last().unwrap().contains(&state), "{screen}");
     }
 
     #[test]

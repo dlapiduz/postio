@@ -734,12 +734,19 @@ impl App {
     /// What the status line says about the connection of the account on
     /// screen: `offline`, `syncing`, `idle` -- the desktop's own words.
     pub fn sync_line(&self) -> Option<String> {
-        let account = self.account?;
-        let (state, detail) = self
-            .trackers
-            .status(account)
-            .lines(std::time::Instant::now());
+        let (state, detail) = self.sync_lines()?;
         Some(format!("{state} · {detail}"))
+    }
+
+    /// The same as two lines, as the foot of the desktop's sidebar has it:
+    /// `idle · imap`, then `last sync 12s`.
+    pub fn sync_lines(&self) -> Option<(String, String)> {
+        let account = self.account?;
+        Some(
+            self.trackers
+                .status(account)
+                .lines(std::time::Instant::now()),
+        )
     }
 
     /// Which account `scope` belongs to.

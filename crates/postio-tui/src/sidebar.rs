@@ -51,11 +51,9 @@ pub struct Line {
 /// The lines for `contents`, top to bottom.
 pub fn lines(contents: &Contents) -> Vec<Line> {
     let mut lines = Vec::new();
-    let several = contents.accounts.len() > 1;
     for account in &contents.accounts {
-        if several {
-            lines.push(heading(&account.display_name));
-        }
+        // By address, as the desktop sidebar heads its folders.
+        lines.push(heading(&account.address.address));
         let counts = contents
             .counts
             .iter()
@@ -200,6 +198,14 @@ mod tests {
                 .unwrap()
         };
         assert!(at("Inbox") < at("Receipts"));
+    }
+
+    #[test]
+    fn even_one_account_is_headed_by_its_address() {
+        let lines = lines(&one_account());
+        assert!(lines[0].heading, "{:?}", lines[0]);
+        assert_eq!(lines[0].label.as_str(), "ada@example.com");
+        assert_eq!(lines[0].opens, None, "a heading opens nothing");
     }
 
     #[test]
