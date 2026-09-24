@@ -1025,6 +1025,7 @@ dependencies = [
  "crossterm_winapi",
  "derive_more",
  "document-features",
+ "futures-core",
  "mio",
  "parking_lot",
  "rustix 1.1.4",
@@ -4162,13 +4163,18 @@ dependencies = [
 name = "postio-tui"
 version = "0.3.0"
 dependencies = [
+ "async-channel",
  "chrono",
  "crossterm",
+ "futures-util",
+ "postio-client",
  "postio-config",
  "postio-core",
  "postio-model",
  "postio-ui",
  "ratatui",
+ "tempfile",
+ "tokio",
  "tracing",
  "unicode-width 0.2.2",
 ]

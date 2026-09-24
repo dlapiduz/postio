@@ -186,6 +186,7 @@ impl App {
             "prev_message" => self.move_to(self.cursor.saturating_sub(1)),
             "first_message" => self.move_to(0),
             "last_message" => self.move_to(last),
+            "quit" => return vec![Effect::Quit],
             _ => return Vec::new(),
         }
         vec![Effect::Redraw]
@@ -409,6 +410,21 @@ mod tests {
         assert_eq!(app.cursor(), 0, "g g is the first row");
         update(&mut app, press('G'));
         assert_eq!(app.cursor(), 2, "G is the last");
+    }
+
+    #[test]
+    fn the_quit_command_quits() {
+        let mut app = app((120, 30));
+        let effects = update(
+            &mut app,
+            Input::Key(KeyEvent {
+                code: KeyCode::Char('q'),
+                modifiers: KeyModifiers::CONTROL,
+                kind: KeyEventKind::Press,
+                state: KeyEventState::NONE,
+            }),
+        );
+        assert!(effects.contains(&Effect::Quit), "{effects:?}");
     }
 
     #[test]

@@ -116,7 +116,7 @@ store (quickstart "triage").
 - [ ] T036 [US1] Wire cursor and `postio_ui::selection::SelectionState` and aim commands with `postio_core::aim::command_for`. Test first: US1 scenario 3 — three selected, cursor on a fourth, `a` archives the three only
 - [ ] T037 [US1] Write `crates/postio-tui/src/view/notice.rs`: the undo notice ("Archived 12 messages — Undo") from `UndoEntry::description`. Test first: US1 scenario 4 — twelve archives in a burst, one `u`, all twelve return
 - [ ] T038 [US1] Write `crates/postio-tui/src/view/status.rs` from `postio_ui::status::SyncStatus` and `list_state` (offline, empty, failed). Test first: with the mock backend offline the list is navigable and the status line says offline (US1 scenario 1)
-- [ ] T039 [US1] Write `crates/postio-tui/src/main.rs` startup: caps → connect (spawning the daemon) → enter terminal → first frame; exit codes and messages per contracts/tui-surface.md. Test first: a version-mismatched daemon yields exit 1 and the sentence naming both versions
+- [X] T039 [US1] Write `crates/postio-tui/src/main.rs` startup: caps → connect (spawning the daemon) → enter terminal → first frame; exit codes and messages per contracts/tui-surface.md. Test first: a version-mismatched daemon yields exit 1 and the sentence naming both versions
 
 **Checkpoint**: triage works end to end in a terminal; the reader pane shows a
 plain-text placeholder until US2.

@@ -4,6 +4,40 @@
 
 pub mod list;
 
+use chrono::{DateTime, Local};
+use ratatui::Frame;
+use ratatui::layout::{Constraint, Layout, Rect};
+use ratatui::text::Line;
+
+use crate::app::App;
+use crate::layout::Shown;
+use crate::theme::{Role, Theme};
+
+/// Draw the whole screen.
+pub fn draw(frame: &mut Frame, app: &App, theme: &Theme, now: DateTime<Local>) {
+    let area = frame.area();
+    match app.shown() {
+        Shown::TooSmall { needs } => {
+            let sentence = format!("Terminal too small: needs {}×{}", needs.0, needs.1);
+            let line = Line::styled(
+                fit(&sentence, usize::from(area.width)),
+                theme.style(Role::Warning),
+            );
+            frame.render_widget(line, Rect::new(area.x, area.y, area.width, 1));
+        }
+        Shown::Panes(_) => {
+            let [list, status] =
+                Layout::vertical([Constraint::Min(1), Constraint::Length(1)]).areas(area);
+            list::draw(frame, list, &app.visible(), theme, now);
+            let words = match app.total() {
+                1 => "1 conversation".to_owned(),
+                total => format!("{total} conversations"),
+            };
+            frame.render_widget(Line::styled(words, theme.style(Role::Dim)), status);
+        }
+    }
+}
+
 /// `text`, cut to at most `width` terminal columns, ending in `…` when cut.
 ///
 /// By display width, not characters or bytes: a CJK character is two
