@@ -9,8 +9,6 @@
 //! that minted a fresh key on the second open would look fine on first run
 //! and lose every mailbox on the second.
 
-use std::sync::Arc;
-
 use postio_account::secret::{AccountKey, MemorySecretStore, Password, SecretError, SecretStore};
 use postio_session::{STORE_KEY_ENTRY, store_key};
 
@@ -172,33 +170,7 @@ fn a_locked_keyring_means_there_is_no_store_to_open() {
 /// reason: a rule nothing checks is a rule that lasts until the next person
 /// adds a `?key` to a `tracing` call because it would have been convenient
 /// that once.
-#[derive(Clone, Default)]
-struct Captured(Arc<std::sync::Mutex<Vec<u8>>>);
-
-impl Captured {
-    fn text(&self) -> String {
-        String::from_utf8_lossy(&self.0.lock().expect("not poisoned")).into_owned()
-    }
-}
-
-impl std::io::Write for Captured {
-    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-        self.0.lock().expect("not poisoned").extend_from_slice(buf);
-        Ok(buf.len())
-    }
-
-    fn flush(&mut self) -> std::io::Result<()> {
-        Ok(())
-    }
-}
-
-impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for Captured {
-    type Writer = Self;
-
-    fn make_writer(&'a self) -> Self::Writer {
-        self.clone()
-    }
-}
+use postio_test_support::logs::Captured;
 
 #[tokio::test]
 async fn no_key_material_reaches_the_log_at_any_level() {

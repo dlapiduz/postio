@@ -29,8 +29,9 @@
 // the environment. This test sets it before the app under test starts, which
 // is the one moment it is sound. The crate's library code forbids `unsafe`.
 
+use crate::{settle, settle_until};
+use gtk::gdk;
 use gtk::prelude::*;
-use gtk::{gdk, glib};
 use postio_app::{commands, feed_the_window, notifications};
 use postio_core::bridge::{Bridge, EventHub};
 use postio_core::state::SharedState;
@@ -40,27 +41,6 @@ use postio_gtk::{app, fonts, style};
 use postio_session::Wiring;
 use postio_storage::seed::{seed_extra_account, seed_small};
 use postio_storage::{BlobStore, test_support};
-
-async fn settle_until<F, Fut>(done: F) -> bool
-where
-    F: Fn() -> Fut,
-    Fut: std::future::Future<Output = bool>,
-{
-    let deadline =
-        std::time::Instant::now() + postio_test_support::scaled(std::time::Duration::from_secs(10));
-    while std::time::Instant::now() < deadline {
-        while glib::MainContext::default().iteration(false) {}
-        if done().await {
-            return true;
-        }
-        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
-    }
-    done().await
-}
-
-fn settle() {
-    while glib::MainContext::default().iteration(false) {}
-}
 
 pub fn a_connection_event_a_scope_cycle_and_the_trackers_all_agree_with_appstate() {
     crate::gtk_case(async {

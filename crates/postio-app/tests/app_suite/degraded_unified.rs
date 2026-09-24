@@ -22,8 +22,9 @@
 // the environment. This test sets it before the app under test starts, which
 // is the one moment it is sound. The crate's library code forbids `unsafe`.
 
+use crate::{settle, settle_until};
+use gtk::gdk;
 use gtk::prelude::*;
-use gtk::{gdk, glib};
 use postio_app::feed_the_window;
 use postio_core::bridge::{Bridge, event_channel, handler_fn};
 use postio_core::{ConnectionState, Event};
@@ -34,27 +35,6 @@ use postio_model::ListScope;
 use postio_session::Wiring;
 use postio_storage::seed::{seed_extra_account, seed_small};
 use postio_storage::{BlobStore, test_support};
-
-async fn settle_until<F, Fut>(done: F) -> bool
-where
-    F: Fn() -> Fut,
-    Fut: std::future::Future<Output = bool>,
-{
-    let deadline =
-        std::time::Instant::now() + postio_test_support::scaled(std::time::Duration::from_secs(10));
-    while std::time::Instant::now() < deadline {
-        while glib::MainContext::default().iteration(false) {}
-        if done().await {
-            return true;
-        }
-        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
-    }
-    done().await
-}
-
-fn settle() {
-    while glib::MainContext::default().iteration(false) {}
-}
 
 pub fn the_unified_list_names_an_account_it_could_not_reach_and_then_forgets_it() {
     crate::gtk_case(async {

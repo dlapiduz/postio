@@ -13,8 +13,7 @@
 //! logs, and a global subscriber cannot be shared with tests that log for
 //! other reasons.
 
-use std::io;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use postio_account::backend::{MockBackend, MockMailbox, MockMessage};
@@ -24,33 +23,7 @@ use postio_storage::seed::seed_small;
 use postio_storage::{BlobStore, test_support};
 
 /// A writer every `tracing` line lands in, so the test can read them back.
-#[derive(Clone, Default)]
-struct Captured(Arc<Mutex<Vec<u8>>>);
-
-impl Captured {
-    fn text(&self) -> String {
-        String::from_utf8_lossy(&self.0.lock().expect("not poisoned")).into_owned()
-    }
-}
-
-impl io::Write for Captured {
-    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        self.0.lock().expect("not poisoned").extend_from_slice(buf);
-        Ok(buf.len())
-    }
-
-    fn flush(&mut self) -> io::Result<()> {
-        Ok(())
-    }
-}
-
-impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for Captured {
-    type Writer = Captured;
-
-    fn make_writer(&'a self) -> Self::Writer {
-        self.clone()
-    }
-}
+use postio_test_support::logs::Captured;
 
 /// A server holding one large mailbox of small messages, every call slowed.
 ///

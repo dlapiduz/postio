@@ -3831,25 +3831,7 @@ mod tests {
     /// bug report with nothing to chase (#759).
     #[test]
     fn the_stall_warning_names_what_the_engine_was_doing() {
-        use std::io::Write;
-
-        #[derive(Clone, Default)]
-        struct Captured(Arc<Mutex<Vec<u8>>>);
-        impl Write for Captured {
-            fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-                self.0.lock().expect("not poisoned").extend_from_slice(buf);
-                Ok(buf.len())
-            }
-            fn flush(&mut self) -> std::io::Result<()> {
-                Ok(())
-            }
-        }
-        impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for Captured {
-            type Writer = Captured;
-            fn make_writer(&'a self) -> Self::Writer {
-                self.clone()
-            }
-        }
+        use postio_test_support::logs::Captured;
 
         let busy = Busy::new();
         busy.set("the body backfill (message 7)");

@@ -20,11 +20,12 @@
 // the environment. This test sets it before the app under test starts, which
 // is the one moment it is sound. The crate's library code forbids `unsafe`.
 
+use crate::{settle, settle_until};
 use std::cell::Cell;
 use std::rc::Rc;
 
+use gtk::gdk;
 use gtk::prelude::*;
-use gtk::{gdk, glib};
 use postio_app::{commands, feed_the_window, notifications};
 use postio_core::bridge::{Bridge, EventHub};
 use postio_core::state::SharedState;
@@ -40,27 +41,6 @@ use postio_storage::{BlobStore, test_support};
 /// A word every fixture in the corpus supplies, so both accounts have hits
 /// and the caveat is about reach rather than about an empty answer.
 const QUERY: &str = "example.com";
-
-async fn settle_until<F, Fut>(done: F) -> bool
-where
-    F: Fn() -> Fut,
-    Fut: std::future::Future<Output = bool>,
-{
-    let deadline =
-        std::time::Instant::now() + postio_test_support::scaled(std::time::Duration::from_secs(10));
-    while std::time::Instant::now() < deadline {
-        while glib::MainContext::default().iteration(false) {}
-        if done().await {
-            return true;
-        }
-        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
-    }
-    done().await
-}
-
-fn settle() {
-    while glib::MainContext::default().iteration(false) {}
-}
 
 fn outcome(window: &Window) -> Option<Outcome> {
     window

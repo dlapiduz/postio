@@ -7,38 +7,13 @@
 //!
 //! Skips without a display. Nothing here touches the network.
 
-use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use gtk::prelude::*;
 use gtk::{gdk, glib};
 use postio_gtk::jank;
 
-#[derive(Clone, Default)]
-struct Captured(Arc<Mutex<Vec<u8>>>);
-
-impl std::io::Write for Captured {
-    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-        self.0.lock().expect("not poisoned").extend_from_slice(buf);
-        Ok(buf.len())
-    }
-    fn flush(&mut self) -> std::io::Result<()> {
-        Ok(())
-    }
-}
-
-impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for Captured {
-    type Writer = Captured;
-    fn make_writer(&'a self) -> Self::Writer {
-        self.clone()
-    }
-}
-
-impl Captured {
-    fn text(&self) -> String {
-        String::from_utf8(self.0.lock().expect("not poisoned").clone()).expect("utf-8")
-    }
-}
+use postio_test_support::logs::Captured;
 
 pub fn a_blocked_main_loop_is_reported_with_the_action_before_it() {
     if adw::init().is_err() || gdk::Display::default().is_none() {

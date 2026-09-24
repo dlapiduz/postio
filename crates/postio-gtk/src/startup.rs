@@ -460,23 +460,7 @@ mod tests {
 
     /// Log lines written while `body` runs, as text.
     fn logged(body: impl FnOnce()) -> String {
-        #[derive(Clone, Default)]
-        struct Captured(std::sync::Arc<std::sync::Mutex<Vec<u8>>>);
-        impl std::io::Write for Captured {
-            fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-                self.0.lock().expect("not poisoned").extend_from_slice(buf);
-                Ok(buf.len())
-            }
-            fn flush(&mut self) -> std::io::Result<()> {
-                Ok(())
-            }
-        }
-        impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for Captured {
-            type Writer = Captured;
-            fn make_writer(&'a self) -> Self::Writer {
-                self.clone()
-            }
-        }
+        use postio_test_support::logs::Captured;
         let captured = Captured::default();
         let subscriber = tracing_subscriber::fmt()
             .with_writer(captured.clone())
