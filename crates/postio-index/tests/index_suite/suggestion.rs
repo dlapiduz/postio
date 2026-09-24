@@ -6,7 +6,7 @@
 //! the table the triggers keep in step with `messages` — and a suggestion
 //! drawn from an empty term list is a feature that silently never fires.
 
-use chrono::{TimeZone, Utc};
+use super::executor::at;
 use postio_index::{SearchRequest, search};
 use postio_model::AccountScope;
 use postio_model::{EmailAddress, Message};
@@ -15,10 +15,6 @@ use postio_search::parse;
 use postio_storage::Connection;
 use postio_storage::repository::MessageRepository;
 use postio_storage::test_support;
-
-fn at(hour: u32) -> chrono::DateTime<Utc> {
-    Utc.with_ymd_and_hms(2026, 8, 20, hour, 0, 0).unwrap()
-}
 
 async fn from(
     connection: &Connection,
