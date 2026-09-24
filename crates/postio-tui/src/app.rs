@@ -2303,6 +2303,12 @@ impl App {
             "prev_in_conversation" => self.walk_conversation(-1),
             "scroll_reader_down" => self.scroll_reader(1),
             "scroll_reader_up" => self.scroll_reader(-1),
+            // Escape backs out one layer at a time: a selection first, then
+            // a search whose results the list is showing (#1011), as the
+            // desktop does.
+            "back" if self.selection.selection().is_empty() && self.search.is_some() => {
+                return self.close_search();
+            }
             "back" => self.selection.clear(),
             "next_folder" => return self.walk_sidebar(1),
             "prev_folder" => return self.walk_sidebar(-1),
@@ -3491,6 +3497,33 @@ pub(crate) mod tests {
                 Effect::DesktopNotify { title, .. } if title == "Grace Hopper"
             )),
             "{effects:?}"
+        );
+    }
+
+    #[test]
+    fn escape_leaves_a_search_from_the_bar_and_from_its_results() {
+        // #1011's rule, as the desktop keeps it: Escape leaves the search
+        // whether the keyboard is still in the bar or has gone down to the
+        // results with Enter.
+        let mut app = app((160, 40));
+        let opening = opened(&mut app, 3);
+        serve(&mut app, opening);
+
+        update(&mut app, press('/'));
+        typing(&mut app, "ada");
+        update(&mut app, key(KeyCode::Esc, KeyModifiers::NONE));
+        assert_eq!(app.search_query(), None, "Escape in the bar leaves it");
+        assert_eq!(app.focus(), Focus::List);
+
+        update(&mut app, press('/'));
+        typing(&mut app, "ada");
+        update(&mut app, key(KeyCode::Enter, KeyModifiers::NONE));
+        assert_eq!(app.focus(), Focus::List, "Enter goes down to the results");
+        update(&mut app, key(KeyCode::Esc, KeyModifiers::NONE));
+        assert_eq!(
+            app.search_query(),
+            None,
+            "and Escape from the results leaves the search too"
         );
     }
 
