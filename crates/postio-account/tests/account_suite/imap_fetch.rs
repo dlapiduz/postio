@@ -291,6 +291,41 @@ async fn a_cancelled_token_stops_before_any_round_trip() {
 const UNDECODABLE_UNTAGGED_LINE: &str = "* -1 FETCH (FLAGS (\\Seen))";
 
 #[tokio::test]
+async fn an_unsolicited_flag_update_inside_the_reply_is_not_a_message_that_lost_its_date() {
+    // RFC 3501 §7.4.2 lets a server report a flag change on *any* message at
+    // any time, and a busy mailbox does: another client marks something read
+    // while this fetch is on the wire, and the reply carries `UID` and
+    // `FLAGS` for a message nobody asked about. Read as a requested message
+    // it has no INTERNALDATE, and it failed a whole first sync of an
+    // archive at UID 68776 of a real one.
+    let unsolicited = "* 4 FETCH (UID 68776 FLAGS (\\Seen) MODSEQ (9001))".to_owned();
+    let reply = fetch_reply(&[fetch_line(1, 101), unsolicited]);
+    let connector = ScriptedConnector::new(
+        ImapScript::extensions_hidden_until_login()
+            .on("SELECT", select_reply().as_str())
+            .on("FETCH", reply.as_str()),
+    );
+    let pool = pool_over(connector).await;
+
+    let messages = fetch_headers(
+        &pool,
+        "Archive",
+        &UidSet::single(Uid::new(101)),
+        None,
+        Priority::Interactive,
+        &CancelToken::new(),
+    )
+    .await
+    .expect("a flag update beside the reply does not fail the fetch");
+
+    assert_eq!(
+        messages.iter().map(|m| m.uid).collect::<Vec<_>>(),
+        vec![Uid::new(101)],
+        "only the message that was asked for comes back"
+    );
+}
+
+#[tokio::test]
 async fn a_line_io_imap_could_not_decode_forces_a_full_resync_not_a_silent_success() {
     let reply = fetch_reply(&[UNDECODABLE_UNTAGGED_LINE.to_owned(), fetch_line(1, 101)]);
     let connector = ScriptedConnector::new(

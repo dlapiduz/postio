@@ -173,9 +173,15 @@ async fn fetch_batch_inner(
         .await;
     let raw = raw.map_err(|error| session.command_error("FETCH", error))?;
 
-    raw.into_values()
-        .map(|items| build_fetched_message(items, uid_validity))
-        .collect()
+    let mut messages = Vec::new();
+    for items in raw.into_values() {
+        if let Some(message) = build_fetched_message(items, uid_validity)?
+            && uids.contains(message.uid)
+        {
+            messages.push(message);
+        }
+    }
+    Ok(messages)
 }
 
 /// Whether a `UID SEARCH ALL` answer is too short to be an answer.
@@ -247,10 +253,23 @@ fn list_id_section() -> Section<'static> {
 // Response mapping
 // ---------------------------------------------------------------------------
 
+/// One message out of a `FETCH` reply, or `None` for an entry that is not
+/// one of the messages asked for.
+///
+/// RFC 3501 §7.4.2 lets a server report a flag change on any message at any
+/// moment, and it rides in the same reply: another client marks something
+/// read while this fetch is on the wire, and an entry arrives carrying `UID`
+/// and `FLAGS` and nothing else. That is not a requested message missing its
+/// date -- treating it as one failed a real archive's whole first sync -- so
+/// an entry with neither `INTERNALDATE` nor `ENVELOPE` is passed over. The
+/// flag change itself is not lost: the next incremental pass reads it.
+///
+/// An entry that carries some metadata but not the date is still an error,
+/// because that is a server answering the question badly.
 fn build_fetched_message(
     items: Vec1<MessageDataItem<'static>>,
     uid_validity: UidValidity,
-) -> BackendResult<FetchedMessage> {
+) -> BackendResult<Option<FetchedMessage>> {
     let mut uid = None;
     let mut mod_seq = None;
     let mut flags = FlagSet::new();
@@ -286,6 +305,9 @@ fn build_fetched_message(
         }
     }
 
+    if internal_date.is_none() && envelope.is_none() {
+        return Ok(None);
+    }
     let uid = uid.ok_or_else(|| BackendError::Protocol {
         reason: "the server's FETCH response carried no UID".to_owned(),
     })?;
@@ -293,7 +315,7 @@ fn build_fetched_message(
         reason: format!("the server's FETCH response for UID {uid} carried no INTERNALDATE"),
     })?;
 
-    Ok(FetchedMessage {
+    Ok(Some(FetchedMessage {
         remote_id: crate::backend::identity::remote_id(uid_validity, uid),
         uid,
         uid_validity,
@@ -303,7 +325,7 @@ fn build_fetched_message(
         size,
         envelope: envelope.map(|wire| envelope_from_wire(wire, references.split_off(0), list_id)),
         structure: structure.map(|wire| body_structure_from_wire(&wire)),
-    })
+    }))
 }
 
 pub(super) fn flag_from_wire(flag: FlagFetch<'static>) -> Flag {
