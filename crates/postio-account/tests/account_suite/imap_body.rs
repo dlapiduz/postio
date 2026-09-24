@@ -221,6 +221,41 @@ async fn headers_and_text_ask_for_their_own_named_sections() {
 }
 
 #[tokio::test]
+async fn a_flag_update_on_an_earlier_message_is_not_read_as_the_body() {
+    // A server may report another message's flag change inside any reply
+    // (RFC 3501 §7.4.2). Sorted by sequence number, that one comes first
+    // when its message sits earlier in the folder -- and read as the
+    // answer, it has no body section, so the part came back empty.
+    let payload = ascii_payload(37);
+    let reply = format!(
+        "* 1 FETCH (UID 7 FLAGS (\\Seen))\n\
+         * 3 FETCH (UID 101 BODY[1]<0> {{{len}}}\r\n{payload})\n{{tag}} OK FETCH completed",
+        len = payload.len()
+    );
+    let connector = ScriptedConnector::new(
+        ImapScript::extensions_hidden_until_login()
+            .on("SELECT", select_reply())
+            .on("FETCH", reply.as_str()),
+    );
+    let pool = pool_over(connector).await;
+    let mut sink = VecSink::new();
+
+    fetch_part(
+        &pool,
+        "INBOX",
+        &rid(101),
+        &BodyPart::section("1"),
+        &mut sink,
+        Priority::Interactive,
+        &CancelToken::new(),
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(sink.into_inner(), payload.into_bytes());
+}
+
+#[tokio::test]
 async fn a_message_absent_from_the_response_is_no_such_message() {
     let connector = ScriptedConnector::new(
         ImapScript::extensions_hidden_until_login()

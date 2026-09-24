@@ -299,19 +299,25 @@ async fn fetch_window(
     let raw = session.fetch(sequence_set, items, opts).await;
     let raw = raw.map_err(|error| session.command_error("FETCH", error))?;
 
-    let Some(items) = raw.into_values().next() else {
+    if raw.is_empty() {
         return Err(BackendError::NoSuchMessage {
             mailbox: mailbox.to_owned(),
             uid: uid.get(),
         });
-    };
+    }
 
-    for item in items {
-        if let MessageDataItem::BodyExt { data, .. } = item {
-            return Ok(data
-                .into_option()
-                .map(|bytes| bytes.into_owned())
-                .unwrap_or_default());
+    // The entry that carries a body section, not merely the first: a server
+    // may report another message's flag change inside this reply (RFC 3501
+    // §7.4.2), and one earlier in the folder sorts ahead of the answer. Read
+    // as the answer, it has no section and the part came back empty.
+    for items in raw.into_values() {
+        for item in items {
+            if let MessageDataItem::BodyExt { data, .. } = item {
+                return Ok(data
+                    .into_option()
+                    .map(|bytes| bytes.into_owned())
+                    .unwrap_or_default());
+            }
         }
     }
     Ok(Vec::new())
