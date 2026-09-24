@@ -424,6 +424,17 @@ fn perform(
             | Effect::QueueSend { .. }) => {
                 let _ = drafts.try_send(effect);
             }
+            Effect::Recipients { account, prefix } => {
+                let client = client.clone();
+                let inputs = inputs.clone();
+                tokio::spawn(async move {
+                    let found = client
+                        .recipients(account, prefix.clone())
+                        .await
+                        .unwrap_or_default();
+                    let _ = inputs.send(Input::Recipients { prefix, found }).await;
+                });
+            }
             Effect::Resume(message) => {
                 let client = client.clone();
                 let inputs = inputs.clone();

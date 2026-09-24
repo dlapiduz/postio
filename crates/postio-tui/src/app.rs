@@ -75,6 +75,13 @@ pub enum Input {
         /// Its id, or the sentence for the status line.
         saved: Result<postio_model::DraftId, String>,
     },
+    /// The daemon answered an [`Effect::Recipients`].
+    Recipients {
+        /// What was looked up.
+        prefix: String,
+        /// Who it could be, best first.
+        found: Vec<postio_model::contact_group::RecipientCandidate>,
+    },
     /// The daemon answered an [`Effect::QueueSend`].
     Queued {
         /// When it was scheduled for, if it was.
@@ -195,6 +202,13 @@ pub enum Effect {
         draft: Box<postio_model::Draft>,
         /// When, for a scheduled send.
         at: Option<chrono::DateTime<chrono::Utc>>,
+    },
+    /// Look up who a recipient being typed could be.
+    Recipients {
+        /// Whose contacts.
+        account: postio_model::AccountId,
+        /// What has been typed.
+        prefix: String,
     },
     /// Open the local draft behind a Drafts or Outbox row.
     Resume(postio_model::MessageId),
@@ -494,6 +508,19 @@ impl App {
         if self.scheduling.is_some() {
             return self.schedule_key(key);
         }
+        if let Some(composer) = self.composer.as_mut() {
+            let before = composer.edits();
+            if composer.completion_key(*key) {
+                let mut effects = vec![Effect::Redraw];
+                if composer.edits() != before {
+                    effects.push(Effect::Autosave {
+                        generation: composer.generation(),
+                        edit: composer.edits(),
+                    });
+                }
+                return effects;
+            }
+        }
         match self.keys.press(key, KeyContext::Composer, true) {
             Outcome::Command(id) => self.composer_command(&id),
             Outcome::Pending(_) => Vec::new(),
@@ -512,6 +539,12 @@ impl App {
                     effects.push(Effect::Autosave {
                         generation: composer.generation(),
                         edit: composer.edits(),
+                    });
+                }
+                if let Some(prefix) = composer.wants_completion() {
+                    effects.push(Effect::Recipients {
+                        account: composer.draft().account_id,
+                        prefix,
                     });
                 }
                 effects
@@ -1361,6 +1394,12 @@ pub fn update(app: &mut App, input: Input) -> Vec<Effect> {
             }
             Err(reason) => app.say(&reason),
         },
+        Input::Recipients { prefix, found } => {
+            if let Some(composer) = app.composer.as_mut() {
+                composer.offer(&prefix, found);
+            }
+            vec![Effect::Redraw]
+        }
         Input::Queued { at, queued } => match (queued, at) {
             (Ok(()), None) => app.say("Sending — it is in the Outbox until it leaves"),
             (Ok(()), Some(at)) => app.say(&format!(
@@ -2051,6 +2090,88 @@ mod tests {
             app.notice(),
             Some("Not sent: the store is busy. The draft is still in Drafts.")
         );
+    }
+
+    fn ada() -> postio_model::contact_group::RecipientCandidate {
+        postio_model::contact_group::RecipientCandidate::Contact(postio_model::EmailAddress::new(
+            Some("Ada"),
+            "ada@example.com",
+        ))
+    }
+
+    fn typing(app: &mut App, text: &str) -> Vec<Effect> {
+        text.chars().flat_map(|c| update(app, press(c))).collect()
+    }
+
+    #[test]
+    fn typing_a_recipient_offers_the_contacts_it_could_be() {
+        // T055, at the desktop's threshold of four characters (#424).
+        let mut app = app((160, 40));
+        composing(&mut app);
+        let effects = typing(&mut app, "ada@");
+        let asked: Vec<_> = effects
+            .iter()
+            .filter_map(|effect| match effect {
+                Effect::Recipients { prefix, .. } => Some(prefix.clone()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(asked, vec!["ada@".to_owned()], "three letters ask nothing");
+
+        update(
+            &mut app,
+            Input::Recipients {
+                prefix: "ada@".into(),
+                found: vec![ada()],
+            },
+        );
+        let composer = app.composer().expect("composing");
+        assert_eq!(composer.suggestions(), &[ada()]);
+
+        update(&mut app, key(KeyCode::Tab, KeyModifiers::NONE));
+        let composer = app.composer().expect("composing");
+        assert_eq!(
+            composer.value(crate::composer::Field::To),
+            "Ada <ada@example.com>, "
+        );
+        assert!(composer.suggestions().is_empty());
+        assert_eq!(
+            composer.field(),
+            crate::composer::Field::To,
+            "room for another"
+        );
+    }
+
+    #[test]
+    fn an_answer_for_what_is_no_longer_typed_is_not_offered() {
+        let mut app = app((160, 40));
+        composing(&mut app);
+        typing(&mut app, "ada@e");
+        update(
+            &mut app,
+            Input::Recipients {
+                prefix: "ada@".into(),
+                found: vec![ada()],
+            },
+        );
+        assert!(app.composer().expect("composing").suggestions().is_empty());
+    }
+
+    #[test]
+    fn escape_puts_suggestions_away_before_it_leaves() {
+        let mut app = app((160, 40));
+        composing(&mut app);
+        typing(&mut app, "ada@");
+        update(
+            &mut app,
+            Input::Recipients {
+                prefix: "ada@".into(),
+                found: vec![ada()],
+            },
+        );
+        update(&mut app, key(KeyCode::Esc, KeyModifiers::NONE));
+        let composer = app.composer().expect("still composing");
+        assert!(composer.suggestions().is_empty());
     }
 
     #[test]

@@ -5,6 +5,8 @@ use ratatui::layout::{Position, Rect};
 use ratatui::style::Modifier;
 use ratatui::text::{Line, Span};
 
+use postio_ui::terminal::SafeText;
+
 use crate::composer::{Composer, Field};
 use crate::theme::{Role, Theme};
 use crate::view::fit;
@@ -66,6 +68,9 @@ pub fn draw(frame: &mut Frame, area: Rect, composer: &Composer, focused: bool, t
             frame.set_cursor_position(Position::new(area.x + LABEL + column.min(value_width), y));
         }
         y += 1;
+        if here {
+            y = draw_suggestions(frame, area, y, composer, theme);
+        }
     }
     // A rule between the headers and the body, as a sent message has.
     if y < area.y + area.height {
@@ -98,6 +103,40 @@ pub fn draw(frame: &mut Frame, area: Rect, composer: &Composer, focused: bool, t
         return;
     }
     frame.render_widget(composer.body(), Rect::new(area.x, y, area.width, height));
+}
+
+/// How many suggestions are shown at once.
+const SUGGESTIONS: usize = 5;
+
+/// Recipient suggestions under the field being typed in, from row `y`;
+/// answers the row after them.
+fn draw_suggestions(
+    frame: &mut Frame,
+    area: Rect,
+    mut y: u16,
+    composer: &Composer,
+    theme: &Theme,
+) -> u16 {
+    let width = usize::from(area.width.saturating_sub(LABEL));
+    for (index, candidate) in composer.suggestions().iter().take(SUGGESTIONS).enumerate() {
+        if y >= area.y + area.height {
+            break;
+        }
+        let chosen = index == composer.suggestion();
+        // A contact's name is whatever a sender's header said.
+        let label = SafeText::new(&postio_ui::recipients::candidate_label(candidate));
+        let (mark, role) = if chosen {
+            ("› ", Role::Selection)
+        } else {
+            ("  ", Role::Dim)
+        };
+        frame.render_widget(
+            Line::styled(fit(&format!("{mark}{label}"), width), theme.style(role)),
+            Rect::new(area.x + LABEL, y, area.width.saturating_sub(LABEL), 1),
+        );
+        y += 1;
+    }
+    y
 }
 
 /// The schedule-send picker, over the bottom of the composer: the four

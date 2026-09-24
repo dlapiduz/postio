@@ -13,6 +13,7 @@
 
 use crossterm::event::{KeyCode, KeyEvent};
 use postio_body::{Block, Document, Inline, Presentation, markdown};
+use postio_model::contact_group::RecipientCandidate;
 use postio_model::{Draft, MessageBody};
 use postio_ui::terminal::SafeText;
 use ratatui_textarea::TextArea;
@@ -62,6 +63,12 @@ pub struct Composer {
     /// How many times what would be saved has changed, so a save that was
     /// asked for before the last edit knows it is stale.
     edits: u64,
+    /// Who the recipient being typed could be, best first.
+    suggestions: Vec<RecipientCandidate>,
+    /// The suggestion the keyboard is on.
+    suggestion: usize,
+    /// What was last looked up, so an answer for anything else is dropped.
+    asking: Option<String>,
 }
 
 impl std::fmt::Debug for Composer {
@@ -141,6 +148,9 @@ impl Composer {
             identities: Vec::new(),
             identity: 0,
             edits: 0,
+            suggestions: Vec::new(),
+            suggestion: 0,
+            asking: None,
             draft,
         }
     }
@@ -252,6 +262,73 @@ impl Composer {
     /// How many times what would be saved has changed.
     pub fn edits(&self) -> u64 {
         self.edits
+    }
+
+    /// Who the recipient being typed could be, best first.
+    pub fn suggestions(&self) -> &[RecipientCandidate] {
+        &self.suggestions
+    }
+
+    /// The suggestion the keyboard is on.
+    pub fn suggestion(&self) -> usize {
+        self.suggestion
+    }
+
+    /// What to look up now, if the recipient being typed has changed and
+    /// there is enough of it (the desktop's threshold, #424). Anything
+    /// shorter puts the suggestions away.
+    pub fn wants_completion(&mut self) -> Option<String> {
+        let wanted = match self.field {
+            Field::To | Field::Cc | Field::Bcc => {
+                postio_ui::recipients::prefix(self.value(self.field)).map(str::to_owned)
+            }
+            _ => None,
+        };
+        if wanted.is_none() {
+            self.asking = None;
+            self.suggestions.clear();
+            return None;
+        }
+        if wanted == self.asking {
+            return None;
+        }
+        self.asking.clone_from(&wanted);
+        wanted
+    }
+
+    /// The answer to a lookup, offered only if it is still what is typed.
+    pub fn offer(&mut self, prefix: &str, found: Vec<RecipientCandidate>) {
+        if self.asking.as_deref() == Some(prefix) {
+            self.suggestions = found;
+            self.suggestion = 0;
+        }
+    }
+
+    /// A key while suggestions are showing: the arrows choose, Tab or Enter
+    /// accepts, Escape puts them away. Answers whether it was one of those.
+    pub fn completion_key(&mut self, key: KeyEvent) -> bool {
+        if self.suggestions.is_empty() {
+            return false;
+        }
+        let count = self.suggestions.len();
+        match key.code {
+            KeyCode::Down => self.suggestion = (self.suggestion + 1) % count,
+            KeyCode::Up => self.suggestion = (self.suggestion + count - 1) % count,
+            KeyCode::Tab | KeyCode::Enter => {
+                let candidate = self.suggestions[self.suggestion].clone();
+                let field = self.field;
+                let replaced = postio_ui::recipients::accepted(self.value(field), &candidate);
+                if let Some(input) = self.line_mut(field) {
+                    *input = Input::default().with_value(replaced);
+                }
+                self.suggestions.clear();
+                self.asking = None;
+                self.edits += 1;
+            }
+            KeyCode::Esc => self.suggestions.clear(),
+            _ => return false,
+        }
+        true
     }
 
     /// The id the host gave this draft's first save.

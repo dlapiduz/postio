@@ -255,6 +255,39 @@ mod tests {
     }
 
     #[test]
+    fn recipient_suggestions_are_listed_under_the_field_and_harmless() {
+        let mut app = with_sidebar((160, 16));
+        app.compose(postio_model::Draft::new(postio_model::AccountId::new(1)));
+        for c in "ada@".chars() {
+            update(
+                &mut app,
+                Input::Key(crossterm::event::KeyEvent::from(
+                    crossterm::event::KeyCode::Char(c),
+                )),
+            );
+        }
+        // Contact names are harvested from received mail's headers.
+        let hostile = postio_model::contact_group::RecipientCandidate::Contact(
+            postio_model::EmailAddress::new(Some("Ada\u{1b}[2J"), "ada@example.com"),
+        );
+        update(
+            &mut app,
+            Input::Recipients {
+                prefix: "ada@".into(),
+                found: vec![hostile],
+            },
+        );
+        let screen = screen(160, 16, &app);
+        assert!(
+            screen
+                .lines()
+                .any(|line| line.contains("› Ada") && line.contains("<ada@example.com>")),
+            "{screen}"
+        );
+        assert!(!screen.contains('\u{1b}'), "{screen:?}");
+    }
+
+    #[test]
     fn a_hostile_subject_in_the_composer_reaches_the_screen_harmless() {
         let mut app = with_sidebar((160, 16));
         let mut draft = postio_model::Draft::new(postio_model::AccountId::new(1));
