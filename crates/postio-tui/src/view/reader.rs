@@ -59,13 +59,22 @@ pub fn draw(
         ));
         lines.push(Line::default());
     }
-    let header = lines.len();
-    lines.extend(reading.layout(now).0.into_iter().skip(top));
-    for (offset, line) in lines.into_iter().take(usize::from(area.height)).enumerate() {
+    let height = usize::from(area.height);
+    let mut drawn: Vec<(Line, Option<usize>)> =
+        lines.into_iter().map(|line| (line, None)).collect();
+    // Only as many of the message's lines are wrapped as fill the pane.
+    for (index, line) in reading.layout(now).0.into_iter().enumerate().skip(top) {
+        if drawn.len() >= height {
+            break;
+        }
+        for row in crate::view::wrap::wrap(&line, width) {
+            drawn.push((row, Some(index)));
+        }
+    }
+    for (offset, (line, target)) in drawn.into_iter().take(height).enumerate() {
         let y = area.y + u16::try_from(offset).unwrap_or(u16::MAX);
         let row = Rect::new(area.x, y, area.width, 1);
         frame.render_widget(line, row);
-        let target = offset.checked_sub(header).map(|index| top + index);
         hits.add(row, Target::Reader(target));
     }
 }

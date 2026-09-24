@@ -12,6 +12,7 @@ pub mod reader;
 pub mod search;
 pub mod settings;
 pub mod sidebar;
+pub mod wrap;
 
 use chrono::{DateTime, Local};
 use ratatui::Frame;
@@ -1033,6 +1034,26 @@ mod tests {
             screen.contains("│ Engine notes"),
             "a divider keeps the panes apart:\n{screen}"
         );
+    }
+
+    #[test]
+    fn the_readers_lines_are_wrapped_to_its_pane() {
+        // One paragraph far wider than the reading pane: every word of it
+        // must be on screen, none cut at the pane's right edge.
+        let words: Vec<String> = (0..60).map(|n| format!("w{n:02}")).collect();
+        let mut app = with_sidebar((160, 30));
+        app.set_reading_for_tests(crate::conversation::Reading {
+            row: postio_model::MessageId::new(1),
+            members: vec![crate::conversation::tests::member_saying(
+                1,
+                &words.join(" "),
+            )],
+            current: 0,
+        });
+        let screen = screen(160, 30, &app);
+        for word in &words {
+            assert!(screen.contains(word.as_str()), "{word} was cut:\n{screen}");
+        }
     }
 
     #[test]

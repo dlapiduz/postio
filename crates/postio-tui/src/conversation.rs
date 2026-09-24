@@ -252,6 +252,11 @@ pub(crate) mod tests {
         }
     }
 
+    /// A message whose body is `body`.
+    pub(crate) fn member_saying(id: i64, body: &str) -> Member {
+        member(id, "Ada", Some(body))
+    }
+
     /// A message whose body is `lines` lines long.
     pub(crate) fn member_with_lines(id: i64, lines: usize) -> Member {
         let body: Vec<String> = (0..lines).map(|line| format!("line {line}")).collect();
