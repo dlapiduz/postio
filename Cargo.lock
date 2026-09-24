@@ -5415,6 +5415,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "postio-vcard"
+version = "0.4.2"
+dependencies = [
+ "postio-model",
+ "postio-workspace-hack",
+ "vcard-rs",
+]
+
+[[package]]
 name = "postio-widgets"
 version = "0.4.2"
 dependencies = [
@@ -5733,6 +5742,12 @@ checksum = "1fbf4db142a473a8d80c26bbf18454ed458bf8d26c8219c331daecfdbd079001"
 dependencies = [
  "proc-macro2",
 ]
+
+[[package]]
+name = "quoted_printable"
+version = "0.5.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "478e0585659a122aa407eb7e3c0e1fa51b1d8a870038bd29f0cf4a8551eea972"
 
 [[package]]
 name = "r-efi"
@@ -8166,6 +8181,18 @@ name = "valuable"
 version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ba73ea9cf16a25df0c8caa16c51acb937d5712a8429db78a3ee29d5dcacd3a65"
+
+[[package]]
+name = "vcard-rs"
+version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "255606ce9ec8950425d1dedd846cf11ef53c6705627025821d664a845eeeda3f"
+dependencies = [
+ "base64 0.23.1",
+ "encoding_rs",
+ "memchr",
+ "quoted_printable",
+]
 
 [[package]]
 name = "vello_common"

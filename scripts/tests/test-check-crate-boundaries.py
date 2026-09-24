@@ -55,6 +55,7 @@ def build_fixture(
     body_deps: str = "",
     model_deps: str = "",
     config_deps: str = "",
+    vcard_deps: str = "",
     helper_deps: str = "",
     tui_deps: str = "",
     client_deps: str = "",
@@ -81,6 +82,7 @@ def build_fixture(
     write_crate(root, "crates", "postio-body", body_deps)
     write_crate(root, "crates", "postio-model", model_deps)
     write_crate(root, "crates", "postio-config", config_deps)
+    write_crate(root, "crates", "postio-vcard", vcard_deps)
     write_crate(root, "crates", "helper", helper_deps)
     # The terminal frontend and what it stands on (docs/archive/specs/005-tui-frontend).
     write_crate(root, "crates", "postio-tui", tui_deps)
@@ -329,6 +331,29 @@ def main() -> int:
             ),
             expected_status=1,
             must_mention=("postio-body", "gtk4"),
+        )
+
+        # 11b. postio-vcard parses files a stranger handed the user and is
+        #      linked only by the app's import command -- a leaf, kept off
+        #      postio-model's compile path, with no engine and no runtime of
+        #      its own (specs/005-contacts R9).
+        check_case(
+            "postio-vcard gains a direct tokio dependency",
+            build_fixture(
+                tmp_path / "vcard-tokio",
+                vcard_deps='tokio = { path = "../../vendor/tokio" }\n',
+            ),
+            expected_status=1,
+            must_mention=("postio-vcard", "tokio"),
+        )
+        check_case(
+            "postio-vcard gains a direct turso dependency",
+            build_fixture(
+                tmp_path / "vcard-turso",
+                vcard_deps='turso = { path = "../../vendor/turso" }\n',
+            ),
+            expected_status=1,
+            must_mention=("postio-vcard", "turso"),
         )
 
         # 12. postio-model is what the whole workspace waits on to compile;
