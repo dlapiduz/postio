@@ -279,6 +279,10 @@ command_ids! {
     ContactGroupAdd => "contact_group_add",
     /// Take the marked people out of the group on screen.
     ContactGroupRemove => "contact_group_remove",
+    /// Import people from a vCard file.
+    ContactsImport => "contacts_import",
+    /// Export people to a vCard file.
+    ContactsExport => "contacts_export",
 }
 
 impl fmt::Display for CommandId {
@@ -901,6 +905,11 @@ pub enum Command {
         /// Who; empty means the marked people, or the one under the cursor.
         people: Vec<ContactId>,
     },
+    /// Import a vCard file (FR-050); the screen asks which.
+    ContactsImport,
+    /// Export to a vCard file (FR-050): the marked people, or what the list
+    /// shows; the screen asks where.
+    ContactsExport,
 }
 
 /// What a [`Command::ContactGroupNew`] asks for.
@@ -1172,6 +1181,8 @@ impl Command {
             Command::ContactGroupRename { .. } => CommandId::ContactGroupRename,
             Command::ContactGroupAdd { .. } => CommandId::ContactGroupAdd,
             Command::ContactGroupRemove { .. } => CommandId::ContactGroupRemove,
+            Command::ContactsImport => CommandId::ContactsImport,
+            Command::ContactsExport => CommandId::ContactsExport,
         }
     }
 
@@ -1334,6 +1345,8 @@ impl Command {
                 group: None,
                 people: Vec::new(),
             },
+            CommandId::ContactsImport => Command::ContactsImport,
+            CommandId::ContactsExport => Command::ContactsExport,
         }
     }
 

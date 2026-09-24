@@ -49,6 +49,29 @@ type CursorHandler = Box<dyn Fn(Option<ContactId>)>;
 type PeopleHandler = Box<dyn Fn(Vec<ContactId>)>;
 type GroupHandler = Box<dyn Fn(ContactGroupId)>;
 type NameHandler = Box<dyn Fn(String)>;
+type UnitHandler = Box<dyn Fn()>;
+type FileAskHandler = Box<dyn Fn(FileAsk)>;
+type ImportHandler = Box<dyn Fn(std::path::PathBuf)>;
+type ExportHandler = Box<dyn Fn(ExportScope, std::path::PathBuf)>;
+
+/// Which file the screen is asking for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FileAsk {
+    /// A `.vcf` to import.
+    Import,
+    /// Where to write an export.
+    Export,
+}
+
+/// Who an export writes (FR-050): the marked people, or -- with nothing
+/// marked -- exactly what the list shows.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ExportScope {
+    /// These people.
+    People(Vec<ContactId>),
+    /// Everyone in this view.
+    View(ContactView),
+}
 
 /// What the group panel is asking.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -121,7 +144,7 @@ mod imp {
         pub lists: gtk::Stack,
         pub suggestions: gtk::ListBox,
         pub suggested: RefCell<Vec<postio_model::JoinSuggestion>>,
-        pub suggestions_asked_handlers: RefCell<Vec<Box<dyn Fn()>>>,
+        pub suggestions_asked_handlers: RefCell<Vec<UnitHandler>>,
         /// The groups, above the people; the one the keyboard is on shows
         /// its members in the list (FR-040).
         pub groups_box: gtk::ListBox,
@@ -135,9 +158,16 @@ mod imp {
         pub group_entry: gtk::Entry,
         pub group_choices: gtk::ListBox,
         pub group_mode: RefCell<Option<GroupPanel>>,
-        pub groups_asked_handlers: RefCell<Vec<Box<dyn Fn()>>>,
+        pub groups_asked_handlers: RefCell<Vec<UnitHandler>>,
         pub group_rows_handlers: RefCell<Vec<GroupHandler>>,
         pub group_mail_handlers: RefCell<Vec<NameHandler>>,
+        /// Stands in for the file dialog when set -- a test's answer, the
+        /// parts panel's `connect_ask` shape (#988).
+        pub file_ask_handlers: RefCell<Vec<FileAskHandler>>,
+        pub asking_file: Cell<Option<FileAsk>>,
+        pub export_scope: RefCell<Option<ExportScope>>,
+        pub import_handlers: RefCell<Vec<ImportHandler>>,
+        pub export_handlers: RefCell<Vec<ExportHandler>>,
         pub join_asked_handlers: RefCell<Vec<PeopleHandler>>,
         pub add_address_handlers: RefCell<Vec<TypedHandler>>,
     }
@@ -712,6 +742,27 @@ impl ContactsPane {
             CommandId::Back => self.back(),
             CommandId::ContactsFilter => {
                 self.imp().filter.grab_focus();
+            }
+            CommandId::ContactsImport => self.ask_file(FileAsk::Import),
+            CommandId::ContactsExport => {
+                let marked = self.marked();
+                let scope = if !marked.is_empty() {
+                    ExportScope::People(marked)
+                } else if !self.filter_text().trim().is_empty()
+                    || self.imp().shown_group.get().is_some()
+                {
+                    // A filter or a group: the rows are all here, capped.
+                    let model = self.model();
+                    ExportScope::People(
+                        (0..model.n_items())
+                            .filter_map(|at| model.row(at).map(|row| row.id))
+                            .collect(),
+                    )
+                } else {
+                    ExportScope::View(self.view())
+                };
+                self.imp().export_scope.replace(Some(scope));
+                self.ask_file(FileAsk::Export);
             }
             CommandId::ContactsSuggestions => {
                 if self.suggestions_open() {
@@ -1387,6 +1438,99 @@ impl ContactsPane {
             group: Some(group),
             people,
         });
+    }
+
+    // -- vCard (User Story 6) -----------------------------------------------
+
+    /// Answers "which file?" instead of the file dialog. Installed, it
+    /// replaces the dialog entirely; the answer is
+    /// [`file_chosen`](Self::file_chosen).
+    pub fn connect_file_ask(&self, handler: impl Fn(FileAsk) + 'static) {
+        self.imp()
+            .file_ask_handlers
+            .borrow_mut()
+            .push(Box::new(handler));
+    }
+
+    /// Called with the file the user picked to import.
+    pub fn connect_import(&self, handler: impl Fn(std::path::PathBuf) + 'static) {
+        self.imp()
+            .import_handlers
+            .borrow_mut()
+            .push(Box::new(handler));
+    }
+
+    /// Called with who to export and the file to write.
+    pub fn connect_export(&self, handler: impl Fn(ExportScope, std::path::PathBuf) + 'static) {
+        self.imp()
+            .export_handlers
+            .borrow_mut()
+            .push(Box::new(handler));
+    }
+
+    fn ask_file(&self, ask: FileAsk) {
+        self.imp().asking_file.set(Some(ask));
+        {
+            let handlers = self.imp().file_ask_handlers.borrow();
+            if !handlers.is_empty() {
+                for handler in handlers.iter() {
+                    handler(ask);
+                }
+                return;
+            }
+        }
+        let dialog = gtk::FileDialog::new();
+        let filter = gtk::FileFilter::new();
+        filter.set_name(Some("vCard"));
+        filter.add_suffix("vcf");
+        filter.add_mime_type("text/vcard");
+        let filters = gtk::gio::ListStore::new::<gtk::FileFilter>();
+        filters.append(&filter);
+        dialog.set_filters(Some(&filters));
+        let parent = self.imp().window.upgrade();
+        let pane = self.downgrade();
+        let answer = move |result: Result<gtk::gio::File, glib::Error>| {
+            let (Some(pane), Ok(file)) = (pane.upgrade(), result) else {
+                return;
+            };
+            if let Some(path) = file.path() {
+                pane.file_chosen(path);
+            }
+        };
+        match ask {
+            FileAsk::Import => {
+                dialog.set_title("Import contacts");
+                dialog.open(parent.as_ref(), gtk::gio::Cancellable::NONE, answer);
+            }
+            FileAsk::Export => {
+                dialog.set_title("Export contacts");
+                dialog.set_initial_name(Some("contacts.vcf"));
+                dialog.save(parent.as_ref(), gtk::gio::Cancellable::NONE, answer);
+            }
+        }
+    }
+
+    /// The file the user picked, from the dialog or the seam that stands in
+    /// for it.
+    pub fn file_chosen(&self, path: std::path::PathBuf) {
+        match self.imp().asking_file.take() {
+            Some(FileAsk::Import) => {
+                self.say("Importing…");
+                for handler in self.imp().import_handlers.borrow().iter() {
+                    handler(path.clone());
+                }
+            }
+            Some(FileAsk::Export) => {
+                let Some(scope) = self.imp().export_scope.take() else {
+                    return;
+                };
+                self.say("Exporting…");
+                for handler in self.imp().export_handlers.borrow().iter() {
+                    handler(scope.clone(), path.clone());
+                }
+            }
+            None => {}
+        }
     }
 
     // -- Possible duplicates (User Story 4) --------------------------------

@@ -25,6 +25,7 @@ mod composer_warm;
 mod contact_groups;
 mod contact_name_in_list_and_reader;
 mod contacts_delete_restore;
+mod contacts_import_export;
 mod contacts_join;
 mod contacts_screen;
 mod contacts_suggestions;
@@ -270,6 +271,10 @@ const CASES: &[(&str, fn())] = &[
     (
         "contacts_delete_restore::d_deletes_and_more_mail_does_not_bring_them_back",
         contacts_delete_restore::d_deletes_and_more_mail_does_not_bring_them_back,
+    ),
+    (
+        "contacts_import_export::v_i_imports_and_v_x_exports_what_the_list_shows",
+        contacts_import_export::v_i_imports_and_v_x_exports_what_the_list_shows,
     ),
     (
         "contacts_join::x_x_m_return_joins_and_u_takes_it_back",

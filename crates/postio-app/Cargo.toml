@@ -41,6 +41,7 @@ postio-session.workspace = true
 # `render_dedup` asserts on is postio-ui's instrument, and the import should
 # say so.
 postio-ui.workspace = true
+postio-vcard.workspace = true
 postio-smtp.workspace = true
 postio-storage.workspace = true
 tokio = { workspace = true, features = ["rt", "rt-multi-thread"] }

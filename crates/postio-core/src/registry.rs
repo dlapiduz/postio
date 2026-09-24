@@ -1798,6 +1798,28 @@ static SPECS: &[CommandSpec] = &[
         recovery: Recovery::Undo,
         requires: MAIL,
     },
+    CommandSpec {
+        id: CommandId::ContactsImport,
+        title: "Import vCard",
+        default_binding: "v i",
+        alternate_bindings: &[],
+        contexts: ctx(CONTACTS),
+        destructive: false,
+        // Import only adds, and its summary says what it joined; there is no
+        // unit to take back (contracts/commands.md).
+        recovery: Recovery::None,
+        requires: MAIL,
+    },
+    CommandSpec {
+        id: CommandId::ContactsExport,
+        title: "Export vCard",
+        default_binding: "v x",
+        alternate_bindings: &[],
+        contexts: ctx(CONTACTS),
+        destructive: false,
+        recovery: Recovery::None,
+        requires: MAIL,
+    },
 ];
 
 /// Every command, in cheat-sheet order.

@@ -151,6 +151,8 @@ command from inside a text field.
 | `R` | Rename group | Contacts | Undoable | `contact_group_rename` |
 | `l` | Add to group | Contacts | Undoable | `contact_group_add` |
 | `L` | Remove from group | Contacts | Undoable | `contact_group_remove` |
+| `v i` | Import vCard | Contacts |  | `contacts_import` |
+| `v x` | Export vCard | Contacts |  | `contacts_export` |
 
 ## The one box
 

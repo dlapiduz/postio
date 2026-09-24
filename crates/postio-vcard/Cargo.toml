@@ -19,3 +19,8 @@ vcard-rs = { version = "=0.4.0", default-features = false, features = ["parser",
 
 [lints]
 workspace = true
+
+# cargo-machete looks for `vcard_rs` in the source; the library is named
+# `vcard` (its `[lib] name`), so every `use vcard::...` goes unseen.
+[package.metadata.cargo-machete]
+ignored = ["vcard-rs"]

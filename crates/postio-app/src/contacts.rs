@@ -366,6 +366,79 @@ fn install_edits(window: &Window, wiring: &Wiring) {
         }
     });
 
+    // `v i`: a vCard file, read and parsed off the main thread, applied in
+    // one transaction, and summed up in a line (FR-050..FR-054). The log
+    // gets counts only: the file is somebody's address book (FR-061).
+    pane.connect_import({
+        let pane = pane.downgrade();
+        let database = wiring.database.clone();
+        let runtime = wiring.runtime.clone();
+        let events = wiring.events.clone();
+        move |path| {
+            let answer = ask(&database, &runtime, move |connection| async move {
+                Some(read_and_apply(&connection, &path).await)
+            });
+            let pane = pane.clone();
+            let events = events.clone();
+            glib::spawn_future_local(async move {
+                let Ok(Some(result)) = answer.recv().await else {
+                    return;
+                };
+                let Some(pane) = pane.upgrade() else {
+                    return;
+                };
+                match result {
+                    Ok(summary) => {
+                        tracing::info!(
+                            created = summary.people_created,
+                            updated = summary.people_updated,
+                            joined = summary.joins.len(),
+                            groups = summary.groups_created,
+                            name_conflicts = summary.name_conflicts,
+                            skipped = summary.skipped.len(),
+                            "imported contacts"
+                        );
+                        pane.tell(&postio_ui::contacts::import_summary_line(&summary));
+                        events.emit(postio_core::Event::ContactsChanged {
+                            names_changed: true,
+                        });
+                    }
+                    Err(reason) => pane.tell(&reason),
+                }
+            });
+        }
+    });
+    // `v x`: the marked people, or what the list shows, as one 4.0 file.
+    pane.connect_export({
+        let pane = pane.downgrade();
+        let database = wiring.database.clone();
+        let runtime = wiring.runtime.clone();
+        move |scope, path| {
+            let answer = ask(&database, &runtime, move |connection| async move {
+                Some(read_and_write(&connection, scope, &path).await)
+            });
+            let pane = pane.clone();
+            glib::spawn_future_local(async move {
+                let Ok(Some(result)) = answer.recv().await else {
+                    return;
+                };
+                let Some(pane) = pane.upgrade() else {
+                    return;
+                };
+                match result {
+                    Ok(count) => {
+                        tracing::info!(count, "exported contacts");
+                        pane.tell(&match count {
+                            1 => "Exported 1 person".to_owned(),
+                            n => format!("Exported {n} people"),
+                        });
+                    }
+                    Err(reason) => pane.tell(&reason),
+                }
+            });
+        }
+    });
+
     // `v s`: who might be the same person, read whole and bounded (R11).
     pane.connect_suggestions_asked({
         let pane = pane.downgrade();
@@ -456,6 +529,93 @@ fn install_edits(window: &Window, wiring: &Wiring) {
             });
         }
     });
+}
+
+/// Reads the file at `path`, parses it and applies it; the summary, or why
+/// not in words for the screen.
+async fn read_and_apply(
+    connection: &postio_storage::Checkout,
+    path: &std::path::Path,
+) -> Result<postio_model::card::ImportSummary, String> {
+    let bytes =
+        std::fs::read(path).map_err(|error| format!("Could not read that file: {error}"))?;
+    let import = postio_vcard::parse(&bytes);
+    let mut summary = ContactRepository::new(connection)
+        .apply_import(&import.cards)
+        .await
+        .map_err(|error| {
+            tracing::warn!(%error, "could not apply an import");
+            "Could not import those contacts".to_owned()
+        })?;
+    summary.skipped = import.skipped;
+    Ok(summary)
+}
+
+/// Reads who `scope` names and writes them to `path`; how many, or why not.
+async fn read_and_write(
+    connection: &postio_storage::Checkout,
+    scope: postio_gtk::contacts::ExportScope,
+    path: &std::path::Path,
+) -> Result<usize, String> {
+    let contacts = ContactRepository::new(connection);
+    let failed = |error: postio_storage::Error| {
+        tracing::warn!(%error, "could not read contacts to export");
+        "Could not export those contacts".to_owned()
+    };
+    let ids = match scope {
+        postio_gtk::contacts::ExportScope::People(ids) => ids,
+        postio_gtk::contacts::ExportScope::View(view) => {
+            contacts.view_ids(view).await.map_err(failed)?
+        }
+    };
+    let rows = contacts.export_people(&ids).await.map_err(failed)?;
+    let groups = contacts.export_groups(&rows).await.map_err(failed)?;
+    std::fs::write(path, export_file(&rows, &groups))
+        .map_err(|error| format!("Could not write that file: {error}"))?;
+    Ok(rows.len())
+}
+
+/// One `.vcf` of `rows`, each a 4.0 card edited into the one they were
+/// imported from, when they were -- then the groups they are in, naming
+/// only the members this file carries.
+fn export_file(
+    rows: &[postio_storage::repository::ExportRow],
+    groups: &[postio_storage::repository::GroupExport],
+) -> String {
+    let people = rows
+        .iter()
+        .map(|row| {
+            let person = &row.person;
+            let emails: Vec<(String, bool)> = person
+                .addresses
+                .iter()
+                .map(|owned| (owned.address.address.clone(), owned.id == person.preferred))
+                .collect();
+            let name = person.display_name();
+            postio_vcard::export(
+                &postio_vcard::ExportPerson {
+                    uid: &row.uid,
+                    name: (!name.is_empty()).then_some(name),
+                    emails: &emails,
+                    organization: person.organization.as_deref(),
+                    note: person.note.as_deref(),
+                },
+                row.vcard.as_deref(),
+            )
+        })
+        .collect::<String>();
+    let groups = groups
+        .iter()
+        .map(|group| {
+            postio_vcard::export_group(
+                &group.uid,
+                &group.name,
+                &group.members,
+                group.vcard.as_deref(),
+            )
+        })
+        .collect::<String>();
+    people + &groups
 }
 
 /// How many possible duplicates the view lists at once: a page of them to

@@ -107,3 +107,5 @@ contact_group_new	g n
 contact_group_rename	R
 contact_group_add	l
 contact_group_remove	L
+contacts_import	v i
+contacts_export	v x

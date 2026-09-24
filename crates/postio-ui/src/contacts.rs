@@ -121,6 +121,58 @@ pub fn suggestion_line(suggestion: &postio_model::JoinSuggestion) -> String {
     )
 }
 
+/// What an import did, as the one line the screen shows (FR-053, R9).
+pub fn import_summary_line(summary: &postio_model::card::ImportSummary) -> String {
+    let people = |n: usize| if n == 1 { "person" } else { "people" };
+    let mut done: Vec<String> = Vec::new();
+    match (summary.people_created, summary.people_updated) {
+        (0, 0) => {}
+        (0, updated) => done.push(format!("{updated} {} you already had", people(updated))),
+        (created, 0) => done.push(format!("{created} new {}", people(created))),
+        (created, updated) => {
+            done.push(format!("{created} new {}", people(created)));
+            done.push(format!("updated {updated}"));
+        }
+    }
+    for join in &summary.joins {
+        done.push(format!("joined {}", and_list(join)));
+    }
+    match summary.groups_created {
+        0 => {}
+        1 => done.push("made 1 group".to_owned()),
+        n => done.push(format!("made {n} groups")),
+    }
+    let mut notes: Vec<String> = Vec::new();
+    if summary.name_conflicts > 0 {
+        notes.push(format!("kept your name for {}", summary.name_conflicts));
+    }
+    for skip in &summary.skipped {
+        notes.push(format!("skipped card {} ({})", skip.index + 1, skip.reason));
+    }
+    if done.is_empty() && notes.is_empty() {
+        return "Nothing to import".to_owned();
+    }
+    let mut line = if done.is_empty() {
+        "Imported nothing".to_owned()
+    } else {
+        format!("Imported {}", done.join(", "))
+    };
+    if !notes.is_empty() {
+        line.push_str("; ");
+        line.push_str(&notes.join("; "));
+    }
+    line
+}
+
+/// `a`, `a and b`, `a, b and c`.
+fn and_list(names: &[String]) -> String {
+    match names {
+        [] => String::new(),
+        [one] => one.clone(),
+        [init @ .., last] => format!("{} and {last}", init.join(", ")),
+    }
+}
+
 /// What joining these people offers to call them (specs/005-contacts
 /// FR-012/FR-013): the names the user chose, then what the mail called them,
 /// newest first and each once -- the first preselected, so `Return` accepts
@@ -669,6 +721,38 @@ mod join_tests {
     fn a_group_with_a_space_is_quoted_in_its_query() {
         assert_eq!(group_mail_query("Family"), "group:Family");
         assert_eq!(group_mail_query("Book club"), "group:\"Book club\"");
+    }
+
+    #[test]
+    fn an_import_summary_says_what_happened_and_nothing_that_did_not() {
+        use postio_model::card::{ImportSummary, Skip};
+        let summary = ImportSummary {
+            people_created: 2,
+            people_updated: 1,
+            joins: vec![vec!["Ada".into(), "A. L.".into()]],
+            groups_created: 1,
+            name_conflicts: 1,
+            skipped: vec![Skip {
+                index: 3,
+                reason: "it has no email address".into(),
+            }],
+        };
+        assert_eq!(
+            import_summary_line(&summary),
+            "Imported 2 new people, updated 1, joined Ada and A. L., made 1 group; \
+             kept your name for 1; skipped card 4 (it has no email address)"
+        );
+        assert_eq!(
+            import_summary_line(&ImportSummary {
+                people_updated: 1,
+                ..Default::default()
+            }),
+            "Imported 1 person you already had"
+        );
+        assert_eq!(
+            import_summary_line(&ImportSummary::default()),
+            "Nothing to import"
+        );
     }
 
     #[test]

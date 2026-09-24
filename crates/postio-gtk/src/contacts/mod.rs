@@ -18,7 +18,7 @@ pub use detail::DetailView;
 pub use editor::ContactEditor;
 pub use join::JoinPanel;
 pub use model::{ContactItem, ContactPageSource, ContactsModel};
-pub use pane::{CONTACTS_OPEN_CLASS, ContactsPane};
+pub use pane::{CONTACTS_OPEN_CLASS, ContactsPane, ExportScope, FileAsk};
 pub use row::ContactRowView;
 
 use crate::window::Window;
