@@ -58,7 +58,7 @@ use postio_search::{ParsedQuery, SearchResults};
 // rather than a second one with its own hit limit and its own excerpt rule.
 // `facets` below still needs the limit, which is why it is imported and not
 // merely called through.
-use postio_session::search::{HIT_LIMIT, execute as run};
+use postio_session::search::{HIT_LIMIT, execute_with_snippets};
 use postio_storage::repository::{ContactRepository, LabelRepository};
 use postio_storage::{Checkout, Store};
 
@@ -396,7 +396,11 @@ async fn install_run(
             let hits = ask(&database, &runtime, {
                 let query = query.clone();
                 move |connection| async move {
-                    run(&connection, account, &query, scope, order).await
+                    // One excerpt: the preview draws the focused hit's, and
+                    // only until its body arrives -- `focus` reads that body
+                    // straight after. The rest were fifty body reads between
+                    // the keystroke and this answer (#1613).
+                    execute_with_snippets(&connection, account, &query, scope, order, 1).await
                 }
             });
 
@@ -441,9 +445,7 @@ async fn install_run(
                     // Spelled out rather than chained: the read awaits, and
                     // a closure cannot.
                     let unreachable = match window.upgrade() {
-                        Some(window) => {
-                            unreachable_accounts(&window, &folders, account)
-                        }
+                        Some(window) => unreachable_accounts(&window, &folders, account),
                         None => Vec::new(),
                     };
                     // Whether an account this answer covers is rebuilding
@@ -491,15 +493,17 @@ async fn install_run(
                         announce(&events, &query, results);
                     }
                     facets(
-                        &view, &live, sequence, account, &query, scope, &database, &runtime,
-                    // POSTIO-GLIB-SAFE: nothing under this await wants a reactor. The
-                    // network work it reaches is spawned onto the runtime and answers over a
-                    // channel -- `onboarding::probe_with_offer` is the shape -- and what is
-                    // left is store reads, whose futures this engine makes self-contained.
-                    // Measured rather than assumed: `app_suite::glib_main_context` opens a
-                    // store and reads it on this context with no runtime anywhere, and fails
-                    // loudly if that stops being true.
-                    ).await;
+                        &view, &live, sequence, account, &query, scope, &database,
+                        &runtime,
+                        // POSTIO-GLIB-SAFE: nothing under this await wants a reactor. The
+                        // network work it reaches is spawned onto the runtime and answers over a
+                        // channel -- `onboarding::probe_with_offer` is the shape -- and what is
+                        // left is store reads, whose futures this engine makes self-contained.
+                        // Measured rather than assumed: `app_suite::glib_main_context` opens a
+                        // store and reads it on this context with no runtime anywhere, and fails
+                        // loudly if that stops being true.
+                    )
+                    .await;
                 }
             });
         }
@@ -983,7 +987,7 @@ mod tests {
     ) -> SearchResults {
         let connection = database.connect().await.expect("checkout");
         let query = postio_search::parse(text, chrono::Utc::now().date_naive());
-        run(
+        postio_session::search::execute(
             &connection,
             AccountScope::Account(account),
             &query,
