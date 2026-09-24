@@ -8,7 +8,9 @@ mismatch is refused, never negotiated.
 ## Transport
 
 - **Socket**: `$XDG_RUNTIME_DIR/postio/daemon.sock`, directory `0700`,
-  socket `0600`. Never TCP. A connecting peer's uid is checked with
+  socket `0600`. `$POSTIO_RUNTIME_DIR`, when set, names the directory
+  instead: a scratch run (`scripts/run-isolated.sh`) must not reach the
+  daemon that owns the real store. Never TCP. A connecting peer's uid is checked with
   `SO_PEERCRED` and must equal the daemon's.
 - **Lock and pid**: `$XDG_RUNTIME_DIR/postio/daemon.lock`, held with `flock`
   for the daemon's lifetime. Turso's own file lock is the backstop.
@@ -73,6 +75,7 @@ rather than rewritten.
 | Accounts | `Discover`, `AddAccount`, `SaveAccount`, `SaveOAuthAccount`, `BeginOAuth`, `FinishOAuth`, `CancelOAuth`, `Account(AccountOp)`, `EditAccount`, `RebuildIndex` | `postio-host/src/onboarding.rs`, `postio_session::onboarding` |
 | Settings | `AccountSettings`, `SaveSignature`, `DeleteSignature`, `SetBackfillExcluded`, `EgressLog`, `PrivacyLog`, `OrientationSeen`, `RetireOrientation` | `postio-host/src/settings.rs` |
 | Diagnostics | `Diagnose(report)` | `postio_session::diag` |
+| Startup and upkeep | `StartupRoute`, `Wired`, `StartSync`, `FetchBody(message)`, `StorageCeiling(max)`, `RecordEgress(event)` | `postio-host/src/{startup,maintenance}.rs` and the host's engines by account |
 | Notifications | `Attention(Attention)`, posted and never awaited | the client's entry in the host, read by `postio-host/src/notify.rs` |
 
 The terminal's settings are its `config.toml` (edited in `$EDITOR` at the
