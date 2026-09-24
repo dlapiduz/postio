@@ -80,7 +80,13 @@ pub fn start(account: &Account, wiring: &Wiring) -> Option<Engine> {
     // account has, and nothing downstream asks again.
     let tokens = token_source(account, &wiring.secrets);
 
-    let backend = backend_for(account, key, tokens.clone(), connector);
+    let (backend, smtp) = match &wiring.mail {
+        Some(mail) => (mail.backend.clone(), mail.smtp.clone()),
+        None => {
+            let smtp: Arc<dyn postio_smtp::transport::SmtpConnector> = smtp;
+            (backend_for(account, key, tokens.clone(), connector), smtp)
+        }
+    };
 
     match Engine::spawn(EngineParts {
         account: account.id,

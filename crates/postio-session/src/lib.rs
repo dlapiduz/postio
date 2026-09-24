@@ -345,6 +345,23 @@ pub struct Wiring {
     /// [`enforce_storage_ceiling`], which is the one place that decision is
     /// made.
     pub storage_ceiling: Option<u64>,
+    /// The mail transport every account's engine uses instead of the one its
+    /// settings name, when one is given: `None` in the application.
+    ///
+    /// A part, like `secrets`, and for the same reason: a test drives the
+    /// engine end to end through a mock server and a scripted SMTP server
+    /// rather than the network, and it can only do that if the transport is
+    /// handed in rather than built inside `engine::start`.
+    pub mail: Option<MailOverride>,
+}
+
+/// A mail transport handed to the engine instead of the account's own.
+#[derive(Clone, Debug)]
+pub struct MailOverride {
+    /// Where mail is read and filed.
+    pub backend: Arc<dyn postio_account::backend::MailBackend>,
+    /// Where mail is submitted.
+    pub smtp: Arc<dyn postio_smtp::transport::SmtpConnector>,
 }
 
 impl Wiring {
@@ -376,6 +393,7 @@ impl Wiring {
             backfill: postio_runtime::BackfillPolicy::default(),
             watch: postio_sync::WatchPolicy::default(),
             storage_ceiling: None,
+            mail: None,
         }
     }
 
@@ -422,6 +440,13 @@ impl Wiring {
     /// for one nobody has unlocked.
     pub fn with_secrets(mut self, secrets: Arc<dyn postio_account::secret::SecretStore>) -> Self {
         self.secrets = secrets;
+        self
+    }
+
+    /// The same wiring, reading, filing and submitting mail through `mail`
+    /// for every account rather than the servers their settings name.
+    pub fn with_mail(mut self, mail: MailOverride) -> Self {
+        self.mail = Some(mail);
         self
     }
 }

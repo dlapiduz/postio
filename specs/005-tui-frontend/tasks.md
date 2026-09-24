@@ -214,8 +214,8 @@ edges.)
 **Independent test**: `crates/postio-host/tests/two_clients.rs` against a real
 daemon on a temporary runtime dir (quickstart "two_clients").
 
-- [ ] T077 [US6] Write `crates/postio-host/tests/two_clients.rs` harness: a real `postio-daemon` on a temp `$XDG_RUNTIME_DIR` and data dir with the mock backend, and two `Client`s (kinds Gtk and Tui)
-- [ ] T078 [US6] In `crates/postio-host/tests/two_clients.rs`: US6 scenario 1: an archive in one client is absent from the other's next `Page` and its event arrives within 1 s (test clock-free: assert on event receipt)
+- [X] T077 [US6] Write `crates/postio-host/tests/two_clients.rs` harness: a real `postio-daemon` on a temp `$XDG_RUNTIME_DIR` and data dir with the mock backend, and two `Client`s (kinds Gtk and Tui). *(The daemon's host serving a real socket in-process: a separate `postio-daemon` process cannot be handed the mock server. `Wiring::with_mail` is the seam.)*
+- [X] T078 [US6] In `crates/postio-host/tests/two_clients.rs`: US6 scenario 1: an archive in one client is absent from the other's next `Page` and its event arrives within 1 s (test clock-free: assert on event receipt)
 - [ ] T079 [US6] In `crates/postio-host/tests/two_clients.rs`: US6 scenario 2: new mail from the mock is fetched once (the mock counts fetches) and appears in both
 - [ ] T080 [US6] In `crates/postio-host/tests/two_clients.rs`: US6 scenario 3 / SC-007: a scripted mixed session from both clients (archive, flag, move, send) — the mock sees each remote effect exactly once and one submission per send
 - [ ] T081 [US6] In `crates/postio-host/tests/two_clients.rs`: US6 scenario 4 and FR-043: disconnect one client mid-sync; the other keeps receiving events and the queue drains; then disconnect both and the daemon exits after the grace period
