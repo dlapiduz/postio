@@ -5,19 +5,22 @@ use ratatui::layout::Rect;
 use ratatui::style::Modifier;
 use ratatui::text::Line;
 
-use crate::reader::Rendered;
+use chrono::{DateTime, Local};
+
+use crate::conversation::Reading;
 use crate::row::Row;
 use crate::theme::{Role, Theme};
 use crate::view::fit;
 
-/// Draw `row`'s header and `rendered` into `area`, from line `top`.
+/// Draw `row`'s header and what is being read into `area`, from line `top`.
 pub fn draw(
     frame: &mut Frame,
     area: Rect,
     row: Option<&Row>,
-    rendered: &Rendered,
+    reading: &Reading,
     top: usize,
     theme: &Theme,
+    now: DateTime<Local>,
 ) {
     // A divider and a space between the list and the reader: without them the
     // list's date runs straight into the subject.
@@ -46,7 +49,7 @@ pub fn draw(
         ));
         lines.push(Line::default());
     }
-    lines.extend(rendered.lines().into_iter().skip(top));
+    lines.extend(reading.layout(now).0.into_iter().skip(top));
     for (offset, line) in lines.into_iter().take(usize::from(area.height)).enumerate() {
         let y = area.y + u16::try_from(offset).unwrap_or(u16::MAX);
         frame.render_widget(line, Rect::new(area.x, y, area.width, 1));

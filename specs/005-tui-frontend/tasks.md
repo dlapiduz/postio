@@ -139,7 +139,7 @@ properties on the grid; US2 scenarios on the fixture store.
 - [ ] T045 [US2] Links: a link focus mode that shows the full target, opening only on deliberate activation (xdg-open, or show-and-copy via OSC 52 when no opener exists). Test first: US2 scenario 4 — nothing is opened until the second activation
   - Progress: the full target is drawn inline, `text (destination)`, as tui-markdown draws a link, and `Rendered::links` collects them; opening waits for the mouse (T073), since the registry has no link commands and adding one would oblige the desktop frontend too.
 - [ ] T046 [US2] Attachments: list with name and size; save (`SavePart`) and open (`OpenPart` + xdg-open), fetching only then. Test first: US2 scenario 5 — the payload is requested only after "open"
-- [ ] T047 [US2] Conversations: `J`/`K` walk messages of one scrolling document (ADR 0032's shape) with per-message headers from `postio_ui::reader::header`. Test first: `J` moves to the next message's header row
+- [X] T047 [US2] Conversations: `J`/`K` walk messages of one scrolling document (ADR 0032's shape) with per-message headers from `postio_ui::reader::header`. Test first: `J` moves to the next message's header row
 - [ ] T048 [US2] Unsubscribe on deliberate activation only, through `ActivateUnsubscribe`. Test first: opening a list message sends nothing; the command sends once
 
 ---

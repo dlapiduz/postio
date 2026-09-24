@@ -254,6 +254,17 @@ fn perform(
                     let _ = inputs.send(Input::Rested(message)).await;
                 });
             }
+            Effect::ReadConversation(thread) => {
+                let client = client.clone();
+                let inputs = inputs.clone();
+                tokio::spawn(async move {
+                    let members = client
+                        .conversation(thread)
+                        .await
+                        .map_err(|error| error.message().to_owned());
+                    let _ = inputs.send(Input::Conversation { thread, members }).await;
+                });
+            }
             Effect::ReadBody(message) => {
                 let client = client.clone();
                 let inputs = inputs.clone();

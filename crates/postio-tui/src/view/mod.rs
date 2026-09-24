@@ -57,14 +57,15 @@ pub fn draw(frame: &mut Frame, app: &App, theme: &Theme, now: DateTime<Local>) {
                     }
                     Pane::List => list::draw(frame, *area, &app.visible(), theme, now),
                     Pane::Reader => {
-                        if let Some((message, rendered)) = app.reading() {
+                        if let Some(reading) = app.reading() {
                             reader::draw(
                                 frame,
                                 *area,
-                                app.row(message),
-                                rendered,
+                                app.row(reading.row),
+                                reading,
                                 app.reader_top(),
                                 theme,
+                                now,
                             );
                         }
                     }

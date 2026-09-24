@@ -42,6 +42,13 @@ pub enum Input {
     Host(postio_core::Event),
     /// The cursor has rested on `message` since [`Effect::Rest`] asked.
     Rested(postio_model::MessageId),
+    /// A conversation asked for by [`Effect::ReadConversation`] arrived.
+    Conversation {
+        /// Which.
+        thread: postio_model::ThreadId,
+        /// Its messages, oldest first, or why there are none.
+        members: Result<Vec<postio_model::listing::MessageSummary>, String>,
+    },
     /// A body asked for by [`Effect::ReadBody`] arrived.
     Body {
         /// Whose.
@@ -78,6 +85,8 @@ pub enum Effect {
     Quit,
     /// Wait [`READ_REST`], then answer with [`Input::Rested`].
     Rest(postio_model::MessageId),
+    /// Read a conversation and answer with [`Input::Conversation`].
+    ReadConversation(postio_model::ThreadId),
     /// Read a body and answer with [`Input::Body`].
     ReadBody(postio_model::MessageId),
     /// Open a list: count it and answer with [`Input::Opened`].
@@ -140,7 +149,7 @@ pub struct App {
     /// Every folder, to find the account a list belongs to.
     folders: Vec<postio_model::mailbox::Mailbox>,
     /// The message the reader shows, and how.
-    reading: Option<(postio_model::MessageId, crate::reader::Rendered)>,
+    reading: Option<crate::conversation::Reading>,
     /// The message the cursor was last seen resting towards.
     resting: Option<postio_model::MessageId>,
     /// The first reader line in view.
@@ -207,10 +216,8 @@ impl App {
     }
 
     /// What the reader shows: the message, and its rendered body.
-    pub fn reading(&self) -> Option<(postio_model::MessageId, &crate::reader::Rendered)> {
-        self.reading
-            .as_ref()
-            .map(|(message, rendered)| (*message, rendered))
+    pub fn reading(&self) -> Option<&crate::conversation::Reading> {
+        self.reading.as_ref()
     }
 
     /// What the status line says about the connection of the account on
@@ -423,6 +430,8 @@ impl App {
             }
             "back" if self.focus != Focus::List => self.focus = Focus::List,
             "expand_all" => self.toggle_folds(),
+            "next_in_conversation" => self.walk_conversation(1),
+            "prev_in_conversation" => self.walk_conversation(-1),
             "scroll_reader_down" => self.scroll_reader(1),
             "scroll_reader_up" => self.scroll_reader(-1),
             "back" => self.selection.clear(),
@@ -453,29 +462,27 @@ impl App {
         vec![Effect::Send(command)]
     }
 
-    /// Expand every fold in the message, or fold them all again.
+    /// Expand every fold in what is being read, or fold them all again.
     fn toggle_folds(&mut self) {
-        let Some((_, rendered)) = self.reading.as_mut() else {
-            return;
-        };
-        let any_folded = rendered
-            .blocks
-            .iter()
-            .any(|block| matches!(block, crate::reader::Block::Fold { folded: true, .. }));
-        for block in &mut rendered.blocks {
-            if let crate::reader::Block::Fold { folded, .. } = block {
-                *folded = !any_folded;
-            }
+        if let Some(reading) = self.reading.as_mut() {
+            reading.toggle_folds();
         }
+    }
+
+    /// The reader's lines and each member's header line, as of now.
+    fn reader_layout(&self) -> Option<(Vec<ratatui::text::Line<'static>>, Vec<usize>)> {
+        self.reading
+            .as_ref()
+            .map(|reading| reading.layout(chrono::Local::now()))
     }
 
     /// Scroll the reader by `pages` screenfuls, overlapping two lines so the
     /// eye keeps its place.
     fn scroll_reader(&mut self, pages: isize) {
-        let Some((_, rendered)) = self.reading.as_ref() else {
+        let Some((lines, _)) = self.reader_layout() else {
             return;
         };
-        let length = rendered.lines().len();
+        let length = lines.len();
         let page = usize::from(self.size.1.saturating_sub(6)).max(1);
         let step = page.saturating_sub(2).max(1);
         self.reader_top = if pages >= 0 {
@@ -485,18 +492,89 @@ impl App {
         };
     }
 
-    /// The cursor stayed: read the body, if it is still the one under it.
-    fn rested(&mut self, message: postio_model::MessageId) -> Vec<Effect> {
-        let here = self.cursor_message() == Some(message);
-        let shown = self.reading.as_ref().map(|(shown, _)| *shown) == Some(message);
-        if here && !shown {
-            vec![Effect::ReadBody(message)]
-        } else {
-            Vec::new()
+    /// Move to the next or previous message of the conversation.
+    fn walk_conversation(&mut self, step: isize) {
+        let Some(reading) = self.reading.as_mut() else {
+            return;
+        };
+        let last = reading.members.len().saturating_sub(1);
+        reading.current = reading.current.saturating_add_signed(step).min(last);
+        if let Some((_, headers)) = self.reader_layout() {
+            let current = self.reading.as_ref().map_or(0, |reading| reading.current);
+            self.reader_top = headers.get(current).copied().unwrap_or(0);
         }
     }
 
-    /// A body arrived: draw it, if the reader still wants it.
+    /// The cursor stayed: read what it is on, if the reader is not already.
+    fn rested(&mut self, message: postio_model::MessageId) -> Vec<Effect> {
+        let here = self.cursor_message() == Some(message);
+        let shown = self.reading.as_ref().map(|reading| reading.row) == Some(message);
+        if !here || shown {
+            return Vec::new();
+        }
+        let Some(row) = self.list.row_of(message) else {
+            return Vec::new();
+        };
+        match row.thread {
+            Some(thread) if row.is_thread && row.count > 1 => {
+                self.reading = Some(crate::conversation::Reading {
+                    row: message,
+                    members: Vec::new(),
+                    current: 0,
+                });
+                vec![Effect::ReadConversation(thread)]
+            }
+            _ => {
+                self.reading = Some(crate::conversation::Reading {
+                    row: message,
+                    members: vec![crate::conversation::Member {
+                        id: row.id,
+                        from: row.from.clone(),
+                        when: row.when,
+                        body: None,
+                    }],
+                    current: 0,
+                });
+                self.reader_top = 0;
+                vec![Effect::Redraw, Effect::ReadBody(message)]
+            }
+        }
+    }
+
+    /// A conversation's members arrived: read each one's body, and open on
+    /// the newest.
+    fn conversation(
+        &mut self,
+        thread: postio_model::ThreadId,
+        members: Result<Vec<postio_model::listing::MessageSummary>, String>,
+    ) -> Vec<Effect> {
+        let Some(reading) = self.reading.as_mut() else {
+            return Vec::new();
+        };
+        let wanted = self.list.row_of(reading.row).and_then(|row| row.thread) == Some(thread);
+        if !wanted || !reading.members.is_empty() {
+            return Vec::new();
+        }
+        let Ok(members) = members else {
+            return Vec::new();
+        };
+        reading.members = members
+            .iter()
+            .map(crate::conversation::Member::from_summary)
+            .collect();
+        reading.current = reading.members.len().saturating_sub(1);
+        let reads = reading
+            .members
+            .iter()
+            .map(|member| Effect::ReadBody(member.id))
+            .collect::<Vec<_>>();
+        self.walk_conversation(0);
+        let mut effects = vec![Effect::Redraw];
+        effects.extend(reads);
+        effects
+    }
+
+    /// A body arrived: put it on its member, if it is still being read.
     fn show(
         &mut self,
         message: postio_model::MessageId,
@@ -506,9 +584,6 @@ impl App {
         use postio_ui::reader::document::{
             Absent, Rendering, absent_html, body_html, suits_reader_view,
         };
-        if self.cursor_message() != Some(message) {
-            return Vec::new();
-        }
         let absent = |state| crate::reader::from_html(&absent_html(state));
         let rendered = match answer {
             Ok(Body::Ready { body, .. }) if body.html.is_some() => {
@@ -532,8 +607,17 @@ impl App {
             Ok(Body::ForeignDraft) => absent(Absent::ForeignDraft),
             Err(reason) => crate::reader::from_text(&reason),
         };
-        self.reading = Some((message, rendered));
-        self.reader_top = 0;
+        let Some(member) = self.reading.as_mut().and_then(|reading| {
+            reading
+                .members
+                .iter_mut()
+                .find(|member| member.id == message)
+        }) else {
+            return Vec::new();
+        };
+        member.body = Some(rendered);
+        // Bodies arrive in any order; keep the newest message's header in view.
+        self.walk_conversation(0);
         vec![Effect::Redraw]
     }
 
@@ -712,6 +796,7 @@ pub fn update(app: &mut App, input: Input) -> Vec<Effect> {
         Input::Sidebar(contents) => app.fill_sidebar(&contents),
         Input::Rested(message) => app.rested(message),
         Input::Body { message, answer } => app.show(message, answer),
+        Input::Conversation { thread, members } => app.conversation(thread, members),
         Input::Recounted { scope, total } => app.recounted(scope, total),
         Input::Page {
             generation,
@@ -1171,10 +1256,11 @@ mod tests {
                 }),
             },
         );
-        let (shown, rendered) = app.reading().expect("the reader shows it");
-        assert_eq!(shown, message);
-        let drawn: String = rendered
-            .lines()
+        let reading = app.reading().expect("the reader shows it");
+        assert_eq!(reading.row, message);
+        let drawn: String = reading
+            .layout(chrono::Local::now())
+            .0
             .iter()
             .map(|line| {
                 line.spans
@@ -1201,7 +1287,11 @@ mod tests {
                 answer: Ok(postio_client::protocol::Body::Partial),
             },
         );
-        assert!(app.reading().is_none());
+        assert!(
+            app.reading()
+                .is_none_or(|reading| reading.members.iter().all(|member| member.body.is_none())),
+            "nothing drawn for a row already left"
+        );
     }
 
     fn reading_a_long_quoted_reply(app: &mut App) {
@@ -1232,8 +1322,8 @@ mod tests {
     fn reader_text(app: &App) -> String {
         app.reading()
             .unwrap()
-            .1
-            .lines()
+            .layout(chrono::Local::now())
+            .0
             .iter()
             .map(|line| {
                 line.spans
@@ -1267,6 +1357,122 @@ mod tests {
         assert!(app.reader_top() > 20, "a screenful: {}", app.reader_top());
         update(&mut app, key(KeyCode::PageUp, KeyModifiers::NONE));
         assert_eq!(app.reader_top(), 0);
+    }
+
+    fn summary(id: i64, from: &str) -> postio_model::listing::MessageSummary {
+        postio_model::listing::MessageSummary {
+            id: MessageId::new(id),
+            thread: Some(postio_model::ThreadId::new(9)),
+            from: Some(postio_model::EmailAddress::new(None::<String>, from)),
+            subject: Some("Plans".into()),
+            preview: None,
+            received_at: Utc.with_ymd_and_hms(2026, 9, 20, 9, 0, 0).unwrap(),
+            seen: true,
+            flagged: false,
+            answered: false,
+            send_state: None,
+            send_at: None,
+            has_attachments: false,
+            thread_count: 3,
+        }
+    }
+
+    /// A list of one conversation row, three messages long, being read.
+    fn reading_a_conversation(app: &mut App) -> Vec<Effect> {
+        let effects = opened(app, 1);
+        let (generation, page) = effects
+            .iter()
+            .find_map(|effect| match effect {
+                Effect::Fetch {
+                    generation, page, ..
+                } => Some((*generation, *page)),
+                _ => None,
+            })
+            .unwrap();
+        let mut conversation = row(0);
+        conversation.id = MessageId::new(3);
+        conversation.thread = Some(postio_model::ThreadId::new(9));
+        conversation.is_thread = true;
+        conversation.count = 3;
+        update(
+            app,
+            Input::Page {
+                generation,
+                page,
+                rows: Ok(Page {
+                    total: 1,
+                    rows: vec![conversation],
+                }),
+            },
+        );
+        let effects = update(app, Input::Rested(MessageId::new(3)));
+        assert!(
+            effects.contains(&Effect::ReadConversation(postio_model::ThreadId::new(9))),
+            "a conversation row asks for its messages: {effects:?}"
+        );
+        update(
+            app,
+            Input::Conversation {
+                thread: postio_model::ThreadId::new(9),
+                members: Ok(vec![
+                    summary(1, "ada@example.com"),
+                    summary(2, "bea@example.com"),
+                    summary(3, "cy@example.com"),
+                ]),
+            },
+        )
+    }
+
+    #[test]
+    fn a_conversation_row_reads_every_message_in_it() {
+        let mut app = app((160, 40));
+        let effects = reading_a_conversation(&mut app);
+        let reads: Vec<MessageId> = effects
+            .iter()
+            .filter_map(|effect| match effect {
+                Effect::ReadBody(message) => Some(*message),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(reads, [1, 2, 3].map(MessageId::new).to_vec());
+        for id in 1..=3 {
+            update(
+                &mut app,
+                Input::Body {
+                    message: MessageId::new(id),
+                    answer: Ok(postio_client::protocol::Body::Ready {
+                        body: postio_model::MessageBody {
+                            text: Some(format!("words of message {id}")),
+                            html: None,
+                        },
+                        encoding_problems: false,
+                    }),
+                },
+            );
+        }
+        let drawn = reader_text(&app);
+        for id in 1..=3 {
+            assert!(drawn.contains(&format!("words of message {id}")), "{drawn}");
+        }
+        for who in ["ada@example.com", "bea@example.com", "cy@example.com"] {
+            assert!(drawn.contains(who), "{who} heads their message: {drawn}");
+        }
+    }
+
+    #[test]
+    fn j_and_k_in_the_reader_walk_the_conversation() {
+        let mut app = app((160, 40));
+        reading_a_conversation(&mut app);
+        update(&mut app, key(KeyCode::Tab, KeyModifiers::NONE));
+        assert_eq!(app.reading().unwrap().current, 2, "it opens on the newest");
+        update(&mut app, press('K'));
+        assert_eq!(app.reading().unwrap().current, 1);
+        let at_second = app.reader_top();
+        update(&mut app, press('K'));
+        assert_eq!(app.reading().unwrap().current, 0);
+        assert!(app.reader_top() < at_second, "the reader moved up to it");
+        update(&mut app, press('J'));
+        assert_eq!(app.reading().unwrap().current, 1);
     }
 
     #[test]
