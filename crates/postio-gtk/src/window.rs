@@ -1430,11 +1430,22 @@ impl Window {
         // One way to show a folder, whether the user picked it or the window
         // is opening on the one they were last in.
         let show: OpenMailbox = {
-            let feed = feed.clone();
-            let folders = folders.clone();
-            let list = list.clone();
-            let list_state = self.list_state();
+            // The window and sidebar retain this callback. It must not retain
+            // either feed: Folders owns the sidebar, and both feeds retain
+            // callbacks of their own below.
+            let feed = feed.downgrade();
+            let folders = folders.downgrade();
+            let list = list.downgrade();
+            let list_state = self.list_state().downgrade();
             std::rc::Rc::new(move |choice| {
+                let (Some(feed), Some(folders), Some(list), Some(list_state)) = (
+                    feed.upgrade(),
+                    folders.upgrade(),
+                    list.upgrade(),
+                    list_state.upgrade(),
+                ) else {
+                    return;
+                };
                 // A view row is in `mailboxes()` like any other — it just has
                 // no id — so the header above the rows is named the same way
                 // whichever kind was picked.
@@ -1533,10 +1544,10 @@ impl Window {
 
         folders.connect_loaded({
             let show = show.clone();
-            let feed = feed.clone();
-            let folders = folders.clone();
-            let sidebar = self.sidebar();
-            let list = list.clone();
+            let feed = feed.downgrade();
+            let folders = folders.downgrade();
+            let sidebar = self.sidebar().downgrade();
+            let list = list.downgrade();
             // Which folder tree this handler has already opened something
             // for. `None` is "not yet": generations start at zero, so zero
             // is a real value rather than a spare one.
@@ -1546,6 +1557,14 @@ impl Window {
             // emitted `MailboxesChanged` (#813).
             let picked_for = std::cell::Cell::new(None::<u64>);
             move |loaded| {
+                let (Some(feed), Some(folders), Some(sidebar), Some(list)) = (
+                    feed.upgrade(),
+                    folders.upgrade(),
+                    sidebar.upgrade(),
+                    list.upgrade(),
+                ) else {
+                    return;
+                };
                 // Refresh the header's "N unread" for the folder already on
                 // screen, on every load. `set_mailbox` is called elsewhere
                 // only when a folder is *opened*, so without this the count
@@ -1606,39 +1625,34 @@ impl Window {
         // line does, so there is one connection and one answer about it —
         // and they also depend on whether there are rows, which arrive a
         // beat after the status does.
-        folders.connect_status(glib::clone!(
-            #[weak(rename_to = window)]
-            self,
-            #[strong]
-            folders,
-            #[strong]
-            feed,
-            move |_| window.refresh_list_state(&folders, &feed)
-        ));
+        let refresh = {
+            let window = self.downgrade();
+            let folders = folders.downgrade();
+            let feed = feed.downgrade();
+            std::rc::Rc::new(move || {
+                if let (Some(window), Some(folders), Some(feed)) =
+                    (window.upgrade(), folders.upgrade(), feed.upgrade())
+                {
+                    window.refresh_list_state(&folders, &feed);
+                }
+            })
+        };
+        folders.connect_status({
+            let refresh = refresh.clone();
+            move |_| refresh()
+        });
         // And when the list is aimed somewhere else entirely. What the pane
         // says depends on *which* scope the rows came from -- an aggregate
         // answers ADR 0005 Q10's rule and a folder does not -- so a scope
         // change re-derives it. Neither of the other two triggers fires for
         // one: the connection has not moved, and switching to a view with
         // the same number of rows changes nothing about the model.
-        feed.connect_opened(glib::clone!(
-            #[weak(rename_to = window)]
-            self,
-            #[strong]
-            folders,
-            #[strong(rename_to = opened_feed)]
-            feed,
-            move || window.refresh_list_state(&folders, &opened_feed)
-        ));
-        list.model().connect_items_changed(glib::clone!(
-            #[weak(rename_to = window)]
-            self,
-            #[strong]
-            folders,
-            #[strong]
-            feed,
-            move |_, _, _, _| window.refresh_list_state(&folders, &feed)
-        ));
+        feed.connect_opened({
+            let refresh = refresh.clone();
+            move || refresh()
+        });
+        list.model()
+            .connect_items_changed(move |_, _, _, _| refresh());
 
         folders.open(account, address);
         *self.imp().messages.borrow_mut() = Some(messages);

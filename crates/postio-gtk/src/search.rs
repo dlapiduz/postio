@@ -1292,8 +1292,11 @@ impl View {
         // a second place the search is written down, and the two would
         // disagree the first time anyone edited either.
         view.panel().connect_refine({
-            let finder = finder.clone();
+            let finder = finder.downgrade();
             move |token| {
+                let Some(finder) = finder.upgrade() else {
+                    return;
+                };
                 let query = finder.query();
                 finder.set_query(crate::finder::Query {
                     mode: crate::finder::Mode::Search,
@@ -1311,8 +1314,11 @@ impl View {
         // executor refuses to guess when there are two terms or a filter --
         // so replacing the whole text is replacing exactly that word.
         view.panel().connect_suggestion({
-            let finder = finder.clone();
+            let finder = finder.downgrade();
             move |term| {
+                let Some(finder) = finder.upgrade() else {
+                    return;
+                };
                 finder.set_query(crate::finder::Query {
                     mode: crate::finder::Mode::Search,
                     text: term.to_owned(),
@@ -1325,8 +1331,11 @@ impl View {
         // again, against the new scope, which whoever answers reads off the
         // panel.
         view.panel().connect_scope({
-            let finder = finder.clone();
+            let finder = finder.downgrade();
             move |_| {
+                let Some(finder) = finder.upgrade() else {
+                    return;
+                };
                 if let Some(live) = finder.live() {
                     live.rerun();
                 }

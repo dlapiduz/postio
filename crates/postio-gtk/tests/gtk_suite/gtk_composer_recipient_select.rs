@@ -25,10 +25,59 @@ use std::cell::Cell;
 use std::rc::Rc;
 
 use gtk::gdk;
+use gtk::prelude::*;
 use postio_gtk::composer::{self, Composer, RecipientCandidate};
 use postio_gtk::window::Window;
 use postio_gtk::{fonts, style};
 use postio_model::EmailAddress;
+
+pub fn destroying_a_composer_releases_recipient_completion() {
+    if adw::init().is_err() || gdk::Display::default().is_none() {
+        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
+        return;
+    }
+
+    fn completion(widget: &gtk::Widget) -> Option<gtk::Widget> {
+        if widget.has_css_class("postio-recipient-completion") {
+            return Some(widget.clone());
+        }
+        let mut child = widget.first_child();
+        while let Some(current) = child {
+            if let Some(found) = completion(&current) {
+                return Some(found);
+            }
+            child = current.next_sibling();
+        }
+        None
+    }
+
+    let window = Window::default();
+    let weak_window = window.downgrade();
+    let composer = window.composer();
+    let weak_composer = composer.downgrade();
+    let popover = completion(composer.upcast_ref()).expect("recipient completion is mounted");
+    let weak_popover = popover.downgrade();
+    let weak_list = popover
+        .first_child()
+        .expect("completion has a list")
+        .downgrade();
+    let weak_entry = popover.parent().expect("popover has an entry").downgrade();
+
+    window.destroy();
+    drop(popover);
+    drop(composer);
+    drop(window);
+    settle();
+
+    assert!(weak_window.upgrade().is_none(), "window stayed alive");
+    assert!(weak_composer.upgrade().is_none(), "composer stayed alive");
+    assert!(weak_entry.upgrade().is_none(), "entry stayed alive");
+    assert!(weak_popover.upgrade().is_none(), "popover stayed alive");
+    assert!(
+        weak_list.upgrade().is_none(),
+        "completion list stayed alive"
+    );
+}
 
 fn grace() -> EmailAddress {
     EmailAddress::new(Some("Grace Hopper"), "grace@example.com")

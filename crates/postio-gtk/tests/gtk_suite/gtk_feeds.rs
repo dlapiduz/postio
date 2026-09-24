@@ -10,6 +10,7 @@
 //! harness would otherwise drive from two threads at once.
 
 use crate::pump;
+use crate::settle;
 use std::cell::Cell;
 use std::rc::Rc;
 
@@ -135,6 +136,32 @@ impl MessageSource for Store {
             Ok(Page { total, rows })
         })
     }
+}
+
+pub fn destroying_a_fed_window_releases_its_sources() {
+    if adw::init().is_err() || gdk::Display::default().is_none() {
+        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
+        return;
+    }
+
+    let source = Store::new();
+    let weak_source = Rc::downgrade(&source);
+    let window = Window::default();
+    let weak_window = window.downgrade();
+    let feeds = window.install_feeds(
+        AccountId::new(ACCOUNT),
+        "ada@example.com",
+        source.clone(),
+        source.clone(),
+    );
+    window.destroy();
+    drop(feeds);
+    drop(window);
+    drop(source);
+    settle();
+
+    assert!(weak_window.upgrade().is_none(), "fed window stayed alive");
+    assert!(weak_source.upgrade().is_none(), "feed retained its source");
 }
 
 pub fn the_panes_follow_the_account_the_sync_and_the_folder_you_pick() {
