@@ -107,8 +107,11 @@ impl Daemon {
             host.serve_until(listener, Duration::from_millis(500), async move {
                 let _ = stopped.await;
             });
-            // As `postio-daemon` exits once serving returns: the host, its
-            // runtime and every connection on it go.
+            // As `postio-daemon` exits once serving returns: its engines
+            // stop -- they run on threads of their own, which dropping the
+            // host would not end -- and the host, its runtime and every
+            // connection on it go.
+            host.stop();
             drop(host);
         });
         Daemon {
@@ -245,7 +248,12 @@ pub fn a_window_whose_daemon_stops_says_so_and_retry_reaches_a_new_one() {
             "the archive pressed after reconnecting never reached the new daemon"
         );
 
+        // The window goes before its daemon does, as it does when the app
+        // quits; otherwise the last thing it did would be to say its daemon
+        // stopped, to nobody.
         drop(terminal);
+        window.close();
+        while glib::MainContext::default().iteration(false) {}
         drop(window);
         drop(second);
     });

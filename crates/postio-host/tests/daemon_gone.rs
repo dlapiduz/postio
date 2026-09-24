@@ -42,7 +42,9 @@ fn a_daemon(
         host.serve_until(listener, Duration::from_secs(30), async move {
             let _ = stopped.await;
         });
-        // As `postio-daemon` does once serving returns: the host goes.
+        // As `postio-daemon` does once serving returns: the host stops,
+        // and goes.
+        host.stop();
         drop(host);
     });
     (stop, serving, blobs_dir)
