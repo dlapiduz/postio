@@ -578,10 +578,23 @@ impl Inner {
             Req::DefaultSignature { account, selected } => Resp::Signature(
                 compose::default_signature(&self.wiring.database, account, selected).await,
             ),
-            Req::Attach(path) => {
+            Req::AttachmentBytes(blob) => {
+                let blobs = self.wiring.blobs.clone();
+                let read = tokio::task::spawn_blocking(move || compose::blob_bytes(&blobs, &blob))
+                    .await
+                    .ok()
+                    .flatten();
+                Resp::Bytes(read)
+            }
+            Req::RecoverDraft(account) => Resp::Draft(
+                compose::recover(&self.wiring.database, account)
+                    .await
+                    .map(Box::new),
+            ),
+            Req::Attach { path, mime_type } => {
                 let blobs = self.wiring.blobs.clone();
                 let stored = tokio::task::spawn_blocking(move || {
-                    let mime_type = compose::guess_mime_type(&path);
+                    let mime_type = mime_type.unwrap_or_else(|| compose::guess_mime_type(&path));
                     compose::attach_file(&blobs, &path, mime_type)
                 })
                 .await
@@ -1307,7 +1320,7 @@ impl Drop for Local {
 }
 
 impl Transport for Local {
-    fn call(&self, request: Req) -> Call<'_> {
+    fn call(&self, request: Req) -> Call<'static> {
         let request = match self.inner.answer_in_order(self.client, request) {
             InOrder::Answered(answered) => return Box::pin(async move { Ok(answered) }),
             InOrder::Pending(landing) => {

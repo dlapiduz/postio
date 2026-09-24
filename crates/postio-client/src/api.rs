@@ -49,7 +49,12 @@ pub type Call<'a> = Pin<Box<dyn Future<Output = Result<Resp, Disconnected>> + Se
 /// How requests reach the host and events come back.
 pub trait Transport: Send + Sync + 'static {
     /// Ask, and await the one answer.
-    fn call(&self, request: Req) -> Call<'_>;
+    ///
+    /// The request is handed over by this call, not when the answer is first
+    /// polled: two calls made in order reach the host in that order however
+    /// their answers are awaited. Hence `'static` -- the answer borrows
+    /// nothing, so it can be awaited on another task.
+    fn call(&self, request: Req) -> Call<'static>;
 
     /// Ask without waiting for the answer. For facts a later read acts on,
     /// said from a synchronous caller.
@@ -94,7 +99,9 @@ impl Req {
             Req::CancelSend(_) => "CancelSend",
             Req::SendFailure(_) => "SendFailure",
             Req::DefaultSignature { .. } => "DefaultSignature",
-            Req::Attach(_) => "Attach",
+            Req::Attach { .. } => "Attach",
+            Req::AttachmentBytes(_) => "AttachmentBytes",
+            Req::RecoverDraft(_) => "RecoverDraft",
             Req::InlineImage { .. } => "InlineImage",
             Req::Search(_) => "Search",
             Req::SearchHits { .. } => "SearchHits",
@@ -346,50 +353,75 @@ impl Client {
         .await
     }
 
+    /// Hand `request` over now, in the order this is called, and answer
+    /// when the host does: for writes that must land in the order they were
+    /// made however their answers are awaited.
+    fn hand_over<T: Send + 'static>(
+        &self,
+        request: Req,
+        asked: &'static str,
+        take: fn(Resp) -> Option<T>,
+    ) -> impl Future<Output = Result<T, StoreError>> + Send + 'static {
+        self.counts.record(request.family());
+        let answer = self.transport.call(request);
+        async move {
+            match answer.await {
+                Ok(Resp::Failed(error)) => Err(error),
+                Ok(answer) => take(answer).ok_or_else(|| unexpected(asked)),
+                Err(disconnected) => Err(StoreError::new(disconnected.to_string())),
+            }
+        }
+    }
+
     /// Autosave `draft` as composition `generation`; the answer is its id.
-    pub async fn save_draft(&self, generation: u64, draft: Draft) -> Result<DraftId, StoreError> {
+    ///
+    /// Handed over at the call, like the other draft writes: see
+    /// [`Transport::call`].
+    pub fn save_draft(
+        &self,
+        generation: u64,
+        draft: Draft,
+    ) -> impl Future<Output = Result<DraftId, StoreError>> + Send + 'static {
         let request = Req::SaveDraft {
             generation,
             draft: Box::new(draft),
         };
-        self.read(request, "a saved draft", |answer| match answer {
+        self.hand_over(request, "a saved draft", |answer| match answer {
             Resp::DraftSaved(id) => Some(id),
             _ => None,
         })
-        .await
     }
 
-    /// Queue `draft` to send, now or at `at`.
-    pub async fn queue_send(
+    /// Queue `draft` to send, now or at `at`; handed over at the call.
+    pub fn queue_send(
         &self,
         generation: u64,
         draft: Draft,
         at: Option<DateTime<Utc>>,
-    ) -> Result<Option<MailboxId>, StoreError> {
+    ) -> impl Future<Output = Result<Option<MailboxId>, StoreError>> + Send + 'static {
         let request = Req::QueueSend {
             generation,
             draft: Box::new(draft),
             at,
         };
-        self.read(request, "a queued send", |answer| match answer {
+        self.hand_over(request, "a queued send", |answer| match answer {
             Resp::Queued(moved) => Some(moved),
             _ => None,
         })
-        .await
     }
 
-    /// Composition `generation` closed with nothing worth keeping.
-    pub async fn discard_draft(
+    /// Composition `generation` closed with nothing worth keeping; handed
+    /// over at the call.
+    pub fn discard_draft(
         &self,
         generation: u64,
         known: Option<DraftId>,
-    ) -> Result<(), StoreError> {
+    ) -> impl Future<Output = Result<(), StoreError>> + Send + 'static {
         let request = Req::DiscardDraft { generation, known };
-        self.read(request, "a discard", |answer| match answer {
+        self.hand_over(request, "a discard", |answer| match answer {
             Resp::Done => Some(()),
             _ => None,
         })
-        .await
     }
 
     /// Recipient completion for `prefix`.
@@ -500,15 +532,57 @@ impl Client {
         .await
     }
 
-    /// Store the file at `path` as an attachment.
+    /// Store the file at `path` as an attachment, of the type the host
+    /// guesses for it.
     pub async fn attach(
         &self,
         path: std::path::PathBuf,
     ) -> Result<Option<postio_model::Attachment>, StoreError> {
-        self.read(Req::Attach(path), "an attachment", |answer| match answer {
+        self.attach_as(path, None).await
+    }
+
+    /// Store the file at `path` as an attachment of `mime_type`, when the
+    /// frontend sniffed one; the host guesses otherwise.
+    pub async fn attach_as(
+        &self,
+        path: std::path::PathBuf,
+        mime_type: Option<String>,
+    ) -> Result<Option<postio_model::Attachment>, StoreError> {
+        let request = Req::Attach { path, mime_type };
+        self.read(request, "an attachment", |answer| match answer {
             Resp::Attached(found) => Some(found),
             _ => None,
         })
+        .await
+    }
+
+    /// The bytes stored under `blob`, or none when they are not here.
+    pub async fn attachment_bytes(
+        &self,
+        blob: postio_model::ids::BlobId,
+    ) -> Result<Option<Vec<u8>>, StoreError> {
+        self.read(
+            Req::AttachmentBytes(blob),
+            "an attachment's bytes",
+            |answer| match answer {
+                Resp::Bytes(found) => Some(found),
+                _ => None,
+            },
+        )
+        .await
+    }
+
+    /// Say this frontend's session began, and take back the draft `account`
+    /// was writing when the last one died, if it did.
+    pub async fn recover_draft(&self, account: AccountId) -> Result<Option<Draft>, StoreError> {
+        self.read(
+            Req::RecoverDraft(account),
+            "a recovered draft",
+            |answer| match answer {
+                Resp::Draft(found) => Some(found.map(|found| *found)),
+                _ => None,
+            },
+        )
         .await
     }
 
@@ -968,7 +1042,7 @@ mod tests {
     }
 
     impl Transport for Fake {
-        fn call(&self, request: Req) -> Call<'_> {
+        fn call(&self, request: Req) -> Call<'static> {
             self.asked.lock().unwrap().push(request);
             let answer = self.answers.lock().unwrap().remove(0);
             Box::pin(async move { answer })
@@ -1117,5 +1191,29 @@ mod tests {
         assert_eq!(client.counts().of("Page"), 2);
         assert_eq!(client.counts().of("Count"), 1);
         assert_eq!(client.counts().of("Body"), 0);
+    }
+
+    #[tokio::test]
+    async fn a_draft_write_is_handed_over_when_asked_not_when_awaited() {
+        // A composer hands over an autosave, a send and a discard from
+        // signal handlers and awaits each answer somewhere else, later. The
+        // order they reach the host has to be the order they were made, so
+        // each is handed over at the call, before anything polls it.
+        let (client, fake) = client(vec![
+            Ok(Resp::DraftSaved(DraftId::new(9))),
+            Ok(Resp::Queued(None)),
+            Ok(Resp::Done),
+        ]);
+        let draft = Draft::new(AccountId::new(1));
+        let saved = client.save_draft(1, draft.clone());
+        let queued = client.queue_send(1, draft, None);
+        let discarded = client.discard_draft(1, None);
+        let families: Vec<&str> = fake.asked.lock().unwrap().iter().map(Req::family).collect();
+        assert_eq!(families, ["SaveDraft", "QueueSend", "DiscardDraft"]);
+        // And nothing about the answers borrows the client.
+        drop(client);
+        assert_eq!(saved.await, Ok(DraftId::new(9)));
+        assert_eq!(queued.await, Ok(None));
+        assert_eq!(discarded.await, Ok(()));
     }
 }

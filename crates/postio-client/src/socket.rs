@@ -333,7 +333,7 @@ struct Socket {
 }
 
 impl Transport for Socket {
-    fn call(&self, request: Req) -> Call<'_> {
+    fn call(&self, request: Req) -> Call<'static> {
         let id = self.next.fetch_add(1, Ordering::Relaxed);
         let (answer, answered) = oneshot::channel();
         self.pending

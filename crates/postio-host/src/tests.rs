@@ -510,6 +510,82 @@ fn a_composition_closed_empty_leaves_no_draft() {
 }
 
 #[test]
+fn a_crashed_session_hands_back_the_draft_being_written_and_a_clean_one_does_not() {
+    let world = World::new();
+    let (client, _) = world.frontend(ClientKind::Gtk);
+    let account = world.rt.block_on(client.accounts()).expect("accounts")[0].id;
+
+    // A store this binary never opened is not a crash.
+    let first = world.rt.block_on(client.recover_draft(account));
+    assert_eq!(first, Ok(None));
+
+    // Something written, and a composition holding only whitespace.
+    world.rt.block_on(async {
+        client
+            .save_draft(1, a_draft(account, "Half a sentence"))
+            .await
+            .expect("saved");
+        let mut untouched = postio_model::Draft::new(account);
+        untouched.body.text = Some("  \n".to_owned());
+        client.save_draft(2, untouched).await.expect("saved");
+    });
+
+    // The session never ended: the next start is a crash, and gets back the
+    // draft with words in it, not the empty one.
+    let recovered = world
+        .rt
+        .block_on(client.recover_draft(account))
+        .expect("an answer")
+        .expect("the draft being written");
+    assert_eq!(recovered.body.text.as_deref(), Some("Half a sentence"));
+
+    // A clean end, and the next start leaves the draft parked.
+    world
+        .rt
+        .block_on(postio_session::end_session(&world.database));
+    assert_eq!(world.rt.block_on(client.recover_draft(account)), Ok(None));
+    assert_eq!(client.counts().of("RecoverDraft"), 3);
+}
+
+#[test]
+fn a_file_is_attached_as_the_type_the_frontend_sniffed_and_its_bytes_read_back() {
+    let world = World::new();
+    let (client, _) = world.frontend(ClientKind::Gtk);
+    let directory = tempfile::tempdir().expect("a directory");
+    let path = directory.path().join("minutes");
+    std::fs::write(&path, b"the minutes, unlabelled").expect("written");
+
+    let attached = world
+        .rt
+        .block_on(client.attach_as(path.clone(), Some("text/x-minutes".into())))
+        .expect("an answer")
+        .expect("stored");
+    assert_eq!(attached.mime_type, "text/x-minutes");
+    assert_eq!(attached.filename.as_deref(), Some("minutes"));
+
+    let blob = attached.blob_id.expect("a blob");
+    let bytes = world
+        .rt
+        .block_on(client.attachment_bytes(blob))
+        .expect("an answer");
+    assert_eq!(bytes.as_deref(), Some(&b"the minutes, unlabelled"[..]));
+
+    // With no type, the host guesses, as it does for the terminal.
+    let guessed = world
+        .rt
+        .block_on(client.attach(path))
+        .expect("an answer")
+        .expect("stored");
+    assert_eq!(guessed.mime_type, "application/octet-stream");
+
+    let missing = world
+        .rt
+        .block_on(client.attachment_bytes(postio_model::ids::BlobId::new("0".repeat(64))))
+        .expect("an answer");
+    assert_eq!(missing, None);
+}
+
+#[test]
 fn a_frontend_searches_and_hears_which_messages_matched() {
     let world = World::new();
     let (client, _) = world.frontend(ClientKind::Tui);

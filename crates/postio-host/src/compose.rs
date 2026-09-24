@@ -359,6 +359,53 @@ pub async fn drafts_of(database: &Store, account: AccountId) -> postio_storage::
         .await
 }
 
+/// Record that a session began, and answer the draft `account` was still
+/// writing if the last session died without ending cleanly (#491).
+///
+/// Only after a crash: `DraftState::Editing` alone is not evidence of one --
+/// Esc parks a draft in exactly that state on purpose -- and a client that
+/// opens into a stale compose buffer instead of the inbox reads as broken.
+/// `begin_session` is what knows how the last session ended; asking it also
+/// marks this one open, so this is asked once per process.
+///
+/// The most recently edited draft worth keeping, by the rule Esc uses
+/// ([`closing`](postio_model::draft::closing)): an untouched buffer is not
+/// work, and recovering one is self-perpetuating -- the composer it reopens
+/// autosaves another empty `Editing` row, and every unclean stop after the
+/// first would open the client into it.
+pub async fn recover(database: &Store, account: AccountId) -> Option<Draft> {
+    if !postio_session::begin_session(database).await {
+        return None;
+    }
+    let drafts = match drafts_of(database, account).await {
+        Ok(drafts) => drafts,
+        Err(error) => {
+            tracing::error!(%error, "could not read drafts to recover: {error}");
+            return None;
+        }
+    };
+    drafts.into_iter().find(|draft| {
+        draft.state == postio_model::DraftState::Editing
+            && postio_model::draft::closing(draft) == postio_model::draft::Closing::Keep
+    })
+}
+
+/// The bytes stored under `blob`, or none when they cannot be read.
+///
+/// Blocking: callers run it on a blocking thread. A composer's inline image
+/// is drawn from these, the same cost the reader pays per inline image.
+pub fn blob_bytes(blobs: &BlobStore, blob: &postio_model::ids::BlobId) -> Option<Vec<u8>> {
+    let mut file = blobs
+        .reader(blob)
+        .map_err(|error| tracing::warn!(%error, "could not read an inline image blob"))
+        .ok()?;
+    let mut bytes = Vec::new();
+    std::io::Read::read_to_end(&mut file, &mut bytes)
+        .map_err(|error| tracing::warn!(%error, "could not read an inline image blob"))
+        .ok()?;
+    Some(bytes)
+}
+
 /// The account a composer sends from: its identities, signatures and size
 /// limit.
 pub async fn account(database: &Store, account: AccountId) -> Option<Account> {

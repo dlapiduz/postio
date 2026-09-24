@@ -242,7 +242,23 @@ pub enum Req {
         selected: Option<MailboxId>,
     },
     /// Store the file at this path as an attachment.
-    Attach(std::path::PathBuf),
+    Attach {
+        /// Where the file is.
+        path: std::path::PathBuf,
+        /// Its type, when the frontend can sniff one better than the host's
+        /// fallback: the desktop asks shared-mime-info, which the daemon
+        /// may not have.
+        mime_type: Option<String>,
+    },
+    /// The bytes of a part the composer holds, by the blob they were stored
+    /// under: what an inline image in a draft draws.
+    AttachmentBytes(postio_model::ids::BlobId),
+    /// Record that a frontend's session began, and answer the draft
+    /// `account` was still writing when the last session died without
+    /// ending cleanly (#491). Nothing after a clean exit, or for a draft
+    /// holding nothing worth keeping. Asked once per process: the ask itself
+    /// marks the session open.
+    RecoverDraft(AccountId),
     /// Search, as the desktop's search bar does.
     Search(Search),
     /// The desktop search's hits, as its surfaces draw them: the parsed
@@ -415,6 +431,8 @@ pub enum Resp {
     Signature(Option<postio_model::SignatureId>),
     /// A stored attachment, or none when the file could not be read.
     Attached(Option<postio_model::Attachment>),
+    /// Stored bytes, or none when they are not here.
+    Bytes(Option<Vec<u8>>),
     /// What a search found, or nothing when the store could not be read.
     Found(Option<Found>),
     /// The desktop search's hits, or nothing when the store could not be
@@ -788,6 +806,12 @@ mod tests {
             Req::NoteRemoved(mailbox, messages.clone()),
             Req::Mailboxes(account),
             Req::DraftCounts(account),
+            Req::Attach {
+                path: "/tmp/minutes.txt".into(),
+                mime_type: Some("text/plain".into()),
+            },
+            Req::AttachmentBytes(postio_model::ids::BlobId::new("ab12")),
+            Req::RecoverDraft(account),
         ]
         .into_iter()
         .enumerate()
