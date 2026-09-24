@@ -1,0 +1,15 @@
+BEGIN:VCARD
+VERSION:3.0
+UID:urn:uuid:4fbe8971-0bc3-424c-9c26-36c3e1eff6b1
+FN:Ada Lovelace
+N:Lovelace;Ada;;;
+item1.EMAIL;TYPE=INTERNET,PREF:ada@home.example
+item1.X-ABLabel:Home
+EMAIL;TYPE=INTERNET:ada@work.example
+TEL;TYPE=CELL:+1 555 0100
+PHOTO;ENCODING=b;TYPE=JPEG:/9j/4AAQSkZJRgABAQ==
+X-EXAMPLE-VENDOR;CHARSET=UTF-8:kept as is
+CATEGORIES:Friends,Engines
+ORG:Analytical Engines
+NOTE:met at the conference
+END:VCARD

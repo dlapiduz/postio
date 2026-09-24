@@ -1,0 +1,16 @@
+BEGIN:VCARD
+VERSION:4.0
+FN:Grace Hopper
+EMAIL:grace@example.org
+END:VCARD
+BEGIN:VCARD
+VERSION:4.0
+FN:Broken
+this line has no colon
+EMAIL:broken@example.org
+END:VCARD
+BEGIN:VCARD
+VERSION:4.0
+FN:Katherine Johnson
+EMAIL:katherine@example.com
+END:VCARD

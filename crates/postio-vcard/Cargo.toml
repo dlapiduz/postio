@@ -19,8 +19,3 @@ vcard-rs = { version = "=0.4.0", default-features = false, features = ["parser",
 
 [lints]
 workspace = true
-
-# The crate is a skeleton until the import and export mapping lands
-# (specs/005-contacts T072), which is what uses both. Remove this with it.
-[package.metadata.cargo-machete]
-ignored = ["postio-model", "vcard-rs"]

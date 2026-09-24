@@ -1,0 +1,8 @@
+BEGIN:VCARD
+VERSION:4.0
+KIND:group
+UID:urn:uuid:9b1d6f2e-7c1a-4f7e-8a2b-0c3d4e5f6a7b
+FN:Family
+MEMBER:urn:uuid:4fbe8971-0bc3-424c-9c26-36c3e1eff6b1
+MEMBER:mailto:grace@example.org
+END:VCARD
