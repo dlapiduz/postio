@@ -24,8 +24,11 @@ The invariants (see CLAUDE.md, "Architectural invariants"):
   * ``postio-model`` must not depend on ``ammonia``/``html5ever``,
     ``rusqlite``/``turso``/``gtk4``, or ``tokio``. ADR 0004 Q1 rejected putting the
     composer's document here for exactly this reason -- dependency weight on
-    the crate the whole workspace waits on -- and ADR 0007 admitted the vCard
-    parser only because it brings zero dependencies of its own.
+    the crate the whole workspace waits on -- and the vCard parser went to a
+    crate of its own for the same one (specs/005-contacts R9).
+  * ``postio-vcard`` must not depend on ``rusqlite``/``turso``/``gtk4`` or
+    ``tokio``. It translates vCard files to contacts and back over a parser
+    of untrusted input; the app does the reading and the storing.
   * ``postio-config`` must not depend on ``rusqlite``/``turso``/``gtk4``. It parses and
     validates TOML and watches the file for changes; it does no SQL and links
     no toolkit.
@@ -255,6 +258,28 @@ RULES: dict[str, dict[str, object]] = {
             "0004). It is not a database and not a toolkit, and either one "
             "arriving here would mean a leaf every frontend depends on now "
             "links what only one of them needs."
+        ),
+    },
+    "postio-vcard": {
+        "banned": [
+            "rusqlite",
+            "libsqlite3-sys",
+            # The engine, whatever it is currently called -- the same pair
+            # postio-search and postio-body ban, for the same reason.
+            "turso",
+            "turso_core",
+            "gtk4",
+            "gtk4-sys",
+            "gtk4-macros",
+            "tokio",
+        ],
+        "why": (
+            "postio-vcard maps vCard files to contacts and back -- a pure "
+            "translation over a parser of untrusted input. The app reads the "
+            "file and writes the store; this crate does neither, so a database "
+            "engine, a toolkit or an async runtime arriving here would mean the "
+            "parser of a stranger's file has grown reach it was chosen not to "
+            "have (specs/005-contacts research R9)."
         ),
     },
     "postio-model": {

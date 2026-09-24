@@ -1,0 +1,21 @@
+[package]
+name = "postio-vcard"
+description = "vCard import and export: the mapping between cards and Postio's contacts, over Pimalaya's parser."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+repository.workspace = true
+
+[dependencies]
+postio-model = { workspace = true }
+# Pimalaya's parser, pinned exactly: it is young (0.x, two months old when
+# adopted) and it parses files a stranger handed the user, so a new version is
+# a deliberate bump that re-runs this crate's round-trip corpus, never a
+# `cargo update` side effect. The four features are its defaults, listed so the
+# set is a decision made here rather than inherited (specs/005-contacts R9).
+vcard-rs = { version = "=0.4.0", default-features = false, features = ["parser", "quoted-printable", "base64", "encoding"] }
+
+[lints]
+workspace = true
