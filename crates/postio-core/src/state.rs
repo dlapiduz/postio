@@ -247,7 +247,7 @@ pub enum Resolved {
 /// the `Ctrl+A` and the `a` from silently joining a selection the user was
 /// never shown. It also costs this type its `Copy`, which is the price of
 /// the guarantee.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum ViewScope {
     /// One folder, as the server has it.
     Mailbox(MailboxId),
@@ -320,6 +320,24 @@ struct Frame {
 /// [`Scope::Unified`] — see [`Requirement`](crate::registry::Requirement).
 pub use postio_model::AccountScope as Scope;
 
+/// The part of [`AppState`] a command is aimed with.
+///
+/// A verb resolves [`MessageTarget::Selection`] against the scope, the view,
+/// the selection and the focus, and nothing else in `AppState`. When the
+/// store's owner is another process (ADR 0041), each frontend's command has
+/// to carry its own copy of those four, because each frontend has its own
+/// selection and the host has none. This is that copy, and it is
+/// serialisable. The back stack and connection states stay behind: nothing
+/// aims with them.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct StateSnapshot {
+    scope: Scope,
+    viewing: Option<ViewScope>,
+    selected: Selection,
+    focus: Option<MessageId>,
+    view: ViewMode,
+}
+
 /// The application's view of itself.
 ///
 /// Mutated only from command handlers — the bus is the single writer, which is
@@ -347,6 +365,37 @@ impl AppState {
     /// An empty state: the message list, nothing selected.
     pub fn new() -> Self {
         AppState::default()
+    }
+
+    // -- Carrying it to another process ----------------------------------
+
+    /// What a command from this state is aimed with.
+    pub fn snapshot(&self) -> StateSnapshot {
+        StateSnapshot {
+            scope: self.scope,
+            viewing: self.viewing.clone(),
+            selected: self.selected.clone(),
+            focus: self.focus,
+            view: self.view.clone(),
+        }
+    }
+
+    /// Take on another state's aim, as the host does before running that
+    /// frontend's command. Silent: the host's copy is read by the verb and by
+    /// nothing that repaints.
+    pub fn adopt(&mut self, snapshot: StateSnapshot) {
+        let StateSnapshot {
+            scope,
+            viewing,
+            selected,
+            focus,
+            view,
+        } = snapshot;
+        self.scope = scope;
+        self.viewing = viewing;
+        self.selected = selected;
+        self.focus = focus;
+        self.view = view;
     }
 
     // -- What the user is looking at -------------------------------------
@@ -892,6 +941,28 @@ mod tests {
                 except: vec![MessageId::new(7)],
             })
         );
+    }
+
+    #[test]
+    fn a_snapshot_carries_a_selection_to_another_process_intact() {
+        // The host runs a frontend's `a` against the frontend's selection,
+        // not its own: the snapshot is what crosses, as JSON (ADR 0041).
+        let mut frontend = AppState::new();
+        frontend.open_mailbox(MailboxId::new(4));
+        frontend.select_all();
+        frontend.toggle_selection(MessageId::new(7));
+        frontend.focus_on(Some(MessageId::new(8)));
+
+        let wire = serde_json::to_string(&frontend.snapshot()).expect("serialises");
+        let mut host = AppState::new();
+        host.adopt(serde_json::from_str(&wire).expect("deserialises"));
+
+        assert_eq!(
+            host.resolve(&MessageTarget::Selection),
+            frontend.resolve(&MessageTarget::Selection)
+        );
+        assert_eq!(host.focus(), Some(MessageId::new(8)));
+        assert_eq!(host.mailbox(), Some(MailboxId::new(4)));
     }
 
     #[test]

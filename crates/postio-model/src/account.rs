@@ -444,7 +444,9 @@ impl Account {
 /// class of bug ADR 0005 Q10 is about. One type cannot drift from itself.
 /// `postio_core::state::Scope` re-exports this, so nothing #182 wrote had to
 /// change.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
+#[derive(
+    Debug, Clone, Copy, Default, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize,
+)]
 pub enum AccountScope {
     /// One account's own mailboxes.
     Account(AccountId),

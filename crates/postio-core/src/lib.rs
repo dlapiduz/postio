@@ -74,5 +74,5 @@ pub use dispatch::{CommandError, Dispatcher, Invocation};
 pub use event::{ConnectionState, Event, FailureReason, MailFootprint};
 pub use invocation::{EventEnvelope, InvocationId, InvocationOutcome};
 pub use registry::{Availability, CommandSpec, Recovery, Requirement, RequirementSet};
-pub use state::{AppState, Resolved, Scope, Selection, SharedState, ViewMode};
+pub use state::{AppState, Resolved, Scope, Selection, SharedState, StateSnapshot, ViewMode};
 pub use undo::{UndoEntry, UndoKind, UndoStack};

@@ -308,6 +308,5 @@ pub trait MailStore: Send + Sync {
     /// Separate from [`mailboxes`](Self::mailboxes) because the Outbox is not
     /// one: it has no row in `mailboxes` to carry a count, and the Drafts badge
     /// needs a number the cached column deliberately does not hold.
-    fn draft_counts(&self, account: AccountId)
-    -> Read<'_, DraftCounts>;
+    fn draft_counts(&self, account: AccountId) -> Read<'_, DraftCounts>;
 }
