@@ -35,6 +35,12 @@ pub fn bodies_sanitised() -> u64 {
     cost::read(&cost::BODIES_SANITISED)
 }
 
+/// How many message bodies this thread has parsed to decide whether they
+/// open in reader view -- a whole html5ever parse each.
+pub fn bulk_judged() -> u64 {
+    cost::read(&cost::BULK_JUDGED)
+}
+
 /// How many documents this process has handed to a rendering surface.
 pub fn renders_issued() -> u64 {
     cost::read(&cost::RENDERS)

@@ -57,6 +57,7 @@ use std::thread::LocalKey;
 thread_local! {
     pub(crate) static DOCUMENTS: Cell<u64> = const { Cell::new(0) };
     pub(crate) static BODIES_SANITISED: Cell<u64> = const { Cell::new(0) };
+    pub(crate) static BULK_JUDGED: Cell<u64> = const { Cell::new(0) };
     pub(crate) static DOCUMENT_BYTES: Cell<u64> = const { Cell::new(0) };
     pub(crate) static LARGEST_DOCUMENT: Cell<u64> = const { Cell::new(0) };
     pub(crate) static RENDERS: Cell<u64> = const { Cell::new(0) };

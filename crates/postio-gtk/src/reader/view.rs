@@ -1819,7 +1819,10 @@ fn compose_thread_document(
             // its content suggests, for that message and no other (#1398).
             let rendering = if originals.contains(&message.scope) {
                 Rendering::Original
-            } else if postio_ui::reader::document::suits_reader_view(&message.body) {
+            } else if renders
+                .borrow_mut()
+                .suits_reader_view(&message.scope, &message.body)
+            {
                 Rendering::Reader
             } else {
                 Rendering::Original
