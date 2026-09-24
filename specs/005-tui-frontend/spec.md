@@ -33,6 +33,23 @@ It is also a test of that claim. Every place the terminal frontend has to
 reach into GTK-side code to get behaviour is logic that belonged in a shared
 crate, and moving it there is in scope.
 
+## Clarifications
+
+### Session 2026-09-23
+
+- Q: Does the terminal frontend land on `main` once, with every user story
+  done, or in slices? → A: Once. All seven user stories are complete before
+  the branch lands; nothing reaches `main` earlier.
+- Q: How does text editing behave in the terminal composer? → A: Standard
+  text-box editing only (modeless: type to insert, arrows, Home/End, the
+  usual Ctrl chords); anyone who wants vim hands the body to `$EDITOR`.
+- Q: How is the terminal frontend installed and launched? → A: As its own
+  `postio-tui` command, shipped two ways: a standalone release download that
+  needs no GTK, and a flatpak of its own, separate from the desktop app's.
+- Q: Where do the terminal frontend's colours come from? → A: The terminal's
+  own palette for everything, plus Postio's accent for selection and focus on
+  true-colour terminals; overridable in `config.toml`.
+
 ## User Scenarios & Testing *(mandatory)*
 
 ### User Story 1 - Triage the inbox from a terminal (Priority: P1)
@@ -295,8 +312,10 @@ first sync.
 - **Resize mid-action**: resizing while composing or with a selection loses
   neither.
 - **Colour**: works on 16-colour, 256-colour and true-colour terminals, and
-  with `NO_COLOR` set; colour is never the only carrier of meaning (unread,
-  flagged and selected each have a non-colour mark).
+  with `NO_COLOR` set (no colour at all, accent included); colour is never
+  the only carrier of meaning (unread, flagged and selected each have a
+  non-colour mark). Below true colour the accent falls back to the terminal
+  palette's nearest role rather than an approximated shade.
 - **Unicode**: wide (CJK) characters, emoji and right-to-left text in subjects
   and bodies do not misalign columns or corrupt the grid.
 - **Hostile content**: terminal escape sequences inside a subject, sender name,
@@ -389,6 +408,13 @@ first sync.
   the document; a message that uses none MUST be sent as plain text only.
 - **FR-022**: The composer MUST offer a live preview of the rendered message,
   and MUST let the user edit the body in `$EDITOR` and return.
+- **FR-022a**: Editing in the composer MUST be modeless, standard text-box
+  editing: typing inserts; arrows, Home/End, PageUp/PageDown and the common
+  readline-style Ctrl chords move and delete; selection, cut, copy, paste and
+  undo work as in any text field. There is no modal (vim-style) editing inside
+  the composer; `$EDITOR` handoff (FR-022) is how a user gets their own
+  editor. While the composer has focus, printable keys insert text and never
+  trigger list commands.
 - **FR-023**: Drafts MUST autosave and MUST be readable and editable by
   either frontend. A draft written in the desktop composer MUST open in the
   terminal composer as Markdown, and vice versa, without losing formatting the
@@ -440,6 +466,21 @@ first sync.
 - **FR-052**: The installed terminal frontend MUST be smaller on disk than
   the installed desktop app, and MUST use less memory than the desktop app
   showing the same mailbox.
+- **FR-053**: The terminal frontend MUST be launched as its own command,
+  `postio-tui`, and MUST be released in two forms: a standalone download that
+  runs with no GTK, WebKit or display server installed, and a flatpak of its
+  own, separate from the desktop app's and built on a runtime that carries no
+  GTK. Both MUST be produced by the release workflow, from the same commit
+  and gated by the same suite as the desktop app's release.
+
+**Appearance**
+
+- **FR-054**: The terminal frontend MUST draw with the terminal's own palette
+  (foreground, background and the ANSI colours), so that it follows the
+  user's terminal theme, light or dark. On a true-colour terminal it MUST
+  additionally use Postio's accent, taken from the generated design tokens
+  and never retyped, for the selected row and the focus indicator only.
+  Every colour role MUST be overridable from `config.toml`.
 
 **Privacy**
 
@@ -518,11 +559,19 @@ first sync.
   already the desktop app's; the terminal frontend must meet them, not a
   separate faster set.
 - **"Smaller"** means installed size and resident memory (SC-004), measured
-  against the desktop app built from the same commit.
+  against the desktop app built from the same commit, form for form: the
+  standalone download against the desktop app's binary with its libraries,
+  and the terminal flatpak (with its runtime) against the desktop flatpak
+  (with its runtime).
 - **Shared-store concurrency** is a requirement set by the maintainer
   (2026-09-23). How two processes coordinate on one encrypted store, and which
   of them runs sync, is the plan's to decide; the current desktop app is
   single-instance within itself and has not been built for a second process.
+- **One landing, whole** (clarified 2026-09-23). The feature branch lands on
+  `main` once, when all seven user stories meet their acceptance scenarios.
+  Priorities order the work on the branch; they are not release slices. The
+  branch is rebased onto `main` as it goes, and every commit on it keeps the
+  GTK and macOS frontends green (FR-005).
 - **Reuse over invention** (maintainer, 2026-09-23: *"I dont want to
   reinvent the wheel here"*). The plan surveys what existing terminal
   applications and libraries already do — layout, mouse handling, Markdown
