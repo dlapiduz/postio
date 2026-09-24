@@ -49,6 +49,24 @@ pub async fn execute(
     scope: Scope,
     order: ResultOrder,
 ) -> Option<SearchResults> {
+    execute_with_snippets(connection, account, query, scope, order, SNIPPET_HITS).await
+}
+
+/// [`execute`], cutting an excerpt for only the first `snippets` hits.
+///
+/// For a surface that draws one excerpt at a time: the GTK finder shows the
+/// focused hit's in its preview, and only while that hit's body is still on
+/// its way -- the body replaces it -- so it asks for the best match's alone.
+/// Each excerpt is a body read, a decode and an HTML-to-text pass, and fifty
+/// of them stood between a keystroke and the readout's answer (#1613).
+pub async fn execute_with_snippets(
+    connection: &Checkout,
+    account: AccountScope,
+    query: &ParsedQuery,
+    scope: Scope,
+    order: ResultOrder,
+    snippets: usize,
+) -> Option<SearchResults> {
     let mut results = search(
         connection,
         &SearchRequest {
@@ -70,7 +88,7 @@ pub async fn execute(
     .await
     .map_err(|error| tracing::warn!(%error, "the search did not run"))
     .ok()?;
-    snippet_hits(connection, query, &mut results).await;
+    snippet_hits(connection, query, &mut results, snippets).await;
     Some(results)
 }
 
@@ -92,7 +110,12 @@ pub async fn execute(
 /// the string highlighted is the string that was indexed, rather than a second
 /// guess at it, and `postio_search::highlight`'s token rule is FTS5's own. A
 /// message with no local body gets no excerpt rather than a wrong one.
-async fn snippet_hits(connection: &Checkout, query: &ParsedQuery, results: &mut SearchResults) {
+async fn snippet_hits(
+    connection: &Checkout,
+    query: &ParsedQuery,
+    results: &mut SearchResults,
+    snippets: usize,
+) {
     let terms = postio_search::highlight::terms(query);
     if terms.is_empty() {
         // A structured-only query — `is:unread`, `in:archive` — has nothing to
@@ -100,7 +123,7 @@ async fn snippet_hits(connection: &Checkout, query: &ParsedQuery, results: &mut 
         // SQLite was cutting them.
         return;
     }
-    for hit in results.hits.iter_mut().take(SNIPPET_HITS) {
+    for hit in results.hits.iter_mut().take(snippets) {
         let body = crate::reading::load_body(connection, hit.message_id).await;
         if let Some(text) = postio_index::index::indexable_text(&body) {
             hit.snippet = postio_search::highlight::snippet(&text, &terms);
