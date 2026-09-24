@@ -431,6 +431,8 @@ pub struct App {
     layout: crate::state::TerminalState,
     /// Whether the divider is being dragged.
     dragging: bool,
+    /// Whether the mouse is listened to (`[tui].mouse`).
+    mouse: bool,
 }
 
 /// One section of the cheat sheet as it is drawn: its heading, and each
@@ -570,6 +572,7 @@ impl App {
             armed_link: None,
             layout: crate::state::TerminalState::default(),
             dragging: false,
+            mouse: true,
         }
     }
 
@@ -881,6 +884,13 @@ impl App {
         }
         effects.push(Effect::Redraw);
         effects
+    }
+
+    /// The same app, listening to the mouse or not (`[tui].mouse`). Off, a
+    /// click does nothing at all, and the terminal's own selection works.
+    pub fn with_mouse(mut self, mouse: bool) -> App {
+        self.mouse = mouse;
+        self
     }
 
     /// The same app, laid out as a previous run left it.
@@ -2442,7 +2452,8 @@ pub fn update(app: &mut App, input: Input) -> Vec<Effect> {
             (Some(_), None) => app.say("The draft closed before the image was stored"),
             (None, _) => app.say("The image could not be stored"),
         },
-        Input::Pointer(pointer) => app.pointer(pointer),
+        Input::Pointer(pointer) if app.mouse => app.pointer(pointer),
+        Input::Pointer(_) => Vec::new(),
         Input::Paste(pasted) => app.paste(&pasted),
         Input::Attached { path, attached } => match (attached, app.composer.as_mut()) {
             (Some(attachment), Some(composer)) => {
@@ -4008,6 +4019,26 @@ pub(crate) mod tests {
         let composer = app.composer().unwrap();
         assert_eq!(composer.field(), crate::composer::Field::Body);
         assert_eq!(composer.body().cursor(), (1, 5));
+    }
+
+    #[test]
+    fn with_the_mouse_off_clicks_do_nothing_and_every_key_still_works() {
+        // US5 scenario 3.
+        use crate::view::hit::Target;
+        let mut app = app((160, 40)).with_mouse(false);
+        let opening = opened(&mut app, 8);
+        serve(&mut app, opening);
+        let effects = update(&mut app, click(Target::Row(4), false, false));
+        assert!(effects.is_empty(), "{effects:?}");
+        assert_eq!(app.cursor(), 0);
+        update(&mut app, wheel(Target::Row(0), true));
+        assert_eq!(app.top(), 0);
+
+        update(&mut app, press('j'));
+        update(&mut app, press('j'));
+        assert_eq!(app.cursor(), 2, "the keys are untouched");
+        update(&mut app, press('x'));
+        assert!(app.selection().contains(MessageId::new(3)));
     }
 
     #[test]

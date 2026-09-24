@@ -201,7 +201,7 @@ store.
 - [X] T073 [US5] Links, fold markers, placeholders and attachments respond to clicks (same commands as keys). Test first: a click on a fold marker expands it
 - [X] T074 [US5] Pane divider drag (Down, Drag…, Up) with widths persisted in window state. Test first: dragging 10 columns right widens the list by 10 and survives a restart
 - [X] T075 [US5] Click to place the cursor in the composer via `screen_to_data` + `CursorMove::Jump`. *(ratatui-textarea 0.9.2 has no `screen_to_data` or public viewport, so the composer mirrors the textarea's scroll rule and jumps relative to it.)* Test first: clicking column 5 of body line 2 puts the cursor there
-- [ ] T076 [US5] `[tui].mouse = false` and a terminal reporting no mouse. Test first: US5 scenario 3 — clicks are ignored and every key path still works
+- [X] T076 [US5] `[tui].mouse = false` and a terminal reporting no mouse. Test first: US5 scenario 3 — clicks are ignored and every key path still works
 
 ---
 

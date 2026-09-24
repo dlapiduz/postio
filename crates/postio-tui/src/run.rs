@@ -153,7 +153,8 @@ async fn main_loop(
         .with_downloads(downloads())
         .with_preview(preview)
         .with_enhanced_keys(enhanced_keys)
-        .with_layout(crate::state::TerminalState::load());
+        .with_layout(crate::state::TerminalState::load())
+        .with_mouse(session.has(Mode::Mouse));
 
     let (inputs, arriving) = async_channel::unbounded::<Input>();
     let (drafts, draft_jobs) = async_channel::unbounded::<Effect>();
