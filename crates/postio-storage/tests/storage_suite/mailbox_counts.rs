@@ -420,8 +420,10 @@ async fn an_account_sending_nothing_counts_nothing() {
 async fn the_draft_counts_cost_the_same_however_much_mail_the_account_has() {
     // SC-008, and Principle V's "counts, not timings". The sidebar refreshes
     // on every arrival, so a read that grew with the mailbox would be paid
-    // for on the surface redrawn most often. `idx_messages_send_state` is
-    // partial on exactly this predicate, so the account's mail is not touched.
+    // for on the surface redrawn most often. Statements and rows cannot see
+    // a walk of the account's mail -- one statement, one row either way --
+    // which is why `draft_counts_read_only_the_account_s_drafts_from_an_index`
+    // below asks the planner instead (#1614).
     use postio_storage::test_support::counting::{counted_async, install};
 
     let database = test_support::memory().await;
@@ -662,5 +664,40 @@ async fn a_folder_knows_how_many_of_its_messages_are_owed_a_body() {
         owed(&connection, archive).await,
         0,
         "a deleted message is owed nothing"
+    );
+}
+
+#[tokio::test]
+async fn draft_counts_read_only_the_account_s_drafts_from_an_index() {
+    // #1614: the sidebar asks for these on every refresh -- up to twice a
+    // second per sync lane during a first sync -- and the doc said the
+    // index was partial on `send_state IS NOT NULL`. It had not been since
+    // the engine changed: the planner seeked the account and read every
+    // message row in it for `deleted_locally`. The plan is the gate: a
+    // range on `send_state`, from an index that covers the rest.
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    let (account, _) = test_support::account_with_inbox(&connection).await;
+    let sql = postio_storage::repository::MailboxRepository::new(&connection)
+        .explain_draft_counts();
+    let plan: Vec<String> = postio_storage::sql::all(
+        &connection,
+        &format!("EXPLAIN QUERY PLAN {sql}"),
+        [account.id.get()],
+        |row| postio_storage::sql::RowExt::col(row, 3),
+    )
+    .await
+    .expect("a plan");
+    let reads_rows: Vec<&String> = plan
+        .iter()
+        .filter(|step| !(step.contains("COVERING INDEX") || step.starts_with("USE ")))
+        .collect();
+    assert!(
+        reads_rows.is_empty(),
+        "draft counts read message rows: {reads_rows:?}\n{plan:#?}"
+    );
+    assert!(
+        plan.iter().any(|step| step.contains("send_state")),
+        "draft counts walk the whole account instead of its drafts:\n{plan:#?}"
     );
 }

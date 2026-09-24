@@ -708,7 +708,7 @@ CREATE INDEX idx_messages_rfc_message_id
     ON messages (account_id, rfc_message_id);
 
 CREATE INDEX idx_messages_send_state
-    ON messages (account_id, send_state);
+    ON messages (account_id, send_state, deleted_locally);
 
 CREATE INDEX idx_messages_snoozed_due
     ON messages (account_id, snoozed_until, mailbox_id);
