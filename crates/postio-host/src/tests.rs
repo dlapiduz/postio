@@ -822,7 +822,7 @@ fn a_host_over_a_wiring_built_elsewhere_serves_its_store_and_its_news() {
         hub.sink(),
         commands,
     );
-    let host = Host::over(wiring).expect("a host over the wiring");
+    let host = Host::over(wiring);
     let client = host.connect(ClientKind::Gtk);
     let events = client.events();
 
@@ -837,4 +837,26 @@ fn a_host_over_a_wiring_built_elsewhere_serves_its_store_and_its_news() {
         .expect("in time")
         .expect("an event");
     assert_eq!(heard.event, Event::MailboxesChanged { account });
+}
+
+#[test]
+fn a_host_over_a_wiring_with_one_event_reader_still_serves_its_store() {
+    // Most of the desktop's integration suites wire their events to one
+    // stream they read themselves; a client over such a wiring can still
+    // read.
+    let world = World::new();
+    let (sink, _events) = event_channel();
+    let (commands, _queued) = postio_core::bridge::command_channel();
+    let blobs = postio_storage::BlobStore::open(world.blob_dir.clone(), &test_support::blob_keys())
+        .expect("a blob store");
+    let wiring = postio_session::Wiring::new(
+        world.database.clone(),
+        blobs,
+        world.rt.handle().clone(),
+        sink,
+        commands,
+    );
+    let client = Host::over(wiring).connect(ClientKind::Gtk);
+    let accounts = world.rt.block_on(client.accounts()).expect("accounts");
+    assert_eq!(accounts.len(), 1);
 }

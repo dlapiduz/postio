@@ -61,7 +61,8 @@ struct Inner {
     oauth_offers: Mutex<HashMap<String, postio_account::discovery::OAuthOffer>>,
     /// The browser sign-ins under way, by address.
     sign_ins: Mutex<HashMap<String, SignIn>>,
-    /// The event hub everybody hears, as a sink on it.
+    /// Where everybody's news goes: a sink on the event hub, or over a
+    /// wiring built elsewhere, whatever that wiring reports to.
     hub: EventSink,
     clients: Mutex<HashMap<ClientId, Entry>>,
     next_client: AtomicU64,
@@ -226,14 +227,12 @@ impl Host {
     /// integration suite's -- rather than opening the store again: its
     /// runtime, its event hub, its engines' slot.
     ///
-    /// Refused when the wiring's events go to a single reader rather than a
-    /// hub, since each client needs a subscription of its own.
-    pub fn over(wiring: Wiring) -> Result<Host, String> {
+    /// A wiring whose events go to a single reader rather than a hub still
+    /// has its store served, and still hears what the host's verbs change;
+    /// its clients hear only what their own commands say about themselves.
+    pub fn over(wiring: Wiring) -> Host {
         let hub = wiring.events.clone();
-        if hub.subscribe("host:probe").is_none() {
-            return Err("the wiring's events are not on a hub".to_owned());
-        }
-        Ok(Host::serving(wiring, hub, None))
+        Host::serving(wiring, hub, None)
     }
 
     fn serving(wiring: Wiring, hub: EventSink, bridge: Option<Bridge>) -> Host {
@@ -349,12 +348,14 @@ impl Inner {
 
         // Everybody's news, from the engines and from every client's verbs.
         let label = format!("client:{kind:?}:{}", id.0).to_lowercase();
-        let everybody = self
-            .hub
-            .subscribe(&label)
-            .expect("a host's events are on a hub: `start` and `over` both see to it");
+        // Over a wiring whose events go to one reader, there is no news to
+        // subscribe to: the client hears what its own commands say.
+        let everybody = self.hub.subscribe(&label);
         let to_client = outbox.clone();
         let hearing = self.runtime().spawn(async move {
+            let Some(everybody) = everybody else {
+                return;
+            };
             while let Some(envelope) = everybody.next_tracked().await {
                 if to_client.send(envelope).await.is_err() {
                     return;
