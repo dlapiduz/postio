@@ -171,6 +171,12 @@ command_ids! {
     EditConfig => "edit_config",
     /// Quit Postio.
     Quit => "quit",
+    /// Load this message's remote images, this once.
+    ShowImages => "show_images",
+    /// Always load remote images from this message's sender.
+    AlwaysShowImages => "always_show_images",
+    /// Leave the mailing list this message came from.
+    Unsubscribe => "unsubscribe",
     /// Show or hide the sidebar.
     ToggleSidebar => "toggle_sidebar",
     /// Put the keyboard in the folder list.
@@ -671,6 +677,17 @@ pub enum Command {
     /// that is not in the registry does not exist (Principle II), so it is
     /// one here and the desktop gains a key for it too.
     Quit,
+    /// Load this message's remote images, this once.
+    ///
+    /// The reading pane's banner had this as a button and nothing else; a
+    /// command that is not in the registry does not exist (Principle II), and
+    /// a terminal has no banner to click.
+    ShowImages,
+    /// Always load remote images from this message's sender.
+    AlwaysShowImages,
+    /// Leave the mailing list this message came from, by its one-click
+    /// `List-Unsubscribe` -- only ever on this deliberate act.
+    Unsubscribe,
     /// Show or hide the sidebar.
     ToggleSidebar,
     /// Put the keyboard in the folder list.
@@ -898,6 +915,9 @@ impl Command {
             Command::AddAccount => CommandId::AddAccount,
             Command::EditConfig => CommandId::EditConfig,
             Command::Quit => CommandId::Quit,
+            Command::ShowImages => CommandId::ShowImages,
+            Command::AlwaysShowImages => CommandId::AlwaysShowImages,
+            Command::Unsubscribe => CommandId::Unsubscribe,
             Command::ToggleSidebar => CommandId::ToggleSidebar,
             Command::FocusSidebar => CommandId::FocusSidebar,
             Command::GoToInbox => CommandId::GoToInbox,
@@ -1019,6 +1039,9 @@ impl Command {
             CommandId::AddAccount => Command::AddAccount,
             CommandId::EditConfig => Command::EditConfig,
             CommandId::Quit => Command::Quit,
+            CommandId::ShowImages => Command::ShowImages,
+            CommandId::AlwaysShowImages => Command::AlwaysShowImages,
+            CommandId::Unsubscribe => Command::Unsubscribe,
             CommandId::ToggleSidebar => Command::ToggleSidebar,
             CommandId::FocusSidebar => Command::FocusSidebar,
             CommandId::GoToInbox => Command::GoToInbox,

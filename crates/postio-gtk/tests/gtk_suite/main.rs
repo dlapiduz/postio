@@ -42,6 +42,7 @@ mod webkit_probe;
 mod feed;
 mod feed_results;
 mod gtk_accelerators;
+mod gtk_banner_keys;
 mod gtk_capture;
 mod gtk_cheatsheet;
 mod gtk_checkrow;
@@ -1054,6 +1055,10 @@ const CASES: &[(&str, fn())] = &[
     (
         "gtk_toggle_rail::shift_i_puts_the_rail_away_and_brings_it_back",
         gtk_toggle_rail::shift_i_puts_the_rail_away_and_brings_it_back as fn(),
+    ),
+    (
+        "gtk_banner_keys::the_banner_commands_do_what_their_buttons_do",
+        gtk_banner_keys::the_banner_commands_do_what_their_buttons_do as fn(),
     ),
     (
         "gtk_toggle_sidebar::toggle_sidebar_moves_the_sidebar_from_the_palette_and_from_ctrl_b",

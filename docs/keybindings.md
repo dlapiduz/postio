@@ -99,6 +99,9 @@ command from inside a text field.
 | `ctrl+shift+n` or `alt+n` | Add account | Everywhere |  | `add_account` |
 | `ctrl+e` | Edit configuration | List, conversation, reader |  | `edit_config` |
 | `ctrl+q` | Quit Postio | Everywhere |  | `quit` |
+| `i i` | Show remote images | List, conversation, reader |  | `show_images` |
+| `i a` | Always show images from this sender | List, conversation, reader |  | `always_show_images` |
+| `X` | Unsubscribe from this list | List, conversation, reader |  | `unsubscribe` |
 | `ctrl+b` | Toggle sidebar | List, conversation, reader |  | `toggle_sidebar` |
 | `g f` | Focus the folder list | List, conversation, reader, search |  | `focus_sidebar` |
 | `g i` | Go to inbox | List, conversation, reader, search, folder list |  | `go_to_inbox` |

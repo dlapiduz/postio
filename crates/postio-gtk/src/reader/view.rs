@@ -1282,6 +1282,29 @@ impl Reader {
         self.banner.always_allow_label()
     }
 
+    /// Run one of the banners' commands, as its button would: `show_images`,
+    /// `always_show_images` or `unsubscribe`. Only when the banner is there to
+    /// offer it -- a key on a message with nothing to show or no list to leave
+    /// does nothing. Returns whether it ran.
+    ///
+    /// The registry entries these answer were buttons and nothing else, so a
+    /// person without a pointer could not reach them (Principle II;
+    /// `specs/005-tui-frontend` T044, T048).
+    pub fn run_banner_command(&self, command: postio_core::CommandId) -> bool {
+        use postio_core::CommandId;
+        match command {
+            CommandId::ShowImages if self.banner.is_visible() => self.banner.emit_show_once(),
+            CommandId::AlwaysShowImages if self.banner.is_visible() => {
+                self.banner.emit_always_allow()
+            }
+            CommandId::Unsubscribe if self.unsubscribe_banner.is_visible() => {
+                self.unsubscribe_banner.emit_unsubscribe()
+            }
+            _ => return false,
+        }
+        true
+    }
+
     /// Simulate clicking the banner's "always allow" — what a test uses in
     /// place of a synthesized pointer click.
     pub fn click_always_allow(&self) {

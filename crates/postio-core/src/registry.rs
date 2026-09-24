@@ -1093,6 +1093,39 @@ static SPECS: &[CommandSpec] = &[
         requires: CHROME,
     },
     CommandSpec {
+        id: CommandId::ShowImages,
+        title: "Show remote images",
+        // A sequence under `i` for images: once, or always from this sender.
+        default_binding: "i i",
+        alternate_bindings: &[],
+        contexts: ctx(MESSAGE_SURFACES),
+        destructive: false,
+        recovery: Recovery::None,
+        requires: MAIL,
+    },
+    CommandSpec {
+        id: CommandId::AlwaysShowImages,
+        title: "Always show images from this sender",
+        default_binding: "i a",
+        alternate_bindings: &[],
+        contexts: ctx(MESSAGE_SURFACES),
+        destructive: false,
+        recovery: Recovery::None,
+        requires: MAIL,
+    },
+    CommandSpec {
+        id: CommandId::Unsubscribe,
+        title: "Unsubscribe from this list",
+        // Shifted and deliberate: an unsubscribe tells the sender the address
+        // is read, so it is never one stray keystroke away.
+        default_binding: "X",
+        alternate_bindings: &[],
+        contexts: ctx(MESSAGE_SURFACES),
+        destructive: false,
+        recovery: Recovery::None,
+        requires: MAIL,
+    },
+    CommandSpec {
         id: CommandId::ToggleSidebar,
         title: "Toggle sidebar",
         default_binding: "mod+b",

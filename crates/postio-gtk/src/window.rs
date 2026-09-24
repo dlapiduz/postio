@@ -2584,6 +2584,13 @@ impl Window {
             // reason the folders are — see `postio-14b`. Set and cleared by
             // `open_parts`/`close_parts`, the one door in and out of it.
             CommandId::OpenParts => self.reader().request_parts(),
+            // The remote-image banner's two buttons and the unsubscribe
+            // banner's one, from the keyboard and the palette -- and only when
+            // the banner is there to offer them, so a key on a message with
+            // nothing to show or no list to leave does nothing at all.
+            CommandId::ShowImages | CommandId::AlwaysShowImages | CommandId::Unsubscribe => {
+                self.reader().run_banner_command(id);
+            }
             CommandId::NextPart => self.parts().next_part(),
             CommandId::PrevPart => self.parts().prev_part(),
             CommandId::OpenPart => self.parts().open_part(),

@@ -55,6 +55,9 @@ settings	ctrl+comma | alt+comma
 add_account	ctrl+shift+n | alt+n
 edit_config	ctrl+e
 quit	ctrl+q
+show_images	i i
+always_show_images	i a
+unsubscribe	X
 toggle_sidebar	ctrl+b
 focus_sidebar	g f
 go_to_inbox	g i
