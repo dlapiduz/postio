@@ -9,8 +9,9 @@ publish.workspace = true
 repository.workspace = true
 
 [dependencies]
-chrono = { workspace = true, features = ["std"] }
+chrono = { workspace = true, features = ["serde", "std"] }
 postio-model = { workspace = true }
+serde = { workspace = true }
 
 [lints]
 workspace = true

@@ -13,7 +13,9 @@ use chrono::NaiveDate;
 ///
 /// Always lands on `char` boundaries, so `&input[span.start..span.end]` is safe
 /// for the input the query was parsed from.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize,
+)]
 pub struct Span {
     /// Byte offset of the first character of the token.
     pub start: usize,
@@ -49,7 +51,9 @@ impl Span {
 /// The spellings come from the design canvas (artboard 2b) and are recorded in
 /// `docs/PRODUCT.md` §7: it is `has:attach` and `is:flagged`, with the older
 /// `has:attachment` and `is:starred` accepted as aliases.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize,
+)]
 pub enum Field {
     /// `from:` — sender address or display name.
     From,
@@ -185,7 +189,9 @@ impl Field {
 }
 
 /// A message flag state, for `is:`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize,
+)]
 pub enum State {
     /// `is:unread` — `\Seen` is absent.
     Unread,
@@ -201,7 +207,7 @@ pub enum State {
 /// Values stay as plain data — no `MailboxId`, no `Flag`, no SQL. Resolving
 /// `in:archive` against the account's folders and turning dates into timestamps
 /// is the executor's job.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum Filter {
     /// `from:alice`
     From(String),
@@ -286,7 +292,7 @@ impl Filter {
 }
 
 /// A [`Filter`] plus whether it was negated with a leading `-`.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct Clause {
     /// `-from:bob` excludes rather than includes.
     pub negated: bool,
@@ -300,7 +306,7 @@ pub struct Clause {
 /// `after:2026-` are all perfectly ordinary intermediate states. A partial
 /// constrains nothing — the executor ignores it — but it carries enough for the
 /// search bar to draw a pending chip and offer completions.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct Partial {
     /// Whether a leading `-` was typed.
     pub negated: bool,
@@ -311,7 +317,7 @@ pub struct Partial {
 }
 
 /// A free-text term, destined for the FTS5 `MATCH` expression.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct TextTerm {
     /// `-docker` excludes the term.
     pub negated: bool,
@@ -325,7 +331,7 @@ pub struct TextTerm {
 }
 
 /// What a [`Token`] turned out to be.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum TokenKind {
     /// A complete operator that constrains results.
     Filter(Clause),
@@ -336,7 +342,7 @@ pub enum TokenKind {
 }
 
 /// One chip's worth of query: a slice of the input and what it means.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct Token {
     /// Where the token sits in the original query string.
     pub span: Span,
@@ -374,7 +380,7 @@ impl Token {
 
 /// A parsed query: everything the executor and the search bar need, and nothing
 /// that depends on the clock, the database or the network.
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
 pub struct ParsedQuery {
     pub(crate) input: String,
     pub(crate) tokens: Vec<Token>,

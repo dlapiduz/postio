@@ -35,7 +35,19 @@
 /// Not a mailbox id: this is the standing, no-typing rescope from the canvas'
 /// left column, and it has to mean the same thing before any folder has been
 /// picked. `in:` is still there for naming one folder exactly.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    Default,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Hash,
+    serde::Serialize,
+    serde::Deserialize,
+)]
 pub enum Scope {
     /// Every folder except drafts, junk and trash. The default, because
     /// search is how you find the thing you filed somewhere and forgot --
@@ -78,7 +90,7 @@ impl Scope {
 }
 
 /// One scope and how many of the query's matches are in it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct ScopeCount {
     /// The scope.
     pub scope: Scope,
@@ -88,7 +100,7 @@ pub struct ScopeCount {
 }
 
 /// One offered narrowing: a token to append, and what it would leave.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct Refinement {
     /// The query token, exactly as it would be typed — `is:unread`.
     pub token: String,
@@ -103,7 +115,7 @@ pub struct Refinement {
 pub const MAX_REFINEMENTS: usize = 4;
 
 /// What a query's result set turned out to be made of.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct Facets {
     /// Matches per scope, in [`Scope::ALL`] order.
     pub scopes: Vec<ScopeCount>,

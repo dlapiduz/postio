@@ -31,7 +31,7 @@ pub struct Term<'a> {
 }
 
 /// What to offer instead of a term that matched nothing.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct Suggestion {
     /// The term to search for instead.
     pub term: String,
