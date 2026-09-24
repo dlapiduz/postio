@@ -60,7 +60,9 @@ What still holds, and is inherited here as requirements:
   they are picked in the composer, and `group:` in search means "from or to
   any member" (Q3).
 - **vCard import keeps what Postio does not understand, verbatim**, reads
-  3.0 and 4.0, writes 4.0, with no third-party parser (Q4).
+  3.0 and 4.0, writes 4.0 (Q4). Q4's "no third-party parser" does not
+  survive: a Pimalaya parser now round-trips byte-for-byte, and the
+  constitution's Pimalaya-first rule prefers it (`research.md` R9).
 - **Contacts are shared across accounts; sightings are per account** (Q5).
 - **Explicit beats frequent** in completion ranking (Q6).
 - **Managing takes over the reading pane; finding stays in the `@` finder**
@@ -366,9 +368,10 @@ confirm every property Postio does not model is present byte-for-byte.
 - **FR-007**: "Show mail" MUST open the message list on mail from or to any of
   the person's addresses, and "compose to" MUST open a draft addressed to
   their preferred address. The search it opens MUST be an ordinary query in
-  the existing language naming each of the person's addresses at that
+  the one query language naming each of the person's addresses at that
   moment, visible and editable in the search bar; no person-level search
-  field is added.
+  field is added. (The language gains one address field meaning "from or to
+  any of these", since it has no "or" — `research.md` R6.)
 
 **People and addresses**
 
@@ -459,7 +462,9 @@ confirm every property Postio does not model is present byte-for-byte.
   "everyone from mail" toggle included. Suppressed (deleted) people MUST
   never be exported.
 - **FR-051**: Every property Postio does not model MUST be kept verbatim on
-  import and reproduced verbatim on export.
+  import and reproduced verbatim on export — byte-identical from a 4.0 card;
+  from a 3.0 card, changed only where 4.0 forbids the 3.0 spelling (version
+  line, binary encoding, preference and charset parameters).
 - **FR-052**: A card with several `EMAIL` properties MUST import as one
   person with several addresses; a group card MUST import as a group.
 - **FR-053**: An imported address that already belongs to a person MUST be
@@ -508,8 +513,9 @@ confirm every property Postio does not model is present byte-for-byte.
   in one.
 - **SC-005**: A deleted mail-derived person stays absent after any number of
   further messages from their addresses.
-- **SC-006**: A vCard file imported and exported again reproduces every
-  property Postio does not model byte-for-byte.
+- **SC-006**: A vCard 4.0 file imported and exported again reproduces every
+  property Postio does not model byte-for-byte; a 3.0 file does so except for
+  the spellings FR-051 names.
 - **SC-007**: No contacts action produces any network traffic.
 - **SC-008**: Every contacts action is completable without a pointer.
 - **SC-009**: Renaming a person changes how every message from any of their
