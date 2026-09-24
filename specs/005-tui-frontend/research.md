@@ -462,6 +462,21 @@ download):
   the daemon does, so the `postio-tui` binary itself stays small. SC-004 is
   measured package against package (spec, Assumptions).
 
+- **First numbers** (T092, 2026-09-24, this workstation, from one commit):
+
+  | | executable | with the libraries it loads |
+  |---|---|---|
+  | `postio-tui` (`release-tui`) | 5.4 MB | 10.2 MB |
+  | `postio-tui` + `postio-daemon` (the download) | 55.6 MB | 60.4 MB |
+  | `postio` (desktop, `release`) | 55.5 MB | 348.3 MB |
+
+  The download is 17% of the desktop app, and the terminal frontend alone
+  is 3%. The daemon is the bulk of it -- the store engine, the protocol
+  crates -- and is built with the ordinary `release` profile, unstripped,
+  so the same levers as `release-tui` would shrink it further if it ever
+  mattered. The Flatpak comparison, with runtimes, is what the release
+  workflow's `package-sizes` job measures.
+
 ---
 
 ## R11. Testing
