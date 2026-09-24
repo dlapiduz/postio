@@ -62,10 +62,14 @@ pub fn draw(frame: &mut Frame, app: &App, theme: &Theme, now: DateTime<Local>) {
                     }
                 }
             }
-            let words = match (app.notice(), app.total()) {
+            let count = match app.total() {
+                1 => "1 conversation".to_owned(),
+                total => format!("{total} conversations"),
+            };
+            let words = match (app.notice(), app.sync_line()) {
                 (Some(notice), _) => notice.to_owned(),
-                (None, 1) => "1 conversation".to_owned(),
-                (None, total) => format!("{total} conversations"),
+                (None, Some(sync)) => format!("{sync} · {count}"),
+                (None, None) => count,
             };
             let words = fit(&words, usize::from(status.width));
             frame.render_widget(Line::styled(words, theme.style(Role::Dim)), status);

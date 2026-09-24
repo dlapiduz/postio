@@ -113,6 +113,12 @@ pub struct App {
     sidebar: Vec<crate::sidebar::Line>,
     /// The sidebar line the keyboard is on.
     sidebar_cursor: usize,
+    /// Each account's sync status, folded from the daemon's events.
+    trackers: postio_ui::status::Trackers,
+    /// Which account the list on screen belongs to.
+    account: Option<postio_model::AccountId>,
+    /// Every folder, to find the account a list belongs to.
+    folders: Vec<postio_model::mailbox::Mailbox>,
 }
 
 /// Which pane the keyboard is in.
@@ -153,6 +159,36 @@ impl App {
             focus: Focus::List,
             sidebar: Vec::new(),
             sidebar_cursor: 0,
+            trackers: postio_ui::status::Trackers::default(),
+            account: None,
+            folders: Vec::new(),
+        }
+    }
+
+    /// What the status line says about the connection of the account on
+    /// screen: `offline`, `syncing`, `idle` -- the desktop's own words.
+    pub fn sync_line(&self) -> Option<String> {
+        let account = self.account?;
+        let (state, detail) = self
+            .trackers
+            .status(account)
+            .lines(std::time::Instant::now());
+        Some(format!("{state} · {detail}"))
+    }
+
+    /// Which account `scope` belongs to.
+    fn account_of(&self, scope: ListScope) -> Option<postio_model::AccountId> {
+        match scope {
+            ListScope::Mailbox(mailbox) => self
+                .folders
+                .iter()
+                .find(|folder| folder.id == mailbox)
+                .map(|folder| folder.account_id),
+            ListScope::Account(account)
+            | ListScope::Flagged(account)
+            | ListScope::Snoozed(account)
+            | ListScope::Outbox(account) => Some(account),
+            ListScope::Unified | ListScope::Thread(_) => None,
         }
     }
 
@@ -358,6 +394,13 @@ impl App {
     /// Take in the sidebar's contents, keeping the cursor on the list shown.
     fn fill_sidebar(&mut self, contents: &crate::sidebar::Contents) -> Vec<Effect> {
         self.sidebar = crate::sidebar::lines(contents);
+        self.folders = contents.folders.clone();
+        for account in &contents.accounts {
+            self.trackers.note_last_sync(account.id, &contents.folders);
+        }
+        if let Some(scope) = self.scope {
+            self.account = self.account_of(scope);
+        }
         self.sidebar_cursor = self
             .sidebar
             .iter()
@@ -399,6 +442,9 @@ impl App {
     /// list follows, so the two lists react to one event the same way.
     fn hear(&mut self, event: &postio_core::Event) -> Vec<Effect> {
         use postio_core::Event;
+        // Every event is offered to the status line first: an error is both
+        // something to say and the reason a failing account's line gives.
+        let moved = self.trackers.apply(event, self.account);
         match event {
             Event::ActionCompleted {
                 description,
@@ -414,6 +460,9 @@ impl App {
             Event::CommandRejected { reason, .. } => return self.say(reason),
             Event::Error { message } => return self.say(message),
             _ => {}
+        }
+        if moved {
+            return vec![Effect::Redraw];
         }
         if matches!(event, Event::MailboxesChanged { .. }) {
             return vec![Effect::RefreshSidebar];
@@ -466,6 +515,7 @@ impl App {
     fn open(&mut self, scope: ListScope, total: u32) -> Vec<Effect> {
         self.paging.open(scope);
         self.scope = Some(scope);
+        self.account = self.account_of(scope);
         // A selection is relative to the list it was made in.
         self.selection.clear();
         self.list.reset(total);
@@ -885,6 +935,26 @@ mod tests {
         update(&mut app, Input::Sidebar(sidebar_contents()));
         let (lines, at) = app.sidebar();
         assert_eq!(lines[at].opens, Some(ListScope::Mailbox(MailboxId::new(1))));
+    }
+
+    #[test]
+    fn the_status_line_says_offline_until_the_daemon_says_otherwise() {
+        let mut app = app((160, 40));
+        update(&mut app, Input::Sidebar(sidebar_contents()));
+        let opening = opened(&mut app, 3);
+        serve(&mut app, opening);
+        let line = app.sync_line().expect("a line for the account on screen");
+        assert!(line.starts_with("offline"), "{line}");
+
+        update(
+            &mut app,
+            Input::Host(postio_core::Event::ConnectionChanged {
+                account: postio_model::AccountId::new(1),
+                state: postio_core::ConnectionState::Online,
+            }),
+        );
+        let line = app.sync_line().unwrap();
+        assert!(line.starts_with("idle"), "{line}");
     }
 
     #[test]
