@@ -18,7 +18,7 @@
 //! rows (research R2). [`MAX_FRAME`] refuses a length no real frame has, so
 //! a corrupt stream is an error rather than a gigabyte allocation.
 
-use postio_core::{Command, EventEnvelope, InvocationId};
+use postio_core::{Command, EventEnvelope, InvocationId, StateSnapshot};
 use postio_model::ListScope;
 use postio_model::ids::{AccountId, MailboxId, MessageId};
 use postio_model::listing::{
@@ -94,10 +94,11 @@ pub enum Refusal {
 /// [`Resp`] with the same id.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Req {
-    /// Run a command; its effects arrive as events.
-    Send(Command),
-    /// Run a command and learn the id its events will carry.
-    SendTracked(Command),
+    /// Run a command, aimed with the frontend's own selection; its effects
+    /// arrive as events.
+    Send(Command, StateSnapshot),
+    /// The same, learning the id its events will carry.
+    SendTracked(Command, StateSnapshot),
     /// One page of a list.
     Page(PageRequest),
     /// How many rows a list would show.
@@ -255,10 +256,13 @@ mod tests {
         let messages = vec![MessageId::new(3), MessageId::new(4)];
         let scope = ListScope::Mailbox(mailbox);
         for (id, body) in [
-            Req::Send(Command::Archive {
-                target: postio_core::MessageTarget::Messages(messages.clone()),
-            }),
-            Req::SendTracked(Command::Undo),
+            Req::Send(
+                Command::Archive {
+                    target: postio_core::MessageTarget::Messages(messages.clone()),
+                },
+                StateSnapshot::default(),
+            ),
+            Req::SendTracked(Command::Undo, StateSnapshot::default()),
             Req::Page(PageRequest {
                 scope,
                 offset: 40,

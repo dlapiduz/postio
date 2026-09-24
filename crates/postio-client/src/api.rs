@@ -13,7 +13,7 @@ use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
 
-use postio_core::{Command, EventEnvelope, InvocationId};
+use postio_core::{Command, EventEnvelope, InvocationId, SharedState};
 use postio_model::ListScope;
 use postio_model::ids::{AccountId, MailboxId, MessageId};
 use postio_model::listing::{
@@ -60,8 +60,8 @@ impl Req {
     /// The family a round trip is counted under.
     pub fn family(&self) -> &'static str {
         match self {
-            Req::Send(_) => "Send",
-            Req::SendTracked(_) => "SendTracked",
+            Req::Send(..) => "Send",
+            Req::SendTracked(..) => "SendTracked",
             Req::Page(_) => "Page",
             Req::Count(_) => "Count",
             Req::Rows(_) => "Rows",
@@ -78,6 +78,7 @@ impl Req {
 pub struct Client {
     transport: Arc<dyn Transport>,
     counts: Arc<Counts>,
+    state: SharedState,
 }
 
 impl std::fmt::Debug for Client {
@@ -92,7 +93,16 @@ impl Client {
         Client {
             transport,
             counts: Arc::new(Counts::default()),
+            state: SharedState::default(),
         }
+    }
+
+    /// The same client, aiming its commands with `state`: the frontend's
+    /// own selection, focus and view, which the host adopts before running
+    /// each command (ADR 0041).
+    pub fn with_state(mut self, state: SharedState) -> Self {
+        self.state = state;
+        self
     }
 
     /// The round trips this client has made.
@@ -126,7 +136,8 @@ impl Client {
 
     /// Run a command. Its effects arrive as events.
     pub async fn send(&self, command: Command) -> Result<(), SendError> {
-        match self.call(Req::Send(command)).await? {
+        let aim = self.state.read(|state| state.snapshot());
+        match self.call(Req::Send(command, aim)).await? {
             Resp::Stopped => Err(SendError::Stopped),
             _ => Ok(()),
         }
@@ -134,7 +145,8 @@ impl Client {
 
     /// Run a command and learn the id its events will carry.
     pub async fn send_tracked(&self, command: Command) -> Result<InvocationId, SendError> {
-        match self.call(Req::SendTracked(command)).await? {
+        let aim = self.state.read(|state| state.snapshot());
+        match self.call(Req::SendTracked(command, aim)).await? {
             Resp::Tracked(id) => Ok(id),
             _ => Err(SendError::Stopped),
         }
@@ -297,6 +309,22 @@ mod tests {
         assert_eq!(client.send(Command::Undo).await, Ok(()));
         assert_eq!(client.send(Command::Undo).await, Err(SendError::Stopped));
         assert_eq!(fake.asked.lock().unwrap().len(), 2);
+    }
+
+    #[tokio::test]
+    async fn a_command_carries_the_frontends_selection() {
+        let state = SharedState::default();
+        state.update(&postio_core::bridge::event_channel().0, |app| {
+            app.select(vec![MessageId::new(5)], Some(MessageId::new(5)))
+        });
+        let (client, fake) = client(vec![Ok(Resp::Done)]);
+        let client = client.with_state(state.clone());
+        client.send(Command::Undo).await.unwrap();
+        let Req::Send(_, aim) = &fake.asked.lock().unwrap()[0] else {
+            panic!("a send was asked for");
+        };
+        assert_eq!(*aim, state.read(|app| app.snapshot()));
+        assert_ne!(*aim, postio_core::StateSnapshot::default());
     }
 
     #[tokio::test]
