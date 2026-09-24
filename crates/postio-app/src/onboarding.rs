@@ -41,23 +41,20 @@ use adw::prelude::*;
 use gtk::glib;
 use postio_account::cancel::CancelToken;
 use postio_account::discovery::{DiscoveryTransport, Probe};
-use postio_account::imap::{ConnectionSettings, ImapSession, RustlsConnector};
-use postio_account::secret::{AccountKey, Password, SecretStore};
 use postio_core::CommandId;
 use postio_core::bridge::EventStream;
 use postio_core::state::SharedState;
-use postio_gtk::onboarding::{BrowserSignIn, Onboarding, Settings, Status, Submission};
+use postio_gtk::onboarding::{BrowserSignIn, Onboarding, Status, Submission};
 use postio_gtk::window::Window;
 use postio_model::Account;
-use postio_model::account::AuthMethod;
 use postio_storage::Store;
 use postio_storage::repository::AccountRepository;
 
 use crate::Wiring;
 pub(crate) use postio_session::onboarding::configured;
 use postio_session::onboarding::{
-    connection_settings, explain, persist, probe_options, prove, save, status_for,
-    write_sync_window,
+    SignInError, connection_settings, persist, persist_oauth, probe_options, prove, provider_name,
+    run_sign_in, status_for, write_sync_window,
 };
 
 /// Whether this installation has an account yet.
@@ -634,217 +631,6 @@ pub(crate) fn submit_oauth(
     });
 }
 
-/// How a sign-in attempt ended without tokens.
-enum SignInError {
-    /// The user cancelled — the screen goes back, not to a failure.
-    Cancelled,
-    /// Everything else, in words the user can act on.
-    Failed(String),
-}
-
-/// The runtime half of the sign-in: endpoints, the browser flow, and the
-/// proof against the IMAP server, in that order.
-async fn run_sign_in(
-    settings: &ConnectionSettings,
-    client: &postio_gtk::onboarding::OAuthClientSubmission,
-    offer: &postio_account::discovery::OAuthOffer,
-    opener: &dyn postio_account::oauth::BrowserOpener,
-    cancel: &CancelToken,
-) -> Result<
-    (
-        postio_account::oauth::Endpoints,
-        postio_account::oauth::TokenResponse,
-    ),
-    SignInError,
-> {
-    use postio_account::oauth;
-
-    let cancelled = |error: &oauth::OAuthError| matches!(error, oauth::OAuthError::Cancelled);
-
-    // Endpoints: the row's own, or resolved from its issuer (RFC 8414 —
-    // ADR 0006 Q4 as amended by #152). Both are validated at preset load,
-    // so a row reaching here without either is a bug worth the sentence.
-    let endpoints = match (&offer.authorize, &offer.token) {
-        (Some(authorize), Some(token)) => oauth::Endpoints {
-            authorize: authorize.parse().map_err(|error| {
-                SignInError::Failed(format!(
-                    "The provider's sign-in address is invalid: {error}"
-                ))
-            })?,
-            token: token.parse().map_err(|error| {
-                SignInError::Failed(format!("The provider's token address is invalid: {error}"))
-            })?,
-        },
-        _ => {
-            let issuer = offer.issuer.as_deref().ok_or_else(|| {
-                SignInError::Failed(
-                    "This provider's settings name no OAuth endpoints — check the \
-                     providers.toml row."
-                        .to_owned(),
-                )
-            })?;
-            let issuer = issuer.parse().map_err(|error| {
-                SignInError::Failed(format!("The provider's issuer is invalid: {error}"))
-            })?;
-            oauth::exchange::resolve_endpoints(&issuer, cancel)
-                .await
-                .map_err(|error| {
-                    if cancelled(&error) {
-                        SignInError::Cancelled
-                    } else {
-                        SignInError::Failed(format!(
-                            "Could not discover the provider's sign-in endpoints: {error}"
-                        ))
-                    }
-                })?
-        }
-    };
-
-    let tokens = oauth::authorize(
-        oauth::AuthorizeRequest {
-            client_id: client.client_id.clone(),
-            client_secret: client.client_secret.clone(),
-            authorize_endpoint: endpoints.authorize.clone(),
-            token_endpoint: endpoints.token.clone(),
-            scopes: offer.scopes.clone(),
-        },
-        opener,
-        cancel,
-    )
-    .await
-    .map_err(|error| {
-        if cancelled(&error) {
-            SignInError::Cancelled
-        } else {
-            SignInError::Failed(format!("The sign-in did not complete: {error}"))
-        }
-    })?;
-
-    // The proof, before anything persists: the token opens a real session
-    // against the account's own IMAP server, the same test the password
-    // path runs. A consent screen that granted the wrong scopes fails
-    // here, in front of the user, instead of at the first background sync.
-    let mut verified = settings.clone();
-    verified.auth = postio_model::account::AuthMethod::XOAuth2;
-    let connector = RustlsConnector::new().map_err(|error| {
-        SignInError::Failed(format!(
-            "Postio could not start a TLS connection on this machine: {error}"
-        ))
-    })?;
-    ImapSession::open(&verified, &tokens.access_token, &connector)
-        .await
-        .map(|_| ())
-        .map_err(|error| SignInError::Failed(explain(&error)))?;
-
-    Ok((endpoints, tokens))
-}
-
-/// The OAuth writes, in the same nothing-stranded order [`persist`] keeps:
-/// secrets first, then the row, rolling the secrets back if the row write
-/// fails.
-async fn persist_oauth(
-    database: &Store,
-    secrets: Arc<dyn SecretStore>,
-    submission: &Submission,
-    endpoints: &postio_account::oauth::Endpoints,
-    scopes: &[String],
-    refresh_token_lifetime_days: Option<u32>,
-    tokens: postio_account::oauth::TokenResponse,
-) -> Result<(), String> {
-    let Some(client) = submission.oauth_client.clone() else {
-        return Err("The sign-in lost its client on the way to the store.".to_owned());
-    };
-    let key = AccountKey::new(submission.address.clone());
-
-    let source = postio_account::oauth::OwnClientTokenSource::new(
-        secrets.clone(),
-        endpoints.token.clone(),
-        client.client_id.clone(),
-        client.client_secret.clone(),
-        // So the mint records the grant's deadline, not just its rotations.
-        refresh_token_lifetime_days
-            .map(|days| std::time::Duration::from_secs(u64::from(days) * 86_400)),
-    );
-    source.seed(&key, tokens).await.map_err(|error| {
-        format!(
-            "The sign-in worked but its token could not be stored in the \
-             keyring: {error}. Is the keyring unlocked?"
-        )
-    })?;
-    if let Some(secret) = &client.client_secret {
-        source
-            .store_client_secret(&key, &Password::new(secret.clone()))
-            .await
-            .map_err(|error| {
-                format!("The OAuth client secret could not be stored in the keyring: {error}")
-            })?;
-    }
-
-    if let Err(reason) = save_oauth(
-        database,
-        submission,
-        &client,
-        endpoints,
-        scopes,
-        refresh_token_lifetime_days,
-    )
-    .await
-    {
-        // Roll the secrets back the same way `persist` does: nothing reads
-        // a credential no account row names, but leaving one is untidy.
-        let _ = secrets
-            .delete(&AccountKey::new(format!("{}#oauth-refresh", key.account())))
-            .await;
-        return Err(reason);
-    }
-    Ok(())
-}
-
-/// The row write for an OAuth sign-in: auth method, client, endpoints.
-async fn save_oauth(
-    database: &Store,
-    submission: &Submission,
-    client: &postio_gtk::onboarding::OAuthClientSubmission,
-    endpoints: &postio_account::oauth::Endpoints,
-    scopes: &[String],
-    refresh_token_lifetime_days: Option<u32>,
-) -> Result<(), String> {
-    // A browser sign-in is an IMAP account today; the Gmail REST backend
-    // is #546, gated on its preset row flipping after #195.
-    save(database, submission, postio_model::account::Backend::Imap).await?;
-    let connection = database
-        .connect()
-        .await
-        .map_err(|error| format!("Postio could not open its local store: {error}"))?;
-    let repository = AccountRepository::new(&connection);
-    let Some(mut account) = repository
-        .list()
-        .await
-        .map_err(|error| format!("Postio could not read its local store: {error}"))?
-        .into_iter()
-        .find(|account| {
-            account
-                .address
-                .address
-                .eq_ignore_ascii_case(&submission.address)
-        })
-    else {
-        return Err("The account row vanished while it was being written.".to_owned());
-    };
-    account.auth = AuthMethod::XOAuth2;
-    account.oauth = Some(postio_model::account::OAuthConfig {
-        client_id: client.client_id.clone(),
-        token_url: endpoints.token.to_string(),
-        authorize_url: endpoints.authorize.to_string(),
-        scopes: scopes.join(" "),
-        refresh_token_lifetime_days,
-    });
-    repository
-        .update(&mut account)
-        .await
-        .map_err(|error| format!("Postio could not record the sign-in: {error}"))
-}
-
 /// Forwards to the real opener and announces the URL on its way past.
 ///
 /// The consent URL and the loopback port it carries are built inside
@@ -871,22 +657,15 @@ impl postio_account::oauth::BrowserOpener for AnnouncingOpener {
     }
 }
 
-/// Whose consent screen this is, for the step's own heading.
-///
-/// From the IMAP host, because that is what the preset row actually carries
-/// — there is no provider *name* in the table, and inventing a mapping from
-/// domain to brand is how a provider table stops being data and starts being
-/// code (CLAUDE.md: providers are data, not code).
-fn provider_name(settings: &Settings) -> String {
-    settings.source.clone()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use postio_account::discovery::{AccountSettings, DiscoveryOutcome};
+    use postio_account::secret::{AccountKey, SecretStore};
     use postio_gtk::onboarding::Server;
+    use postio_gtk::onboarding::Settings;
     use postio_model::account::TransportSecurity;
+    use postio_session::onboarding::explain;
     use std::time::Duration;
 
     use postio_account::discovery::{DiscoveryReport, ServerSettings, SettingsSource};
