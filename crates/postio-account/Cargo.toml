@@ -21,10 +21,8 @@ default = ["imap"]
 imap = [
     "dep:io-imap",
     "dep:io-sasl",
+    "dep:postio-transport",
     "dep:log",
-    "dep:rustls",
-    "dep:rustls-platform-verifier",
-    "dep:tokio-rustls",
 ]
 
 # Test-only: lets `MockMailbox::corpus` seed mailboxes from the shared `.eml`
@@ -84,9 +82,7 @@ oo7 = "0.6.0-alpha"
 pimalaya-stream = { workspace = true }
 postio-config.workspace = true
 postio-model.workspace = true
-# `oauth::pkce`'s `code_verifier`/`state` randomness.
-rustls = { workspace = true, optional = true }
-rustls-platform-verifier = { workspace = true, optional = true }
+postio-transport = { workspace = true, optional = true }
 secrecy = { workspace = true }
 serde = { workspace = true }
 # `oauth::exchange`'s token responses, and RFC 8414 metadata's own parsing
@@ -94,7 +90,6 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true, features = ["io-util", "macros", "net", "process", "rt", "sync", "time"] }
-tokio-rustls = { workspace = true, optional = true }
 toml = { workspace = true }
 tracing = { workspace = true }
 url = { workspace = true }

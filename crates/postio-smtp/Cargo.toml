@@ -17,14 +17,11 @@ io-smtp = { version = "=0.3.0", default-features = false, features = ["client"] 
 # rather than a crate. `io-smtp` has modules for RFC 1870, 3207, 3461, 4954,
 # 7628 and 7677 and none for 6531, so the conversion is ours to do (#922).
 idna = "1.1.0"
-chrono = { workspace = true, features = ["std"] }
 postio-model.workspace = true
-rustls = { workspace = true }
-rustls-platform-verifier = { workspace = true }
+postio-transport.workspace = true
 secrecy = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true, features = ["io-util", "macros", "net", "rt", "sync", "time"] }
-tokio-rustls = { workspace = true }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["macros", "rt-multi-thread", "test-util", "time"] }

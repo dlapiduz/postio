@@ -19,7 +19,7 @@ pub const IMAPS_PORT: u16 = 993;
 pub const IMAP_PORT: u16 = 143;
 
 /// How long a connection attempt may take before it is abandoned.
-pub const DEFAULT_CONNECT_TIMEOUT: Duration = Duration::from_secs(30);
+pub use postio_transport::DEFAULT_CONNECT_TIMEOUT;
 
 /// Everything needed to open a session, minus the password.
 #[derive(Clone, PartialEq, Eq)]
