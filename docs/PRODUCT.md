@@ -88,6 +88,17 @@ tidy: measured on 2026-08-27, thirteen of what were then fifteen crates built
 and tested on macOS with no changes at all (the workspace is twenty crates
 now). Windows remains unscheduled.
 
+**A terminal frontend runs beside the desktop app, on the same store** —
+`postio-tui`, [`specs/005-tui-frontend`](../specs/005-tui-frontend/spec.md):
+the desktop app's commands, keys and verbs in a terminal, local or over SSH,
+with the mouse as well as the keyboard, and mail read and written as
+Markdown. The two can be open at once on one mailbox, which is why neither
+opens the store itself: one background process owns it and both are its
+clients ([ADR 0041](decisions/0041-one-process-owns-the-store.md)). It ships
+as its own package, smaller than the desktop one. Images are labelled
+placeholders that open in the system viewer; drawing them in the terminal is
+the next iteration.
+
 ---
 
 ## 3. Accounts and providers
@@ -643,13 +654,15 @@ contact groups, filled from the mail and completing recipients; local
 full-text search with operators, an instant search box, and saved searches
 pinned in the sidebar; vim-style navigation, a command palette and
 configurable shortcuts; an encrypted local store, background sync, offline
-reading, undo, desktop notifications.
+reading, undo, desktop notifications. All of it in a terminal too, on the
+same store as the desktop app (§2).
 
 **Out, deliberately:** Rules — the language is shared and the design is
 [ADR 0008](decisions/0008-filters-and-rules.md), but no rule fires yet. A
 contacts management surface, and vCard import and export — the tables are
 there, the screen is not. Microsoft Graph. PGP and S/MIME, phishing and link
-warnings. Windows. **And AI** — a founding principle, deferred so that core
+warnings. Windows. Images drawn inside the terminal (placeholders there
+for now). **And AI** — a founding principle, deferred so that core
 mail, search and the keyboard land excellently first. Shipping AI over a
 mediocre mail client would produce a mediocre mail client with AI in it.
 

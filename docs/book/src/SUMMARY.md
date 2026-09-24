@@ -3,6 +3,7 @@
 [What Postio is](introduction.md)
 
 - [Installing Postio](install.md)
+- [Postio in a terminal](terminal.md)
 - [Keyboard reference](keyboard.md)
 - [config.toml reference](config.md)
 - [How sync works](sync.md)

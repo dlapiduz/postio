@@ -16,6 +16,9 @@ in [`docs/archive/`](archive/); every finding it raised has since landed.
 ```mermaid
 graph TD
     app["<b>postio-app</b><br/><i>GTK binary</i><br/>a window, and the presenters that join the two halves"]
+    tui["<b>postio-tui</b><br/><i>terminal binary</i><br/>ratatui · crossterm · Markdown in and out"]
+    host["<b>postio-host</b><br/><i>postio-daemon</i><br/>the store's one owner · a dispatcher per frontend"]
+    client["<b>postio-client</b><br/>Req/Resp · commands down, events up<br/><i>no engine — CI enforced</i>"]
     session["<b>postio-session</b><br/><i>composition root — no toolkit</i><br/>store · runtime · engines · the verb vocabulary<br/><i>no GTK — CI enforced</i>"]
 
     subgraph view ["frontend"]
@@ -44,6 +47,12 @@ graph TD
 
     app --> session
     app --> gtk
+    app --> host
+    app --> client
+    tui --> client
+    host --> session
+    host --> client
+    client --> core
     session --> runtime
     session --> core
     gtk --> core
@@ -70,7 +79,7 @@ graph TD
     classDef pure fill:#eef3f8,stroke:#5980a6,color:#1c2b3a
     classDef guard stroke-dasharray:4 3,stroke:#5980a6
     class model,search pure
-    class core,gtk,session guard
+    class core,gtk,session,client,tui guard
 ```
 
 Arrows are "depends on", and every arrow drawn is a real direct dependency.
@@ -89,8 +98,17 @@ of which names a widget. See [ADR 0010](decisions/0010-mcp-surface.md) for why
 the alternative — a second binary opening the store directly — is not a second
 frontend but a second application sharing a file.
 
-Dashed borders mark the three crates whose dependency closure CI polices
+Dashed borders mark the crates whose dependency closure CI polices
 (`scripts/checks/check-crate-boundaries.py`).
+
+**One process owns the store** ([ADR 0041](decisions/0041-one-process-owns-the-store.md)).
+`postio-host` is that owner — built as the `postio-daemon` binary, or run
+inside a process that no other frontend can share a store with (the macOS
+frontend, the integration suites) — and every frontend reaches mail through
+`postio-client`. The terminal frontend is the first built that way from the
+start; the desktop app is moving onto its client surface by surface
+(`specs/005-tui-frontend` T018), which is why it still draws an edge to
+`postio-session` and to the host.
 
 ---
 
@@ -285,13 +303,17 @@ This is also why `postio-account`'s in-process test server is written **against
 the wire** rather than against `io-imap`: a bug in the protocol crate cannot
 hide inside the thing meant to catch it.
 
-### 9. Two crate boundaries are enforced, not encouraged
+### 9. The crate boundaries are enforced, not encouraged
 
 - **`postio-core` must not depend on `gtk4`/`libadwaita`.** It is the
   UI-agnostic contract; this is what keeps a second frontend possible.
 - **`postio-gtk` must not depend on `turso`/`io-imap`.** The view layer does
   no SQL and speaks no protocol. (`rusqlite` stays on the banned list beside
   `turso`, so the rule outlives the engine that made it.)
+- **`postio-client` and `postio-tui` must not depend on a toolkit, WebKit,
+  the database engine or the protocol crates.** A frontend's client that could
+  open the store would be the second writer ADR 0041 rules out, and the
+  terminal package is held to being small (`specs/005-tui-frontend` FR-051).
 
 `scripts/checks/check-crate-boundaries.py` inspects `cargo metadata`'s **resolved
 graph**, not source text, so a violation arriving transitively through an

@@ -135,6 +135,9 @@ cargo run -p postio-app
 ```
 
 builds and runs Postio from the checkout without installing anything.
+`cargo run -p postio-tui` does the same for Postio in a terminal, which can
+be open beside the desktop app on the same mail; see
+[Postio in a terminal](docs/book/src/terminal.md).
 
 ## First run
 

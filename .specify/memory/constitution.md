@@ -1,7 +1,15 @@
 <!--
 Sync Impact Report
 ==================
-Version change: 1.0.0 → 1.1.0 (was: unversioned scaffold → 1.0.0)
+Version change: 1.1.0 → 1.2.0 (was: 1.0.0 → 1.1.0; unversioned scaffold → 1.0.0)
+Bump rationale (1.2.0): MINOR. Additional Constraints → Scope names a second
+  Linux frontend, the terminal one (`postio-tui`), on the same store as the
+  desktop app; the maintainer asked for it on 2026-09-23 ("I want to create a
+  TUI version of postio", and "the same store to be available to the GTK
+  version and TUI"). Principle VII's boundary list gains the rules
+  `check-crate-boundaries.py` already enforces for `postio-client` and
+  `postio-tui`, and the one-owner rule of ADR 0041 they follow from. This
+  expands both sections; it narrows nothing.
 Bump rationale (1.1.0): MINOR. Development Workflow gains a second sanctioned
   mode — spec-driven work on one feature branch, with tasks from `tasks.md`
   instead of an issue each. The issue loop remains the default and is unchanged;
@@ -27,6 +35,13 @@ Added sections:
   Governance (filled)
 
 Removed sections: none
+
+Modified sections (1.2.0):
+  VII. Boundaries Are Enforced, Not Advised — adds one process owning the
+  store, and `postio-client`/`postio-tui` taking no toolkit, WebKit, store
+  engine or protocol.
+  Additional Constraints — Scope names the terminal frontend
+  (specs/005-tui-frontend).
 
 Modified sections (1.1.0):
   Development Workflow and Quality Gates — adds "Spec-driven work lands on one
@@ -185,6 +200,9 @@ take no GTK; `postio-gtk` takes no SQL and no protocol; `postio-search` and
 `postio-body` are pure leaves; `postio-model` takes no ammonia/html5ever,
 rusqlite, gtk4, or tokio; `postio-config` takes no rusqlite or gtk4;
 `postio-sync` talks to the `MailBackend` trait and never to `io-imap` types.
+One process owns the store (ADR 0041): every other frontend reaches mail
+through `postio-client`, and `postio-client` and `postio-tui` take no toolkit,
+no WebKit, no store engine and no protocol.
 
 **Providers are data, not code.** Server settings live in the preset table.
 Named constants and provider-specific branches are forbidden: Postio is not
@@ -201,7 +219,8 @@ that lives only in a document has already been crossed.
 
 ## Additional Constraints
 
-**Scope.** v1 is Linux only: GTK4 and libadwaita, Wayland first. IMAP and SMTP,
+**Scope.** v1 is Linux only: GTK4 and libadwaita, Wayland first, and a
+terminal frontend on the same store (`specs/005-tui-frontend`). IMAP and SMTP,
 one provider preset table, OAuth in scope (ADR 0006), no AI (deferred to epic
 E12). Work outside this scope belongs on the roadmap, not in a branch.
 
@@ -305,4 +324,4 @@ architecture call an agent can make is labelled `needs-architecture`.
 the skills it names. `CLAUDE.md` elaborates this constitution and MUST NOT
 contradict it.
 
-**Version**: 1.0.0 | **Ratified**: 2026-09-08 | **Last Amended**: 2026-09-08
+**Version**: 1.2.0 | **Ratified**: 2026-09-08 | **Last Amended**: 2026-09-24
