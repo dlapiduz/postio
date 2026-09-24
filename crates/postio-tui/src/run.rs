@@ -102,7 +102,13 @@ pub fn run() -> ExitCode {
     };
     session.publish();
 
-    let outcome = runtime.block_on(main_loop(client, keys, theme, state));
+    let saved: Vec<String> = config
+        .filters
+        .iter()
+        .filter(|(_, filter)| filter.pinned)
+        .map(|(key, filter)| filter.name.clone().unwrap_or_else(|| key.clone()))
+        .collect();
+    let outcome = runtime.block_on(main_loop(client, keys, theme, state, saved));
     let _ = session.leave(&mut Stdout);
     session.publish();
     match outcome {
@@ -130,6 +136,7 @@ async fn main_loop(
     keys: Keys,
     theme: Theme,
     state: postio_core::SharedState,
+    saved: Vec<String>,
 ) -> io::Result<()> {
     let backend = CrosstermBackend::new(io::stdout());
     let mut terminal = Terminal::new(backend)?;
@@ -140,10 +147,20 @@ async fn main_loop(
     let mut terminal_events = EventStream::new();
     let host_events = client.events();
 
+    let contents = sidebar_contents(&client, saved.clone()).await;
+    let _ = update(&mut app, Input::Sidebar(contents));
     if let Some(scope) = first_scope(&client).await {
         let total = client.list_count(scope).await.unwrap_or(0);
         let effects = update(&mut app, Input::Opened { scope, total });
-        if perform(&client, &mut app, &mut terminal, &theme, &inputs, effects)? {
+        if perform(
+            &client,
+            &mut app,
+            &mut terminal,
+            &theme,
+            &inputs,
+            &saved,
+            effects,
+        )? {
             return Ok(());
         }
     }
@@ -170,9 +187,46 @@ async fn main_loop(
             },
         };
         let effects = update(&mut app, input);
-        if perform(&client, &mut app, &mut terminal, &theme, &inputs, effects)? {
+        if perform(
+            &client,
+            &mut app,
+            &mut terminal,
+            &theme,
+            &inputs,
+            &saved,
+            effects,
+        )? {
             return Ok(());
         }
+    }
+}
+
+/// What the sidebar holds: every account, its folders, and the counts its
+/// views draw.
+async fn sidebar_contents(client: &Client, saved: Vec<String>) -> crate::sidebar::Contents {
+    let accounts = client.accounts().await.unwrap_or_default();
+    let mut folders = Vec::new();
+    let mut counts = Vec::new();
+    for account in &accounts {
+        let theirs = client.mailboxes(account.id).await.unwrap_or_default();
+        let drafts = client.draft_counts(account.id).await.unwrap_or_default();
+        counts.push((
+            account.id,
+            postio_ui::sidebar::ViewCounts {
+                flagged: theirs.iter().map(|folder| folder.counts.flagged).sum(),
+                snoozed: theirs.iter().map(|folder| folder.counts.snoozed).sum(),
+                outbox: drafts.outbox,
+                drafts: drafts.drafts,
+                attention: drafts.attention,
+            },
+        ));
+        folders.extend(theirs);
+    }
+    crate::sidebar::Contents {
+        accounts,
+        folders,
+        counts,
+        saved,
     }
 }
 
@@ -185,6 +239,7 @@ fn perform(
     terminal: &mut Screen,
     theme: &Theme,
     inputs: &async_channel::Sender<Input>,
+    saved: &[String],
     effects: Vec<Effect>,
 ) -> io::Result<bool> {
     let mut redraw = false;
@@ -192,6 +247,23 @@ fn perform(
         match effect {
             Effect::Quit => return Ok(true),
             Effect::Redraw => redraw = true,
+            Effect::Open(scope) => {
+                let client = client.clone();
+                let inputs = inputs.clone();
+                tokio::spawn(async move {
+                    let total = client.list_count(scope).await.unwrap_or(0);
+                    let _ = inputs.send(Input::Opened { scope, total }).await;
+                });
+            }
+            Effect::RefreshSidebar => {
+                let client = client.clone();
+                let inputs = inputs.clone();
+                let saved = saved.to_vec();
+                tokio::spawn(async move {
+                    let contents = sidebar_contents(&client, saved).await;
+                    let _ = inputs.send(Input::Sidebar(contents)).await;
+                });
+            }
             Effect::Recount(scope) => {
                 let client = client.clone();
                 let inputs = inputs.clone();

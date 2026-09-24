@@ -110,7 +110,7 @@ and layout but draws no mail yet.
 transport, no network; drive it with keys; assert the rendered buffer and the
 store (quickstart "triage").
 
-- [ ] T033 [P] [US1] Write `crates/postio-tui/src/view/sidebar.rs` over `postio_ui::sidebar` (folders, views, saved searches, counts, accounts). Test first: a snapshot of the fixture sidebar shows Inbox, Flagged, Snoozed and a saved search
+- [X] T033 [P] [US1] Write `crates/postio-tui/src/view/sidebar.rs` over `postio_ui::sidebar` (folders, views, saved searches, counts, accounts). Test first: a snapshot of the fixture sidebar shows Inbox, Flagged, Snoozed and a saved search
 - [X] T034 [P] [US1] Write `crates/postio-tui/src/view/list.rs` drawing only the `postio_ui::list::ListWindow` slice with the marks of contracts/tui-surface.md (`●`, `⚑`, `▌`, `›`), wide characters aligned. Test first: a snapshot with a CJK subject and an emoji sender keeps columns aligned
 - [X] T035 [US1] Wire paging through `postio_ui::paging::Paging` and `Client::page`. Test first (counts, Principle V): scrolling one row costs at most one `Page` request plus `ListWindow`'s read-ahead page and zero `Body` requests; a 100,000-row fixture scope never requests more than the window
 - [X] T036 [US1] Wire cursor and `postio_ui::selection::SelectionState` and aim commands with `postio_core::aim::command_for`. Test first: US1 scenario 3 — three selected, cursor on a fourth, `a` archives the three only

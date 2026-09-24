@@ -16,6 +16,7 @@ pub mod input;
 pub mod layout;
 pub mod row;
 pub mod run;
+pub mod sidebar;
 pub mod term;
 pub mod theme;
 pub mod view;

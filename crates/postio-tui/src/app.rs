@@ -40,6 +40,8 @@ pub enum Input {
     },
     /// The daemon said something happened.
     Host(postio_core::Event),
+    /// What the sidebar holds, read afresh.
+    Sidebar(crate::sidebar::Contents),
     /// A list was counted again, after an event said it changed.
     Recounted {
         /// Which list.
@@ -65,6 +67,10 @@ pub enum Effect {
     Redraw,
     /// Leave.
     Quit,
+    /// Open a list: count it and answer with [`Input::Opened`].
+    Open(ListScope),
+    /// Read the sidebar's contents again and answer with [`Input::Sidebar`].
+    RefreshSidebar,
     /// Count a list again and answer with [`Input::Recounted`].
     Recount(ListScope),
     /// Send a command to the daemon, aimed with [`App::state`].
@@ -101,6 +107,22 @@ pub struct App {
     /// What the status line says about the last thing done: the undo offer,
     /// a refusal, an error.
     notice: Option<String>,
+    /// Where the keyboard is.
+    focus: Focus,
+    /// The sidebar's lines.
+    sidebar: Vec<crate::sidebar::Line>,
+    /// The sidebar line the keyboard is on.
+    sidebar_cursor: usize,
+}
+
+/// Which pane the keyboard is in.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Focus {
+    /// The message list.
+    #[default]
+    List,
+    /// The sidebar.
+    Sidebar,
 }
 
 impl std::fmt::Debug for App {
@@ -128,6 +150,27 @@ impl App {
             selection: postio_ui::selection::SelectionState::new(),
             scope: None,
             notice: None,
+            focus: Focus::List,
+            sidebar: Vec::new(),
+            sidebar_cursor: 0,
+        }
+    }
+
+    /// Where the keyboard is.
+    pub fn focus(&self) -> Focus {
+        self.focus
+    }
+
+    /// The sidebar's lines, and which one the keyboard would be on.
+    pub fn sidebar(&self) -> (&[crate::sidebar::Line], usize) {
+        (&self.sidebar, self.sidebar_cursor)
+    }
+
+    /// The keymap context the keyboard is in.
+    fn key_context(&self) -> KeyContext {
+        match self.focus {
+            Focus::List => KeyContext::List,
+            Focus::Sidebar => KeyContext::Sidebar,
         }
     }
 
@@ -276,6 +319,17 @@ impl App {
                 .selection
                 .select_all(postio_ui::selection::Reach::default()),
             "quit" => return vec![Effect::Quit],
+            "focus_sidebar" => self.focus = Focus::Sidebar,
+            "cycle_pane" | "cycle_pane_back" => {
+                self.focus = match self.focus {
+                    Focus::List => Focus::Sidebar,
+                    Focus::Sidebar => Focus::List,
+                }
+            }
+            "back" if self.focus == Focus::Sidebar => self.focus = Focus::List,
+            "back" => self.selection.clear(),
+            "next_folder" => return self.walk_sidebar(1),
+            "prev_folder" => return self.walk_sidebar(-1),
             other => return self.send(other),
         }
         vec![Effect::Redraw]
@@ -301,6 +355,43 @@ impl App {
         vec![Effect::Send(command)]
     }
 
+    /// Take in the sidebar's contents, keeping the cursor on the list shown.
+    fn fill_sidebar(&mut self, contents: &crate::sidebar::Contents) -> Vec<Effect> {
+        self.sidebar = crate::sidebar::lines(contents);
+        self.sidebar_cursor = self
+            .sidebar
+            .iter()
+            .position(|line| line.opens.is_some() && line.opens == self.scope)
+            .or_else(|| self.sidebar.iter().position(|line| line.opens.is_some()))
+            .unwrap_or(0);
+        vec![Effect::Redraw]
+    }
+
+    /// Move the sidebar cursor by `step` rows that open something, and open
+    /// what it lands on -- as the desktop sidebar opens a folder when the
+    /// selection moves to it.
+    fn walk_sidebar(&mut self, step: isize) -> Vec<Effect> {
+        let openable: Vec<usize> = self
+            .sidebar
+            .iter()
+            .enumerate()
+            .filter(|(_, line)| line.opens.is_some())
+            .map(|(index, _)| index)
+            .collect();
+        let Some(here) = openable
+            .iter()
+            .position(|index| *index >= self.sidebar_cursor)
+        else {
+            return Vec::new();
+        };
+        let there = here.saturating_add_signed(step).min(openable.len() - 1);
+        self.sidebar_cursor = openable[there];
+        match self.sidebar[self.sidebar_cursor].opens {
+            Some(scope) if Some(scope) != self.scope => vec![Effect::Redraw, Effect::Open(scope)],
+            _ => vec![Effect::Redraw],
+        }
+    }
+
     /// The daemon said something happened.
     ///
     /// What a command said about itself goes on the status line; what
@@ -323,6 +414,9 @@ impl App {
             Event::CommandRejected { reason, .. } => return self.say(reason),
             Event::Error { message } => return self.say(message),
             _ => {}
+        }
+        if matches!(event, Event::MailboxesChanged { .. }) {
+            return vec![Effect::RefreshSidebar];
         }
         match self.paging.plan(event) {
             postio_ui::paging::Plan::Ignore => Vec::new(),
@@ -413,12 +507,13 @@ pub fn update(app: &mut App, input: Input) -> Vec<Effect> {
             app.size = (width, height);
             vec![Effect::Redraw]
         }
-        Input::Key(key) => match app.keys.press(&key, KeyContext::List, false) {
+        Input::Key(key) => match app.keys.press(&key, app.key_context(), false) {
             Outcome::Command(id) => app.command(&id),
             Outcome::Pending(_) | Outcome::Unhandled => Vec::new(),
         },
         Input::Opened { scope, total } => app.open(scope, total),
         Input::Host(event) => app.hear(&event),
+        Input::Sidebar(contents) => app.fill_sidebar(&contents),
         Input::Recounted { scope, total } => app.recounted(scope, total),
         Input::Page {
             generation,
@@ -717,6 +812,79 @@ mod tests {
             }),
         );
         assert_eq!(app.notice(), Some("Nothing selected"));
+    }
+
+    fn sidebar_contents() -> crate::sidebar::Contents {
+        use postio_model::mailbox::{Mailbox, MailboxRole};
+        let mut account = postio_model::Account::new(
+            "ada",
+            postio_model::EmailAddress::new(None::<String>, "ada@example.com"),
+        );
+        account.id = postio_model::AccountId::new(1);
+        account.enabled = true;
+        let folder = |id, name: &str, role| {
+            let mut folder = Mailbox::new(account.id, name, None);
+            folder.id = MailboxId::new(id);
+            folder.role = role;
+            folder.selectable = true;
+            folder
+        };
+        crate::sidebar::Contents {
+            accounts: vec![account.clone()],
+            folders: vec![
+                folder(1, "INBOX", MailboxRole::Inbox),
+                folder(2, "Archive", MailboxRole::Archive),
+            ],
+            counts: Vec::new(),
+            saved: Vec::new(),
+        }
+    }
+
+    fn key(code: KeyCode, modifiers: KeyModifiers) -> Input {
+        Input::Key(KeyEvent {
+            code,
+            modifiers,
+            kind: KeyEventKind::Press,
+            state: KeyEventState::NONE,
+        })
+    }
+
+    #[test]
+    fn walking_the_sidebar_opens_what_the_cursor_lands_on() {
+        let mut app = app((160, 40));
+        let opening = opened(&mut app, 3);
+        serve(&mut app, opening);
+        update(&mut app, Input::Sidebar(sidebar_contents()));
+        update(&mut app, press('g'));
+        update(&mut app, press('f'));
+        assert_eq!(app.focus(), Focus::Sidebar, "g f focuses the sidebar");
+
+        let effects = update(&mut app, press('j'));
+        let opened_scope = effects.iter().find_map(|effect| match effect {
+            Effect::Open(scope) => Some(*scope),
+            _ => None,
+        });
+        let (lines, at) = app.sidebar();
+        assert_eq!(opened_scope, lines[at].opens, "{effects:?}");
+        assert!(opened_scope.is_some());
+        assert_ne!(
+            opened_scope,
+            Some(ListScope::Mailbox(MailboxId::new(1))),
+            "it moved off the inbox"
+        );
+
+        update(&mut app, key(KeyCode::Esc, KeyModifiers::NONE));
+        assert_eq!(app.focus(), Focus::List, "Escape goes back to the list");
+    }
+
+    #[test]
+    fn the_sidebar_cursor_starts_on_the_list_being_shown() {
+        let mut app = app((160, 40));
+        let opening = opened(&mut app, 3);
+        serve(&mut app, opening);
+        update(&mut app, Input::Sidebar(sidebar_contents()));
+        let (lines, at) = app.sidebar();
+        assert_eq!(lines[at].opens, Some(ListScope::Mailbox(MailboxId::new(1))));
     }
 
     #[test]
