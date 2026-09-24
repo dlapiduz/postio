@@ -2575,7 +2575,7 @@ async fn an_idle_engine_does_not_poll_the_queue() {
             break;
         }
         assert!(
-            started.elapsed() < postio_test_support::scaled(std::time::Duration::from_secs(4)),
+            started.elapsed() < postio_test_support::scaled(std::time::Duration::from_secs(2)),
             "a queued action waited out the fallback tick instead of waking the engine"
         );
         tokio::time::sleep(std::time::Duration::from_millis(20)).await;
