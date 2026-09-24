@@ -87,6 +87,7 @@ const WIRED: &[CommandId] = &[
     CommandId::ContactEdit,
     CommandId::ContactDelete,
     CommandId::ContactRestore,
+    CommandId::SuggestionDismiss,
 ];
 
 /// How long [`Command::Snooze`] hides a message for, with no duration picker
@@ -362,6 +363,22 @@ impl Actions {
                     self.restore_contact(person, state.unwrap_or(ContactState::Live))
                         .await?,
                 ]
+            }
+            // Not an undo unit (contracts/commands.md): it hides a
+            // suggestion and touches nobody, so it announces itself and
+            // records nothing.
+            Command::SuggestionDismiss { pair } => {
+                let (a, b) =
+                    pair.ok_or_else(|| CommandError::rejected("Choose a suggestion first"))?;
+                let (connection, _permit) = self.connect().await?;
+                ContactRepository::new(&connection)
+                    .dismiss(a, b)
+                    .await
+                    .map_err(contact_failure)?;
+                events.emit(Event::ContactsChanged {
+                    names_changed: false,
+                });
+                Vec::new()
             }
             Command::MarkReadOnDwell { message } => {
                 self.set_flag(
@@ -6204,6 +6221,33 @@ mod tests {
             assert_eq!(
                 get(&world, ada).await.expect("ada").state,
                 ContactState::Deleted
+            );
+        }
+
+        #[tokio::test]
+        async fn a_dismissal_hides_the_pair_and_is_not_an_undo() {
+            let world = world().await;
+            let a = person(&world, "Ada Lovelace", &["ada@work.example"]).await;
+            let b = person(&world, "Ada Lovelace", &["ada@home.example"]).await;
+            world
+                .run(Command::SuggestionDismiss { pair: Some((a, b)) })
+                .await
+                .expect("dismiss");
+            let events = world.drained().await;
+            assert_eq!(changed(&events), Some(false), "no name moved");
+            assert!(
+                !events
+                    .iter()
+                    .any(|e| matches!(e, Event::ActionCompleted { undoable: true, .. })),
+                "nothing to take back: {events:?}"
+            );
+            let connection = world.database.connect().await.expect("a connection");
+            assert!(
+                ContactRepository::new(&connection)
+                    .suggestions(10)
+                    .await
+                    .expect("suggestions")
+                    .is_empty()
             );
         }
     }

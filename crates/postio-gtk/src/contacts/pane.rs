@@ -102,6 +102,11 @@ mod imp {
         /// What the editor is doing: `Some(None)` making someone,
         /// `Some(Some(id))` editing them.
         pub editing: Cell<Option<Option<ContactId>>>,
+        /// The people list, or the suggestions in its place.
+        pub lists: gtk::Stack,
+        pub suggestions: gtk::ListBox,
+        pub suggested: RefCell<Vec<postio_model::JoinSuggestion>>,
+        pub suggestions_asked_handlers: RefCell<Vec<Box<dyn Fn()>>>,
         pub join_asked_handlers: RefCell<Vec<PeopleHandler>>,
         pub add_address_handlers: RefCell<Vec<TypedHandler>>,
     }
@@ -261,9 +266,25 @@ impl ContactsPane {
         column.append(&imp.empty);
         column.append(&imp.hint);
 
+        imp.suggestions
+            .set_selection_mode(gtk::SelectionMode::Browse);
+        imp.suggestions.add_css_class("postio-contact-suggestions");
+        imp.suggestions
+            .update_property(&[gtk::accessible::Property::Label("Possible duplicates")]);
+        let suggestions = gtk::ScrolledWindow::builder()
+            .child(&imp.suggestions)
+            .hexpand(true)
+            .vexpand(true)
+            .hscrollbar_policy(gtk::PolicyType::Never)
+            .build();
+        imp.lists.set_hexpand(true);
+        imp.lists.add_named(&column, Some("people"));
+        imp.lists.add_named(&suggestions, Some("suggestions"));
+        imp.lists.set_visible_child_name("people");
+
         let body = gtk::Box::new(gtk::Orientation::Horizontal, 0);
         body.set_vexpand(true);
-        body.append(&column);
+        body.append(&imp.lists);
         self.build_side();
         body.append(&imp.side);
 
@@ -607,19 +628,43 @@ impl ContactsPane {
     /// Acts on the commands the Contacts screen owns while it is open.
     pub fn dispatch(&self, id: CommandId) {
         use postio_ui::contacts::{RowKind, applies};
-        if let Err(hint) = applies(id, RowKind::Person) {
+        // An open panel answers `Return` before the row under it is asked
+        // what `Return` means there -- in the suggestions view that row
+        // would refuse it.
+        if id == CommandId::ContactShowMail {
+            if self.join_open() {
+                self.confirm_join();
+                return;
+            }
+            if self.imp().moving.get().is_some() {
+                self.confirm_moving();
+                return;
+            }
+        }
+        let kind = if self.suggestions_open() {
+            RowKind::Suggestion
+        } else {
+            RowKind::Person
+        };
+        if let Err(hint) = applies(id, kind) {
             self.say(hint.0);
             return;
         }
         match id {
             CommandId::Back => self.back(),
-            // `Return` answers whichever panel is up before it shows mail.
-            CommandId::ContactShowMail if self.join_open() => self.confirm_join(),
-            CommandId::ContactShowMail if self.imp().moving.get().is_some() => {
-                self.confirm_moving()
-            }
             CommandId::ContactsFilter => {
                 self.imp().filter.grab_focus();
+            }
+            CommandId::ContactsSuggestions => {
+                if self.suggestions_open() {
+                    self.imp().lists.set_visible_child_name("people");
+                    self.show_view_text();
+                    self.focus_list();
+                } else {
+                    self.imp().lists.set_visible_child_name("suggestions");
+                    self.imp().title.set_text("Possible duplicates");
+                    self.ask_suggestions();
+                }
             }
             CommandId::ContactsToggleDeleted => {
                 let next = if self.view() == ContactView::Deleted {
@@ -718,7 +763,23 @@ impl ContactsPane {
             return;
         }
         match command {
+            Command::ContactJoin(ContactJoinAction::Ask) if self.suggestions_open() => {
+                match self.focused_suggestion() {
+                    Some((a, b)) => {
+                        self.say("");
+                        self.imp().joining.replace(vec![a, b]);
+                        for handler in self.imp().join_asked_handlers.borrow().iter() {
+                            handler(vec![a, b]);
+                        }
+                    }
+                    None => self.say("No suggestion to join"),
+                }
+            }
             Command::ContactJoin(ContactJoinAction::Ask) => self.ask_join(),
+            Command::SuggestionDismiss { pair: None } => match self.focused_suggestion() {
+                Some(pair) => self.act(Command::SuggestionDismiss { pair: Some(pair) }),
+                None => self.say("No suggestion to dismiss"),
+            },
             Command::ContactAddAddress(ContactAddressAction::Ask) => self.ask_address(),
             Command::ContactDetachAddress { address: None } => match self.focused_address() {
                 Some(address) => self.act(Command::ContactDetachAddress {
@@ -729,14 +790,14 @@ impl ContactsPane {
             Command::ContactNew(ContactNewAction::Ask) => {
                 self.imp().editing.set(Some(None));
                 self.imp().editor.start_new();
-                self.imp().side.set_visible_child_name("editor");
+                self.show_side("editor");
                 self.imp().editor.name_entry().grab_focus();
             }
             Command::ContactEdit(ContactEditAction::Ask) => match self.imp().detail.detail() {
                 Some(detail) => {
                     self.imp().editing.set(Some(Some(detail.person.id)));
                     self.imp().editor.start_edit(&detail.person);
-                    self.imp().side.set_visible_child_name("editor");
+                    self.show_side("editor");
                     self.imp().editor.name_entry().grab_focus();
                 }
                 None => self.say("Choose someone first"),
@@ -815,7 +876,7 @@ impl ContactsPane {
         }
         imp.join_into.set(Some(choices.into));
         imp.join.set_choices(&choices);
-        imp.side.set_visible_child_name("join");
+        self.show_side("join");
         imp.join.focus();
     }
 
@@ -873,7 +934,7 @@ impl ContactsPane {
         imp.address_entry.set_text("");
         imp.address_entry.set_visible(true);
         imp.address_prompt.set_text("Return to add · Esc to cancel");
-        imp.side.set_visible_child_name("address");
+        self.show_side("address");
         imp.address_entry.grab_focus();
     }
 
@@ -919,7 +980,7 @@ impl ContactsPane {
         imp.address_prompt.set_text(&format!(
             "{text} belongs to {owner}. Return moves it here · Esc keeps it there"
         ));
-        imp.side.set_visible_child_name("address");
+        self.show_side("address");
         self.focus_list();
     }
 
@@ -941,6 +1002,93 @@ impl ContactsPane {
             to: Some(to),
             revive: None,
         }));
+    }
+
+    // -- Possible duplicates (User Story 4) --------------------------------
+
+    /// Called when the suggestions view wants its pairs; the answer is
+    /// [`show_suggestions`](Self::show_suggestions).
+    pub fn connect_suggestions_asked(&self, handler: impl Fn() + 'static) {
+        self.imp()
+            .suggestions_asked_handlers
+            .borrow_mut()
+            .push(Box::new(handler));
+    }
+
+    fn ask_suggestions(&self) {
+        for handler in self.imp().suggestions_asked_handlers.borrow().iter() {
+            handler();
+        }
+    }
+
+    /// Shows these pairs, each with its evidence, the cursor on the one it
+    /// was on as far as the list still reaches.
+    pub fn show_suggestions(&self, suggestions: Vec<postio_model::JoinSuggestion>) {
+        let imp = self.imp();
+        let at = imp.suggestions.selected_row().map(|row| row.index());
+        imp.suggestions.remove_all();
+        for suggestion in &suggestions {
+            let text = postio_ui::contacts::suggestion_line(suggestion);
+            let label = gtk::Label::new(Some(&text));
+            label.set_xalign(0.0);
+            label.set_wrap(true);
+            label.add_css_class("postio-contact-suggestion");
+            imp.suggestions.append(&label);
+        }
+        let count = i32::try_from(suggestions.len()).unwrap_or(i32::MAX);
+        if count > 0 {
+            let at = at.unwrap_or(0).clamp(0, count - 1);
+            if let Some(row) = imp.suggestions.row_at_index(at) {
+                imp.suggestions.select_row(Some(&row));
+                row.grab_focus();
+            }
+        }
+        imp.meta.set_text(&match suggestions.len() {
+            0 => "No one looks like anyone else".to_owned(),
+            1 => "1 possible duplicate".to_owned(),
+            n => format!("{n} possible duplicates"),
+        });
+        imp.suggested.replace(suggestions);
+    }
+
+    /// Whether the suggestions view is up.
+    pub fn suggestions_open(&self) -> bool {
+        self.imp().lists.visible_child_name().as_deref() == Some("suggestions")
+    }
+
+    /// Each suggestion as drawn.
+    pub fn suggestion_lines(&self) -> Vec<String> {
+        let mut lines = Vec::new();
+        let mut index = 0;
+        while let Some(row) = self.imp().suggestions.row_at_index(index) {
+            if let Some(label) = row.child().and_downcast::<gtk::Label>() {
+                lines.push(label.text().to_string());
+            }
+            index += 1;
+        }
+        lines
+    }
+
+    /// Puts the cursor on the suggestion at `position`, as the arrow keys do.
+    #[doc(hidden)]
+    pub fn focus_suggestion(&self, position: usize) {
+        let suggestions = &self.imp().suggestions;
+        if let Some(row) = i32::try_from(position)
+            .ok()
+            .and_then(|at| suggestions.row_at_index(at))
+        {
+            suggestions.select_row(Some(&row));
+            row.grab_focus();
+        }
+    }
+
+    /// The pair under the cursor in the suggestions view.
+    fn focused_suggestion(&self) -> Option<(ContactId, ContactId)> {
+        let imp = self.imp();
+        let row = imp.suggestions.selected_row()?;
+        let suggested = imp.suggested.borrow();
+        let pair = suggested.get(usize::try_from(row.index()).ok()?)?;
+        Some((pair.people[0].id, pair.people[1].id))
     }
 
     /// Whether the editor is up.
@@ -1003,6 +1151,16 @@ impl ContactsPane {
         self.act(command);
     }
 
+    /// Shows `page` in the detail column. The column itself is hidden only
+    /// for an empty list showing no panel: hiding the detail page instead
+    /// would let the stack fall through to whichever page came next.
+    fn show_side(&self, page: &str) {
+        let imp = self.imp();
+        imp.side.set_visible_child_name(page);
+        imp.side
+            .set_visible(page != "detail" || self.model().n_items() > 0);
+    }
+
     /// `Esc`: a panel if one is up, the screen otherwise.
     pub fn back(&self) {
         if self.imp().side.visible_child_name().as_deref() != Some("detail") {
@@ -1021,7 +1179,7 @@ impl ContactsPane {
         imp.moving.set(None);
         imp.editing.set(None);
         imp.address_entry.set_visible(true);
-        imp.side.set_visible_child_name("detail");
+        self.show_side("detail");
     }
 
     /// Reads the view again, for an address book that changed under it,
@@ -1039,6 +1197,9 @@ impl ContactsPane {
             .filter(|at| *at != gtk::INVALID_LIST_POSITION);
         self.imp().keep.set(at);
         self.query_changed();
+        if self.suggestions_open() {
+            self.ask_suggestions();
+        }
     }
 
     /// Puts the cursor on the row at `position`, as the arrow keys do.
@@ -1137,7 +1298,10 @@ impl ContactsPane {
         imp.empty.set_visible(total == 0 && !filtered);
         // With nobody listed there is nobody to show in detail, and a column
         // saying "Nobody chosen" beside an empty list says it twice.
-        imp.detail.set_visible(total > 0);
+        // The detail column goes with an empty list -- but not a panel in it:
+        // `n` on an empty address book is how the first person is made.
+        let panel = imp.side.visible_child_name().as_deref() != Some("detail");
+        imp.side.set_visible(total > 0 || panel);
         if let Some(scroller) = imp.scroller.borrow().as_ref() {
             scroller.set_visible(total > 0 || filtered);
         }

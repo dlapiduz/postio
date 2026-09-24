@@ -3173,6 +3173,7 @@ impl Window {
                 | postio_core::Command::ContactEdit(postio_core::ContactEditAction::Ask)
                 | postio_core::Command::ContactDelete { person: None }
                 | postio_core::Command::ContactRestore { person: None, .. }
+                | postio_core::Command::SuggestionDismiss { pair: None }
         ) {
             self.contacts().ask(&command);
             return;

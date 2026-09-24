@@ -70,6 +70,7 @@ mod gtk_composer_warm;
 mod gtk_contacts_edit;
 mod gtk_contacts_join;
 mod gtk_contacts_pane;
+mod gtk_contacts_suggestions;
 mod gtk_conversation;
 mod gtk_cursor_preview;
 mod gtk_dispatch;
@@ -215,6 +216,10 @@ const CASES: &[(&str, fn())] = &[
     (
         "gtk_contacts_join::plus_adds_a_typed_address_and_asks_before_taking_one",
         gtk_contacts_join::plus_adds_a_typed_address_and_asks_before_taking_one,
+    ),
+    (
+        "gtk_contacts_suggestions::v_s_shows_the_evidence_m_joins_and_x_dismisses",
+        gtk_contacts_suggestions::v_s_shows_the_evidence_m_joins_and_x_dismisses,
     ),
     (
         "gtk_contacts_pane::contacts_takes_the_pane_and_esc_gives_it_back",

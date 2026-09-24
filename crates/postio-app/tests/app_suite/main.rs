@@ -26,6 +26,7 @@ mod contact_name_in_list_and_reader;
 mod contacts_delete_restore;
 mod contacts_join;
 mod contacts_screen;
+mod contacts_suggestions;
 mod contacts_support;
 mod conversation_body_arrives;
 mod conversation_by_default;
@@ -268,6 +269,10 @@ const CASES: &[(&str, fn())] = &[
     (
         "contacts_join::x_x_m_return_joins_and_u_takes_it_back",
         contacts_join::x_x_m_return_joins_and_u_takes_it_back,
+    ),
+    (
+        "contacts_suggestions::m_joins_a_suggestion_and_x_dismisses_one",
+        contacts_suggestions::m_joins_a_suggestion_and_x_dismisses_one,
     ),
     (
         "contacts_screen::g_c_shows_the_people_from_the_mail_and_esc_returns",

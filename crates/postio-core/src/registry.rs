@@ -1733,6 +1733,29 @@ static SPECS: &[CommandSpec] = &[
         recovery: Recovery::None,
         requires: MAIL,
     },
+    CommandSpec {
+        id: CommandId::ContactsSuggestions,
+        title: "Possible duplicates",
+        default_binding: "v s",
+        alternate_bindings: &[],
+        contexts: ctx(CONTACTS),
+        destructive: false,
+        recovery: Recovery::None,
+        requires: MAIL,
+    },
+    CommandSpec {
+        id: CommandId::SuggestionDismiss,
+        title: "Not the same person",
+        default_binding: "X",
+        alternate_bindings: &[],
+        contexts: ctx(CONTACTS),
+        // It hides a suggestion and nothing else: the two people, their
+        // addresses and their mail are untouched, so there is nothing to
+        // lose and nothing for undo to give back (contracts/commands.md).
+        destructive: false,
+        recovery: Recovery::None,
+        requires: MAIL,
+    },
 ];
 
 /// Every command, in cheat-sheet order.

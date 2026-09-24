@@ -101,3 +101,5 @@ contact_edit	e
 contact_delete	d | Delete
 contact_restore	r
 contacts_toggle_deleted	v d
+contacts_suggestions	v s
+suggestion_dismiss	X

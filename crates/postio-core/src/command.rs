@@ -266,6 +266,10 @@ command_ids! {
     ContactRestore => "contact_restore",
     /// Show the deleted people, or the default view again.
     ContactsToggleDeleted => "contacts_toggle_deleted",
+    /// Show who might be the same person, or the people again.
+    ContactsSuggestions => "contacts_suggestions",
+    /// Say the focused suggestion is two people, for good.
+    SuggestionDismiss => "suggestion_dismiss",
 }
 
 impl fmt::Display for CommandId {
@@ -854,6 +858,14 @@ pub enum Command {
     },
     /// Toggle the Deleted view.
     ContactsToggleDeleted,
+    /// Toggle the suggestions view (FR-018).
+    ContactsSuggestions,
+    /// Never suggest these two together again (FR-019). `None` means the
+    /// focused suggestion.
+    SuggestionDismiss {
+        /// The two people.
+        pair: Option<(ContactId, ContactId)>,
+    },
 }
 
 /// What a [`Command::ContactNew`] asks for.
@@ -1098,6 +1110,8 @@ impl Command {
             Command::ContactDelete { .. } => CommandId::ContactDelete,
             Command::ContactRestore { .. } => CommandId::ContactRestore,
             Command::ContactsToggleDeleted => CommandId::ContactsToggleDeleted,
+            Command::ContactsSuggestions => CommandId::ContactsSuggestions,
+            Command::SuggestionDismiss { .. } => CommandId::SuggestionDismiss,
         }
     }
 
@@ -1242,6 +1256,8 @@ impl Command {
                 state: None,
             },
             CommandId::ContactsToggleDeleted => Command::ContactsToggleDeleted,
+            CommandId::ContactsSuggestions => Command::ContactsSuggestions,
+            CommandId::SuggestionDismiss => Command::SuggestionDismiss { pair: None },
         }
     }
 

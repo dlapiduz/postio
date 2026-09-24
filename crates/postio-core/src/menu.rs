@@ -205,7 +205,9 @@ pub fn section_for(command: CommandId) -> Option<MenuSection> {
         | C::ContactEdit
         | C::ContactDelete
         | C::ContactRestore
-        | C::ContactsToggleDeleted => None,
+        | C::ContactsToggleDeleted
+        | C::ContactsSuggestions
+        | C::SuggestionDismiss => None,
         // The one-off render of a part the reader would not draw by itself.
         // Deliberately *not* a menu item: `PRODUCT.md`'s privacy rule is that
         // this happens on a deliberate activation on the part itself, and a

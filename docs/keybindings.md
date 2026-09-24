@@ -145,6 +145,8 @@ command from inside a text field.
 | `d` or `Delete` | Delete | Contacts | Undoable | `contact_delete` |
 | `r` | Restore contact | Contacts | Undoable | `contact_restore` |
 | `v d` | Deleted contacts | Contacts |  | `contacts_toggle_deleted` |
+| `v s` | Possible duplicates | Contacts |  | `contacts_suggestions` |
+| `X` | Not the same person | Contacts |  | `suggestion_dismiss` |
 
 ## The one box
 

@@ -301,6 +301,31 @@ fn install_edits(window: &Window, wiring: &Wiring) {
         }
     });
 
+    // `v s`: who might be the same person, read whole and bounded (R11).
+    pane.connect_suggestions_asked({
+        let pane = pane.downgrade();
+        let database = wiring.database.clone();
+        let runtime = wiring.runtime.clone();
+        move || {
+            let answer = ask(&database, &runtime, move |connection| async move {
+                ContactRepository::new(&connection)
+                    .suggestions(SUGGESTIONS)
+                    .await
+                    .map_err(|error| tracing::warn!(%error, "could not read suggestions"))
+                    .ok()
+            });
+            let pane = pane.clone();
+            glib::spawn_future_local(async move {
+                let Ok(Some(suggestions)) = answer.recv().await else {
+                    return;
+                };
+                if let Some(pane) = pane.upgrade() {
+                    pane.show_suggestions(suggestions);
+                }
+            });
+        }
+    });
+
     pane.connect_add_address({
         let window = window.downgrade();
         let database = wiring.database.clone();
@@ -367,6 +392,10 @@ fn install_edits(window: &Window, wiring: &Wiring) {
         }
     });
 }
+
+/// How many possible duplicates the view lists at once: a page of them to
+/// work through, not the whole address book's worth.
+const SUGGESTIONS: u32 = 50;
 
 /// What a query is answered with: a view's length, or a filter's rows whole.
 enum Listed {
