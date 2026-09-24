@@ -44,6 +44,7 @@ mod list_contract;
 mod mailto_uri;
 mod manual_sync;
 mod navigation_cost;
+mod next_conversation_prepared;
 mod notify_off_the_main_thread;
 mod onboarding_probe;
 mod one_document_conversation;
@@ -489,6 +490,11 @@ const CASES: &[(&str, fn())] = &[
     (
         "startup_repair::an_account_with_no_credential_lands_on_the_repair_screen",
         startup_repair::an_account_with_no_credential_lands_on_the_repair_screen as fn(),
+    ),
+    (
+        "next_conversation_prepared::the_next_conversation_is_drawn_without_parsing_on_the_main_thread",
+        next_conversation_prepared::the_next_conversation_is_drawn_without_parsing_on_the_main_thread
+            as fn(),
     ),
     (
         "thread_bodies_in_one_crossing::a_conversation_is_read_in_one_crossing",

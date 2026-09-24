@@ -413,6 +413,7 @@ pub async fn install(window: &Window, wiring: &Wiring, feeds: &Feeds, showing: S
         queued: Cell::new(false),
         aimed: Cell::new(None),
         engine: wiring.engine.clone(),
+        ahead: RefCell::new(None),
     });
     window.list().connect_cursor_moved(glib::clone!(
         #[weak]
@@ -473,6 +474,8 @@ pub async fn install(window: &Window, wiring: &Wiring, feeds: &Feeds, showing: S
                     return;
                 };
                 fill.fill_thread(&window.conversation(), rows);
+                // While this one is read, the next one is prepared.
+                fill.prepare_next(&window);
             }
         });
     }
@@ -751,7 +754,26 @@ struct Fill {
     /// because the pane is built before an account's engine is adopted
     /// (`adopt_engine`), and reads empty until it is.
     engine: postio_session::refresh::EngineSlot,
+    /// The conversation after the one on screen, read and rendered before
+    /// anybody opened it -- see [`Fill::prepare_next`].
+    ahead: RefCell<Option<Ahead>>,
 }
+
+/// A conversation read and rendered ahead of `j`.
+///
+/// Only the messages whose bodies were here: one still to come is read when
+/// the conversation opens, as before, so preparing never decides what a
+/// message *is*, only saves the reading of one that is settled.
+struct Ahead {
+    thread: postio_model::ids::ThreadId,
+    bodies: std::collections::HashMap<MessageId, Loaded>,
+    prepared: Vec<postio_ui::reader::document::Prepared>,
+}
+
+/// The most messages of a neighbouring conversation prepared ahead: the
+/// conversation pane's own first read, so a long thread is not read whole
+/// for a keystroke that may never come.
+const AHEAD_MESSAGES: usize = 50;
 
 impl Fill {
     /// Render one message into a reader of its own, for the conversation
@@ -884,6 +906,89 @@ impl Fill {
         }
     }
 
+    /// Read and render the conversation after the cursor's, so `j` onto it
+    /// asks the store and the main thread for nothing it already has.
+    ///
+    /// Bodies are read on one reader turn and let go of before sanitising,
+    /// which is CPU and goes to the blocking pool rather than holding a
+    /// reader or a runtime worker. Images are prepared blocked, which is
+    /// how most senders are drawn; a sender on the allow list is rendered
+    /// when shown, as before.
+    fn prepare_next(self: &Rc<Self>, window: &Window) {
+        let Some(row) = window.list().row_after_cursor() else {
+            return;
+        };
+        let Some(thread) = row.thread.filter(|_| row.is_thread()) else {
+            return;
+        };
+        if self
+            .ahead
+            .borrow()
+            .as_ref()
+            .is_some_and(|ahead| ahead.thread == thread)
+        {
+            return;
+        }
+        let offline = self.offline.get();
+        let database = self.database.clone();
+        let (sender, receiver) = async_channel::bounded(1);
+        self.runtime.spawn(async move {
+            let loaded = {
+                let Ok(reader) = database.read().await else {
+                    return;
+                };
+                let Ok(members) = postio_storage::repository::ThreadRepository::new(&reader)
+                    .member_ids(thread)
+                    .await
+                else {
+                    return;
+                };
+                let mut loaded = Vec::new();
+                for id in members.into_iter().take(AHEAD_MESSAGES) {
+                    let answer = load(&reader, id, offline).await;
+                    if matches!(answer.body, crate::compose::Body::Ready { .. }) {
+                        loaded.push((id, answer));
+                    }
+                }
+                loaded
+            };
+            let ahead = tokio::task::spawn_blocking(move || {
+                let prepared = loaded
+                    .iter()
+                    .filter_map(|(id, answer)| match &answer.body {
+                        crate::compose::Body::Ready { body, .. } => {
+                            Some(postio_ui::reader::document::prepare(
+                                &id.get().to_string(),
+                                body,
+                                postio_ui::reader::document::RemoteImages::Blocked,
+                            ))
+                        }
+                        _ => None,
+                    })
+                    .collect();
+                Ahead {
+                    thread,
+                    bodies: loaded.into_iter().collect(),
+                    prepared,
+                }
+            })
+            .await;
+            if let Ok(ahead) = ahead {
+                let _ = sender.send(ahead).await;
+            }
+        });
+        let fill = Rc::downgrade(self);
+        glib::spawn_future_local(async move {
+            // POSTIO-GLIB-SAFE: a channel receive; the reads and the
+            // rendering run on the runtime above.
+            if let Ok(ahead) = receiver.recv().await
+                && let Some(fill) = fill.upgrade()
+            {
+                *fill.ahead.borrow_mut() = Some(ahead);
+            }
+        });
+    }
+
     /// Fetch every body in a thread, for one-document mode (ADR 0032, #1316).
     ///
     /// The stacked pane fetches a body when a message is expanded, and
@@ -900,15 +1005,54 @@ impl Fill {
         pane: &postio_gtk::conversation::ConversationView,
         rows: Vec<postio_gtk::list::Row>,
     ) {
-        let ids: Vec<MessageId> = rows.iter().map(|row| row.id).collect();
+        let thread = rows.first().and_then(|row| row.thread);
+        let mut ahead = self
+            .ahead
+            .borrow_mut()
+            .take_if(|ahead| Some(ahead.thread) == thread);
+        if let Some(ahead) = ahead.as_mut() {
+            // Rendered on a worker; the pane's redraws take these instead of
+            // parsing each body again here.
+            pane.offer_prepared(std::mem::take(&mut ahead.prepared));
+        }
+        let mut ready: Vec<(MessageId, Loaded)> = Vec::new();
+        let mut ids: Vec<MessageId> = Vec::new();
+        for row in &rows {
+            match ahead
+                .as_mut()
+                .and_then(|ahead| ahead.bodies.remove(&row.id))
+            {
+                Some(loaded) => ready.push((row.id, loaded)),
+                None => ids.push(row.id),
+            }
+        }
         let rows: std::collections::HashMap<MessageId, postio_gtk::list::Row> =
             rows.into_iter().map(|row| (row.id, row)).collect();
-        let answers = self.read_each(ids);
+        // What was read ahead first, then the store for the rest -- through
+        // the one channel, so both are drawn by the same loop below.
+        let (early, answers) = async_channel::unbounded();
+        for answer in ready {
+            let _ = early.send_blocking(answer);
+        }
+        if !ids.is_empty() {
+            let rest = self.read_each(ids);
+            glib::spawn_future_local(async move {
+                // POSTIO-GLIB-SAFE: a channel receive; the reads run on the
+                // runtime in `read_each`.
+                while let Ok(answer) = rest.recv().await {
+                    if early.send(answer).await.is_err() {
+                        return;
+                    }
+                }
+            });
+        } else {
+            drop(early);
+        }
         let pane = pane.clone();
         let fetch = self.fetcher();
         glib::spawn_future_local(async move {
             // POSTIO-GLIB-SAFE: a channel receive; the reads run on the
-            // runtime in `read_each`.
+            // runtime in `read_each`, or ran ahead in `prepare_next`.
             while let Ok((id, loaded)) = answers.recv().await {
                 let Some(row) = rows.get(&id) else {
                     continue;

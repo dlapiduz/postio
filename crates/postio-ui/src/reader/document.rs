@@ -13,7 +13,11 @@ use std::sync::OnceLock;
 
 use postio_body::quote;
 use postio_body::reader_view;
-use postio_body::sanitize::{self, RemoteImages};
+use postio_body::sanitize;
+/// Whether a message may load remote images -- what [`prepare`] and the
+/// renderers are asked under, re-exported so a caller preparing ahead needs
+/// no second path to it.
+pub use postio_body::sanitize::RemoteImages;
 use postio_model::message::MessageBody;
 
 /// The security origin every rendered message loads under.
@@ -913,6 +917,45 @@ pub fn content_security_policy(remote: RemoteImages) -> String {
     )
 }
 
+/// One message rendered ahead of being shown, off the main thread.
+///
+/// What [`prepare`] makes and [`RenderCache::offer`] takes: the reader-view
+/// verdict and the sanitised document for a message the reader is likely to
+/// open next, so opening it asks the main thread for neither parse.
+#[derive(Clone, Debug)]
+pub struct Prepared {
+    scope: String,
+    body: MessageBody,
+    remote: RemoteImages,
+    verdict: bool,
+    rendering: Rendering,
+    rendered: Rendered,
+}
+
+/// Render `body` for the message `scope` ahead of time, as a conversation
+/// would draw it by default: reader view if it reads as bulk, the original
+/// if not, under `remote`.
+///
+/// Pure, and for a worker thread -- the parses it saves the main thread are
+/// the point. A message drawn any other way when it is shown (its sender
+/// allowed since, `⌃O` on it) is simply rendered then, as before.
+pub fn prepare(scope: &str, body: &MessageBody, remote: RemoteImages) -> Prepared {
+    let verdict = suits_reader_view(body);
+    let rendering = if verdict {
+        Rendering::Reader
+    } else {
+        Rendering::Original
+    };
+    Prepared {
+        scope: scope.to_owned(),
+        body: body.clone(),
+        remote,
+        verdict,
+        rendering,
+        rendered: body_html_in(body, remote, rendering, Some(scope)),
+    }
+}
+
 /// What the sanitiser made of each message of a thread, kept while the
 /// thread is on screen, so a redraw re-sanitises only what changed (#1605).
 ///
@@ -928,6 +971,10 @@ pub struct RenderCache {
     held: std::collections::HashMap<String, Held>,
     /// Each message's reader-view verdict, and the body it was reached for.
     judged: std::collections::HashMap<String, (MessageBody, bool)>,
+    /// Messages rendered ahead of being shown -- see [`RenderCache::offer`].
+    /// Apart from `held` so that trimming to the thread on screen does not
+    /// throw away the thread about to be.
+    offered: std::collections::HashMap<String, Prepared>,
 }
 
 #[derive(Debug)]
@@ -955,7 +1002,13 @@ impl RenderCache {
         {
             return held.rendered.clone();
         }
-        let rendered = body_html_in(body, remote, rendering, Some(scope));
+        let offered = self.offered.remove(scope).filter(|prepared| {
+            prepared.remote == remote && prepared.rendering == rendering && prepared.body == *body
+        });
+        let rendered = match offered {
+            Some(prepared) => prepared.rendered,
+            None => body_html_in(body, remote, rendering, Some(scope)),
+        };
         self.held.insert(
             scope.to_owned(),
             Held {
@@ -966,6 +1019,15 @@ impl RenderCache {
             },
         );
         rendered
+    }
+
+    /// Take messages rendered ahead of being shown, in place of whatever was
+    /// offered before.
+    pub fn offer(&mut self, prepared: Vec<Prepared>) {
+        self.offered = prepared
+            .into_iter()
+            .map(|prepared| (prepared.scope.clone(), prepared))
+            .collect();
     }
 
     /// [`suits_reader_view`] for the message `scope`.
@@ -979,7 +1041,10 @@ impl RenderCache {
         {
             return *verdict;
         }
-        let verdict = suits_reader_view(body);
+        let verdict = match self.offered.get(scope) {
+            Some(prepared) if prepared.body == *body => prepared.verdict,
+            _ => suits_reader_view(body),
+        };
         self.judged
             .insert(scope.to_owned(), (body.clone(), verdict));
         verdict
@@ -1013,6 +1078,48 @@ mod render_cache_tests {
             text: None,
             html: Some(html.to_owned()),
         }
+    }
+
+    #[test]
+    fn a_message_prepared_ahead_is_shown_without_parsing_it_again() {
+        // `j` into the next conversation parsed every body in it twice on the
+        // main thread -- once to judge it, once to sanitise it -- in front of
+        // the first frame of it. Prepared on a worker, it costs neither.
+        let newsletter = body("<table><tr><td>Weekly digest</td></tr></table>");
+        let prepared = prepare("9", &newsletter, RemoteImages::Blocked);
+        let expected = prepared.rendered.clone();
+        let rendering = prepared.rendering;
+
+        let mut cache = RenderCache::default();
+        // The thread on screen trims the cache; what was offered survives it.
+        cache.offer(vec![prepared]);
+        cache.keep_only(["1"]);
+
+        let (judged, sanitised) = (
+            crate::test_support::bulk_judged(),
+            crate::test_support::bodies_sanitised(),
+        );
+        let verdict = cache.suits_reader_view("9", &newsletter);
+        let drawn = cache.render("9", &newsletter, RemoteImages::Blocked, rendering);
+        assert_eq!(drawn, expected);
+        assert_eq!(verdict, rendering == Rendering::Reader);
+        assert_eq!(
+            crate::test_support::bulk_judged() - judged,
+            0,
+            "judged again"
+        );
+        assert_eq!(
+            crate::test_support::bodies_sanitised() - sanitised,
+            0,
+            "sanitised again"
+        );
+
+        // A different body under the same scope is not the prepared one.
+        cache.offer(vec![prepare("9", &newsletter, RemoteImages::Blocked)]);
+        let reply = body("<p>A reply.</p>");
+        let sanitised = crate::test_support::bodies_sanitised();
+        cache.render("9", &reply, RemoteImages::Blocked, Rendering::Original);
+        assert_eq!(crate::test_support::bodies_sanitised() - sanitised, 1);
     }
 
     #[test]
