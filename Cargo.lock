@@ -4204,6 +4204,7 @@ dependencies = [
  "postio-core",
  "postio-model",
  "postio-ui",
+ "pulldown-cmark",
  "ratatui",
  "tempfile",
  "tokio",

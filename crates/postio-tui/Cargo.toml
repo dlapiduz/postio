@@ -28,6 +28,9 @@ postio-core.workspace = true
 postio-body.workspace = true
 postio-model.workspace = true
 postio-ui.workspace = true
+# The link destinations in a message, from the parser tui-markdown already
+# brings.
+pulldown-cmark = { version = "0.13", default-features = false }
 # Drawing (research R3). No calendar widget, no macros.
 ratatui = { version = "0.30.2", default-features = false, features = ["crossterm_0_29", "layout-cache"] }
 tokio = { workspace = true, features = ["macros", "rt", "sync", "time"] }

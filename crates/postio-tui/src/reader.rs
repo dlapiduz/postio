@@ -32,6 +32,13 @@ pub enum Block {
 pub struct Rendered {
     /// The blocks, top to bottom.
     pub blocks: Vec<Block>,
+    /// Every link's destination, in the order they appear.
+    ///
+    /// `tui-markdown` already draws a link as `text (destination)`, so what a
+    /// link leads to is on screen, in full, before anything follows it
+    /// (FR-014). This list is what the mouse opens from; nothing here opens
+    /// anything by itself.
+    pub links: Vec<SafeText>,
 }
 
 impl Rendered {
@@ -60,7 +67,7 @@ impl Rendered {
 
 /// Sanitised, folded HTML as a rendered message.
 pub fn from_html(html: &str) -> Rendered {
-    let markdown = placeholders(&postio_body::markdown::from_html(html));
+    let (markdown, links) = links_in(&placeholders(&postio_body::markdown::from_html(html)));
     // Everything from the message, made safe before it is styled: every span
     // `tui-markdown` makes is a slice of this.
     let safe = SafeText::new(&markdown);
@@ -106,7 +113,10 @@ pub fn from_html(html: &str) -> Rendered {
     if !open.trim().is_empty() {
         blocks.push(Block::Lines(styled(&open)));
     }
-    Rendered { blocks }
+    Rendered {
+        blocks,
+        links: links.iter().map(|link| SafeText::new(link)).collect(),
+    }
 }
 
 /// A plain-text message as it was written.
@@ -144,7 +154,22 @@ pub fn from_text(text: &str) -> Rendered {
     if !open.is_empty() {
         blocks.push(Block::Lines(open));
     }
-    Rendered { blocks }
+    Rendered {
+        blocks,
+        links: Vec::new(),
+    }
+}
+
+/// The Markdown unchanged, and every link's destination in order.
+fn links_in(markdown: &str) -> (String, Vec<String>) {
+    use pulldown_cmark::{Event, Parser, Tag};
+    let links = Parser::new(markdown)
+        .filter_map(|event| match event {
+            Event::Start(Tag::Link { dest_url, .. }) => Some(dest_url.into_string()),
+            _ => None,
+        })
+        .collect();
+    (markdown.to_owned(), links)
 }
 
 /// Markdown as styled lines that own their text.
@@ -275,6 +300,27 @@ mod tests {
         assert!(
             !drawn.contains('\u{1b}') && !drawn.contains('\u{7}'),
             "{drawn:?}"
+        );
+    }
+
+    #[test]
+    fn a_link_shows_where_it_goes_before_anything_follows_it() {
+        let html = sanitize_body(
+            "<p>See <a href=\"https://example.com/invoice/42\">your invoice</a> and <a href=\"https://example.org/\">this</a>.</p>",
+            RemoteImages::Blocked,
+        )
+        .html;
+        let rendered = from_html(&html);
+        let drawn = text(&rendered);
+        assert!(
+            drawn.contains("your invoice (https://example.com/invoice/42)"),
+            "{drawn}"
+        );
+        assert!(drawn.contains("this (https://example.org/)"), "{drawn}");
+        let links: Vec<&str> = rendered.links.iter().map(SafeText::as_str).collect();
+        assert_eq!(
+            links,
+            ["https://example.com/invoice/42", "https://example.org/"]
         );
     }
 
