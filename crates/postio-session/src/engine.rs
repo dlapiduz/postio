@@ -51,14 +51,18 @@ pub fn start(account: &Account, wiring: &Wiring) -> Option<Engine> {
     // this engine opens is a row the user can audit.
     let egress = wiring.egress.for_account(account.id);
     let connector = match RustlsConnector::new() {
-        Ok(connector) => Arc::new(connector.with_egress(egress.clone())),
+        Ok(connector) => Arc::new(
+            connector.with_egress(egress.clone(), postio_model::egress::EgressSubsystem::Imap),
+        ),
         Err(error) => {
             tracing::error!(%error, "no IMAP transport, so no sync: {error}");
             return None;
         }
     };
     let smtp = match postio_smtp::transport::RustlsConnector::new() {
-        Ok(connector) => Arc::new(connector.with_egress(egress)),
+        Ok(connector) => {
+            Arc::new(connector.with_egress(egress, postio_model::egress::EgressSubsystem::Smtp))
+        }
         Err(error) => {
             tracing::error!(%error, "no SMTP transport, so nothing can be sent: {error}");
             return None;

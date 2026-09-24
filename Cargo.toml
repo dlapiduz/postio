@@ -12,6 +12,7 @@ members = [
     "crates/postio-gmail",
     "crates/postio-ui",
     "crates/postio-smtp",
+    "crates/postio-transport",
     "crates/postio-sync",
     "crates/postio-core",
     "crates/postio-runtime",
@@ -51,6 +52,7 @@ default-members = [
     "crates/postio-gmail",
     "crates/postio-ui",
     "crates/postio-smtp",
+    "crates/postio-transport",
     "crates/postio-sync",
     "crates/postio-core",
     "crates/postio-runtime",
@@ -131,6 +133,7 @@ postio-jmap    = { path = "crates/postio-jmap" }
 postio-gmail   = { path = "crates/postio-gmail" }
 postio-ui      = { path = "crates/postio-ui" }
 postio-smtp    = { path = "crates/postio-smtp" }
+postio-transport = { path = "crates/postio-transport" }
 postio-sync    = { path = "crates/postio-sync" }
 postio-core    = { path = "crates/postio-core" }
 postio-runtime = { path = "crates/postio-runtime" }
