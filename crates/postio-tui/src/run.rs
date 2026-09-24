@@ -733,6 +733,24 @@ fn perform(
                     let _ = inputs.send(Input::Found { sequence, found }).await;
                 });
             }
+            // Nothing to offer is what a store that cannot be read offers:
+            // the finder says "no label matches" either way.
+            Effect::ReadLabels(account) => {
+                let client = client.clone();
+                let inputs = inputs.clone();
+                tokio::spawn(async move {
+                    let labels = client.labels(account).await.unwrap_or_default();
+                    let _ = inputs.send(Input::Labels(labels)).await;
+                });
+            }
+            Effect::ReadCorrespondents(account) => {
+                let client = client.clone();
+                let inputs = inputs.clone();
+                tokio::spawn(async move {
+                    let found = client.correspondents(account).await.unwrap_or_default();
+                    let _ = inputs.send(Input::Correspondents(found)).await;
+                });
+            }
             Effect::Recipients { account, prefix } => {
                 let client = client.clone();
                 let inputs = inputs.clone();

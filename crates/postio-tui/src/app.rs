@@ -139,6 +139,11 @@ pub enum Input {
         /// Its id, or the sentence for the status line.
         saved: Result<postio_model::DraftId, String>,
     },
+    /// The account's labels, for the finder's `+` ([`Effect::ReadLabels`]).
+    Labels(Vec<postio_model::Label>),
+    /// The account's correspondents, for the finder's `@`
+    /// ([`Effect::ReadCorrespondents`]).
+    Correspondents(Vec<postio_model::Contact>),
     /// The daemon answered an [`Effect::Search`].
     Found {
         /// Which question it answers.
@@ -231,6 +236,10 @@ pub enum Effect {
     Unsubscribe(postio_model::MessageId),
     /// Read a message's parts and answer with [`Input::Parts`].
     ReadParts(postio_model::MessageId),
+    /// Read the account's labels, for the finder's `+`.
+    ReadLabels(postio_model::AccountId),
+    /// Read the account's correspondents, for the finder's `@`.
+    ReadCorrespondents(postio_model::AccountId),
     /// Write a part to a file, and answer with [`Input::PartWritten`].
     SavePart {
         /// Whose.
@@ -401,6 +410,10 @@ pub struct App {
     focus: Focus,
     /// The sidebar's lines.
     sidebar: Vec<crate::sidebar::Line>,
+    /// The account's labels, as the finder's `+` offers them.
+    labels: Vec<postio_model::Label>,
+    /// The account's correspondents, as the finder's `@` offers them.
+    correspondents: Vec<postio_model::Contact>,
     /// The sidebar line the keyboard is on.
     sidebar_cursor: usize,
     /// Each account's sync status, folded from the daemon's events.
@@ -478,6 +491,12 @@ enum Finding {
     Commands,
     /// `#`: go to a folder.
     Folders,
+    /// `#`, asked by `m`: which folder to move the selection to.
+    MoveTo,
+    /// `+`: put a label on the selection.
+    Labels,
+    /// `@`: find a correspondent, and search their mail.
+    Correspondents,
 }
 
 /// The palette: what is typed, which row is chosen, and where it was opened
@@ -493,7 +512,7 @@ struct PaletteState {
 /// The palette as it is drawn.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PaletteView {
-    /// The finder mode's marker: `>` or `#`.
+    /// The finder mode's marker: `>`, `#`, `+` or `@`.
     pub marker: &'static str,
     /// What is typed.
     pub query: String,
@@ -508,7 +527,8 @@ pub struct PaletteView {
 pub struct PaletteRow {
     /// What it says.
     pub title: String,
-    /// The key that does the same, as this terminal can send it.
+    /// What the row says at its right: the key that does the same, as this
+    /// terminal can send it, or a correspondent's address.
     pub chord: Option<String>,
     /// Which characters of the title the query matched.
     pub positions: Vec<usize>,
@@ -518,6 +538,10 @@ pub struct PaletteRow {
 enum PaletteAction {
     Run(postio_core::ActionId),
     Open(ListScope),
+    MoveTo(postio_model::MailboxId),
+    Label(postio_model::ids::LabelId),
+    /// The query that searches a correspondent's mail.
+    Correspondent(String),
 }
 
 /// The search bar: what is typed, which question is outstanding, and what
@@ -603,6 +627,8 @@ impl App {
             detached: false,
             search: None,
             palette: None,
+            labels: Vec::new(),
+            correspondents: Vec::new(),
             enhanced_keys: false,
             cheatsheet: None,
             armed_link: None,
@@ -1297,7 +1323,16 @@ impl App {
             finding,
         });
         self.focus = Focus::Palette;
-        vec![Effect::Redraw]
+        // Labels and correspondents are read each time the box asks for
+        // them, so one made since the last time is offered.
+        let read = match (finding, self.account) {
+            (Finding::Labels, Some(account)) => Some(Effect::ReadLabels(account)),
+            (Finding::Correspondents, Some(account)) => Some(Effect::ReadCorrespondents(account)),
+            _ => None,
+        };
+        let mut effects = vec![Effect::Redraw];
+        effects.extend(read);
+        effects
     }
 
     /// The registry's context for where the keyboard is.
@@ -1366,7 +1401,9 @@ impl App {
         Some(PaletteView {
             marker: match state.finding {
                 Finding::Commands => ">",
-                Finding::Folders => "#",
+                Finding::Folders | Finding::MoveTo => "#",
+                Finding::Labels => "+",
+                Finding::Correspondents => "@",
             },
             query,
             rows,
@@ -1400,12 +1437,19 @@ impl App {
                     })
                     .collect()
             }
-            Finding::Folders => {
+            Finding::Folders | Finding::MoveTo => {
+                let moving = state.finding == Finding::MoveTo;
                 let mut found: Vec<(i32, PaletteRow, PaletteAction)> = self
                     .sidebar
                     .iter()
                     .filter_map(|line| {
                         let scope = line.opens?;
+                        // A move goes to a folder, not to a view over several.
+                        let action = match scope {
+                            ListScope::Mailbox(mailbox) if moving => PaletteAction::MoveTo(mailbox),
+                            _ if moving => return None,
+                            scope => PaletteAction::Open(scope),
+                        };
                         let title = line.label.as_str().to_owned();
                         let matched = postio_ui::palette::score(query.trim(), &title)?;
                         Some((
@@ -1415,7 +1459,7 @@ impl App {
                                 chord: None,
                                 positions: matched.positions,
                             },
-                            PaletteAction::Open(scope),
+                            action,
                         ))
                     })
                     .collect();
@@ -1425,6 +1469,33 @@ impl App {
                     .map(|(_, row, action)| (row, action))
                     .collect()
             }
+            Finding::Labels => postio_ui::finder::labels(&self.labels, query)
+                .into_iter()
+                .map(|hit| {
+                    (
+                        PaletteRow {
+                            title: hit.name,
+                            chord: None,
+                            positions: hit.positions,
+                        },
+                        PaletteAction::Label(hit.id),
+                    )
+                })
+                .collect(),
+            Finding::Correspondents => postio_ui::finder::contacts(&self.correspondents, query)
+                .into_iter()
+                .map(|hit| {
+                    let search = postio_ui::finder::contact_query(&hit);
+                    (
+                        PaletteRow {
+                            title: hit.name,
+                            chord: Some(hit.address),
+                            positions: hit.positions,
+                        },
+                        PaletteAction::Correspondent(search),
+                    )
+                })
+                .collect(),
         }
     }
 
@@ -1461,6 +1532,30 @@ impl App {
                         self.say(&format!("{other} is not something this terminal can run"))
                     }
                     Some(PaletteAction::Open(scope)) => vec![Effect::Open(scope), Effect::Redraw],
+                    Some(PaletteAction::MoveTo(mailbox)) => {
+                        self.send_answered(postio_core::CommandId::Move, |command| {
+                            if let postio_core::Command::Move { to, .. } = command {
+                                *to = Some(mailbox);
+                            }
+                        })
+                    }
+                    Some(PaletteAction::Label(label)) => {
+                        self.send_answered(postio_core::CommandId::AddLabel, |command| {
+                            if let postio_core::Command::AddLabel { label: chosen, .. } = command {
+                                *chosen = Some(label);
+                            }
+                        })
+                    }
+                    // Back in the bar holding the query, which is a search the
+                    // person can go on building on, as the desktop's `@` is.
+                    Some(PaletteAction::Correspondent(query)) => {
+                        self.search = Some(SearchBar {
+                            input: tui_input::Input::default().with_value(query),
+                            ..SearchBar::default()
+                        });
+                        self.focus = Focus::Search;
+                        self.run_search()
+                    }
                     None => vec![Effect::Redraw],
                 };
             }
@@ -1592,6 +1687,14 @@ impl App {
             "#" => {
                 self.search = None;
                 return self.open_palette(Finding::Folders);
+            }
+            "+" => {
+                self.search = None;
+                return self.open_palette(Finding::Labels);
+            }
+            "@" => {
+                self.search = None;
+                return self.open_palette(Finding::Correspondents);
             }
             _ => {}
         }
@@ -2103,10 +2206,40 @@ impl App {
     }
 
     /// Aim a verb at what the user is looking at, and send it.
+    ///
+    /// A move with no folder and a label with no label are half a request:
+    /// `None` means "ask", and this is the terminal asking, as the desktop's
+    /// window opens its finder for them.
     fn send(&mut self, id: &str) -> Vec<Effect> {
         let Ok(id) = id.parse::<postio_core::CommandId>() else {
             return Vec::new();
         };
+        match id {
+            postio_core::CommandId::Move => self.open_palette(Finding::MoveTo),
+            postio_core::CommandId::AddLabel => self.open_palette(Finding::Labels),
+            id => self.send_aimed(id),
+        }
+    }
+
+    /// Send `id` aimed as [`App::send`] aims it, with the answer to what it
+    /// asked filled in.
+    fn send_answered(
+        &mut self,
+        id: postio_core::CommandId,
+        answer: impl Fn(&mut postio_core::Command),
+    ) -> Vec<Effect> {
+        let mut effects = self.send_aimed(id);
+        for effect in &mut effects {
+            if let Effect::Send(command) = effect {
+                answer(command);
+            }
+        }
+        effects.push(Effect::Redraw);
+        effects
+    }
+
+    /// Aim a verb at what the user is looking at, and send it as it is.
+    fn send_aimed(&mut self, id: postio_core::CommandId) -> Vec<Effect> {
         let selection = self.selection.selection();
         let aim = postio_core::aim::Aim {
             scope: self
@@ -2766,6 +2899,33 @@ pub fn update(app: &mut App, input: Input) -> Vec<Effect> {
             )),
         },
         Input::Found { sequence, found } => app.found(sequence, found),
+        // Outside text, made safe to draw once, here, as the list's rows are.
+        Input::Labels(labels) => {
+            app.labels = labels
+                .into_iter()
+                .map(|mut label| {
+                    label.name = postio_ui::terminal::SafeText::new(&label.name)
+                        .as_str()
+                        .to_owned();
+                    label
+                })
+                .collect();
+            vec![Effect::Redraw]
+        }
+        Input::Correspondents(found) => {
+            app.correspondents = found
+                .into_iter()
+                .map(|mut contact| {
+                    let safe =
+                        |text: &str| postio_ui::terminal::SafeText::new(text).as_str().to_owned();
+                    contact.name = contact.name.as_deref().map(safe);
+                    contact.address.name = contact.address.name.as_deref().map(safe);
+                    contact.address.address = safe(&contact.address.address);
+                    contact
+                })
+                .collect();
+            vec![Effect::Redraw]
+        }
         Input::Recipients { prefix, found } => {
             if let Some(composer) = app.composer.as_mut() {
                 composer.offer(&prefix, found);
@@ -4119,6 +4279,147 @@ pub(crate) mod tests {
             effects.contains(&Effect::Open(ListScope::Mailbox(MailboxId::new(2)))),
             "{effects:?}"
         );
+    }
+
+    fn labelled(id: i64, name: &str) -> postio_model::Label {
+        let mut label = postio_model::Label::new(postio_model::AccountId::new(1), name);
+        label.id = postio_model::ids::LabelId::new(id);
+        label
+    }
+
+    fn added_label(effects: &[Effect]) -> Option<Option<postio_model::ids::LabelId>> {
+        effects.iter().find_map(|effect| match effect {
+            Effect::Send(postio_core::Command::AddLabel { label, .. }) => Some(*label),
+            _ => None,
+        })
+    }
+
+    #[test]
+    fn the_plus_prefix_puts_a_label_on_the_selection() {
+        let mut app = app((160, 40));
+        update(&mut app, Input::Sidebar(sidebar_contents()));
+        let opening = opened(&mut app, 3);
+        serve(&mut app, opening);
+
+        update(&mut app, press('/'));
+        let effects = update(&mut app, press('+'));
+        assert_eq!(app.palette().expect("+ adds a label").marker, "+");
+        assert!(
+            effects.contains(&Effect::ReadLabels(postio_model::AccountId::new(1))),
+            "{effects:?}"
+        );
+        update(
+            &mut app,
+            Input::Labels(vec![labelled(7, "Work"), labelled(8, "Receipts")]),
+        );
+        typing(&mut app, "rec");
+        assert_eq!(app.palette().unwrap().rows[0].title, "Receipts");
+        let effects = update(&mut app, key(KeyCode::Enter, KeyModifiers::NONE));
+        assert_eq!(
+            added_label(&effects),
+            Some(Some(postio_model::ids::LabelId::new(8))),
+            "{effects:?}"
+        );
+        assert!(app.palette().is_none());
+    }
+
+    #[test]
+    fn add_label_asks_which_label_rather_than_sending_half_a_command() {
+        // A label of `None` means "ask": sent as it is, the dispatcher
+        // refuses it with "Pick a label to add".
+        let mut app = app((160, 40));
+        update(&mut app, Input::Sidebar(sidebar_contents()));
+        let opening = opened(&mut app, 3);
+        serve(&mut app, opening);
+
+        let effects = update(&mut app, press('L'));
+        assert_eq!(added_label(&effects), None, "{effects:?}");
+        assert_eq!(app.palette().expect("the label picker").marker, "+");
+        update(&mut app, Input::Labels(vec![labelled(7, "Work")]));
+        let effects = update(&mut app, key(KeyCode::Enter, KeyModifiers::NONE));
+        assert_eq!(
+            added_label(&effects),
+            Some(Some(postio_model::ids::LabelId::new(7))),
+            "{effects:?}"
+        );
+    }
+
+    #[test]
+    fn move_asks_which_folder_and_moves_rather_than_opening_it() {
+        let mut app = app((160, 40));
+        update(&mut app, Input::Sidebar(sidebar_contents()));
+        let opening = opened(&mut app, 3);
+        serve(&mut app, opening);
+
+        let effects = update(&mut app, press('m'));
+        assert!(
+            !effects
+                .iter()
+                .any(|effect| matches!(effect, Effect::Send(_))),
+            "{effects:?}"
+        );
+        assert_eq!(app.palette().expect("the folder picker").marker, "#");
+        typing(&mut app, "arch");
+        let effects = update(&mut app, key(KeyCode::Enter, KeyModifiers::NONE));
+        assert!(
+            effects.iter().any(|effect| matches!(
+                effect,
+                Effect::Send(postio_core::Command::Move { to: Some(to), .. })
+                    if *to == MailboxId::new(2)
+            )),
+            "{effects:?}"
+        );
+        assert!(
+            !effects
+                .iter()
+                .any(|effect| matches!(effect, Effect::Open(_))),
+            "a move does not go there: {effects:?}"
+        );
+    }
+
+    #[test]
+    fn the_at_prefix_finds_a_correspondent_and_searches_their_mail() {
+        let mut app = app((160, 40));
+        update(&mut app, Input::Sidebar(sidebar_contents()));
+        let opening = opened(&mut app, 3);
+        serve(&mut app, opening);
+
+        update(&mut app, press('/'));
+        let effects = update(&mut app, press('@'));
+        assert_eq!(app.palette().expect("@ finds a correspondent").marker, "@");
+        assert!(
+            effects.contains(&Effect::ReadCorrespondents(postio_model::AccountId::new(1))),
+            "{effects:?}"
+        );
+        let contact = |name: &str, address: &str| postio_model::Contact {
+            id: postio_model::ids::ContactId::new(1),
+            account_id: Some(postio_model::AccountId::new(1)),
+            address: postio_model::EmailAddress::new(Some(name), address),
+            name: None,
+            times_seen: 3,
+            last_seen_at: None,
+            source: Default::default(),
+            suppressed: false,
+        };
+        update(
+            &mut app,
+            Input::Correspondents(vec![
+                contact("Ada Lovelace", "ada@example.test"),
+                contact("Grace Hopper", "grace@example.test"),
+            ]),
+        );
+        typing(&mut app, "gh");
+        assert_eq!(app.palette().unwrap().rows[0].title, "Grace Hopper");
+        let effects = update(&mut app, key(KeyCode::Enter, KeyModifiers::NONE));
+        assert_eq!(app.focus(), Focus::Search, "back in the bar, to build on");
+        let asked: Vec<String> = effects
+            .iter()
+            .filter_map(|effect| match effect {
+                Effect::Search { search, .. } => Some(search.query.clone()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(asked, ["from:grace@example.test"]);
     }
 
     fn click(target: crate::view::hit::Target, ctrl: bool, shift: bool) -> Input {
