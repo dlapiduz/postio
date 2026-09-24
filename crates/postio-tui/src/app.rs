@@ -75,6 +75,13 @@ pub enum Input {
         /// Its id, or the sentence for the status line.
         saved: Result<postio_model::DraftId, String>,
     },
+    /// The daemon answered an [`Effect::QueueSend`].
+    Queued {
+        /// When it was scheduled for, if it was.
+        at: Option<chrono::DateTime<chrono::Utc>>,
+        /// Whether it was queued, or why not.
+        queued: Result<(), String>,
+    },
     /// The daemon answered an [`Effect::Resume`]: the draft behind the row,
     /// taken back from the Outbox if it was queued; nothing when there is no
     /// local draft or its send has already started.
@@ -179,6 +186,16 @@ pub enum Effect {
         /// Its id, when it has one.
         known: Option<postio_model::DraftId>,
     },
+    /// Queue a draft to send, through the same writer as its saves, so it
+    /// goes after the last of them.
+    QueueSend {
+        /// Which composition.
+        generation: u64,
+        /// The draft.
+        draft: Box<postio_model::Draft>,
+        /// When, for a scheduled send.
+        at: Option<chrono::DateTime<chrono::Utc>>,
+    },
     /// Open the local draft behind a Drafts or Outbox row.
     Resume(postio_model::MessageId),
     /// Read the message a reply or forward starts from, and its account.
@@ -265,6 +282,11 @@ pub struct App {
     compositions: u64,
     /// Every account, for the addresses a composer can send as.
     accounts: Vec<postio_model::Account>,
+    /// The schedule-send picker's times, while it is open.
+    scheduling: Option<[(&'static str, chrono::DateTime<chrono::Local>); 4]>,
+    /// The composer's edit count when "send it anyway?" was asked: sending
+    /// again with nothing changed is the answer.
+    asked_at: Option<u64>,
 }
 
 /// Which pane the keyboard is in.
@@ -323,6 +345,8 @@ impl App {
             composer: None,
             compositions: 0,
             accounts: Vec::new(),
+            scheduling: None,
+            asked_at: None,
         }
     }
 
@@ -467,6 +491,9 @@ impl App {
     /// names one, and otherwise typed (FR-022a). The keymap is asked in
     /// text entry, so a plain letter is handed back rather than resolved.
     fn composer_key(&mut self, key: &KeyEvent) -> Vec<Effect> {
+        if self.scheduling.is_some() {
+            return self.schedule_key(key);
+        }
         match self.keys.press(key, KeyContext::Composer, true) {
             Outcome::Command(id) => self.composer_command(&id),
             Outcome::Pending(_) => Vec::new(),
@@ -492,9 +519,84 @@ impl App {
         }
     }
 
+    /// The schedule-send picker's times, while it is open.
+    pub fn scheduling(&self) -> Option<&[(&'static str, chrono::DateTime<chrono::Local>)]> {
+        self.scheduling.as_ref().map(|times| times.as_slice())
+    }
+
+    /// A key while the schedule picker is open: a number picks, Escape
+    /// goes back to writing.
+    fn schedule_key(&mut self, key: &KeyEvent) -> Vec<Effect> {
+        use crossterm::event::KeyCode;
+        let Some(times) = self.scheduling else {
+            return Vec::new();
+        };
+        match key.code {
+            KeyCode::Esc => {
+                self.scheduling = None;
+                vec![Effect::Redraw]
+            }
+            KeyCode::Char(digit @ '1'..='4') => {
+                let index = usize::from(digit as u8 - b'1');
+                self.scheduling = None;
+                self.send_draft(Some(times[index].1.with_timezone(&chrono::Utc)))
+            }
+            _ => Vec::new(),
+        }
+    }
+
+    /// Send what is being written, now or at `at`, unless something stops
+    /// it: nobody to send to, or a question to ask first (FR-018, FR-057),
+    /// asked once and answered by sending again.
+    fn send_draft(&mut self, at: Option<chrono::DateTime<chrono::Utc>>) -> Vec<Effect> {
+        let Some(composer) = self.composer.as_ref() else {
+            return Vec::new();
+        };
+        let draft = composer.draft();
+        if !draft.is_sendable() {
+            return self.say(if draft.has_recipients() {
+                postio_ui::sending::ALREADY_QUEUED
+            } else {
+                postio_ui::sending::NO_RECIPIENTS
+            });
+        }
+        let concerns = postio_ui::sending::send_concerns(&draft);
+        if !concerns.is_empty() && self.asked_at != Some(composer.edits()) {
+            self.asked_at = Some(composer.edits());
+            let key = self
+                .keys
+                .key_for(KeyContext::Composer, "send")
+                .unwrap_or_else(|| "send".to_owned());
+            let question = postio_ui::sending::join_with_and(&concerns);
+            return self.say(&format!(
+                "Send it anyway? {question}. {key} again sends it."
+            ));
+        }
+        let generation = composer.generation();
+        // The send is the write: the composer closes with nothing to save or
+        // discard, and the draft is the queue's now.
+        self.composer = None;
+        self.asked_at = None;
+        self.focus = Focus::List;
+        self.requested.front = crate::layout::Pane::List;
+        vec![
+            Effect::QueueSend {
+                generation,
+                draft: Box::new(draft),
+                at,
+            },
+            Effect::Redraw,
+        ]
+    }
+
     /// A command run with the composer in front.
     fn composer_command(&mut self, id: &str) -> Vec<Effect> {
         match id {
+            "send" => self.send_draft(None),
+            "schedule_send" => {
+                self.scheduling = Some(postio_ui::schedule::schedule_presets(chrono::Local::now()));
+                vec![Effect::Redraw]
+            }
             // Escape. The draft is not lost by leaving: it is autosaved, a row
             // in Drafts, as the desktop's Esc parks one.
             "back" | "discard_draft" => self.close_composer(),
@@ -1259,6 +1361,16 @@ pub fn update(app: &mut App, input: Input) -> Vec<Effect> {
             }
             Err(reason) => app.say(&reason),
         },
+        Input::Queued { at, queued } => match (queued, at) {
+            (Ok(()), None) => app.say("Sending — it is in the Outbox until it leaves"),
+            (Ok(()), Some(at)) => app.say(&format!(
+                "Scheduled for {}",
+                at.with_timezone(&chrono::Local).format("%a %-d %b, %H:%M")
+            )),
+            (Err(reason), _) => app.say(&format!(
+                "Not sent: {reason}. The draft is still in Drafts."
+            )),
+        },
         Input::Resumed(found) => match found {
             Some(draft) => app.compose(*draft),
             None => app.say("That draft is not on this device, or is already sending"),
@@ -1802,6 +1914,143 @@ mod tests {
         let composer = app.composer().expect("composing");
         assert_eq!(composer.markdown(), "Half **written**");
         assert_eq!(composer.draft().id, postio_model::DraftId::new(5));
+    }
+
+    fn addressed(app: &mut App, subject: &str) {
+        let mut draft = postio_model::Draft::new(postio_model::AccountId::new(1));
+        draft.to = vec![postio_model::EmailAddress::new(
+            None::<String>,
+            "grace@example.net",
+        )];
+        draft.subject = subject.into();
+        draft.body_markdown = Some("Looking now.".into());
+        app.compose(draft);
+    }
+
+    fn sends(effects: &[Effect]) -> Vec<Option<chrono::DateTime<Utc>>> {
+        effects
+            .iter()
+            .filter_map(|effect| match effect {
+                Effect::QueueSend { at, .. } => Some(*at),
+                _ => None,
+            })
+            .collect()
+    }
+
+    fn ctrl_return() -> Input {
+        key(KeyCode::Enter, KeyModifiers::CONTROL)
+    }
+
+    #[test]
+    fn sending_queues_the_draft_and_closes_without_discarding_it() {
+        let mut app = app((160, 40));
+        addressed(&mut app, "Tide gate");
+        let effects = update(&mut app, ctrl_return());
+        assert_eq!(sends(&effects), vec![None], "{effects:?}");
+        assert!(
+            !effects.iter().any(|effect| matches!(
+                effect,
+                Effect::DiscardDraft { .. } | Effect::SaveDraft { .. }
+            )),
+            "the send is the write: {effects:?}"
+        );
+        assert!(app.composer().is_none());
+        assert_eq!(app.focus(), Focus::List);
+    }
+
+    #[test]
+    fn the_legacy_alternate_sends_too() {
+        let mut app = app((160, 40));
+        addressed(&mut app, "Tide gate");
+        let effects = update(&mut app, key(KeyCode::Enter, KeyModifiers::ALT));
+        assert_eq!(sends(&effects), vec![None], "{effects:?}");
+    }
+
+    #[test]
+    fn a_message_to_nobody_is_not_sent() {
+        let mut app = app((160, 40));
+        composing(&mut app);
+        let effects = update(&mut app, ctrl_return());
+        assert!(sends(&effects).is_empty());
+        assert_eq!(app.notice(), Some(postio_ui::sending::NO_RECIPIENTS));
+        assert!(app.composer().is_some(), "still writing");
+    }
+
+    #[test]
+    fn a_message_with_no_subject_asks_once_then_sends() {
+        let mut app = app((160, 40));
+        addressed(&mut app, "");
+        let asked = update(&mut app, ctrl_return());
+        assert!(sends(&asked).is_empty(), "{asked:?}");
+        let notice = app.notice().expect("a question").to_owned();
+        assert!(notice.contains("no subject"), "{notice}");
+        assert!(app.composer().is_some());
+
+        let effects = update(&mut app, ctrl_return());
+        assert_eq!(
+            sends(&effects),
+            vec![None],
+            "asked and answered: {effects:?}"
+        );
+    }
+
+    #[test]
+    fn a_scheduled_send_offers_the_desktops_times() {
+        let mut app = app((160, 40));
+        addressed(&mut app, "Tide gate");
+        update(
+            &mut app,
+            key(KeyCode::Enter, KeyModifiers::CONTROL | KeyModifiers::SHIFT),
+        );
+        let offered = app.scheduling().expect("the picker").to_vec();
+        assert_eq!(offered.len(), 4);
+        assert_eq!(offered[2].0, "Tomorrow morning");
+
+        let effects = update(&mut app, press('3'));
+        let at = offered[2].1.with_timezone(&Utc);
+        assert_eq!(sends(&effects), vec![Some(at)], "{effects:?}");
+        assert!(app.scheduling().is_none());
+        assert!(app.composer().is_none());
+    }
+
+    #[test]
+    fn escape_from_the_schedule_picker_keeps_writing() {
+        let mut app = app((160, 40));
+        addressed(&mut app, "Tide gate");
+        update(
+            &mut app,
+            key(KeyCode::Enter, KeyModifiers::CONTROL | KeyModifiers::SHIFT),
+        );
+        update(&mut app, key(KeyCode::Esc, KeyModifiers::NONE));
+        assert!(app.scheduling().is_none());
+        assert!(app.composer().is_some());
+    }
+
+    #[test]
+    fn the_status_line_says_where_a_send_went() {
+        let mut app = app((160, 40));
+        update(
+            &mut app,
+            Input::Queued {
+                at: None,
+                queued: Ok(()),
+            },
+        );
+        assert_eq!(
+            app.notice(),
+            Some("Sending — it is in the Outbox until it leaves")
+        );
+        update(
+            &mut app,
+            Input::Queued {
+                at: None,
+                queued: Err("the store is busy".into()),
+            },
+        );
+        assert_eq!(
+            app.notice(),
+            Some("Not sent: the store is busy. The draft is still in Drafts.")
+        );
     }
 
     #[test]

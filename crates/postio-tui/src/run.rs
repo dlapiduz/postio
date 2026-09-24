@@ -188,6 +188,18 @@ async fn write_drafts(
             Effect::DiscardDraft { generation, known } => {
                 let _ = client.discard_draft(generation, known).await;
             }
+            Effect::QueueSend {
+                generation,
+                draft,
+                at,
+            } => {
+                let queued = client
+                    .queue_send(generation, *draft, at)
+                    .await
+                    .map(|_| ())
+                    .map_err(|error| error.message().to_owned());
+                let _ = inputs.send(Input::Queued { at, queued }).await;
+            }
             _ => {}
         }
     }
@@ -407,7 +419,9 @@ fn perform(
                 });
             }
             // One writer, in order: see `write_drafts`.
-            effect @ (Effect::SaveDraft { .. } | Effect::DiscardDraft { .. }) => {
+            effect @ (Effect::SaveDraft { .. }
+            | Effect::DiscardDraft { .. }
+            | Effect::QueueSend { .. }) => {
                 let _ = drafts.try_send(effect);
             }
             Effect::Resume(message) => {

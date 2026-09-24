@@ -99,3 +99,50 @@ pub fn draw(frame: &mut Frame, area: Rect, composer: &Composer, focused: bool, t
     }
     frame.render_widget(composer.body(), Rect::new(area.x, y, area.width, height));
 }
+
+/// The schedule-send picker, over the bottom of the composer: the four
+/// times, each with the number that picks it and when that is.
+pub fn draw_schedule(
+    frame: &mut Frame,
+    area: Rect,
+    times: &[(&'static str, chrono::DateTime<chrono::Local>)],
+    theme: &Theme,
+    now: chrono::DateTime<chrono::Local>,
+) {
+    let area = Rect::new(
+        area.x + 2,
+        area.y,
+        area.width.saturating_sub(2),
+        area.height,
+    );
+    let wanted = u16::try_from(times.len() + 1).unwrap_or(u16::MAX);
+    if area.height < wanted {
+        return;
+    }
+    let top = area.y + area.height - wanted;
+    let width = usize::from(area.width);
+    let mut lines = vec![Line::styled(
+        fit("Send later — a number picks, Esc goes back", width),
+        theme.style(Role::Accent).add_modifier(Modifier::BOLD),
+    )];
+    for (index, (label, when)) in times.iter().enumerate() {
+        // The day only when it is not today: "18:00" this evening, "Tue
+        // 08:00" otherwise.
+        let at = if when.date_naive() == now.date_naive() {
+            when.format("%H:%M").to_string()
+        } else {
+            when.format("%a %H:%M").to_string()
+        };
+        lines.push(Line::from(vec![
+            Span::styled(format!("{} ", index + 1), theme.style(Role::Accent)),
+            Span::styled(format!("{label:<18}"), theme.style(Role::Text)),
+            Span::styled(at, theme.style(Role::Dim)),
+        ]));
+    }
+    for (offset, line) in lines.into_iter().enumerate() {
+        let y = top + u16::try_from(offset).unwrap_or(u16::MAX);
+        let row = Rect::new(area.x, y, area.width, 1);
+        frame.render_widget(ratatui::widgets::Clear, row);
+        frame.render_widget(line, row);
+    }
+}

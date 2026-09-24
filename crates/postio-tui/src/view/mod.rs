@@ -63,9 +63,12 @@ pub fn draw(frame: &mut Frame, app: &App, theme: &Theme, now: DateTime<Local>) {
                                 frame,
                                 *area,
                                 writing,
-                                app.focus() == Focus::Composer,
+                                app.focus() == Focus::Composer && app.scheduling().is_none(),
                                 theme,
                             );
+                            if let Some(times) = app.scheduling() {
+                                composer::draw_schedule(frame, *area, times, theme, now);
+                            }
                         } else if let Some(reading) = app.reading() {
                             reader::draw(
                                 frame,
@@ -218,6 +221,37 @@ mod tests {
         let screen = screen(160, 16, &app);
         assert!(screen.contains("▸ Quoted message"), "{screen}");
         assert!(!screen.contains("Hello there"), "folded:\n{screen}");
+    }
+
+    #[test]
+    fn the_schedule_picker_lists_its_times_by_number() {
+        use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyEventState, KeyModifiers};
+        let mut app = with_sidebar((160, 16));
+        let mut draft = postio_model::Draft::new(postio_model::AccountId::new(1));
+        draft.to = vec![postio_model::EmailAddress::new(
+            None::<String>,
+            "grace@example.net",
+        )];
+        app.compose(draft);
+        update(
+            &mut app,
+            Input::Key(KeyEvent {
+                code: KeyCode::Enter,
+                modifiers: KeyModifiers::CONTROL | KeyModifiers::SHIFT,
+                kind: KeyEventKind::Press,
+                state: KeyEventState::NONE,
+            }),
+        );
+        let screen = screen(160, 16, &app);
+        for wanted in [
+            "Send later",
+            "1 In 1 hour",
+            "2 This evening",
+            "3 Tomorrow morning",
+            "4 Monday morning",
+        ] {
+            assert!(screen.contains(wanted), "{wanted} missing:\n{screen}");
+        }
     }
 
     #[test]
