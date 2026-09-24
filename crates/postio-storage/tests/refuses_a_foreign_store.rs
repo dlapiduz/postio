@@ -9,6 +9,8 @@
 //! `Store::open` refusing, which is the one thing the suite's shared fixtures
 //! cannot set up: they all open successfully.
 
+#![allow(clippy::disallowed_methods)] // the crate's own code prepares through `sql::statement`; a test may reach the engine directly
+
 use postio_storage::{
     Store,
     key::{Purpose, StoreKey},

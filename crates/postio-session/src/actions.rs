@@ -489,7 +489,7 @@ impl Actions {
         // whole answer. Rolled back rather than committed, so a partial undo
         // and a refused one cannot be told apart by what is in the store.
         if undone == 0 {
-            drop(transaction);
+            transaction.rollback().await.map_err(store_failure)?;
             return Err(CommandError::rejected(
                 "That move reached the other account but Postio could not confirm it,                  so taking it back would be a guess. Nothing was changed.",
             ));

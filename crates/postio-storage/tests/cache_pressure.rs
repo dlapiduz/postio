@@ -65,6 +65,8 @@
 //! to no one -- and that a fixed 16 MiB cannot be right for both a test store
 //! and a gigabyte mailbox.
 
+#![allow(clippy::disallowed_methods)] // the crate's own code prepares through `sql::statement`; a test may reach the engine directly
+
 use std::time::{Duration, Instant};
 
 use postio_storage::repository::{ListQuery, MessageRepository};

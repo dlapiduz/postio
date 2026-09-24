@@ -54,32 +54,32 @@ impl<'a> MailboxRoleRepository<'a> {
     /// Map `role` to the folder at `path` for this account, replacing any
     /// earlier choice for the role.
     pub async fn set(&self, account: AccountId, role: MailboxRole, path: &str) -> Result<()> {
-        self.connection
-            .execute(
-                "INSERT INTO mailbox_roles (account_id, role, path, updated_at)
+        sql::execute(
+            self.connection,
+            "INSERT INTO mailbox_roles (account_id, role, path, updated_at)
              VALUES (?1, ?2, ?3, ?4)
              ON CONFLICT (account_id, role) DO UPDATE
              SET path = excluded.path, updated_at = excluded.updated_at",
-                bind![
-                    account.get(),
-                    role.as_str(),
-                    path,
-                    Utc::now().timestamp_millis()
-                ],
-            )
-            .await?;
+            bind![
+                account.get(),
+                role.as_str(),
+                path,
+                Utc::now().timestamp_millis()
+            ],
+        )
+        .await?;
         Ok(())
     }
 
     /// Forget the account's choice for `role`, so it resolves automatically
     /// again. Clearing a role that was never mapped is not an error.
     pub async fn clear(&self, account: AccountId, role: MailboxRole) -> Result<()> {
-        self.connection
-            .execute(
-                "DELETE FROM mailbox_roles WHERE account_id = ?1 AND role = ?2",
-                bind![account.get(), role.as_str()],
-            )
-            .await?;
+        sql::execute(
+            self.connection,
+            "DELETE FROM mailbox_roles WHERE account_id = ?1 AND role = ?2",
+            bind![account.get(), role.as_str()],
+        )
+        .await?;
         // A choice supersedes a refusal: the user has answered the question
         // another way, so the record of the server saying no is stale and
         // must not keep suppressing an attempt.
@@ -117,20 +117,20 @@ impl<'a> MailboxRoleRepository<'a> {
     /// Replaces any earlier refusal for the role: what matters is the current
     /// answer and the current reason, not how many times it has been given.
     pub async fn refuse(&self, account: AccountId, role: MailboxRole, reason: &str) -> Result<()> {
-        self.connection
-            .execute(
-                "INSERT INTO mailbox_role_refusals (account_id, role, refused_at, reason)
+        sql::execute(
+            self.connection,
+            "INSERT INTO mailbox_role_refusals (account_id, role, refused_at, reason)
              VALUES (?1, ?2, ?3, ?4)
              ON CONFLICT (account_id, role) DO UPDATE
              SET refused_at = excluded.refused_at, reason = excluded.reason",
-                bind![
-                    account.get(),
-                    role.as_str(),
-                    Utc::now().timestamp_millis(),
-                    reason
-                ],
-            )
-            .await?;
+            bind![
+                account.get(),
+                role.as_str(),
+                Utc::now().timestamp_millis(),
+                reason
+            ],
+        )
+        .await?;
         Ok(())
     }
 
@@ -140,12 +140,12 @@ impl<'a> MailboxRoleRepository<'a> {
     /// mean the question has been answered by something other than another
     /// attempt. Clearing one that was never recorded is not an error.
     pub async fn clear_refusal(&self, account: AccountId, role: MailboxRole) -> Result<()> {
-        self.connection
-            .execute(
-                "DELETE FROM mailbox_role_refusals WHERE account_id = ?1 AND role = ?2",
-                bind![account.get(), role.as_str()],
-            )
-            .await?;
+        sql::execute(
+            self.connection,
+            "DELETE FROM mailbox_role_refusals WHERE account_id = ?1 AND role = ?2",
+            bind![account.get(), role.as_str()],
+        )
+        .await?;
         Ok(())
     }
 }

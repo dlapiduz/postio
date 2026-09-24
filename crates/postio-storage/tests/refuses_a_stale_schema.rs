@@ -25,6 +25,8 @@
 //! exactly as it was, for the same reason the foreign store is: "rebuilt by
 //! resyncing" means the file has to survive being refused.
 
+#![allow(clippy::disallowed_methods)] // the crate's own code prepares through `sql::statement`; a test may reach the engine directly
+
 use postio_storage::{
     Store,
     key::{Purpose, StoreKey},

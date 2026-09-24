@@ -113,9 +113,9 @@ impl<'a> SyncStateRepository<'a> {
         let mailbox_id = require_persisted(state.mailbox_id.get(), "mailbox")?;
         let account_id = require_persisted(state.account_id.get(), "account")?;
 
-        self.connection
-            .execute(
-                "INSERT INTO sync_state (mailbox_id, account_id, uid_validity, uid_next,
+        sql::execute(
+            self.connection,
+            "INSERT INTO sync_state (mailbox_id, account_id, uid_validity, uid_next,
                                      highest_mod_seq, last_full_sync_at, last_seen_at)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
              ON CONFLICT (mailbox_id) DO UPDATE
@@ -125,17 +125,17 @@ impl<'a> SyncStateRepository<'a> {
                     highest_mod_seq = excluded.highest_mod_seq,
                     last_full_sync_at = excluded.last_full_sync_at,
                     last_seen_at = excluded.last_seen_at",
-                bind![
-                    mailbox_id,
-                    account_id,
-                    state.generation.map(|value| i64::from(value.get())),
-                    state.uid_next.map(|value| i64::from(value.get())),
-                    state.highest_mod_seq.map(|value| value.get() as i64),
-                    state.last_full_sync_at.map(to_millis),
-                    state.last_seen_at.map(to_millis),
-                ],
-            )
-            .await?;
+            bind![
+                mailbox_id,
+                account_id,
+                state.generation.map(|value| i64::from(value.get())),
+                state.uid_next.map(|value| i64::from(value.get())),
+                state.highest_mod_seq.map(|value| value.get() as i64),
+                state.last_full_sync_at.map(to_millis),
+                state.last_seen_at.map(to_millis),
+            ],
+        )
+        .await?;
         Ok(())
     }
 

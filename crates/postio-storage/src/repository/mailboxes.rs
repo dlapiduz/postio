@@ -95,31 +95,31 @@ impl<'a> MailboxRepository<'a> {
         refuse_a_view(mailbox.role)?;
         let account_id = require_persisted(mailbox.account_id.get(), "account")?;
         sql::in_scope(self.connection, |transaction| async move {
-            transaction
-                .execute(
-                    "INSERT INTO mailboxes (account_id, parent_id, name, path, delimiter, role,
+            sql::execute(
+                &transaction,
+                "INSERT INTO mailboxes (account_id, parent_id, name, path, delimiter, role,
                                     selectable, subscribed, total_count, unread_count,
                                     flagged_count, last_synced_at, signature_id,
                                     backfill_excluded)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
-                    bind![
-                        account_id,
-                        optional_id(mailbox.parent_id),
-                        mailbox.name,
-                        mailbox.path,
-                        mailbox.delimiter.map(String::from),
-                        mailbox.role.as_str(),
-                        mailbox.selectable,
-                        mailbox.subscribed,
-                        mailbox.counts.total,
-                        mailbox.counts.unread,
-                        mailbox.counts.flagged,
-                        mailbox.last_synced_at.map(to_millis),
-                        optional_signature_id(mailbox.signature_id),
-                        mailbox.backfill_excluded,
-                    ],
-                )
-                .await?;
+                bind![
+                    account_id,
+                    optional_id(mailbox.parent_id),
+                    mailbox.name,
+                    mailbox.path,
+                    mailbox.delimiter.map(String::from),
+                    mailbox.role.as_str(),
+                    mailbox.selectable,
+                    mailbox.subscribed,
+                    mailbox.counts.total,
+                    mailbox.counts.unread,
+                    mailbox.counts.flagged,
+                    mailbox.last_synced_at.map(to_millis),
+                    optional_signature_id(mailbox.signature_id),
+                    mailbox.backfill_excluded,
+                ],
+            )
+            .await?;
             let id = MailboxId::new(transaction.last_insert_rowid());
             mailbox.id = id;
 
@@ -139,34 +139,34 @@ impl<'a> MailboxRepository<'a> {
         let id = require_persisted(mailbox.id.get(), "mailbox")?;
         let account_id = require_persisted(mailbox.account_id.get(), "account")?;
         sql::in_scope(self.connection, |transaction| async move {
-            let changed = transaction
-                .execute(
-                    "UPDATE mailboxes
+            let changed = sql::execute(
+                &transaction,
+                "UPDATE mailboxes
                 SET account_id = ?2, parent_id = ?3, name = ?4, path = ?5, delimiter = ?6,
                     role = ?7, selectable = ?8, subscribed = ?9, total_count = ?10,
                     unread_count = ?11, flagged_count = ?12, last_synced_at = ?13,
                     signature_id = ?14, backfill_excluded = ?15, snoozed_count = ?16
               WHERE id = ?1",
-                    bind![
-                        id,
-                        account_id,
-                        optional_id(mailbox.parent_id),
-                        mailbox.name,
-                        mailbox.path,
-                        mailbox.delimiter.map(String::from),
-                        mailbox.role.as_str(),
-                        mailbox.selectable,
-                        mailbox.subscribed,
-                        mailbox.counts.total,
-                        mailbox.counts.unread,
-                        mailbox.counts.flagged,
-                        mailbox.last_synced_at.map(to_millis),
-                        optional_signature_id(mailbox.signature_id),
-                        mailbox.backfill_excluded,
-                        mailbox.counts.snoozed,
-                    ],
-                )
-                .await?;
+                bind![
+                    id,
+                    account_id,
+                    optional_id(mailbox.parent_id),
+                    mailbox.name,
+                    mailbox.path,
+                    mailbox.delimiter.map(String::from),
+                    mailbox.role.as_str(),
+                    mailbox.selectable,
+                    mailbox.subscribed,
+                    mailbox.counts.total,
+                    mailbox.counts.unread,
+                    mailbox.counts.flagged,
+                    mailbox.last_synced_at.map(to_millis),
+                    optional_signature_id(mailbox.signature_id),
+                    mailbox.backfill_excluded,
+                    mailbox.counts.snoozed,
+                ],
+            )
+            .await?;
             if changed == 0 {
                 return Err(Error::NotFound {
                     entity: "mailbox",
@@ -216,13 +216,12 @@ impl<'a> MailboxRepository<'a> {
     /// interactive, on-open fetch — only what [`MailboxRepository::backfill_excluded`]
     /// answers for the background lane's own seeding pass.
     pub async fn set_backfill_excluded(&self, id: MailboxId, excluded: bool) -> Result<bool> {
-        let changed = self
-            .connection
-            .execute(
-                "UPDATE mailboxes SET backfill_excluded = ?2 WHERE id = ?1",
-                bind![id.get(), excluded],
-            )
-            .await?;
+        let changed = sql::execute(
+            self.connection,
+            "UPDATE mailboxes SET backfill_excluded = ?2 WHERE id = ?1",
+            bind![id.get(), excluded],
+        )
+        .await?;
         Ok(changed > 0)
     }
 
@@ -285,22 +284,23 @@ impl<'a> MailboxRepository<'a> {
 
     /// Deletes a mailbox and its messages, returning whether there was one.
     pub async fn delete(&self, id: MailboxId) -> Result<bool> {
-        let deleted = self
-            .connection
-            .execute("DELETE FROM mailboxes WHERE id = ?1", [id.get()])
-            .await?;
+        let deleted = sql::execute(
+            self.connection,
+            "DELETE FROM mailboxes WHERE id = ?1",
+            [id.get()],
+        )
+        .await?;
         Ok(deleted > 0)
     }
 
     /// The cached counts on a mailbox row.
     pub async fn counts(&self, id: MailboxId) -> Result<Option<MailboxCounts>> {
-        let mut statement = self
-            .connection
-            .prepare(
-                "SELECT total_count, unread_count, flagged_count, snoozed_count
+        let mut statement = sql::statement(
+            self.connection,
+            "SELECT total_count, unread_count, flagged_count, snoozed_count
                FROM mailboxes WHERE id = ?1",
-            )
-            .await?;
+        )
+        .await?;
         crate::sql::first_of(&mut statement, [id.get()], |row| {
             Ok(MailboxCounts {
                 total: row.col(0)?,
@@ -323,21 +323,20 @@ impl<'a> MailboxRepository<'a> {
     /// concept of it — so the only real caller is [`Self::recount`], whose
     /// own live scan computes a genuine value.
     pub async fn set_counts(&self, id: MailboxId, counts: MailboxCounts) -> Result<()> {
-        let changed = self
-            .connection
-            .execute(
-                "UPDATE mailboxes SET total_count = ?2, unread_count = ?3, flagged_count = ?4,
+        let changed = sql::execute(
+            self.connection,
+            "UPDATE mailboxes SET total_count = ?2, unread_count = ?3, flagged_count = ?4,
                 snoozed_count = ?5
               WHERE id = ?1",
-                bind![
-                    id.get(),
-                    counts.total,
-                    counts.unread,
-                    counts.flagged,
-                    counts.snoozed
-                ],
-            )
-            .await?;
+            bind![
+                id.get(),
+                counts.total,
+                counts.unread,
+                counts.flagged,
+                counts.snoozed
+            ],
+        )
+        .await?;
         if changed == 0 {
             return Err(Error::NotFound {
                 entity: "mailbox",
@@ -399,7 +398,7 @@ impl<'a> MailboxRepository<'a> {
     /// repairing an account whose counts have drifted, not something a
     /// normal write path should call.
     pub async fn recount_account(&self, account_id: AccountId) -> Result<()> {
-        self.connection.execute(
+        sql::execute(self.connection,
             &format!(
                 "UPDATE mailboxes
                     SET total_count = coalesce((SELECT count(*) FROM messages
@@ -506,7 +505,8 @@ async fn write_sync_state(
     account_id: i64,
     mailbox: &Mailbox,
 ) -> Result<()> {
-    connection.execute(
+    sql::execute(
+        connection,
         "INSERT INTO sync_state (mailbox_id, account_id, uid_validity, uid_next, highest_mod_seq)
          VALUES (?1, ?2, ?3, ?4, ?5)
          ON CONFLICT (mailbox_id) DO UPDATE
@@ -521,7 +521,8 @@ async fn write_sync_state(
             mailbox.uid_next.map(|value| i64::from(value.get())),
             mailbox.highest_mod_seq.map(|value| value.get() as i64),
         ],
-    ).await?;
+    )
+    .await?;
     Ok(())
 }
 

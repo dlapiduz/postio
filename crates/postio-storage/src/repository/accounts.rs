@@ -43,9 +43,9 @@ impl<'a> AccountRepository<'a> {
     /// missing the address the user just typed.
     pub async fn create(&self, account: &mut Account) -> Result<AccountId> {
         sql::in_scope(self.connection, |transaction| async move {
-            transaction
-                .execute(
-                    "INSERT INTO accounts (display_name, address, address_name, incoming_host,
+            sql::execute(
+                &transaction,
+                "INSERT INTO accounts (display_name, address, address_name, incoming_host,
                                    incoming_port, incoming_security, incoming_username,
                                    outgoing_host, outgoing_port, outgoing_security,
                                    outgoing_username, auth_method, enabled, created_at,
@@ -55,46 +55,46 @@ impl<'a> AccountRepository<'a> {
                                    max_message_size)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15,
                      ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23)",
-                    bind![
-                        account.display_name,
-                        account.address.address,
-                        account.address.name,
-                        account.incoming.host,
-                        account.incoming.port,
-                        account.incoming.security.as_str(),
-                        account.incoming.username,
-                        account.outgoing.host,
-                        account.outgoing.port,
-                        account.outgoing.security.as_str(),
-                        account.outgoing.username,
-                        account.auth.as_str(),
-                        account.enabled,
-                        to_millis(account.created_at),
-                        optional_signature_id(account.default_signature_id),
-                        account.oauth.as_ref().map(|oauth| oauth.client_id.as_str()),
-                        account.oauth.as_ref().map(|oauth| oauth.token_url.as_str()),
-                        account
-                            .oauth
-                            .as_ref()
-                            .map(|oauth| oauth.authorize_url.as_str()),
-                        account.oauth.as_ref().map(|oauth| oauth.scopes.as_str()),
-                        account.backend.kind(),
-                        match &account.backend {
-                            postio_model::account::Backend::Jmap { session_url } =>
-                                Some(session_url.as_str()),
-                            postio_model::account::Backend::Imap
-                            | postio_model::account::Backend::Gmail => None,
-                        },
-                        account
-                            .oauth
-                            .as_ref()
-                            .and_then(|oauth| oauth.refresh_token_lifetime_days),
-                        // SQLite integers are signed, and a limit large enough to
-                        // overflow `i64` is not a limit any provider has.
-                        account.max_message_size.and_then(|n| i64::try_from(n).ok()),
-                    ],
-                )
-                .await?;
+                bind![
+                    account.display_name,
+                    account.address.address,
+                    account.address.name,
+                    account.incoming.host,
+                    account.incoming.port,
+                    account.incoming.security.as_str(),
+                    account.incoming.username,
+                    account.outgoing.host,
+                    account.outgoing.port,
+                    account.outgoing.security.as_str(),
+                    account.outgoing.username,
+                    account.auth.as_str(),
+                    account.enabled,
+                    to_millis(account.created_at),
+                    optional_signature_id(account.default_signature_id),
+                    account.oauth.as_ref().map(|oauth| oauth.client_id.as_str()),
+                    account.oauth.as_ref().map(|oauth| oauth.token_url.as_str()),
+                    account
+                        .oauth
+                        .as_ref()
+                        .map(|oauth| oauth.authorize_url.as_str()),
+                    account.oauth.as_ref().map(|oauth| oauth.scopes.as_str()),
+                    account.backend.kind(),
+                    match &account.backend {
+                        postio_model::account::Backend::Jmap { session_url } =>
+                            Some(session_url.as_str()),
+                        postio_model::account::Backend::Imap
+                        | postio_model::account::Backend::Gmail => None,
+                    },
+                    account
+                        .oauth
+                        .as_ref()
+                        .and_then(|oauth| oauth.refresh_token_lifetime_days),
+                    // SQLite integers are signed, and a limit large enough to
+                    // overflow `i64` is not a limit any provider has.
+                    account.max_message_size.and_then(|n| i64::try_from(n).ok()),
+                ],
+            )
+            .await?;
 
             let id = AccountId::new(transaction.last_insert_rowid());
             account.id = id;
@@ -130,9 +130,9 @@ impl<'a> AccountRepository<'a> {
         let id = require_persisted(account.id.get(), "account")?;
         let account_id = account.id;
         sql::in_scope(self.connection, |transaction| async move {
-            let changed = transaction
-                .execute(
-                    "UPDATE accounts
+            let changed = sql::execute(
+                &transaction,
+                "UPDATE accounts
                 SET display_name = ?2, address = ?3, address_name = ?4,
                     incoming_host = ?5, incoming_port = ?6, incoming_security = ?7,
                     incoming_username = ?8, outgoing_host = ?9, outgoing_port = ?10,
@@ -144,47 +144,47 @@ impl<'a> AccountRepository<'a> {
                     oauth_refresh_lifetime_days = ?23,
                     max_message_size = ?24
               WHERE id = ?1",
-                    bind![
-                        id,
-                        account.display_name,
-                        account.address.address,
-                        account.address.name,
-                        account.incoming.host,
-                        account.incoming.port,
-                        account.incoming.security.as_str(),
-                        account.incoming.username,
-                        account.outgoing.host,
-                        account.outgoing.port,
-                        account.outgoing.security.as_str(),
-                        account.outgoing.username,
-                        account.auth.as_str(),
-                        account.enabled,
-                        to_millis(account.created_at),
-                        optional_signature_id(account.default_signature_id),
-                        account.oauth.as_ref().map(|oauth| oauth.client_id.as_str()),
-                        account.oauth.as_ref().map(|oauth| oauth.token_url.as_str()),
-                        account
-                            .oauth
-                            .as_ref()
-                            .map(|oauth| oauth.authorize_url.as_str()),
-                        account.oauth.as_ref().map(|oauth| oauth.scopes.as_str()),
-                        account.backend.kind(),
-                        match &account.backend {
-                            postio_model::account::Backend::Jmap { session_url } =>
-                                Some(session_url.as_str()),
-                            postio_model::account::Backend::Imap
-                            | postio_model::account::Backend::Gmail => None,
-                        },
-                        account
-                            .oauth
-                            .as_ref()
-                            .and_then(|oauth| oauth.refresh_token_lifetime_days),
-                        // SQLite integers are signed, and a limit large enough to
-                        // overflow `i64` is not a limit any provider has.
-                        account.max_message_size.and_then(|n| i64::try_from(n).ok()),
-                    ],
-                )
-                .await?;
+                bind![
+                    id,
+                    account.display_name,
+                    account.address.address,
+                    account.address.name,
+                    account.incoming.host,
+                    account.incoming.port,
+                    account.incoming.security.as_str(),
+                    account.incoming.username,
+                    account.outgoing.host,
+                    account.outgoing.port,
+                    account.outgoing.security.as_str(),
+                    account.outgoing.username,
+                    account.auth.as_str(),
+                    account.enabled,
+                    to_millis(account.created_at),
+                    optional_signature_id(account.default_signature_id),
+                    account.oauth.as_ref().map(|oauth| oauth.client_id.as_str()),
+                    account.oauth.as_ref().map(|oauth| oauth.token_url.as_str()),
+                    account
+                        .oauth
+                        .as_ref()
+                        .map(|oauth| oauth.authorize_url.as_str()),
+                    account.oauth.as_ref().map(|oauth| oauth.scopes.as_str()),
+                    account.backend.kind(),
+                    match &account.backend {
+                        postio_model::account::Backend::Jmap { session_url } =>
+                            Some(session_url.as_str()),
+                        postio_model::account::Backend::Imap
+                        | postio_model::account::Backend::Gmail => None,
+                    },
+                    account
+                        .oauth
+                        .as_ref()
+                        .and_then(|oauth| oauth.refresh_token_lifetime_days),
+                    // SQLite integers are signed, and a limit large enough to
+                    // overflow `i64` is not a limit any provider has.
+                    account.max_message_size.and_then(|n| i64::try_from(n).ok()),
+                ],
+            )
+            .await?;
             if changed == 0 {
                 return Err(Error::NotFound {
                     entity: "account",
@@ -194,12 +194,12 @@ impl<'a> AccountRepository<'a> {
 
             // Clear the default first: the schema allows only one per account, and
             // moving it between two identities would otherwise collide mid-update.
-            transaction
-                .execute(
-                    "UPDATE identities SET is_default = 0 WHERE account_id = ?1",
-                    [id],
-                )
-                .await?;
+            sql::execute(
+                &transaction,
+                "UPDATE identities SET is_default = 0 WHERE account_id = ?1",
+                [id],
+            )
+            .await?;
 
             let mut kept: Vec<i64> = Vec::with_capacity(account.identities.len());
             for (position, identity) in account.identities.iter_mut().enumerate() {
@@ -217,8 +217,8 @@ impl<'a> AccountRepository<'a> {
             let mut arguments: Vec<turso::Value> = Vec::with_capacity(kept.len() + 1);
             arguments.push(turso::Value::Integer(id));
             arguments.extend(kept.into_iter().map(turso::Value::Integer));
-            transaction
-            .execute(
+            sql::execute(
+                &transaction,
                 &format!(
                     "DELETE FROM identities WHERE account_id = ?1 AND id NOT IN ({placeholders})"
                 ),
@@ -293,10 +293,12 @@ impl<'a> AccountRepository<'a> {
     /// cascade in the schema; the blob store is swept separately by
     /// [`BlobStore::collect_garbage`](crate::blob::BlobStore::collect_garbage).
     pub async fn delete(&self, id: AccountId) -> Result<bool> {
-        let deleted = self
-            .connection
-            .execute("DELETE FROM accounts WHERE id = ?1", [id.get()])
-            .await?;
+        let deleted = sql::execute(
+            self.connection,
+            "DELETE FROM accounts WHERE id = ?1",
+            [id.get()],
+        )
+        .await?;
         Ok(deleted > 0)
     }
 
@@ -308,13 +310,12 @@ impl<'a> AccountRepository<'a> {
     /// through `update` would risk silently rewriting identities from a
     /// stale copy.
     pub async fn set_enabled(&self, id: AccountId, enabled: bool) -> Result<bool> {
-        let changed = self
-            .connection
-            .execute(
-                "UPDATE accounts SET enabled = ?2 WHERE id = ?1",
-                bind![id.get(), enabled],
-            )
-            .await?;
+        let changed = sql::execute(
+            self.connection,
+            "UPDATE accounts SET enabled = ?2 WHERE id = ?1",
+            bind![id.get(), enabled],
+        )
+        .await?;
         Ok(changed > 0)
     }
 
@@ -339,15 +340,13 @@ impl<'a> AccountRepository<'a> {
     /// [`Error::NotFound`] if no account has that id.
     pub async fn set_default(&self, id: AccountId) -> Result<()> {
         sql::in_scope(self.connection, |transaction| async move {
-            transaction
-                .execute("UPDATE accounts SET is_default = 0", ())
-                .await?;
-            let changed = transaction
-                .execute(
-                    "UPDATE accounts SET is_default = 1 WHERE id = ?1",
-                    [id.get()],
-                )
-                .await?;
+            sql::execute(&transaction, "UPDATE accounts SET is_default = 0", ()).await?;
+            let changed = sql::execute(
+                &transaction,
+                "UPDATE accounts SET is_default = 1 WHERE id = ?1",
+                [id.get()],
+            )
+            .await?;
             if changed == 0 {
                 return Err(Error::NotFound {
                     entity: "account",
@@ -366,25 +365,23 @@ impl<'a> AccountRepository<'a> {
     /// [`AccountRepository::reap_pending_deletions`] actually runs, which is
     /// what gives the undo toast something to undo.
     pub async fn mark_pending_deletion(&self, id: AccountId) -> Result<bool> {
-        let changed = self
-            .connection
-            .execute(
-                "UPDATE accounts SET pending_deletion = 1 WHERE id = ?1",
-                [id.get()],
-            )
-            .await?;
+        let changed = sql::execute(
+            self.connection,
+            "UPDATE accounts SET pending_deletion = 1 WHERE id = ?1",
+            [id.get()],
+        )
+        .await?;
         Ok(changed > 0)
     }
 
     /// Undoes [`AccountRepository::mark_pending_deletion`].
     pub async fn restore(&self, id: AccountId) -> Result<bool> {
-        let changed = self
-            .connection
-            .execute(
-                "UPDATE accounts SET pending_deletion = 0 WHERE id = ?1",
-                [id.get()],
-            )
-            .await?;
+        let changed = sql::execute(
+            self.connection,
+            "UPDATE accounts SET pending_deletion = 0 WHERE id = ?1",
+            [id.get()],
+        )
+        .await?;
         Ok(changed > 0)
     }
 
@@ -405,9 +402,12 @@ impl<'a> AccountRepository<'a> {
         .await?;
 
         for id in &ids {
-            self.connection
-                .execute("DELETE FROM accounts WHERE id = ?1", [id.get()])
-                .await?;
+            sql::execute(
+                self.connection,
+                "DELETE FROM accounts WHERE id = ?1",
+                [id.get()],
+            )
+            .await?;
         }
         Ok(ids)
     }
@@ -446,27 +446,26 @@ impl<'a> IdentityRepository<'a> {
     /// Writes an identity back, leaving its position alone.
     pub async fn update(&self, identity: &Identity) -> Result<()> {
         let id = require_persisted(identity.id.get(), "identity")?;
-        let changed = self
-            .connection
-            .execute(
-                "UPDATE identities
+        let changed = sql::execute(
+            self.connection,
+            "UPDATE identities
                 SET display_name = ?2, address = ?3, address_name = ?4,
                     reply_to_address = ?5, reply_to_name = ?6,
                     signature_text = ?7, signature_html = ?8, is_default = ?9
               WHERE id = ?1",
-                bind![
-                    id,
-                    identity.display_name,
-                    identity.address.address,
-                    identity.address.name,
-                    identity.reply_to.as_ref().map(|to| to.address.clone()),
-                    identity.reply_to.as_ref().and_then(|to| to.name.clone()),
-                    identity.signature.as_ref().map(|s| s.text.clone()),
-                    identity.signature.as_ref().and_then(|s| s.html.clone()),
-                    identity.is_default,
-                ],
-            )
-            .await?;
+            bind![
+                id,
+                identity.display_name,
+                identity.address.address,
+                identity.address.name,
+                identity.reply_to.as_ref().map(|to| to.address.clone()),
+                identity.reply_to.as_ref().and_then(|to| to.name.clone()),
+                identity.signature.as_ref().map(|s| s.text.clone()),
+                identity.signature.as_ref().and_then(|s| s.html.clone()),
+                identity.is_default,
+            ],
+        )
+        .await?;
         if changed == 0 {
             return Err(Error::NotFound {
                 entity: "identity",
@@ -504,18 +503,18 @@ impl<'a> IdentityRepository<'a> {
     /// Makes one identity the account's default, clearing any other.
     pub async fn set_default(&self, account_id: AccountId, id: IdentityId) -> Result<()> {
         sql::in_scope(self.connection, |transaction| async move {
-            transaction
-                .execute(
-                    "UPDATE identities SET is_default = 0 WHERE account_id = ?1",
-                    [account_id.get()],
-                )
-                .await?;
-            let changed = transaction
-                .execute(
-                    "UPDATE identities SET is_default = 1 WHERE id = ?1 AND account_id = ?2",
-                    [id.get(), account_id.get()],
-                )
-                .await?;
+            sql::execute(
+                &transaction,
+                "UPDATE identities SET is_default = 0 WHERE account_id = ?1",
+                [account_id.get()],
+            )
+            .await?;
+            let changed = sql::execute(
+                &transaction,
+                "UPDATE identities SET is_default = 1 WHERE id = ?1 AND account_id = ?2",
+                [id.get(), account_id.get()],
+            )
+            .await?;
             if changed == 0 {
                 return Err(Error::NotFound {
                     entity: "identity",
@@ -529,10 +528,12 @@ impl<'a> IdentityRepository<'a> {
 
     /// Deletes an identity, returning whether there was one.
     pub async fn delete(&self, id: IdentityId) -> Result<bool> {
-        let deleted = self
-            .connection
-            .execute("DELETE FROM identities WHERE id = ?1", [id.get()])
-            .await?;
+        let deleted = sql::execute(
+            self.connection,
+            "DELETE FROM identities WHERE id = ?1",
+            [id.get()],
+        )
+        .await?;
         Ok(deleted > 0)
     }
 }
@@ -542,26 +543,26 @@ async fn insert_identity(
     identity: &Identity,
     position: usize,
 ) -> Result<i64> {
-    connection
-        .execute(
-            "INSERT INTO identities (account_id, display_name, address, address_name,
+    sql::execute(
+        connection,
+        "INSERT INTO identities (account_id, display_name, address, address_name,
                                  reply_to_address, reply_to_name, signature_text,
                                  signature_html, is_default, position)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
-            bind![
-                identity.account_id.get(),
-                identity.display_name,
-                identity.address.address,
-                identity.address.name,
-                identity.reply_to.as_ref().map(|to| to.address.clone()),
-                identity.reply_to.as_ref().and_then(|to| to.name.clone()),
-                identity.signature.as_ref().map(|s| s.text.clone()),
-                identity.signature.as_ref().and_then(|s| s.html.clone()),
-                identity.is_default,
-                position as i64,
-            ],
-        )
-        .await?;
+        bind![
+            identity.account_id.get(),
+            identity.display_name,
+            identity.address.address,
+            identity.address.name,
+            identity.reply_to.as_ref().map(|to| to.address.clone()),
+            identity.reply_to.as_ref().and_then(|to| to.name.clone()),
+            identity.signature.as_ref().map(|s| s.text.clone()),
+            identity.signature.as_ref().and_then(|s| s.html.clone()),
+            identity.is_default,
+            position as i64,
+        ],
+    )
+    .await?;
     Ok(connection.last_insert_rowid())
 }
 
@@ -570,28 +571,28 @@ async fn update_identity(
     identity: &Identity,
     position: usize,
 ) -> Result<()> {
-    connection
-        .execute(
-            "UPDATE identities
+    sql::execute(
+        connection,
+        "UPDATE identities
             SET account_id = ?2, display_name = ?3, address = ?4, address_name = ?5,
                 reply_to_address = ?6, reply_to_name = ?7, signature_text = ?8,
                 signature_html = ?9, is_default = ?10, position = ?11
           WHERE id = ?1",
-            bind![
-                identity.id.get(),
-                identity.account_id.get(),
-                identity.display_name,
-                identity.address.address,
-                identity.address.name,
-                identity.reply_to.as_ref().map(|to| to.address.clone()),
-                identity.reply_to.as_ref().and_then(|to| to.name.clone()),
-                identity.signature.as_ref().map(|s| s.text.clone()),
-                identity.signature.as_ref().and_then(|s| s.html.clone()),
-                identity.is_default,
-                position as i64,
-            ],
-        )
-        .await?;
+        bind![
+            identity.id.get(),
+            identity.account_id.get(),
+            identity.display_name,
+            identity.address.address,
+            identity.address.name,
+            identity.reply_to.as_ref().map(|to| to.address.clone()),
+            identity.reply_to.as_ref().and_then(|to| to.name.clone()),
+            identity.signature.as_ref().map(|s| s.text.clone()),
+            identity.signature.as_ref().and_then(|s| s.html.clone()),
+            identity.is_default,
+            position as i64,
+        ],
+    )
+    .await?;
     Ok(())
 }
 
@@ -626,19 +627,19 @@ impl<'a> SignatureRepository<'a> {
             [account],
         )
         .await?;
-        self.connection
-            .execute(
-                "INSERT INTO signatures (account_id, name, text, html, position)
+        sql::execute(
+            self.connection,
+            "INSERT INTO signatures (account_id, name, text, html, position)
              VALUES (?1, ?2, ?3, ?4, ?5)",
-                bind![
-                    account,
-                    signature.name,
-                    signature.text,
-                    signature.html,
-                    position
-                ],
-            )
-            .await?;
+            bind![
+                account,
+                signature.name,
+                signature.text,
+                signature.html,
+                position
+            ],
+        )
+        .await?;
         signature.id = SignatureId::new(self.connection.last_insert_rowid());
         Ok(signature.id)
     }
@@ -646,13 +647,12 @@ impl<'a> SignatureRepository<'a> {
     /// Writes a signature back, leaving its position alone.
     pub async fn update(&self, signature: &Signature) -> Result<()> {
         let id = require_persisted(signature.id.get(), "signature")?;
-        let changed = self
-            .connection
-            .execute(
-                "UPDATE signatures SET name = ?2, text = ?3, html = ?4 WHERE id = ?1",
-                bind![id, signature.name, signature.text, signature.html],
-            )
-            .await?;
+        let changed = sql::execute(
+            self.connection,
+            "UPDATE signatures SET name = ?2, text = ?3, html = ?4 WHERE id = ?1",
+            bind![id, signature.name, signature.text, signature.html],
+        )
+        .await?;
         if changed == 0 {
             return Err(Error::NotFound {
                 entity: "signature",
@@ -664,10 +664,12 @@ impl<'a> SignatureRepository<'a> {
 
     /// Deletes a signature, returning whether there was one.
     pub async fn delete(&self, id: SignatureId) -> Result<bool> {
-        let deleted = self
-            .connection
-            .execute("DELETE FROM signatures WHERE id = ?1", [id.get()])
-            .await?;
+        let deleted = sql::execute(
+            self.connection,
+            "DELETE FROM signatures WHERE id = ?1",
+            [id.get()],
+        )
+        .await?;
         Ok(deleted > 0)
     }
 

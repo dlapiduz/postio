@@ -41,12 +41,12 @@ impl<'a> LabelRepository<'a> {
     /// (`idx_labels_account_name`), so a second `work` beside a `Work` is
     /// refused here rather than becoming two rows a person would read as one.
     pub async fn create(&self, label: &mut Label) -> Result<LabelId> {
-        self.connection
-            .execute(
-                "INSERT INTO labels (account_id, name, color) VALUES (?1, ?2, ?3)",
-                bind![label.account_id.get(), label.name, label.color],
-            )
-            .await?;
+        sql::execute(
+            self.connection,
+            "INSERT INTO labels (account_id, name, color) VALUES (?1, ?2, ?3)",
+            bind![label.account_id.get(), label.name, label.color],
+        )
+        .await?;
         let id = LabelId::new(self.connection.last_insert_rowid());
         label.id = id;
         Ok(id)
@@ -87,13 +87,12 @@ impl<'a> LabelRepository<'a> {
     /// is harmless — which a queued command has to be, because a drain that
     /// is retried after an uncertain failure runs it again.
     pub async fn attach(&self, message: MessageId, label: LabelId) -> Result<bool> {
-        let changed = self
-            .connection
-            .execute(
-                "INSERT OR IGNORE INTO message_labels (message_id, label_id) VALUES (?1, ?2)",
-                bind![message.get(), label.get()],
-            )
-            .await?;
+        let changed = sql::execute(
+            self.connection,
+            "INSERT OR IGNORE INTO message_labels (message_id, label_id) VALUES (?1, ?2)",
+            bind![message.get(), label.get()],
+        )
+        .await?;
         Ok(changed > 0)
     }
 
@@ -102,13 +101,12 @@ impl<'a> LabelRepository<'a> {
     /// `false` for a label that was not there, so an undo that runs twice
     /// does not report having removed something.
     pub async fn detach(&self, message: MessageId, label: LabelId) -> Result<bool> {
-        let changed = self
-            .connection
-            .execute(
-                "DELETE FROM message_labels WHERE message_id = ?1 AND label_id = ?2",
-                bind![message.get(), label.get()],
-            )
-            .await?;
+        let changed = sql::execute(
+            self.connection,
+            "DELETE FROM message_labels WHERE message_id = ?1 AND label_id = ?2",
+            bind![message.get(), label.get()],
+        )
+        .await?;
         Ok(changed > 0)
     }
 
@@ -128,10 +126,12 @@ impl<'a> LabelRepository<'a> {
     /// `message_labels` cascades, so this takes it off every message carrying
     /// it rather than leaving rows pointing at a label that is gone.
     pub async fn delete(&self, id: LabelId) -> Result<bool> {
-        let changed = self
-            .connection
-            .execute("DELETE FROM labels WHERE id = ?1", [id.get()])
-            .await?;
+        let changed = sql::execute(
+            self.connection,
+            "DELETE FROM labels WHERE id = ?1",
+            [id.get()],
+        )
+        .await?;
         Ok(changed > 0)
     }
 }

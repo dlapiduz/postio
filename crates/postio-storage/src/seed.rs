@@ -424,31 +424,31 @@ pub async fn thread_seeded_messages(
                 .first()
                 .and_then(|(_, subject)| subject.as_deref())
                 .unwrap_or("seeded conversation");
-            scope
-                .execute(
-                    "INSERT INTO threads (account_id, subject, message_count, unread_count,
+            sql::execute(
+                &scope,
+                "INSERT INTO threads (account_id, subject, message_count, unread_count,
                                       has_attachments, is_flagged, first_at, last_at)
                  VALUES (?1, ?2, 0, 0, 0, 0, 0, 0)",
-                    bind![account.get(), subject],
-                )
-                .await
-                .expect("insert a seeded thread");
+                bind![account.get(), subject],
+            )
+            .await
+            .expect("insert a seeded thread");
             let thread = scope.last_insert_rowid();
             for (id, _) in chunk {
-                scope
-                    .execute(
-                        "UPDATE messages SET thread_id = ?1 WHERE id = ?2",
-                        [thread, *id],
-                    )
-                    .await
-                    .expect("file a seeded message into its thread");
+                sql::execute(
+                    &scope,
+                    "UPDATE messages SET thread_id = ?1 WHERE id = ?2",
+                    [thread, *id],
+                )
+                .await
+                .expect("file a seeded message into its thread");
             }
             threads += 1;
         }
         // The aggregates, in one statement rather than per thread.
-        scope
-            .execute(
-                "UPDATE threads SET
+        sql::execute(
+            &scope,
+            "UPDATE threads SET
                  message_count = (SELECT count(*) FROM messages m
                                    WHERE m.thread_id = threads.id AND m.deleted_locally = 0),
                  unread_count  = (SELECT count(*) FROM messages m
@@ -459,10 +459,10 @@ pub async fn thread_seeded_messages(
                  last_at  = coalesce((SELECT max(received_at) FROM messages m
                                        WHERE m.thread_id = threads.id), 0)
                WHERE account_id = ?1",
-                [account.get()],
-            )
-            .await
-            .expect("recompute the seeded thread aggregates");
+            [account.get()],
+        )
+        .await
+        .expect("recompute the seeded thread aggregates");
         Ok::<_, crate::Error>(threads)
     })
     .await

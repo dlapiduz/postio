@@ -134,26 +134,26 @@ impl<'a> CrossAccountMoveRepository<'a> {
     /// runs anything — resumability is this insert.
     pub async fn create(&self, saga: &NewCrossAccountMove) -> Result<CrossAccountMoveId> {
         let now = Utc::now().timestamp_millis();
-        self.connection
-            .execute(
-                "INSERT INTO cross_account_moves
+        sql::execute(
+            self.connection,
+            "INSERT INTO cross_account_moves
                  (source_message_id, source_account_id, source_mailbox_id,
                   target_account_id, target_mailbox_id, target_message_id,
                   raw_blob_id, rfc_message_id, phase, created_at, updated_at)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 'copying', ?9, ?9)",
-                bind![
-                    saga.source_message.get(),
-                    saga.source_account.get(),
-                    saga.source_mailbox.get(),
-                    saga.target_account.get(),
-                    saga.target_mailbox.get(),
-                    saga.target_message.map(MessageId::get),
-                    saga.raw_blob_id,
-                    saga.rfc_message_id,
-                    now,
-                ],
-            )
-            .await?;
+            bind![
+                saga.source_message.get(),
+                saga.source_account.get(),
+                saga.source_mailbox.get(),
+                saga.target_account.get(),
+                saga.target_mailbox.get(),
+                saga.target_message.map(MessageId::get),
+                saga.raw_blob_id,
+                saga.rfc_message_id,
+                now,
+            ],
+        )
+        .await?;
         Ok(CrossAccountMoveId::new(self.connection.last_insert_rowid()))
     }
 
@@ -208,14 +208,15 @@ impl<'a> CrossAccountMoveRepository<'a> {
             .map(|phase| format!("'{}'", phase.as_str()))
             .collect::<Vec<_>>()
             .join(", ");
-        let mut statement = self
-            .connection
-            .prepare(&format!(
+        let mut statement = sql::statement(
+            self.connection,
+            &format!(
                 "SELECT id FROM cross_account_moves
               WHERE phase IN ({list})
               ORDER BY id"
-            ))
-            .await?;
+            ),
+        )
+        .await?;
         let ids: Vec<i64> = sql::mapped(&mut statement, (), |row| row.col(0)).await?;
         let mut found = Vec::new();
         for id in ids {
@@ -255,12 +256,12 @@ impl<'a> CrossAccountMoveRepository<'a> {
                 ),
             });
         }
-        self.connection
-            .execute(
-                "UPDATE cross_account_moves SET phase = ?2, updated_at = ?3 WHERE id = ?1",
-                bind![id.get(), next.as_str(), Utc::now().timestamp_millis()],
-            )
-            .await?;
+        sql::execute(
+            self.connection,
+            "UPDATE cross_account_moves SET phase = ?2, updated_at = ?3 WHERE id = ?1",
+            bind![id.get(), next.as_str(), Utc::now().timestamp_millis()],
+        )
+        .await?;
         Ok(())
     }
 
@@ -277,12 +278,12 @@ impl<'a> CrossAccountMoveRepository<'a> {
         let Some(remote_id) = remote_id else {
             return Ok(());
         };
-        self.connection
-            .execute(
-                "UPDATE cross_account_moves SET confirmed_remote_id = ?2 WHERE id = ?1",
-                bind![id.get(), remote_id.as_str()],
-            )
-            .await?;
+        sql::execute(
+            self.connection,
+            "UPDATE cross_account_moves SET confirmed_remote_id = ?2 WHERE id = ?1",
+            bind![id.get(), remote_id.as_str()],
+        )
+        .await?;
 
         // And onto the row the user is looking at (ADR 0026, #531).
         //
@@ -300,13 +301,13 @@ impl<'a> CrossAccountMoveRepository<'a> {
         // same message. And an inverse saga (#531) has no coordinate for the
         // copy it must remove — which is the failure that reaches no server
         // and reports success.
-        self.connection
-            .execute(
-                "UPDATE messages SET remote_id = ?2
+        sql::execute(
+            self.connection,
+            "UPDATE messages SET remote_id = ?2
               WHERE id = (SELECT target_message_id FROM cross_account_moves WHERE id = ?1)",
-                bind![id.get(), remote_id.as_str()],
-            )
-            .await?;
+            bind![id.get(), remote_id.as_str()],
+        )
+        .await?;
         Ok(())
     }
 }

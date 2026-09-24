@@ -515,6 +515,8 @@ impl Store {
     /// (#404).
     async fn prove_the_key_fits(&self) -> Result<()> {
         let connection = self.connect_bare()?;
+        // Once per open, and on a bare connection: nothing to cache.
+        #[allow(clippy::disallowed_methods)]
         match connection
             .query("SELECT count(*) FROM sqlite_schema", ())
             .await
@@ -526,16 +528,16 @@ impl Store {
 
     async fn apply_schema(&self) -> Result<()> {
         let connection = self.connect_bare()?;
-        connection.execute("PRAGMA foreign_keys = OFF", ()).await?;
+        crate::sql::execute(&connection, "PRAGMA foreign_keys = OFF", ()).await?;
         connection.execute_batch(schema::HEAD).await?;
         // Stamped in the same breath as the schema it describes, so the two
         // cannot be written apart. See `prove_the_schema_matches`.
-        connection
-            .execute(
-                &format!("PRAGMA user_version = {}", schema::FINGERPRINT),
-                (),
-            )
-            .await?;
+        crate::sql::execute(
+            &connection,
+            &format!("PRAGMA user_version = {}", schema::FINGERPRINT),
+            (),
+        )
+        .await?;
         Ok(())
     }
 
@@ -645,7 +647,7 @@ impl Store {
         let before = self.file_bytes();
         let connection = self.connect().await?;
         let _permit = self.gate.acquire(WritePriority::Background).await;
-        connection.execute("VACUUM", ()).await?;
+        crate::sql::execute(&connection, "VACUUM", ()).await?;
         drop(_permit);
         drop(connection);
         // The rewrite lands in the log; the file on disk only shrinks once
@@ -806,7 +808,9 @@ impl Store {
 
         let connection = self.connect().await?;
         // A query, not an `execute`: it answers with (busy, log, checkpointed)
-        // and the engine refuses a statement whose rows nobody reads.
+        // and the engine refuses a statement whose rows nobody reads. Rare
+        // enough that compiling it each time is nothing.
+        #[allow(clippy::disallowed_methods)]
         let mut rows = connection
             .query("PRAGMA wal_checkpoint(TRUNCATE)", ())
             .await?;
