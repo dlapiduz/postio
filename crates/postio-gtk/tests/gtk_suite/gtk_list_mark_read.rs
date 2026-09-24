@@ -63,6 +63,7 @@ impl Mailbox120 {
 
 impl MailboxSource for Mailbox120 {
     fn mailboxes(&self, _account: AccountId) -> MailboxFuture {
+        self.asked.borrow_mut().push("folders".to_owned());
         let account = AccountId::new(ACCOUNT);
         let mut inbox = Mailbox::new(account, "INBOX", Some('/'));
         inbox.id = MailboxId::new(INBOX);
@@ -363,4 +364,62 @@ fn pump_until(done: impl Fn() -> bool) {
         }
         std::thread::sleep(std::time::Duration::from_millis(5));
     }
+}
+
+pub fn another_account_s_changes_do_not_reload_this_sidebar() {
+    // #1607: the sidebar re-read every folder on any message event, from
+    // any account -- so with two accounts syncing, each one's burst
+    // reloaded the other's folders for numbers that could not have moved.
+    if adw::init().is_err() || gdk::Display::default().is_none() {
+        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
+        return;
+    }
+    let display = gdk::Display::default().unwrap();
+    fonts::install().expect("the embedded fonts should install");
+    style::install(&display);
+
+    let store = Mailbox120::new();
+    let window = Window::default();
+    window.present();
+    pump();
+    let feeds = window.install_feeds(
+        AccountId::new(ACCOUNT),
+        "ada@example.com",
+        store.clone(),
+        store.clone(),
+    );
+    pump();
+    let list = window.list();
+    pump_until(|| list.model().n_items() == TOTAL);
+    for _ in 0..20 {
+        pump();
+    }
+
+    let folder_reads = || {
+        store
+            .asked
+            .borrow()
+            .iter()
+            .filter(|ask| *ask == "folders")
+            .count()
+    };
+    let before = folder_reads();
+    feeds.apply(&Event::MessagesChanged {
+        account: AccountId::new(ACCOUNT + 1),
+        messages: vec![MessageId::new(9_001)],
+    });
+    for _ in 0..20 {
+        pump();
+    }
+    assert_eq!(
+        folder_reads(),
+        before,
+        "another account's change reloaded this account's folders"
+    );
+
+    feeds.apply(&Event::MessagesChanged {
+        account: AccountId::new(ACCOUNT),
+        messages: vec![MessageId::new(3)],
+    });
+    pump_until(|| folder_reads() > before);
 }

@@ -1278,15 +1278,26 @@ impl Folders {
             inner.publish();
         }
         let ours = |account: &AccountId| inner.account.get() == Some(*account);
+        // Every account the sidebar draws: the one account, or each section
+        // of the unified tree.
+        let drawn =
+            |account: &AccountId| ours(account) || inner.sections.borrow().contains(account);
         match event {
             // The tree itself moved: renamed, created, unsubscribed.
             Event::MailboxesChanged { account } if ours(account) => self.reload(),
             // Counts move with read state and with mail arriving or leaving.
-            // Which mailbox is irrelevant — the sidebar shows all of them.
-            Event::MessagesChanged { .. }
-            | Event::MessagesRemoved { .. }
-            | Event::NewMail { .. }
-            | Event::MessageListChanged { .. } => self.reload(),
+            // Which mailbox is irrelevant — the sidebar shows all of them —
+            // but which account is not: another account's sync burst used to
+            // re-read these folders for numbers it could not have moved
+            // (#1607).
+            Event::MessagesChanged { account, .. }
+            | Event::MessagesRemoved { account, .. }
+            | Event::NewMail { account, .. }
+            | Event::MessageListChanged { account, .. }
+                if drawn(account) =>
+            {
+                self.reload()
+            }
             _ => {}
         }
     }
