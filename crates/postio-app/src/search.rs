@@ -493,16 +493,15 @@ async fn install_run(
                         announce(&events, &query, results);
                     }
                     facets(
-                        &view, &live, sequence, account, &query, scope, &database,
-                        &runtime,
-                        // POSTIO-GLIB-SAFE: nothing under this await wants a reactor. The
-                        // network work it reaches is spawned onto the runtime and answers over a
-                        // channel -- `onboarding::probe_with_offer` is the shape -- and what is
-                        // left is store reads, whose futures this engine makes self-contained.
-                        // Measured rather than assumed: `app_suite::glib_main_context` opens a
-                        // store and reads it on this context with no runtime anywhere, and fails
-                        // loudly if that stops being true.
+                        &view, &live, sequence, account, &query, scope, &database, &runtime,
                     )
+                    // POSTIO-GLIB-SAFE: nothing under this await wants a reactor. The
+                    // network work it reaches is spawned onto the runtime and answers over a
+                    // channel -- `onboarding::probe_with_offer` is the shape -- and what is
+                    // left is store reads, whose futures this engine makes self-contained.
+                    // Measured rather than assumed: `app_suite::glib_main_context` opens a
+                    // store and reads it on this context with no runtime anywhere, and fails
+                    // loudly if that stops being true.
                     .await;
                 }
             });
