@@ -29,6 +29,7 @@ pub mod paging;
 pub mod palette;
 pub mod paste;
 pub mod reader;
+pub mod recipients;
 pub mod row;
 pub mod schedule;
 pub mod search;

@@ -509,6 +509,7 @@ fn reply_draft(id: CommandId, source: &Message, account: &Account) -> Option<Dra
 
 use postio_body::replying::{ReplyKind, source_document};
 
+use postio_ui::recipients::{MIN_COMPLETION_PREFIX, candidate_label};
 use postio_ui::schedule::schedule_presets;
 use postio_ui::sending::{ALREADY_QUEUED, NO_RECIPIENTS, join_with_and, send_concerns};
 
@@ -3725,15 +3726,6 @@ fn sync_detach_button(button: &gtk::Button, detached: bool) {
     button.update_property(&[gtk::accessible::Property::Label(tooltip)]);
 }
 
-/// How much of the recipient being typed must exist before completion offers
-/// anything.
-///
-/// Four, from #424. One character matches most of an address book, so the
-/// popover opened over the field with a list nobody could choose from yet —
-/// and it did it while a query ran on every keystroke. Four is where a prefix
-/// starts to identify somebody.
-const MIN_COMPLETION_PREFIX: usize = 4;
-
 /// Recipient completion attached to one entry: a popover of suggestions from
 /// [`Composer::connect_recipient_suggestions`], keyboard-navigable and
 /// accepted without ever reaching for the mouse.
@@ -3950,38 +3942,11 @@ impl Completion {
             return false;
         };
 
-        // A contact inserts one address; a group inserts every member as its
-        // own address, comma by comma, exactly as if they had been typed
-        // individually -- there is no group reference to insert instead
-        // (ADR 0007 Q3).
-        let inserted: String = match &candidate {
-            RecipientCandidate::Contact(address) => format!("{address}, "),
-            RecipientCandidate::Group { members, .. } => members
-                .iter()
-                .map(|address| format!("{address}, "))
-                .collect(),
-        };
-
-        let text = entry.text();
-        let (start, _) = current_entry(&text);
-        let mut replaced = text.to_string();
-        replaced.replace_range(start.., &inserted);
+        let replaced = postio_ui::recipients::accepted(&entry.text(), &candidate);
         entry.set_text(&replaced);
         entry.set_position(-1);
         self.popover.popdown();
         true
-    }
-}
-
-/// The completion row's label: an address for a contact, or the name and
-/// size for a group -- distinguishable from a contact at a glance, since
-/// accepting one inserts several addresses rather than one.
-fn candidate_label(candidate: &RecipientCandidate) -> String {
-    match candidate {
-        RecipientCandidate::Contact(address) => address.to_string(),
-        RecipientCandidate::Group { name, members } => {
-            format!("{name} ({} people)", members.len())
-        }
     }
 }
 
