@@ -75,7 +75,7 @@ command from inside a text field.
 | `/` | Search | List, conversation, reader, search, folder list |  | `search` |
 | `ctrl+s` | Save search as folder | Search |  | `save_search` |
 | `c` | Compose | List, conversation, reader |  | `compose` |
-| `ctrl+Return` or `alt+Return` | Send | Composer | Undo briefly | `send` |
+| `ctrl+Return` or `alt+s` or `alt+Return` | Send | Composer | Undo briefly | `send` |
 | `ctrl+shift+Return` or `alt+S` | Schedule send… | Composer |  | `schedule_send` |
 | `ctrl+s` | Save draft | Composer |  | `save_draft` |
 | `ctrl+d` | Discard draft | Composer | Asks first | `discard_draft` |
@@ -104,7 +104,7 @@ command from inside a text field.
 | `i i` | Show remote images | List, conversation, reader |  | `show_images` |
 | `i a` | Always show images from this sender | List, conversation, reader |  | `always_show_images` |
 | `X` | Unsubscribe from this list | List, conversation, reader |  | `unsubscribe` |
-| `ctrl+b` | Toggle sidebar | List, conversation, reader |  | `toggle_sidebar` |
+| `ctrl+b` | Toggle sidebar | List, conversation, reader, folder list |  | `toggle_sidebar` |
 | `g f` | Focus the folder list | List, conversation, reader, search |  | `focus_sidebar` |
 | `g i` | Go to inbox | List, conversation, reader, search, folder list |  | `go_to_inbox` |
 | `g d` | Go to drafts | List, conversation, reader, search, folder list |  | `go_to_drafts` |

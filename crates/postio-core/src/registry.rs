@@ -757,7 +757,9 @@ static SPECS: &[CommandSpec] = &[
         id: CommandId::Send,
         title: "Send",
         default_binding: "mod+Return",
-        alternate_bindings: &["alt+Return"],
+        // `alt+s` first: a terminal delivers it everywhere, where many take
+        // `ctrl+Return` or `alt+Return` for their own fullscreen.
+        alternate_bindings: &["alt+s", "alt+Return"],
         contexts: Context::Composer.as_set(),
         // Not destructive — but it is externally visible and irreversible once
         // the queue drains, so it earns an undo-send window rather than a modal.
