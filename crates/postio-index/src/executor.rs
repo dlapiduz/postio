@@ -334,8 +334,10 @@ pub async fn search(
 /// offer anyway. Term counts count documents, not occurrences, which is what
 /// `fts5vocab('row')` reported and what the ranking expects.
 ///
-/// This runs only on a search that found nothing, so the scan never sits on
-/// the typing path.
+/// This runs only on a search that found nothing -- which, because terms
+/// match whole words, is every pause while a name is still being typed. So
+/// the vocabulary is built once and kept until the index moves: see
+/// [`vocabulary`].
 ///
 /// # What it does not read
 ///
@@ -347,14 +349,85 @@ async fn suggestion_for(
     connection: &Connection,
     query: &postio_search::ParsedQuery,
 ) -> Result<Option<postio_search::suggest::Suggestion>> {
-    use std::collections::{HashMap, HashSet};
-
     let mut terms = query.text_terms();
     let Some(term) = terms.next() else {
         return Ok(None);
     };
     if terms.next().is_some() || term.negated || query.filters().next().is_some() {
         return Ok(None);
+    }
+
+    let vocabulary = vocabulary(connection).await?;
+
+    // A wider net than the rule needs: `postio-search` owns how far a word
+    // may be mistyped, and this only has to avoid carrying every term across
+    // the boundary to find out.
+    let typed = term.value.chars().count() as i64;
+    let band = (typed - MOST_EDITS_CONSIDERED)..=(typed + MOST_EDITS_CONSIDERED);
+    let counts: Vec<(String, u64)> = vocabulary
+        .iter()
+        .filter(|(word, _)| band.contains(&(word.chars().count() as i64)))
+        .map(|(word, documents)| (word.clone(), *documents))
+        .collect();
+
+    // Commonest first, so the cap keeps the terms most likely to be the
+    // intended word.
+    let mut vocabulary = counts;
+    vocabulary.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+    vocabulary.truncate(VOCABULARY_CAP as usize);
+
+    Ok(postio_search::suggest::suggest(
+        &term.value,
+        vocabulary
+            .iter()
+            .map(|(text, documents)| postio_search::suggest::Term {
+                text,
+                documents: *documents,
+            }),
+    ))
+}
+
+/// What the vocabulary was built from: the newest document's id and a
+/// digest of its text. Moves when a message is indexed; two stores in one
+/// process do not share one by accident.
+type VocabularyWitness = (i64, u64);
+
+/// Words and how many of the sampled documents hold each.
+type Vocabulary = std::sync::Arc<std::collections::HashMap<String, u64>>;
+
+/// Every word in the newest [`VOCABULARY_DOCUMENTS`] documents, with how many
+/// of them hold it -- built once and kept until the index moves.
+///
+/// Terms match whole words, so a name typed letter by letter is a zero-hit
+/// search at every pause until it is complete, and each rebuilt this from
+/// five thousand rows before the readout answered (#1613). What it is built
+/// from moves only when mail is indexed, and the witness is one row.
+async fn vocabulary(connection: &Connection) -> Result<Vocabulary> {
+    use std::collections::{HashMap, HashSet};
+    use std::hash::{Hash, Hasher};
+    use std::sync::{Arc, Mutex};
+
+    static BUILT: Mutex<Option<(VocabularyWitness, Vocabulary)>> = Mutex::new(None);
+
+    let newest = sql::first(
+        connection,
+        "SELECT message_id, coalesce(sender, '') || coalesce(subject, '')
+           FROM search_documents
+          ORDER BY message_id DESC
+          LIMIT 1",
+        (),
+        |row| Ok((row.col::<i64>(0)?, row.opt_text(1)?.unwrap_or_default())),
+    )
+    .await?;
+    let witness: VocabularyWitness = newest.map_or((0, 0), |(id, text)| {
+        let mut digest = std::collections::hash_map::DefaultHasher::new();
+        text.hash(&mut digest);
+        (id, digest.finish())
+    });
+    if let Some((built, words)) = BUILT.lock().expect("not poisoned").as_ref()
+        && *built == witness
+    {
+        return Ok(Arc::clone(words));
     }
 
     let documents = sql::all(
@@ -375,12 +448,6 @@ async fn suggestion_for(
         },
     )
     .await?;
-
-    // A wider net than the rule needs: `postio-search` owns how far a word
-    // may be mistyped, and this only has to avoid carrying every term across
-    // the boundary to find out.
-    let typed = term.value.chars().count() as i64;
-    let band = (typed - MOST_EDITS_CONSIDERED)..=(typed + MOST_EDITS_CONSIDERED);
     let mut counts: HashMap<String, u64> = HashMap::new();
     for document in &documents {
         // Each document counts a term once, however often it repeats it.
@@ -390,28 +457,15 @@ async fn suggestion_for(
                 .split(|c: char| !c.is_alphanumeric())
                 .filter(|word| !word.is_empty())
             {
-                if band.contains(&(word.chars().count() as i64)) && seen.insert(word) {
+                if seen.insert(word) {
                     *counts.entry(word.to_owned()).or_default() += 1;
                 }
             }
         }
     }
-
-    // Commonest first, so the cap keeps the terms most likely to be the
-    // intended word.
-    let mut vocabulary: Vec<(String, u64)> = counts.into_iter().collect();
-    vocabulary.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
-    vocabulary.truncate(VOCABULARY_CAP as usize);
-
-    Ok(postio_search::suggest::suggest(
-        &term.value,
-        vocabulary
-            .iter()
-            .map(|(text, documents)| postio_search::suggest::Term {
-                text,
-                documents: *documents,
-            }),
-    ))
+    let words = Arc::new(counts);
+    *BUILT.lock().expect("not poisoned") = Some((witness, Arc::clone(&words)));
+    Ok(words)
 }
 
 /// Whether every message in the searched scope has a body to search.

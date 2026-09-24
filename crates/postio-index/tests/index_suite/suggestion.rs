@@ -128,3 +128,58 @@ async fn a_query_with_a_filter_is_left_alone() {
     assert_eq!(results.total_hits, 0);
     assert_eq!(results.suggestion, None);
 }
+
+#[tokio::test]
+async fn the_vocabulary_is_built_once_until_the_index_moves() {
+    // #1613: terms match whole words, so a name typed letter by letter is a
+    // zero-hit search at every pause until it is complete, and each one
+    // rebuilt the vocabulary from the newest 5,000 documents -- read,
+    // tokenised, counted and sorted -- before the readout could answer.
+    use postio_storage::test_support::counting::counted_async;
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    postio_index::index::ensure_schema(&connection)
+        .await
+        .expect("schema");
+    let (account, mailbox) = test_support::account_with_inbox(&connection).await;
+    for _ in 0..40 {
+        from(&connection, &account, mailbox, "hannah").await;
+    }
+
+    let first = counted_async(async || {
+        let results = results_for(&connection, &account, "hanah").await;
+        assert_eq!(
+            results.suggestion.map(|offer| offer.term).as_deref(),
+            Some("hannah")
+        );
+    })
+    .await;
+    let again = counted_async(async || {
+        let results = results_for(&connection, &account, "hannha").await;
+        assert_eq!(
+            results.suggestion.map(|offer| offer.term).as_deref(),
+            Some("hannah")
+        );
+    })
+    .await;
+    assert!(
+        first.rows >= 40,
+        "the first zero-hit search reads the documents: {first:?}"
+    );
+    assert!(
+        again.rows < 10,
+        "the second zero-hit search read {} rows; nothing had moved",
+        again.rows
+    );
+
+    // And a sender who arrives after it is offered like any other.
+    for _ in 0..3 {
+        from(&connection, &account, mailbox, "joaquin").await;
+    }
+    let results = results_for(&connection, &account, "joaqin").await;
+    assert_eq!(
+        results.suggestion.map(|offer| offer.term).as_deref(),
+        Some("joaquin"),
+        "a vocabulary kept past the mail that arrived after it"
+    );
+}
