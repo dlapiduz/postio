@@ -33,7 +33,7 @@ Replaces today's one-row-per-address table. `account_id`, `address`,
 | `name` | The name the user set or picked on a join (FR-013, FR-021). NULL until they do. Never written by sync. |
 | `organization`, `note` | User-edited (FR-021). |
 | `source` | `mail` \| `user` \| `import` — how the person first appeared; `mail` → `user` on the first user edit or join (FR-022). |
-| `state` | `live` \| `deleted` \| `merged` (R4). Only `live` people are shown, offered or used for name substitution. |
+| `state` | `live` \| `deleted` \| `merged` (R4). Only `live` people are shown, offered or used for name substitution. `merged` is the state a **join** leaves the absorbed people in — the user-facing verb is "join"; `merged` names the stored result. |
 | `merged_into` | The survivor, when `state = 'merged'`; NULL otherwise. |
 | `preferred_address` | `addresses.id` of the preferred address (FR-016); must be one of the person's own. |
 | `seen_name` | The display name most recently seen on any of the person's addresses. |

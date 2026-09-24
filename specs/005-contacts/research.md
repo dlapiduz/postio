@@ -200,6 +200,7 @@ in `postio-session/src/actions.rs` like `map_mailbox_role` (`:1685`), whose
 | `MoveAddress { address, to }` | `MoveAddress { address, to: previous }` |
 | `EditContact { id, fields }` | `EditContact { id, prior fields }` |
 | `DeleteContact { id }` / `RestoreContact { id }` | each other |
+| `DeleteGroup { id }` | `RestoreGroup { id, name, uid, members }` |
 | group commands | their obvious opposites |
 
 Each is registered `Recovery::Undo` with a new `UndoKind` and toast text.
@@ -291,6 +292,13 @@ user-set name; otherwise the user's name stands and the summary counts it.
   single-row list of its own — the saved-search section (`sidebar.rs:458`) is
   the precedent for a row that is neither a folder nor a view. ADR 0036
   governs folder and view rows; this is neither, and does not reopen it.
+- **One context, dispatch on the focused row.** Rows in the pane have a
+  kind — person, address, group, suggestion — and a command acts on the
+  focused kind where it has a meaning, else does nothing and says which row it
+  wants (contracts/commands.md). Sub-contexts per row kind were considered and
+  rejected: `ContextSet` has six free bits, each context must join seven
+  exhaustive matches, and the cheat sheet would split one surface into four
+  headings.
 - **`g c` opens Contacts** from anywhere (`ContextSet::ANY`, free today beside
   `g i`/`g d`/`g s`/`g t`/`g f`/`g a`).
 
