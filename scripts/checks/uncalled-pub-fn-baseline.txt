@@ -85,7 +85,6 @@ reopen                            # crates/postio-account/src/secret.rs:670
 reports_destination_uid           # crates/postio-account/src/imap/dispatch.rs:181
 requeue_in_flight                 # crates/postio-storage/src/repository/operations.rs:510
 resync_strategy                   # crates/postio-account/src/imap/dispatch.rs:144
-rethread_orphans                  # crates/postio-storage/src/repository/threading.rs:268
 root_message_id                   # crates/postio-model/src/thread.rs:86
 search_query                      # crates/postio-core/src/state.rs:413
 section_spec                      # crates/postio-account/src/backend/message.rs:585

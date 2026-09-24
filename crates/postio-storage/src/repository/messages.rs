@@ -2031,21 +2031,36 @@ impl<'a> MessageRepository<'a> {
     /// can ever have a better answer for later than it did at insertion: one
     /// that names an ancestor either already found it or is waiting to, so
     /// only silence at insertion time is worth asking about again.
+    ///
+    /// And only those whose subject reads as a reply. A message with no
+    /// references is most of a folder -- every newsletter, every first
+    /// message of a conversation -- and only a reply can be placed by its
+    /// subject, so everything else is dropped here, from two columns,
+    /// rather than loaded whole to be turned away one at a time.
     pub async fn subject_only_orphans(&self, mailbox_id: MailboxId) -> Result<Vec<MessageId>> {
         let mut statement = sql::statement(
             self.connection,
-            "SELECT id FROM messages
+            "SELECT id, subject FROM messages
               WHERE mailbox_id = ?1
                 AND thread_id IS NOT NULL
                 AND in_reply_to IS NULL
                 AND reference_ids = ''",
         )
         .await?;
-        let rows = sql::mapped(&mut statement, [mailbox_id.get()], |row| {
-            Ok(MessageId::new(row.col(0)?))
-        })
-        .await?;
-        Ok(rows)
+        let rows: Vec<(i64, Option<String>)> =
+            sql::mapped(&mut statement, [mailbox_id.get()], |row| {
+                Ok((row.col(0)?, row.col(1)?))
+            })
+            .await?;
+        Ok(rows
+            .into_iter()
+            .filter(|(_, subject)| {
+                subject
+                    .as_deref()
+                    .is_some_and(postio_model::subject::is_reply)
+            })
+            .map(|(id, _)| MessageId::new(id))
+            .collect())
     }
 }
 
