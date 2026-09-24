@@ -68,7 +68,11 @@ pub fn m_joins_a_suggestion_and_x_dismisses_one() {
 
         // ── m, Return: joined, and no longer a suggestion ──────────────────
         press(window, "m");
-        assert!(settle_until(async || pane.join_open()).await, "hint {:?}", pane.hint_text());
+        assert!(
+            settle_until(async || pane.join_open()).await,
+            "hint {:?}",
+            pane.hint_text()
+        );
         press(window, "Return");
         assert!(
             settle_until(async || zebulon() == 0).await,
