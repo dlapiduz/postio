@@ -3796,6 +3796,7 @@ version = "0.3.0"
 dependencies = [
  "blake3",
  "chrono",
+ "mimalloc",
  "postio-account",
  "postio-config",
  "postio-core",
