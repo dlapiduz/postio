@@ -26,7 +26,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use chrono::Utc;
 use postio_model::{
     AddressId, AddressMove, Contact, ContactAddress, ContactDetail, ContactId, ContactListRow,
-    ContactSource, ContactState, ContactView, EmailAddress, JoinReceipt, Message, PersonFields,
+    ContactSource, ContactState, ContactView, EmailAddress, JoinReceipt, Message, PersonEdit,
+    PersonFields,
 };
 
 use super::{from_millis, to_millis};
@@ -287,6 +288,7 @@ impl<'a> ContactRepository<'a> {
         sql::in_scope(self.connection, |transaction| async move {
             let mut claimed: Vec<(i64, Option<i64>)> = Vec::new();
             for address in addresses {
+                refuse_own(&transaction, address).await?;
                 let (id, owner) = address_and_owner(&transaction, address).await?;
                 if let Some((owner, state)) = &owner
                     && state == "live"
@@ -875,6 +877,7 @@ impl ContactRepository<'_> {
         address: &EmailAddress,
     ) -> Result<AddressId> {
         sql::in_scope(self.connection, |transaction| async move {
+            refuse_own(&transaction, address).await?;
             let (id, owner) = address_and_owner(&transaction, address).await?;
             match &owner {
                 Some((owner, _)) if *owner == person.get() => return Ok(AddressId::new(id)),
@@ -988,6 +991,117 @@ impl ContactRepository<'_> {
         Ok(rows.into_iter().collect())
     }
 
+    /// Sets a person's name, organisation and note, making them the user's
+    /// if they were only the mail's (FR-021, FR-022). Hands back the fields
+    /// it replaced, which [`put_fields`](Self::put_fields) restores.
+    pub async fn edit(&self, person: ContactId, edit: &PersonEdit) -> Result<PersonFields> {
+        let filled = |value: &Option<String>| {
+            value
+                .as_deref()
+                .map(str::trim)
+                .filter(|v| !v.is_empty())
+                .map(str::to_owned)
+        };
+        let (name, organization, note) = (
+            filled(&edit.name),
+            filled(&edit.organization),
+            filled(&edit.note),
+        );
+        sql::in_scope(self.connection, |transaction| async move {
+            let prior = fields(&transaction, person).await?;
+            sql::execute(
+                &transaction,
+                "UPDATE contacts SET name = ?2, organization = ?3, note = ?4, updated_at = ?5
+                  WHERE id = ?1",
+                bind![
+                    person.get(),
+                    name,
+                    organization,
+                    note,
+                    to_millis(Utc::now())
+                ],
+            )
+            .await?;
+            promote(&transaction, person).await?;
+            refresh(&transaction, person.get()).await?;
+            Ok(prior)
+        })
+        .await
+    }
+
+    /// Puts a person's fields back exactly as `fields` has them -- source
+    /// and preferred address included. What undoes an edit.
+    pub async fn put_fields(&self, person: ContactId, fields: &PersonFields) -> Result<()> {
+        let fields = fields.clone();
+        sql::in_scope(self.connection, |transaction| async move {
+            sql::execute(
+                &transaction,
+                "UPDATE contacts
+                    SET name = ?2, organization = ?3, note = ?4, source = ?5,
+                        preferred_address = ?6, updated_at = ?7
+                  WHERE id = ?1",
+                bind![
+                    person.get(),
+                    fields.name,
+                    fields.organization,
+                    fields.note,
+                    fields.source.as_str(),
+                    fields.preferred.get(),
+                    to_millis(Utc::now())
+                ],
+            )
+            .await?;
+            // `refresh` keeps the preferred address only if it is still one
+            // of theirs, which is the guard a stale inverse needs.
+            refresh(&transaction, person.get()).await
+        })
+        .await
+    }
+
+    /// Deletes a person: offered nowhere, listed only in the Deleted view,
+    /// still counting their addresses' mail (FR-023, SC-005). Hands back the
+    /// state they were in.
+    pub async fn delete(&self, person: ContactId) -> Result<ContactState> {
+        sql::in_scope(self.connection, |transaction| async move {
+            let state = state_of(&transaction, person).await?;
+            if state != ContactState::Live {
+                return Err(Error::ForbiddenTransition {
+                    what: "contact",
+                    reason: "only someone in the address book can be deleted".into(),
+                });
+            }
+            sql::execute(
+                &transaction,
+                "UPDATE contacts SET state = 'deleted', updated_at = ?2 WHERE id = ?1",
+                bind![person.get(), to_millis(Utc::now())],
+            )
+            .await?;
+            Ok(state)
+        })
+        .await
+    }
+
+    /// Brings a deleted person back in `state` -- what they were before.
+    pub async fn restore(&self, person: ContactId, state: ContactState) -> Result<()> {
+        sql::in_scope(self.connection, |transaction| async move {
+            if state_of(&transaction, person).await? != ContactState::Deleted {
+                return Err(Error::ForbiddenTransition {
+                    what: "contact",
+                    reason: "only a deleted contact can be restored".into(),
+                });
+            }
+            sql::execute(
+                &transaction,
+                "UPDATE contacts SET state = ?2, merged_into = NULL, updated_at = ?3
+                  WHERE id = ?1",
+                bind![person.get(), state.as_str(), to_millis(Utc::now())],
+            )
+            .await?;
+            Ok(())
+        })
+        .await
+    }
+
     /// Who owns `address`, or `None` for nobody.
     pub async fn owner_of_address(&self, address: AddressId) -> Result<Option<ContactId>> {
         Ok(owner_of(self.connection, address)
@@ -1066,6 +1180,45 @@ async fn owner_of(connection: &Connection, address: AddressId) -> Result<Option<
         entity: "address",
         id: address.get(),
     })
+}
+
+/// A person's state.
+async fn state_of(connection: &Connection, person: ContactId) -> Result<ContactState> {
+    let state: Option<String> = sql::first(
+        connection,
+        "SELECT state FROM contacts WHERE id = ?1",
+        [person.get()],
+        |row| row.col(0),
+    )
+    .await?;
+    let state = state.ok_or(Error::NotFound {
+        entity: "contact",
+        id: person.get(),
+    })?;
+    ContactState::from_name(&state).ok_or(Error::UnknownEnum {
+        column: "contacts.state",
+        value: state,
+    })
+}
+
+/// Refuses one of the user's own addresses -- an account's or an
+/// identity's. The user is never their own contact (spec edge case), and
+/// saying so beats a person who silently never appears.
+async fn refuse_own(connection: &Connection, address: &EmailAddress) -> Result<()> {
+    let own = sql::scalar(
+        connection,
+        "SELECT (SELECT count(*) FROM accounts WHERE lower(address) = ?1)
+              + (SELECT count(*) FROM identities WHERE lower(address) = ?1)",
+        bind![address.normalized()],
+    )
+    .await?;
+    if own > 0 {
+        return Err(Error::ForbiddenTransition {
+            what: "contact",
+            reason: "that address is one of yours".into(),
+        });
+    }
+    Ok(())
 }
 
 /// A person's editable fields, for a receipt or an inverse.

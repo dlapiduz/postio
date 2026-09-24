@@ -31,6 +31,7 @@ mod contact_rank_index;
 mod contacts;
 mod contacts_budget;
 mod contacts_join;
+mod contacts_lifecycle;
 mod contacts_list_views;
 mod draft_indexes;
 mod drafts;
