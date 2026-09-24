@@ -479,7 +479,10 @@ download):
   | `postio` (desktop, `release`) | 55.5 MB | 348.3 MB |
 
   The download is 17% of the desktop app, and the terminal frontend alone
-  is 3%. The daemon is the bulk of it -- the store engine, the protocol
+  is 3%. *(Measured with the daemon, 2026-09-24. Since Phase 11 the
+  terminal links the store engine itself and ships alone, so the download is
+  one binary about the size of the two above; the release workflow's size
+  check measures it.)* The daemon is the bulk of it -- the store engine, the protocol
   crates -- and is built with the ordinary `release` profile, unstripped,
   so the same levers as `release-tui` would shrink it further if it ever
   mattered. The Flatpak comparison, with runtimes, is what the release

@@ -1,6 +1,6 @@
 # FR-005 audit: what this branch did to the desktop's and macOS's tests
 
-Final pass after T019 and T023; the first pass predates them.
+Final pass after Phase 11 (one app at a time); earlier passes predate it.
 
 FR-005 says no desktop or macOS function may be removed or degraded, and the
 tests that prove them stay unchanged except for import paths. This is the
@@ -24,8 +24,8 @@ merge base with its body at `HEAD`, wherever it now lives.
 
 `macos/` has no changes at all. The integration suites gained four modules
 and changed none:
-- `postio-app/tests/app_suite/daemon_window.rs`: the desktop's production
-  path over a daemon, the proof for T023;
+- `postio-app/tests/app_suite/store_in_use_window.rs`: the desktop says the
+  store is open elsewhere, and opens it once it is free (Phase 11);
 - `postio-ffi/tests/ffi_suite/host.rs`: a command through the macOS
   boundary reaches the store, which the no-op bus it replaced never did
   (T019);
@@ -39,8 +39,8 @@ The only other changes are their rows in each suite's `main.rs`.
 
 Three desktop modules moved with their tests: two to the shared,
 toolkit-free layer (FR-004), and the notification decision to the host,
-which now chooses the one frontend that notifies (T022). Every body is
-byte-for-byte identical but the one noted below the table.
+where both frontends ask it. Every body is byte-for-byte identical but the
+one noted below the table.
 
 | Tests | Were in | Now in |
 |---|---|---|

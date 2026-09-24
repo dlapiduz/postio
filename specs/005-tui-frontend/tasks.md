@@ -269,10 +269,10 @@ through the local transport.
 **Goal**: No daemon. Each app opens the store and runs the host in-process;
 an app that finds the store open elsewhere says so (FR-041, US6 as revised).
 
-- [ ] T101 Test first: a store held open by another process is refused with "Postio is already open in another window. Close it to open Postio here.", and the store is unchanged (SC-007); map the engine's refusal to a distinct error in `postio-storage`/`postio-session`
-- [ ] T102 The terminal opens the store and runs `postio-host` in-process (`ClientKind::Tui`); a store in use prints the sentence and exits `1` before the alternate screen; `check-crate-boundaries.py` lets `postio-tui` link the store engine and still bans GTK and WebKit
-- [ ] T103 The desktop opens the store and runs the host in-process again, the startup screen naming each wait from `open_store_reporting`; a store in use shows the sentence on the "cannot open" screen, whose retry opens it once free; a new `app_suite` case proves both
-- [ ] T104 Remove `postio-daemon`, `serve.rs`, the socket transport, the reconnect handling, the notifier election and their tests; the flatpaks ship no daemon and drop `xdg-run/postio`; the release tarball ships `postio-tui` alone; `startup_budget.rs` measures the in-process start
+- [X] T101 Test first: a store held open by another process is refused with "Postio is already open in another window. Close it to open Postio here.", and the store is unchanged (SC-007); map the engine's refusal to a distinct error in `postio-storage`/`postio-session` *(`Error::InUse`, from the engine's "locked by another process"; `postio-storage/tests/refuses_a_store_in_use.rs` holds the store from a second process.)*
+- [X] T102 The terminal opens the store and runs `postio-host` in-process (`ClientKind::Tui`); a store in use prints the sentence and exits `1` before the alternate screen; `check-crate-boundaries.py` lets `postio-tui` link the store engine and still bans GTK and WebKit *(`Host::open`; `postio-tui/tests/store_in_use.rs`.)*
+- [X] T103 The desktop opens the store and runs the host in-process again, the startup screen naming each wait from `open_store_reporting`; a store in use shows the sentence on the "cannot open" screen, whose retry opens it once free; a new `app_suite` case proves both *(`app_suite::store_in_use_window`.)*
+- [X] T104 Remove `postio-daemon`, `serve.rs`, the socket transport, the reconnect handling, the notifier election and their tests; the flatpaks ship no daemon and drop `xdg-run/postio`; the release tarball ships `postio-tui` alone; `startup_budget.rs` measures the in-process start *(+1009/−4719 lines; `startup_budget.rs`: 16 ms over 5,000 messages in-process.)*
 
 ---
 
