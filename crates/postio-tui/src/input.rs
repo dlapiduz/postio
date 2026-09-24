@@ -65,6 +65,9 @@ pub fn chord_of(key: &KeyEvent) -> Option<Chord> {
 #[derive(Debug)]
 pub struct Keys {
     resolver: Resolver,
+    /// The bindings the resolver was built from, for the palette and the
+    /// cheat sheet, which list them.
+    commands: postio_core::Keymap,
 }
 
 impl Keys {
@@ -72,7 +75,13 @@ impl Keys {
     /// be honoured.
     pub fn new(commands: &postio_core::Keymap) -> (Keys, Vec<String>) {
         let (resolver, problems) = Resolver::from_commands(commands);
-        (Keys { resolver }, problems)
+        (
+            Keys {
+                resolver,
+                commands: commands.clone(),
+            },
+            problems,
+        )
     }
 
     /// The key that runs `command` with the keyboard in `context`, as the
@@ -84,6 +93,11 @@ impl Keys {
                 .binding_for(*context, command)
                 .map(ToString::to_string)
         })
+    }
+
+    /// The keymap in force: the registry's bindings with `[keys]` applied.
+    pub fn keymap(&self) -> &postio_core::Keymap {
+        &self.commands
     }
 
     /// What `key` means with the keyboard in `context`.

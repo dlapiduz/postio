@@ -42,6 +42,33 @@ pub fn legacy_deliverable(chord: &Chord) -> bool {
     }
 }
 
+/// The binding to show for `command` in a terminal: its first binding the
+/// terminal can deliver.
+///
+/// With the kitty keyboard protocol (`enhanced`) every chord arrives, so it is
+/// the binding in force, `[keys]` override and all. Without it, it is the
+/// first binding every chord of which a legacy terminal can send -- the
+/// alternate that exists for exactly this -- so a palette row or cheat-sheet
+/// line never shows a key that would do nothing when pressed.
+pub fn deliverable_binding(
+    keymap: &postio_core::Keymap,
+    command: impl Into<postio_core::ActionId>,
+    enhanced: bool,
+) -> Option<String> {
+    let bindings = keymap.bindings(command);
+    if enhanced {
+        return bindings.first().cloned();
+    }
+    bindings
+        .iter()
+        .find(|binding| {
+            binding
+                .parse::<crate::keymap::Binding>()
+                .is_ok_and(|parsed| parsed.chords().iter().all(legacy_deliverable))
+        })
+        .cloned()
+}
+
 /// Text from a message, made safe to put in front of a terminal.
 ///
 /// Mail is attacker-controlled, and a terminal obeys what it is sent: an
@@ -199,6 +226,24 @@ mod registry {
     /// deliver, or the terminal frontend could only reach it through the
     /// palette -- which Principle II does not accept as reachable
     /// (`specs/005-tui-frontend` SC-001, research R4).
+    #[test]
+    fn a_legacy_terminal_is_shown_the_alternate_it_can_send() {
+        let keymap = postio_core::Keymap::resolve(&Default::default());
+        let mark_sent = postio_core::CommandId::MarkSent;
+        assert_eq!(
+            super::deliverable_binding(&keymap, mark_sent, true).as_deref(),
+            Some("ctrl+shift+m")
+        );
+        assert_eq!(
+            super::deliverable_binding(&keymap, mark_sent, false).as_deref(),
+            Some("alt+m")
+        );
+        assert_eq!(
+            super::deliverable_binding(&keymap, postio_core::CommandId::Archive, false).as_deref(),
+            Some("a")
+        );
+    }
+
     #[test]
     fn every_command_has_a_binding_a_legacy_terminal_delivers() {
         let unreachable: Vec<String> = postio_core::registry::all()

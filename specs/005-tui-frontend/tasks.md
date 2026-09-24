@@ -181,7 +181,7 @@ and `?` cheat sheet from the registry.
 palette against the registry.
 
 - [X] T065 [P] [US4] Write `crates/postio-tui/src/view/search.rs` over `postio_ui::search` (chips, backspace, `Pacer`) and `Client::search`. Test first: US4 scenario 1 — `from:ada is:unread` typed character by character updates on each key and `is:` shows no error
-- [ ] T066 [P] [US4] Write `crates/postio-tui/src/view/palette.rs` over `postio_ui::palette::entries` and the finder prefixes of `postio_ui::finder`. Test first: the palette lists exactly `registry::all()` available in context, each with the chord this terminal can deliver
+- [ ] T066 [P] [US4] Write `crates/postio-tui/src/view/palette.rs` over `postio_ui::palette::entries` and the finder prefixes of `postio_ui::finder`. Test first: the palette lists exactly `registry::all()` available in context, each with the chord this terminal can deliver. *(`>` and `#` are in; the finder's `@` (correspondent) and `+` (label) modes are not yet.)*
 - [ ] T067 [P] [US4] Write `crates/postio-tui/src/view/cheatsheet.rs` over `postio_ui::cheatsheet::sections`. Test first: every section and binding appears
 - [ ] T068 [US4] Write the registry parity test `crates/postio-tui/tests/registry_parity.rs` (SC-001): for every command, reachable by chord (with fallback) and by palette; failing names the command. This is the test that keeps parity from drifting
 - [ ] T069 [US4] Saved searches from `config.toml` in the sidebar returning the same results as GTK. Test first: US4 scenario 3 against the same fixture as the GTK case

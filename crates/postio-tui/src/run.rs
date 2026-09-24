@@ -148,6 +148,7 @@ async fn main_loop(
     preview: postio_config::Preview,
     session: &mut Session,
 ) -> io::Result<()> {
+    let enhanced_keys = session.has(Mode::KeyboardEnhancement);
     let backend = CrosstermBackend::new(io::stdout());
     let mut terminal = Terminal::new(backend)?;
     let size = terminal.size()?;
@@ -155,7 +156,8 @@ async fn main_loop(
         .with_state(state)
         .with_allowlist(postio_ui::allowlist::RemoteImageAllowList::load())
         .with_downloads(downloads())
-        .with_preview(preview);
+        .with_preview(preview)
+        .with_enhanced_keys(enhanced_keys);
 
     let (inputs, arriving) = async_channel::unbounded::<Input>();
     let (drafts, draft_jobs) = async_channel::unbounded::<Effect>();

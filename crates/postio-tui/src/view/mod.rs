@@ -4,6 +4,7 @@
 
 pub mod composer;
 pub mod list;
+pub mod palette;
 pub mod reader;
 pub mod search;
 pub mod sidebar;
@@ -135,6 +136,9 @@ pub fn draw(frame: &mut Frame, app: &App, theme: &Theme, now: DateTime<Local>) {
             };
             if app.composer_detached() && !tab {
                 words = format!("✎ A draft is open — c goes back to it · {words}");
+            }
+            if let Some(open) = app.palette() {
+                palette::draw(frame, area, &open, theme);
             }
             let words = fit(&words, usize::from(status.width));
             frame.render_widget(Line::styled(words, theme.style(Role::Dim)), status);
@@ -514,6 +518,26 @@ mod tests {
             .find(|line| line.contains("/ from:ada tide"))
             .unwrap_or_else(|| panic!("no bar:\n{screen}"));
         assert!(bar.contains("1 hit · 7 ms · still syncing"), "{bar}");
+    }
+
+    #[test]
+    fn the_palette_draws_its_rows_with_their_keys() {
+        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+        let mut app = with_sidebar((160, 24));
+        update(
+            &mut app,
+            Input::Key(KeyEvent::new(KeyCode::Char('k'), KeyModifiers::CONTROL)),
+        );
+        for c in "archive".chars() {
+            update(&mut app, Input::Key(KeyEvent::from(KeyCode::Char(c))));
+        }
+        let screen = screen(160, 24, &app);
+        assert!(screen.contains("> archive"), "{screen}");
+        let row = screen
+            .lines()
+            .find(|line| line.contains("Archive") && !line.contains("thread"))
+            .unwrap_or_else(|| panic!("no Archive row:\n{screen}"));
+        assert!(row.contains(" a│"), "the key, at the right edge: {row}");
     }
 
     #[test]

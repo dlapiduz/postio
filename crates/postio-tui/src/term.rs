@@ -205,6 +205,11 @@ impl Console for Stdout {
 static ENTERED: std::sync::Mutex<Vec<Mode>> = std::sync::Mutex::new(Vec::new());
 
 impl Session {
+    /// Whether `mode` is entered.
+    pub fn has(&self, mode: Mode) -> bool {
+        self.entered.contains(&mode)
+    }
+
     /// Record what is entered where the panic hook can find it. Called after
     /// every change of modes by the loop that owns the real terminal.
     pub fn publish(&self) {

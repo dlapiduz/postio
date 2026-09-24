@@ -370,6 +370,60 @@ pub struct App {
     detached: bool,
     /// The search bar, while it is open.
     search: Option<SearchBar>,
+    /// The palette, while it is open.
+    palette: Option<PaletteState>,
+    /// Whether the terminal speaks the kitty keyboard protocol, so every
+    /// chord arrives; otherwise only what a legacy terminal can send does.
+    enhanced_keys: bool,
+}
+
+/// Which of the finder's modes the palette is in (`postio_ui::finder`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Finding {
+    /// `>`: run a command.
+    Commands,
+    /// `#`: go to a folder.
+    Folders,
+}
+
+/// The palette: what is typed, which row is chosen, and where it was opened
+/// from, which is where what it runs runs.
+#[derive(Debug)]
+struct PaletteState {
+    input: tui_input::Input,
+    selected: usize,
+    from: Focus,
+    finding: Finding,
+}
+
+/// The palette as it is drawn.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PaletteView {
+    /// The finder mode's marker: `>` or `#`.
+    pub marker: &'static str,
+    /// What is typed.
+    pub query: String,
+    /// The rows, best first.
+    pub rows: Vec<PaletteRow>,
+    /// The chosen row.
+    pub selected: usize,
+}
+
+/// One palette row.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PaletteRow {
+    /// What it says.
+    pub title: String,
+    /// The key that does the same, as this terminal can send it.
+    pub chord: Option<String>,
+    /// Which characters of the title the query matched.
+    pub positions: Vec<usize>,
+}
+
+/// What a palette row does.
+enum PaletteAction {
+    Run(postio_core::ActionId),
+    Open(ListScope),
 }
 
 /// The search bar: what is typed, which question is outstanding, and what
@@ -397,6 +451,8 @@ pub enum Focus {
     Composer,
     /// The search bar.
     Search,
+    /// The command palette, or another of the finder's modes.
+    Palette,
 }
 
 impl std::fmt::Debug for App {
@@ -446,6 +502,8 @@ impl App {
             previewing: false,
             detached: false,
             search: None,
+            palette: None,
+            enhanced_keys: false,
         }
     }
 
@@ -754,6 +812,166 @@ impl App {
         effects
     }
 
+    /// The same app, knowing the terminal delivers every chord.
+    pub fn with_enhanced_keys(mut self, enhanced: bool) -> App {
+        self.enhanced_keys = enhanced;
+        self
+    }
+
+    /// Open the palette in one of the finder's modes, from wherever the
+    /// keyboard is.
+    fn open_palette(&mut self, finding: Finding) -> Vec<Effect> {
+        let from = match self.focus {
+            Focus::Search | Focus::Palette => Focus::List,
+            other => other,
+        };
+        self.palette = Some(PaletteState {
+            input: tui_input::Input::default(),
+            selected: 0,
+            from,
+            finding,
+        });
+        self.focus = Focus::Palette;
+        vec![Effect::Redraw]
+    }
+
+    /// The palette as it is drawn, while it is open.
+    pub fn palette(&self) -> Option<PaletteView> {
+        let state = self.palette.as_ref()?;
+        let query = state.input.value().to_owned();
+        let rows = self
+            .palette_rows(state)
+            .into_iter()
+            .map(|(row, _)| row)
+            .collect();
+        Some(PaletteView {
+            marker: match state.finding {
+                Finding::Commands => ">",
+                Finding::Folders => "#",
+            },
+            query,
+            rows,
+            selected: state.selected,
+        })
+    }
+
+    /// The rows for what is typed, each with what choosing it does.
+    fn palette_rows(&self, state: &PaletteState) -> Vec<(PaletteRow, PaletteAction)> {
+        let query = state.input.value();
+        match state.finding {
+            Finding::Commands => {
+                let context = match state.from {
+                    Focus::List | Focus::Search | Focus::Palette => postio_core::Context::List,
+                    Focus::Sidebar => postio_core::Context::Sidebar,
+                    Focus::Reader => postio_core::Context::Reader,
+                    Focus::Parts => postio_core::Context::Parts,
+                    Focus::Composer => postio_core::Context::Composer,
+                };
+                let availability = postio_core::Availability::open(
+                    self.account
+                        .map_or(postio_core::Scope::Unified, postio_core::Scope::Account),
+                );
+                postio_ui::palette::entries(self.keys.keymap(), context, availability, query)
+                    .into_iter()
+                    .map(|entry| {
+                        let chord = postio_ui::terminal::deliverable_binding(
+                            self.keys.keymap(),
+                            entry.id,
+                            self.enhanced_keys,
+                        );
+                        (
+                            PaletteRow {
+                                title: entry.title.to_owned(),
+                                chord,
+                                positions: entry.positions,
+                            },
+                            PaletteAction::Run(entry.id),
+                        )
+                    })
+                    .collect()
+            }
+            Finding::Folders => {
+                let mut found: Vec<(i32, PaletteRow, PaletteAction)> = self
+                    .sidebar
+                    .iter()
+                    .filter_map(|line| {
+                        let scope = line.opens?;
+                        let title = line.label.as_str().to_owned();
+                        let matched = postio_ui::palette::score(query.trim(), &title)?;
+                        Some((
+                            matched.score,
+                            PaletteRow {
+                                title,
+                                chord: None,
+                                positions: matched.positions,
+                            },
+                            PaletteAction::Open(scope),
+                        ))
+                    })
+                    .collect();
+                found.sort_by_key(|(score, ..)| std::cmp::Reverse(*score));
+                found
+                    .into_iter()
+                    .map(|(_, row, action)| (row, action))
+                    .collect()
+            }
+        }
+    }
+
+    /// A key in the palette: typed into its query, the arrows choose, Enter
+    /// runs the chosen row where the palette was opened, Escape closes.
+    fn palette_key(&mut self, key: &KeyEvent) -> Vec<Effect> {
+        use crossterm::event::KeyCode;
+        use tui_input::backend::crossterm::EventHandler;
+        let Some(state) = self.palette.as_mut() else {
+            return Vec::new();
+        };
+        let from = state.from;
+        match key.code {
+            KeyCode::Esc => {
+                self.palette = None;
+                self.focus = from;
+            }
+            KeyCode::Down => state.selected = state.selected.saturating_add(1),
+            KeyCode::Up => state.selected = state.selected.saturating_sub(1),
+            KeyCode::Enter => {
+                let chosen = self.palette.take().and_then(|state| {
+                    let mut rows = self.palette_rows(&state);
+                    let index = state.selected.min(rows.len().saturating_sub(1));
+                    (!rows.is_empty()).then(|| rows.swap_remove(index).1)
+                });
+                self.focus = from;
+                return match chosen {
+                    Some(PaletteAction::Run(postio_core::ActionId::Builtin(id))) => match from {
+                        Focus::Composer => self.composer_command(id.as_str()),
+                        _ => self.command(id.as_str()),
+                    },
+                    Some(PaletteAction::Run(other)) => {
+                        self.say(&format!("{other} is not something this terminal can run"))
+                    }
+                    Some(PaletteAction::Open(scope)) => vec![Effect::Open(scope), Effect::Redraw],
+                    None => vec![Effect::Redraw],
+                };
+            }
+            _ => {
+                if state
+                    .input
+                    .handle_event(&crossterm::event::Event::Key(*key))
+                    .is_some()
+                {
+                    state.selected = 0;
+                }
+            }
+        }
+        if let Some(state) = self.palette.as_ref() {
+            let count = self.palette_rows(state).len();
+            if let Some(state) = self.palette.as_mut() {
+                state.selected = state.selected.min(count.saturating_sub(1));
+            }
+        }
+        vec![Effect::Redraw]
+    }
+
     /// What is typed in the search bar, while it is open.
     pub fn search_query(&self) -> Option<&str> {
         self.search.as_ref().map(|bar| bar.input.value())
@@ -852,6 +1070,19 @@ impl App {
         }
         if bar.input.value() == before {
             return vec![Effect::Redraw];
+        }
+        // The finder's prefixes: typed first into an empty bar, they turn it
+        // into another of its modes, as the desktop's box does.
+        match bar.input.value() {
+            ">" => {
+                self.search = None;
+                return self.open_palette(Finding::Commands);
+            }
+            "#" => {
+                self.search = None;
+                return self.open_palette(Finding::Folders);
+            }
+            _ => {}
         }
         self.run_search()
     }
@@ -1066,6 +1297,7 @@ impl App {
             Focus::Parts => KeyContext::Parts,
             Focus::Composer => KeyContext::Composer,
             Focus::Search => KeyContext::Search,
+            Focus::Palette => KeyContext::Palette,
         }
     }
 
@@ -1263,6 +1495,7 @@ impl App {
             }
             "focus_sidebar" => self.focus = Focus::Sidebar,
             "search" => return self.open_search(),
+            "command_palette" => return self.open_palette(Finding::Commands),
             "cycle_pane" => {
                 // The composer is the reading pane while it is open.
                 let reader = if self.composer.is_some() && !self.detached {
@@ -1271,7 +1504,7 @@ impl App {
                     Focus::Reader
                 };
                 self.focus = match self.focus {
-                    Focus::List | Focus::Search => reader,
+                    Focus::List | Focus::Search | Focus::Palette => reader,
                     Focus::Reader | Focus::Parts | Focus::Composer => Focus::Sidebar,
                     Focus::Sidebar => Focus::List,
                 }
@@ -1283,7 +1516,7 @@ impl App {
                     Focus::Reader
                 };
                 self.focus = match self.focus {
-                    Focus::List | Focus::Search => Focus::Sidebar,
+                    Focus::List | Focus::Search | Focus::Palette => Focus::Sidebar,
                     Focus::Sidebar => reader,
                     Focus::Reader | Focus::Parts | Focus::Composer => Focus::List,
                 }
@@ -1768,6 +2001,7 @@ pub fn update(app: &mut App, input: Input) -> Vec<Effect> {
         }
         Input::Key(key) if app.focus == Focus::Composer => app.composer_key(&key),
         Input::Key(key) if app.focus == Focus::Search => app.search_key(&key),
+        Input::Key(key) if app.focus == Focus::Palette => app.palette_key(&key),
         Input::Key(key) => match app.keys.press(&key, app.key_context(), false) {
             Outcome::Command(id) => app.command(&id),
             Outcome::Pending(_) | Outcome::Unhandled => Vec::new(),
@@ -3075,6 +3309,92 @@ mod tests {
         assert_eq!(app.search_query(), None);
         let scope = ListScope::Mailbox(MailboxId::new(1));
         assert!(effects.contains(&Effect::Recount(scope)), "{effects:?}");
+    }
+
+    fn ctrl(c: char) -> Input {
+        key(KeyCode::Char(c), KeyModifiers::CONTROL)
+    }
+
+    #[test]
+    fn the_palette_lists_what_this_context_reaches_with_keys_this_terminal_sends() {
+        // T066: the rows are postio_ui::palette::entries, and each shows the
+        // chord a legacy terminal can deliver.
+        let mut app = app((160, 40));
+        let opening = opened(&mut app, 3);
+        serve(&mut app, opening);
+        update(&mut app, ctrl('k'));
+        assert_eq!(app.focus(), Focus::Palette);
+        let shown = app.palette().expect("open");
+        let keymap = postio_core::Keymap::resolve(&Default::default());
+        let expected: Vec<&str> = postio_ui::palette::entries(
+            &keymap,
+            postio_core::Context::List,
+            postio_core::Availability::open(postio_core::Scope::Unified),
+            "",
+        )
+        .iter()
+        .map(|entry| entry.title)
+        .collect();
+        let titles: Vec<&str> = shown.rows.iter().map(|row| row.title.as_str()).collect();
+        assert_eq!(titles, expected);
+        let mark_sent = shown
+            .rows
+            .iter()
+            .find(|row| {
+                row.title == postio_core::registry::get(postio_core::CommandId::MarkSent).title
+            })
+            .expect("listed");
+        assert_eq!(mark_sent.chord.as_deref(), Some("alt+m"));
+    }
+
+    #[test]
+    fn a_palette_row_runs_where_the_palette_was_opened() {
+        let mut app = app((160, 40));
+        let opening = opened(&mut app, 3);
+        serve(&mut app, opening);
+        update(&mut app, ctrl('k'));
+        typing(&mut app, "archive");
+        assert_eq!(app.palette().unwrap().rows[0].title, "Archive");
+        let effects = update(&mut app, key(KeyCode::Enter, KeyModifiers::NONE));
+        assert!(
+            effects
+                .iter()
+                .any(|effect| matches!(effect, Effect::Send(postio_core::Command::Archive { .. }))),
+            "{effects:?}"
+        );
+        assert!(app.palette().is_none());
+        assert_eq!(app.focus(), Focus::List);
+
+        update(&mut app, ctrl('k'));
+        update(&mut app, key(KeyCode::Esc, KeyModifiers::NONE));
+        assert!(app.palette().is_none());
+        assert_eq!(app.focus(), Focus::List);
+    }
+
+    #[test]
+    fn the_search_bars_prefixes_reach_the_palette_and_the_folders() {
+        let mut app = app((160, 40));
+        update(&mut app, Input::Sidebar(sidebar_contents()));
+        let opening = opened(&mut app, 3);
+        serve(&mut app, opening);
+
+        update(&mut app, press('/'));
+        update(&mut app, press('>'));
+        assert_eq!(app.focus(), Focus::Palette, "> runs a command");
+        assert_eq!(app.palette().unwrap().marker, ">");
+        update(&mut app, key(KeyCode::Esc, KeyModifiers::NONE));
+
+        update(&mut app, press('/'));
+        update(&mut app, press('#'));
+        let folders = app.palette().expect("# goes to a folder");
+        assert_eq!(folders.marker, "#");
+        typing(&mut app, "arch");
+        assert_eq!(app.palette().unwrap().rows[0].title, "Archive");
+        let effects = update(&mut app, key(KeyCode::Enter, KeyModifiers::NONE));
+        assert!(
+            effects.contains(&Effect::Open(ListScope::Mailbox(MailboxId::new(2)))),
+            "{effects:?}"
+        );
     }
 
     #[test]
