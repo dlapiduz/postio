@@ -35,7 +35,7 @@ chacha20poly1305 = "0.11.0"
 # `tokio::sync::Notify` rather than a `Condvar`, because a condvar blocks the
 # *thread* and every thread here is a runtime worker -- see `store::GateInner`.
 # Whoever calls this crate still supplies the runtime.
-tokio = { workspace = true, features = ["macros", "sync"] }
+tokio = { workspace = true, features = ["sync"] }
 chrono = { workspace = true, features = ["std"] }
 postio-model = { version = "0.3.0", path = "../postio-model" }
 # Turso, the Rust rewrite of SQLite (specs/004-turso-store). Encryption is

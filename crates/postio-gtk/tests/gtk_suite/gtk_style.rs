@@ -63,7 +63,11 @@ pub fn the_generated_stylesheet_works_in_gtk() {
         assert!(path.exists(), "{} was not unpacked", path.display());
     }
 
-    let font_map = pangocairo::FontMap::default();
+    // The map a widget draws with, which is what registering is for.
+    let font_map = gtk::Label::new(None)
+        .pango_context()
+        .font_map()
+        .expect("a label has a font map");
     let families: Vec<String> = font_map
         .list_families()
         .iter()

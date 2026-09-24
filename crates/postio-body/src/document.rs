@@ -533,7 +533,7 @@ fn collect_link_hosts_in_inlines(inlines: &[Inline], hosts: &mut Vec<String>) {
 /// The host of an `http`/`https` href, lowercased. `None` for `mailto:` and
 /// anything else with no authority component to name one.
 fn host_of(href: &str) -> Option<String> {
-    url::Url::parse(href)
+    ammonia::Url::parse(href)
         .ok()?
         .host_str()
         .map(str::to_ascii_lowercase)

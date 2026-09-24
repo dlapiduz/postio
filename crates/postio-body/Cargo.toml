@@ -19,7 +19,6 @@ cssparser = "0.37"
 html5ever = "0.39.0"
 markup5ever_rcdom = "0.39.0"
 postio-model = { workspace = true }
-url = { workspace = true }
 
 [dev-dependencies]
 postio-model = { workspace = true, features = ["test-corpus"] }

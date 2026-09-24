@@ -212,11 +212,6 @@ fn rid(uid: u32) -> postio_model::RemoteId {
     postio_model::RemoteId::new(format!("{GENERATION}:{uid}"))
 }
 
-#[allow(dead_code)]
-fn uid_set(values: impl IntoIterator<Item = u32>) -> UidSet {
-    values.into_iter().map(Uid::new).collect()
-}
-
 #[tokio::test]
 async fn the_mock_behaves_like_a_mail_server() {
     let backend = MockBackend::builder()

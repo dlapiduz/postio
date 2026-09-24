@@ -313,54 +313,19 @@ fn mark_index(token: &str) -> Option<usize> {
 /// acknowledge with a single `0x01`, and only then the `NO`. A server that
 /// skipped the challenge would leave the client's coroutine waiting for
 /// something that never arrives, and the test would hang rather than fail.
-///
-/// Written out for the same reason [`base64_decode`] is.
 pub(super) fn base64_encode(input: &[u8]) -> String {
-    const ALPHABET: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-
-    let mut out = String::new();
-    for chunk in input.chunks(3) {
-        let bytes = [
-            chunk[0],
-            chunk.get(1).copied().unwrap_or(0),
-            chunk.get(2).copied().unwrap_or(0),
-        ];
-        let triple = (u32::from(bytes[0]) << 16) | (u32::from(bytes[1]) << 8) | u32::from(bytes[2]);
-        for index in 0..4 {
-            if index <= chunk.len() {
-                let shift = 18 - index * 6;
-                out.push(ALPHABET[((triple >> shift) & 0x3f) as usize] as char);
-            } else {
-                out.push('=');
-            }
-        }
-    }
-    out
+    use base64::Engine as _;
+    base64::engine::general_purpose::STANDARD.encode(input)
 }
 
-/// Decodes the base64 of a SASL initial response.
-///
-/// Written out rather than pulled in: this is the only base64 in the crate,
-/// and a test server is not a reason to grow the dependency graph.
+/// Decodes the base64 of a SASL initial response, padded or not.
 pub(super) fn base64_decode(input: &str) -> Option<Vec<u8>> {
-    const ALPHABET: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-
-    let mut out = Vec::new();
-    let mut accumulator: u32 = 0;
-    let mut bits = 0u32;
-
-    for byte in input.bytes().filter(|byte| !byte.is_ascii_whitespace()) {
-        if byte == b'=' {
-            break;
-        }
-        let value = ALPHABET.iter().position(|candidate| *candidate == byte)? as u32;
-        accumulator = (accumulator << 6) | value;
-        bits += 6;
-        if bits >= 8 {
-            bits -= 8;
-            out.push((accumulator >> bits) as u8);
-        }
-    }
-
-    Some(out)
+    use base64::Engine as _;
+    const LENIENT: base64::engine::GeneralPurpose = base64::engine::GeneralPurpose::new(
+        &base64::alphabet::STANDARD,
+        base64::engine::GeneralPurposeConfig::new()
+            .with_decode_padding_mode(base64::engine::DecodePaddingMode::Indifferent),
+    );
+    let compact: String = input.split_whitespace().collect();
+    LENIENT.decode(compact).ok()
 }
