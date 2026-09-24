@@ -808,6 +808,15 @@ mod imp {
         pub restore: Cell<Option<(Context, Pane)>>,
         /// Set while `open` is filling the fields, so the widgets' own
         /// `changed` signals do not report the fill as the user typing.
+        /// Which composition this is: bumped every time the fields are
+        /// filled with a draft. An answer that arrives after the composer
+        /// moved on to another draft names an older one, and is ignored
+        /// (#1608). See [`super::Composer::adopt_id`].
+        pub generation: Cell<u64>,
+        /// The composition the fields held before the last fill -- the one a
+        /// close or a send just finished, since both refill the composer
+        /// before the closed handlers run.
+        pub previous_generation: Cell<u64>,
         pub filling: Cell<bool>,
         /// The pending debounced autosave, if an edit is waiting out the
         /// quiet period before [`Composer::save`] runs again.
@@ -880,6 +889,8 @@ mod imp {
                 blob_lookup,
                 window: glib::WeakRef::new(),
                 restore: Cell::new(None),
+                previous_generation: Cell::new(0),
+                generation: Cell::new(0),
                 filling: Cell::new(false),
                 autosave_source: Cell::new(None),
                 to_completion: RefCell::new(None),
@@ -1075,6 +1086,10 @@ impl Composer {
     /// was nothing in it. Never destroys typed content — that is
     /// [`Composer::discard`], and it asks first.
     pub fn close(&self) -> Closing {
+        // The pending autosave belongs to the composition being closed, so it
+        // runs before the fields are refilled -- after, it saved the empty
+        // draft that replaced it (#1608).
+        self.flush_autosave();
         let draft = self.draft();
         let outcome = closing(&draft);
         if outcome == Closing::Drop {
@@ -1628,10 +1643,49 @@ impl Composer {
     /// to own, not a save handler's.
     pub fn save(&self) {
         let mut draft = self.draft();
+        // Nothing written and never saved: not worth a row. The editor
+        // reports its changes asynchronously, so an edit can re-arm the
+        // autosave after a close has refilled the fields with an empty
+        // draft, and that timer used to insert an empty `Editing` row for a
+        // composition nobody started -- the row `recover_empty_draft` has to
+        // step around at the next launch (#1608).
+        if !draft.id.is_assigned() && closing(&draft) == Closing::Drop {
+            return;
+        }
         for handler in self.imp().saved.borrow().iter() {
             handler(&mut draft);
         }
         self.imp().draft.borrow_mut().id = draft.id;
+    }
+
+    /// Which composition is in the fields now; see [`Composer::adopt_id`].
+    pub fn generation(&self) -> u64 {
+        self.imp().generation.get()
+    }
+
+    /// The composition the composer held before its last fill: the one a
+    /// closed handler is being told about, since `close` and `send` refill
+    /// the fields before the handlers run.
+    pub fn previous_generation(&self) -> u64 {
+        self.imp().previous_generation.get()
+    }
+
+    /// A save the composer handed out for composition `generation` has
+    /// landed and assigned `id` (#1608).
+    ///
+    /// Saves are written off the main thread, so the id a first save assigns
+    /// arrives after [`Composer::save`] returned rather than inside it. It is
+    /// taken only while the same composition is in the fields and has no id
+    /// yet: a composer that moved on to another draft meanwhile must not
+    /// have that draft's next save update the previous one's row.
+    pub fn adopt_id(&self, generation: u64, id: postio_model::ids::DraftId) {
+        if self.generation() != generation {
+            return;
+        }
+        let mut draft = self.imp().draft.borrow_mut();
+        if !draft.id.is_assigned() {
+            draft.id = id;
+        }
     }
 
     /// Called with the draft when the user sends it.
@@ -2569,6 +2623,8 @@ impl Composer {
     /// Loads a draft into the fields without reporting it as an edit.
     fn fill(&self, draft: Draft) {
         let imp = self.imp();
+        imp.previous_generation.set(imp.generation.get());
+        imp.generation.set(imp.generation.get() + 1);
         imp.filling.set(true);
         // Whatever this draft is replacing, filling the fields is not itself
         // an edit worth autosaving, and a timer armed for the *previous*
