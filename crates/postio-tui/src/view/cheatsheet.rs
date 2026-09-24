@@ -4,7 +4,7 @@ use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::style::Modifier;
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, Clear};
+use ratatui::widgets::{Block, BorderType, Borders, Clear};
 
 use crate::app::SheetSection;
 use crate::theme::{Role, Theme};
@@ -28,11 +28,13 @@ pub fn draw(frame: &mut Frame, area: Rect, sections: &[SheetSection], theme: &Th
     frame.render_widget(
         Block::default()
             .borders(Borders::ALL)
+            .border_type(BorderType::Rounded)
             .border_style(theme.style(Role::Dim))
-            .title(Span::styled(
-                " Keys — any key closes ",
-                theme.style(Role::Accent),
-            )),
+            .title(Line::from(vec![
+                Span::styled("─ ", theme.style(Role::Dim)),
+                Span::styled("Keys", theme.style(Role::Accent)),
+                Span::styled(" — any key closes ", theme.style(Role::Dim)),
+            ])),
         outer,
     );
     let inner = Rect::new(outer.x + 2, outer.y + 1, outer.width - 4, outer.height - 2);
@@ -53,7 +55,7 @@ pub fn draw(frame: &mut Frame, area: Rect, sections: &[SheetSection], theme: &Th
             lines.push(Line::from(vec![
                 Span::styled(name, theme.style(Role::Text)),
                 Span::raw(" ".repeat(gap)),
-                Span::styled(key.clone(), theme.style(Role::Dim)),
+                Span::styled(key.clone(), theme.style(Role::Accent)),
             ]));
         }
     }

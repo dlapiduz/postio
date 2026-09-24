@@ -430,6 +430,10 @@ pub struct App {
     /// What the status line says about the last thing done: the undo offer,
     /// a refusal, an error.
     notice: Option<String>,
+    /// What kind of news the notice is, for its mark and colour.
+    notice_tone: Tone,
+    /// The key the notice offers undo on, when it offers it.
+    notice_undo: Option<String>,
     /// Where the keyboard is.
     focus: Focus,
     /// The sidebar's lines.
@@ -502,6 +506,18 @@ pub struct App {
     first_run: Option<crate::first_run::FirstRun>,
     /// The settings, while they are open.
     settings: Option<crate::settings::Settings>,
+}
+
+/// What kind of news a notice is: the status line marks each with more
+/// than a colour.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Tone {
+    /// Something to know.
+    Plain,
+    /// Something done.
+    Worked,
+    /// Something refused or failed.
+    Failed,
 }
 
 /// One section of the cheat sheet as it is drawn: its heading, and each
@@ -667,6 +683,8 @@ impl App {
             selection: postio_ui::selection::SelectionState::new(),
             scope: None,
             notice: None,
+            notice_tone: Tone::Plain,
+            notice_undo: None,
             focus: Focus::List,
             sidebar: Vec::new(),
             sidebar_cursor: 0,
@@ -2054,8 +2072,25 @@ impl App {
     /// Postio's own sentences, but an error can quote a folder name, and a
     /// folder name came from a server.
     fn say(&mut self, sentence: &str) -> Vec<Effect> {
+        self.say_as(Tone::Plain, sentence, None)
+    }
+
+    /// [`App::say`], as news of `tone`, offering undo on `undo`.
+    fn say_as(&mut self, tone: Tone, sentence: &str, undo: Option<String>) -> Vec<Effect> {
         self.notice = Some(postio_ui::terminal::SafeText::new(sentence).to_string());
+        self.notice_tone = tone;
+        self.notice_undo = undo;
         vec![Effect::Redraw]
+    }
+
+    /// What kind of news the status line's notice is.
+    pub fn notice_tone(&self) -> Tone {
+        self.notice_tone
+    }
+
+    /// The key the notice offers undo on, when it does.
+    pub fn notice_undo(&self) -> Option<&str> {
+        self.notice_undo.as_deref()
     }
 
     /// The same app, mirroring into `state`: the one the client snapshots.
@@ -2769,15 +2804,21 @@ impl App {
                 description,
                 undoable,
             } => {
-                let sentence = match (undoable, self.keys.key_for(KeyContext::List, "undo")) {
-                    (true, Some(key)) => format!("{description} — {key} to undo"),
-                    _ => description.clone(),
+                return match (undoable, self.keys.key_for(KeyContext::List, "undo")) {
+                    (true, Some(key)) => {
+                        let sentence = format!("{description} — {key} to undo");
+                        self.say_as(Tone::Worked, &sentence, Some(key))
+                    }
+                    _ => self.say_as(Tone::Worked, description, None),
                 };
-                return self.say(&sentence);
             }
-            Event::UndoPerformed { description } => return self.say(description),
-            Event::CommandRejected { reason, .. } => return self.say(reason),
-            Event::Error { message } => return self.say(message),
+            Event::UndoPerformed { description } => {
+                return self.say_as(Tone::Worked, description, None);
+            }
+            Event::CommandRejected { reason, .. } => {
+                return self.say_as(Tone::Failed, reason, None);
+            }
+            Event::Error { message } => return self.say_as(Tone::Failed, message, None),
             _ => {}
         }
         if moved {

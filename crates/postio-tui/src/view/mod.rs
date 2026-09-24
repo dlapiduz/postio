@@ -143,21 +143,6 @@ pub fn draw(frame: &mut Frame, app: &App, theme: &Theme, now: DateTime<Local>) -
                     }
                 }
             }
-            let count = match app.total() {
-                1 => "1 conversation".to_owned(),
-                total => format!("{total} conversations"),
-            };
-            // The sync state sits at the foot of the sidebar when there is
-            // one on screen, and here when there is not.
-            let sync = app.sync_line().filter(|_| !drawn.contains(&Pane::Sidebar));
-            let mut words = match (app.notice(), sync) {
-                (Some(notice), _) => notice.to_owned(),
-                (None, Some(sync)) => format!("{sync} · {count}"),
-                (None, None) => count,
-            };
-            if app.composer_detached() && !tab {
-                words = format!("✎ A draft is open — c goes back to it · {words}");
-            }
             // Over everything: a click there lands on nothing underneath.
             if let Some(open) = app.palette() {
                 palette::draw(frame, area, &open, theme);
@@ -167,11 +152,106 @@ pub fn draw(frame: &mut Frame, app: &App, theme: &Theme, now: DateTime<Local>) -
                 cheatsheet::draw(frame, area, &sections, theme);
                 hits.add(area, hit::Target::Overlay);
             }
-            let words = fit(&words, usize::from(status.width));
-            frame.render_widget(Line::styled(words, theme.style(Role::Dim)), status);
+            status_line(
+                frame,
+                status,
+                app,
+                tab,
+                !drawn.contains(&Pane::Sidebar),
+                theme,
+            );
         }
     }
     hits
+}
+
+/// The status line: what just happened on the left -- a failure marked `✕`
+/// in the error colour, a success `✓` in the success colour with its undo
+/// key in the accent -- and how many conversations are listed on the right,
+/// with the sync state when no sidebar is there to carry it.
+fn status_line(
+    frame: &mut Frame,
+    area: Rect,
+    app: &App,
+    tab: bool,
+    no_sidebar: bool,
+    theme: &Theme,
+) {
+    use crate::app::Tone;
+    use ratatui::text::Span;
+    let count = match app.total() {
+        1 => "1 conversation".to_owned(),
+        total => format!("{total} conversations"),
+    };
+    let right = match app.sync_line().filter(|_| no_sidebar) {
+        Some(sync) => format!("{sync} · {count}"),
+        None => count,
+    };
+    let mut spans: Vec<Span> = Vec::new();
+    if app.composer_detached() && !tab {
+        spans.push(Span::styled(
+            match app.hint(postio_core::CommandId::Compose) {
+                Some(key) => format!("✎ A draft is open — {key} goes back to it"),
+                None => "✎ A draft is open".to_owned(),
+            },
+            theme.style(Role::Text),
+        ));
+    }
+    if let Some(notice) = app.notice() {
+        if !spans.is_empty() {
+            spans.push(Span::styled(" · ", theme.style(Role::Dim)));
+        }
+        match app.notice_tone() {
+            Tone::Failed => spans.push(Span::styled("✕ ", theme.style(Role::Error))),
+            Tone::Worked => spans.push(Span::styled("✓ ", theme.style(Role::Success))),
+            Tone::Plain => {}
+        }
+        let text = match app.notice_tone() {
+            Tone::Failed => theme.style(Role::Error),
+            _ => theme.style(Role::Text),
+        };
+        let offer = app
+            .notice_undo()
+            .map(|key| format!(" — {key} to undo"))
+            .filter(|offer| notice.ends_with(offer.as_str()));
+        match (offer, app.notice_undo()) {
+            (Some(offer), Some(key)) => {
+                spans.push(Span::styled(
+                    notice[..notice.len() - offer.len()].to_owned(),
+                    text,
+                ));
+                spans.push(Span::styled(" — ", theme.style(Role::Dim)));
+                spans.push(Span::styled(key.to_owned(), theme.style(Role::Accent)));
+                spans.push(Span::styled(" to undo", theme.style(Role::Dim)));
+            }
+            _ => spans.push(Span::styled(notice.to_owned(), text)),
+        }
+    }
+    let width = usize::from(area.width);
+    let left = Line::from(spans);
+    let used = left.width();
+    let right_width = unicode_width::UnicodeWidthStr::width(right.as_str());
+    if used > width {
+        // Too long for the line: the words, cut, without their colours.
+        let words: String = left
+            .spans
+            .iter()
+            .map(|span| span.content.as_ref())
+            .collect();
+        frame.render_widget(
+            Line::styled(fit(&words, width), theme.style(Role::Text)),
+            area,
+        );
+        return;
+    }
+    frame.render_widget(left, area);
+    if used + right_width + 3 <= width {
+        let x = area.x + u16::try_from(width - right_width).unwrap_or(0);
+        frame.render_widget(
+            Line::styled(right, theme.style(Role::Dim)),
+            Rect::new(x, area.y, u16::try_from(right_width).unwrap_or(0), 1),
+        );
+    }
 }
 
 /// `text`, cut to at most `width` terminal columns, ending in `…` when cut.
@@ -644,6 +724,11 @@ mod tests {
             .find(|line| line.contains("Archive") && !line.contains("thread"))
             .unwrap_or_else(|| panic!("no Archive row:\n{screen}"));
         assert!(row.contains(" a│"), "the key, at the right edge: {row}");
+        assert!(
+            screen.contains("╭─ Commands ─"),
+            "a rounded frame, titled:\n{screen}"
+        );
+        assert!(screen.contains('╯'), "{screen}");
     }
 
     #[test]
@@ -682,6 +767,10 @@ mod tests {
                 );
             }
         }
+        assert!(
+            screen.contains("╭─ Keys "),
+            "a rounded frame, titled:\n{screen}"
+        );
         update(&mut app, Input::Key(KeyEvent::from(KeyCode::Esc)));
         assert!(!screen_of_size(&app, 200, 90).contains(sections[0].title));
     }
@@ -1229,6 +1318,60 @@ mod tests {
             reader[keys].contains("e reply") && reader[keys].contains("a archive"),
             "the keys at the foot:\n{screen}"
         );
+    }
+
+    fn status_of(app: &App, colour: Colour) -> (String, Vec<ratatui::buffer::Cell>, Theme) {
+        let theme = Theme::new(colour, Background::Dark, &Default::default()).0;
+        let now = chrono::Local
+            .with_ymd_and_hms(2026, 9, 23, 12, 0, 0)
+            .unwrap();
+        let mut terminal = Terminal::new(TestBackend::new(160, 16)).unwrap();
+        terminal
+            .draw(|frame| {
+                draw(frame, app, &theme, now);
+            })
+            .unwrap();
+        let buffer = terminal.backend().buffer();
+        let cells: Vec<ratatui::buffer::Cell> = (0..160).map(|x| buffer[(x, 15)].clone()).collect();
+        let text = cells.iter().map(|cell| cell.symbol().to_owned()).collect();
+        (text, cells, theme)
+    }
+
+    #[test]
+    fn the_status_line_marks_what_failed_and_what_worked_and_the_undo_key() {
+        let mut app = with_sidebar((160, 16));
+        update(
+            &mut app,
+            Input::Host(postio_core::Event::Error {
+                message: "The server refused the move".into(),
+            }),
+        );
+        let (text, cells, theme) = status_of(&app, Colour::TrueColor);
+        assert!(text.starts_with("✕ The server refused the move"), "{text}");
+        assert_eq!(cells[2].fg, theme.style(Role::Error).fg.unwrap(), "{text}");
+
+        update(
+            &mut app,
+            Input::Host(postio_core::Event::ActionCompleted {
+                description: "Archived 1 message".into(),
+                undoable: true,
+            }),
+        );
+        let (text, cells, theme) = status_of(&app, Colour::TrueColor);
+        assert!(
+            text.starts_with("✓ Archived 1 message — u to undo"),
+            "{text}"
+        );
+        assert_eq!(cells[0].fg, theme.style(Role::Success).fg.unwrap());
+        let key = text.chars().position(|c| c == 'u').expect("the key");
+        assert_eq!(
+            cells[key].fg,
+            theme.style(Role::Accent).fg.unwrap(),
+            "the undo key in the accent: {text}"
+        );
+        // Without colour the marks still say it.
+        let (text, _, _) = status_of(&app, Colour::None);
+        assert!(text.starts_with('✓'), "{text}");
     }
 
     #[test]

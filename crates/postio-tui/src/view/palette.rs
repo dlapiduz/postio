@@ -4,7 +4,7 @@ use ratatui::Frame;
 use ratatui::layout::{Position, Rect};
 use ratatui::style::Modifier;
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, Clear};
+use ratatui::widgets::{Block, BorderType, Borders, Clear};
 
 use crate::app::PaletteView;
 use crate::theme::{Role, Theme};
@@ -17,26 +17,48 @@ const WIDTH: u16 = 72;
 pub fn draw(frame: &mut Frame, area: Rect, palette: &PaletteView, theme: &Theme) {
     let width = WIDTH.min(area.width.saturating_sub(4));
     let rows = u16::try_from(palette.rows.len()).unwrap_or(u16::MAX);
-    let height = (rows + 3).min(area.height.saturating_sub(2));
-    if width < 20 || height < 4 {
+    // Below the top bar, so the search field stays in view.
+    let height = (rows + 4).min(area.height.saturating_sub(3));
+    if width < 20 || height < 5 {
         return;
     }
-    let outer = Rect::new(area.x + (area.width - width) / 2, area.y + 1, width, height);
+    let outer = Rect::new(area.x + (area.width - width) / 2, area.y + 2, width, height);
     frame.render_widget(Clear, outer);
+    let title = match palette.marker {
+        ">" => "Commands",
+        "#" => "Folders",
+        "+" => "Labels",
+        "@" => "People",
+        _ => "Choose",
+    };
     frame.render_widget(
         Block::default()
             .borders(Borders::ALL)
-            .border_style(theme.style(Role::Dim)),
+            .border_type(BorderType::Rounded)
+            .border_style(theme.style(Role::Dim))
+            .title(Line::from(vec![
+                Span::styled("─ ", theme.style(Role::Dim)),
+                Span::styled(title, theme.style(Role::Accent)),
+                Span::raw(" "),
+            ])),
         outer,
     );
     let inner = Rect::new(outer.x + 1, outer.y + 1, outer.width - 2, outer.height - 2);
     let prompt = format!("{} {}", palette.marker, palette.query);
     frame.render_widget(
-        Line::styled(
-            fit(&prompt, usize::from(inner.width)),
-            theme.style(Role::Text),
-        ),
+        Line::from(vec![
+            Span::styled(format!("{} ", palette.marker), theme.style(Role::Accent)),
+            Span::styled(
+                fit(&palette.query, usize::from(inner.width).saturating_sub(2)),
+                theme.style(Role::Text),
+            ),
+        ]),
         Rect::new(inner.x, inner.y, inner.width, 1),
+    );
+    // A rule between what is typed and what it found.
+    frame.render_widget(
+        Line::styled("─".repeat(usize::from(inner.width)), theme.style(Role::Dim)),
+        Rect::new(inner.x, inner.y + 1, inner.width, 1),
     );
     let caret = unicode_width::UnicodeWidthStr::width(prompt.as_str());
     frame.set_cursor_position(Position::new(
@@ -47,7 +69,7 @@ pub fn draw(frame: &mut Frame, area: Rect, palette: &PaletteView, theme: &Theme)
         inner.y,
     ));
 
-    let shown = usize::from(inner.height.saturating_sub(1));
+    let shown = usize::from(inner.height.saturating_sub(2));
     // Keep the chosen row in view.
     let first = palette.selected.saturating_sub(shown.saturating_sub(1));
     for (offset, (index, row)) in palette
@@ -58,10 +80,15 @@ pub fn draw(frame: &mut Frame, area: Rect, palette: &PaletteView, theme: &Theme)
         .take(shown)
         .enumerate()
     {
-        let y = inner.y + 1 + u16::try_from(offset).unwrap_or(u16::MAX);
+        let y = inner.y + 2 + u16::try_from(offset).unwrap_or(u16::MAX);
         let chosen = index == palette.selected;
+        // The chosen row as the list's cursor row is: raised, with a bar.
         let base = if chosen {
-            theme.style(Role::Selection)
+            frame.buffer_mut().set_style(
+                Rect::new(inner.x, y, inner.width, 1),
+                theme.style(Role::Surface),
+            );
+            theme.style(Role::Text).add_modifier(Modifier::BOLD)
         } else {
             theme.style(Role::Text)
         };
@@ -70,7 +97,10 @@ pub fn draw(frame: &mut Frame, area: Rect, palette: &PaletteView, theme: &Theme)
             .saturating_sub(unicode_width::UnicodeWidthStr::width(chord) + 3);
         let title = fit(&row.title, room);
         // The letters the query matched, marked.
-        let mut spans = vec![Span::styled(if chosen { "› " } else { "  " }, base)];
+        let mut spans = vec![Span::styled(
+            if chosen { "▌ " } else { "  " },
+            theme.style(Role::Focus),
+        )];
         for (at, c) in title.char_indices() {
             let style = if row.positions.contains(&at) {
                 base.add_modifier(Modifier::BOLD | Modifier::UNDERLINED)
@@ -81,8 +111,9 @@ pub fn draw(frame: &mut Frame, area: Rect, palette: &PaletteView, theme: &Theme)
         }
         let used = 2 + unicode_width::UnicodeWidthStr::width(title.as_str());
         let gap = usize::from(inner.width).saturating_sub(used + chord.len());
-        spans.push(Span::styled(" ".repeat(gap), base));
-        spans.push(Span::styled(chord.to_owned(), theme.style(Role::Dim)));
+        spans.push(Span::raw(" ".repeat(gap)));
+        let key = if chosen { Role::Accent } else { Role::Dim };
+        spans.push(Span::styled(chord.to_owned(), theme.style(key)));
         frame.render_widget(Line::from(spans), Rect::new(inner.x, y, inner.width, 1));
     }
 }
