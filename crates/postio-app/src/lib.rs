@@ -537,7 +537,12 @@ pub async fn feed_the_window(window: &Window, wiring: &Wiring) -> Option<Wired> 
         "opening account"
     );
 
-    let sources = feed::Sources::new(wiring.store.clone(), wiring.runtime.clone());
+    // The window's surfaces read through a client of the store's owner
+    // (ADR 0041). Over this wiring for now: the host is in this process, and
+    // the client alone keeps it alive.
+    let client =
+        postio_host::Host::over(wiring.clone()).connect(postio_client::protocol::ClientKind::Gtk);
+    let sources = feed::Sources::new(std::sync::Arc::new(client.clone()), wiring.runtime.clone());
     let feeds = window.install_feeds(
         account.id,
         account.address.address.as_str(),
