@@ -57,6 +57,8 @@ struct Inner {
     clients: Mutex<HashMap<ClientId, Entry>>,
     next_client: AtomicU64,
     queue: async_channel::Sender<Queued>,
+    /// How many frontends are connected, watched by the daemon's idle timer.
+    connected: tokio::sync::watch::Sender<usize>,
 }
 
 /// One connected frontend, as the host holds it.
@@ -67,6 +69,17 @@ struct Entry {
     verbs: Arc<Dispatcher>,
     /// Where this client's own command events go, to be sorted.
     sink: EventSink,
+    /// The tasks that carry this client's events, stopped when it leaves:
+    /// the hub never closes a subscription on its own.
+    tasks: Vec<tokio::task::AbortHandle>,
+}
+
+/// A request answered on arrival, or one left to be answered concurrently.
+enum InOrder {
+    /// Answered now, in the order it arrived.
+    Answered(Resp),
+    /// A read, to answer on a task of its own.
+    Later(Req),
 }
 
 struct Queued {
@@ -143,6 +156,7 @@ impl Host {
             clients: Mutex::new(HashMap::new()),
             next_client: AtomicU64::new(1),
             queue,
+            connected: tokio::sync::watch::Sender::new(0),
         });
         let pump = Arc::clone(&inner);
         bridge.handle().spawn(async move {
@@ -189,7 +203,7 @@ impl Inner {
         let label = format!("client:{kind:?}:{}", id.0).to_lowercase();
         let everybody = self.hub.subscribe(&label);
         let to_client = outbox.clone();
-        self.runtime().spawn(async move {
+        let hearing = self.runtime().spawn(async move {
             while let Some(envelope) = everybody.next_tracked().await {
                 if to_client.send(envelope).await.is_err() {
                     return;
@@ -202,7 +216,7 @@ impl Inner {
         // to everybody (the hub, which includes this client).
         let (sink, own) = event_channel();
         let hub = self.hub.sink();
-        self.runtime().spawn(async move {
+        let sorting = self.runtime().spawn(async move {
             while let Some(envelope) = own.next_tracked().await {
                 if is_feedback(&envelope.event) {
                     if outbox.send(envelope).await.is_err() {
@@ -225,10 +239,49 @@ impl Inner {
                 state,
                 verbs,
                 sink,
+                tasks: vec![hearing.abort_handle(), sorting.abort_handle()],
             },
         );
+        self.connected.send_modify(|count| *count += 1);
         tracing::info!(client = id.0, ?kind, "a frontend connected");
         (id, events)
+    }
+
+    /// Forget a client: its events stop, and a command it queued and has
+    /// not run yet is dropped with it.
+    fn leave(&self, client: ClientId) {
+        let entry = self.clients.lock().expect("never poisoned").remove(&client);
+        if let Some(entry) = entry {
+            for task in &entry.tasks {
+                task.abort();
+            }
+            self.connected
+                .send_modify(|count| *count = count.saturating_sub(1));
+            tracing::info!(client = client.0, kind = ?entry.kind, "a frontend left");
+        }
+    }
+
+    /// A request that must be answered in the order it was made, answered
+    /// now; any other request, handed back to be answered concurrently.
+    ///
+    /// Commands are this kind: two keystrokes arrive in order and must run
+    /// in order, and spawning each would let the second overtake the first.
+    fn answer_in_order(&self, client: ClientId, request: Req) -> InOrder {
+        match request {
+            Req::Send(command, aim) => InOrder::Answered(self.enqueue(client, command, aim, None)),
+            Req::SendTracked(command, aim) => {
+                let invocation = InvocationId::next();
+                InOrder::Answered(match self.enqueue(client, command, aim, Some(invocation)) {
+                    Resp::Done => Resp::Tracked(invocation),
+                    refused => refused,
+                })
+            }
+            Req::NoteRemoved(mailbox, messages) => {
+                self.wiring.store.note_removed(mailbox, messages);
+                InOrder::Answered(Resp::Done)
+            }
+            other => InOrder::Later(other),
+        }
     }
 
     fn entry(&self, client: ClientId) -> Option<Entry> {
@@ -260,15 +313,14 @@ impl Inner {
     /// Answer one request from local state. Nothing here waits on the
     /// network: a remote effect is a command, queued.
     async fn answer(&self, client: ClientId, request: Req) -> Resp {
+        let request = match self.answer_in_order(client, request) {
+            InOrder::Answered(answered) => return answered,
+            InOrder::Later(request) => request,
+        };
         let store = &self.wiring.store;
         match request {
-            Req::Send(command, aim) => self.enqueue(client, command, aim, None),
-            Req::SendTracked(command, aim) => {
-                let invocation = InvocationId::next();
-                match self.enqueue(client, command, aim, Some(invocation)) {
-                    Resp::Done => Resp::Tracked(invocation),
-                    refused => refused,
-                }
+            Req::Send(..) | Req::SendTracked(..) | Req::NoteRemoved(..) => {
+                unreachable!("answered in order above")
             }
             Req::Page(page) => store
                 .list_page(page)
@@ -286,10 +338,6 @@ impl Inner {
                 .rows_in(scope, ids)
                 .await
                 .map_or_else(Resp::Failed, Resp::ListRows),
-            Req::NoteRemoved(mailbox, messages) => {
-                store.note_removed(mailbox, messages);
-                Resp::Done
-            }
             Req::Mailboxes(account) => store
                 .mailboxes(account)
                 .await
@@ -331,8 +379,18 @@ struct Local {
     events: async_channel::Receiver<EventEnvelope>,
 }
 
+impl Drop for Local {
+    fn drop(&mut self) {
+        self.inner.leave(self.client);
+    }
+}
+
 impl Transport for Local {
     fn call(&self, request: Req) -> Call<'_> {
+        let request = match self.inner.answer_in_order(self.client, request) {
+            InOrder::Answered(answered) => return Box::pin(async move { Ok(answered) }),
+            InOrder::Later(request) => request,
+        };
         let (answer, answered) = tokio::sync::oneshot::channel();
         let inner = Arc::clone(&self.inner);
         let client = self.client;
@@ -343,6 +401,10 @@ impl Transport for Local {
     }
 
     fn post(&self, request: Req) {
+        let request = match self.inner.answer_in_order(self.client, request) {
+            InOrder::Answered(_) => return,
+            InOrder::Later(request) => request,
+        };
         let inner = Arc::clone(&self.inner);
         let client = self.client;
         self.inner.runtime().spawn(async move {
@@ -354,6 +416,8 @@ impl Transport for Local {
         self.events.clone()
     }
 }
+
+pub mod serve;
 
 #[cfg(test)]
 mod tests;

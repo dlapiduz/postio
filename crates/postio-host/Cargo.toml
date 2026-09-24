@@ -22,7 +22,8 @@ postio-core.workspace = true
 postio-model.workspace = true
 postio-session.workspace = true
 postio-storage.workspace = true
-tokio = { workspace = true, features = ["rt", "sync"] }
+thiserror = { workspace = true }
+tokio = { workspace = true, features = ["io-util", "macros", "net", "rt", "sync", "time"] }
 tracing = { workspace = true }
 
 [dev-dependencies]

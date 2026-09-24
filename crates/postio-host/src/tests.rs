@@ -18,8 +18,8 @@ use super::Host;
 
 /// A store with an inbox, an archive and a trash, one message in the inbox,
 /// and a host over it.
-struct World {
-    rt: tokio::runtime::Runtime,
+pub(crate) struct World {
+    pub(crate) rt: tokio::runtime::Runtime,
     host: Option<Host>,
     inbox: MailboxId,
     message: MessageId,
@@ -27,7 +27,7 @@ struct World {
 }
 
 impl World {
-    fn new() -> World {
+    pub(crate) fn new() -> World {
         let rt = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()
@@ -64,8 +64,13 @@ impl World {
         }
     }
 
-    /// A frontend looking at the inbox with the cursor on the message.
-    fn frontend(&self, kind: ClientKind) -> (Client, async_channel::Receiver<EventEnvelope>) {
+    /// The host.
+    pub(crate) fn host(&self) -> &Host {
+        self.host.as_ref().expect("running")
+    }
+
+    /// A frontend's state: looking at the inbox, the cursor on the message.
+    pub(crate) fn looking_at_the_message(&self) -> SharedState {
         let state = SharedState::default();
         let (quiet, _) = event_channel();
         state.update(&quiet, |app| {
@@ -73,6 +78,12 @@ impl World {
             events.extend(app.select(Vec::new(), Some(self.message)));
             events
         });
+        state
+    }
+
+    /// A frontend looking at the inbox with the cursor on the message.
+    fn frontend(&self, kind: ClientKind) -> (Client, async_channel::Receiver<EventEnvelope>) {
+        let state = self.looking_at_the_message();
         let client = self
             .host
             .as_ref()
@@ -83,7 +94,7 @@ impl World {
         (client, events)
     }
 
-    fn inbox_rows(&self, client: &Client) -> u32 {
+    pub(crate) fn inbox_rows(&self, client: &Client) -> u32 {
         let page = self
             .rt
             .block_on(client.list_page(PageRequest {
@@ -99,7 +110,7 @@ impl World {
     }
 
     /// Wait for an event matching `wanted`, failing after a while.
-    fn hear(
+    pub(crate) fn hear(
         &self,
         events: &async_channel::Receiver<EventEnvelope>,
         wanted: impl Fn(&Event) -> bool,
@@ -227,4 +238,27 @@ fn undo_takes_back_only_what_this_frontend_did() {
         matches!(event, Event::UndoPerformed { .. })
     });
     assert_eq!(world.inbox_rows(&desktop), 1, "and the message is back");
+}
+
+#[test]
+fn two_commands_sent_back_to_back_run_in_the_order_they_were_sent() {
+    // Archive, then undo, without waiting between them. In order, the
+    // message ends where it started; reversed, the undo finds nothing to
+    // take back and the archive stands. Answering each request on a spawned
+    // task made that a race; commands are answered in order now.
+    let world = World::new();
+    let (client, events) = world.frontend(ClientKind::Tui);
+
+    world.rt.block_on(async {
+        let archiving = client.send(archive());
+        let undoing = client.send(Command::Undo);
+        let (archived, undone) = tokio::join!(archiving, undoing);
+        archived.expect("sent");
+        undone.expect("sent");
+    });
+
+    world.hear(&events, |event| {
+        matches!(event, Event::UndoPerformed { .. })
+    });
+    assert_eq!(world.inbox_rows(&client), 1);
 }

@@ -3758,6 +3758,7 @@ dependencies = [
  "postio-session",
  "postio-storage",
  "tempfile",
+ "thiserror",
  "tokio",
  "tracing",
 ]
