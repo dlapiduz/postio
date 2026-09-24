@@ -46,6 +46,7 @@ pub mod diag;
 pub mod egress;
 pub mod engine;
 pub mod logging;
+pub mod onboarding;
 pub mod paths;
 pub mod provision;
 pub mod reachability;
