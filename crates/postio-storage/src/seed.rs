@@ -284,10 +284,14 @@ pub async fn seed_extra_account(
 /// [`BATCH_SIZE`]; nothing holds more than one batch's worth in memory at once,
 /// however large `message_count` is.
 ///
-/// Unlike [`seed_small`], these messages are not threaded: none of them
-/// reference each other, so every reply chain [`ThreadingRepository`] would
-/// resolve is one message long, and the cost of running it 100k times would
-/// buy nothing a benchmark cares about.
+/// Threaded in conversations of mixed length, the way a real folder lists
+/// them -- mostly single messages, some exchanges, a few long threads -- by
+/// the same bulk assignment [`thread_seeded_messages`] makes rather than by
+/// running [`ThreadingRepository`] a hundred thousand times. They used to be
+/// left unthreaded, and a folder of them listed plain message rows, which is
+/// not what any real folder lists: every large-fixture test walked a path
+/// no user takes, and landing on a conversation asked for the whole folder
+/// (138 page requests for five `j` presses) with none of them able to see it.
 ///
 /// # Panics
 ///
@@ -325,11 +329,30 @@ pub async fn seed_large(database: &Store, seed: u64, message_count: usize) -> Se
         .expect("commit a seed batch");
         inserted = end;
     }
+    drop(connection);
 
+    thread_in_runs(database, account.id, move || conversation_length(&mut rng)).await;
+
+    let connection = database.connect().await.expect("a checked-out connection");
     SeedReport {
         mailboxes: load_folders(&connection, &account).await,
         account,
         message_count: inserted,
+    }
+}
+
+/// How many messages the next seeded conversation holds.
+///
+/// Shaped like a working mailbox rather than measured from one: most mail
+/// is a message nobody answered, some is an exchange, and a few threads run
+/// long enough that paging within one is a real case.
+fn conversation_length(rng: &mut Rng) -> usize {
+    match rng.below(100) {
+        0..60 => 1,
+        60..80 => 2,
+        80..90 => 3 + rng.below(2) as usize,
+        90..97 => 5 + rng.below(5) as usize,
+        _ => 10 + rng.below(21) as usize,
     }
 }
 
@@ -363,12 +386,11 @@ async fn load_folders(connection: &Connection, account: &Account) -> Vec<Mailbox
 }
 
 /// Groups an already-seeded account's messages into conversations of
-/// `per_thread`, for benchmarking the threaded list. Answers how many threads.
+/// exactly `per_thread`, replacing the threads they had. Answers how many
+/// threads.
 ///
-/// [`seed_large`] deliberately leaves its messages unthreaded — it exists for
-/// the *message* window, where threading would only add noise. The thread
-/// list needs the opposite, and needs it at a size worth measuring, so this
-/// threads a seeded store after the fact.
+/// [`seed_large`] threads its messages in mixed lengths already; this is for
+/// a benchmark or test that needs one uniform length to reason about.
 ///
 /// **Not how threading works.** Real threading is JWZ over `References` and
 /// `In-Reply-To` (`ThreadingRepository`), one message at a time, and running
@@ -386,6 +408,18 @@ pub async fn thread_seeded_messages(
     per_thread: usize,
 ) -> u32 {
     assert!(per_thread > 0, "a conversation holds at least one message");
+    thread_in_runs(database, account, move || per_thread).await
+}
+
+/// Files an account's messages, newest first, into consecutive
+/// conversations whose lengths `length` says, replacing whatever threads it
+/// had -- so threading an already-threaded fixture again leaves no empty
+/// threads behind. Answers how many threads.
+async fn thread_in_runs(
+    database: &Store,
+    account: postio_model::AccountId,
+    mut length: impl FnMut() -> usize + Send + 'static,
+) -> u32 {
     let connection = database.connect().await.expect("a checked-out connection");
 
     // `all_unbounded`: a seeder threading the whole corpus is the shape that
@@ -405,8 +439,17 @@ pub async fn thread_seeded_messages(
     };
 
     sql::in_scope(&connection, |scope| async move {
+        // Replaced, not added to: `ON DELETE SET NULL` clears the messages'
+        // membership with the threads.
+        scope
+            .execute("DELETE FROM threads WHERE account_id = ?1", [account.get()])
+            .await
+            .expect("clear the seeded threads");
         let mut threads = 0;
-        for chunk in rows.chunks(per_thread) {
+        let mut rest = rows.as_slice();
+        while !rest.is_empty() {
+            let (chunk, after) = rest.split_at(length().clamp(1, rest.len()));
+            rest = after;
             // A real thread's subject is one of its own messages' (`recompute_in`
             // reads the oldest member's), never a constant -- and a benchmark
             // that gave every seeded thread the identical literal subject once

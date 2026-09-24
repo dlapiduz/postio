@@ -50,11 +50,9 @@ pub fn opening_a_large_folder_asks_for_a_bounded_number_of_pages() {
         }
 
         let database = test_support::memory().await;
-        let seeded = seed_large(&database, 11, MESSAGES).await;
-        // In conversations, as a real folder lists them: landing on a row is
-        // then opening a conversation, which is the path the `j` presses
-        // below are about.
-        postio_storage::seed::thread_seeded_messages(&database, seeded.account.id, 3).await;
+        // Threaded, as a real folder is: landing on a row opens a
+        // conversation, which is the path the `j` presses below are about.
+        seed_large(&database, 11, MESSAGES).await;
         let directory = tempfile::tempdir().expect("a blob directory");
         let blobs = BlobStore::open(
             directory.path().to_path_buf(),
