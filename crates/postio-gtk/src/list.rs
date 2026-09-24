@@ -738,6 +738,69 @@ impl MessageList {
         self.items_changed(0, total, total);
     }
 
+    /// Whether every one of `messages` is a row the list is holding.
+    pub fn all_resident(&self, messages: &[MessageId]) -> bool {
+        let window = self.imp().window.borrow();
+        !messages.is_empty()
+            && messages
+                .iter()
+                .all(|message| window.position_of(*message).is_some())
+    }
+
+    /// Take `messages` out of the list where they stand, each row after them
+    /// moving up, rather than reloading it (#1607).
+    ///
+    /// `false`, with nothing changed, unless every one is a resident row
+    /// that [`ListWindow::remove_at`](postio_ui::list::ListWindow::remove_at)
+    /// can take out: the caller reloads then, as before. Removed from the
+    /// bottom up, so no removal moves a position another is still to use,
+    /// and announced one row at a time -- `items_changed(position, 1, 0)` --
+    /// so the list view keeps every other row's widget, and a cursor on a
+    /// removed row lands on the one that moved into its place.
+    pub fn remove_in_place(&self, messages: &[MessageId]) -> bool {
+        if self.reading() {
+            return false;
+        }
+        let positions: Option<Vec<u32>> = {
+            let window = self.imp().window.borrow();
+            messages
+                .iter()
+                .map(|message| window.position_of(*message))
+                .collect()
+        };
+        let Some(mut positions) = positions else {
+            return false;
+        };
+        positions.sort_unstable_by(|a, b| b.cmp(a));
+        positions.dedup();
+        for (n, position) in positions.into_iter().enumerate() {
+            if !self.imp().window.borrow_mut().remove_at(position) {
+                // Only the first can refuse: the rest are lower, and taking
+                // a higher row out moved none of them.
+                debug_assert_eq!(n, 0, "a later removal refused");
+                return n > 0;
+            }
+            {
+                let mut handed = self.imp().handed.borrow_mut();
+                handed.remove(&position);
+                let moved: Vec<(u32, MessageRow)> = handed
+                    .iter()
+                    .filter(|(held, _)| **held > position)
+                    .map(|(held, row)| (*held, row.clone()))
+                    .collect();
+                for (held, _) in &moved {
+                    handed.remove(held);
+                }
+                for (held, row) in moved {
+                    handed.insert(held - 1, row);
+                }
+            }
+            EMISSIONS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            self.items_changed(position, 1, 0);
+        }
+        true
+    }
+
     /// How many rows are resident. The number the memory budget is about.
     pub fn resident_rows(&self) -> usize {
         self.imp().window.borrow().resident_rows()

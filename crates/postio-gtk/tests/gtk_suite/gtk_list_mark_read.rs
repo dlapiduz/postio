@@ -45,6 +45,8 @@ struct Mailbox120 {
     /// What the feed asked of this source, in order: `told ...` for a
     /// removal it was told about, `fetch <page>` for a page it read.
     asked: std::cell::RefCell<Vec<String>>,
+    /// Messages the store no longer lists here, for a test that archives.
+    gone: std::cell::RefCell<Vec<i64>>,
 }
 
 impl Mailbox120 {
@@ -52,6 +54,7 @@ impl Mailbox120 {
         Rc::new(Mailbox120 {
             read: Cell::new(None),
             asked: std::cell::RefCell::new(Vec::new()),
+            gone: std::cell::RefCell::new(Vec::new()),
         })
     }
 
@@ -82,10 +85,12 @@ impl MailboxSource for Mailbox120 {
 impl MessageSource for Mailbox120 {
     fn rows_in(&self, _scope: postio_model::ListScope, ids: Vec<MessageId>) -> RowsFuture {
         let read = self.read.get();
+        let gone = self.gone.borrow().clone();
         Box::pin(async move {
             Ok(ids
                 .into_iter()
                 .filter(|id| (1..=i64::from(TOTAL)).contains(&id.get()))
+                .filter(|id| !gone.contains(&id.get()))
                 .map(|id| {
                     let position = id.get() - 1;
                     Row {
@@ -422,4 +427,59 @@ pub fn another_account_s_changes_do_not_reload_this_sidebar() {
         messages: vec![MessageId::new(3)],
     });
     pump_until(|| folder_reads() > before);
+}
+
+pub fn an_archive_of_rows_on_screen_takes_them_out_where_they_stand() {
+    // #1607: an archive reloaded the list -- every row's widget rebuilt,
+    // every seek mark dropped, page 0 read again -- to take out a row it
+    // was holding.
+    if adw::init().is_err() || gdk::Display::default().is_none() {
+        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
+        return;
+    }
+    let display = gdk::Display::default().unwrap();
+    fonts::install().expect("the embedded fonts should install");
+    style::install(&display);
+
+    let store = Mailbox120::new();
+    let window = Window::default();
+    window.set_default_size(1280, 800);
+    window.present();
+    pump();
+    let feeds = window.install_feeds(
+        AccountId::new(ACCOUNT),
+        "ada@example.com",
+        store.clone(),
+        store.clone(),
+    );
+    pump();
+    let list = window.list();
+    pump_until(|| list.model().n_items() == TOTAL);
+    for _ in 0..20 {
+        pump();
+    }
+
+    store.asked.borrow_mut().clear();
+    store.gone.borrow_mut().push(3);
+    feeds.apply(&Event::MessagesRemoved {
+        account: AccountId::new(ACCOUNT),
+        mailbox: MailboxId::new(INBOX),
+        messages: vec![MessageId::new(3)],
+    });
+    pump_until(|| list.model().n_items() == TOTAL - 1);
+    for _ in 0..20 {
+        pump();
+    }
+
+    assert_eq!(list.model().n_items(), TOTAL - 1);
+    assert_eq!(
+        list.model().peek(2),
+        Some(MessageId::new(4)),
+        "the row after the archived one moved up into its place"
+    );
+    let asked = store.asked.borrow().clone();
+    assert!(
+        !asked.iter().any(|ask| ask.starts_with("fetch")),
+        "taking out a row the list held read a page anyway: {asked:?}"
+    );
 }

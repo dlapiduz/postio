@@ -10,6 +10,7 @@
 mod account_connection_wiring;
 mod add_account_wiring;
 mod aiming;
+mod archive_in_place;
 mod attach_account;
 mod autosave_off_the_main_thread;
 mod body_arrives;
@@ -495,6 +496,10 @@ const CASES: &[(&str, fn())] = &[
         "next_conversation_prepared::the_next_conversation_is_drawn_without_parsing_on_the_main_thread",
         next_conversation_prepared::the_next_conversation_is_drawn_without_parsing_on_the_main_thread
             as fn(),
+    ),
+    (
+        "archive_in_place::archiving_a_conversation_on_screen_takes_out_only_its_row",
+        archive_in_place::archiving_a_conversation_on_screen_takes_out_only_its_row as fn(),
     ),
     (
         "thread_bodies_in_one_crossing::a_conversation_is_read_in_one_crossing",
