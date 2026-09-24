@@ -1309,3 +1309,43 @@ async fn a_folder_is_counted_from_an_index_alone() {
         "a folder count that reads more than an index: {uncovered:?}\n{plan:#?}"
     );
 }
+
+#[tokio::test]
+async fn a_folder_s_page_boundaries_are_where_its_pages_begin() {
+    // #1610: a scrollbar jump deep into a folder was an OFFSET walk over the
+    // window's correlated predicate -- 572 ms to the bottom of a seeded
+    // folder of 17,804 conversations, linear in the depth. The boundaries
+    // are what lets it seek instead, and they are only worth anything if
+    // resuming after one reads exactly the page OFFSET would have.
+    let database = test_support::memory().await;
+    let seed = postio_storage::seed::seed_large(&database, 7, 2_000).await;
+    let connection = database.connect().await.expect("checkout");
+    let inbox = seed
+        .mailbox(postio_model::MailboxRole::Inbox)
+        .expect("an inbox")
+        .id;
+    let mut query = ThreadListQuery::in_mailbox(seed.account.id, inbox);
+    query.limit = 50;
+    let threads = ThreadRepository::new(&connection);
+    let total = threads.count_of(&query).await.expect("a count");
+    let boundaries = threads.boundaries(&query, 50).await.expect("boundaries");
+    assert_eq!(
+        boundaries.len() as u32,
+        (total.saturating_sub(1)) / 50,
+        "one boundary per page after the first, in a folder of {total} rows"
+    );
+    for (offset, cursor) in boundaries.iter().copied().step_by(3) {
+        let skipped = threads.page_at(&query, offset).await.expect("by offset");
+        let sought = threads
+            .page(&ThreadListQuery {
+                after: Some(cursor),
+                ..query
+            })
+            .await
+            .expect("by cursor");
+        let ids = |rows: &[postio_storage::repository::ThreadListRow]| {
+            rows.iter().map(|row| row.cursor().id).collect::<Vec<_>>()
+        };
+        assert_eq!(ids(&sought), ids(&skipped), "the page at {offset}");
+    }
+}
