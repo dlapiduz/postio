@@ -49,7 +49,12 @@ use postio_core::{ActionId, Availability, Context, Keymap, registry};
 /// cost (see `an_empty_query_lists_everything_reachable_in_registry_order`).
 /// Raised for headroom, not tuned to a new exact count -- the next command
 /// added to a full context should not trip this again.
-pub const MAX_ROWS: usize = 48;
+///
+/// It did anyway, at 48: the terminal frontend's registry additions (quit,
+/// the two image commands, unsubscribe) took `Context::List` to 51, and
+/// `refresh` and the reader's scrolling fell off the end of an empty query.
+/// 64, for the same reason as before.
+pub const MAX_ROWS: usize = 64;
 
 // ---------------------------------------------------------------------------
 // Matching
