@@ -50,7 +50,7 @@ use postio_storage::repository::{
 };
 use postio_storage::{BlobStore, Store};
 
-use crate::recipients::{Directory, resolved_address};
+use crate::recipients::{Directory, preferred_address};
 
 /// How many recipient suggestions to offer at once — a popover, not a list
 /// the user scrolls.
@@ -91,7 +91,7 @@ pub async fn install(
     install_send(&composer, &writer, Rc::clone(&last_id), account, announce);
     install_send_later(&composer, &writer, Rc::clone(&last_id));
     install_resume(window, &composer, database.clone(), last_id);
-    install_recipient_suggestions(&composer, database.clone(), account, &runtime);
+    install_recipient_suggestions(&composer, database.clone(), &runtime);
     install_reply_source(&composer, database, showing, &runtime);
     install_attach(&composer, blobs.clone(), runtime.clone());
     install_inline_image(&composer, blobs.clone(), runtime).await;
@@ -898,14 +898,14 @@ async fn recover(
 /// Recipient completion, answered from memory (see [`crate::recipients`]).
 ///
 /// The directory is read off the GTK thread when this is installed and again
-/// each time the composer opens, so a contact first seen in mail that
-/// arrived meanwhile is offered in the next composition. Every keystroke is
-/// then [`Directory::suggest`] over what was read: no connection, no query,
-/// nothing on the thread that draws.
+/// each time the composer opens, so a person first seen in mail that arrived
+/// meanwhile is offered in the next composition. Every keystroke is then
+/// [`Directory::suggest`] over what was read: no connection, no query,
+/// nothing on the thread that draws. People are shared across accounts
+/// (specs/005-contacts), so the directory is too.
 fn install_recipient_suggestions(
     composer: &Composer,
     database: Store,
-    account: AccountId,
     runtime: &tokio::runtime::Handle,
 ) {
     let directory: Rc<RefCell<Rc<Directory>>> = Rc::default();
@@ -914,7 +914,7 @@ fn install_recipient_suggestions(
         let runtime = runtime.clone();
         move || {
             let answer = crate::search::ask(&database, &runtime, move |connection| async move {
-                read_directory(&connection, account)
+                read_directory(&connection)
                     .await
                     .map_err(|error| tracing::warn!(%error, "could not read the contacts"))
                     .ok()
@@ -935,22 +935,24 @@ fn install_recipient_suggestions(
     });
 }
 
-/// Every group (with its members) and contact `account` can complete, in
-/// the order they are offered.
+/// Every group (with its members' preferred addresses, FR-041) and every live
+/// person, in the order they are offered.
 async fn read_directory(
     connection: &postio_storage::Checkout,
-    account: AccountId,
 ) -> postio_storage::Result<Directory> {
     let groups = ContactGroupRepository::new(connection);
     let mut named = Vec::new();
-    for group in groups.list(Some(account)).await? {
+    for group in groups.list().await? {
         let members = groups.members(group.id).await?;
-        named.push((group.name, members.iter().map(resolved_address).collect()));
+        named.push((
+            group.name,
+            members.iter().filter_map(preferred_address).collect(),
+        ));
     }
-    let contacts = ContactRepository::new(connection)
-        .search(Some(account), "", DIRECTORY_LIMIT)
+    let people = ContactRepository::new(connection)
+        .people(DIRECTORY_LIMIT)
         .await?;
-    Ok(Directory::new(named, contacts))
+    Ok(Directory::new(named, people))
 }
 
 /// The most contacts a directory holds: the same bound the search

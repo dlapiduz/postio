@@ -1,10 +1,11 @@
-//! Contact groups: a named set of contacts, expanded to addresses at compose
-//! time rather than referenced by a group address of their own (ADR 0007
-//! Q3).
+//! Contact groups: a named set of people, expanded to their preferred
+//! addresses at compose time rather than referenced by a group address of
+//! their own (specs/005-contacts FR-041). Groups are shared across accounts,
+//! as people are.
 
-use postio_model::{AccountId, Contact, ContactGroup, ContactGroupId, ContactId};
+use postio_model::{Contact, ContactGroup, ContactGroupId, ContactId};
 
-use super::contacts::{CONTACT_COLUMNS, read_contact};
+use super::contacts::{ContactRepository, PERSON_COLUMNS_C, read_person};
 use super::{from_millis, to_millis};
 
 use crate::error::{Error, Result};
@@ -18,7 +19,7 @@ pub struct ContactGroupRepository<'a> {
     connection: &'a Connection,
 }
 
-const GROUP_COLUMNS: &str = "id, account_id, name, uid, created_at";
+const GROUP_COLUMNS: &str = "id, name, uid, created_at";
 
 impl<'a> ContactGroupRepository<'a> {
     /// Borrows a connection.
@@ -30,14 +31,8 @@ impl<'a> ContactGroupRepository<'a> {
     pub async fn create(&self, group: &mut ContactGroup) -> Result<ContactGroupId> {
         sql::execute(
             self.connection,
-            "INSERT INTO contact_groups (account_id, name, uid, created_at)
-             VALUES (?1, ?2, ?3, ?4)",
-            bind![
-                group.account_id.map(AccountId::get),
-                group.name,
-                group.uid,
-                to_millis(group.created_at),
-            ],
+            "INSERT INTO contact_groups (name, uid, created_at) VALUES (?1, ?2, ?3)",
+            bind![group.name, group.uid, to_millis(group.created_at)],
         )
         .await?;
         let id = ContactGroupId::new(self.connection.last_insert_rowid());
@@ -56,18 +51,15 @@ impl<'a> ContactGroupRepository<'a> {
         .await
     }
 
-    /// Every group visible to `account_id` -- shared groups when `None`,
-    /// exactly the same matching `ContactRepository::list` uses for
-    /// contacts.
-    pub async fn list(&self, account_id: Option<AccountId>) -> Result<Vec<ContactGroup>> {
+    /// Every group, by name.
+    pub async fn list(&self) -> Result<Vec<ContactGroup>> {
         sql::all(
             self.connection,
             &format!(
-                "SELECT {GROUP_COLUMNS} FROM contact_groups WHERE {}
-                  ORDER BY name",
-                account_filter(account_id)
+                "SELECT {GROUP_COLUMNS} FROM contact_groups
+                  ORDER BY name COLLATE NOCASE LIMIT 10000"
             ),
-            account_argument(account_id),
+            (),
             read_group,
         )
         .await
@@ -135,53 +127,40 @@ impl<'a> ContactGroupRepository<'a> {
         Ok(())
     }
 
-    /// Every contact currently in a group, for expansion at compose time.
+    /// The live people in a group, with their addresses — what a group
+    /// expands to at compose time.
     ///
-    /// Deliberately not filtered by `suppressed`: membership is an explicit
-    /// choice the user made, and a contact suppressed from autocomplete
-    /// afterwards is still someone they put in this group on purpose.
+    /// A deleted member keeps its membership, so restoring them returns it
+    /// (FR-023a), but is offered nowhere, and a group picked in the composer
+    /// is no exception.
     pub async fn members(&self, group_id: ContactGroupId) -> Result<Vec<Contact>> {
-        let columns: Vec<String> = CONTACT_COLUMNS
-            .split(", ")
-            .map(|column| format!("c.{column}"))
-            .collect();
-        sql::all(
+        self.members_where(group_id, "AND c.state = 'live'").await
+    }
+
+    async fn members_where(&self, group_id: ContactGroupId, filter: &str) -> Result<Vec<Contact>> {
+        let people = sql::all(
             self.connection,
             &format!(
-                "SELECT {} FROM contact_group_members m
-              JOIN contacts c ON c.id = m.contact_id
-              WHERE m.group_id = ?1
-              ORDER BY c.id",
-                columns.join(", ")
+                "SELECT {PERSON_COLUMNS_C} FROM contact_group_members m
+                   JOIN contacts c ON c.id = m.contact_id
+                  WHERE m.group_id = ?1 {filter}
+                  ORDER BY c.sort_key, c.id LIMIT 10000"
             ),
             [group_id.get()],
-            read_contact,
+            read_person,
         )
-        .await
+        .await?;
+        ContactRepository::new(self.connection)
+            .with_addresses(people)
+            .await
     }
-}
-
-/// The account predicate, matching `ContactRepository`'s own -- see that
-/// module's comment for why `account_id = ?` cannot stand in for `IS NULL`.
-fn account_filter(account_id: Option<AccountId>) -> &'static str {
-    match account_id {
-        Some(_) => "account_id = ?1",
-        None => "account_id IS NULL",
-    }
-}
-
-fn account_argument(account_id: Option<AccountId>) -> Vec<turso::Value> {
-    account_id
-        .map(|id| vec![turso::Value::Integer(id.get())])
-        .unwrap_or_default()
 }
 
 fn read_group(row: &Row) -> Result<ContactGroup> {
     Ok(ContactGroup {
         id: ContactGroupId::new(row.col(0)?),
-        account_id: row.col::<Option<i64>>(1)?.map(AccountId::new),
-        name: row.col(2)?,
-        uid: row.col(3)?,
-        created_at: from_millis(row.col(4)?),
+        name: row.col(1)?,
+        uid: row.col(2)?,
+        created_at: from_millis(row.col(3)?),
     })
 }

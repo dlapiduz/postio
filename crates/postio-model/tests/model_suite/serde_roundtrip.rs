@@ -181,15 +181,36 @@ fn sample_thread() -> Thread {
 }
 
 fn sample_contact() -> Contact {
+    // Two addresses, a preferred one that is not the first, and every
+    // optional field filled: a `None` proves nothing about the `Some` arm.
     Contact {
         id: ContactId::new(21),
-        account_id: Some(AccountId::new(1)),
         name: Some("Alice".into()),
-        address: EmailAddress::new(Some("Alice"), "alice@example.com"),
+        organization: Some("Example Ltd".into()),
+        note: Some("met at the conference".into()),
+        source: postio_model::ContactSource::User,
+        state: ContactState::Deleted,
+        preferred: AddressId::new(8),
+        addresses: vec![
+            ContactAddress {
+                id: AddressId::new(7),
+                address: EmailAddress::new(Some("Alice"), "alice@work.example"),
+                times_seen: 10,
+                last_seen_at: Some(at(3_000)),
+                written: 2,
+            },
+            ContactAddress {
+                id: AddressId::new(8),
+                address: EmailAddress::new(None::<String>, "alice@home.example"),
+                times_seen: 2,
+                last_seen_at: Some(at(2_000)),
+                written: 1,
+            },
+        ],
+        seen_name: Some("Alice".into()),
         times_seen: 12,
         last_seen_at: Some(at(3_000)),
-        source: postio_model::ContactSource::User,
-        suppressed: false,
+        written: 3,
     }
 }
 
@@ -233,7 +254,6 @@ fn sample_label() -> Label {
 fn sample_contact_group() -> ContactGroup {
     ContactGroup {
         id: ContactGroupId::new(3),
-        account_id: None,
         name: "Book club".into(),
         uid: Some("group-uid-1".into()),
         created_at: at(3_400),

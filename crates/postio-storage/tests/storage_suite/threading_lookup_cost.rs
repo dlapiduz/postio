@@ -75,9 +75,20 @@ const PER_MESSAGE_LOOKUPS: &[(&str, &str, &[&str])] = &[
         &["mailbox_id=?", "uid_validity=?", "uid=?"],
     ),
     (
-        "contact by address",
-        "SELECT id FROM contacts WHERE account_id = ?1 AND address_normalized = ?2",
-        &["account_id=?", "address_normalized=?"],
+        // specs/005-contacts: recording a correspondent finds the address
+        // and its owner in one statement, once per address per message.
+        "address and its owner",
+        "SELECT a.id, a.contact_id, c.name, c.seen_name, c.last_seen_at \
+           FROM addresses a LEFT JOIN contacts c ON c.id = a.contact_id \
+          WHERE a.address_normalized = ?1",
+        &["address_normalized=?", "rowid=?"],
+    ),
+    (
+        // …and counts the sighting against its `(address, account)` key.
+        "sighting by address and account",
+        "SELECT times_seen FROM contact_sightings \
+          WHERE address_id = ?1 AND account_id = ?2",
+        &["address_id=?", "account_id=?"],
     ),
 ];
 

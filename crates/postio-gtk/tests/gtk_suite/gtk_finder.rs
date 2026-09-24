@@ -498,8 +498,10 @@ pub fn at_finds_a_correspondent_and_searches_their_mail() {
 
 fn correspondents() -> Vec<postio_model::Contact> {
     let person = |name: &str, address: &str, seen: u32| {
-        let mut contact =
-            postio_model::Contact::new(postio_model::EmailAddress::new(Some(name), address));
+        let mut contact = postio_model::Contact::new(postio_model::ContactAddress::new(
+            postio_model::AddressId::new(1),
+            postio_model::EmailAddress::new(Some(name), address),
+        ));
         contact.times_seen = seen;
         contact
     };

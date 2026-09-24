@@ -120,7 +120,7 @@ pub async fn install(
     install_scope_rerun(window, &finder);
     install_results(window, feeds, &view, held, wiring, order.clone()).await;
     install_order_toggle(window, &finder, feeds, order);
-    load_contacts(&finder, account.id, wiring).await;
+    load_contacts(&finder, wiring).await;
     load_labels(&finder, account.id, wiring).await;
 
     Some(view)
@@ -893,20 +893,22 @@ async fn install_open(preview: &postio_gtk::search::Preview, window: &Window) {
     ));
 }
 
-/// Give `@` the account's correspondents.
+/// Give `@` the people the user corresponds with.
 ///
-/// The whole list, not a prefix query: the matcher is a subsequence one, so
+/// People, not one account's: they are shared across accounts
+/// (specs/005-contacts), so `@` finds someone whichever inbox their mail
+/// landed in. The whole list, not a prefix query: the matcher is a subsequence one, so
 /// `gh` has to reach `Grace Hopper` and no SQL `LIKE` will find that. Read off
 /// the UI thread because it is the one read here whose size is set by the
 /// mailbox rather than by the query, and a window that paused at startup to
 /// count someone's correspondents would be paying the whole cost up front.
-async fn load_contacts(finder: &Finder, account: AccountId, wiring: &Wiring) {
+async fn load_contacts(finder: &Finder, wiring: &Wiring) {
     let answer = ask(
         &wiring.database,
         &wiring.runtime,
         move |connection| async move {
             ContactRepository::new(&connection)
-                .search(Some(account), "", CONTACT_LIMIT)
+                .people(CONTACT_LIMIT)
                 .await
                 .map_err(|error| tracing::warn!(%error, "could not read the correspondents"))
                 .ok()

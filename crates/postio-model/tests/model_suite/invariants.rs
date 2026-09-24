@@ -381,17 +381,22 @@ fn draft_starts_unsent_and_empty() {
 }
 
 #[test]
-fn contact_tracks_how_often_an_address_was_seen() {
-    let mut contact = Contact::new(EmailAddress::new(Some("Alice"), "alice@example.com"));
-    assert_eq!(contact.times_seen, 0);
-    contact.record_seen(Utc.timestamp_opt(10, 0).unwrap());
-    contact.record_seen(Utc.timestamp_opt(20, 0).unwrap());
-    assert_eq!(contact.times_seen, 2);
+fn an_address_tracks_how_often_it_was_seen_and_names_its_person() {
+    let mut address = ContactAddress::new(
+        AddressId::new(1),
+        EmailAddress::new(Some("Alice"), "alice@example.com"),
+    );
+    assert_eq!(address.times_seen, 0);
+    address.record_seen(Utc.timestamp_opt(10, 0).unwrap());
+    address.record_seen(Utc.timestamp_opt(20, 0).unwrap());
+    assert_eq!(address.times_seen, 2);
     assert_eq!(
-        contact.last_seen_at,
+        address.last_seen_at,
         Some(Utc.timestamp_opt(20, 0).unwrap())
     );
-    assert_eq!(contact.display_name(), "Alice");
+    // The display name the mail carried is the person's name until the user
+    // gives one.
+    assert_eq!(Contact::new(address).display_name(), "Alice");
 }
 
 #[test]

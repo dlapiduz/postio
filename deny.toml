@@ -47,6 +47,11 @@ allow = [
     # Public-domain dedications. `notify` (the config file watcher),
     # `blake3` and `constant_time_eq` are here.
     "CC0-1.0",
+    # Zero-clause BSD: permission to use for any purpose, no conditions at all
+    # -- MIT without even the notice. `quoted_printable`, which `vcard-rs`
+    # uses to read the quoted-printable values older vCard exports carry
+    # (specs/005-contacts R9).
+    "0BSD",
     # File-level copyleft, and the only copyleft in the graph: `cssparser` and
     # `dtoa-short`, both pulled in by the HTML sanitizer's stack. MPL-2.0
     # obliges publishing changes *to those files*; Postio does not modify them,

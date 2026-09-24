@@ -315,13 +315,14 @@ pub async fn seed_large(database: &Store, seed: u64, message_count: usize) -> Se
             })
             .collect();
 
+        let own = own_addresses(&account);
         sql::in_scope(&connection, move |scope| async move {
             for mut message in batch {
                 MessageRepository::new(&scope)
                     .create(&mut message)
                     .await
                     .expect("insert a synthetic message");
-                record_correspondents(&scope, &message).await;
+                record_correspondents(&scope, &message, &own).await;
             }
             Ok::<_, crate::Error>(())
         })
@@ -562,8 +563,23 @@ async fn file_message(
         .thread(&message)
         .await
         .expect("thread a seeded message");
-    record_correspondents(connection, &message).await;
+    let own = match crate::repository::AccountRepository::new(connection)
+        .get(account_id)
+        .await
+    {
+        Ok(Some(account)) => own_addresses(&account),
+        _ => Vec::new(),
+    };
+    record_correspondents(connection, &message, &own).await;
     message.id
+}
+
+/// The addresses a seeded account sends from, which decide "written to" the
+/// way sync decides it (specs/005-contacts R3).
+fn own_addresses(account: &postio_model::Account) -> Vec<postio_model::EmailAddress> {
+    std::iter::once(account.address.clone())
+        .chain(account.identities.iter().map(|i| i.address.clone()))
+        .collect()
 }
 
 /// Remember everyone on `message`, the way a sync pass would.
@@ -578,9 +594,13 @@ async fn file_message(
 /// Not fatal: a sighting that will not record leaves the store's *mail*
 /// perfectly good, and panicking here would turn a completion list into a
 /// broken fixture.
-async fn record_correspondents(connection: &Connection, message: &Message) {
+async fn record_correspondents(
+    connection: &Connection,
+    message: &Message,
+    own: &[postio_model::EmailAddress],
+) {
     if let Err(error) = ContactRepository::new(connection)
-        .record_message(message)
+        .record_message(message, own)
         .await
     {
         tracing::warn!(%error, "could not record a seeded message's correspondents");
@@ -900,7 +920,7 @@ mod tests {
         let connection = database.connect().await.expect("a checked-out connection");
 
         let contacts = ContactRepository::new(&connection)
-            .search(Some(report.account.id), "", 1_000)
+            .people(1_000)
             .await
             .expect("read the seeded correspondents");
 
@@ -924,7 +944,8 @@ mod tests {
         assert!(
             contacts
                 .iter()
-                .any(|contact| senders.contains(&contact.address.normalized())),
+                .flat_map(|person| &person.addresses)
+                .any(|owned| senders.contains(&owned.address.normalized())),
             "the store lists correspondents that never wrote any of the \
              seeded mail"
         );
@@ -936,11 +957,11 @@ mod tests {
         // rows however many messages there are — and the benches and paging
         // fixtures built on it look like an account somebody actually uses.
         let database = test_support::memory().await;
-        let report = seed_large(&database, 9, 500).await;
+        seed_large(&database, 9, 500).await;
         let connection = database.connect().await.expect("a checked-out connection");
 
         let contacts = ContactRepository::new(&connection)
-            .search(Some(report.account.id), "", 1_000)
+            .people(1_000)
             .await
             .expect("read the seeded correspondents");
 

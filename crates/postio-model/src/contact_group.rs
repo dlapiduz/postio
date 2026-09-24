@@ -1,30 +1,26 @@
 //! Contact groups: a named set of people, not a saved search.
 //!
-//! ADR 0007 Q3 is explicit that this is the one place
+//! This is the one place
 //! `ARCHITECTURE.md` §6's "one matching language" does not apply: a saved
 //! search answers *which messages*; a group answers *which people*, and no
-//! query can express "Ada, Grace and Katherine, because I said so".
+//! query can express "Ada, Grace and Katherine, because I said so"
+//! (specs/005-contacts, inherited from the address-book decision's Q3).
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
-use crate::ids::{AccountId, ContactGroupId};
+use crate::ids::ContactGroupId;
 
-/// A named set of contacts.
+/// A named set of people, shared across accounts as people are.
 ///
-/// Expanded into its members' addresses at the moment it is picked in the
-/// composer, never referenced by a group address of its own (ADR 0007 Q3) —
+/// Expanded into its members' preferred addresses at the moment it is picked
+/// in the composer, never referenced by a group address of its own —
 /// there is no `family@` to put in a `To:` header, and pretending otherwise
 /// would mean a draft whose recipients change between saving and sending.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ContactGroup {
     /// Local id.
     pub id: ContactGroupId,
-    /// Account this group belongs to, or `None` when it is shared —
-    /// matching `Contact::account_id`, and defaulting the same way (ADR
-    /// 0007 Q5): a group the user creates is shared unless they say
-    /// otherwise.
-    pub account_id: Option<AccountId>,
     /// Display name.
     pub name: String,
     /// vCard `KIND:group` UID, when this group came from or round-trips
@@ -36,14 +32,9 @@ pub struct ContactGroup {
 
 impl ContactGroup {
     /// Builds an unpersisted group.
-    pub fn new(
-        account_id: Option<AccountId>,
-        name: impl Into<String>,
-        created_at: DateTime<Utc>,
-    ) -> Self {
+    pub fn new(name: impl Into<String>, created_at: DateTime<Utc>) -> Self {
         Self {
             id: ContactGroupId::UNASSIGNED,
-            account_id,
             name: name.into(),
             uid: None,
             created_at,
@@ -57,7 +48,7 @@ mod tests {
 
     #[test]
     fn a_new_group_carries_no_vcard_link_until_one_is_given() {
-        let group = ContactGroup::new(Some(AccountId::new(1)), "Book club", Utc::now());
+        let group = ContactGroup::new("Book club", Utc::now());
         assert_eq!(group.uid, None);
     }
 }

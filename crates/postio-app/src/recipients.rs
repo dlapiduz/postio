@@ -3,40 +3,40 @@
 //! The composer asks for candidates on every keystroke in `To`, `Cc` and
 //! `Bcc`, synchronously, on the GTK thread. That used to be a fresh store
 //! connection, a groups read, one members read per matching group, and a
-//! contacts query of five `LIKE`s with a leading wildcard -- a scan of the
-//! table, per key, on the thread that draws. The directory is small (the
-//! search surface already holds the same list for `@`) and changes slowly,
-//! so it is read off the thread whenever the composer opens and each key is
-//! answered by [`Directory::suggest`], which is arithmetic.
+//! contacts query -- per key, on the thread that draws. The directory is
+//! small and changes slowly, so it is read off the thread whenever the
+//! composer opens and each key is answered by [`Directory::suggest`], which
+//! is arithmetic.
 //!
-//! The matching rules are the ones `ContactRepository::search` applied, kept
-//! so that nothing about *what* is offered changed: a prefix of the address,
-//! of the contact's name or the address's display name, or of any word in
-//! either name; mail-sourced contacts after the ones the user made; then the
-//! order the store read them in -- most recently seen first.
+//! What is offered is a *person* (specs/005-contacts): once per address they
+//! own, preferred address first, every one under the person's one name
+//! (FR-030). A person completes on a prefix of any of their addresses, or of
+//! their name or any word in it; the people the user made come before the
+//! ones only the mail knows, then the order the store ranked them in -- most
+//! recently seen first.
 
 use postio_gtk::composer::RecipientCandidate;
 use postio_model::{Contact, EmailAddress};
 
-/// Every contact and group a composer can complete, as last read.
+/// Every person and group a composer can complete, as last read.
 #[derive(Debug, Default, Clone)]
 pub struct Directory {
     /// Named groups with their members' addresses, in the store's order.
     groups: Vec<(String, Vec<EmailAddress>)>,
-    /// Contacts in the order the store ranks them.
-    contacts: Vec<Contact>,
+    /// Live people, in the order the store ranks them.
+    people: Vec<Contact>,
 }
 
 impl Directory {
-    /// A directory over `groups` and `contacts`, which arrive in the order
+    /// A directory over `groups` and `people`, which arrive in the order
     /// they are to be offered.
-    pub fn new(groups: Vec<(String, Vec<EmailAddress>)>, contacts: Vec<Contact>) -> Self {
-        Self { groups, contacts }
+    pub fn new(groups: Vec<(String, Vec<EmailAddress>)>, people: Vec<Contact>) -> Self {
+        Self { groups, people }
     }
 
     /// At most `limit` candidates for `prefix`: groups whose name begins
     /// with it first -- a group is a deliberate choice the user is likelier
-    /// typing towards -- then contacts.
+    /// typing towards -- then people, one candidate per address.
     pub fn suggest(&self, prefix: &str, limit: usize) -> Vec<RecipientCandidate> {
         let prefix = prefix.trim().to_lowercase();
         let mut candidates: Vec<RecipientCandidate> = self
@@ -53,28 +53,29 @@ impl Directory {
             })
             .take(limit)
             .collect();
-        if candidates.len() < limit {
-            candidates.extend(
-                self.contacts
-                    .iter()
-                    .filter(|contact| !contact.suppressed && matches(contact, &prefix))
-                    .take(limit - candidates.len())
-                    .map(|contact| RecipientCandidate::Contact(resolved_address(contact))),
-            );
-        }
+        candidates.extend(
+            self.people
+                .iter()
+                .filter(|person| matches(person, &prefix))
+                .flat_map(offered_addresses)
+                .map(RecipientCandidate::Contact),
+        );
+        candidates.truncate(limit);
         candidates
     }
 }
 
-/// Whether `contact` completes `prefix`, which is already lowercase.
-fn matches(contact: &Contact, prefix: &str) -> bool {
-    if prefix.is_empty() || contact.address.address.to_lowercase().starts_with(prefix) {
-        return true;
-    }
-    [contact.name.as_deref(), contact.address.name.as_deref()]
-        .into_iter()
-        .flatten()
-        .any(|name| begins_a_word(&name.to_lowercase(), prefix))
+/// Whether `person` completes `prefix`, which is already lowercase.
+fn matches(person: &Contact, prefix: &str) -> bool {
+    prefix.is_empty()
+        || person
+            .addresses
+            .iter()
+            .any(|owned| owned.address.address.to_lowercase().starts_with(prefix))
+        || [person.name.as_deref(), person.seen_name.as_deref()]
+            .into_iter()
+            .flatten()
+            .any(|name| begins_a_word(&name.to_lowercase(), prefix))
 }
 
 /// Whether `prefix` begins `text` or any space-separated word in it.
@@ -85,24 +86,58 @@ fn begins_a_word(text: &str, prefix: &str) -> bool {
             .any(|(at, _)| text[at + 1..].starts_with(prefix))
 }
 
-/// The address a contact completes to: its own name when it has one, the
-/// address's display name otherwise.
-pub fn resolved_address(contact: &Contact) -> EmailAddress {
-    let name = contact
-        .name
-        .clone()
-        .or_else(|| contact.address.name.clone());
-    EmailAddress::new(name, contact.address.address.clone())
+/// Every address a person offers, preferred first (the store's order), each
+/// under the person's one name.
+fn offered_addresses(person: &Contact) -> Vec<EmailAddress> {
+    let name = person_name(person);
+    person
+        .addresses
+        .iter()
+        .map(|owned| EmailAddress::new(name.clone(), owned.address.address.clone()))
+        .collect()
+}
+
+/// The address a group member expands to: their preferred one (FR-041).
+pub fn preferred_address(person: &Contact) -> Option<EmailAddress> {
+    person
+        .preferred_address()
+        .map(|owned| EmailAddress::new(person_name(person), owned.address.address.clone()))
+}
+
+/// A person's name for a recipient header -- the one the user set, else the
+/// one the mail gave them -- when they have one beyond their address.
+fn person_name(person: &Contact) -> Option<String> {
+    [person.name.as_deref(), person.seen_name.as_deref()]
+        .into_iter()
+        .flatten()
+        .map(str::trim)
+        .find(|name| !name.is_empty())
+        .map(str::to_owned)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use postio_model::{AddressId, ContactAddress, ContactId};
 
-    fn contact(name: Option<&str>, address: &str) -> Contact {
-        let mut contact = Contact::new(EmailAddress::new(None::<String>, address));
-        contact.name = name.map(str::to_owned);
-        contact
+    fn owned(id: i64, address: &str) -> ContactAddress {
+        ContactAddress {
+            id: AddressId::new(id),
+            address: EmailAddress::new(None::<String>, address),
+            times_seen: 0,
+            last_seen_at: None,
+            written: 0,
+        }
+    }
+
+    fn person(id: i64, name: Option<&str>, addresses: &[&str]) -> Contact {
+        let mut person = Contact::new(owned(id * 10, addresses[0]));
+        person.id = ContactId::new(id);
+        person.name = name.map(str::to_owned);
+        for (i, address) in addresses.iter().enumerate().skip(1) {
+            person.addresses.push(owned(id * 10 + i as i64, address));
+        }
+        person
     }
 
     fn addresses(candidates: &[RecipientCandidate]) -> Vec<String> {
@@ -125,15 +160,15 @@ mod tests {
                 ("Ghosts".to_owned(), Vec::new()),
             ],
             vec![
-                contact(Some("Grace Hopper"), "grace@example.com"),
-                contact(Some("Ada Lovelace"), "ada@example.com"),
-                contact(None, "gh-bot@example.com"),
+                person(1, Some("Grace Hopper"), &["grace@example.com"]),
+                person(2, Some("Ada Lovelace"), &["ada@example.com"]),
+                person(3, None, &["gh-bot@example.com"]),
             ],
         )
     }
 
     #[test]
-    fn a_prefix_of_the_address_the_name_or_a_word_in_it_completes() {
+    fn a_prefix_of_an_address_the_name_or_a_word_in_it_completes() {
         let directory = directory();
         assert_eq!(
             addresses(&directory.suggest("ada@", 8)),
@@ -176,21 +211,21 @@ mod tests {
     }
 
     #[test]
-    fn a_suppressed_contact_is_not_offered() {
-        let mut deleted = contact(Some("Ada Lovelace"), "ada@example.com");
-        deleted.suppressed = true;
-        let directory = Directory::new(Vec::new(), vec![deleted]);
-        assert!(directory.suggest("ada", 8).is_empty());
-    }
-
-    #[test]
-    fn a_contact_completes_to_its_own_name_before_the_address_name() {
-        let mut named = contact(Some("Ada Lovelace"), "ada@example.com");
-        named.address.name = Some("A. King".to_owned());
-        let directory = Directory::new(Vec::new(), vec![named]);
-        let [RecipientCandidate::Contact(address)] = &directory.suggest("ada", 8)[..] else {
-            panic!("one contact");
-        };
-        assert_eq!(address.name.as_deref(), Some("Ada Lovelace"));
+    fn a_person_is_offered_once_per_address_preferred_first_under_one_name() {
+        // FR-030: the second address completes too, and both carry the name
+        // the person has -- not whatever each address's mail said.
+        let mut ada = person(2, None, &["ada@work.example", "ada@home.example"]);
+        ada.seen_name = Some("Ada Lovelace".to_owned());
+        let directory = Directory::new(Vec::new(), vec![ada]);
+        let offered = directory.suggest("ada@home", 8);
+        assert_eq!(
+            addresses(&offered),
+            vec!["ada@work.example", "ada@home.example"],
+            "a match on any address offers the person, preferred address first"
+        );
+        assert!(offered.iter().all(|candidate| matches!(
+            candidate,
+            RecipientCandidate::Contact(address) if address.name.as_deref() == Some("Ada Lovelace")
+        )));
     }
 }

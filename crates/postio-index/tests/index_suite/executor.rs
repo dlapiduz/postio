@@ -1251,8 +1251,10 @@ async fn sender_affinity_from_contacts_reaches_the_ranking() {
     .await;
     connection
         .execute(
-            "INSERT INTO contacts (account_id, address, address_normalized, times_seen)
-             VALUES (?1, ?2, ?2, 80)",
+            // What sync would have recorded for a sender seen eighty times in
+            // this account (specs/005-contacts R2).
+            "INSERT INTO contact_sightings (address_id, account_id, times_seen)
+             SELECT id, ?1, 80 FROM addresses WHERE address_normalized = ?2",
             bind![account.id.get(), "ada@example.com"],
         )
         .await

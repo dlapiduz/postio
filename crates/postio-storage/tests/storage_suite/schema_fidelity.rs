@@ -16,7 +16,7 @@ use postio_storage::Connection;
 use postio_storage::sql::bind;
 
 use postio_model::{
-    Account, Attachment, AuthMethod, BodyState, Contact, Disposition, Draft, DraftKind, DraftState,
+    Account, Attachment, AuthMethod, BodyState, Disposition, Draft, DraftKind, DraftState,
     EmailAddress, Flag, FlagSet, Label, Mailbox, MailboxRole, Message, RfcMessageId, Thread,
 };
 
@@ -728,41 +728,164 @@ async fn labels_apply_to_many_messages_and_cascade() {
 }
 
 #[tokio::test]
-async fn a_contact_accumulates_sightings() {
+async fn a_person_owns_addresses_and_each_address_keeps_its_own_sightings() {
+    // specs/005-contacts R1/R2: the owner is a column on `addresses`, the
+    // mail's evidence is per (address, account), and the person carries
+    // aggregates. Hand-written SQL proves the columns exist and hold what
+    // they say; the repository is what keeps them in step.
     let (_store, connection) = migrated().await;
-    let mut contact = Contact::new(EmailAddress::new(Some("Alice"), "Alice@Example.com"));
-    contact.record_seen(Utc.with_ymd_and_hms(2026, 2, 3, 0, 0, 0).unwrap());
+    let account = store_account(
+        &connection,
+        &Account::new("Work", EmailAddress::new(None::<String>, "me@example.com")),
+    )
+    .await;
+    let work = address_id(
+        &connection,
+        &EmailAddress::new(None::<String>, "Ada@Work.example"),
+    )
+    .await;
+    let home = address_id(
+        &connection,
+        &EmailAddress::new(None::<String>, "ada@home.example"),
+    )
+    .await;
 
     connection
         .execute(
-            "INSERT INTO contacts (account_id, name, address, address_name,
-                                   address_normalized, times_seen, last_seen_at)
-             VALUES (NULL, ?1, ?2, ?3, ?4, ?5, ?6)",
+            "INSERT INTO contacts (name, organization, note, source, state,
+                                   preferred_address, seen_name, sort_key, name_key,
+                                   times_seen, last_seen_at, written, created_at, updated_at)
+             VALUES ('Ada Lovelace', 'Analytical', 'a note', 'user', 'live',
+                     ?1, 'Ada', 'ada lovelace', 'ada lovelace', 5, ?2, 1, 1, 1)",
             bind![
-                contact.name,
-                contact.address.address,
-                contact.address.name,
-                contact.address.normalized(),
-                contact.times_seen,
-                contact.last_seen_at.map(millis),
+                home,
+                millis(Utc.with_ymd_and_hms(2026, 2, 3, 0, 0, 0).unwrap())
             ],
         )
         .await
-        .expect("insert contact");
+        .expect("insert person");
+    let person: i64 = postio_storage::sql::one(&connection, "SELECT id FROM contacts", (), |row| {
+        postio_storage::sql::RowExt::col(row, 0)
+    })
+    .await
+    .expect("the person");
+    connection
+        .execute(
+            "UPDATE addresses SET contact_id = ?1 WHERE id IN (?2, ?3)",
+            bind![person, work, home],
+        )
+        .await
+        .expect("assign owners");
+    for (address, seen, written) in [(work, 4, 1), (home, 1, 0)] {
+        connection
+            .execute(
+                "INSERT INTO contact_sightings
+                     (address_id, account_id, times_seen, last_seen_at, last_name, times_written)
+                 VALUES (?1, ?2, ?3, 0, 'Ada', ?4)",
+                bind![address, account, seen, written],
+            )
+            .await
+            .expect("insert sighting");
+    }
+    connection
+        .execute(
+            "INSERT INTO contact_terms (term, contact_id) VALUES ('ada', ?1), ('lovelace', ?1)",
+            bind![person],
+        )
+        .await
+        .expect("insert terms");
 
-    let (normalized, times_seen): (String, i64) = postio_storage::sql::one(
+    let owned: i64 = postio_storage::sql::one(
         &connection,
-        "SELECT address_normalized, times_seen FROM contacts",
-        (),
-        |row| {
-            Ok((
-                postio_storage::sql::RowExt::col(row, 0)?,
-                postio_storage::sql::RowExt::col(row, 1)?,
-            ))
-        },
+        "SELECT count(*) FROM addresses WHERE contact_id = ?1",
+        bind![person],
+        |row| postio_storage::sql::RowExt::col(row, 0),
     )
     .await
-    .expect("read contact");
-    assert_eq!(normalized, "alice@example.com");
-    assert_eq!(times_seen, 1);
+    .expect("count owned");
+    assert_eq!(owned, 2, "one person owns both addresses");
+
+    let seen: i64 = postio_storage::sql::one(
+        &connection,
+        "SELECT sum(s.times_seen) FROM contact_sightings s
+           JOIN addresses a ON a.id = s.address_id WHERE a.contact_id = ?1",
+        bind![person],
+        |row| postio_storage::sql::RowExt::col(row, 0),
+    )
+    .await
+    .expect("sum sightings");
+    assert_eq!(seen, 5, "each address's sightings stay with the address");
+
+    // A state the schema does not know is refused rather than stored.
+    let refused = connection
+        .execute(
+            "INSERT INTO contacts (source, state, sort_key, name_key, created_at, updated_at)
+             VALUES ('mail', 'archived', 'x', 'x', 0, 0)",
+            (),
+        )
+        .await;
+    assert!(refused.is_err(), "state is one of live, deleted, merged");
+
+    // A second sighting row for the same address and account is refused:
+    // the evidence has one home per pair.
+    let duplicate = connection
+        .execute(
+            "INSERT INTO contact_sightings (address_id, account_id, times_seen) VALUES (?1, ?2, 1)",
+            bind![work, account],
+        )
+        .await;
+    assert!(
+        duplicate.is_err(),
+        "one sighting row per (address, account)"
+    );
+}
+
+#[tokio::test]
+async fn groups_are_shared_and_their_names_are_unique_ignoring_case() {
+    let (_store, connection) = migrated().await;
+    connection
+        .execute(
+            "INSERT INTO contact_groups (name, created_at) VALUES ('Family', 0)",
+            (),
+        )
+        .await
+        .expect("a group without an account");
+    let clash = connection
+        .execute(
+            "INSERT INTO contact_groups (name, created_at) VALUES ('family', 0)",
+            (),
+        )
+        .await;
+    assert!(clash.is_err(), "group:family must name one group");
+}
+
+#[tokio::test]
+async fn a_dismissed_join_is_one_row_per_address_pair() {
+    let (_store, connection) = migrated().await;
+    let a = address_id(
+        &connection,
+        &EmailAddress::new(None::<String>, "a@example.com"),
+    )
+    .await;
+    let b = address_id(
+        &connection,
+        &EmailAddress::new(None::<String>, "b@example.com"),
+    )
+    .await;
+    for table in ["contact_join_dismissals", "contact_join_candidates"] {
+        connection
+            .execute(
+                &format!("INSERT INTO {table} (address_low, address_high) VALUES (?1, ?2)"),
+                bind![a.min(b), a.max(b)],
+            )
+            .await
+            .unwrap_or_else(|e| panic!("insert into {table}: {e}"));
+        let again = connection
+            .execute(
+                &format!("INSERT INTO {table} (address_low, address_high) VALUES (?1, ?2)"),
+                bind![a.min(b), a.max(b)],
+            )
+            .await;
+        assert!(again.is_err(), "{table} holds a pair once");
+    }
 }

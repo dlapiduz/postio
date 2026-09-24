@@ -302,8 +302,10 @@ fn wait_for_first_page(window: &Window) -> bool {
 /// Every address is a reserved domain, per CLAUDE.md.
 fn sample_contacts() -> Vec<postio_model::Contact> {
     let person = |name: &str, address: &str, seen: u32| {
-        let mut contact =
-            postio_model::Contact::new(postio_model::EmailAddress::new(Some(name), address));
+        let mut contact = postio_model::Contact::new(postio_model::ContactAddress::new(
+            postio_model::AddressId::new(1),
+            postio_model::EmailAddress::new(Some(name), address),
+        ));
         contact.times_seen = seen;
         contact
     };

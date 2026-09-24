@@ -1298,15 +1298,19 @@ impl Plan {
     /// The statement `hydrate` runs, with `placeholders` standing in for the
     /// `IN` list. Its own function so a test can hold its query plan still.
     fn hydrate_sql(&self, placeholders: &str) -> String {
-        // Sender affinity is per account, or shared when `account_id IS
-        // NULL`. Scoped to one account, only that account's sightings count;
-        // unified, every account's do — which is the right answer rather than
-        // a shortcut, since the question "how often do I hear from this
-        // person" is about the person and not about which inbox they landed
-        // in.
+        // Sender affinity. Scoped to one account, it is that account's
+        // evidence about the sender's address -- one `contact_sightings` row,
+        // by its whole key. Unified, it is the person's: every account's
+        // sightings of every address they own, which the person row keeps
+        // summed (specs/005-contacts R2) -- the question "how often do I hear
+        // from this person" is about the person and not about which inbox or
+        // which of their addresses the mail came through.
         let affinity = match self.account.account() {
-            Some(_) => "AND (c.account_id = ? OR c.account_id IS NULL)",
-            None => "",
+            Some(_) => {
+                "(SELECT s.times_seen FROM contact_sightings s
+                    WHERE s.address_id = a.id AND s.account_id = ?)"
+            }
+            None => "(SELECT c.times_seen FROM contacts c WHERE c.id = a.contact_id)",
         };
         // The contacts probe compares against `sub.from_normalized` — a
         // plain column of the row source — and never against a nested
@@ -1327,19 +1331,16 @@ impl Plan {
         // and two thirds of it was asking the same question again.
         //
         // So the subquery finds the sender's `recipients` row once, and the
-        // outer query joins it and `addresses` by primary key. The contacts
-        // probe still compares against a plain column -- now the joined
-        // `a.address_normalized` rather than a nested subquery -- which is
-        // what keeps it on `idx_contacts_account_address` rather than walking
-        // every contact per candidate (#746, and
+        // outer query joins it and `addresses` by primary key. The affinity
+        // probe compares against a plain column -- the joined `a.id` or
+        // `a.contact_id` rather than a nested subquery -- which is what keeps
+        // it a key lookup rather than a walk per candidate (#746, and
         // `hydrate_probes_contacts_by_address_key` pins it).
         format!(
             "SELECT
                  sub.id, sub.thread_id, sub.mailbox_id, sub.subject, sub.received_at,
                  sender.name AS from_name, a.address AS from_address,
-                 (SELECT max(c.times_seen) FROM contacts c
-                    WHERE c.address_normalized = a.address_normalized
-                      {affinity}) AS sender_times_seen,
+                 {affinity} AS sender_times_seen,
                  0 AS unused
              FROM (SELECT
                      m.id, m.thread_id, m.mailbox_id, m.subject, m.received_at,
@@ -1519,14 +1520,19 @@ fn filter_condition(filter: &Filter) -> (String, Vec<turso::Value>) {
         // An unresolvable group name is an empty member set and therefore
         // matches nothing, the same "never everything" rule `Account` and
         // `In` follow just above.
+        //
+        // A member is a person, so the set is every address any live member
+        // owns, reached through `addresses.contact_id` and matched against
+        // `recipients.address_id` by key rather than by comparing strings
+        // (specs/005-contacts FR-042). A deleted member widens nothing.
         Filter::Group(value) => (
             "m.id IN (SELECT r.message_id FROM recipients r \
-             JOIN addresses a ON a.id = r.address_id \
              WHERE r.kind IN ('from', 'to', 'cc', 'bcc') \
-               AND a.address_normalized IN ( \
-                 SELECT c.address_normalized FROM contact_group_members gm \
-                 JOIN contacts c ON c.id = gm.contact_id \
-                 JOIN contact_groups g ON g.id = gm.group_id \
+               AND r.address_id IN ( \
+                 SELECT a.id FROM contact_groups g \
+                 JOIN contact_group_members gm ON gm.group_id = g.id \
+                 JOIN contacts c ON c.id = gm.contact_id AND c.state = 'live' \
+                 JOIN addresses a ON a.contact_id = c.id \
                  WHERE lower(g.name) = lower(?)))"
                 .to_string(),
             vec![turso::Value::Text(value.clone())],
@@ -1842,21 +1848,21 @@ mod tests {
         .await
         .expect("explain");
 
-        // Either the scoped index or the shared one, and either the
-        // constraint's own index or its read companion: the claim is that the
-        // probe is *keyed on the address*, not which of the four keys it.
-        // The companions exist because this engine's planner will not read
-        // through a partial index -- see
-        // `turso_capabilities.rs::the_planner_does_not_use_a_partial_index`.
+        // Scoped to one account, affinity is that account's evidence about
+        // the sender's address: one `contact_sightings` row, reached by its
+        // whole primary key (specs/005-contacts R2). The claim is that the
+        // probe is *keyed on the address*, per candidate, never a walk.
         assert!(
-            steps
-                .iter()
-                .any(|step| step.contains("idx_contacts_") && step.contains("address_normalized=?")),
-            "the contacts probe is not keyed on the address; plan:\n{steps:#?}"
+            steps.iter().any(|step| step.contains("contact_sightings")
+                && step.contains("address_id=?")
+                && step.contains("account_id=?")),
+            "the affinity probe is not keyed on the address and account; plan:\n{steps:#?}"
         );
         assert!(
-            !steps.iter().any(|step| step.starts_with("SCAN c")),
-            "the contacts table is being scanned per candidate; plan:\n{steps:#?}"
+            !steps
+                .iter()
+                .any(|step| step.starts_with("SCAN") && step.contains("contact")),
+            "a contacts table is being scanned per candidate; plan:\n{steps:#?}"
         );
     }
 

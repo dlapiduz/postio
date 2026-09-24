@@ -1,5 +1,6 @@
-//! `group:` — ADR 0007 Q3: "from or to any member", composing with every
-//! other operator the way `list:` and `in:` do.
+//! `group:` — "from or to any member", composing with every other operator
+//! the way `list:` and `in:` do (specs/005-contacts FR-042). A member is a
+//! person, so "any member" means any address any member owns.
 
 use super::executor::at;
 
@@ -16,6 +17,7 @@ struct World {
     connection: postio_storage::Checkout,
     from_member: Message,
     to_member: Message,
+    from_second_address: Message,
     unrelated: Message,
 }
 
@@ -36,22 +38,23 @@ async fn world() -> World {
 
     let ada = contacts
         .create(
-            Some(account.id),
-            &EmailAddress::new(Some("Ada"), "ada@example.com"),
-            None,
+            Some("Ada"),
+            &[
+                EmailAddress::new(None::<String>, "ada@example.com"),
+                EmailAddress::new(None::<String>, "ada@home.example"),
+            ],
         )
         .await
         .expect("create ada");
     contacts
         .create(
-            Some(account.id),
-            &EmailAddress::new(Some("Quinn"), "quinn@example.net"),
-            None,
+            Some("Quinn"),
+            &[EmailAddress::new(None::<String>, "quinn@example.net")],
         )
         .await
         .expect("create quinn");
 
-    let mut family = postio_model::ContactGroup::new(Some(account.id), "family", at(0));
+    let mut family = postio_model::ContactGroup::new("family", at(0));
     groups.create(&mut family).await.expect("create group");
     groups.add_member(family.id, ada).await.expect("add ada");
 
@@ -72,6 +75,15 @@ async fn world() -> World {
         .await
         .expect("create");
 
+    // From ada's other address: a member is a person, not one address.
+    let mut from_second_address = Message::new(account.id, inbox, at(6));
+    from_second_address.from = vec![EmailAddress::new(None::<String>, "Ada@Home.example")];
+    from_second_address.subject = Some("Evening note".into());
+    MessageRepository::new(&connection)
+        .create(&mut from_second_address)
+        .await
+        .expect("create");
+
     let mut unrelated = Message::new(account.id, inbox, at(7));
     unrelated.from = vec![EmailAddress::new(Some("Quinn"), "quinn@example.net")];
     unrelated.subject = Some("From Quinn".into());
@@ -85,6 +97,7 @@ async fn world() -> World {
         connection,
         from_member,
         to_member,
+        from_second_address,
         unrelated,
     }
 }
@@ -112,12 +125,16 @@ async fn group_matches_a_message_from_or_to_any_member() {
     let world = world().await;
     let mut hits = run(&world.connection, "group:family").await;
     hits.sort();
-    let mut expected = vec![world.from_member.id, world.to_member.id];
+    let mut expected = vec![
+        world.from_member.id,
+        world.to_member.id,
+        world.from_second_address.id,
+    ];
     expected.sort();
     assert_eq!(
         hits, expected,
-        "a message from a member and one to a member both match; the one \
-         with neither does not"
+        "a message from a member, one to a member, and one from the member's \
+         other address all match; the one with none of them does not"
     );
 }
 
@@ -144,5 +161,21 @@ async fn group_composes_with_a_text_search() {
         hits,
         vec![world.from_member.id],
         "group: narrows the same way any other filter does"
+    );
+}
+
+#[tokio::test]
+async fn a_deleted_member_no_longer_widens_the_group() {
+    let world = world().await;
+    postio_storage::sql::execute(
+        &world.connection,
+        "UPDATE contacts SET state = 'deleted' WHERE name = 'Ada'",
+        (),
+    )
+    .await
+    .expect("delete ada");
+    assert!(
+        run(&world.connection, "group:family").await.is_empty(),
+        "a deleted person is offered nowhere, and a group is no exception"
     );
 }

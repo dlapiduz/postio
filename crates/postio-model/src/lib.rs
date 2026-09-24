@@ -80,7 +80,7 @@ pub use account::{
 };
 pub use address::EmailAddress;
 pub use attachment::{Attachment, Disposition};
-pub use contact::{Contact, ContactSource};
+pub use contact::{Contact, ContactAddress, ContactSource, ContactState};
 pub use contact_group::ContactGroup;
 pub use draft::{Draft, DraftKind, DraftState};
 pub use flag::{Flag, FlagSet};

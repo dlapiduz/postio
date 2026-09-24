@@ -259,13 +259,15 @@ async fn a_full_sync_records_every_correspondent_as_a_contact() {
         .await
         .expect("initial sync");
 
-    let contacts = ContactRepository::new(&connection)
-        .list(Some(account_id))
+    let _ = account_id;
+    let people = ContactRepository::new(&connection)
+        .people(10_000)
         .await
-        .expect("list contacts");
-    let ada = contacts
+        .expect("list people");
+    let ada = people
         .iter()
-        .find(|contact| contact.address.normalized() == "ada@example.com")
+        .flat_map(|person| &person.addresses)
+        .find(|owned| owned.address.normalized() == "ada@example.com")
         .expect("the sender of all three messages must be a recorded contact");
     assert_eq!(
         ada.times_seen, 3,

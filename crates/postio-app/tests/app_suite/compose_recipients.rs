@@ -48,21 +48,14 @@ pub fn typing_a_recipient_opens_no_connections_and_still_completes() {
         let database = test_support::memory().await;
         seed_small(&database, 11).await;
         {
-            // A contact the test names, rather than one the seed happens to
-            // hold: the account's own, so completion offers it.
+            // A person the test names, rather than one the seed happens to
+            // hold. People are shared across accounts, so completion in the
+            // seed's account offers them.
             let connection = database.connect().await.expect("checkout");
-            let account = postio_storage::repository::AccountRepository::new(&connection)
-                .list()
-                .await
-                .expect("accounts")
-                .into_iter()
-                .next()
-                .expect("the seed made an account");
             ContactRepository::new(&connection)
                 .create(
-                    Some(account.id),
-                    &EmailAddress::new(None::<String>, "wilhelmina@example.com"),
                     Some("Wilhelmina Quartz"),
+                    &[EmailAddress::new(None::<String>, "wilhelmina@example.com")],
                 )
                 .await
                 .expect("create the contact");

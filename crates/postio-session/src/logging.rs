@@ -240,6 +240,7 @@ const OURS: &[&str] = &[
     "postio_sync",
     "postio_test_support",
     "postio_ui",
+    "postio_vcard",
     "io_imap",
 ];
 

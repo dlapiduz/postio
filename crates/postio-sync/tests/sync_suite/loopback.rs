@@ -308,15 +308,16 @@ async fn a_rebuild_that_re_reads_known_messages_does_not_double_count_their_corr
     let backend = backend_for(&server).await;
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
-    let (account_id, inbox, _archive) = local(&connection).await;
+    let (_account_id, inbox, _archive) = local(&connection).await;
     bootstrap(&connection, &backend, &inbox).await;
 
     let seen_before: Vec<(String, u32)> = ContactRepository::new(&connection)
-        .list(Some(account_id))
+        .people(10_000)
         .await
-        .expect("list contacts")
+        .expect("list people")
         .into_iter()
-        .map(|contact| (contact.address.normalized(), contact.times_seen))
+        .flat_map(|person| person.addresses)
+        .map(|owned| (owned.address.normalized(), owned.times_seen))
         .collect();
     assert!(
         !seen_before.is_empty(),
@@ -335,11 +336,12 @@ async fn a_rebuild_that_re_reads_known_messages_does_not_double_count_their_corr
     );
 
     let seen_after: Vec<(String, u32)> = ContactRepository::new(&connection)
-        .list(Some(account_id))
+        .people(10_000)
         .await
-        .expect("list contacts")
+        .expect("list people")
         .into_iter()
-        .map(|contact| (contact.address.normalized(), contact.times_seen))
+        .flat_map(|person| person.addresses)
+        .map(|owned| (owned.address.normalized(), owned.times_seen))
         .collect();
     assert_eq!(
         seen_before, seen_after,

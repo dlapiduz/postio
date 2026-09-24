@@ -103,11 +103,14 @@ async fn a_committed_batch_is_stored_threaded_and_its_correspondents_recorded() 
     // Recorded: the correspondent list is built by the sync path and nothing
     // else, so a batch that writes mail without recording anyone leaves the
     // finder and the composer's completion empty however much mail arrives.
-    let contacts = ContactRepository::new(&connection)
-        .list(Some(account.id))
+    let addresses: Vec<String> = ContactRepository::new(&connection)
+        .people(10_000)
         .await
-        .expect("list contacts");
-    let addresses: Vec<String> = contacts.iter().map(|c| c.address.normalized()).collect();
+        .expect("list people")
+        .iter()
+        .flat_map(|person| &person.addresses)
+        .map(|owned| owned.address.normalized())
+        .collect();
     assert!(
         addresses.contains(&"ada@example.com".to_string()),
         "the sender was recorded: {addresses:?}"
@@ -161,13 +164,17 @@ async fn a_uid_already_known_is_written_again_but_its_correspondents_are_not() {
 }
 
 /// How many times `address` has been seen for `account`.
-async fn sightings_of(connection: &Connection, account: &Account, address: &str) -> u32 {
+async fn sightings_of(connection: &Connection, _account: &Account, address: &str) -> u32 {
     ContactRepository::new(connection)
-        .list(Some(account.id))
+        .by_address(address)
         .await
-        .expect("list contacts")
-        .iter()
-        .find(|contact| contact.address.normalized() == address)
-        .map(|contact| contact.times_seen)
+        .expect("look the address up")
+        .and_then(|person| {
+            person
+                .addresses
+                .into_iter()
+                .find(|owned| owned.address.normalized() == address)
+        })
+        .map(|owned| owned.times_seen)
         .unwrap_or(0)
 }

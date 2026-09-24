@@ -30,37 +30,32 @@ use crate::drain::Result;
 ///
 /// A correspondent list where the account's own address is the top hit is
 /// noise: it turns up whenever the account is cc'd on its own thread, and as
-/// the sender of everything filed in Sent. `record_message` has no way to
-/// know which address is "ours" — it only sees one message at a time — so
-/// the exclusion happens here, against every address `account` can send as.
+/// the sender of everything filed in Sent. The same addresses are what make a
+/// message the user's own, and so what marks its recipients as written to
+/// (specs/005-contacts R3) — which is why they are handed down rather than
+/// stripped here: stripping the sender first would leave nothing to tell a
+/// sent message from a received one.
 pub(crate) async fn record(
     connection: &Connection,
     account: &Account,
     message: &Message,
 ) -> Result<()> {
-    let is_own = |address: &EmailAddress| {
-        let normalized = address.normalized();
-        account.address.normalized() == normalized
-            || account
-                .identities
-                .iter()
-                .any(|identity| identity.address.normalized() == normalized)
-    };
-
-    let mut trimmed = message.clone();
-    trimmed.from.retain(|address| !is_own(address));
-    if trimmed.sender.as_ref().is_some_and(&is_own) {
-        trimmed.sender = None;
-    }
-    trimmed.reply_to.retain(|address| !is_own(address));
-    trimmed.to.retain(|address| !is_own(address));
-    trimmed.cc.retain(|address| !is_own(address));
-    trimmed.bcc.retain(|address| !is_own(address));
-
     ContactRepository::new(connection)
-        .record_message(&trimmed)
+        .record_message(message, &own_addresses(account))
         .await?;
     Ok(())
+}
+
+/// Every address `account` sends as: its own and each identity's.
+fn own_addresses(account: &Account) -> Vec<EmailAddress> {
+    std::iter::once(account.address.clone())
+        .chain(
+            account
+                .identities
+                .iter()
+                .map(|identity| identity.address.clone()),
+        )
+        .collect()
 }
 
 #[cfg(test)]
@@ -89,6 +84,18 @@ mod tests {
         message
     }
 
+    /// Every address the store now attributes to a person, normalised.
+    async fn known(connection: &Connection) -> Vec<String> {
+        ContactRepository::new(connection)
+            .people(1_000)
+            .await
+            .expect("people")
+            .iter()
+            .flat_map(|person| &person.addresses)
+            .map(|owned| owned.address.normalized())
+            .collect()
+    }
+
     #[tokio::test]
     async fn every_real_correspondent_is_recorded() {
         let database = test_support::memory().await;
@@ -100,23 +107,10 @@ mod tests {
             .await
             .expect("record");
 
-        let contacts = ContactRepository::new(&connection)
-            .list(Some(account.id))
-            .await
-            .expect("list");
-        let addresses: Vec<String> = contacts.iter().map(|c| c.address.normalized()).collect();
-        assert!(
-            addresses.contains(&"ada@example.com".to_string()),
-            "{addresses:?}"
-        );
-        assert!(
-            addresses.contains(&"bob@example.com".to_string()),
-            "{addresses:?}"
-        );
-        assert!(
-            addresses.contains(&"carol@example.com".to_string()),
-            "{addresses:?}"
-        );
+        let addresses = known(&connection).await;
+        for expected in ["ada@example.com", "bob@example.com", "carol@example.com"] {
+            assert!(addresses.contains(&expected.to_string()), "{addresses:?}");
+        }
     }
 
     #[tokio::test]
@@ -130,15 +124,11 @@ mod tests {
             .await
             .expect("record");
 
-        let contacts = ContactRepository::new(&connection)
-            .list(Some(account.id))
-            .await
-            .expect("list");
         assert!(
-            contacts
-                .iter()
-                .all(|contact| contact.address.normalized() != account.address.normalized()),
-            "the account's own address must not show up in its own correspondent list: {contacts:?}"
+            !known(&connection)
+                .await
+                .contains(&account.address.normalized()),
+            "the account's own address must not show up among its correspondents"
         );
     }
 
@@ -167,15 +157,44 @@ mod tests {
             .await
             .expect("record");
 
-        let contacts = ContactRepository::new(&connection)
-            .list(Some(account.id))
-            .await
-            .expect("list");
         assert_eq!(
-            contacts.len(),
-            1,
-            "only bob, not the identity address: {contacts:?}"
+            known(&connection).await,
+            ["bob@example.com"],
+            "only bob, not the identity address"
         );
-        assert_eq!(contacts[0].address.normalized(), "bob@example.com");
+    }
+
+    #[tokio::test]
+    async fn mail_sent_from_an_identity_marks_its_recipients_written_to() {
+        // specs/005-contacts R3: "written to" is decided by the From header,
+        // whichever of the account's addresses sent it -- a message the user
+        // sent as an identity is as much theirs as one sent as the account.
+        let database = test_support::memory().await;
+        let connection = database.connect().await.expect("checkout");
+        let (mut account, mailbox) = test_support::account_with_inbox(&connection).await;
+        account.identities.push(Identity::new(
+            account.id,
+            EmailAddress::new(Some("Ada at Work"), "ada.work@example.com"),
+        ));
+
+        let mut sent = Message::new(account.id, mailbox, chrono::Utc::now());
+        sent.from = vec![EmailAddress::new(
+            Some("Ada at Work"),
+            "Ada.Work@example.com",
+        )];
+        sent.to = vec![EmailAddress::new(Some("Bob"), "bob@example.com")];
+        MessageRepository::new(&connection)
+            .create(&mut sent)
+            .await
+            .expect("create message");
+
+        record(&connection, &account, &sent).await.expect("record");
+
+        let bob = ContactRepository::new(&connection)
+            .by_address("bob@example.com")
+            .await
+            .expect("lookup")
+            .expect("bob");
+        assert_eq!(bob.written, 1, "the user wrote to bob");
     }
 }
