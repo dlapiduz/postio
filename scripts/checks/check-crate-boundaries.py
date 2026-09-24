@@ -29,6 +29,14 @@ The invariants (see CLAUDE.md, "Architectural invariants"):
   * ``postio-config`` must not depend on ``rusqlite``/``turso``/``gtk4``. It parses and
     validates TOML and watches the file for changes; it does no SQL and links
     no toolkit.
+  * ``postio-ui`` must not depend on ``gtk4``/``libadwaita``/``webkit6`` or the
+    engine. It is the toolkit-free presentation logic every frontend shares
+    (ADR 0019), and its own ``lib.rs`` says this check holds it to that.
+  * ``postio-client`` and ``postio-tui`` must not depend on a toolkit, the
+    engine, or ``io-imap``. Exactly one process opens the store and a frontend
+    is its client (ADR 0041); the terminal frontend is also required to be
+    small (``specs/005-tui-frontend`` FR-051), and a store engine or a toolkit
+    in its graph is how it would stop being either.
 
 Not enforced here: ADR 0001's rule that ``postio-sync`` never reaches
 ``io-imap``/``io-sasl``. Cargo unifies features workspace-wide, so
@@ -70,6 +78,79 @@ from collections import deque
 # depending on the lower layer directly.
 
 RULES: dict[str, dict[str, object]] = {
+    "postio-ui": {
+        "banned": [
+            "gtk4",
+            "gtk4-sys",
+            "gtk4-macros",
+            "libadwaita",
+            "libadwaita-sys",
+            "gdk4",
+            "gdk4-sys",
+            "gsk4-sys",
+            "webkit6",
+            "webkit6-sys",
+            "rusqlite",
+            "libsqlite3-sys",
+            "turso",
+            "turso_core",
+        ],
+        "why": (
+            "postio-ui is the presentation logic every frontend shares -- "
+            "keymap, list window, selection, palette, reader document "
+            "(ADR 0019). A toolkit or the store here would put one frontend's "
+            "assumptions, or a second store owner, into all of them."
+        ),
+    },
+    "postio-client": {
+        "banned": [
+            "gtk4",
+            "gtk4-sys",
+            "gtk4-macros",
+            "libadwaita",
+            "libadwaita-sys",
+            "gdk4",
+            "gdk4-sys",
+            "gsk4-sys",
+            "webkit6",
+            "webkit6-sys",
+            "rusqlite",
+            "libsqlite3-sys",
+            "turso",
+            "turso_core",
+            "io-imap",
+        ],
+        "why": (
+            "postio-client is what a frontend holds: commands down, events "
+            "up, reads answered by the store's one owner (ADR 0041). The "
+            "engine here would let a frontend open the store itself, which "
+            "is the second writer that ADR exists to rule out."
+        ),
+    },
+    "postio-tui": {
+        "banned": [
+            "gtk4",
+            "gtk4-sys",
+            "gtk4-macros",
+            "libadwaita",
+            "libadwaita-sys",
+            "gdk4",
+            "gdk4-sys",
+            "gsk4-sys",
+            "webkit6",
+            "webkit6-sys",
+            "rusqlite",
+            "libsqlite3-sys",
+            "turso",
+            "turso_core",
+            "io-imap",
+        ],
+        "why": (
+            "postio-tui is a client of the store's one owner (ADR 0041) and "
+            "must stay small (specs/005-tui-frontend FR-051): no toolkit, no "
+            "WebKit, no engine and no protocol in its graph."
+        ),
+    },
     "postio-ffi": {
         "banned": [
             "gtk4",
