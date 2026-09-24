@@ -247,6 +247,24 @@ fn perform(
         match effect {
             Effect::Quit => return Ok(true),
             Effect::Redraw => redraw = true,
+            Effect::Rest(message) => {
+                let inputs = inputs.clone();
+                tokio::spawn(async move {
+                    tokio::time::sleep(crate::app::READ_REST).await;
+                    let _ = inputs.send(Input::Rested(message)).await;
+                });
+            }
+            Effect::ReadBody(message) => {
+                let client = client.clone();
+                let inputs = inputs.clone();
+                tokio::spawn(async move {
+                    let answer = client
+                        .body(message)
+                        .await
+                        .map_err(|error| error.message().to_owned());
+                    let _ = inputs.send(Input::Body { message, answer }).await;
+                });
+            }
             Effect::Open(scope) => {
                 let client = client.clone();
                 let inputs = inputs.clone();

@@ -40,6 +40,15 @@ pub enum Input {
     },
     /// The daemon said something happened.
     Host(postio_core::Event),
+    /// The cursor has rested on `message` since [`Effect::Rest`] asked.
+    Rested(postio_model::MessageId),
+    /// A body asked for by [`Effect::ReadBody`] arrived.
+    Body {
+        /// Whose.
+        message: postio_model::MessageId,
+        /// The body, or why there is none.
+        answer: Result<postio_client::protocol::Body, String>,
+    },
     /// What the sidebar holds, read afresh.
     Sidebar(crate::sidebar::Contents),
     /// A list was counted again, after an event said it changed.
@@ -67,6 +76,10 @@ pub enum Effect {
     Redraw,
     /// Leave.
     Quit,
+    /// Wait [`READ_REST`], then answer with [`Input::Rested`].
+    Rest(postio_model::MessageId),
+    /// Read a body and answer with [`Input::Body`].
+    ReadBody(postio_model::MessageId),
     /// Open a list: count it and answer with [`Input::Opened`].
     Open(ListScope),
     /// Read the sidebar's contents again and answer with [`Input::Sidebar`].
@@ -85,6 +98,13 @@ pub enum Effect {
         fetch: Fetch,
     },
 }
+
+/// How long the cursor must rest on a row before its body is read.
+///
+/// A keystroke reads no body -- `j` held down is a scroll, and reading each
+/// row it passes would be a body per keystroke for mail nobody looked at
+/// (Principle V). Short enough that stopping on a row reads as immediate.
+pub const READ_REST: std::time::Duration = std::time::Duration::from_millis(120);
 
 /// Everything the terminal frontend knows.
 pub struct App {
@@ -119,6 +139,10 @@ pub struct App {
     account: Option<postio_model::AccountId>,
     /// Every folder, to find the account a list belongs to.
     folders: Vec<postio_model::mailbox::Mailbox>,
+    /// The message the reader shows, and how.
+    reading: Option<(postio_model::MessageId, crate::reader::Rendered)>,
+    /// The message the cursor was last seen resting towards.
+    resting: Option<postio_model::MessageId>,
 }
 
 /// Which pane the keyboard is in.
@@ -162,7 +186,21 @@ impl App {
             trackers: postio_ui::status::Trackers::default(),
             account: None,
             folders: Vec::new(),
+            reading: None,
+            resting: None,
         }
+    }
+
+    /// The row for `message`, if it is resident.
+    pub fn row(&self, message: postio_model::MessageId) -> Option<&Row> {
+        self.list.row_of(message)
+    }
+
+    /// What the reader shows: the message, and its rendered body.
+    pub fn reading(&self) -> Option<(postio_model::MessageId, &crate::reader::Rendered)> {
+        self.reading
+            .as_ref()
+            .map(|(message, rendered)| (*message, rendered))
     }
 
     /// What the status line says about the connection of the account on
@@ -391,6 +429,57 @@ impl App {
         vec![Effect::Send(command)]
     }
 
+    /// The cursor stayed: read the body, if it is still the one under it.
+    fn rested(&mut self, message: postio_model::MessageId) -> Vec<Effect> {
+        let here = self.cursor_message() == Some(message);
+        let shown = self.reading.as_ref().map(|(shown, _)| *shown) == Some(message);
+        if here && !shown {
+            vec![Effect::ReadBody(message)]
+        } else {
+            Vec::new()
+        }
+    }
+
+    /// A body arrived: draw it, if the reader still wants it.
+    fn show(
+        &mut self,
+        message: postio_model::MessageId,
+        answer: Result<postio_client::protocol::Body, String>,
+    ) -> Vec<Effect> {
+        use postio_client::protocol::Body;
+        use postio_ui::reader::document::{
+            Absent, Rendering, absent_html, body_html, suits_reader_view,
+        };
+        if self.cursor_message() != Some(message) {
+            return Vec::new();
+        }
+        let absent = |state| crate::reader::from_html(&absent_html(state));
+        let rendered = match answer {
+            Ok(Body::Ready { body, .. }) if body.html.is_some() => {
+                // The rule every reader applies: reader view for bulk mail,
+                // the sender's own markup (sanitised, folded) otherwise.
+                let rendering = if suits_reader_view(&body) {
+                    Rendering::Reader
+                } else {
+                    Rendering::Original
+                };
+                let drawn = body_html(&body, postio_body::RemoteImages::Blocked, rendering);
+                crate::reader::from_html(&drawn.html)
+            }
+            Ok(Body::Ready { body, .. }) => {
+                crate::reader::from_text(body.text.as_deref().unwrap_or(""))
+            }
+            Ok(Body::Partial) => absent(Absent::Partial),
+            Ok(Body::Offline) => absent(Absent::Offline),
+            Ok(Body::Missing) => absent(Absent::Missing),
+            Ok(Body::Empty) => absent(Absent::Empty),
+            Ok(Body::ForeignDraft) => absent(Absent::ForeignDraft),
+            Err(reason) => crate::reader::from_text(&reason),
+        };
+        self.reading = Some((message, rendered));
+        vec![Effect::Redraw]
+    }
+
     /// Take in the sidebar's contents, keeping the cursor on the list shown.
     fn fill_sidebar(&mut self, contents: &crate::sidebar::Contents) -> Vec<Effect> {
         self.sidebar = crate::sidebar::lines(contents);
@@ -564,6 +653,8 @@ pub fn update(app: &mut App, input: Input) -> Vec<Effect> {
         Input::Opened { scope, total } => app.open(scope, total),
         Input::Host(event) => app.hear(&event),
         Input::Sidebar(contents) => app.fill_sidebar(&contents),
+        Input::Rested(message) => app.rested(message),
+        Input::Body { message, answer } => app.show(message, answer),
         Input::Recounted { scope, total } => app.recounted(scope, total),
         Input::Page {
             generation,
@@ -572,6 +663,16 @@ pub fn update(app: &mut App, input: Input) -> Vec<Effect> {
         } => app.page(generation, page, rows),
     };
     effects.extend(app.fetches());
+    // The cursor landed on a different message: rest, then read it. Asked
+    // after every input rather than only after a keystroke, because a row can
+    // arrive under a still cursor -- a page landing, a list opening.
+    let under = app.cursor_message();
+    if under != app.resting {
+        app.resting = under;
+        if let Some(message) = under {
+            effects.push(Effect::Rest(message));
+        }
+    }
     effects
 }
 
@@ -955,6 +1056,95 @@ mod tests {
         );
         let line = app.sync_line().unwrap();
         assert!(line.starts_with("idle"), "{line}");
+    }
+
+    fn rests(effects: &[Effect]) -> Vec<MessageId> {
+        effects
+            .iter()
+            .filter_map(|effect| match effect {
+                Effect::Rest(message) => Some(*message),
+                _ => None,
+            })
+            .collect()
+    }
+
+    fn reads(effects: &[Effect]) -> usize {
+        effects
+            .iter()
+            .filter(|effect| matches!(effect, Effect::ReadBody(_)))
+            .count()
+    }
+
+    #[test]
+    fn scrolling_reads_no_body_and_resting_reads_one() {
+        let mut app = app((160, 40));
+        let opening = opened(&mut app, 50);
+        serve(&mut app, opening);
+        let mut asked_to_rest = Vec::new();
+        for _ in 0..10 {
+            let effects = update(&mut app, press('j'));
+            assert_eq!(reads(&effects), 0, "a keystroke reads no body");
+            asked_to_rest.extend(rests(&effects));
+        }
+        // Every rest but the last is for a row the cursor has left.
+        let mut read = 0;
+        for message in asked_to_rest {
+            read += reads(&update(&mut app, Input::Rested(message)));
+        }
+        assert_eq!(read, 1, "only the row the cursor stopped on is read");
+    }
+
+    #[test]
+    fn a_body_that_arrives_is_drawn_in_the_reader() {
+        let mut app = app((160, 40));
+        let opening = opened(&mut app, 5);
+        serve(&mut app, opening);
+        let message = row(0).id;
+        update(&mut app, Input::Rested(message));
+        update(
+            &mut app,
+            Input::Body {
+                message,
+                answer: Ok(postio_client::protocol::Body::Ready {
+                    body: postio_model::MessageBody {
+                        text: Some("Hello Ada,\n\n> old words\n".into()),
+                        html: None,
+                    },
+                    encoding_problems: false,
+                }),
+            },
+        );
+        let (shown, rendered) = app.reading().expect("the reader shows it");
+        assert_eq!(shown, message);
+        let drawn: String = rendered
+            .lines()
+            .iter()
+            .map(|line| {
+                line.spans
+                    .iter()
+                    .map(|span| span.content.to_string())
+                    .collect::<String>()
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(drawn.contains("Hello Ada,"), "{drawn}");
+        assert!(drawn.contains("▸ quoted text"), "{drawn}");
+    }
+
+    #[test]
+    fn a_body_for_a_row_already_left_is_not_drawn() {
+        let mut app = app((160, 40));
+        let opening = opened(&mut app, 5);
+        serve(&mut app, opening);
+        update(&mut app, press('j'));
+        update(
+            &mut app,
+            Input::Body {
+                message: row(0).id,
+                answer: Ok(postio_client::protocol::Body::Partial),
+            },
+        );
+        assert!(app.reading().is_none());
     }
 
     #[test]

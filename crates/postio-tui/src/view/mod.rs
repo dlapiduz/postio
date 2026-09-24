@@ -3,6 +3,7 @@
 //! Nothing here decides anything about mail; it draws what `App` holds.
 
 pub mod list;
+pub mod reader;
 pub mod sidebar;
 
 use chrono::{DateTime, Local};
@@ -56,9 +57,9 @@ pub fn draw(frame: &mut Frame, app: &App, theme: &Theme, now: DateTime<Local>) {
                     }
                     Pane::List => list::draw(frame, *area, &app.visible(), theme, now),
                     Pane::Reader => {
-                        // The reader arrives with User Story 2.
-                        let quiet = Line::styled("", theme.style(Role::Dim));
-                        frame.render_widget(quiet, *area);
+                        if let Some((message, rendered)) = app.reading() {
+                            reader::draw(frame, *area, app.row(message), rendered, 0, theme);
+                        }
                     }
                 }
             }
@@ -181,6 +182,74 @@ mod tests {
                 .lines()
                 .any(|line| line.contains("Inbox") && line.contains('4')),
             "{screen}"
+        );
+    }
+
+    #[test]
+    fn the_message_under_the_cursor_is_read_beside_the_list() {
+        use chrono::Utc;
+        use postio_ui::paging::Page;
+        use postio_ui::terminal::SafeText;
+        let mut app = with_sidebar((160, 12));
+        let scope = postio_model::ListScope::Mailbox(postio_model::MailboxId::new(1));
+        let effects = update(&mut app, Input::Opened { scope, total: 1 });
+        let (generation, page) = effects
+            .iter()
+            .find_map(|effect| match effect {
+                crate::app::Effect::Fetch {
+                    generation, page, ..
+                } => Some((*generation, *page)),
+                _ => None,
+            })
+            .expect("the first page is asked for");
+        let row = crate::row::Row {
+            id: postio_model::MessageId::new(7),
+            thread: None,
+            is_thread: false,
+            from: SafeText::new("Ada Lovelace"),
+            subject: SafeText::new("Engine notes"),
+            preview: SafeText::new(""),
+            when: Utc::now(),
+            unread: true,
+            flagged: false,
+            attachment: false,
+            count: 1,
+        };
+        update(
+            &mut app,
+            Input::Page {
+                generation,
+                page,
+                rows: Ok(Page {
+                    total: 1,
+                    rows: vec![row],
+                }),
+            },
+        );
+        update(&mut app, Input::Rested(postio_model::MessageId::new(7)));
+        update(
+            &mut app,
+            Input::Body {
+                message: postio_model::MessageId::new(7),
+                answer: Ok(postio_client::protocol::Body::Ready {
+                    body: postio_model::MessageBody {
+                        text: None,
+                        html: Some("<p>The <b>analytical</b> engine</p>".into()),
+                    },
+                    encoding_problems: false,
+                }),
+            },
+        );
+        let screen = screen(160, 12, &app);
+        assert!(screen.contains("The analytical engine"), "{screen}");
+        assert_eq!(
+            screen.matches("Engine notes").count(),
+            2,
+            "the subject is in the list and heads the reader:\n{screen}"
+        );
+        assert!(
+            screen.contains("│ Engine notes"),
+            "a divider keeps the panes apart:\n{screen}"
         );
     }
 
