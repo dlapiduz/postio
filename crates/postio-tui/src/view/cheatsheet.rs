@@ -24,7 +24,9 @@ pub fn draw(frame: &mut Frame, area: Rect, sections: &[SheetSection], theme: &Th
     if outer.width < COLUMN || outer.height < 4 {
         return;
     }
-    frame.render_widget(Clear, outer);
+    // The whole screen, not just the frame: nothing underneath shows
+    // round its edges.
+    frame.render_widget(Clear, area);
     frame.render_widget(
         Block::default()
             .borders(Borders::ALL)
@@ -45,7 +47,7 @@ pub fn draw(frame: &mut Frame, area: Rect, sections: &[SheetSection], theme: &Th
         }
         lines.push(Line::styled(
             *title,
-            theme.style(Role::Accent).add_modifier(Modifier::BOLD),
+            theme.style(Role::Text).add_modifier(Modifier::BOLD),
         ));
         for (name, key) in rows {
             let room = usize::from(COLUMN - 2).saturating_sub(key.len() + 1);
