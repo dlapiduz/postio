@@ -146,6 +146,183 @@ pub fn to_document(markdown: &str) -> crate::Document {
     crate::Document { blocks }
 }
 
+/// The composer's document, as Markdown the terminal composer can edit.
+///
+/// What opens a draft written in the desktop composer: its HTML, parsed to
+/// the document, written back out as the Markdown that reads into that same
+/// document -- `to_document(&from_document(d)) == d` for any document without
+/// a carried quote. A quote carried from the message being answered
+/// (`Block::Quoted`) is not Markdown and is not written here; the composer
+/// keeps it whole beside the text.
+pub fn from_document(document: &crate::Document) -> String {
+    let mut out = String::new();
+    write_blocks(&mut out, &document.blocks, "");
+    out
+}
+
+/// `blocks`, each line after the first of each block prefixed with `indent`
+/// (a list item's continuation, a quote's `> `), a blank line between them.
+fn write_blocks(out: &mut String, blocks: &[crate::Block], indent: &str) {
+    let mut first = true;
+    for block in blocks {
+        let mut text = String::new();
+        if !write_block(&mut text, block) {
+            continue;
+        }
+        if !first {
+            out.push_str(indent.trim_end());
+            out.push('\n');
+            out.push_str(indent);
+        }
+        first = false;
+        out.push_str(&text.replace('\n', &format!("\n{indent}")));
+        out.push('\n');
+    }
+}
+
+/// One block, without its trailing newline; `false` for one Markdown does
+/// not carry (a quote carried from the message being answered).
+fn write_block(out: &mut String, block: &crate::Block) -> bool {
+    use crate::Block;
+    match block {
+        Block::Paragraph(inlines) => write_inlines(out, inlines),
+        Block::Heading { level, inlines } => {
+            out.push_str(&"#".repeat(usize::from(level.digit())));
+            out.push(' ');
+            write_inlines(out, inlines);
+        }
+        Block::List { ordered, items } => {
+            for (index, item) in items.iter().enumerate() {
+                if index > 0 {
+                    out.push('\n');
+                }
+                let marker = if *ordered {
+                    format!("{}. ", index + 1)
+                } else {
+                    "- ".to_owned()
+                };
+                out.push_str(&marker);
+                let indent = " ".repeat(marker.len());
+                let mut inner = String::new();
+                write_item(&mut inner, item, &indent);
+                out.push_str(inner.trim_end_matches('\n'));
+            }
+        }
+        Block::Quote(blocks) => {
+            let mut inner = String::new();
+            write_blocks(&mut inner, blocks, "");
+            let quoted: Vec<String> = inner
+                .trim_end_matches('\n')
+                .lines()
+                .map(|line| {
+                    if line.is_empty() {
+                        ">".to_owned()
+                    } else {
+                        format!("> {line}")
+                    }
+                })
+                .collect();
+            out.push_str(&quoted.join("\n"));
+        }
+        Block::Pre(code) => {
+            let fence = if code.contains("```") { "~~~" } else { "```" };
+            out.push_str(fence);
+            out.push('\n');
+            out.push_str(code);
+            if !code.ends_with('\n') {
+                out.push('\n');
+            }
+            out.push_str(fence);
+        }
+        Block::Rule => out.push_str("---"),
+        Block::Quoted(_) => return false,
+    }
+    true
+}
+
+/// A list item: its first block after the marker, the rest indented under
+/// it, tight -- no blank line -- which is how a person types a list.
+fn write_item(out: &mut String, blocks: &[crate::Block], indent: &str) {
+    for (index, block) in blocks.iter().enumerate() {
+        let mut text = String::new();
+        if !write_block(&mut text, block) {
+            continue;
+        }
+        if index > 0 {
+            out.push('\n');
+            out.push_str(indent);
+        }
+        out.push_str(&text.replace('\n', &format!("\n{indent}")));
+    }
+}
+
+fn write_inlines(out: &mut String, inlines: &[crate::Inline]) {
+    use crate::Inline;
+    for inline in inlines {
+        match inline {
+            Inline::Text(text) => out.push_str(&escape(text)),
+            Inline::Strong(inner) => {
+                out.push_str("**");
+                write_inlines(out, inner);
+                out.push_str("**");
+            }
+            Inline::Emphasis(inner) => {
+                out.push('*');
+                write_inlines(out, inner);
+                out.push('*');
+            }
+            Inline::Code(code) => {
+                // A fence longer than any run of backticks inside.
+                let longest = code.split(|c| c != '`').map(str::len).max().unwrap_or(0);
+                let fence = "`".repeat(longest + 1);
+                let pad = if code.starts_with('`') || code.ends_with('`') {
+                    " "
+                } else {
+                    ""
+                };
+                out.push_str(&format!("{fence}{pad}{code}{pad}{fence}"));
+            }
+            Inline::Link { href, inlines } => {
+                out.push('[');
+                write_inlines(out, inlines);
+                out.push_str(&format!("]({})", href.as_str()));
+            }
+            Inline::Image { content_id, alt } => {
+                out.push_str(&format!("![{}](cid:{})", escape(alt), content_id.as_str()));
+            }
+            Inline::Break => out.push_str("\\\n"),
+        }
+    }
+}
+
+/// Text, with everything Markdown would read as markup escaped.
+fn escape(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    for (index, c) in text.char_indices() {
+        let at_line_start = index == 0 || text[..index].ends_with('\n');
+        let special = matches!(
+            c,
+            '\\' | '`' | '*' | '_' | '[' | ']' | '<' | '>' | '!' | '|'
+        ) || (at_line_start && matches!(c, '#' | '-' | '+' | '=' | '~'))
+            || (c == '.'
+                && text[..index]
+                    .chars()
+                    .rev()
+                    .take_while(char::is_ascii_digit)
+                    .count()
+                    > 0
+                && text[..index]
+                    .trim_start()
+                    .chars()
+                    .all(|c| c.is_ascii_digit()));
+        if special {
+            out.push('\\');
+        }
+        out.push(c);
+    }
+    out
+}
+
 /// What holds a run of inlines.
 enum Holder {
     Paragraph,
@@ -173,7 +350,17 @@ enum Frame {
 
 fn push_inline(stack: &mut [Frame], inline: crate::Inline) {
     match stack.last_mut() {
-        Some(Frame::Inlines(_, inlines) | Frame::Item(_, inlines)) => inlines.push(inline),
+        Some(Frame::Inlines(_, inlines) | Frame::Item(_, inlines)) => {
+            // One run of words is one text, however the parser split it -- at
+            // an escape, a soft break -- so a document reads back the same.
+            if let (crate::Inline::Text(more), Some(crate::Inline::Text(last))) =
+                (&inline, inlines.last_mut())
+            {
+                last.push_str(more);
+            } else {
+                inlines.push(inline);
+            }
+        }
         Some(Frame::Code(code)) => {
             if let crate::Inline::Text(text) = inline {
                 code.push_str(&text);
@@ -471,6 +658,50 @@ mod tests {
             ] {
                 let _ = to_document(input);
             }
+        }
+    }
+
+    mod reopening {
+        use super::super::{from_document, to_document};
+
+        const SAMPLES: &[&str] = &[
+            "Hello Ada,\n\nThanks for the notes.",
+            "Some **bold**, *italic* and `code`\\\nnext line",
+            "# One\n\n## Two\n\n### Three",
+            "- one\n  - inner\n- two",
+            "1. first\n2. second",
+            "> quoted\n>\n> - with a list",
+            "```\nfn x() {}\n```",
+            "---",
+            "[site](https://example.com) and ![chart](cid:chart.1@postio.invalid)",
+            "Stars * and _underscores_ and a # and 1. not a list",
+            "a `tick`` pair and \\*escaped\\*",
+            "**bold *and italic* inside**",
+            "| a | b |\n|---|---|",
+        ];
+
+        #[test]
+        fn a_document_written_as_markdown_reads_back_the_same() {
+            for sample in SAMPLES {
+                let document = to_document(sample);
+                let written = from_document(&document);
+                assert_eq!(
+                    to_document(&written),
+                    document,
+                    "{sample:?} wrote {written:?}"
+                );
+            }
+        }
+
+        #[test]
+        fn markdown_it_writes_is_what_a_person_would_type() {
+            let written = from_document(&to_document(
+                "Some **bold** and a [link](https://example.com).",
+            ));
+            assert_eq!(
+                written.trim_end(),
+                "Some **bold** and a [link](https://example.com)."
+            );
         }
     }
 }
