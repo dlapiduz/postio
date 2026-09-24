@@ -3589,6 +3589,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "postio-client"
+version = "0.3.0"
+
+[[package]]
 name = "postio-config"
 version = "0.3.0"
 dependencies = [
@@ -3684,6 +3688,10 @@ dependencies = [
  "tracing-subscriber",
  "webkit6",
 ]
+
+[[package]]
+name = "postio-host"
+version = "0.3.0"
 
 [[package]]
 name = "postio-index"
@@ -3865,6 +3873,10 @@ dependencies = [
  "tokio",
  "tokio-rustls",
 ]
+
+[[package]]
+name = "postio-tui"
+version = "0.3.0"
 
 [[package]]
 name = "postio-ui"
