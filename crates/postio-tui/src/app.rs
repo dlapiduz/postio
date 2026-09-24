@@ -58,6 +58,11 @@ pub enum Pointer {
 pub enum Input {
     /// The terminal is now this many columns and rows.
     Resize(u16, u16),
+    /// The daemon went away: the connection to it ended.
+    Disconnected,
+    /// An [`Effect::Reconnect`] finished: connected again, or the sentence
+    /// for why not.
+    Reconnected(Result<(), String>),
     /// The clipboard answered an [`Effect::ReadClipboardImage`]: a PNG,
     /// no image, or why it could not be read.
     ClipboardImage(Result<Option<Vec<u8>>, String>),
@@ -224,6 +229,9 @@ pub enum Input {
 pub enum Effect {
     /// Draw a frame.
     Redraw,
+    /// Reach the daemon again, starting it if nothing answers, and answer
+    /// with [`Input::Reconnected`].
+    Reconnect,
     /// Leave.
     Quit,
     /// Wait [`READ_REST`], then answer with [`Input::Rested`].
@@ -400,6 +408,21 @@ const MINIMUM_READER: u16 = 24;
 /// The narrowest the rest of the screen may be left by a drag.
 const MINIMUM_LIST: u16 = 40;
 
+/// The daemon is gone: what the terminal is doing about it.
+#[derive(Debug, Default)]
+struct Gone {
+    /// A reconnect is under way.
+    reconnecting: bool,
+    /// Why the last reconnect failed.
+    why_not: Option<String>,
+    /// A draft is open that nothing can save until the daemon is back.
+    holding: bool,
+    /// Quitting was asked once with such a draft open: again leaves.
+    quit_asked: bool,
+    /// What the status line says, kept in step with the rest.
+    sentence: String,
+}
+
 /// Everything the terminal frontend knows.
 pub struct App {
     size: (u16, u16),
@@ -421,6 +444,9 @@ pub struct App {
     /// What the status line says about the last thing done: the undo offer,
     /// a refusal, an error.
     notice: Option<String>,
+    /// The daemon went away and has not been reached again. While it is,
+    /// the status line says so above anything else.
+    gone: Option<Gone>,
     /// Where the keyboard is.
     focus: Focus,
     /// The sidebar's lines.
@@ -658,6 +684,7 @@ impl App {
             selection: postio_ui::selection::SelectionState::new(),
             scope: None,
             notice: None,
+            gone: None,
             focus: Focus::List,
             sidebar: Vec::new(),
             sidebar_cursor: 0,
@@ -816,6 +843,10 @@ impl App {
     /// written, and dropping a composition nothing was written in, by the
     /// desktop's own rule (`postio_model::draft::closing`).
     fn close_composer(&mut self) -> Vec<Effect> {
+        if self.holding_a_draft() {
+            self.tell_gone();
+            return vec![Effect::Redraw];
+        }
         let mut effects = Vec::new();
         if let Some(composer) = self.composer.take() {
             let generation = composer.generation();
@@ -1903,6 +1934,10 @@ impl App {
     /// it: nobody to send to, or a question to ask first (FR-018, FR-057),
     /// asked once and answered by sending again.
     fn send_draft(&mut self, at: Option<chrono::DateTime<chrono::Utc>>) -> Vec<Effect> {
+        if self.holding_a_draft() {
+            self.tell_gone();
+            return vec![Effect::Redraw];
+        }
         let Some(composer) = self.composer.as_ref() else {
             return Vec::new();
         };
@@ -2025,7 +2060,147 @@ impl App {
 
     /// What the status line says about the last thing done.
     pub fn notice(&self) -> Option<&str> {
-        self.notice.as_deref()
+        match &self.gone {
+            Some(gone) => Some(&gone.sentence),
+            None => self.notice.as_deref(),
+        }
+    }
+
+    /// The daemon went away: say so, and keep saying it until it is back.
+    ///
+    /// Nothing reconnects on its own: the person asks, with refresh's key
+    /// (the canvas' own retry key, `R`). What is on screen stays, to read.
+    fn disconnected(&mut self) -> Vec<Effect> {
+        if self.gone.is_none() {
+            self.gone = Some(Gone::default());
+        }
+        self.tell_gone();
+        vec![Effect::Redraw]
+    }
+
+    /// Refresh's key, as the status line names it: a single key when it
+    /// has one, `R` by default.
+    fn reconnect_key(&self) -> String {
+        let bindings = self.keys.keymap().bindings(postio_core::CommandId::Refresh);
+        bindings
+            .iter()
+            .find(|binding| binding.chars().count() == 1)
+            .or_else(|| bindings.first())
+            .cloned()
+            .unwrap_or_else(|| "R".to_owned())
+    }
+
+    /// Bring the status line's sentence in step with what is happening.
+    fn tell_gone(&mut self) {
+        let key = self.reconnect_key();
+        let Some(gone) = self.gone.as_mut() else {
+            return;
+        };
+        gone.sentence = if gone.reconnecting {
+            "Reconnecting to Postio's background service…".to_owned()
+        } else if let Some(why) = &gone.why_not {
+            let why = postio_ui::terminal::SafeText::new(why).to_string();
+            format!("Could not reconnect: {why} — press {key} to try again")
+        } else if gone.quit_asked {
+            format!(
+                "This draft cannot be saved until Postio reconnects — quit again to leave \
+                 without it, or press {key} to reconnect"
+            )
+        } else if gone.holding {
+            format!(
+                "Postio's background service stopped, so this draft stays open until it is \
+                 back — press {key} to reconnect"
+            )
+        } else {
+            format!("Postio's background service stopped — press {key} to reconnect")
+        };
+    }
+
+    /// Whether `key` asks to reconnect: refresh's key, which in a text
+    /// field only counts when it is not a letter that field would type.
+    fn asks_to_reconnect(&self, key: &KeyEvent) -> bool {
+        let Some(chord) = crate::input::chord_of(key) else {
+            return false;
+        };
+        let chord = chord.to_string();
+        let typing = self.path_prompt.is_some()
+            || matches!(
+                self.focus,
+                Focus::Composer | Focus::Search | Focus::Palette | Focus::FirstRun
+            );
+        self.keys
+            .keymap()
+            .bindings(postio_core::CommandId::Refresh)
+            .iter()
+            .any(|binding| *binding == chord && !(typing && binding.chars().count() == 1))
+    }
+
+    /// Ask the loop to reach the daemon again, once at a time.
+    fn reconnect(&mut self) -> Vec<Effect> {
+        let Some(gone) = self.gone.as_mut() else {
+            return Vec::new();
+        };
+        if gone.reconnecting {
+            return Vec::new();
+        }
+        gone.reconnecting = true;
+        gone.why_not = None;
+        self.tell_gone();
+        vec![Effect::Reconnect, Effect::Redraw]
+    }
+
+    /// A reconnect finished. Connected, everything on screen is read again
+    /// from the daemon now there -- the sidebar, the list where it was
+    /// scrolled, the reader -- and an open draft is saved, since nothing
+    /// could save it while the daemon was gone.
+    fn reconnected(&mut self, result: Result<(), String>) -> Vec<Effect> {
+        if let Err(why) = result {
+            if let Some(gone) = self.gone.as_mut() {
+                gone.reconnecting = false;
+                gone.why_not = Some(why);
+            }
+            self.tell_gone();
+            return vec![Effect::Redraw];
+        }
+        self.gone = None;
+        let mut effects = vec![Effect::RefreshSidebar];
+        if let Some(scope) = self.scope {
+            effects.push(Effect::Recount(scope));
+        }
+        if let Some(reading) = &self.reading {
+            effects.extend(
+                reading
+                    .members
+                    .iter()
+                    .map(|member| Effect::ReadBody(member.id)),
+            );
+        }
+        if let Some(composer) = &self.composer {
+            let draft = composer.draft();
+            if postio_model::draft::closing(&draft) == postio_model::draft::Closing::Keep {
+                effects.push(Effect::SaveDraft {
+                    generation: composer.generation(),
+                    draft: Box::new(draft),
+                });
+            }
+        }
+        effects.extend(self.say("Reconnected to Postio's background service"));
+        effects
+    }
+
+    /// Whether an open draft has something in it that only the daemon can
+    /// keep, while there is no daemon: closing it now would lose it.
+    fn holding_a_draft(&mut self) -> bool {
+        if self.gone.is_none() {
+            return false;
+        }
+        let keep = self.composer.as_ref().is_some_and(|composer| {
+            postio_model::draft::closing(&composer.draft()) == postio_model::draft::Closing::Keep
+        });
+        if keep && let Some(gone) = self.gone.as_mut() {
+            gone.holding = true;
+        }
+        keep
     }
 
     /// Put `sentence` on the status line. Through `SafeText`: these are
@@ -2168,6 +2343,18 @@ impl App {
                 .selection
                 .select_all(postio_ui::selection::Reach::default()),
             "quit" => {
+                // With the daemon gone, a draft cannot be saved on the way
+                // out: say so once, and leave on the second ask.
+                if self.holding_a_draft() {
+                    if let Some(gone) = self.gone.as_mut()
+                        && !gone.quit_asked
+                    {
+                        gone.quit_asked = true;
+                        self.tell_gone();
+                        return vec![Effect::Redraw];
+                    }
+                    return vec![Effect::Quit];
+                }
                 // What is being written is saved on the way out.
                 let mut effects = if self.composer.is_some() {
                     self.close_composer()
@@ -2825,6 +3012,9 @@ pub fn update(app: &mut App, input: Input) -> Vec<Effect> {
             app.size = (width, height);
             vec![Effect::Redraw]
         }
+        Input::Disconnected => app.disconnected(),
+        Input::Reconnected(result) => app.reconnected(result),
+        Input::Key(key) if app.gone.is_some() && app.asks_to_reconnect(&key) => app.reconnect(),
         // Any key puts the cheat sheet away; it is something to read.
         Input::Key(_) if app.cheatsheet.is_some() => {
             app.cheatsheet = None;
@@ -5766,6 +5956,132 @@ pub(crate) mod tests {
                 .iter()
                 .any(|effect| matches!(effect, Effect::Fetch { page: 0, .. })),
             "{effects:?}"
+        );
+    }
+
+    /// What the status line says while the daemon is gone.
+    const GONE: &str = "Postio's background service stopped — press R to reconnect";
+
+    fn reconnects(effects: &[Effect]) -> usize {
+        effects
+            .iter()
+            .filter(|effect| matches!(effect, Effect::Reconnect))
+            .count()
+    }
+
+    #[test]
+    fn the_daemon_going_is_said_and_r_asks_to_reconnect_once() {
+        let mut app = app((160, 40));
+        let opening = opened(&mut app, 3);
+        serve(&mut app, opening);
+
+        let effects = update(&mut app, Input::Disconnected);
+        assert!(effects.contains(&Effect::Redraw), "{effects:?}");
+        assert_eq!(app.notice(), Some(GONE));
+        // Whatever else is said meanwhile, the status line keeps saying it.
+        update(
+            &mut app,
+            Input::Host(postio_core::Event::Error {
+                message: "Postio's background service is not answering.".into(),
+            }),
+        );
+        assert_eq!(app.notice(), Some(GONE));
+
+        let effects = update(&mut app, press('R'));
+        assert_eq!(reconnects(&effects), 1, "{effects:?}");
+        assert!(
+            !effects
+                .iter()
+                .any(|effect| matches!(effect, Effect::Send(_))),
+            "R reconnects rather than sending a refresh nobody can answer: {effects:?}"
+        );
+        let again = update(&mut app, press('R'));
+        assert_eq!(reconnects(&again), 0, "one reconnect at a time: {again:?}");
+    }
+
+    #[test]
+    fn r_is_the_refresh_it_always_was_while_the_daemon_is_there() {
+        let mut app = app((160, 40));
+        let opening = opened(&mut app, 3);
+        serve(&mut app, opening);
+        let effects = update(&mut app, press('R'));
+        assert_eq!(reconnects(&effects), 0, "{effects:?}");
+    }
+
+    #[test]
+    fn a_reconnect_reads_again_what_is_on_screen() {
+        let mut app = app((160, 40));
+        let opening = opened(&mut app, 3);
+        serve(&mut app, opening);
+        let reading = update(&mut app, Input::Rested(MessageId::new(1)));
+        assert!(reading.contains(&Effect::ReadBody(MessageId::new(1))));
+        update(&mut app, Input::Disconnected);
+        update(&mut app, press('R'));
+
+        let effects = update(&mut app, Input::Reconnected(Ok(())));
+
+        assert!(effects.contains(&Effect::RefreshSidebar), "{effects:?}");
+        assert!(
+            effects.contains(&Effect::Recount(ListScope::Mailbox(MailboxId::new(1)))),
+            "the list: {effects:?}"
+        );
+        assert!(
+            effects.contains(&Effect::ReadBody(MessageId::new(1))),
+            "the reader: {effects:?}"
+        );
+        assert_ne!(app.notice(), Some(GONE));
+        let effects = update(&mut app, press('R'));
+        assert_eq!(reconnects(&effects), 0, "connected again: {effects:?}");
+    }
+
+    #[test]
+    fn a_reconnect_that_fails_says_why_and_can_be_asked_again() {
+        let mut app = app((160, 40));
+        update(&mut app, Input::Disconnected);
+        update(&mut app, press('R'));
+
+        update(
+            &mut app,
+            Input::Reconnected(Err("Postio's background service did not start".into())),
+        );
+
+        let notice = app.notice().expect("said").to_owned();
+        assert!(notice.contains("did not start"), "{notice}");
+        assert!(notice.contains("press R"), "{notice}");
+        let effects = update(&mut app, press('R'));
+        assert_eq!(reconnects(&effects), 1, "{effects:?}");
+    }
+
+    #[test]
+    fn a_draft_written_while_the_daemon_is_gone_stays_and_is_saved_after() {
+        let mut app = app((160, 40));
+        composing(&mut app);
+        update(&mut app, Input::Disconnected);
+        for typed in "ada@example.com".chars() {
+            update(&mut app, press(typed));
+        }
+
+        // Neither Escape nor a quit throws away what nobody can save.
+        let effects = update(&mut app, key(KeyCode::Esc, KeyModifiers::NONE));
+        assert!(saves(&effects).is_empty(), "{effects:?}");
+        assert!(app.composer().is_some(), "Escape kept the draft open");
+        let effects = update(&mut app, key(KeyCode::Char('q'), KeyModifiers::CONTROL));
+        assert!(!effects.contains(&Effect::Quit), "{effects:?}");
+        assert!(app.composer().is_some(), "a quit kept the draft open");
+        // F5 is refresh's own key, and types nothing in a composer.
+        let effects = update(&mut app, key(KeyCode::F(5), KeyModifiers::NONE));
+        assert_eq!(reconnects(&effects), 1, "{effects:?}");
+
+        let effects = update(&mut app, Input::Reconnected(Ok(())));
+
+        let saved = saves(&effects);
+        assert_eq!(saved.len(), 1, "saved once connected again: {effects:?}");
+        assert_eq!(saved[0].to[0].address, "ada@example.com");
+        assert_eq!(
+            app.composer()
+                .expect("still composing")
+                .value(crate::composer::Field::To),
+            "ada@example.com"
         );
     }
 }

@@ -43,6 +43,14 @@ pub fn connect(endpoint: &Endpoint) -> Result<Client, String> {
         .map_err(|error| refusal(&error))
 }
 
+/// Reach the daemon again once the person asks, starting it if nothing
+/// answers: the same path startup takes, saying nothing on the way -- the
+/// screen is the terminal's, and the status line says what is happening.
+fn reach_again(endpoint: &Endpoint) -> Result<Client, String> {
+    connect_or_start(endpoint, ClientKind::Tui, &daemon_path(), &mut |_| {})
+        .map_err(|error| error.to_string())
+}
+
 /// The whole program.
 pub fn run() -> ExitCode {
     let config = postio_config::paths::config_path()
@@ -110,6 +118,7 @@ pub fn run() -> ExitCode {
     let saved = crate::config_file::pinned(&config);
     let outcome = runtime.block_on(main_loop(
         client,
+        endpoint,
         keys,
         theme,
         state,
@@ -139,8 +148,10 @@ async fn first_scope(client: &Client) -> Option<ListScope> {
     Some(ListScope::Mailbox(inbox.id))
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn main_loop(
     client: Client,
+    endpoint: Endpoint,
     keys: Keys,
     theme: Theme,
     state: postio_core::SharedState,
@@ -164,20 +175,33 @@ async fn main_loop(
     let (inputs, arriving) = async_channel::unbounded::<Input>();
     let (drafts, draft_jobs) = async_channel::unbounded::<Effect>();
     let writer = tokio::spawn(write_drafts(client.clone(), draft_jobs, inputs.clone()));
-    // New mail the daemon elected this terminal to tell about (T022).
-    let notices = client.notifications();
+    // New mail the daemon elected this terminal to tell about (T022), from
+    // whichever daemon is there: a reconnect is a new connection's channel.
     let told = inputs.clone();
-    let listening = tokio::spawn(async move {
-        while let Ok(notification) = notices.recv().await {
-            if told.send(Input::Notified(notification)).await.is_err() {
-                return;
+    let listening = tokio::spawn({
+        let client = client.clone();
+        async move {
+            let mut reconnected = client.reconnected();
+            loop {
+                let notices = client.notifications();
+                while let Ok(notification) = notices.recv().await {
+                    if told.send(Input::Notified(notification)).await.is_err() {
+                        return;
+                    }
+                }
+                if reconnected.changed().await.is_err() {
+                    return;
+                }
             }
         }
     });
+    let (reached, reaching) = async_channel::unbounded::<Result<Client, String>>();
     let senders = Senders {
         inputs,
         drafts,
         saved,
+        endpoint,
+        reached,
     };
     let outcome = drive(
         &client,
@@ -185,6 +209,7 @@ async fn main_loop(
         &mut terminal,
         &theme,
         &arriving,
+        &reaching,
         &senders,
         session,
     )
@@ -335,6 +360,10 @@ struct Senders {
     drafts: async_channel::Sender<Effect>,
     /// The pinned saved searches' names, for the sidebar.
     saved: Vec<crate::sidebar::Saved>,
+    /// Where the daemon is reached, again after it went away.
+    endpoint: Endpoint,
+    /// Where a reconnect's new connection, or why there is none, goes.
+    reached: async_channel::Sender<Result<Client, String>>,
 }
 
 /// What the loop does after performing a batch of effects.
@@ -355,17 +384,23 @@ enum Flow {
     },
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn drive(
     client: &Client,
     app: &mut App,
     terminal: &mut Screen,
     theme: &Theme,
     arriving: &async_channel::Receiver<Input>,
+    reaching: &async_channel::Receiver<Result<Client, String>>,
     senders: &Senders,
     session: &mut Session,
 ) -> io::Result<()> {
     let mut terminal_events = EventStream::new();
-    let host_events = client.events();
+    let mut host_events = client.events();
+    // The daemon going away is said, not left for the next call to fail
+    // on; what is on screen stays, to read, until the person reconnects.
+    let mut gone = Box::pin(client.closed());
+    let mut disconnected = false;
 
     // What is where on the screen, as last drawn: what a click lands on.
     let mut hits = crate::view::hit::Hits::default();
@@ -394,11 +429,29 @@ async fn drive(
                 Some(Err(error)) => return Err(error),
                 None => return Ok(()),
             },
-            heard = host_events.recv() => match heard {
+            () = &mut gone, if !disconnected => {
+                disconnected = true;
+                Input::Disconnected
+            }
+            heard = host_events.recv(), if !disconnected => match heard {
                 Ok(envelope) => Input::Host(envelope.event),
-                // The daemon went away: nothing on screen can be trusted to
-                // change any more, so leave rather than show a frozen mailbox.
-                Err(_) => return Err(io::Error::other("Postio's background service went away.")),
+                Err(_) => {
+                    disconnected = true;
+                    Input::Disconnected
+                }
+            },
+            reached = reaching.recv() => match reached {
+                // Every clone of the client -- the draft writer's, each
+                // read in flight -- reaches the new daemon from here on.
+                Ok(Ok(fresh)) => {
+                    client.reconnect(&fresh);
+                    host_events = client.events();
+                    gone = Box::pin(client.closed());
+                    disconnected = false;
+                    Input::Reconnected(Ok(()))
+                }
+                Ok(Err(why)) => Input::Reconnected(Err(why)),
+                Err(_) => continue,
             },
             arrived = arriving.recv() => match arrived {
                 Ok(input) => input,
@@ -532,6 +585,8 @@ fn perform(
         inputs,
         drafts,
         saved,
+        endpoint,
+        reached,
     } = senders;
     let mut redraw = false;
     let mut flow = Flow::Go;
@@ -563,6 +618,15 @@ fn perform(
                 });
             }
             Effect::Redraw => redraw = true,
+            Effect::Reconnect => {
+                // Off the loop: starting a daemon waits on it, and a keyring
+                // prompt has held that for half a minute.
+                let endpoint = endpoint.clone();
+                let reached = reached.clone();
+                tokio::task::spawn_blocking(move || {
+                    let _ = reached.send_blocking(reach_again(&endpoint));
+                });
+            }
             Effect::ReplySource { kind, message } => {
                 let client = client.clone();
                 let inputs = inputs.clone();
