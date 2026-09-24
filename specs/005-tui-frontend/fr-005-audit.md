@@ -1,5 +1,7 @@
 # FR-005 audit: what this branch did to the desktop's and macOS's tests
 
+Final pass after T019 and T023; the first pass predates them.
+
 FR-005 says no desktop or macOS function may be removed or degraded, and the
 tests that prove them stay unchanged except for import paths. This is the
 record T100 asks for: every test file under `postio-app`, `postio-gtk`,
@@ -20,14 +22,18 @@ merge base with its body at `HEAD`, wherever it now lives.
 
 ## Integration suites: additions only
 
-`crates/postio-app/tests`, `crates/postio-ffi/tests` and `macos/` have no
-changes at all. `crates/postio-gtk/tests` has two new modules and nothing
-changed:
+`macos/` has no changes at all. The integration suites gained four modules
+and changed none:
+- `postio-app/tests/app_suite/daemon_window.rs`: the desktop's production
+  path over a daemon, the proof for T023;
+- `postio-ffi/tests/ffi_suite/host.rs`: a command through the macOS
+  boundary reaches the store, which the no-op bus it replaced never did
+  (T019);
 - `gtk_banner_keys.rs`: the reader's banner keys;
 - `gtk_composer_markdown.rs`: a draft's Markdown survives the desktop
   composer.
 
-The only other change is their two rows in `gtk_suite/main.rs`.
+The only other changes are their rows in each suite's `main.rs`.
 
 ## Unit tests that moved with their code: identical
 
@@ -39,6 +45,12 @@ branch head is byte-for-byte identical.
 |---|---|---|
 | 15, the status line: sync, backfill, connection state, age | `postio-gtk/src/feed.rs` | `postio-ui/src/status.rs` |
 | 10, the remote-image allow list | `postio-gtk/src/reader/allowlist.rs` | `postio-ui/src/allowlist.rs` |
+| 3, deciding a new-mail notification | `postio-app/src/notifications.rs` | `postio-host/src/notify.rs` |
+
+Two of the three notification tests are identical; the third,
+`mail_landing_in_the_open_mailbox_of_the_active_window_is_not_posted`,
+differs by one import path (`notify::Suppressed` is imported as
+`Suppressed`), which FR-005 allows.
 
 ## One test changed in place, and why
 

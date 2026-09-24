@@ -253,7 +253,7 @@ through the local transport.
 - [ ] T097 [P] Move ADR 0041 to Accepted if the maintainer agrees at review, and update `docs/decisions/README.md`
 - [X] T098 [P] `docs/book/` (or README) section: installing and running `postio-tui`, the flatpak alias, SSH notes, clipboard caveats *(docs/book/src/terminal.md, linked from SUMMARY.md and the README. It describes both frontends open at once, which is true once T023 lands; T099 checks it.)*
 - [ ] T099 Run quickstart.md end to end by hand and record the outcome in the PR body; confirm `postio-tui` is in `default-members` and the `ci.yml` `changes` job builds it
-- [ ] T100 Final FR-005 audit: diff the test files of `postio-app`, `postio-gtk`, `postio-ffi` and `macos/` against `origin/main`; any change beyond import paths is explained in the PR or reverted *(First pass recorded in `fr-005-audit.md`: additions and byte-identical moves, one test changed with its reason. Rerun before landing.)*
+- [X] T100 Final FR-005 audit: diff the test files of `postio-app`, `postio-gtk`, `postio-ffi` and `macos/` against `origin/main`; any change beyond import paths is explained in the PR or reverted *(`fr-005-audit.md`: additions, byte-identical moves, one import-path difference, and one GTK test turned round with its reason.)*
 
 ---
 
