@@ -29,10 +29,12 @@ pub fn draw(frame: &mut Frame, app: &App, theme: &Theme, now: DateTime<Local>) {
             let [list, status] =
                 Layout::vertical([Constraint::Min(1), Constraint::Length(1)]).areas(area);
             list::draw(frame, list, &app.visible(), theme, now);
-            let words = match app.total() {
-                1 => "1 conversation".to_owned(),
-                total => format!("{total} conversations"),
+            let words = match (app.notice(), app.total()) {
+                (Some(notice), _) => notice.to_owned(),
+                (None, 1) => "1 conversation".to_owned(),
+                (None, total) => format!("{total} conversations"),
             };
+            let words = fit(&words, usize::from(status.width));
             frame.render_widget(Line::styled(words, theme.style(Role::Dim)), status);
         }
     }

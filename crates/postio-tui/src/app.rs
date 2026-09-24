@@ -38,6 +38,15 @@ pub enum Input {
         /// How many rows it has.
         total: u32,
     },
+    /// The daemon said something happened.
+    Host(postio_core::Event),
+    /// A list was counted again, after an event said it changed.
+    Recounted {
+        /// Which list.
+        scope: ListScope,
+        /// How many rows it has now.
+        total: u32,
+    },
     /// A page asked for by [`Effect::Fetch`] arrived, or failed.
     Page {
         /// The list's generation when it was asked for.
@@ -56,6 +65,8 @@ pub enum Effect {
     Redraw,
     /// Leave.
     Quit,
+    /// Count a list again and answer with [`Input::Recounted`].
+    Recount(ListScope),
     /// Send a command to the daemon, aimed with [`App::state`].
     Send(postio_core::Command),
     /// Read a page of the list and answer with [`Input::Page`].
@@ -87,6 +98,9 @@ pub struct App {
     selection: postio_ui::selection::SelectionState,
     /// The list being shown.
     scope: Option<ListScope>,
+    /// What the status line says about the last thing done: the undo offer,
+    /// a refusal, an error.
+    notice: Option<String>,
 }
 
 impl std::fmt::Debug for App {
@@ -113,7 +127,21 @@ impl App {
             state: postio_core::SharedState::default(),
             selection: postio_ui::selection::SelectionState::new(),
             scope: None,
+            notice: None,
         }
+    }
+
+    /// What the status line says about the last thing done.
+    pub fn notice(&self) -> Option<&str> {
+        self.notice.as_deref()
+    }
+
+    /// Put `sentence` on the status line. Through `SafeText`: these are
+    /// Postio's own sentences, but an error can quote a folder name, and a
+    /// folder name came from a server.
+    fn say(&mut self, sentence: &str) -> Vec<Effect> {
+        self.notice = Some(postio_ui::terminal::SafeText::new(sentence).to_string());
+        vec![Effect::Redraw]
     }
 
     /// The same app, mirroring into `state`: the one the client snapshots.
@@ -273,6 +301,73 @@ impl App {
         vec![Effect::Send(command)]
     }
 
+    /// The daemon said something happened.
+    ///
+    /// What a command said about itself goes on the status line; what
+    /// changed in the store goes through the same paging plan the desktop
+    /// list follows, so the two lists react to one event the same way.
+    fn hear(&mut self, event: &postio_core::Event) -> Vec<Effect> {
+        use postio_core::Event;
+        match event {
+            Event::ActionCompleted {
+                description,
+                undoable,
+            } => {
+                let sentence = match (undoable, self.keys.key_for(KeyContext::List, "undo")) {
+                    (true, Some(key)) => format!("{description} — {key} to undo"),
+                    _ => description.clone(),
+                };
+                return self.say(&sentence);
+            }
+            Event::UndoPerformed { description } => return self.say(description),
+            Event::CommandRejected { reason, .. } => return self.say(reason),
+            Event::Error { message } => return self.say(message),
+            _ => {}
+        }
+        match self.paging.plan(event) {
+            postio_ui::paging::Plan::Ignore => Vec::new(),
+            postio_ui::paging::Plan::InsertAtTop(count) => {
+                if self.list.inserted_at_top(count) {
+                    // The rows under the cursor moved down; follow them.
+                    self.cursor = self.cursor.saturating_add(count);
+                    self.top = self.top.saturating_add(count);
+                }
+                vec![Effect::Redraw]
+            }
+            postio_ui::paging::Plan::Refetch(messages) => {
+                let generation = self.list.generation();
+                let pages = self.list.pages_holding(messages);
+                pages
+                    .into_iter()
+                    .filter(|page| self.list.note_pending(*page))
+                    .filter_map(|page| {
+                        self.paging.fetch_for(page).map(|fetch| Effect::Fetch {
+                            generation,
+                            page,
+                            fetch,
+                        })
+                    })
+                    .collect()
+            }
+            postio_ui::paging::Plan::Reload => self
+                .scope
+                .map(|scope| vec![Effect::Recount(scope)])
+                .unwrap_or_default(),
+        }
+    }
+
+    /// A list was counted again after it changed: keep the scroll, drop what
+    /// is cached, and let the rows in view be read again.
+    fn recounted(&mut self, scope: ListScope, total: u32) -> Vec<Effect> {
+        if self.scope != Some(scope) {
+            return Vec::new();
+        }
+        self.list.invalidate();
+        let _ = self.list.set_total(total);
+        self.move_to(self.cursor);
+        vec![Effect::Redraw]
+    }
+
     /// A list opened: show it from the top.
     fn open(&mut self, scope: ListScope, total: u32) -> Vec<Effect> {
         self.paging.open(scope);
@@ -323,6 +418,8 @@ pub fn update(app: &mut App, input: Input) -> Vec<Effect> {
             Outcome::Pending(_) | Outcome::Unhandled => Vec::new(),
         },
         Input::Opened { scope, total } => app.open(scope, total),
+        Input::Host(event) => app.hear(&event),
+        Input::Recounted { scope, total } => app.recounted(scope, total),
         Input::Page {
             generation,
             page,
@@ -554,6 +651,72 @@ mod tests {
         let visible = app.visible();
         assert!(visible[2].selected);
         assert!(!visible[1].selected);
+    }
+
+    #[test]
+    fn an_undoable_action_is_announced_and_u_sends_undo() {
+        let mut app = app((120, 30));
+        let opening = opened(&mut app, 10);
+        serve(&mut app, opening);
+        update(
+            &mut app,
+            Input::Host(postio_core::Event::ActionCompleted {
+                description: "Archived 12 messages".into(),
+                undoable: true,
+            }),
+        );
+        assert_eq!(app.notice(), Some("Archived 12 messages — u to undo"));
+
+        let effects = update(&mut app, press('u'));
+        assert!(
+            effects.contains(&Effect::Send(postio_core::Command::Undo)),
+            "{effects:?}"
+        );
+        update(
+            &mut app,
+            Input::Host(postio_core::Event::UndoPerformed {
+                description: "Unarchived 12 messages".into(),
+            }),
+        );
+        assert_eq!(app.notice(), Some("Unarchived 12 messages"));
+    }
+
+    #[test]
+    fn a_list_the_host_changed_is_counted_again_and_reread() {
+        let mut app = app((120, 30));
+        let opening = opened(&mut app, 10);
+        serve(&mut app, opening);
+        let scope = ListScope::Mailbox(MailboxId::new(1));
+        let effects = update(
+            &mut app,
+            Input::Host(postio_core::Event::MessageListChanged {
+                account: postio_model::AccountId::new(1),
+                mailbox: MailboxId::new(1),
+            }),
+        );
+        assert!(effects.contains(&Effect::Recount(scope)), "{effects:?}");
+
+        let effects = update(&mut app, Input::Recounted { scope, total: 7 });
+        assert_eq!(app.total(), 7);
+        assert!(
+            effects
+                .iter()
+                .any(|effect| matches!(effect, Effect::Fetch { page: 0, .. })),
+            "the rows in view are read again: {effects:?}"
+        );
+    }
+
+    #[test]
+    fn a_refusal_is_said_quietly() {
+        let mut app = app((120, 30));
+        update(
+            &mut app,
+            Input::Host(postio_core::Event::CommandRejected {
+                command: postio_core::CommandId::Archive.into(),
+                reason: "Nothing selected".into(),
+            }),
+        );
+        assert_eq!(app.notice(), Some("Nothing selected"));
     }
 
     #[test]

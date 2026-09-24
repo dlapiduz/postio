@@ -138,6 +138,7 @@ async fn main_loop(
 
     let (inputs, arriving) = async_channel::unbounded::<Input>();
     let mut terminal_events = EventStream::new();
+    let host_events = client.events();
 
     if let Some(scope) = first_scope(&client).await {
         let total = client.list_count(scope).await.unwrap_or(0);
@@ -156,6 +157,12 @@ async fn main_loop(
                 Some(Ok(_)) => continue,
                 Some(Err(error)) => return Err(error),
                 None => return Ok(()),
+            },
+            heard = host_events.recv() => match heard {
+                Ok(envelope) => Input::Host(envelope.event),
+                // The daemon went away: nothing on screen can be trusted to
+                // change any more, so leave rather than show a frozen mailbox.
+                Err(_) => return Err(io::Error::other("Postio's background service went away.")),
             },
             arrived = arriving.recv() => match arrived {
                 Ok(input) => input,
@@ -185,6 +192,15 @@ fn perform(
         match effect {
             Effect::Quit => return Ok(true),
             Effect::Redraw => redraw = true,
+            Effect::Recount(scope) => {
+                let client = client.clone();
+                let inputs = inputs.clone();
+                tokio::spawn(async move {
+                    if let Ok(total) = client.list_count(scope).await {
+                        let _ = inputs.send(Input::Recounted { scope, total }).await;
+                    }
+                });
+            }
             Effect::Send(command) => {
                 let client = client.clone();
                 tokio::spawn(async move {

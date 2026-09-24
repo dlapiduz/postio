@@ -75,6 +75,17 @@ impl Keys {
         (Keys { resolver }, problems)
     }
 
+    /// The key that runs `command` with the keyboard in `context`, as the
+    /// cheat sheet spells it -- whatever `[keys]` bound it to.
+    pub fn key_for(&self, context: KeyContext, command: &str) -> Option<String> {
+        context.chain().iter().find_map(|context| {
+            self.resolver
+                .keymap()
+                .binding_for(*context, command)
+                .map(ToString::to_string)
+        })
+    }
+
     /// What `key` means with the keyboard in `context`.
     pub fn press(&mut self, key: &KeyEvent, context: KeyContext, in_text_entry: bool) -> Outcome {
         match chord_of(key) {
