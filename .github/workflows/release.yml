@@ -261,6 +261,19 @@ jobs:
             -o flatpak/cargo-sources.json
           echo "$(jq length flatpak/cargo-sources.json) crate sources pinned"
 
+      # The daemon refuses a frontend from a different build, and a build is
+      # its version *and* its commit (`BuildId`, specs/005-tui-frontend T021).
+      # Every package from this tag carries the same commit, so the desktop
+      # app and the terminal package share one daemon; one built without it
+      # would handshake as a bare version and be refused by the others.
+      # flatpak-builder passes no host environment through, so the manifest
+      # carries it.
+      - name: Stamp the build with its commit
+        run: |
+          COMMIT="$(git rev-parse --short=12 HEAD)"
+          jq --arg commit "$COMMIT" '."build-options".env.POSTIO_GIT_COMMIT = $commit' \
+            "$MANIFEST" > manifest.json && mv manifest.json "$MANIFEST"
+
       - name: Cache flatpak-builder state
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
@@ -353,3 +366,217 @@ jobs:
         with:
           subject-path: ${{ env.BUNDLE }}
           sbom-path: ${{ env.SBOM }}
+
+  # The terminal frontend's two packages (specs/005-tui-frontend R10): its own
+  # Flatpak on the plain freedesktop runtime, and a standalone download. Both
+  # after `flatpak`, which is what creates the release they attach to, and so
+  # after the suite. Each bumps the version the same way `flatpak` does and
+  # stamps the same commit, because a daemon from one package must accept
+  # the frontends of the others.
+  tui-flatpak:
+    name: Terminal Flatpak bundle
+    needs: [suite, flatpak]
+    runs-on: ubuntu-26.04
+    env:
+      TUI_APP_ID: dev.postio.PostioTui
+      TUI_MANIFEST: flatpak/dev.postio.PostioTui.json
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      # The version only: the notes and the AppStream entry are the desktop
+      # package's. `cargo metadata` rewrites Cargo.lock for the bumped
+      # internal versions without compiling anything, which is all the
+      # offline sources below need.
+      - name: Bump the workspace version for this release
+        if: github.ref_type == 'tag'
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          printf -- '- Terminal package\n' > tui-notes.txt
+          python3 scripts/release-bump.py "$VERSION" --notes-file tui-notes.txt
+          cargo metadata --format-version 1 > /dev/null
+
+      - name: Stamp the build with its commit
+        run: |
+          COMMIT="$(git rev-parse --short=12 HEAD)"
+          jq --arg commit "$COMMIT" '."build-options".env.POSTIO_GIT_COMMIT = $commit' \
+            "$TUI_MANIFEST" > manifest.json && mv manifest.json "$TUI_MANIFEST"
+
+      - name: Give flatpak a runtime directory
+        run: |
+          runtime="${RUNNER_TEMP:-/tmp}/xdg"
+          mkdir -p "$runtime" && chmod 700 "$runtime"
+          echo "XDG_RUNTIME_DIR=$runtime" >> "$GITHUB_ENV"
+
+      - name: Install flatpak
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y flatpak flatpak-builder
+          flatpak remote-add --user --if-not-exists flathub \
+            https://flathub.org/repo/flathub.flatpakrepo
+
+      - name: Install the runtime the manifest asks for
+        run: |
+          RUNTIME=$(jq -r '.runtime + "//" + (."runtime-version"|tostring)' "$TUI_MANIFEST")
+          SDK=$(jq -r '.sdk + "//" + (."runtime-version"|tostring)' "$TUI_MANIFEST")
+          flatpak install --user -y flathub "$RUNTIME" "$SDK"
+
+      - name: Generate the offline cargo sources
+        run: |
+          pip install --quiet aiohttp PyYAML tomlkit
+          python3 flatpak/flatpak-cargo-generator.py Cargo.lock \
+            -o flatpak/cargo-sources.json
+
+      - name: Build
+        run: |
+          flatpak-builder --user --disable-rofiles-fuse --force-clean \
+            --install-deps-from=flathub \
+            --repo=repo build-dir "$TUI_MANIFEST"
+
+      - name: Bundle
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          [ "$GITHUB_REF_TYPE" = tag ] || VERSION="$(git rev-parse --short HEAD)"
+          BUNDLE="${TUI_APP_ID}-${VERSION}-x86_64.flatpak"
+          flatpak build-bundle repo "$BUNDLE" "$TUI_APP_ID" --runtime-repo=https://flathub.org/repo/flathub.flatpakrepo
+          ls -lh "$BUNDLE"
+          echo "BUNDLE=$BUNDLE" >> "$GITHUB_ENV"
+          echo "SBOM=${TUI_APP_ID}-${VERSION}.spdx.json" >> "$GITHUB_ENV"
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: tui-flatpak-bundle
+          path: ${{ env.BUNDLE }}
+
+      - name: Generate the SBOM
+        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
+        with:
+          path: .
+          format: spdx-json
+          output-file: ${{ env.SBOM }}
+          upload-artifact: false
+          upload-release-assets: false
+
+      - name: Attach to the release
+        if: github.ref_type == 'tag'
+        run: gh release upload "$GITHUB_REF_NAME" "$BUNDLE" "$SBOM" --clobber
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: ${{ env.BUNDLE }}
+
+      - name: Attest the SBOM
+        uses: actions/attest-sbom@c604332985a26aa8cf1bdc465b92731239ec6b9e # v4.1.0
+        with:
+          subject-path: ${{ env.BUNDLE }}
+          sbom-path: ${{ env.SBOM }}
+
+  # `postio-tui` and `postio-daemon`, for a machine without Flatpak -- a
+  # server reached over SSH is the usual one. It also builds the desktop
+  # executable, only to measure it: SC-004 compares the download's
+  # executables and the libraries they load against the desktop app's.
+  tui-tarball:
+    name: Terminal download
+    needs: [suite, flatpak]
+    runs-on: ubuntu-26.04
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - uses: ./.github/actions/rust-workspace
+
+      - name: Bump the workspace version for this release
+        if: github.ref_type == 'tag'
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          printf -- '- Terminal package\n' > tui-notes.txt
+          python3 scripts/release-bump.py "$VERSION" --notes-file tui-notes.txt
+
+      - name: Build
+        run: |
+          export POSTIO_GIT_COMMIT="$(git rev-parse --short=12 HEAD)"
+          cargo build --profile release-tui -p postio-tui --bin postio-tui
+          cargo build --release -p postio-host --bin postio-daemon
+          cargo build --release -p postio-app --bin postio
+
+      - name: Is it under half the desktop app?
+        run: |
+          scripts/measure-package-size.sh binaries \
+            target/release-tui/postio-tui target/release/postio-daemon \
+            -- target/release/postio
+
+      - name: Package
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          [ "$GITHUB_REF_TYPE" = tag ] || VERSION="$(git rev-parse --short HEAD)"
+          DIR="postio-tui-${VERSION}"
+          mkdir -p "$DIR"
+          install -m755 target/release-tui/postio-tui target/release/postio-daemon "$DIR/"
+          cp docs/book/src/terminal.md "$DIR/README.md"
+          TARBALL="postio-tui-${VERSION}-x86_64-linux.tar.zst"
+          tar --zstd -cf "$TARBALL" "$DIR"
+          ls -lh "$TARBALL"
+          echo "TARBALL=$TARBALL" >> "$GITHUB_ENV"
+          echo "SBOM=postio-tui-${VERSION}.spdx.json" >> "$GITHUB_ENV"
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: tui-tarball
+          path: ${{ env.TARBALL }}
+
+      - name: Generate the SBOM
+        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
+        with:
+          path: .
+          format: spdx-json
+          output-file: ${{ env.SBOM }}
+          upload-artifact: false
+          upload-release-assets: false
+
+      - name: Attach to the release
+        if: github.ref_type == 'tag'
+        run: gh release upload "$GITHUB_REF_NAME" "$TARBALL" "$SBOM" --clobber
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: ${{ env.TARBALL }}
+
+      - name: Attest the SBOM
+        uses: actions/attest-sbom@c604332985a26aa8cf1bdc465b92731239ec6b9e # v4.1.0
+        with:
+          subject-path: ${{ env.TARBALL }}
+          sbom-path: ${{ env.SBOM }}
+
+  # SC-004 for the Flatpaks: each installed with the runtime it names, since
+  # the terminal's plain freedesktop runtime against GNOME's is most of the
+  # difference. After both are published: a size is not a reason to withhold
+  # a working build, it is a reason the next one has to shrink, and a red job
+  # on the release says so.
+  package-sizes:
+    name: Terminal packages are under half
+    needs: [flatpak, tui-flatpak]
+    runs-on: ubuntu-26.04
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          path: bundles
+          merge-multiple: true
+
+      - name: Install both bundles and their runtimes
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y flatpak
+          flatpak remote-add --user --if-not-exists flathub \
+            https://flathub.org/repo/flathub.flatpakrepo
+          for bundle in bundles/*.flatpak; do
+            flatpak install --user -y --noninteractive "$bundle"
+          done
+
+      - name: Is the terminal Flatpak under half the desktop one?
+        run: scripts/measure-package-size.sh flatpak dev.postio.PostioTui dev.postio.Postio
