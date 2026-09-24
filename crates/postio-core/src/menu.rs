@@ -193,7 +193,14 @@ pub fn section_for(command: CommandId) -> Option<MenuSection> {
         // commands on the screen act on its focused row, like the settings
         // surfaces above, and a global menu cannot say which person.
         C::OpenContacts => Some(M::Go),
-        C::ContactShowMail | C::ContactCompose | C::ContactsFilter | C::ContactsToggleEveryone => {
+        C::ContactShowMail
+        | C::ContactCompose
+        | C::ContactsFilter
+        | C::ContactsToggleEveryone
+        | C::ContactJoin
+        | C::ContactAddAddress
+        | C::ContactDetachAddress
+        | C::ContactSetPreferred => {
             None
         }
         // The one-off render of a part the reader would not draw by itself.

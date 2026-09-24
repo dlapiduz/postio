@@ -26,7 +26,8 @@ use std::path::PathBuf;
 use std::str::FromStr;
 
 use postio_model::{
-    AccountId, DraftId, LabelId, MailboxId, MailboxRole, MessageId, OperationRange, ThreadId,
+    AccountId, AddressId, ContactId, ContactState, DraftId, EmailAddress, JoinReceipt, LabelId, MailboxId,
+    MailboxRole, MessageId, OperationRange, ThreadId,
 };
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
@@ -247,6 +248,14 @@ command_ids! {
     ContactsFilter => "contacts_filter",
     /// Show everyone from mail, or only the people the user made or wrote to.
     ContactsToggleEveryone => "contacts_toggle_everyone",
+    /// Join the marked people, or a suggested pair, into one person.
+    ContactJoin => "contact_join",
+    /// Give the focused person an address they type.
+    ContactAddAddress => "contact_add_address",
+    /// Make the focused address a person of its own.
+    ContactDetachAddress => "contact_detach_address",
+    /// Offer the focused address first.
+    ContactSetPreferred => "contact_set_preferred",
 }
 
 impl fmt::Display for CommandId {
@@ -799,6 +808,73 @@ pub enum Command {
     ContactsFilter,
     /// Toggle between the default view and everyone from mail.
     ContactsToggleEveryone,
+    /// Join people into one (specs/005-contacts FR-012), or take a join back.
+    ContactJoin(ContactJoinAction),
+    /// Give a person an address, or put an address back where it was.
+    ContactAddAddress(ContactAddressAction),
+    /// Make an address a person of its own (FR-014). `None` means the one
+    /// the keyboard is on.
+    ContactDetachAddress {
+        /// The address.
+        address: Option<AddressId>,
+    },
+    /// Offer an address first (FR-016). `None`s mean the focused ones.
+    ContactSetPreferred {
+        /// Whose.
+        person: Option<ContactId>,
+        /// Which.
+        address: Option<AddressId>,
+    },
+}
+
+/// What a [`Command::ContactJoin`] asks for.
+///
+/// A keystroke is [`Ask`](Self::Ask): the Contacts screen asks which name the
+/// joined person keeps, then invokes [`Join`](Self::Join). Undo invokes
+/// [`Unjoin`](Self::Unjoin) with what the join handed back -- one verb, three
+/// shapes, the way `Move` with no destination asks and with one moves.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ContactJoinAction {
+    /// Ask the user which name, and which organisation if theirs disagree.
+    Ask,
+    /// Join `others` into `into`, under `name`.
+    Join {
+        /// The survivor.
+        into: ContactId,
+        /// The people joined into it.
+        others: Vec<ContactId>,
+        /// The joined person's name, which every join ends with.
+        name: String,
+        /// The organisation chosen when theirs disagreed.
+        organization: Option<String>,
+    },
+    /// Take a join back.
+    Unjoin(JoinReceipt),
+}
+
+/// What a [`Command::ContactAddAddress`] asks for.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ContactAddressAction {
+    /// Ask the user for the address.
+    Ask,
+    /// Give `person` the typed `address`; refused while a live person owns it.
+    Add {
+        /// Whose.
+        person: ContactId,
+        /// The address as typed.
+        address: EmailAddress,
+    },
+    /// Give `address` to `to`, whoever has it -- the "move it" answer, and
+    /// the way undo puts an address back. `to: None` lets go of it.
+    Put {
+        /// The address.
+        address: AddressId,
+        /// Who gets it, or nobody.
+        to: Option<ContactId>,
+        /// Undo's half: the state `to` was in before an earlier move left
+        /// them with no address, to bring them back in.
+        revive: Option<ContactState>,
+    },
 }
 
 impl Command {
@@ -949,6 +1025,10 @@ impl Command {
             Command::ContactCompose => CommandId::ContactCompose,
             Command::ContactsFilter => CommandId::ContactsFilter,
             Command::ContactsToggleEveryone => CommandId::ContactsToggleEveryone,
+            Command::ContactJoin(_) => CommandId::ContactJoin,
+            Command::ContactAddAddress(_) => CommandId::ContactAddAddress,
+            Command::ContactDetachAddress { .. } => CommandId::ContactDetachAddress,
+            Command::ContactSetPreferred { .. } => CommandId::ContactSetPreferred,
         }
     }
 
@@ -1078,6 +1158,13 @@ impl Command {
             CommandId::ContactCompose => Command::ContactCompose,
             CommandId::ContactsFilter => Command::ContactsFilter,
             CommandId::ContactsToggleEveryone => Command::ContactsToggleEveryone,
+            CommandId::ContactJoin => Command::ContactJoin(ContactJoinAction::Ask),
+            CommandId::ContactAddAddress => Command::ContactAddAddress(ContactAddressAction::Ask),
+            CommandId::ContactDetachAddress => Command::ContactDetachAddress { address: None },
+            CommandId::ContactSetPreferred => Command::ContactSetPreferred {
+                person: None,
+                address: None,
+            },
         }
     }
 

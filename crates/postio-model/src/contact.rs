@@ -11,7 +11,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
 use crate::address::EmailAddress;
-use crate::ids::{AddressId, ContactId};
+use crate::ids::{AddressId, ContactGroupId, ContactId};
 
 /// How a person first came to exist.
 ///
@@ -254,6 +254,47 @@ pub struct ContactDetail {
     pub groups: Vec<String>,
     /// How many distinct messages involve any of their addresses.
     pub messages: u64,
+}
+
+/// What moving an address did, precisely enough to put it back: who had it,
+/// and the state they were in if the move left them with no address at all.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AddressMove {
+    /// Who owned the address before, or nobody.
+    pub previous: Option<ContactId>,
+    /// `previous`'s state before the move emptied them, when it did.
+    pub emptied: Option<ContactState>,
+}
+
+/// The fields of a person a join may change, as they were before it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PersonFields {
+    /// The name the user set, if any.
+    pub name: Option<String>,
+    /// Organisation.
+    pub organization: Option<String>,
+    /// Note.
+    pub note: Option<String>,
+    /// Provenance.
+    pub source: ContactSource,
+    /// The preferred address.
+    pub preferred: AddressId,
+}
+
+/// What a join changed, precisely enough to take it back
+/// (specs/005-contacts research R8): which addresses came from which person,
+/// what the survivor's fields were, and which group memberships the join
+/// gave it that it did not already have.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct JoinReceipt {
+    /// The person the others were joined into.
+    pub into: ContactId,
+    /// Each absorbed person and the addresses that were theirs.
+    pub restore: Vec<(ContactId, Vec<AddressId>)>,
+    /// The survivor's fields before the join.
+    pub prior: PersonFields,
+    /// Groups the survivor joined only because an absorbed person was in them.
+    pub added_memberships: Vec<ContactGroupId>,
 }
 
 #[cfg(test)]

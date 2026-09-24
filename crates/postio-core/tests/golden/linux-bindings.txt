@@ -92,3 +92,7 @@ contact_show_mail	Return | o
 contact_compose	c
 contacts_filter	/
 contacts_toggle_everyone	v e
+contact_join	m
+contact_add_address	plus
+contact_detach_address	minus
+contact_set_preferred	asterisk

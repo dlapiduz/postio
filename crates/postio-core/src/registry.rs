@@ -1639,6 +1639,48 @@ static SPECS: &[CommandSpec] = &[
         recovery: Recovery::None,
         requires: MAIL,
     },
+    CommandSpec {
+        id: CommandId::ContactJoin,
+        title: "Join",
+        // `m` for merge: `J` extends the selection being joined, and `x`
+        // marks it -- the join acts on what they built.
+        default_binding: "m",
+        alternate_bindings: &[],
+        contexts: ctx(CONTACTS),
+        destructive: false,
+        recovery: Recovery::Undo,
+        requires: MAIL,
+    },
+    CommandSpec {
+        id: CommandId::ContactAddAddress,
+        title: "Add address",
+        default_binding: "plus",
+        alternate_bindings: &[],
+        contexts: ctx(CONTACTS),
+        destructive: false,
+        recovery: Recovery::Undo,
+        requires: MAIL,
+    },
+    CommandSpec {
+        id: CommandId::ContactDetachAddress,
+        title: "Detach address",
+        default_binding: "minus",
+        alternate_bindings: &[],
+        contexts: ctx(CONTACTS),
+        destructive: false,
+        recovery: Recovery::Undo,
+        requires: MAIL,
+    },
+    CommandSpec {
+        id: CommandId::ContactSetPreferred,
+        title: "Use this address first",
+        default_binding: "asterisk",
+        alternate_bindings: &[],
+        contexts: ctx(CONTACTS),
+        destructive: false,
+        recovery: Recovery::Undo,
+        requires: MAIL,
+    },
 ];
 
 /// Every command, in cheat-sheet order.

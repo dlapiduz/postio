@@ -26,7 +26,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use chrono::Utc;
 use postio_model::{
     AddressId, Contact, ContactAddress, ContactDetail, ContactId, ContactListRow, ContactSource,
-    ContactState, ContactView, EmailAddress, Message,
+    AddressMove, ContactState, ContactView, EmailAddress, JoinReceipt, Message, PersonFields,
 };
 
 use super::{from_millis, to_millis};
@@ -325,7 +325,7 @@ impl<'a> ContactRepository<'a> {
             }
             refresh(&transaction, person).await?;
             for owner in previous {
-                settle_after_losing_addresses(&transaction, owner).await?;
+                settle_after_losing_addresses(&transaction, owner, Some(person)).await?;
             }
             Ok(ContactId::new(person))
         })
@@ -643,8 +643,441 @@ pub(crate) async fn release_own_address(
             bind![address.normalized()],
         )
         .await?;
-        settle_after_losing_addresses(connection, owner).await?;
+        settle_after_losing_addresses(connection, owner, None).await?;
     }
+    Ok(())
+}
+
+impl ContactRepository<'_> {
+    /// Joins `others` into `into`: one person afterwards, owning every
+    /// address, keeping every sighting, every group and every note
+    /// (specs/005-contacts FR-012, FR-013).
+    ///
+    /// `name` is the joined person's name, which the user picked or typed --
+    /// every join ends with one, and it counts as set by the user from here
+    /// on. `organization`, when given, is the one the user chose between
+    /// conflicting ones; otherwise the survivor's stands, or the first absorbed
+    /// person's if it had none. The absorbed become `merged` rather than
+    /// deleted, which is what lets [`unjoin`](Self::unjoin) put them back
+    /// exactly from the [`JoinReceipt`] this returns.
+    pub async fn join(
+        &self,
+        into: ContactId,
+        others: &[ContactId],
+        name: &str,
+        organization: Option<&str>,
+    ) -> Result<JoinReceipt> {
+        let name = name.trim().to_owned();
+        let organization = organization
+            .map(str::trim)
+            .filter(|o| !o.is_empty())
+            .map(str::to_owned);
+        let others: Vec<ContactId> = others.iter().copied().filter(|o| *o != into).collect();
+        sql::in_scope(self.connection, |transaction| async move {
+            let survivor = fields(&transaction, into).await?;
+            let into_groups = groups_of(&transaction, into).await?;
+            let mut restore = Vec::new();
+            let mut added: Vec<postio_model::ContactGroupId> = Vec::new();
+            let mut notes: Vec<String> = survivor.note.iter().cloned().collect();
+            let mut fallback_organization = survivor.organization.clone();
+            for other in &others {
+                let absorbed = fields(&transaction, *other).await?;
+                let owned: Vec<i64> = sql::all(
+                    &transaction,
+                    "SELECT id FROM addresses WHERE contact_id = ?1 ORDER BY id LIMIT 10000",
+                    [other.get()],
+                    |row| row.col(0),
+                )
+                .await?;
+                restore.push((*other, owned.iter().map(|a| AddressId::new(*a)).collect()));
+                sql::execute(
+                    &transaction,
+                    "UPDATE addresses SET contact_id = ?2 WHERE contact_id = ?1",
+                    bind![other.get(), into.get()],
+                )
+                .await?;
+                for group in groups_of(&transaction, *other).await? {
+                    if !into_groups.contains(&group) && !added.contains(&group) {
+                        sql::execute(
+                            &transaction,
+                            "INSERT OR IGNORE INTO contact_group_members (group_id, contact_id)
+                             VALUES (?1, ?2)",
+                            bind![group.get(), into.get()],
+                        )
+                        .await?;
+                        added.push(group);
+                    }
+                }
+                notes.extend(absorbed.note.into_iter().filter(|n| !n.trim().is_empty()));
+                if fallback_organization.is_none() {
+                    fallback_organization = absorbed.organization;
+                }
+                sql::execute(
+                    &transaction,
+                    "UPDATE contacts SET state = 'merged', merged_into = ?2 WHERE id = ?1",
+                    bind![other.get(), into.get()],
+                )
+                .await?;
+                sql::execute(
+                    &transaction,
+                    "DELETE FROM contact_terms WHERE contact_id = ?1",
+                    [other.get()],
+                )
+                .await?;
+            }
+            let note = (!notes.is_empty()).then(|| notes.join("\n\n"));
+            sql::execute(
+                &transaction,
+                "UPDATE contacts
+                    SET name = ?2, organization = ?3, note = ?4, source = 'user',
+                        updated_at = ?5
+                  WHERE id = ?1",
+                bind![
+                    into.get(),
+                    name,
+                    organization.or(fallback_organization),
+                    note,
+                    to_millis(Utc::now())
+                ],
+            )
+            .await?;
+            refresh(&transaction, into.get()).await?;
+            Ok(JoinReceipt {
+                into,
+                restore,
+                prior: survivor,
+                added_memberships: added,
+            })
+        })
+        .await
+    }
+
+    /// Takes a join apart: every absorbed person back, with the addresses
+    /// that were theirs, and the survivor's fields and groups as they were.
+    pub async fn unjoin(&self, receipt: &JoinReceipt) -> Result<()> {
+        sql::in_scope(self.connection, |transaction| async move {
+            for (person, owned) in &receipt.restore {
+                for address in owned {
+                    sql::execute(
+                        &transaction,
+                        "UPDATE addresses SET contact_id = ?2 WHERE id = ?1",
+                        bind![address.get(), person.get()],
+                    )
+                    .await?;
+                }
+                sql::execute(
+                    &transaction,
+                    "UPDATE contacts SET state = 'live', merged_into = NULL WHERE id = ?1",
+                    [person.get()],
+                )
+                .await?;
+                refresh(&transaction, person.get()).await?;
+            }
+            for group in &receipt.added_memberships {
+                sql::execute(
+                    &transaction,
+                    "DELETE FROM contact_group_members WHERE group_id = ?1 AND contact_id = ?2",
+                    bind![group.get(), receipt.into.get()],
+                )
+                .await?;
+            }
+            let prior = &receipt.prior;
+            sql::execute(
+                &transaction,
+                "UPDATE contacts
+                    SET name = ?2, organization = ?3, note = ?4, source = ?5,
+                        preferred_address = ?6
+                  WHERE id = ?1",
+                bind![
+                    receipt.into.get(),
+                    prior.name,
+                    prior.organization,
+                    prior.note,
+                    prior.source.as_str(),
+                    prior.preferred.get()
+                ],
+            )
+            .await?;
+            refresh(&transaction, receipt.into.get()).await?;
+            Ok(())
+        })
+        .await
+    }
+
+    /// Takes `address` away from its person and makes it a person of its own,
+    /// carrying its own sighting history (FR-014). Refused for a person's last
+    /// address -- deleting is how a person goes.
+    pub async fn detach_address(&self, address: AddressId) -> Result<ContactId> {
+        sql::in_scope(self.connection, |transaction| async move {
+            let owner: Option<Option<i64>> = sql::first(
+                &transaction,
+                "SELECT contact_id FROM addresses WHERE id = ?1",
+                [address.get()],
+                |row| row.col(0),
+            )
+            .await?;
+            let Some(Some(owner)) = owner else {
+                return Err(Error::NotFound {
+                    entity: "address",
+                    id: address.get(),
+                });
+            };
+            let owned = sql::scalar(
+                &transaction,
+                "SELECT count(*) FROM addresses WHERE contact_id = ?1",
+                [owner],
+            )
+            .await?;
+            if owned <= 1 {
+                return Err(Error::ForbiddenTransition {
+                    what: "contact",
+                    reason: "a person keeps at least one address; delete them instead".into(),
+                });
+            }
+            let seen = sql::scalar(
+                &transaction,
+                "SELECT coalesce(sum(times_seen), 0) FROM contact_sightings WHERE address_id = ?1",
+                [address.get()],
+            )
+            .await?;
+            // Known from mail if the mail knows it; otherwise it was typed in.
+            let source = if seen > 0 { "mail" } else { "user" };
+            let now = to_millis(Utc::now());
+            sql::execute(
+                &transaction,
+                "INSERT INTO contacts (source, state, preferred_address, sort_key, name_key,
+                                       created_at, updated_at)
+                 VALUES (?1, 'live', ?2, '', '', ?3, ?3)",
+                bind![source, address.get(), now],
+            )
+            .await?;
+            let person = transaction.last_insert_rowid();
+            sql::execute(
+                &transaction,
+                "UPDATE addresses SET contact_id = ?2 WHERE id = ?1",
+                bind![address.get(), person],
+            )
+            .await?;
+            refresh(&transaction, person).await?;
+            refresh(&transaction, owner).await?;
+            Ok(ContactId::new(person))
+        })
+        .await
+    }
+
+    /// Gives `person` an address they typed. One nobody owns, or one a deleted
+    /// person owns, becomes theirs; one a live person owns is refused with
+    /// [`Error::AddressOwned`], naming who, so the caller can offer to move it
+    /// (FR-015).
+    pub async fn add_address(&self, person: ContactId, address: &EmailAddress) -> Result<AddressId> {
+        sql::in_scope(self.connection, |transaction| async move {
+            let (id, owner) = address_and_owner(&transaction, address).await?;
+            match &owner {
+                Some((owner, _)) if *owner == person.get() => return Ok(AddressId::new(id)),
+                Some((owner, state)) if state == "live" => {
+                    return Err(Error::AddressOwned {
+                        address: id,
+                        owner: *owner,
+                    });
+                }
+                _ => {}
+            }
+            sql::execute(
+                &transaction,
+                "UPDATE addresses SET contact_id = ?2 WHERE id = ?1",
+                bind![id, person.get()],
+            )
+            .await?;
+            promote(&transaction, person).await?;
+            refresh(&transaction, person.get()).await?;
+            if let Some((previous, _)) = owner {
+                settle_after_losing_addresses(&transaction, previous, Some(person.get())).await?;
+            }
+            Ok(AddressId::new(id))
+        })
+        .await
+    }
+
+    /// Moves `address` to `person`, whoever had it -- the "move it" answer to
+    /// [`Error::AddressOwned`], and what undoes a detach or an add. Moving an
+    /// address off a deleted person lifts its suppression (FR-024).
+    ///
+    /// `revive`, given by an undo, is the state `person` had before an earlier
+    /// move left them with nothing: they come back in it. The returned
+    /// [`AddressMove`] is what the same undo needs for this move.
+    pub async fn move_address(
+        &self,
+        address: AddressId,
+        person: ContactId,
+        revive: Option<ContactState>,
+    ) -> Result<AddressMove> {
+        sql::in_scope(self.connection, |transaction| async move {
+            let previous = owner_of(&transaction, address).await?;
+            if previous == Some(person.get()) && revive.is_none() {
+                return Ok(AddressMove {
+                    previous: previous.map(ContactId::new),
+                    emptied: None,
+                });
+            }
+            sql::execute(
+                &transaction,
+                "UPDATE addresses SET contact_id = ?2 WHERE id = ?1",
+                bind![address.get(), person.get()],
+            )
+            .await?;
+            if let Some(state) = revive {
+                sql::execute(
+                    &transaction,
+                    "UPDATE contacts SET state = ?2, merged_into = NULL WHERE id = ?1",
+                    bind![person.get(), state.as_str()],
+                )
+                .await?;
+            }
+            refresh(&transaction, person.get()).await?;
+            let emptied = match previous {
+                Some(previous) if previous != person.get() => {
+                    settle_after_losing_addresses(&transaction, previous, Some(person.get()))
+                        .await?
+                }
+                _ => None,
+            };
+            Ok(AddressMove {
+                previous: previous.map(ContactId::new),
+                emptied,
+            })
+        })
+        .await
+    }
+
+    /// Who owns `address`, or `None` for nobody.
+    pub async fn owner_of_address(&self, address: AddressId) -> Result<Option<ContactId>> {
+        Ok(owner_of(self.connection, address)
+            .await?
+            .map(ContactId::new))
+    }
+
+    /// Lets go of `address`: it belongs to nobody afterwards, as a typed
+    /// address did before anyone added it. What undoes adding one nobody
+    /// owned.
+    pub async fn release_address(&self, address: AddressId) -> Result<AddressMove> {
+        sql::in_scope(self.connection, |transaction| async move {
+            let previous = owner_of(&transaction, address).await?;
+            sql::execute(
+                &transaction,
+                "UPDATE addresses SET contact_id = NULL WHERE id = ?1",
+                [address.get()],
+            )
+            .await?;
+            let emptied = match previous {
+                Some(previous) => settle_after_losing_addresses(&transaction, previous, None).await?,
+                None => None,
+            };
+            Ok(AddressMove {
+                previous: previous.map(ContactId::new),
+                emptied,
+            })
+        })
+        .await
+    }
+
+    /// Makes `address` the one completion offers first and "write to" uses
+    /// (FR-016). Returns the preferred address it replaced. Refused for an
+    /// address that is not the person's own.
+    pub async fn set_preferred(&self, person: ContactId, address: AddressId) -> Result<AddressId> {
+        sql::in_scope(self.connection, |transaction| async move {
+            let owns = sql::exists(
+                &transaction,
+                "SELECT 1 FROM addresses WHERE id = ?1 AND contact_id = ?2",
+                bind![address.get(), person.get()],
+            )
+            .await?;
+            if !owns {
+                return Err(Error::ForbiddenTransition {
+                    what: "contact",
+                    reason: "a person's preferred address is one of their own".into(),
+                });
+            }
+            let previous = fields(&transaction, person).await?.preferred;
+            sql::execute(
+                &transaction,
+                "UPDATE contacts SET preferred_address = ?2 WHERE id = ?1",
+                bind![person.get(), address.get()],
+            )
+            .await?;
+            refresh(&transaction, person.get()).await?;
+            Ok(previous)
+        })
+        .await
+    }
+}
+
+/// Who owned `address`, or `None` for nobody; an address the store does not
+/// have is an error.
+async fn owner_of(connection: &Connection, address: AddressId) -> Result<Option<i64>> {
+    let found: Option<Option<i64>> = sql::first(
+        connection,
+        "SELECT contact_id FROM addresses WHERE id = ?1",
+        [address.get()],
+        |row| row.col(0),
+    )
+    .await?;
+    found.ok_or(Error::NotFound {
+        entity: "address",
+        id: address.get(),
+    })
+}
+
+/// A person's editable fields, for a receipt or an inverse.
+async fn fields(connection: &Connection, person: ContactId) -> Result<PersonFields> {
+    type Row = (Option<String>, Option<String>, Option<String>, String, Option<i64>);
+    let row: Option<Row> = sql::first(
+        connection,
+        "SELECT name, organization, note, source, preferred_address FROM contacts WHERE id = ?1",
+        [person.get()],
+        |row| Ok((row.col(0)?, row.col(1)?, row.col(2)?, row.col(3)?, row.col(4)?)),
+    )
+    .await?;
+    let Some((name, organization, note, source, preferred)) = row else {
+        return Err(Error::NotFound {
+            entity: "contact",
+            id: person.get(),
+        });
+    };
+    Ok(PersonFields {
+        name,
+        organization,
+        note,
+        source: ContactSource::from_name(&source).ok_or_else(|| Error::UnknownEnum {
+            column: "contacts.source",
+            value: source.clone(),
+        })?,
+        preferred: AddressId::new(preferred.unwrap_or(0)),
+    })
+}
+
+/// The groups a person is in.
+async fn groups_of(
+    connection: &Connection,
+    person: ContactId,
+) -> Result<Vec<postio_model::ContactGroupId>> {
+    sql::all(
+        connection,
+        "SELECT group_id FROM contact_group_members WHERE contact_id = ?1 LIMIT 10000",
+        [person.get()],
+        |row| Ok(postio_model::ContactGroupId::new(row.col(0)?)),
+    )
+    .await
+}
+
+/// A deliberate edit promotes a person known only from mail to one the user
+/// made, in place (FR-022).
+async fn promote(connection: &Connection, person: ContactId) -> Result<()> {
+    sql::execute(
+        connection,
+        "UPDATE contacts SET source = 'user' WHERE id = ?1 AND source = 'mail'",
+        [person.get()],
+    )
+    .await?;
     Ok(())
 }
 
@@ -922,31 +1355,49 @@ pub(super) async fn refresh(connection: &Connection, person: i64) -> Result<()> 
     Ok(())
 }
 
-/// After `person` has lost addresses to someone else: removed outright if
-/// they are left with none — a deleted person with no address has nothing
-/// left to suppress and nothing to restore — and refreshed otherwise.
+/// After `person` has lost addresses to someone else: refreshed if they
+/// still own one, and folded into `receiver` -- `merged`, offered nowhere --
+/// if they are left with none.
+///
+/// Folded rather than removed, and the state they were in handed back,
+/// because undo has to be able to give the address back to *them*: a
+/// person removed here would leave the inverse with nobody to return it to
+/// (specs/005-contacts research R8).
 pub(super) async fn settle_after_losing_addresses(
     connection: &Connection,
     person: i64,
-) -> Result<()> {
+    receiver: Option<i64>,
+) -> Result<Option<ContactState>> {
     let remaining = sql::scalar(
         connection,
         "SELECT count(*) FROM addresses WHERE contact_id = ?1",
         [person],
     )
     .await?;
-    if remaining == 0 {
-        sql::execute(
-            connection,
-            "DELETE FROM contact_terms WHERE contact_id = ?1",
-            [person],
-        )
-        .await?;
-        sql::execute(connection, "DELETE FROM contacts WHERE id = ?1", [person]).await?;
-        Ok(())
-    } else {
-        refresh(connection, person).await
+    if remaining > 0 {
+        refresh(connection, person).await?;
+        return Ok(None);
     }
+    let state: Option<String> = sql::first(
+        connection,
+        "SELECT state FROM contacts WHERE id = ?1",
+        [person],
+        |row| row.col(0),
+    )
+    .await?;
+    sql::execute(
+        connection,
+        "UPDATE contacts SET state = 'merged', merged_into = ?2 WHERE id = ?1",
+        bind![person, receiver],
+    )
+    .await?;
+    sql::execute(
+        connection,
+        "DELETE FROM contact_terms WHERE contact_id = ?1",
+        [person],
+    )
+    .await?;
+    Ok(state.as_deref().and_then(ContactState::from_name))
 }
 
 /// Adds `terms` to a person's filter index; one statement for all of them.
