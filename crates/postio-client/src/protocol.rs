@@ -201,6 +201,15 @@ pub enum Req {
     Account(AccountOp),
     /// Look up the servers for a new account's address.
     Discover(String),
+    /// Begin a browser sign-in for a new account; answered with the consent
+    /// URL, which nothing opens: the frontend shows it, and opens it only
+    /// when asked.
+    BeginOAuth(Box<postio_ui::onboarding::Submission>),
+    /// Wait for the sign-in for this address to finish, and the account to
+    /// be saved.
+    FinishOAuth(String),
+    /// Give up the sign-in for this address.
+    CancelOAuth(String),
     /// Prove a new account's credentials and save it (the password goes to
     /// the keyring and nowhere else).
     AddAccount(Box<postio_ui::onboarding::Submission>),
@@ -266,6 +275,8 @@ pub enum Resp {
     Diagnosis(String),
     /// What discovery found, as the first-run screen shows it.
     Onboarding(Box<postio_ui::onboarding::Status>),
+    /// Where the browser sign-in waits for the person.
+    Consent(Box<postio_ui::onboarding::BrowserSignIn>),
     /// The read could not be answered; the sentence is for the user.
     Failed(StoreError),
 }

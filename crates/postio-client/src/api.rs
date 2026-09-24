@@ -94,6 +94,9 @@ impl Req {
             Req::Diagnose(_) => "Diagnose",
             Req::Account(_) => "Account",
             Req::Discover(_) => "Discover",
+            Req::BeginOAuth(_) => "BeginOAuth",
+            Req::FinishOAuth(_) => "FinishOAuth",
+            Req::CancelOAuth(_) => "CancelOAuth",
             Req::AddAccount(_) => "AddAccount",
         }
     }
@@ -442,6 +445,46 @@ impl Client {
             Resp::Onboarding(status) => Some(*status),
             _ => None,
         })
+        .await
+    }
+
+    /// Begin a browser sign-in; the answer is the consent URL, unopened.
+    pub async fn begin_oauth(
+        &self,
+        submission: postio_ui::onboarding::Submission,
+    ) -> Result<postio_ui::onboarding::BrowserSignIn, StoreError> {
+        let request = Req::BeginOAuth(Box::new(submission));
+        self.read(request, "a sign-in", |answer| match answer {
+            Resp::Consent(consent) => Some(*consent),
+            _ => None,
+        })
+        .await
+    }
+
+    /// Wait for the sign-in for `address` to finish and the account to be
+    /// saved; the error is the sentence for the screen.
+    pub async fn finish_oauth(&self, address: String) -> Result<(), StoreError> {
+        self.read(
+            Req::FinishOAuth(address),
+            "a finished sign-in",
+            |answer| match answer {
+                Resp::Done => Some(()),
+                _ => None,
+            },
+        )
+        .await
+    }
+
+    /// Give up the sign-in for `address`.
+    pub async fn cancel_oauth(&self, address: String) -> Result<(), StoreError> {
+        self.read(
+            Req::CancelOAuth(address),
+            "a cancelled sign-in",
+            |answer| match answer {
+                Resp::Done => Some(()),
+                _ => None,
+            },
+        )
         .await
     }
 

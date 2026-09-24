@@ -56,6 +56,10 @@ struct Inner {
     /// What each address's last probe offered for JMAP, for the submission
     /// that follows it.
     offers: Mutex<HashMap<String, Option<postio_account::discovery::JmapOffer>>>,
+    /// What each address's last probe offered for a browser sign-in.
+    oauth_offers: Mutex<HashMap<String, postio_account::discovery::OAuthOffer>>,
+    /// The browser sign-ins under way, by address.
+    sign_ins: Mutex<HashMap<String, SignIn>>,
     hub: EventHub,
     clients: Mutex<HashMap<ClientId, Entry>>,
     next_client: AtomicU64,
@@ -77,6 +81,49 @@ struct Entry {
     tasks: Vec<tokio::task::AbortHandle>,
     /// This client's draft writes, in the order it made them.
     drafts: compose::DraftWriter,
+}
+
+/// Start the sync of the account saved for `address`, and no other.
+async fn start_engine_for(wiring: &Wiring, address: &str) {
+    let Ok(connection) = wiring.database.connect().await else {
+        return;
+    };
+    let account = postio_storage::repository::AccountRepository::new(&connection)
+        .list()
+        .await
+        .ok()
+        .and_then(|accounts| {
+            accounts
+                .into_iter()
+                .find(|account| account.address.address.eq_ignore_ascii_case(address))
+        });
+    if let Some(account) = account
+        && let Some(engine) = postio_session::engine::start(&account, wiring)
+    {
+        postio_runtime::retain(engine.clone());
+        wiring.engine.fill(engine);
+    }
+}
+
+/// A browser sign-in under way.
+struct SignIn {
+    /// Gives it up.
+    cancel: postio_account::cancel::CancelToken,
+    /// How it ended, once it has.
+    done: tokio::sync::watch::Receiver<Option<Result<(), String>>>,
+}
+
+/// The daemon's browser opener: it opens nothing, and reports the URL to the
+/// frontend that asked, which opens it only when the person does.
+struct Announcer(Mutex<Option<tokio::sync::oneshot::Sender<postio_account::oauth::Url>>>);
+
+impl postio_account::oauth::BrowserOpener for Announcer {
+    fn open(&self, url: &postio_account::oauth::Url) -> std::io::Result<()> {
+        if let Some(announce) = self.0.lock().expect("never poisoned").take() {
+            let _ = announce.send(url.clone());
+        }
+        Ok(())
+    }
 }
 
 /// A request answered on arrival, or one left to be answered concurrently.
@@ -166,6 +213,8 @@ impl Host {
             queue,
             connected: tokio::sync::watch::Sender::new(0),
             offers: Mutex::new(HashMap::new()),
+            oauth_offers: Mutex::new(HashMap::new()),
+            sign_ins: Mutex::new(HashMap::new()),
         });
         let pump = Arc::clone(&inner);
         bridge.handle().spawn(async move {
@@ -472,6 +521,25 @@ impl Inner {
                 Ok(()) => Resp::Done,
                 Err(error) => Resp::Failed(error),
             },
+            Req::BeginOAuth(submission) => match self.begin_oauth(*submission).await {
+                Ok(consent) => Resp::Consent(Box::new(consent)),
+                Err(sentence) => Resp::Failed(postio_model::listing::StoreError::new(sentence)),
+            },
+            Req::FinishOAuth(address) => match self.finish_oauth(&address).await {
+                Ok(()) => Resp::Done,
+                Err(sentence) => Resp::Failed(postio_model::listing::StoreError::new(sentence)),
+            },
+            Req::CancelOAuth(address) => {
+                if let Some(sign_in) = self
+                    .sign_ins
+                    .lock()
+                    .expect("never poisoned")
+                    .get(&address.to_ascii_lowercase())
+                {
+                    sign_in.cancel.cancel();
+                }
+                Resp::Done
+            }
             Req::Discover(address) => Resp::Onboarding(Box::new(self.discover(&address).await)),
             Req::AddAccount(submission) => match self.add_account(*submission).await {
                 Ok(()) => Resp::Done,
@@ -649,11 +717,136 @@ impl Inner {
                     .lock()
                     .expect("never poisoned")
                     .insert(address.to_ascii_lowercase(), jmap);
+                if let Some(oauth) = report
+                    .settings()
+                    .and_then(|settings| settings.oauth.clone())
+                {
+                    self.oauth_offers
+                        .lock()
+                        .expect("never poisoned")
+                        .insert(address.to_ascii_lowercase(), oauth);
+                }
                 postio_session::onboarding::status_for(&report)
             }
             Err(error) => {
                 tracing::info!(%error, "autoconfig found nothing");
                 postio_ui::onboarding::Status::Manual { suggestion: None }
+            }
+        }
+    }
+
+    /// Begin the desktop's browser sign-in for `submission`
+    /// (`postio_session::onboarding::run_sign_in`) and answer where it waits
+    /// for the person: the consent URL, in full.
+    ///
+    /// **Nothing is opened here.** The daemon's opener only reports the URL;
+    /// the frontend shows it and opens it, or copies it, when the person
+    /// asks (US7 scenario 2). The sign-in runs on, waiting at its loopback
+    /// redirect, and [`finish_oauth`](Self::finish_oauth) is how a frontend
+    /// hears the end of it.
+    async fn begin_oauth(
+        &self,
+        submission: postio_ui::onboarding::Submission,
+    ) -> Result<postio_ui::onboarding::BrowserSignIn, String> {
+        let key = submission.address.to_ascii_lowercase();
+        let offer = self
+            .oauth_offers
+            .lock()
+            .expect("never poisoned")
+            .get(&key)
+            .cloned()
+            .ok_or_else(|| "This address's provider has no browser sign-in.".to_owned())?;
+        let client = submission
+            .oauth_client
+            .clone()
+            .ok_or_else(|| "A browser sign-in needs the OAuth client's id.".to_owned())?;
+        let cancel = postio_account::cancel::CancelToken::new();
+        let (announce, announced) = tokio::sync::oneshot::channel();
+        let (finished, done) = tokio::sync::watch::channel(None);
+        self.sign_ins.lock().expect("never poisoned").insert(
+            key.clone(),
+            SignIn {
+                cancel: cancel.clone(),
+                done,
+            },
+        );
+        let opener = Announcer(Mutex::new(Some(announce)));
+        let wiring = self.wiring.clone();
+        let scopes = offer.scopes.clone();
+        let refresh = offer.refresh_token_lifetime_days;
+        let provider = postio_session::onboarding::provider_name(&submission.settings);
+        self.runtime().spawn(async move {
+            let settings = postio_session::onboarding::connection_settings(&submission);
+            let signed_in = postio_session::onboarding::run_sign_in(
+                &settings, &client, &offer, &opener, &cancel,
+            )
+            .await;
+            let outcome = match signed_in {
+                Ok((endpoints, tokens)) => {
+                    postio_session::onboarding::persist_oauth(
+                        &wiring.database,
+                        wiring.secrets.clone(),
+                        &submission,
+                        &endpoints,
+                        &scopes,
+                        refresh,
+                        tokens,
+                    )
+                    .await
+                }
+                Err(postio_session::onboarding::SignInError::Cancelled) => {
+                    Err("The sign-in was cancelled.".to_owned())
+                }
+                Err(postio_session::onboarding::SignInError::Failed(reason)) => Err(reason),
+            };
+            if outcome.is_ok() {
+                start_engine_for(&wiring, &submission.address).await;
+            }
+            let _ = finished.send(Some(outcome));
+        });
+        let url = announced
+            .await
+            .map_err(|_| "The sign-in ended before it reached the browser step.".to_owned())?;
+        let redirect_uri = url
+            .query_pairs()
+            .find(|(key, _)| key == "redirect_uri")
+            .map(|(_, value)| value.into_owned())
+            .unwrap_or_default();
+        Ok(postio_ui::onboarding::BrowserSignIn {
+            provider,
+            scopes: self
+                .oauth_offers
+                .lock()
+                .expect("never poisoned")
+                .get(&key)
+                .map(|offer| offer.scopes.clone())
+                .unwrap_or_default(),
+            redirect_uri,
+            authorize_url: url.to_string(),
+        })
+    }
+
+    /// Wait for the sign-in for `address` to end.
+    async fn finish_oauth(&self, address: &str) -> Result<(), String> {
+        let done = self
+            .sign_ins
+            .lock()
+            .expect("never poisoned")
+            .get(&address.to_ascii_lowercase())
+            .map(|sign_in| sign_in.done.clone());
+        let Some(mut done) = done else {
+            return Err("There is no sign-in under way for that address.".to_owned());
+        };
+        loop {
+            if let Some(outcome) = done.borrow().clone() {
+                self.sign_ins
+                    .lock()
+                    .expect("never poisoned")
+                    .remove(&address.to_ascii_lowercase());
+                return outcome;
+            }
+            if done.changed().await.is_err() {
+                return Err("The sign-in stopped without an answer.".to_owned());
             }
         }
     }
@@ -688,29 +881,7 @@ impl Inner {
         )
         .await?;
         // Its engine, and only its: the others are already running.
-        let connection = self
-            .wiring
-            .database
-            .connect()
-            .await
-            .map_err(|error| format!("Postio could not read its local store: {error}"))?;
-        let account = postio_storage::repository::AccountRepository::new(&connection)
-            .list()
-            .await
-            .map_err(|error| format!("Postio could not read its local store: {error}"))?
-            .into_iter()
-            .find(|account| {
-                account
-                    .address
-                    .address
-                    .eq_ignore_ascii_case(&submission.address)
-            });
-        if let Some(account) = account
-            && let Some(engine) = postio_session::engine::start(&account, &self.wiring)
-        {
-            postio_runtime::retain(engine.clone());
-            self.wiring.engine.fill(engine);
-        }
+        start_engine_for(&self.wiring, &submission.address).await;
         Ok(())
     }
 
