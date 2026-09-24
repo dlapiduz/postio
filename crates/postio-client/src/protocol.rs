@@ -123,6 +123,25 @@ pub enum Req {
     /// Leave the list this message came from: record the activation, and
     /// answer the list's name. Only ever on a person's deliberate act.
     Unsubscribe(MessageId),
+    /// A message's parts: its attachments, and inline parts.
+    Parts(MessageId),
+    /// Write one part to `to`, fetching it first if it was never downloaded.
+    SavePart {
+        /// Whose.
+        message: MessageId,
+        /// Which part.
+        attachment: postio_model::ids::AttachmentId,
+        /// Where; the frontend chose it.
+        to: std::path::PathBuf,
+    },
+    /// Write one part to a private temporary file for the system to open,
+    /// and answer where.
+    OpenPart {
+        /// Whose.
+        message: MessageId,
+        /// Which part.
+        attachment: postio_model::ids::AttachmentId,
+    },
 }
 
 /// The host's answer to one [`Req`].
@@ -152,6 +171,10 @@ pub enum Resp {
     Body(Body),
     /// The list a message was unsubscribed from.
     Unsubscribed(String),
+    /// A message's parts.
+    Parts(Vec<postio_model::Attachment>),
+    /// Where a part was written.
+    Saved(std::path::PathBuf),
     /// The read could not be answered; the sentence is for the user.
     Failed(StoreError),
 }

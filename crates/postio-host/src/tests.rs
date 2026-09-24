@@ -24,6 +24,7 @@ pub(crate) struct World {
     inbox: MailboxId,
     message: MessageId,
     database: postio_storage::Store,
+    blob_dir: std::path::PathBuf,
     _blobs: tempfile::TempDir,
 }
 
@@ -63,6 +64,7 @@ impl World {
             inbox,
             message,
             database: kept,
+            blob_dir: directory.path().to_path_buf(),
             _blobs: directory,
         }
     }
@@ -369,4 +371,45 @@ fn unsubscribing_records_the_activation_against_the_messages_list() {
             .expect("the activations")
     });
     assert_eq!(recorded.len(), 1);
+}
+
+#[test]
+fn a_frontend_lists_a_messages_parts_and_saves_one() {
+    let world = World::new();
+    let (client, _) = world.frontend(ClientKind::Tui);
+    let blobs = postio_storage::BlobStore::open(world.blob_dir.clone(), &test_support::blob_keys())
+        .expect("the same blob store");
+    let blob = blobs.put(b"%PDF-1.7 the report").expect("stored");
+    let message = world.rt.block_on(async {
+        let connection = world.database.connect().await.expect("a connection");
+        let first = MessageRepository::new(&connection)
+            .get(world.message)
+            .await
+            .expect("read")
+            .expect("there");
+        let mut message = Message::new(first.account_id, world.inbox, Utc::now());
+        let mut report =
+            postio_model::Attachment::new(MessageId::UNASSIGNED, "application/pdf", 19);
+        report.filename = Some("report.pdf".into());
+        report.part_id = Some("2".into());
+        report.blob_id = Some(blob);
+        message.attachments.push(report);
+        MessageRepository::new(&connection)
+            .create(&mut message)
+            .await
+            .expect("a message")
+    });
+
+    let parts = world.rt.block_on(client.parts(message)).expect("the parts");
+    assert_eq!(parts.len(), 1);
+    assert_eq!(parts[0].filename.as_deref(), Some("report.pdf"));
+
+    let out = tempfile::tempdir().unwrap();
+    let to = out.path().join("report.pdf");
+    let written = world
+        .rt
+        .block_on(client.save_part(message, parts[0].id, to.clone()))
+        .expect("saved");
+    assert_eq!(written, to);
+    assert_eq!(std::fs::read(&to).unwrap(), b"%PDF-1.7 the report");
 }

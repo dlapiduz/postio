@@ -404,6 +404,24 @@ impl Inner {
             Req::Body(message) => self.body(message).await,
             Req::Conversation(thread) => self.conversation(thread).await,
             Req::Unsubscribe(message) => self.unsubscribe(message).await,
+            Req::Parts(message) => {
+                match parts::read_message(&self.wiring.database, message).await {
+                    Ok(found) => Resp::Parts(found.attachments),
+                    Err(reason) => Resp::Failed(postio_model::listing::StoreError::new(reason)),
+                }
+            }
+            Req::SavePart {
+                message,
+                attachment,
+                to,
+            } => self.write_part(message, attachment, to).await,
+            Req::OpenPart {
+                message,
+                attachment,
+            } => match self.private_copy_path(message, attachment).await {
+                Ok(to) => self.write_part(message, attachment, to).await,
+                Err(reason) => Resp::Failed(postio_model::listing::StoreError::new(reason)),
+            },
             Req::DraftCounts(account) => store
                 .draft_counts(account)
                 .await
@@ -507,6 +525,75 @@ impl Inner {
             Ok(_) => Resp::Unsubscribed(list),
             Err(error) => Resp::Failed(StoreError::from(error)),
         }
+    }
+
+    /// Write one part's bytes to `to`, fetching them first if they were
+    /// never downloaded -- the one reading path allowed to reach the network,
+    /// and only because a person asked for these bytes.
+    async fn write_part(
+        &self,
+        message: postio_model::MessageId,
+        attachment: postio_model::ids::AttachmentId,
+        to: std::path::PathBuf,
+    ) -> Resp {
+        let engine = self.wiring.engine.get().cloned();
+        let bytes = parts::part_bytes(
+            &self.wiring.database,
+            &self.wiring.blobs,
+            engine,
+            message,
+            attachment,
+        )
+        .await;
+        let written = bytes.and_then(|bytes| {
+            // Replaces rather than appends: an appended save would corrupt
+            // whatever was there.
+            std::fs::write(&to, bytes).map_err(|error| error.to_string())
+        });
+        match written {
+            Ok(()) => Resp::Saved(to),
+            Err(reason) => Resp::Failed(postio_model::listing::StoreError::new(reason)),
+        }
+    }
+
+    /// Where a part opened by the system is written: under this user's
+    /// runtime directory, readable by this user alone, named as the sender
+    /// named it -- but only the file name, so a hostile name cannot write
+    /// anywhere else.
+    async fn private_copy_path(
+        &self,
+        message: postio_model::MessageId,
+        attachment: postio_model::ids::AttachmentId,
+    ) -> Result<std::path::PathBuf, String> {
+        use std::os::unix::fs::DirBuilderExt;
+        let found = parts::read_message(&self.wiring.database, message).await?;
+        let name = found
+            .attachments
+            .iter()
+            .find(|part| part.id == attachment)
+            .and_then(|part| part.filename.clone())
+            .and_then(|name| {
+                std::path::Path::new(&name)
+                    .file_name()
+                    .map(|name| name.to_string_lossy().into_owned())
+            })
+            .filter(|name| !name.is_empty() && name != "." && name != "..")
+            .unwrap_or_else(|| "part".to_owned());
+        let base = std::env::var_os("XDG_RUNTIME_DIR")
+            .filter(|dir| !dir.is_empty())
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(std::env::temp_dir);
+        let dir = base.join("postio").join("parts").join(format!(
+            "{}-{}",
+            message.get(),
+            attachment.get()
+        ));
+        std::fs::DirBuilder::new()
+            .recursive(true)
+            .mode(0o700)
+            .create(&dir)
+            .map_err(|error| error.to_string())?;
+        Ok(dir.join(name))
     }
 
     /// Put a command on the one queue. Never waits.

@@ -73,6 +73,9 @@ impl Req {
             Req::Body(_) => "Body",
             Req::Conversation(_) => "Conversation",
             Req::Unsubscribe(_) => "Unsubscribe",
+            Req::Parts(_) => "Parts",
+            Req::SavePart { .. } => "SavePart",
+            Req::OpenPart { .. } => "OpenPart",
         }
     }
 }
@@ -182,6 +185,54 @@ impl Client {
                 _ => None,
             },
         )
+        .await
+    }
+
+    /// A message's parts.
+    pub async fn parts(
+        &self,
+        message: MessageId,
+    ) -> Result<Vec<postio_model::Attachment>, StoreError> {
+        self.read(Req::Parts(message), "the parts", |answer| match answer {
+            Resp::Parts(parts) => Some(parts),
+            _ => None,
+        })
+        .await
+    }
+
+    /// Write one part to `to`, fetching it first if it has to be.
+    pub async fn save_part(
+        &self,
+        message: MessageId,
+        attachment: postio_model::ids::AttachmentId,
+        to: std::path::PathBuf,
+    ) -> Result<std::path::PathBuf, StoreError> {
+        let request = Req::SavePart {
+            message,
+            attachment,
+            to,
+        };
+        self.read(request, "a saved part", |answer| match answer {
+            Resp::Saved(path) => Some(path),
+            _ => None,
+        })
+        .await
+    }
+
+    /// Write one part to a private temporary file to open, and say where.
+    pub async fn open_part(
+        &self,
+        message: MessageId,
+        attachment: postio_model::ids::AttachmentId,
+    ) -> Result<std::path::PathBuf, StoreError> {
+        let request = Req::OpenPart {
+            message,
+            attachment,
+        };
+        self.read(request, "a part to open", |answer| match answer {
+            Resp::Saved(path) => Some(path),
+            _ => None,
+        })
         .await
     }
 
