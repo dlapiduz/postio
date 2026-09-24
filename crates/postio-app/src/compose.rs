@@ -84,15 +84,10 @@ pub async fn install(
     install_identities(window, &composer, &database, account).await;
     install_signature_default(&composer, window, database.clone(), account);
 
-    let last_id = install_autosave(&composer, database.clone(), account);
-    install_send(
-        &composer,
-        database.clone(),
-        Rc::clone(&last_id),
-        account,
-        announce,
-    );
-    install_send_later(&composer, database.clone(), Rc::clone(&last_id));
+    let writer = DraftWriter::spawn(database.clone(), account, &runtime);
+    let last_id = install_autosave(&composer, database.clone(), account, &writer);
+    install_send(&composer, &writer, Rc::clone(&last_id), account, announce);
+    install_send_later(&composer, &writer, Rc::clone(&last_id));
     install_resume(window, &composer, database.clone(), last_id);
     install_recipient_suggestions(&composer, database.clone(), account).await;
     install_reply_source(&composer, database, showing).await;
@@ -429,12 +424,143 @@ async fn draft_behind(database: &Store, message: MessageId) -> Option<Draft> {
         .ok()?
 }
 
+/// What the composer asks of the store, in the order it asked (#1608).
+enum DraftOp {
+    /// Autosave this composition's draft.
+    Save { generation: u64, draft: Draft },
+    /// Queue it to send -- now, or at `at` -- and answer with the Drafts
+    /// folder, whose list just changed, when the queue write landed.
+    Send {
+        generation: u64,
+        draft: Draft,
+        at: Option<chrono::DateTime<Utc>>,
+        reply: async_channel::Sender<Option<MailboxId>>,
+    },
+    /// This composition was closed empty: its autosaved row goes.
+    Discard {
+        generation: u64,
+        known: Option<DraftId>,
+    },
+}
+
+/// Writes a composer's drafts on the runtime, one request at a time, in the
+/// order the composer made them (#1608).
+///
+/// Every save, send and discard used to run under `blocking::now` on the GTK
+/// thread, each waiting for the interactive write permit -- which lets the
+/// background unit already holding the writer finish first -- so an autosave
+/// tick could stall the thread that draws for as long as a sync's unit took.
+/// Here the composer hands the request over and returns.
+///
+/// What the synchronous version guaranteed by construction has to be kept by
+/// hand, and it is kept by order and by remembering one id. A draft's first
+/// save assigns its id; the writer remembers it for that composition, so a
+/// second save made before the first landed updates the same row rather than
+/// inserting another, and a send queues the row the saves made. A discard is
+/// behind every save its composition made, so it deletes the row they left.
+#[derive(Clone)]
+struct DraftWriter {
+    ops: async_channel::Sender<DraftOp>,
+    /// Each save that landed: which composition, and the id it has.
+    saved: async_channel::Receiver<(u64, DraftId)>,
+}
+
+impl DraftWriter {
+    fn spawn(database: Store, account: AccountId, runtime: &tokio::runtime::Handle) -> Self {
+        let (ops, requests) = async_channel::unbounded::<DraftOp>();
+        let (report, saved) = async_channel::unbounded();
+        runtime.spawn(async move {
+            // The composition whose draft was saved last, and its id.
+            let mut current: Option<(u64, DraftId)> = None;
+            let id_for = |current: &Option<(u64, DraftId)>, generation: u64, draft: &mut Draft| {
+                if !draft.id.is_assigned()
+                    && let Some((saved_for, id)) = *current
+                    && saved_for == generation
+                {
+                    draft.id = id;
+                }
+            };
+            while let Ok(op) = requests.recv().await {
+                match op {
+                    DraftOp::Save {
+                        generation,
+                        mut draft,
+                    } => {
+                        id_for(&current, generation, &mut draft);
+                        match save_draft(&database, &mut draft).await {
+                            Ok(()) => {
+                                current = Some((generation, draft.id));
+                                let _ = report.send((generation, draft.id)).await;
+                            }
+                            Err(error) => {
+                                tracing::error!(%error, "could not autosave the draft: {error}")
+                            }
+                        }
+                    }
+                    DraftOp::Send {
+                        generation,
+                        mut draft,
+                        at,
+                        reply,
+                    } => {
+                        id_for(&current, generation, &mut draft);
+                        // Taken on failure too, and deliberately: a queue write
+                        // that fails leaves the autosaved row where it is,
+                        // `Editing`, recoverable, and the close that follows a
+                        // send must not delete the user's words on the way out.
+                        // Losing the send is recoverable, losing the message is
+                        // not.
+                        if current.is_some_and(|(saved_for, _)| saved_for == generation) {
+                            current = None;
+                        }
+                        let queued = match at {
+                            Some(at) => queue_send_at(&database, &mut draft, at).await,
+                            None => queue_send(&database, &mut draft).await,
+                        };
+                        let moved = match queued {
+                            Ok(()) if at.is_none() => drafts_mailbox(&database, account).await,
+                            Ok(()) => None,
+                            Err(error) => {
+                                tracing::error!(%error, "could not queue the draft for sending: {error}");
+                                None
+                            }
+                        };
+                        let _ = reply.send(moved).await;
+                    }
+                    DraftOp::Discard { generation, known } => {
+                        let id = match current {
+                            Some((saved_for, id)) if saved_for == generation => {
+                                current = None;
+                                Some(id)
+                            }
+                            _ => known,
+                        };
+                        if let Some(id) = id
+                            && let Err(error) = delete_draft(&database, id).await
+                        {
+                            tracing::warn!(%error, "could not clear the finished draft");
+                        }
+                    }
+                }
+            }
+        });
+        DraftWriter { ops, saved }
+    }
+
+    fn send(&self, op: DraftOp) {
+        // Unbounded: the composer never waits on the writer, which is the
+        // point. A closed channel means the runtime is gone with the app.
+        let _ = self.ops.try_send(op);
+    }
+}
+
 /// Autosave to [`DraftRepository`], crash recovery, and clearing the row once
 /// there is nothing left to keep — sent, discarded, or closed empty.
 fn install_autosave(
     composer: &Composer,
     database: Store,
     account: AccountId,
+    writer: &DraftWriter,
 ) -> Rc<Cell<Option<DraftId>>> {
     postio_session::blocking::now(async {
         // The id of whatever `connect_save`'s handler last persisted. Not read
@@ -443,38 +569,62 @@ fn install_autosave(
         // piece of bookkeeping this module has to keep for itself.
         let last_id: Rc<Cell<Option<DraftId>>> = Rc::new(Cell::new(None));
 
+        // Off the GTK thread (#1608): a save is handed to the writer and the
+        // handler returns. The id a first save assigns comes back over
+        // `saved` and is written onto the composer -- only while the same
+        // composition is in its fields -- and into `last_id`.
+        let weak = composer.downgrade();
         composer.connect_save({
-            let database = database.clone();
-            let last_id = Rc::clone(&last_id);
+            let writer = writer.clone();
+            let weak = weak.clone();
             move |draft| {
-                postio_session::blocking::now(async {
-                    match save_draft(&database, draft).await {
-                        Ok(()) => last_id.set(Some(draft.id)),
-                        Err(error) => {
-                            tracing::error!(%error, "could not autosave the draft: {error}")
-                        }
+                let Some(composer) = weak.upgrade() else {
+                    return;
+                };
+                writer.send(DraftOp::Save {
+                    generation: composer.generation(),
+                    draft: draft.clone(),
+                });
+            }
+        });
+        glib::spawn_future_local({
+            let saved = writer.saved.clone();
+            let last_id = Rc::clone(&last_id);
+            let weak = weak.clone();
+            async move {
+                // POSTIO-GLIB-SAFE: a channel receive; the writes run on the
+                // runtime in `DraftWriter`.
+                while let Ok((generation, id)) = saved.recv().await {
+                    let Some(composer) = weak.upgrade() else {
+                        return;
+                    };
+                    if composer.generation() == generation {
+                        last_id.set(Some(id));
                     }
-                })
+                    composer.adopt_id(generation, id);
+                }
             }
         });
 
         composer.connect_closed({
-            let database = database.clone();
+            let writer = writer.clone();
             let last_id = Rc::clone(&last_id);
             move |outcome| {
-                postio_session::blocking::now(async {
-                    // Kept: Esc with something still in it. The row stays exactly as
-                    // autosaved, ready to recover it right back.
-                    if outcome != Closing::Drop {
-                        return;
-                    }
-                    let Some(id) = last_id.take() else {
-                        return;
-                    };
-                    if let Err(error) = delete_draft(&database, id).await {
-                        tracing::warn!(%error, "could not clear the finished draft");
-                    }
-                })
+                // Kept: Esc with something still in it. The row stays exactly as
+                // autosaved, ready to recover it right back.
+                if outcome != Closing::Drop {
+                    return;
+                }
+                let Some(composer) = weak.upgrade() else {
+                    return;
+                };
+                // The composition just closed, not the empty one the close
+                // refilled the fields with -- and after every save it handed
+                // out, because the writer takes them in order.
+                writer.send(DraftOp::Discard {
+                    generation: composer.previous_generation(),
+                    known: last_id.take(),
+                });
             }
         });
 
@@ -550,46 +700,47 @@ async fn delete_draft(database: &Store, id: DraftId) -> postio_storage::Result<(
 /// the message is not.
 fn install_send(
     composer: &Composer,
-    database: Store,
+    writer: &DraftWriter,
     last_id: Rc<Cell<Option<DraftId>>>,
     account: AccountId,
     announce: Announce,
 ) {
+    let weak = composer.downgrade();
+    let writer = writer.clone();
     composer.connect_send(move |draft| {
-        postio_session::blocking::now(async {
-            // Cloned because the seam hands out `&Draft`: unlike a save, which
-            // writes the assigned id back onto the composer's own draft, nothing
-            // survives this — the composer is about to be refilled and closed.
-            let mut draft = draft.clone();
-            last_id.set(None);
-            if let Err(error) = queue_send(&database, &mut draft).await {
-                // The draft is still in the store, unsent and unqueued. Not a
-                // status line: `Composer::send` closes straight after this, so
-                // there is nothing on screen left to read it.
-                tracing::error!(%error, "could not queue the draft for sending: {error}");
+        let Some(composer) = weak.upgrade() else {
+            return;
+        };
+        last_id.set(None);
+        // Through the writer, after every save this composition handed it:
+        // a send racing a first save in flight would insert a second row.
+        // The writer queues the send and says which folder moved; the
+        // announcement is made here, where the list lives (#1608).
+        let (reply, answer) = async_channel::bounded(1);
+        writer.send(DraftOp::Send {
+            generation: composer.generation(),
+            draft: draft.clone(),
+            at: None,
+            reply,
+        });
+        let announce = announce.clone();
+        glib::spawn_future_local(async move {
+            // POSTIO-GLIB-SAFE: a channel receive; the write ran on the runtime.
+            let Ok(Some(drafts)) = answer.recv().await else {
                 return;
-            }
+            };
             // Say so, or the write is invisible until something else redraws.
             //
             // This is the last step of the local-first order -- write, enqueue,
-            // emit, repaint -- and it was missing: the draft moved from Drafts to
-            // the Outbox in the store and nothing on screen knew. `Composer::send`
-            // closes the pane straight after this, so the user is looking at the
-            // list while it happens.
-            //
-            // `MessageListChanged` rather than a state-change event of its own.
-            // What happened *is* a list membership change, in both directions at
-            // once: the row leaves Drafts and joins the Outbox. Both scopes
-            // already answer `Reload` to it, and the Drafts mailbox scope answers
-            // `Refetch` to `MessagesChanged`, which would keep drawing a row that
-            // is no longer a member.
-            if let Some(drafts) = drafts_mailbox(&database, account).await {
-                announce(&postio_core::Event::MessageListChanged {
-                    account,
-                    mailbox: drafts,
-                });
-            }
-        })
+            // emit, repaint. `MessageListChanged` rather than a state-change
+            // event of its own: what happened *is* a list membership change, in
+            // both directions at once -- the row leaves Drafts and joins the
+            // Outbox -- and both scopes already answer `Reload` to it.
+            announce(&postio_core::Event::MessageListChanged {
+                account,
+                mailbox: drafts,
+            });
+        });
     });
 }
 
@@ -627,15 +778,25 @@ async fn queue_send(database: &Store, draft: &mut Draft) -> postio_storage::Resu
 /// closes the instant a time is chosen, the same way it does for an
 /// immediate send, so there is nothing on screen left to read a status line
 /// from by the time a queue error could be reported.
-fn install_send_later(composer: &Composer, database: Store, last_id: Rc<Cell<Option<DraftId>>>) {
+fn install_send_later(
+    composer: &Composer,
+    writer: &DraftWriter,
+    last_id: Rc<Cell<Option<DraftId>>>,
+) {
+    let weak = composer.downgrade();
+    let writer = writer.clone();
     composer.connect_send_later(move |draft, send_at| {
-        postio_session::blocking::now(async {
-            let mut draft = draft.clone();
-            last_id.set(None);
-            if let Err(error) = queue_send_at(&database, &mut draft, send_at).await {
-                tracing::error!(%error, "could not schedule the draft for sending: {error}");
-            }
-        })
+        let Some(composer) = weak.upgrade() else {
+            return;
+        };
+        last_id.set(None);
+        let (reply, _answer) = async_channel::bounded(1);
+        writer.send(DraftOp::Send {
+            generation: composer.generation(),
+            draft: draft.clone(),
+            at: Some(send_at),
+            reply,
+        });
     });
 }
 
