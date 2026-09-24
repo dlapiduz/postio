@@ -12,10 +12,13 @@ mismatch is refused, never negotiated.
   `SO_PEERCRED` and must equal the daemon's.
 - **Lock and pid**: `$XDG_RUNTIME_DIR/postio/daemon.lock`, held with `flock`
   for the daemon's lifetime. Turso's own file lock is the backstop.
-- **Framing**: a length-prefixed frame (u32 big-endian) carrying a serde
-  encoding of `Frame`. The encoding (`postcard` or `bincode`) is decided by
-  the first task. It must round-trip every existing `Command` and `Event`,
-  which already derive serde.
+- **Framing**: a length-prefixed frame (u32 big-endian) carrying `Frame` as
+  **JSON** (`serde_json`), decided in T008. Several model types deserialize
+  by hand (`flag.rs`, `ids.rs`, `operation.rs`, `action.rs`), and a format
+  that is not self-describing, such as postcard, cannot always read those
+  back. JSON is already in the graph, and it costs microseconds for a page of
+  rows. Frames longer than `MAX_FRAME` (256 MiB) are refused before they are
+  read.
 - **In-process**: the same `Frame` values over channels, with no encoding.
   Used by `postio-ffi` and the integration suites.
 

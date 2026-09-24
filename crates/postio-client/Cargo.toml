@@ -12,3 +12,11 @@ repository.workspace = true
 workspace = true
 
 [dependencies]
+postio-core.workspace = true
+postio-model.workspace = true
+serde = { workspace = true }
+# The wire encoding. Self-describing on purpose: several model types have
+# hand-written `Deserialize` impls, which compact non-self-describing
+# formats cannot always read back. Already in the graph (research R2, T008).
+serde_json = { workspace = true }
+thiserror = { workspace = true }

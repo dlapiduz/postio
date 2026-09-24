@@ -3636,6 +3636,13 @@ dependencies = [
 [[package]]
 name = "postio-client"
 version = "0.3.0"
+dependencies = [
+ "postio-core",
+ "postio-model",
+ "serde",
+ "serde_json",
+ "thiserror",
+]
 
 [[package]]
 name = "postio-config"

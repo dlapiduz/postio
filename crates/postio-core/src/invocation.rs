@@ -141,7 +141,7 @@ pub enum InvocationOutcome {
 /// [`EventStream::next`](crate::bridge::EventStream::next) unwraps it, because
 /// the frontend has no use for the envelope; the `_tracked` accessors hand it
 /// over intact.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct EventEnvelope {
     /// What happened.
     pub event: Event,
