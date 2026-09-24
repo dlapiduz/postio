@@ -137,7 +137,7 @@ pub async fn export_messages(
         .iter()
         .map(|message| {
             postio_session::blocking::now(async {
-                crate::reading::read_message(database, *message)
+                postio_host::parts::read_message(database, *message)
                     .await
                     .map(|row| row.subject)
                     .unwrap_or_default()
@@ -150,7 +150,7 @@ pub async fn export_messages(
 
     let mut written = Vec::new();
     for (message, name) in messages.iter().zip(names) {
-        let raw = match crate::reading::raw_blob(database, *message).await? {
+        let raw = match postio_host::parts::raw_blob(database, *message).await? {
             Some(raw) => raw,
             None => {
                 let engine = engine.clone().ok_or(
@@ -168,7 +168,7 @@ pub async fn export_messages(
                 {
                     return Err("There is nothing to fetch for that message".into());
                 }
-                crate::reading::wait_for_body(database, *message).await?
+                postio_host::parts::wait_for_body(database, *message).await?
             }
         };
 
@@ -180,33 +180,40 @@ pub async fn export_messages(
     Ok(written)
 }
 
+/// Where one part goes under `into`, and which part it is: the panel's own
+/// [`postio_gtk::parts::save_name`], the same one the save dialog offers, so
+/// a part saved and a part dragged land under the same name. It already
+/// refuses to let a part called `../../.bashrc` steer where the file goes.
+///
+/// A container is refused: `multipart/mixed` is a wrapper, and writing it
+/// would make an empty file named after something that was never a file.
+pub(crate) fn part_target(
+    into: &Path,
+    node: &postio_gtk::parts::Node,
+) -> Result<(postio_model::ids::AttachmentId, PathBuf), String> {
+    let attachment = node
+        .attachment
+        .ok_or("That part is not something with bytes of its own")?;
+    Ok((attachment, into.join(postio_gtk::parts::save_name(node))))
+}
+
 /// Write one message part into `into`, under the name the sender gave it.
 ///
-/// The bytes come from [`crate::reading::part_bytes`], so a part that was
+/// The store's owner writes the bytes (`Req::SavePart`), so a part that was
 /// never downloaded is fetched exactly as `s` fetches it — the user named
 /// this part by dragging it.
-///
-/// The filename is the panel's own [`postio_gtk::parts::save_name`], the same
-/// one the save dialog offers, so a part saved and a part dragged land under
-/// the same name. It already refuses to let a part called `../../.bashrc`
-/// steer where the file goes.
 pub async fn export_part(
-    database: &Store,
-    blobs: &BlobStore,
-    engine: Option<Engine>,
+    client: &postio_client::Client,
     into: &Path,
     message: MessageId,
     node: &postio_gtk::parts::Node,
 ) -> Result<PathBuf, String> {
-    let attachment = node
-        .attachment
-        .ok_or("That part is not something with bytes of its own")?;
-    let bytes = crate::reading::part_bytes(database, blobs, engine, message, attachment).await?;
-
+    let (attachment, path) = part_target(into, node)?;
     std::fs::create_dir_all(into).map_err(|error| error.to_string())?;
-    let path = into.join(postio_gtk::parts::save_name(node));
-    std::fs::write(&path, &bytes).map_err(|error| error.to_string())?;
-    Ok(path)
+    client
+        .save_part(message, attachment, path)
+        .await
+        .map_err(|error| error.to_string())
 }
 
 /// Let the list hand messages to another application as files.
@@ -301,6 +308,23 @@ mod tests {
                 .await
                 .expect("a message")
         }
+    }
+
+    /// [`super::export_part`] over a store rather than a client: the same
+    /// node to path, and the bytes as the host writes them for
+    /// `Req::SavePart`.
+    async fn export_part(
+        database: &Store,
+        blobs: &BlobStore,
+        engine: Option<Engine>,
+        into: &Path,
+        message: MessageId,
+        node: &postio_gtk::parts::Node,
+    ) -> Result<PathBuf, String> {
+        let (attachment, path) = part_target(into, node)?;
+        std::fs::create_dir_all(into).map_err(|error| error.to_string())?;
+        postio_host::parts::save_part(database, blobs, engine, message, attachment, &path).await?;
+        Ok(path)
     }
 
     /// The corpus spells mail this way; so does every fixture in this repo.

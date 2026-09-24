@@ -856,7 +856,7 @@ fn results_label(count: u32) -> String {
 /// Resolve `cid:` parts, and open what the preview asks to open.
 async fn install_preview(view: &View, wiring: &Wiring, window: &Window) {
     let preview = view.preview();
-    preview.set_blob_source(crate::reading::cid_source(
+    preview.set_blob_source(postio_session::reading::cid_source(
         {
             // The preview and the reading pane have the same problem and
             // different notions of "the message on screen", which is why the

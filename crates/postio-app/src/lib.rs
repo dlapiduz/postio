@@ -688,7 +688,7 @@ pub async fn feed_the_window(window: &Window, wiring: &Wiring) -> Option<Wired> 
 
     // The reading pane. After `compose::install`, because the two share the
     // pane and the window wires their swap when the composer is installed.
-    reading::install(window, wiring, &feeds, showing).await;
+    reading::install(window, wiring, client.clone(), &feeds, showing).await;
 
     // ADR 0012 Q4: the first-run keyboard orientation, after the first sync.
     // Installed here rather than in `postio-gtk` because the two questions
