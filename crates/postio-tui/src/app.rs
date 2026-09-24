@@ -502,6 +502,10 @@ enum Finding {
     Labels,
     /// `@`: find a correspondent, and search their mail.
     Correspondents,
+    /// `M` in the settings: which of an account's roles to point somewhere.
+    Roles(postio_model::AccountId),
+    /// Then which folder that role is, or automatic.
+    RoleFolder(postio_model::AccountId, postio_model::mailbox::MailboxRole),
 }
 
 /// The palette: what is typed, which row is chosen, and where it was opened
@@ -547,6 +551,41 @@ enum PaletteAction {
     Label(postio_model::ids::LabelId),
     /// The query that searches a correspondent's mail.
     Correspondent(String),
+    /// Ask which folder this role is.
+    PickRole(postio_model::AccountId, postio_model::mailbox::MailboxRole),
+    /// Point the role at this folder's path, or back to automatic.
+    MapRole(
+        postio_model::AccountId,
+        postio_model::mailbox::MailboxRole,
+        Option<String>,
+    ),
+}
+
+/// Rows offered by title, matched against `query` with the palette's
+/// matcher, best first; an empty query keeps the order they were offered in.
+fn best_first(
+    query: &str,
+    offered: impl Iterator<Item = (String, PaletteAction)>,
+) -> Vec<(PaletteRow, PaletteAction)> {
+    let mut found: Vec<(i32, PaletteRow, PaletteAction)> = offered
+        .filter_map(|(title, action)| {
+            let matched = postio_ui::palette::score(query.trim(), &title)?;
+            Some((
+                matched.score,
+                PaletteRow {
+                    title,
+                    chord: None,
+                    positions: matched.positions,
+                },
+                action,
+            ))
+        })
+        .collect();
+    found.sort_by_key(|(score, ..)| std::cmp::Reverse(*score));
+    found
+        .into_iter()
+        .map(|(_, row, action)| (row, action))
+        .collect()
 }
 
 /// The search bar: what is typed, which question is outstanding, and what
@@ -1041,6 +1080,10 @@ impl App {
             }
             ("set_default_account", Some(account)) => Some(AccountOp::SetDefault(account.id)),
             ("rebuild_account_index", Some(account)) => Some(AccountOp::RebuildIndex(account.id)),
+            ("map_mailbox_role", Some(account)) => {
+                let account = account.id;
+                return self.open_palette(Finding::Roles(account));
+            }
             ("update_credential", Some(account)) => {
                 self.first_run = Some(crate::first_run::FirstRun::repair(account));
                 self.focus = Focus::FirstRun;
@@ -1409,6 +1452,8 @@ impl App {
                 Finding::Folders | Finding::MoveTo => "#",
                 Finding::Labels => "+",
                 Finding::Correspondents => "@",
+                Finding::Roles(_) => "Role",
+                Finding::RoleFolder(..) => "Folder",
             },
             query,
             rows,
@@ -1487,6 +1532,35 @@ impl App {
                     )
                 })
                 .collect(),
+            // ADR 0035's role map: the desktop's roles in its order, then the
+            // account's folders with "Automatic" first, as its picker lists
+            // them.
+            Finding::Roles(account) => {
+                let offered = postio_ui::settings::MAPPABLE_ROLES
+                    .iter()
+                    .map(|(role, title)| {
+                        ((*title).to_owned(), PaletteAction::PickRole(account, *role))
+                    });
+                best_first(query, offered)
+            }
+            Finding::RoleFolder(account, role) => {
+                let offered = std::iter::once((
+                    "Automatic".to_owned(),
+                    PaletteAction::MapRole(account, role, None),
+                ))
+                .chain(
+                    self.folders
+                        .iter()
+                        .filter(|folder| folder.account_id == account && folder.selectable)
+                        .map(|folder| {
+                            (
+                                postio_ui::terminal::SafeText::new(&folder.path).to_string(),
+                                PaletteAction::MapRole(account, role, Some(folder.path.clone())),
+                            )
+                        }),
+                );
+                best_first(query, offered)
+            }
             Finding::Correspondents => postio_ui::finder::contacts(&self.correspondents, query)
                 .into_iter()
                 .map(|hit| {
@@ -1537,6 +1611,17 @@ impl App {
                         self.say(&format!("{other} is not something this terminal can run"))
                     }
                     Some(PaletteAction::Open(scope)) => vec![Effect::Open(scope), Effect::Redraw],
+                    Some(PaletteAction::PickRole(account, role)) => {
+                        self.open_palette(Finding::RoleFolder(account, role))
+                    }
+                    Some(PaletteAction::MapRole(account, role, path)) => vec![
+                        Effect::Send(postio_core::Command::MapMailboxRole {
+                            account: Some(account),
+                            role: Some(role),
+                            path,
+                        }),
+                        Effect::Redraw,
+                    ],
                     Some(PaletteAction::MoveTo(mailbox)) => {
                         self.send_answered(postio_core::CommandId::Move, |command| {
                             if let postio_core::Command::Move { to, .. } = command {
@@ -4830,6 +4915,56 @@ pub(crate) mod tests {
             ))),
             "{effects:?}"
         );
+    }
+
+    #[test]
+    fn map_mailbox_role_asks_which_role_and_which_folder() {
+        // ADR 0035's role map, from the terminal: `M` asks rather than
+        // sending half a command, the roles are the desktop's, in its order,
+        // and "Automatic" is first among the folders as it is there.
+        use postio_model::mailbox::MailboxRole;
+        let mut app = app((160, 40));
+        in_settings(&mut app);
+        update(&mut app, key(KeyCode::Tab, KeyModifiers::NONE));
+        let effects = update(&mut app, press('M'));
+        assert!(
+            !effects
+                .iter()
+                .any(|effect| matches!(effect, Effect::Send(_))),
+            "{effects:?}"
+        );
+        let roles: Vec<String> = app
+            .palette()
+            .expect("the role picker")
+            .rows
+            .into_iter()
+            .map(|row| row.title)
+            .collect();
+        assert_eq!(roles, ["Sent", "Archive", "Drafts", "Trash", "Junk"]);
+
+        typing(&mut app, "arch");
+        update(&mut app, key(KeyCode::Enter, KeyModifiers::NONE));
+        let folders: Vec<String> = app
+            .palette()
+            .expect("the folder picker")
+            .rows
+            .into_iter()
+            .map(|row| row.title)
+            .collect();
+        assert_eq!(folders[0], "Automatic");
+        assert!(folders.contains(&"Archive".to_owned()), "{folders:?}");
+
+        typing(&mut app, "archive");
+        let effects = update(&mut app, key(KeyCode::Enter, KeyModifiers::NONE));
+        assert!(
+            effects.contains(&Effect::Send(postio_core::Command::MapMailboxRole {
+                account: Some(postio_model::AccountId::new(1)),
+                role: Some(MailboxRole::Archive),
+                path: Some("Archive".into()),
+            })),
+            "{effects:?}"
+        );
+        assert_eq!(app.focus(), Focus::Settings, "back where it was asked");
     }
 
     #[test]
