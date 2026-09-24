@@ -92,6 +92,7 @@ impl Req {
             Req::InlineImage { .. } => "InlineImage",
             Req::Search(_) => "Search",
             Req::Diagnose(_) => "Diagnose",
+            Req::Account(_) => "Account",
             Req::Discover(_) => "Discover",
             Req::AddAccount(_) => "AddAccount",
         }
@@ -416,6 +417,19 @@ impl Client {
             Resp::Diagnosis(text) => Some(text),
             _ => None,
         })
+        .await
+    }
+
+    /// Change an account as the settings' account commands do.
+    pub async fn account(&self, op: crate::protocol::AccountOp) -> Result<(), StoreError> {
+        self.read(
+            Req::Account(op),
+            "an account change",
+            |answer| match answer {
+                Resp::Done => Some(()),
+                _ => None,
+            },
+        )
         .await
     }
 

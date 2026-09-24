@@ -197,6 +197,8 @@ pub enum Req {
     Search(Search),
     /// One of `postio-diag`'s reports, by name.
     Diagnose(String),
+    /// Change an account the way the settings' account commands do.
+    Account(AccountOp),
     /// Look up the servers for a new account's address.
     Discover(String),
     /// Prove a new account's credentials and save it (the password goes to
@@ -290,6 +292,27 @@ pub enum Body {
     Empty,
     /// A draft written by another client: nothing here to edit.
     ForeignDraft,
+}
+
+/// What the settings' account commands do to an account.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum AccountOp {
+    /// Sync it, or stop.
+    SetEnabled {
+        /// Which.
+        account: AccountId,
+        /// Whether it should sync.
+        enabled: bool,
+    },
+    /// Remove it: marked for deletion, and undone by [`AccountOp::Restore`]
+    /// until the deletion is carried out.
+    Remove(AccountId),
+    /// Take back a removal.
+    Restore(AccountId),
+    /// Make it the account new mail is written from.
+    SetDefault(AccountId),
+    /// Rebuild its local search index; progress arrives as events.
+    RebuildIndex(AccountId),
 }
 
 /// A search, as a frontend's search bar asks it.

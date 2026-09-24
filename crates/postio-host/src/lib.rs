@@ -468,6 +468,10 @@ impl Inner {
                 Resp::Attached(stored)
             }
             Req::Search(search) => Resp::Found(self.search(search).await),
+            Req::Account(op) => match self.account(op).await {
+                Ok(()) => Resp::Done,
+                Err(error) => Resp::Failed(error),
+            },
             Req::Discover(address) => Resp::Onboarding(Box::new(self.discover(&address).await)),
             Req::AddAccount(submission) => match self.add_account(*submission).await {
                 Ok(()) => Resp::Done,
@@ -522,13 +526,22 @@ impl Inner {
                 .mailboxes(account)
                 .await
                 .map_or_else(Resp::Failed, Resp::Mailboxes),
+            // A removed account is gone for every frontend until the removal
+            // is undone or carried out, as the desktop's settings show it.
             Req::Accounts => match self.wiring.database.connect().await {
                 Ok(connection) => postio_storage::repository::AccountRepository::new(&connection)
                     .list()
                     .await
                     .map_or_else(
                         |error| Resp::Failed(postio_model::listing::StoreError::from(error)),
-                        Resp::Accounts,
+                        |accounts| {
+                            Resp::Accounts(
+                                accounts
+                                    .into_iter()
+                                    .filter(|account| !account.pending_deletion)
+                                    .collect(),
+                            )
+                        },
                     ),
                 Err(error) => Resp::Failed(postio_model::listing::StoreError::from(error)),
             },
@@ -558,6 +571,61 @@ impl Inner {
                 .await
                 .map_or_else(Resp::Failed, Resp::DraftCounts),
         }
+    }
+
+    /// An account change, as the desktop's settings make it
+    /// (`postio-app`'s `settings_accounts`). Everyone's sidebar hears of it.
+    async fn account(
+        &self,
+        op: postio_client::protocol::AccountOp,
+    ) -> Result<(), postio_model::listing::StoreError> {
+        use postio_client::protocol::AccountOp;
+        use postio_storage::repository::AccountRepository;
+        let connection = self.wiring.database.connect().await?;
+        let accounts = AccountRepository::new(&connection);
+        match op {
+            AccountOp::SetEnabled { account, enabled } => {
+                accounts.set_enabled(account, enabled).await?;
+            }
+            AccountOp::Remove(account) => {
+                accounts.mark_pending_deletion(account).await?;
+            }
+            AccountOp::Restore(account) => {
+                accounts.restore(account).await?;
+            }
+            AccountOp::SetDefault(account) => accounts.set_default(account).await?,
+            AccountOp::RebuildIndex(account) => {
+                drop(connection);
+                let database = self.wiring.database.clone();
+                let events = self.wiring.events.clone();
+                self.runtime().spawn(async move {
+                    let rebuilt =
+                        postio_session::reindex_account(&database, account, |done, total| {
+                            events.emit(Event::BackfillProgress {
+                                account,
+                                done,
+                                total,
+                                footprint: None,
+                            });
+                        });
+                    if let Err(error) = rebuilt.await {
+                        tracing::warn!(%error, "could not rebuild an account's local search index");
+                    }
+                });
+                return Ok(());
+            }
+        }
+        // The account's folders appear, go or come back in every sidebar:
+        // what a mailbox tree changing already makes each frontend redraw.
+        let account = match op {
+            AccountOp::SetEnabled { account, .. }
+            | AccountOp::Remove(account)
+            | AccountOp::Restore(account)
+            | AccountOp::SetDefault(account)
+            | AccountOp::RebuildIndex(account) => account,
+        };
+        self.hub.sink().emit(Event::MailboxesChanged { account });
+        Ok(())
     }
 
     /// What discovery finds for `address`, as the first-run screen shows it:

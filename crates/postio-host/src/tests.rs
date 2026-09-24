@@ -708,3 +708,41 @@ fn a_submission_never_shows_its_password() {
     let shown = format!("{:?}", submission("correct horse"));
     assert!(!shown.contains("correct horse"), "{shown}");
 }
+
+#[test]
+fn a_frontend_disables_removes_and_restores_an_account_through_the_daemon() {
+    // T087: the settings' account commands, from the terminal.
+    use postio_client::protocol::AccountOp;
+    let world = World::new();
+    let (client, _) = world.frontend(ClientKind::Tui);
+    let account = world.rt.block_on(client.accounts()).expect("accounts")[0].id;
+    let accounts = || world.rt.block_on(client.accounts()).expect("accounts");
+
+    world
+        .rt
+        .block_on(client.account(AccountOp::SetEnabled {
+            account,
+            enabled: false,
+        }))
+        .expect("disabled");
+    assert!(!accounts()[0].enabled);
+
+    world
+        .rt
+        .block_on(client.account(AccountOp::Remove(account)))
+        .expect("removed");
+    assert!(
+        accounts().is_empty(),
+        "a removed account is gone from the list"
+    );
+    world
+        .rt
+        .block_on(client.account(AccountOp::Restore(account)))
+        .expect("restored");
+    assert_eq!(accounts().len(), 1, "and comes back on undo");
+
+    world
+        .rt
+        .block_on(client.account(AccountOp::SetDefault(account)))
+        .expect("made the default");
+}
