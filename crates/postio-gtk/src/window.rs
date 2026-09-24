@@ -3169,6 +3169,10 @@ impl Window {
                 | postio_core::Command::ContactAddAddress(postio_core::ContactAddressAction::Ask)
                 | postio_core::Command::ContactDetachAddress { address: None }
                 | postio_core::Command::ContactSetPreferred { address: None, .. }
+                | postio_core::Command::ContactNew(postio_core::ContactNewAction::Ask)
+                | postio_core::Command::ContactEdit(postio_core::ContactEditAction::Ask)
+                | postio_core::Command::ContactDelete { person: None }
+                | postio_core::Command::ContactRestore { person: None, .. }
         ) {
             self.contacts().ask(&command);
             return;

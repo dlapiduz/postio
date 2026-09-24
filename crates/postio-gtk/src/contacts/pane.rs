@@ -20,7 +20,10 @@ use std::rc::Rc;
 use adw::prelude::*;
 use adw::subclass::prelude::*;
 use gtk::glib;
-use postio_core::{Command, CommandId, ContactAddressAction, ContactJoinAction, Context};
+use postio_core::{
+    Command, CommandId, ContactAddressAction, ContactEditAction, ContactJoinAction,
+    ContactNewAction, Context,
+};
 use postio_model::{AddressId, ContactDetail, ContactId, ContactListRow, ContactView};
 
 use super::join::JoinPanel;
@@ -95,6 +98,10 @@ mod imp {
         pub adding: Cell<Option<ContactId>>,
         /// An owned address the prompt is asking to move, and to whom.
         pub moving: Cell<Option<(AddressId, ContactId)>>,
+        pub editor: super::super::editor::ContactEditor,
+        /// What the editor is doing: `Some(None)` making someone,
+        /// `Some(Some(id))` editing them.
+        pub editing: Cell<Option<Option<ContactId>>>,
         pub join_asked_handlers: RefCell<Vec<PeopleHandler>>,
         pub add_address_handlers: RefCell<Vec<TypedHandler>>,
     }
@@ -614,6 +621,14 @@ impl ContactsPane {
             CommandId::ContactsFilter => {
                 self.imp().filter.grab_focus();
             }
+            CommandId::ContactsToggleDeleted => {
+                let next = if self.view() == ContactView::Deleted {
+                    ContactView::Written
+                } else {
+                    ContactView::Deleted
+                };
+                self.set_view(next);
+            }
             CommandId::ContactsToggleEveryone => {
                 let next = match self.view() {
                     ContactView::Written => ContactView::Everyone,
@@ -677,7 +692,16 @@ impl ContactsPane {
         imp.address_panel.append(&imp.address_entry);
         imp.address_panel.append(&imp.address_prompt);
         imp.side.add_named(&imp.address_panel, Some("address"));
+        imp.side.add_named(imp.editor.widget(), Some("editor"));
         imp.side.set_visible_child_name("detail");
+        imp.editor.connect_save({
+            let pane = self.downgrade();
+            move || {
+                if let Some(pane) = pane.upgrade() {
+                    pane.save_editor();
+                }
+            }
+        });
 
         imp.address_entry.connect_activate(glib::clone!(
             #[weak(rename_to = pane)]
@@ -702,6 +726,40 @@ impl ContactsPane {
                 }),
                 None => self.say("Choose an address in the detail first"),
             },
+            Command::ContactNew(ContactNewAction::Ask) => {
+                self.imp().editing.set(Some(None));
+                self.imp().editor.start_new();
+                self.imp().side.set_visible_child_name("editor");
+                self.imp().editor.name_entry().grab_focus();
+            }
+            Command::ContactEdit(ContactEditAction::Ask) => match self.imp().detail.detail() {
+                Some(detail) => {
+                    self.imp().editing.set(Some(Some(detail.person.id)));
+                    self.imp().editor.start_edit(&detail.person);
+                    self.imp().side.set_visible_child_name("editor");
+                    self.imp().editor.name_entry().grab_focus();
+                }
+                None => self.say("Choose someone first"),
+            },
+            Command::ContactDelete { person: None } => match self.cursor_person() {
+                Some(row) => self.act(Command::ContactDelete {
+                    person: Some(row.id),
+                }),
+                None => self.say("Choose someone first"),
+            },
+            Command::ContactRestore { person: None, .. } => {
+                if self.view() != ContactView::Deleted {
+                    self.say("Restore works in the Deleted view (v d)");
+                    return;
+                }
+                match self.cursor_person() {
+                    Some(row) => self.act(Command::ContactRestore {
+                        person: Some(row.id),
+                        state: None,
+                    }),
+                    None => self.say("Choose someone first"),
+                }
+            }
             Command::ContactSetPreferred { address: None, .. } => {
                 let person = self.imp().detail.detail().map(|d| d.person.id);
                 match (person, self.focused_address()) {
@@ -885,6 +943,66 @@ impl ContactsPane {
         }));
     }
 
+    /// Whether the editor is up.
+    pub fn editor_open(&self) -> bool {
+        self.imp().side.visible_child_name().as_deref() == Some("editor")
+    }
+
+    /// The editor, for a test to type into.
+    pub fn editor(&self) -> super::editor::ContactEditor {
+        self.imp().editor.clone()
+    }
+
+    /// Saves the editor as `Return` does: a new person, or an edit, acted
+    /// through the window -- or, for an address that does not parse, the
+    /// reason on the line and the editor left up.
+    pub fn save_editor(&self) {
+        let imp = self.imp();
+        let Some(editing) = imp.editing.get() else {
+            return;
+        };
+        let editor = &imp.editor;
+        let text = |entry: &gtk::Entry| {
+            let text = entry.text().trim().to_owned();
+            (!text.is_empty()).then_some(text)
+        };
+        let name = text(editor.name_entry());
+        let command = match editing {
+            None => {
+                let typed = editor.address_entry().text();
+                let parsed = postio_model::address::parse_list(&typed);
+                let address = match parsed.as_slice() {
+                    [one] if one.is_plausible() => {
+                        postio_model::EmailAddress::new(None::<String>, one.address.clone())
+                    }
+                    [] => {
+                        editor.set_error("A contact needs an address");
+                        return;
+                    }
+                    _ => {
+                        editor.set_error("That does not look like one address");
+                        return;
+                    }
+                };
+                Command::ContactNew(ContactNewAction::Create {
+                    name,
+                    addresses: vec![address],
+                })
+            }
+            Some(person) => Command::ContactEdit(ContactEditAction::Edit {
+                person,
+                edit: postio_model::PersonEdit {
+                    name,
+                    organization: text(editor.organization_entry()),
+                    note: text(editor.note_entry()),
+                },
+            }),
+        };
+        self.close_side();
+        self.focus_list();
+        self.act(command);
+    }
+
     /// `Esc`: a panel if one is up, the screen otherwise.
     pub fn back(&self) {
         if self.imp().side.visible_child_name().as_deref() != Some("detail") {
@@ -901,6 +1019,7 @@ impl ContactsPane {
         imp.join_into.set(None);
         imp.adding.set(None);
         imp.moving.set(None);
+        imp.editing.set(None);
         imp.address_entry.set_visible(true);
         imp.side.set_visible_child_name("detail");
     }

@@ -175,14 +175,14 @@ a mail person), delete so they stay gone, restore from the Deleted view.
 
 - [X] T053 [P] [US3] `crates/postio-storage/tests/storage_suite/contacts_lifecycle.rs`: `create` with a never-seen address makes a `user` person offered by `complete` at once; `create` with an address owned by a deleted person moves it and keeps its sightings (FR-024); `edit` promotes `mail` → `user` in place and a later sighting with another display name leaves `name` alone (FR-021/22); `delete` hides the person from every view but Deleted, from `complete` and from name substitution, and a later message from its address still counts on it and leaves it deleted (SC-005); `restore` returns it whole, sightings gathered meanwhile included
 - [X] T054 [P] [US3] (revised: `mod contacts` in `crates/postio-session/src/actions.rs`) `CreateContact`, `EditContact`, `DeleteContact`, `RestoreContact` each emit and undo exactly
-- [ ] T055 [P] [US3] `crates/postio-app/tests/app_suite/contacts_delete_restore.rs`: delete a person with `#`, send a fixture message from their address through the sync mock, confirm the row does not return and completion does not offer them; toggle the Deleted view (`v d`), `r` restores; `u` after a delete restores too
+- [X] T055 [P] [US3] `crates/postio-app/tests/app_suite/contacts_delete_restore.rs`: delete a person with `#`, send a fixture message from their address through the sync mock, confirm the row does not return and completion does not offer them; toggle the Deleted view (`v d`), `r` restores; `u` after a delete restores too
 
 ### Implementation
 
 - [X] T056 [US3] Implement `create`, `edit` (+ `put_fields` for its inverse), `delete`, `restore` in `crates/postio-storage/src/repository/contacts.rs`, recomputing terms and keys; `create` and `add_address` refuse an address that is one of the user's own identity addresses, with the reason (spec edge case). `delete` on a group-kind row deletes the group (T067). Makes T053 green
 - [X] T057 [US3] Add `CreateContact`, `EditContact`, `DeleteContact`, `RestoreContact` payloads, undo kinds and handlers (`command.rs`, `undo.rs`, `actions.rs`, `WIRED`). Makes T054 green
-- [ ] T058 [US3] Register `contact_new`, `contact_edit`, `contact_delete` (destructive, `Recovery::Undo`; acts on a person or, in US5, a group), `contact_restore`, `contacts_toggle_deleted` in the registry and menu; `destructive_commands_offer_a_way_back` (`command_registry.rs:216`) stays green
-- [ ] T059 [US3] Build the editor in `crates/postio-gtk/src/contacts/editor.rs` (name, addresses, organisation, note; keyboard-reachable; validation of addresses via `EmailAddress` parsing with the reason shown inline) and the Deleted view in `list.rs`; wire in `crates/postio-app/src/contacts.rs`. Makes T055 green
+- [X] T058 [US3] Register `contact_new`, `contact_edit`, `contact_delete` (destructive, `Recovery::Undo`; acts on a person or, in US5, a group), `contact_restore`, `contacts_toggle_deleted` in the registry and menu; `destructive_commands_offer_a_way_back` (`command_registry.rs:216`) stays green
+- [X] T059 [US3] Build the editor in `crates/postio-gtk/src/contacts/editor.rs` (name, the first address for a new person, organisation, note -- later addresses use `+`/`-`/`*` (revised); keyboard-reachable; validation of addresses via `EmailAddress` parsing with the reason shown inline) and the Deleted view in `list.rs`; wire in `crates/postio-app/src/contacts.rs`. Makes T055 green
 
 **Checkpoint**: #4's first acceptance criterion is met by a surface.
 

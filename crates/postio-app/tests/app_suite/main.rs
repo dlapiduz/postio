@@ -23,8 +23,10 @@ mod compose_recipients;
 mod compose_typing;
 mod composer_warm;
 mod contact_name_in_list_and_reader;
+mod contacts_delete_restore;
 mod contacts_join;
 mod contacts_screen;
+mod contacts_support;
 mod conversation_body_arrives;
 mod conversation_by_default;
 mod conversation_reply_target;
@@ -258,6 +260,10 @@ const CASES: &[(&str, fn())] = &[
     (
         "contact_name_in_list_and_reader::a_joined_persons_name_reaches_the_list_and_the_reader",
         contact_name_in_list_and_reader::a_joined_persons_name_reaches_the_list_and_the_reader,
+    ),
+    (
+        "contacts_delete_restore::d_deletes_and_more_mail_does_not_bring_them_back",
+        contacts_delete_restore::d_deletes_and_more_mail_does_not_bring_them_back,
     ),
     (
         "contacts_join::x_x_m_return_joins_and_u_takes_it_back",
