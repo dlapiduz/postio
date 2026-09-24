@@ -71,6 +71,7 @@ impl Req {
             Req::DraftCounts(_) => "DraftCounts",
             Req::Accounts => "Accounts",
             Req::Body(_) => "Body",
+            Req::Conversation(_) => "Conversation",
         }
     }
 }
@@ -151,6 +152,22 @@ impl Client {
             Resp::Body(body) => Some(body),
             _ => None,
         })
+        .await
+    }
+
+    /// A conversation's messages, oldest first.
+    pub async fn conversation(
+        &self,
+        thread: postio_model::ThreadId,
+    ) -> Result<Vec<MessageSummary>, StoreError> {
+        self.read(
+            Req::Conversation(thread),
+            "a conversation",
+            |answer| match answer {
+                Resp::Rows(rows) => Some(rows),
+                _ => None,
+            },
+        )
         .await
     }
 

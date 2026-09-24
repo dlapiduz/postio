@@ -23,6 +23,7 @@ pub(crate) struct World {
     host: Option<Host>,
     inbox: MailboxId,
     message: MessageId,
+    database: postio_storage::Store,
     _blobs: tempfile::TempDir,
 }
 
@@ -51,6 +52,7 @@ impl World {
             &test_support::blob_keys(),
         )
         .expect("a blob store");
+        let kept = database.clone();
         let host = Host::start(database, blobs, |wiring| {
             wiring.with_secrets(std::sync::Arc::new(MemorySecretStore::new()))
         })
@@ -60,6 +62,7 @@ impl World {
             host: Some(host),
             inbox,
             message,
+            database: kept,
             _blobs: directory,
         }
     }
@@ -283,4 +286,44 @@ fn a_frontend_reads_a_body_or_hears_why_there_is_none() {
         .block_on(client.body(world.message))
         .expect("an answer");
     assert_eq!(body, postio_client::protocol::Body::Partial);
+}
+
+#[test]
+fn a_frontend_reads_a_conversations_messages_oldest_first() {
+    let world = World::new();
+    let (client, _) = world.frontend(ClientKind::Tui);
+    // A second, later message joined to the first one's thread.
+    let (thread, later) = world.rt.block_on(async {
+        let connection = world.database.connect().await.expect("a connection");
+        let first = MessageRepository::new(&connection)
+            .get(world.message)
+            .await
+            .expect("read")
+            .expect("there");
+        let mut reply = Message::new(
+            first.account_id,
+            world.inbox,
+            Utc::now() + chrono::Duration::minutes(5),
+        );
+        let reply = MessageRepository::new(&connection)
+            .create(&mut reply)
+            .await
+            .expect("a reply");
+        let threads = postio_storage::repository::ThreadRepository::new(&connection);
+        let mut thread = postio_model::Thread::new(first.account_id);
+        threads.create(&mut thread).await.expect("a thread");
+        for member in [world.message, reply] {
+            threads
+                .add_message(thread.id, member)
+                .await
+                .expect("membership");
+        }
+        (thread.id, reply)
+    });
+    let members = world
+        .rt
+        .block_on(client.conversation(thread))
+        .expect("the conversation");
+    let ids: Vec<MessageId> = members.iter().map(|row| row.id).collect();
+    assert_eq!(ids, vec![world.message, later]);
 }

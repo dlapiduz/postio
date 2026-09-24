@@ -402,6 +402,7 @@ impl Inner {
                 Err(error) => Resp::Failed(postio_model::listing::StoreError::from(error)),
             },
             Req::Body(message) => self.body(message).await,
+            Req::Conversation(thread) => self.conversation(thread).await,
             Req::DraftCounts(account) => store
                 .draft_counts(account)
                 .await
@@ -438,6 +439,30 @@ impl Inner {
                 Stored::Absent(Absent::ForeignDraft) => Body::ForeignDraft,
             },
         )
+    }
+
+    /// A conversation's messages as list rows, oldest first: the order it
+    /// happened in, which is how a reader reads down the page.
+    async fn conversation(&self, thread: postio_model::ThreadId) -> Resp {
+        use postio_model::listing::StoreError;
+        use postio_storage::repository::{ThreadOrder, ThreadRepository};
+        let ids = match self.wiring.database.connect().await {
+            Ok(connection) => match ThreadRepository::new(&connection)
+                .messages(thread, ThreadOrder::Oldest)
+                .await
+            {
+                Ok(rows) => rows.into_iter().map(|row| row.id).collect::<Vec<_>>(),
+                Err(error) => return Resp::Failed(StoreError::from(error)),
+            },
+            Err(error) => return Resp::Failed(StoreError::from(error)),
+        };
+        // The store's own rows, so a conversation's members look exactly like
+        // the list rows every frontend already draws.
+        self.wiring
+            .store
+            .message_rows(ids)
+            .await
+            .map_or_else(Resp::Failed, Resp::Rows)
     }
 
     /// Put a command on the one queue. Never waits.

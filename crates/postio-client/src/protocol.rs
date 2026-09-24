@@ -118,6 +118,8 @@ pub enum Req {
     Accounts,
     /// A message's body, or why there is none yet.
     Body(MessageId),
+    /// A conversation's messages, oldest first, as list rows.
+    Conversation(postio_model::ThreadId),
 }
 
 /// The host's answer to one [`Req`].
