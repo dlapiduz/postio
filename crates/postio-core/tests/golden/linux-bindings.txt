@@ -96,3 +96,8 @@ contact_join	m
 contact_add_address	plus
 contact_detach_address	minus
 contact_set_preferred	asterisk
+contact_new	n
+contact_edit	e
+contact_delete	d | Delete
+contact_restore	r
+contacts_toggle_deleted	v d

@@ -1681,6 +1681,58 @@ static SPECS: &[CommandSpec] = &[
         recovery: Recovery::Undo,
         requires: MAIL,
     },
+    CommandSpec {
+        id: CommandId::ContactNew,
+        title: "New contact",
+        default_binding: "n",
+        alternate_bindings: &[],
+        contexts: ctx(CONTACTS),
+        destructive: false,
+        recovery: Recovery::Undo,
+        requires: MAIL,
+    },
+    CommandSpec {
+        id: CommandId::ContactEdit,
+        title: "Edit contact",
+        default_binding: "e",
+        alternate_bindings: &[],
+        contexts: ctx(CONTACTS),
+        destructive: false,
+        recovery: Recovery::Undo,
+        requires: MAIL,
+    },
+    CommandSpec {
+        id: CommandId::ContactDelete,
+        title: "Delete",
+        // The message list's own delete key: the same gesture means the
+        // same thing on a person, and `u` takes it back.
+        default_binding: "d",
+        alternate_bindings: &["Delete"],
+        contexts: ctx(CONTACTS),
+        destructive: true,
+        recovery: Recovery::Undo,
+        requires: MAIL,
+    },
+    CommandSpec {
+        id: CommandId::ContactRestore,
+        title: "Restore contact",
+        default_binding: "r",
+        alternate_bindings: &[],
+        contexts: ctx(CONTACTS),
+        destructive: false,
+        recovery: Recovery::Undo,
+        requires: MAIL,
+    },
+    CommandSpec {
+        id: CommandId::ContactsToggleDeleted,
+        title: "Deleted contacts",
+        default_binding: "v d",
+        alternate_bindings: &[],
+        contexts: ctx(CONTACTS),
+        destructive: false,
+        recovery: Recovery::None,
+        requires: MAIL,
+    },
 ];
 
 /// Every command, in cheat-sheet order.

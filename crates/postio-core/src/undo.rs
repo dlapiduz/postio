@@ -79,6 +79,14 @@ pub enum UndoKind {
     DetachAddress,
     /// A person's preferred address changed.
     PreferredAddress,
+    /// A person was made.
+    CreateContact,
+    /// A person was edited.
+    EditContact,
+    /// A person was deleted.
+    DeleteContact,
+    /// A deleted person was brought back.
+    RestoreContact,
 }
 
 impl UndoKind {
@@ -108,6 +116,10 @@ impl UndoKind {
             UndoKind::ContactAddress => "Added an address".to_owned(),
             UndoKind::DetachAddress => "Detached an address".to_owned(),
             UndoKind::PreferredAddress => "Changed the preferred address".to_owned(),
+            UndoKind::CreateContact => "Added a contact".to_owned(),
+            UndoKind::EditContact => "Edited a contact".to_owned(),
+            UndoKind::DeleteContact => "Deleted a contact".to_owned(),
+            UndoKind::RestoreContact => "Restored a contact".to_owned(),
             UndoKind::Snooze => format!("Snoozed {count} {messages}"),
             UndoKind::Unsnooze => format!("Unsnoozed {count} {messages}"),
         }

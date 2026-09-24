@@ -27,7 +27,7 @@ use std::str::FromStr;
 
 use postio_model::{
     AccountId, AddressId, ContactId, ContactState, DraftId, EmailAddress, JoinReceipt, LabelId,
-    MailboxId, MailboxRole, MessageId, OperationRange, ThreadId,
+    MailboxId, MailboxRole, MessageId, OperationRange, PersonEdit, PersonFields, ThreadId,
 };
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
@@ -256,6 +256,16 @@ command_ids! {
     ContactDetachAddress => "contact_detach_address",
     /// Offer the focused address first.
     ContactSetPreferred => "contact_set_preferred",
+    /// Make a person, with a name and addresses.
+    ContactNew => "contact_new",
+    /// Edit the focused person's name, organisation and note.
+    ContactEdit => "contact_edit",
+    /// Delete the focused person.
+    ContactDelete => "contact_delete",
+    /// Bring the focused deleted person back.
+    ContactRestore => "contact_restore",
+    /// Show the deleted people, or the default view again.
+    ContactsToggleDeleted => "contacts_toggle_deleted",
 }
 
 impl fmt::Display for CommandId {
@@ -825,6 +835,60 @@ pub enum Command {
         /// Which.
         address: Option<AddressId>,
     },
+    /// Make a person (FR-020), or ask for one.
+    ContactNew(ContactNewAction),
+    /// Edit a person (FR-021), or put an edit back.
+    ContactEdit(ContactEditAction),
+    /// Delete a person (FR-023). `None` means the focused one.
+    ContactDelete {
+        /// Who.
+        person: Option<ContactId>,
+    },
+    /// Bring a deleted person back (FR-023a). `None` means the focused one;
+    /// `state` is what they were, which undo knows and a key does not.
+    ContactRestore {
+        /// Who.
+        person: Option<ContactId>,
+        /// The state they come back in; live when not given.
+        state: Option<ContactState>,
+    },
+    /// Toggle the Deleted view.
+    ContactsToggleDeleted,
+}
+
+/// What a [`Command::ContactNew`] asks for.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ContactNewAction {
+    /// Ask the user: the editor, empty.
+    Ask,
+    /// Make this person.
+    Create {
+        /// Their name, if the user gave one.
+        name: Option<String>,
+        /// Their addresses; at least one.
+        addresses: Vec<EmailAddress>,
+    },
+}
+
+/// What a [`Command::ContactEdit`] asks for.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ContactEditAction {
+    /// Ask the user: the editor, on the focused person.
+    Ask,
+    /// Set these fields.
+    Edit {
+        /// Whose.
+        person: ContactId,
+        /// What they become.
+        edit: PersonEdit,
+    },
+    /// Put fields back exactly -- undo's half.
+    Put {
+        /// Whose.
+        person: ContactId,
+        /// What they were.
+        fields: PersonFields,
+    },
 }
 
 /// What a [`Command::ContactJoin`] asks for.
@@ -1029,6 +1093,11 @@ impl Command {
             Command::ContactAddAddress(_) => CommandId::ContactAddAddress,
             Command::ContactDetachAddress { .. } => CommandId::ContactDetachAddress,
             Command::ContactSetPreferred { .. } => CommandId::ContactSetPreferred,
+            Command::ContactNew(_) => CommandId::ContactNew,
+            Command::ContactEdit(_) => CommandId::ContactEdit,
+            Command::ContactDelete { .. } => CommandId::ContactDelete,
+            Command::ContactRestore { .. } => CommandId::ContactRestore,
+            Command::ContactsToggleDeleted => CommandId::ContactsToggleDeleted,
         }
     }
 
@@ -1165,6 +1234,14 @@ impl Command {
                 person: None,
                 address: None,
             },
+            CommandId::ContactNew => Command::ContactNew(ContactNewAction::Ask),
+            CommandId::ContactEdit => Command::ContactEdit(ContactEditAction::Ask),
+            CommandId::ContactDelete => Command::ContactDelete { person: None },
+            CommandId::ContactRestore => Command::ContactRestore {
+                person: None,
+                state: None,
+            },
+            CommandId::ContactsToggleDeleted => Command::ContactsToggleDeleted,
         }
     }
 

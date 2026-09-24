@@ -161,6 +161,7 @@ const CONTACTS_OWNED: &[CommandId] = &[
     CommandId::ContactCompose,
     CommandId::ContactsFilter,
     CommandId::ContactsToggleEveryone,
+    CommandId::ContactsToggleDeleted,
 ];
 
 pub fn every_command_id_is_handled_locally_or_wired_to_the_bus() {

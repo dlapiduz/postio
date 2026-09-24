@@ -136,6 +136,15 @@ command from inside a text field.
 | `c` | Write to | Contacts |  | `contact_compose` |
 | `/` | Filter contacts | Contacts |  | `contacts_filter` |
 | `v e` | Everyone from mail | Contacts |  | `contacts_toggle_everyone` |
+| `m` | Join | Contacts | Undoable | `contact_join` |
+| `plus` | Add address | Contacts | Undoable | `contact_add_address` |
+| `minus` | Detach address | Contacts | Undoable | `contact_detach_address` |
+| `asterisk` | Use this address first | Contacts | Undoable | `contact_set_preferred` |
+| `n` | New contact | Contacts | Undoable | `contact_new` |
+| `e` | Edit contact | Contacts | Undoable | `contact_edit` |
+| `d` or `Delete` | Delete | Contacts | Undoable | `contact_delete` |
+| `r` | Restore contact | Contacts | Undoable | `contact_restore` |
+| `v d` | Deleted contacts | Contacts |  | `contacts_toggle_deleted` |
 
 ## The one box
 
