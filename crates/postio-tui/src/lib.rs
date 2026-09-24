@@ -12,6 +12,7 @@
 
 pub mod app;
 pub mod caps;
+pub mod composer;
 pub mod conversation;
 pub mod input;
 pub mod layout;

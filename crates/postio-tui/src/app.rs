@@ -196,6 +196,11 @@ pub struct App {
     /// Senders whose remote images are always allowed, shared with the
     /// desktop app (`postio_ui::allowlist`).
     allowlist: postio_ui::allowlist::RemoteImageAllowList,
+    /// The draft being written, which takes the reading pane while it is.
+    composer: Option<crate::composer::Composer>,
+    /// How many compositions this frontend has started: each is named by the
+    /// next, for the host's draft writer.
+    compositions: u64,
 }
 
 /// Which pane the keyboard is in.
@@ -210,6 +215,8 @@ pub enum Focus {
     Reader,
     /// The parts of the message being read.
     Parts,
+    /// The composer, in the reading pane.
+    Composer,
 }
 
 impl std::fmt::Debug for App {
@@ -249,6 +256,8 @@ impl App {
             allowlist: postio_ui::allowlist::RemoteImageAllowList::default(),
             part_cursor: 0,
             downloads: std::path::PathBuf::from("."),
+            composer: None,
+            compositions: 0,
         }
     }
 
@@ -316,6 +325,62 @@ impl App {
         self.focus
     }
 
+    /// The draft being written, if one is.
+    pub fn composer(&self) -> Option<&crate::composer::Composer> {
+        self.composer.as_ref()
+    }
+
+    /// Start writing `draft`: the composer takes the reading pane and the
+    /// keyboard.
+    pub fn compose(&mut self, draft: postio_model::Draft) -> Vec<Effect> {
+        self.compositions += 1;
+        self.composer = Some(crate::composer::Composer::new(self.compositions, draft));
+        self.focus = Focus::Composer;
+        self.requested.front = crate::layout::Pane::Reader;
+        vec![Effect::Redraw]
+    }
+
+    /// Leave the composer, back to the list where it was.
+    fn close_composer(&mut self) -> Vec<Effect> {
+        self.composer = None;
+        self.focus = Focus::List;
+        self.requested.front = crate::layout::Pane::List;
+        vec![Effect::Redraw]
+    }
+
+    /// A key while the composer has the keyboard: a composer command if it
+    /// names one, and otherwise typed (FR-022a). The keymap is asked in
+    /// text entry, so a plain letter is handed back rather than resolved.
+    fn composer_key(&mut self, key: &KeyEvent) -> Vec<Effect> {
+        match self.keys.press(key, KeyContext::Composer, true) {
+            Outcome::Command(id) => self.composer_command(&id),
+            Outcome::Pending(_) => Vec::new(),
+            Outcome::Unhandled => {
+                let typed = self
+                    .composer
+                    .as_mut()
+                    .is_some_and(|composer| composer.type_key(*key));
+                if typed {
+                    vec![Effect::Redraw]
+                } else {
+                    Vec::new()
+                }
+            }
+        }
+    }
+
+    /// A command run with the composer in front.
+    fn composer_command(&mut self, id: &str) -> Vec<Effect> {
+        match id {
+            // Escape. The draft is not lost by leaving: it is autosaved, a row
+            // in Drafts, as the desktop's Esc parks one.
+            "back" | "discard_draft" => self.close_composer(),
+            // Everything else the composer context reaches -- quitting, the
+            // palette -- means what it means anywhere.
+            _ => self.command(id),
+        }
+    }
+
     /// The sidebar's lines, and which one the keyboard would be on.
     pub fn sidebar(&self) -> (&[crate::sidebar::Line], usize) {
         (&self.sidebar, self.sidebar_cursor)
@@ -339,6 +404,7 @@ impl App {
             }
             Focus::Reader => KeyContext::Reader,
             Focus::Parts => KeyContext::Parts,
+            Focus::Composer => KeyContext::Composer,
         }
     }
 
@@ -489,17 +555,28 @@ impl App {
             "quit" => return vec![Effect::Quit],
             "focus_sidebar" => self.focus = Focus::Sidebar,
             "cycle_pane" => {
+                // The composer is the reading pane while it is open.
+                let reader = if self.composer.is_some() {
+                    Focus::Composer
+                } else {
+                    Focus::Reader
+                };
                 self.focus = match self.focus {
-                    Focus::List => Focus::Reader,
-                    Focus::Reader | Focus::Parts => Focus::Sidebar,
+                    Focus::List => reader,
+                    Focus::Reader | Focus::Parts | Focus::Composer => Focus::Sidebar,
                     Focus::Sidebar => Focus::List,
                 }
             }
             "cycle_pane_back" => {
+                let reader = if self.composer.is_some() {
+                    Focus::Composer
+                } else {
+                    Focus::Reader
+                };
                 self.focus = match self.focus {
                     Focus::List => Focus::Sidebar,
-                    Focus::Sidebar => Focus::Reader,
-                    Focus::Reader | Focus::Parts => Focus::List,
+                    Focus::Sidebar => reader,
+                    Focus::Reader | Focus::Parts | Focus::Composer => Focus::List,
                 }
             }
             "back" if self.focus == Focus::Parts => self.focus = Focus::Reader,
@@ -979,6 +1056,7 @@ pub fn update(app: &mut App, input: Input) -> Vec<Effect> {
             app.size = (width, height);
             vec![Effect::Redraw]
         }
+        Input::Key(key) if app.focus == Focus::Composer => app.composer_key(&key),
         Input::Key(key) => match app.keys.press(&key, app.key_context(), false) {
             Outcome::Command(id) => app.command(&id),
             Outcome::Pending(_) | Outcome::Unhandled => Vec::new(),
@@ -1309,6 +1387,39 @@ mod tests {
                 .any(|effect| matches!(effect, Effect::Fetch { page: 0, .. })),
             "the rows in view are read again: {effects:?}"
         );
+    }
+
+    #[test]
+    fn in_the_composer_a_letter_is_typed_not_run() {
+        // T053: `a` is Archive in the list and a letter in the composer.
+        let mut app = app((160, 40));
+        let opening = opened(&mut app, 3);
+        serve(&mut app, opening);
+        app.compose(postio_model::Draft::new(postio_model::AccountId::new(1)));
+        assert_eq!(app.focus(), Focus::Composer);
+
+        let effects = update(&mut app, press('a'));
+        assert!(
+            !effects
+                .iter()
+                .any(|effect| matches!(effect, Effect::Send(_))),
+            "a letter ran a command: {effects:?}"
+        );
+        let composer = app.composer().expect("still composing");
+        assert_eq!(composer.value(crate::composer::Field::To), "a");
+
+        update(&mut app, key(KeyCode::Esc, KeyModifiers::NONE));
+        assert_eq!(app.focus(), Focus::List, "Escape leaves the composer");
+        assert!(app.composer().is_none());
+    }
+
+    #[test]
+    fn the_composer_takes_the_reading_pane_on_a_narrow_terminal() {
+        let mut app = app((70, 30));
+        app.compose(postio_model::Draft::new(postio_model::AccountId::new(1)));
+        assert_eq!(app.shown(), Shown::Panes(vec![Pane::Reader]));
+        update(&mut app, key(KeyCode::Esc, KeyModifiers::NONE));
+        assert_eq!(app.shown(), Shown::Panes(vec![Pane::List]));
     }
 
     #[test]

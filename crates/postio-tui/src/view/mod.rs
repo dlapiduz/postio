@@ -2,6 +2,7 @@
 //!
 //! Nothing here decides anything about mail; it draws what `App` holds.
 
+pub mod composer;
 pub mod list;
 pub mod reader;
 pub mod sidebar;
@@ -57,7 +58,15 @@ pub fn draw(frame: &mut Frame, app: &App, theme: &Theme, now: DateTime<Local>) {
                     }
                     Pane::List => list::draw(frame, *area, &app.visible(), theme, now),
                     Pane::Reader => {
-                        if let Some(reading) = app.reading() {
+                        if let Some(writing) = app.composer() {
+                            composer::draw(
+                                frame,
+                                *area,
+                                writing,
+                                app.focus() == Focus::Composer,
+                                theme,
+                            );
+                        } else if let Some(reading) = app.reading() {
                             reader::draw(
                                 frame,
                                 *area,
@@ -170,6 +179,43 @@ mod tests {
             }),
         );
         app
+    }
+
+    #[test]
+    fn the_composer_draws_its_fields_and_body_in_the_reading_pane() {
+        let mut app = with_sidebar((160, 16));
+        let mut draft = postio_model::Draft::new(postio_model::AccountId::new(1));
+        draft.to = vec![postio_model::EmailAddress::new(
+            None::<String>,
+            "grace@example.net",
+        )];
+        draft.subject = "Tide gate".into();
+        draft.body_markdown = Some("Some **bold** words".into());
+        app.compose(draft);
+
+        let screen = screen(160, 16, &app);
+        for wanted in [
+            "To",
+            "grace@example.net",
+            "Subject",
+            "Tide gate",
+            "Some **bold** words",
+        ] {
+            assert!(screen.contains(wanted), "{wanted} missing:\n{screen}");
+        }
+        assert!(!screen.contains("Cc"), "Cc is on demand:\n{screen}");
+    }
+
+    #[test]
+    fn a_hostile_subject_in_the_composer_reaches_the_screen_harmless() {
+        let mut app = with_sidebar((160, 16));
+        let mut draft = postio_model::Draft::new(postio_model::AccountId::new(1));
+        // What a reply copies from the message it answers.
+        draft.subject = "Re: \u{1b}]0;pwned\u{7}\u{1b}[2J".into();
+        app.compose(draft);
+        let screen = screen(160, 16, &app);
+        assert!(!screen.contains('\u{1b}'), "{screen:?}");
+        assert!(screen.contains("Re:"), "{screen}");
     }
 
     #[test]
