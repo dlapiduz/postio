@@ -39,6 +39,14 @@ static ALLOCATOR: mimalloc::MiMalloc = mimalloc::MiMalloc;
 /// allocator all reach a steady state, few enough to run in a minute.
 const MESSAGES: u32 = 20_000;
 
+/// `POSTIO_MEASURE_MESSAGES` overrides [`MESSAGES`] for a quicker look.
+fn messages() -> u32 {
+    std::env::var("POSTIO_MEASURE_MESSAGES")
+        .ok()
+        .and_then(|value| value.parse().ok())
+        .unwrap_or(MESSAGES)
+}
+
 /// How long the process is left alone before the last sample.
 const QUIET: Duration = Duration::from_secs(10);
 
@@ -125,7 +133,7 @@ async fn local(database: &Store, sql: &str) -> i64 {
 #[tokio::test(flavor = "multi_thread")]
 async fn what_a_first_sync_leaves_resident() {
     let mut archive = MockMailbox::new("Archive").attributes(["\\Archive"]);
-    for n in 1..=MESSAGES {
+    for n in 1..=messages() {
         archive = archive.message(MockMessage::new(message(n)));
     }
     let backend = Arc::new(
@@ -179,6 +187,7 @@ async fn what_a_first_sync_leaves_resident() {
     })
     .expect("the engine starts");
 
+    let mut headers_at: Option<Duration> = None;
     let deadline = Instant::now() + postio_test_support::scaled(Duration::from_secs(1200));
     loop {
         let stored = local(&database, "SELECT count(*) FROM messages").await;
@@ -187,7 +196,10 @@ async fn what_a_first_sync_leaves_resident() {
             "SELECT count(*) FROM messages WHERE body_state IN ('not_fetched', 'headers_only')",
         )
         .await;
-        if stored >= i64::from(MESSAGES) && owed == 0 {
+        if headers_at.is_none() && stored >= i64::from(messages()) {
+            headers_at = Some(started.elapsed());
+        }
+        if stored >= i64::from(messages()) && owed == 0 {
             break;
         }
         assert!(
@@ -218,7 +230,11 @@ async fn what_a_first_sync_leaves_resident() {
             at.rss_kb, at.peak_kb, at.arena_rss_kb, at.arena_thp_kb
         );
     }
-    eprintln!("first-sync memory (MIMALLOC_ALLOW_THP={thp}): {MESSAGES} messages in {took:.1?}");
+    eprintln!(
+        "first-sync memory (MIMALLOC_ALLOW_THP={thp}): {} messages in {took:.1?}, headers all local at {:.1?}",
+        messages(),
+        headers_at.unwrap_or_default()
+    );
 
     // Only what holds on any machine: memory after a quiet spell is not above
     // the peak. The numbers are the point.
