@@ -1040,7 +1040,9 @@ impl Fill {
                 // POSTIO-GLIB-SAFE: a channel receive; the reads run on the
                 // runtime in `read_each`.
                 while let Ok(answer) = rest.recv().await {
-                    if early.send(answer).await.is_err() {
+                    // Unbounded, so this never waits: it fails only when the
+                    // pane has stopped listening.
+                    if early.try_send(answer).is_err() {
                         return;
                     }
                 }
