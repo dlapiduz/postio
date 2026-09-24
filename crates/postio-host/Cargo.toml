@@ -16,3 +16,18 @@ path = "src/bin/postio-daemon.rs"
 workspace = true
 
 [dependencies]
+async-channel = { workspace = true }
+postio-client.workspace = true
+postio-core.workspace = true
+postio-model.workspace = true
+postio-session.workspace = true
+postio-storage.workspace = true
+tokio = { workspace = true, features = ["rt", "sync"] }
+tracing = { workspace = true }
+
+[dev-dependencies]
+chrono = { workspace = true }
+postio-account.workspace = true
+postio-storage = { workspace = true, features = ["test-support"] }
+tempfile = { workspace = true }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "time"] }

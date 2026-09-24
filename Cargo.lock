@@ -3746,6 +3746,19 @@ dependencies = [
 [[package]]
 name = "postio-host"
 version = "0.3.0"
+dependencies = [
+ "async-channel",
+ "chrono",
+ "postio-account",
+ "postio-client",
+ "postio-core",
+ "postio-model",
+ "postio-session",
+ "postio-storage",
+ "tempfile",
+ "tokio",
+ "tracing",
+]
 
 [[package]]
 name = "postio-index"

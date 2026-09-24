@@ -1,0 +1,230 @@
+//! The host over a real store, driven through clients the way a frontend
+//! drives it. Asserted on what a frontend would see: its events and its list.
+
+use std::time::Duration;
+
+use chrono::Utc;
+use postio_account::secret::MemorySecretStore;
+use postio_client::Client;
+use postio_client::protocol::ClientKind;
+use postio_core::bridge::event_channel;
+use postio_core::{Command, Event, EventEnvelope, MessageTarget, SharedState};
+use postio_model::listing::{ListPage, MailStore, PageRequest};
+use postio_model::{ListScope, MailboxId, Message, MessageId};
+use postio_storage::repository::MessageRepository;
+use postio_storage::test_support;
+
+use super::Host;
+
+/// A store with an inbox, an archive and a trash, one message in the inbox,
+/// and a host over it.
+struct World {
+    rt: tokio::runtime::Runtime,
+    host: Option<Host>,
+    inbox: MailboxId,
+    message: MessageId,
+    _blobs: tempfile::TempDir,
+}
+
+impl World {
+    fn new() -> World {
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("a test runtime");
+        let (database, inbox, message) = rt.block_on(async {
+            let database = test_support::memory().await;
+            let connection = database.connect().await.expect("a connection");
+            let (account, inbox) = test_support::account_with_inbox(&connection).await;
+            test_support::mailbox(&connection, &account, "Archive").await;
+            test_support::mailbox(&connection, &account, "Trash").await;
+            let mut message = Message::new(account.id, inbox, Utc::now());
+            let message = MessageRepository::new(&connection)
+                .create(&mut message)
+                .await
+                .expect("a message");
+            (database, inbox, message)
+        });
+        let directory = tempfile::tempdir().expect("a blob directory");
+        let blobs = postio_storage::BlobStore::open(
+            directory.path().to_path_buf(),
+            &test_support::blob_keys(),
+        )
+        .expect("a blob store");
+        let host = Host::start(database, blobs, |wiring| {
+            wiring.with_secrets(std::sync::Arc::new(MemorySecretStore::new()))
+        })
+        .expect("a host");
+        World {
+            rt,
+            host: Some(host),
+            inbox,
+            message,
+            _blobs: directory,
+        }
+    }
+
+    /// A frontend looking at the inbox with the cursor on the message.
+    fn frontend(&self, kind: ClientKind) -> (Client, async_channel::Receiver<EventEnvelope>) {
+        let state = SharedState::default();
+        let (quiet, _) = event_channel();
+        state.update(&quiet, |app| {
+            let mut events = app.open_mailbox(self.inbox);
+            events.extend(app.select(Vec::new(), Some(self.message)));
+            events
+        });
+        let client = self
+            .host
+            .as_ref()
+            .expect("running")
+            .connect(kind)
+            .with_state(state);
+        let events = client.events();
+        (client, events)
+    }
+
+    fn inbox_rows(&self, client: &Client) -> u32 {
+        let page = self
+            .rt
+            .block_on(client.list_page(PageRequest {
+                scope: ListScope::Mailbox(self.inbox),
+                offset: 0,
+                limit: 20,
+            }))
+            .expect("a page");
+        match page {
+            ListPage::Messages(page) => page.total,
+            ListPage::Threads(page) => page.total,
+        }
+    }
+
+    /// Wait for an event matching `wanted`, failing after a while.
+    fn hear(
+        &self,
+        events: &async_channel::Receiver<EventEnvelope>,
+        wanted: impl Fn(&Event) -> bool,
+    ) -> Event {
+        self.rt.block_on(async {
+            tokio::time::timeout(Duration::from_secs(10), async {
+                loop {
+                    let envelope = events.recv().await.expect("the host is running");
+                    if wanted(&envelope.event) {
+                        return envelope.event;
+                    }
+                }
+            })
+            .await
+            .expect("the event arrived")
+        })
+    }
+
+    /// Everything that arrives within a short quiet period.
+    fn drain(&self, events: &async_channel::Receiver<EventEnvelope>) -> Vec<Event> {
+        self.rt.block_on(async {
+            let mut heard = Vec::new();
+            while let Ok(Ok(envelope)) =
+                tokio::time::timeout(Duration::from_millis(300), events.recv()).await
+            {
+                heard.push(envelope.event);
+            }
+            heard
+        })
+    }
+
+    fn send(&self, client: &Client, command: Command) {
+        self.rt.block_on(client.send(command)).expect("sent");
+    }
+}
+
+impl Drop for World {
+    fn drop(&mut self) {
+        // The host's runtime cannot be dropped from inside another runtime's
+        // `block_on`, and this is outside every one of them.
+        self.host.take();
+    }
+}
+
+fn archive() -> Command {
+    Command::Archive {
+        target: MessageTarget::Selection,
+    }
+}
+
+#[test]
+fn a_frontend_archives_through_the_host_and_its_list_empties() {
+    let world = World::new();
+    let (client, events) = world.frontend(ClientKind::Test);
+    assert_eq!(world.inbox_rows(&client), 1);
+
+    world.send(&client, archive());
+
+    world.hear(&events, |event| {
+        matches!(event, Event::MessagesRemoved { .. })
+    });
+    assert_eq!(world.inbox_rows(&client), 0);
+}
+
+#[test]
+fn what_one_frontend_changed_reaches_the_other() {
+    let world = World::new();
+    let (terminal, _) = world.frontend(ClientKind::Tui);
+    let (_desktop, desktop_events) = world.frontend(ClientKind::Gtk);
+
+    world.send(&terminal, archive());
+
+    world.hear(&desktop_events, |event| {
+        matches!(event, Event::MessagesRemoved { .. })
+    });
+}
+
+#[test]
+fn an_undo_offer_is_only_for_the_frontend_that_can_take_it() {
+    let world = World::new();
+    let (terminal, terminal_events) = world.frontend(ClientKind::Tui);
+    let (_desktop, desktop_events) = world.frontend(ClientKind::Gtk);
+
+    world.send(&terminal, archive());
+
+    world.hear(&terminal_events, |event| {
+        matches!(event, Event::ActionCompleted { undoable: true, .. })
+    });
+    let desktop_heard = world.drain(&desktop_events);
+    assert!(
+        desktop_heard
+            .iter()
+            .any(|event| matches!(event, Event::MessagesRemoved { .. })),
+        "the desktop hears what changed: {desktop_heard:?}"
+    );
+    assert!(
+        !desktop_heard
+            .iter()
+            .any(|event| matches!(event, Event::ActionCompleted { .. })),
+        "but not the terminal's undo offer: {desktop_heard:?}"
+    );
+}
+
+#[test]
+fn undo_takes_back_only_what_this_frontend_did() {
+    let world = World::new();
+    let (terminal, terminal_events) = world.frontend(ClientKind::Tui);
+    let (desktop, desktop_events) = world.frontend(ClientKind::Gtk);
+
+    world.send(&terminal, archive());
+    world.hear(&terminal_events, |event| {
+        matches!(event, Event::ActionCompleted { .. })
+    });
+
+    // The desktop did nothing, so it has nothing to undo.
+    world.send(&desktop, Command::Undo);
+    world.hear(&desktop_events, |event| {
+        matches!(event, Event::CommandRejected { .. })
+    });
+    assert_eq!(world.inbox_rows(&desktop), 0, "the archive stands");
+
+    // The terminal does.
+    world.send(&terminal, Command::Undo);
+    world.hear(&terminal_events, |event| {
+        matches!(event, Event::UndoPerformed { .. })
+    });
+    assert_eq!(world.inbox_rows(&desktop), 1, "and the message is back");
+}
