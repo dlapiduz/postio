@@ -2460,6 +2460,11 @@ impl Window {
             CommandId::EditExternally => self.composer().set_status(
                 "this composer edits in place — the terminal one hands its text to $EDITOR",
             ),
+            // The terminal's composer writes Markdown and can show what it
+            // will look like. This one shows formatting as it is written.
+            CommandId::TogglePreview => self
+                .composer()
+                .set_status("this composer already shows the message as it will look"),
             CommandId::Search => self.open_finder(Mode::Search),
             // The header button already flips this property directly
             // (`window.rs`, `sidebar_toggle.connect_toggled`); this is the

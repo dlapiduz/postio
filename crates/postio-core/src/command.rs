@@ -147,6 +147,8 @@ command_ids! {
     InsertImage => "insert_image",
     /// Hand the body to the person's own editor, and take it back.
     EditExternally => "edit_externally",
+    /// Show the message as it will be received, or go back to writing it.
+    TogglePreview => "toggle_preview",
     /// Make the selection bold, or un-bold it.
     Bold => "bold",
     /// Make the selection italic, or straighten it.
@@ -647,6 +649,10 @@ pub enum Command {
     /// text an editor can open -- the desktop's rich editor -- the frontend
     /// says so.
     EditExternally,
+    /// Show the draft as it will arrive, beside or instead of the text being
+    /// written (specs/005-tui-frontend FR-021). The desktop's composer shows
+    /// formatting as it is written, so it has nothing to preview.
+    TogglePreview,
     /// Make the selection bold, or un-bold it.
     Bold,
     /// Make the selection italic, or straighten it.
@@ -910,6 +916,7 @@ impl Command {
             Command::CopyFields => CommandId::CopyFields,
             Command::InsertImage => CommandId::InsertImage,
             Command::EditExternally => CommandId::EditExternally,
+            Command::TogglePreview => CommandId::TogglePreview,
             Command::Bold => CommandId::Bold,
             Command::Italic => CommandId::Italic,
             Command::BulletList => CommandId::BulletList,
@@ -1035,6 +1042,7 @@ impl Command {
             CommandId::CopyFields => Command::CopyFields,
             CommandId::InsertImage => Command::InsertImage,
             CommandId::EditExternally => Command::EditExternally,
+            CommandId::TogglePreview => Command::TogglePreview,
             CommandId::Bold => Command::Bold,
             CommandId::Italic => Command::Italic,
             CommandId::BulletList => Command::BulletList,

@@ -43,6 +43,7 @@ detach_composer	ctrl+shift+o | alt+o
 copy_fields	ctrl+shift+c | alt+c
 insert_image	ctrl+shift+g | alt+g
 edit_externally	ctrl+shift+e | alt+e
+toggle_preview	ctrl+shift+p | alt+p
 bold	ctrl+b
 italic	ctrl+i | alt+i
 bullet_list	ctrl+shift+8 | alt+8

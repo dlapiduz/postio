@@ -949,6 +949,16 @@ static SPECS: &[CommandSpec] = &[
         requires: MAIL,
     },
     CommandSpec {
+        id: CommandId::TogglePreview,
+        title: "Toggle preview",
+        default_binding: "mod+shift+p",
+        alternate_bindings: &["alt+p"],
+        contexts: Context::Composer.as_set(),
+        destructive: false,
+        recovery: Recovery::None,
+        requires: MAIL,
+    },
+    CommandSpec {
         id: CommandId::Bold,
         title: "Bold",
         default_binding: "mod+b",

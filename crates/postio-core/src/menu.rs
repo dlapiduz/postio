@@ -211,7 +211,7 @@ pub fn section_for(command: CommandId) -> Option<MenuSection> {
         C::InsertImage => Some(M::Format),
         C::InsertLink | C::QuoteBlock => Some(M::Format),
         // Beside the formatting it replaces: the body, edited elsewhere.
-        C::EditExternally => Some(M::Format),
+        C::EditExternally | C::TogglePreview => Some(M::Format),
     }
 }
 
