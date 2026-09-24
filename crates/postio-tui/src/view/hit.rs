@@ -21,6 +21,8 @@ pub enum Target {
     ComposerBody,
     /// Another field of the composer.
     ComposerField(crate::composer::Field),
+    /// One of the composer's buttons, by the command it runs.
+    ComposerAction(&'static str),
     /// The line between the list and the reading pane, for dragging.
     Divider,
     /// Something drawn over everything else: clicks there land on nothing

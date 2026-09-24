@@ -23,6 +23,7 @@ pub fn draw(
     composer: &Composer,
     preview: Option<postio_config::Preview>,
     focused: bool,
+    actions: &[Action],
     theme: &Theme,
     hits: &mut Hits,
 ) {
@@ -95,6 +96,12 @@ pub fn draw(
         y += 1;
     }
     let mut height = (area.y + area.height).saturating_sub(y);
+    // The buttons along the foot, as the desktop's composer has them: what
+    // each does, and the key this terminal can send for it.
+    if !actions.is_empty() && height > 2 {
+        height -= 1;
+        draw_actions(frame, area.x, y + height, area.width, actions, theme, hits);
+    }
     // The draft's files, under the body: each by name and size, the way the
     // desktop lists them. A forwarded file's name is the sender's.
     let files = composer.attachments();
@@ -226,6 +233,49 @@ fn draw_suggestions(
 }
 
 /// The schedule-send picker, over the bottom of the composer: the four
+/// One of the composer's buttons: its key as this terminal sends it, what it
+/// says, and the command it runs.
+pub type Action = (String, &'static str, &'static str);
+
+/// The buttons, left to right: the first is the one a message is for, and
+/// is filled; the rest are words with their keys.
+fn draw_actions(
+    frame: &mut Frame,
+    x: u16,
+    y: u16,
+    width: u16,
+    actions: &[Action],
+    theme: &Theme,
+    hits: &mut Hits,
+) {
+    let mut at = x;
+    let end = x + width;
+    for (index, (key, word, id)) in actions.iter().enumerate() {
+        let label = format!(" {word} {key} ");
+        let wide = u16::try_from(unicode_width::UnicodeWidthStr::width(label.as_str()))
+            .unwrap_or(u16::MAX);
+        if at + wide > end {
+            break;
+        }
+        let line = if index == 0 {
+            let filled = theme.style(Role::Surface).add_modifier(Modifier::BOLD);
+            Line::from(vec![
+                Span::styled(format!(" {word} "), filled.patch(theme.style(Role::Accent))),
+                Span::styled(format!("{key} "), filled),
+            ])
+        } else {
+            Line::from(vec![
+                Span::styled(format!(" {word} "), theme.style(Role::Text)),
+                Span::styled(format!("{key} "), theme.style(Role::Dim)),
+            ])
+        };
+        let rect = Rect::new(at, y, wide, 1);
+        frame.render_widget(line, rect);
+        hits.add(rect, Target::ComposerAction(id));
+        at += wide + 1;
+    }
+}
+
 /// times, each with the number that picks it and when that is.
 pub fn draw_schedule(
     frame: &mut Frame,

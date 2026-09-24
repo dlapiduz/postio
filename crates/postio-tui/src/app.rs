@@ -1290,6 +1290,14 @@ impl App {
                     Vec::new()
                 }
                 Target::Overlay => Vec::new(),
+                // A button is its command, the same as its key.
+                Target::ComposerAction(id) => {
+                    if self.composer.is_none() {
+                        return Vec::new();
+                    }
+                    self.focus = Focus::Composer;
+                    self.composer_command(id)
+                }
             },
             Pointer::Drag { column } => {
                 if !self.dragging {
@@ -3919,6 +3927,31 @@ pub(crate) mod tests {
 
     fn ctrl_return() -> Input {
         key(KeyCode::Enter, KeyModifiers::CONTROL)
+    }
+
+    #[test]
+    fn the_composers_send_button_and_alt_s_both_send() {
+        let mut app = app((160, 40));
+        addressed(&mut app, "Tide gate");
+        let clicked = update(
+            &mut app,
+            click(
+                crate::view::hit::Target::ComposerAction("send"),
+                false,
+                false,
+            ),
+        );
+        assert_eq!(sends(&clicked), vec![None], "{clicked:?}");
+
+        let mut app = app_with_draft_for_alt_s();
+        let pressed = update(&mut app, key(KeyCode::Char('s'), KeyModifiers::ALT));
+        assert_eq!(sends(&pressed), vec![None], "{pressed:?}");
+    }
+
+    fn app_with_draft_for_alt_s() -> App {
+        let mut app = app((160, 40));
+        addressed(&mut app, "Tide gate");
+        app
     }
 
     #[test]

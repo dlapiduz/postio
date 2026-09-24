@@ -28,6 +28,23 @@ const SIDEBAR: u16 = 26;
 use crate::theme::{Role, Theme};
 
 /// Draw the whole screen, and answer what is where on it, for the mouse.
+/// The composer's buttons, each with the key this terminal can send for
+/// it, from the keymap in force; one with no key it can send is left out,
+/// and the last go first when the pane is narrow.
+fn composer_actions(app: &App) -> Vec<composer::Action> {
+    use postio_core::CommandId;
+    [
+        (CommandId::Send, "Send", "send"),
+        (CommandId::ScheduleSend, "Schedule", "schedule_send"),
+        (CommandId::AttachFile, "Attach", "attach_file"),
+        (CommandId::DiscardDraft, "Discard", "discard_draft"),
+        (CommandId::TogglePreview, "Preview", "toggle_preview"),
+    ]
+    .into_iter()
+    .filter_map(|(command, word, id)| Some((app.hint(command)?, word, id)))
+    .collect()
+}
+
 pub fn draw(frame: &mut Frame, app: &App, theme: &Theme, now: DateTime<Local>) -> hit::Hits {
     let mut hits = hit::Hits::default();
     let area = frame.area();
@@ -82,6 +99,7 @@ pub fn draw(frame: &mut Frame, app: &App, theme: &Theme, now: DateTime<Local>) -
                     writing,
                     app.preview_shown(),
                     app.scheduling().is_none() && app.path_prompt().is_none(),
+                    &composer_actions(app),
                     theme,
                     &mut hits,
                 );
@@ -128,6 +146,7 @@ pub fn draw(frame: &mut Frame, app: &App, theme: &Theme, now: DateTime<Local>) -
                                 app.focus() == Focus::Composer
                                     && app.scheduling().is_none()
                                     && app.path_prompt().is_none(),
+                                &composer_actions(app),
                                 theme,
                                 &mut hits,
                             );
@@ -386,6 +405,35 @@ mod tests {
         let screen = screen(160, 16, &app);
         assert!(screen.contains("▸ Quoted message"), "{screen}");
         assert!(!screen.contains("Hello there"), "folded:\n{screen}");
+    }
+
+    #[test]
+    fn the_composer_shows_how_to_send_with_a_key_this_terminal_delivers() {
+        // Nothing on screen said how to send, and the desktop's Ctrl+Return
+        // is, in many terminals, the terminal's own fullscreen.
+        let mut app = with_sidebar((160, 16));
+        app.compose(postio_model::Draft::new(postio_model::AccountId::new(1)));
+        let screen = screen(160, 16, &app);
+        let foot = screen
+            .lines()
+            .find(|line| line.contains("Send"))
+            .unwrap_or_else(|| panic!("no Send in the composer:\n{screen}"));
+        assert!(foot.contains("alt+s"), "{foot}");
+        for word in ["Schedule", "Attach", "Discard"] {
+            assert!(foot.contains(word), "{word} in {foot}");
+        }
+        // And it is something to click.
+        let (y, line) = screen
+            .lines()
+            .enumerate()
+            .find(|(_, line)| line.contains("Send"))
+            .unwrap();
+        let x = u16::try_from(line[..line.find("Send").unwrap()].chars().count()).unwrap();
+        let hits = hits_of(160, 16, &app);
+        assert_eq!(
+            hits.at(x, u16::try_from(y).unwrap()).map(|hit| hit.target),
+            Some(hit::Target::ComposerAction("send"))
+        );
     }
 
     #[test]
