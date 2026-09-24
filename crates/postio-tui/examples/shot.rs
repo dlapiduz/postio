@@ -5,13 +5,19 @@
 //! with its colours, so a change to the look can be judged as a picture.
 //!
 //! ```bash
-//! cargo run -p postio-tui --example shot -- /tmp/tui.svg [width] [height]
+//! cargo run -p postio-tui --example shot -- /tmp/tui.svg [width] [height] [state]
 //! magick /tmp/tui.svg /tmp/tui.png
 //! ```
+//!
+//! `state` is what is open over the mail: `search`, `palette`, `keys` (the
+//! cheat sheet), `compose`, `undo` (an undo offer on the status line),
+//! `error`, `selected` (rows 2-4 marked, the cursor on row 3), or `nocolor`
+//! and `selected-nocolor` (the same screens under `NO_COLOR`). Without one, the mail as it opens.
 //!
 //! Every name and address is fictional and on a reserved domain.
 
 use chrono::{Duration, TimeZone, Utc};
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use postio_model::mailbox::{Mailbox, MailboxRole};
 use postio_model::{AccountId, EmailAddress, ListScope, MailboxId, MessageId};
 use postio_tui::app::{App, Effect, Input, update};
@@ -131,6 +137,7 @@ fn main() {
         .unwrap_or_else(|| "/tmp/postio-tui.svg".to_owned());
     let width: u16 = args.next().and_then(|a| a.parse().ok()).unwrap_or(160);
     let height: u16 = args.next().and_then(|a| a.parse().ok()).unwrap_or(42);
+    let state = args.next().unwrap_or_default();
 
     let keys = Keys::new(&postio_core::Keymap::resolve(&Default::default())).0;
     let mut app = App::new((width, height), keys);
@@ -229,6 +236,16 @@ fn main() {
     update(&mut app, Input::Rested(first));
     update(
         &mut app,
+        Input::Addressed {
+            message: first,
+            to: vec![
+                EmailAddress::new(Some("Tove Arnlund"), "tove@example.com"),
+                EmailAddress::new(None::<String>, "gate-team@example.org"),
+            ],
+        },
+    );
+    update(
+        &mut app,
         Input::Body {
             message: first,
             answer: Ok(postio_client::protocol::Body::Ready {
@@ -252,7 +269,80 @@ fn main() {
         },
     );
 
-    let (theme, _) = Theme::new(Colour::TrueColor, Background::Dark, &Default::default());
+    let key = |app: &mut App, code: KeyCode, modifiers: KeyModifiers| {
+        update(app, Input::Key(KeyEvent::new(code, modifiers)));
+    };
+    // Type `text`, and answer which search it asked last, if any.
+    let typed = |app: &mut App, text: &str| {
+        let mut asked = None;
+        for c in text.chars() {
+            for effect in update(app, Input::Key(KeyEvent::from(KeyCode::Char(c)))) {
+                if let Effect::Search { sequence, .. } = effect {
+                    asked = Some(sequence);
+                }
+            }
+        }
+        asked
+    };
+    let mut colour = Colour::TrueColor;
+    match state.as_str() {
+        "search" => {
+            let sequence = typed(&mut app, "/from:mira tide").unwrap_or_default();
+            update(
+                &mut app,
+                Input::Found {
+                    sequence,
+                    found: Ok(Some(postio_client::protocol::Found {
+                        ids: vec![MessageId::new(1)],
+                        hits: 1,
+                        capped: false,
+                        corpus_complete: true,
+                        elapsed: std::time::Duration::from_millis(7),
+                    })),
+                },
+            );
+        }
+        "palette" => {
+            key(&mut app, KeyCode::Char('k'), KeyModifiers::CONTROL);
+            typed(&mut app, "ar");
+        }
+        "keys" => {
+            typed(&mut app, "?");
+        }
+        "compose" => {
+            typed(&mut app, "c");
+        }
+        "undo" => {
+            update(
+                &mut app,
+                Input::Host(postio_core::Event::ActionCompleted {
+                    description: "Archived 1 message".into(),
+                    undoable: true,
+                }),
+            );
+        }
+        "error" => {
+            update(
+                &mut app,
+                Input::Host(postio_core::Event::Error {
+                    message: "The server refused the move: mailbox is read-only".into(),
+                }),
+            );
+        }
+        "selected" | "selected-nocolor" => {
+            // Rows 2-4 marked, and the cursor back on row 3, inside them.
+            for step in ['j', 'x', 'j', 'x', 'j', 'x', 'k'] {
+                key(&mut app, KeyCode::Char(step), KeyModifiers::NONE);
+            }
+            if state == "selected-nocolor" {
+                colour = Colour::None;
+            }
+        }
+        "nocolor" => colour = Colour::None,
+        _ => {}
+    }
+
+    let (theme, _) = Theme::new(colour, Background::Dark, &Default::default());
     let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
     let local = chrono::Local.from_utc_datetime(&now.naive_utc());
     terminal
