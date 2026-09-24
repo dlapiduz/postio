@@ -4162,11 +4162,14 @@ dependencies = [
 name = "postio-tui"
 version = "0.3.0"
 dependencies = [
+ "chrono",
  "crossterm",
  "postio-config",
  "postio-core",
+ "postio-model",
  "postio-ui",
  "ratatui",
+ "unicode-width 0.2.2",
 ]
 
 [[package]]

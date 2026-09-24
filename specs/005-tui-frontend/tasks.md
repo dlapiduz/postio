@@ -111,7 +111,7 @@ transport, no network; drive it with keys; assert the rendered buffer and the
 store (quickstart "triage").
 
 - [ ] T033 [P] [US1] Write `crates/postio-tui/src/view/sidebar.rs` over `postio_ui::sidebar` (folders, views, saved searches, counts, accounts). Test first: a snapshot of the fixture sidebar shows Inbox, Flagged, Snoozed and a saved search
-- [ ] T034 [P] [US1] Write `crates/postio-tui/src/view/list.rs` drawing only the `postio_ui::list::ListWindow` slice with the marks of contracts/tui-surface.md (`●`, `⚑`, `▌`, `›`), wide characters aligned. Test first: a snapshot with a CJK subject and an emoji sender keeps columns aligned
+- [X] T034 [P] [US1] Write `crates/postio-tui/src/view/list.rs` drawing only the `postio_ui::list::ListWindow` slice with the marks of contracts/tui-surface.md (`●`, `⚑`, `▌`, `›`), wide characters aligned. Test first: a snapshot with a CJK subject and an emoji sender keeps columns aligned
 - [ ] T035 [US1] Wire paging through `postio_ui::paging::Paging` and `Client::page`. Test first (counts, Principle V): scrolling one row costs at most one `Page` request and zero `Body` requests; a 100,000-row fixture scope never requests more than the window
 - [ ] T036 [US1] Wire cursor and `postio_ui::selection::SelectionState` and aim commands with `postio_core::aim::command_for`. Test first: US1 scenario 3 — three selected, cursor on a fourth, `a` archives the three only
 - [ ] T037 [US1] Write `crates/postio-tui/src/view/notice.rs`: the undo notice ("Archived 12 messages — Undo") from `UndoEntry::description`. Test first: US1 scenario 4 — twelve archives in a burst, one `u`, all twelve return

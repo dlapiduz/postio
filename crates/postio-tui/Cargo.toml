@@ -16,13 +16,18 @@ path = "src/main.rs"
 workspace = true
 
 [dependencies]
+chrono = { workspace = true, features = ["std"] }
 # The terminal: crossterm for input, mouse, bracketed paste and the keyboard
 # protocol (research R3, R4).
 crossterm = { version = "0.29", default-features = false, features = ["bracketed-paste", "events"] }
 postio-core.workspace = true
+postio-model.workspace = true
 # Drawing (research R3). No calendar widget, no macros.
 ratatui = { version = "0.30.2", default-features = false, features = ["crossterm_0_29", "layout-cache"] }
 postio-ui.workspace = true
+# Display width, for fitting subjects and names to columns: a CJK
+# character is two columns. Already in the graph through ratatui.
+unicode-width = "0.2"
 
 [dev-dependencies]
 postio-config.workspace = true
