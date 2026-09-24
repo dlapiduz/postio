@@ -43,6 +43,9 @@ tracing-log = "0.2"
 tracing-subscriber = { workspace = true, features = ["ansi", "env-filter"] }
 
 [dev-dependencies]
+# The application's allocator, for `body_index_memory`, which measures the heap
+# the application would hold (#1606).
+mimalloc = "0.1"
 # The patience dial (#842), so the indexer test's wait scales with the machine.
 postio-test-support.workspace = true
 # Throwaway migrated databases, so a verb is an ordinary function over a real
