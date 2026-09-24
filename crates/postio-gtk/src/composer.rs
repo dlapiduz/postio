@@ -74,7 +74,6 @@ use gtk::{gdk, gio, glib};
 use postio_body::Placement;
 use postio_core::{CommandId, Context, Keymap};
 use postio_model::address::{current_entry, format_list, parse_list};
-use postio_model::signature;
 use postio_model::{
     Account, AccountId, Attachment, Draft, DraftKind, EmailAddress, Identity, IdentityId, Message,
     MessageBody, Signature, SignatureId,
@@ -136,14 +135,7 @@ pub fn heading(kind: DraftKind) -> &'static str {
     }
 }
 
-/// What closing the composer does with the draft in it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Closing {
-    /// Keep it: reopening compose comes back to it.
-    Keep,
-    /// Nothing was written, so there is nothing to keep.
-    Drop,
-}
+pub use postio_model::draft::{Closing, closing};
 
 /// Which draft [`Composer::open`] puts on screen.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -188,29 +180,6 @@ pub enum Opening {
 /// draft" preference would reopen, should anyone want one.
 pub fn opening(_kept: &Draft, _asked: &Draft) -> Opening {
     Opening::Fill
-}
-
-/// Whether closing the composer has anything to keep.
-///
-/// The acceptance criterion "`Esc` never silently discards content" is this
-/// function: anything the user typed — a recipient, a subject, a word of body —
-/// makes the draft worth keeping. Only a composition that is still exactly as
-/// it opened is dropped, and dropping *that* discards nothing.
-///
-/// Neither whitespace nor the signature counts as content. A body holding
-/// only what the composer put there would make every abandoned composer
-/// permanent, which is how a "we kept your draft" message stops meaning
-/// anything.
-pub fn closing(draft: &Draft) -> Closing {
-    let body = draft.body.text.as_deref().unwrap_or_default();
-    // The signature is the composer's own doing, not something the user
-    // wrote, so a body holding nothing else is still an untouched composer.
-    let written = signature::split(body).0;
-    if draft.has_recipients() || !draft.subject.trim().is_empty() || !written.trim().is_empty() {
-        Closing::Keep
-    } else {
-        Closing::Drop
-    }
 }
 
 /// What to say about recipients that will not survive contact with a server.
