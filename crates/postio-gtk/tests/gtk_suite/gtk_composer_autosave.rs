@@ -156,6 +156,10 @@ pub fn saving_twice_carries_the_assigned_id_forward_into_the_second_save() {
     composer.open(Draft::new(AccountId::UNASSIGNED));
     settle();
 
+    // Something written first: a composer with nothing in it and no id is
+    // not saved at all (#1608), and this case is about the second save.
+    composer.test_set_subject("first");
+    settle();
     composer.save();
     composer.test_set_subject("revised");
     settle();
