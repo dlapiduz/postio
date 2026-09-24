@@ -685,6 +685,41 @@ impl Inner {
                 Ok(to) => self.write_part(message, attachment, to).await,
                 Err(reason) => Resp::Failed(postio_model::listing::StoreError::new(reason)),
             },
+            Req::Readings { messages, offline } => {
+                reading::readings(&self.wiring.database, &messages, offline)
+                    .await
+                    .map_or_else(Resp::Failed, Resp::Readings)
+            }
+            Req::ThreadReadings {
+                thread,
+                limit,
+                offline,
+            } => reading::thread_readings(&self.wiring.database, thread, limit as usize, offline)
+                .await
+                .map_or_else(Resp::Failed, Resp::Readings),
+            Req::InlinePart {
+                message,
+                content_id,
+            } => Resp::InlinePart(
+                postio_session::reading::resolve_cid(
+                    &self.wiring.database,
+                    &self.wiring.blobs,
+                    message,
+                    &content_id,
+                )
+                .await,
+            ),
+            Req::SaveParts { message, parts } => {
+                let failed = parts::save_parts(
+                    &self.wiring.database,
+                    &self.wiring.blobs,
+                    self.wiring.engine.get().cloned(),
+                    message,
+                    &parts,
+                )
+                .await;
+                Resp::SavedParts(u32::try_from(failed).unwrap_or(u32::MAX))
+            }
             Req::DraftCounts(account) => store
                 .draft_counts(account)
                 .await
@@ -980,29 +1015,13 @@ impl Inner {
     /// no reachability signal of its own yet, and saying "downloading" about
     /// a body that is not is the milder of the two mistakes.
     async fn body(&self, message: postio_model::MessageId) -> Resp {
-        use postio_client::protocol::Body;
-        use postio_session::reading::{Body as Stored, load_body_or_reason};
-        use postio_ui::reader::document::Absent;
         let connection = match self.wiring.database.connect().await {
             Ok(connection) => connection,
             Err(error) => return Resp::Failed(postio_model::listing::StoreError::from(error)),
         };
-        Resp::Body(
-            match load_body_or_reason(&connection, message, false).await {
-                Stored::Ready {
-                    body,
-                    encoding_problems,
-                } => Body::Ready {
-                    body,
-                    encoding_problems,
-                },
-                Stored::Absent(Absent::Partial) => Body::Partial,
-                Stored::Absent(Absent::Offline) => Body::Offline,
-                Stored::Absent(Absent::Missing) => Body::Missing,
-                Stored::Absent(Absent::Empty) => Body::Empty,
-                Stored::Absent(Absent::ForeignDraft) => Body::ForeignDraft,
-            },
-        )
+        Resp::Body(reading::wire_body(
+            postio_session::reading::load_body_or_reason(&connection, message, false).await,
+        ))
     }
 
     /// A conversation's messages as list rows, oldest first: the order it
@@ -1081,20 +1100,15 @@ impl Inner {
         attachment: postio_model::ids::AttachmentId,
         to: std::path::PathBuf,
     ) -> Resp {
-        let engine = self.wiring.engine.get().cloned();
-        let bytes = parts::part_bytes(
+        let written = parts::save_part(
             &self.wiring.database,
             &self.wiring.blobs,
-            engine,
+            self.wiring.engine.get().cloned(),
             message,
             attachment,
+            &to,
         )
         .await;
-        let written = bytes.and_then(|bytes| {
-            // Replaces rather than appends: an appended save would corrupt
-            // whatever was there.
-            std::fs::write(&to, bytes).map_err(|error| error.to_string())
-        });
         match written {
             Ok(()) => Resp::Saved(to),
             Err(reason) => Resp::Failed(postio_model::listing::StoreError::new(reason)),
@@ -1224,6 +1238,7 @@ impl Transport for Local {
 
 pub mod compose;
 pub mod parts;
+pub mod reading;
 pub mod serve;
 
 #[cfg(test)]

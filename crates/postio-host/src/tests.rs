@@ -860,3 +860,177 @@ fn a_host_over_a_wiring_with_one_event_reader_still_serves_its_store() {
     let accounts = world.rt.block_on(client.accounts()).expect("accounts");
     assert_eq!(accounts.len(), 1);
 }
+
+/// A second message in the fixture's account and inbox, shaped by `shape`.
+fn another_message(world: &World, shape: impl FnOnce(&mut Message)) -> MessageId {
+    world.rt.block_on(async {
+        let connection = world.database.connect().await.expect("a connection");
+        let first = MessageRepository::new(&connection)
+            .get(world.message)
+            .await
+            .expect("read")
+            .expect("there");
+        let mut message = Message::new(first.account_id, world.inbox, Utc::now());
+        shape(&mut message);
+        MessageRepository::new(&connection)
+            .create(&mut message)
+            .await
+            .expect("a message")
+    })
+}
+
+#[test]
+fn a_reading_pane_reads_everything_it_draws_of_several_messages_in_one_call() {
+    // The desktop's pane draws a header, a parts row and a body from one
+    // read; a conversation is every member's in one read (#1609).
+    let world = World::new();
+    let (client, _) = world.frontend(ClientKind::Gtk);
+    let listed = another_message(&world, |message| {
+        message.subject = Some("Minutes".into());
+        message.list_id = Some("minutes.example.org".into());
+    });
+
+    let readings = world
+        .rt
+        .block_on(client.readings(vec![world.message, listed], false))
+        .expect("the readings");
+    assert_eq!(client.counts().of("Readings"), 1, "one call for both");
+    assert_eq!(
+        readings
+            .iter()
+            .map(|reading| reading.message)
+            .collect::<Vec<_>>(),
+        vec![world.message, listed],
+        "in the order asked"
+    );
+    assert_eq!(readings[0].body, postio_client::protocol::Body::Partial);
+    let row = readings[1].row.as_deref().expect("the row came with it");
+    assert_eq!(row.subject.as_deref(), Some("Minutes"));
+    assert_eq!(row.list_id.as_deref(), Some("minutes.example.org"));
+    assert_eq!(readings[1].send_state, None, "ordinary mail is not sending");
+
+    // Offline is the frontend's to say: the host has no reachability of its
+    // own, and "downloading" about a body nothing is fetching is untrue.
+    let offline = world
+        .rt
+        .block_on(client.readings(vec![world.message], true))
+        .expect("the reading");
+    assert_eq!(offline[0].body, postio_client::protocol::Body::Offline);
+}
+
+#[test]
+fn the_conversation_after_the_cursor_is_read_ahead_in_one_call() {
+    let world = World::new();
+    let (client, _) = world.frontend(ClientKind::Gtk);
+    let later = another_message(&world, |message| {
+        message.received_at = Utc::now() + chrono::Duration::minutes(5);
+    });
+    let thread = world.rt.block_on(async {
+        let connection = world.database.connect().await.expect("a connection");
+        let account = MessageRepository::new(&connection)
+            .get(world.message)
+            .await
+            .expect("read")
+            .expect("there")
+            .account_id;
+        let threads = postio_storage::repository::ThreadRepository::new(&connection);
+        let mut thread = postio_model::Thread::new(account);
+        threads.create(&mut thread).await.expect("a thread");
+        for member in [world.message, later] {
+            threads
+                .add_message(thread.id, member)
+                .await
+                .expect("membership");
+        }
+        thread.id
+    });
+
+    let all = world
+        .rt
+        .block_on(client.thread_readings(thread, 50, false))
+        .expect("the conversation");
+    assert_eq!(
+        all.iter()
+            .map(|reading| reading.message)
+            .collect::<Vec<_>>(),
+        vec![world.message, later],
+        "oldest first"
+    );
+    let first = world
+        .rt
+        .block_on(client.thread_readings(thread, 1, false))
+        .expect("the conversation");
+    assert_eq!(first.len(), 1, "no more than the limit is read");
+    assert_eq!(client.counts().of("ThreadReadings"), 2);
+}
+
+#[test]
+fn an_inline_image_resolves_only_inside_the_message_that_declares_it() {
+    let world = World::new();
+    let (client, _) = world.frontend(ClientKind::Gtk);
+    let blobs = postio_storage::BlobStore::open(world.blob_dir.clone(), &test_support::blob_keys())
+        .expect("the same blob store");
+    let blob = blobs.put(b"\x89PNG a logo").expect("stored");
+    let declaring = another_message(&world, |message| {
+        let mut logo = postio_model::Attachment::new(MessageId::UNASSIGNED, "image/png", 11);
+        logo.content_id = Some("logo@example.com".into());
+        logo.blob_id = Some(blob);
+        message.attachments.push(logo);
+    });
+
+    let found = world
+        .rt
+        .block_on(client.inline_part(declaring, "logo@example.com".into()))
+        .expect("an answer")
+        .expect("the part is here");
+    assert_eq!(found.0, b"\x89PNG a logo");
+    assert_eq!(found.1, "image/png");
+
+    // Another sender's message cannot address this one's parts.
+    let elsewhere = world
+        .rt
+        .block_on(client.inline_part(world.message, "logo@example.com".into()))
+        .expect("an answer");
+    assert_eq!(elsewhere, None);
+}
+
+#[test]
+fn saving_every_part_writes_each_and_counts_what_could_not_be() {
+    let world = World::new();
+    let (client, _) = world.frontend(ClientKind::Gtk);
+    let blobs = postio_storage::BlobStore::open(world.blob_dir.clone(), &test_support::blob_keys())
+        .expect("the same blob store");
+    let blob = blobs.put(b"one,two").expect("stored");
+    let message = another_message(&world, |message| {
+        let mut figures = postio_model::Attachment::new(MessageId::UNASSIGNED, "text/csv", 7);
+        figures.filename = Some("figures.csv".into());
+        figures.part_id = Some("2".into());
+        figures.blob_id = Some(blob);
+        message.attachments.push(figures);
+    });
+    let part = world.rt.block_on(client.parts(message)).expect("the parts")[0].id;
+    let out = tempfile::tempdir().unwrap();
+
+    let failed = world
+        .rt
+        .block_on(client.save_parts(
+            message,
+            vec![
+                // A part this message does not have: refused, and the rest
+                // still saved.
+                (
+                    postio_model::ids::AttachmentId::new(987_654),
+                    out.path().join("nothing"),
+                ),
+                (part, out.path().join("figures.csv")),
+            ],
+        ))
+        .expect("an answer");
+    assert_eq!(failed, 1);
+    assert_eq!(
+        std::fs::read(out.path().join("figures.csv")).unwrap(),
+        b"one,two"
+    );
+    assert!(!out.path().join("nothing").exists());
+    assert_eq!(client.counts().of("SaveParts"), 1, "one call for the batch");
+}

@@ -144,6 +144,43 @@ pub enum Req {
         /// Which part.
         attachment: postio_model::ids::AttachmentId,
     },
+    /// Everything a reading pane draws of each of these messages -- body,
+    /// row and send state -- read on one turn of the store, in the order
+    /// asked. `offline` is the frontend's: it decides whether a body not
+    /// here yet is "downloading" or "offline".
+    Readings {
+        /// Which messages.
+        messages: Vec<MessageId>,
+        /// Whether the frontend has no connection at all right now.
+        offline: bool,
+    },
+    /// [`Req::Readings`] for a conversation's first `limit` members, oldest
+    /// first: what a frontend prepares before the conversation is opened.
+    ThreadReadings {
+        /// Which conversation.
+        thread: postio_model::ThreadId,
+        /// The most members read.
+        limit: u32,
+        /// As [`Req::Readings`].
+        offline: bool,
+    },
+    /// One inline part of `message`, by its `Content-ID`, when its bytes are
+    /// on this machine. Never fetched: a remote read here would be the
+    /// tracking pixel the reader blocks.
+    InlinePart {
+        /// Whose; a `Content-ID` means nothing outside its own message.
+        message: MessageId,
+        /// The `cid:` it was asked for by.
+        content_id: String,
+    },
+    /// Write each part to its path, fetching what was never downloaded, and
+    /// answer how many could not be written. One batch, one answer: `S`.
+    SaveParts {
+        /// Whose.
+        message: MessageId,
+        /// Which parts, and where each goes; the frontend chose them.
+        parts: Vec<(postio_model::ids::AttachmentId, std::path::PathBuf)>,
+    },
     /// Autosave a draft as composition `generation`. Answered in order with
     /// every other draft write from this client (see `DraftWriter`).
     SaveDraft {
@@ -257,6 +294,12 @@ pub enum Resp {
     Parts(Vec<postio_model::Attachment>),
     /// Where a part was written.
     Saved(std::path::PathBuf),
+    /// What a reading pane draws of each message asked for.
+    Readings(Vec<Reading>),
+    /// An inline part's bytes and type, or nothing when they are not here.
+    InlinePart(Option<(Vec<u8>, String)>),
+    /// How many parts of a batch could not be saved.
+    SavedParts(u32),
     /// The id a saved draft has.
     DraftSaved(DraftId),
     /// A draft was queued; the Drafts folder whose list moved, if one did.
@@ -311,6 +354,21 @@ pub enum Body {
     Empty,
     /// A draft written by another client: nothing here to edit.
     ForeignDraft,
+}
+
+/// Everything a reading pane draws of one message, read on one turn.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Reading {
+    /// Which message.
+    pub message: MessageId,
+    /// Its body, or which kind of "no body" this is.
+    pub body: Body,
+    /// Its row -- the header, the parts, the list it came from -- or `None`
+    /// when the message is gone.
+    pub row: Option<Box<postio_model::Message>>,
+    /// Whether it is a message being sent, and in which state; `None` for
+    /// ordinary mail.
+    pub send_state: Option<postio_model::DraftState>,
 }
 
 /// What the settings' account commands do to an account.

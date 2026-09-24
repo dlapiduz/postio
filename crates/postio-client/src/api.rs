@@ -79,6 +79,10 @@ impl Req {
             Req::Parts(_) => "Parts",
             Req::SavePart { .. } => "SavePart",
             Req::OpenPart { .. } => "OpenPart",
+            Req::Readings { .. } => "Readings",
+            Req::ThreadReadings { .. } => "ThreadReadings",
+            Req::InlinePart { .. } => "InlinePart",
+            Req::SaveParts { .. } => "SaveParts",
             Req::SaveDraft { .. } => "SaveDraft",
             Req::QueueSend { .. } => "QueueSend",
             Req::DiscardDraft { .. } => "DiscardDraft",
@@ -255,6 +259,72 @@ impl Client {
         };
         self.read(request, "a part to open", |answer| match answer {
             Resp::Saved(path) => Some(path),
+            _ => None,
+        })
+        .await
+    }
+
+    /// Everything a reading pane draws of each of `messages`, in one call.
+    pub async fn readings(
+        &self,
+        messages: Vec<MessageId>,
+        offline: bool,
+    ) -> Result<Vec<crate::protocol::Reading>, StoreError> {
+        let request = Req::Readings { messages, offline };
+        self.read(request, "a reading", |answer| match answer {
+            Resp::Readings(readings) => Some(readings),
+            _ => None,
+        })
+        .await
+    }
+
+    /// [`Client::readings`] for a conversation's first `limit` members.
+    pub async fn thread_readings(
+        &self,
+        thread: postio_model::ThreadId,
+        limit: u32,
+        offline: bool,
+    ) -> Result<Vec<crate::protocol::Reading>, StoreError> {
+        let request = Req::ThreadReadings {
+            thread,
+            limit,
+            offline,
+        };
+        self.read(request, "a conversation's reading", |answer| match answer {
+            Resp::Readings(readings) => Some(readings),
+            _ => None,
+        })
+        .await
+    }
+
+    /// One inline part of `message` by its `Content-ID`: its bytes and type,
+    /// when they are on this machine.
+    pub async fn inline_part(
+        &self,
+        message: MessageId,
+        content_id: String,
+    ) -> Result<Option<(Vec<u8>, String)>, StoreError> {
+        let request = Req::InlinePart {
+            message,
+            content_id,
+        };
+        self.read(request, "an inline part", |answer| match answer {
+            Resp::InlinePart(found) => Some(found),
+            _ => None,
+        })
+        .await
+    }
+
+    /// Write each of `parts` to its path; the answer is how many could not
+    /// be written.
+    pub async fn save_parts(
+        &self,
+        message: MessageId,
+        parts: Vec<(postio_model::ids::AttachmentId, std::path::PathBuf)>,
+    ) -> Result<usize, StoreError> {
+        let request = Req::SaveParts { message, parts };
+        self.read(request, "saved parts", |answer| match answer {
+            Resp::SavedParts(failed) => Some(failed as usize),
             _ => None,
         })
         .await

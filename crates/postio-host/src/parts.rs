@@ -125,6 +125,45 @@ pub async fn part_bytes(
     }
 }
 
+/// Write one part's bytes to `to`, fetching them first if they were never
+/// downloaded -- see [`part_bytes`]. Replaces rather than appends: an
+/// appended save would corrupt whatever was there.
+pub async fn save_part(
+    database: &Store,
+    blobs: &BlobStore,
+    engine: Option<Engine>,
+    message: MessageId,
+    attachment: AttachmentId,
+    to: &std::path::Path,
+) -> Result<(), String> {
+    let bytes = part_bytes(database, blobs, engine, message, attachment).await?;
+    std::fs::write(to, bytes).map_err(|error| error.to_string())
+}
+
+/// [`save_part`] for each of `parts`, and how many could not be saved.
+///
+/// A count rather than which ones: `S` can easily name a dozen parts, and one
+/// complaint per failure would be worse than the save. A failure does not
+/// abandon the batch -- the parts after it are still saved.
+pub async fn save_parts(
+    database: &Store,
+    blobs: &BlobStore,
+    engine: Option<Engine>,
+    message: MessageId,
+    parts: &[(AttachmentId, std::path::PathBuf)],
+) -> usize {
+    let mut failed = 0;
+    for (attachment, to) in parts {
+        if save_part(database, blobs, engine.clone(), message, *attachment, to)
+            .await
+            .is_err()
+        {
+            failed += 1;
+        }
+    }
+    failed
+}
+
 /// Wait for a queued body to land, or give up saying so.
 ///
 /// Polling rather than listening: the engine announces arrivals on the event
