@@ -120,6 +120,7 @@ mod tests {
             thread: None,
             is_thread: false,
             from: SafeText::new(from),
+            address: None,
             subject: SafeText::new(subject),
             preview: SafeText::new("and a preview"),
             when: Utc.with_ymd_and_hms(2026, 9, 20, 9, 14, 0).unwrap(),

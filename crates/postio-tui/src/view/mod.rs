@@ -215,6 +215,7 @@ mod tests {
             thread: None,
             is_thread: false,
             from: SafeText::new("Ada Lovelace"),
+            address: None,
             subject: SafeText::new("Engine notes"),
             preview: SafeText::new(""),
             when: Utc::now(),

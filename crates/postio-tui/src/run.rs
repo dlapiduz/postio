@@ -141,7 +141,9 @@ async fn main_loop(
     let backend = CrosstermBackend::new(io::stdout());
     let mut terminal = Terminal::new(backend)?;
     let size = terminal.size()?;
-    let mut app = App::new((size.width, size.height), keys).with_state(state);
+    let mut app = App::new((size.width, size.height), keys)
+        .with_state(state)
+        .with_allowlist(postio_ui::allowlist::RemoteImageAllowList::load());
 
     let (inputs, arriving) = async_channel::unbounded::<Input>();
     let mut terminal_events = EventStream::new();
@@ -247,6 +249,11 @@ fn perform(
         match effect {
             Effect::Quit => return Ok(true),
             Effect::Redraw => redraw = true,
+            Effect::SaveAllowlist(list) => {
+                if let Err(error) = list.save() {
+                    tracing::warn!(%error, "could not save the remote-image allow list: {error}");
+                }
+            }
             Effect::Rest(message) => {
                 let inputs = inputs.clone();
                 tokio::spawn(async move {

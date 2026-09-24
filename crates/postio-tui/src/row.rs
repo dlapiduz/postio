@@ -24,6 +24,8 @@ pub struct Row {
     pub is_thread: bool,
     /// Who it is from: a name, or else the address.
     pub from: SafeText,
+    /// The sender's address, for what is decided by sender: remote images.
+    pub address: Option<String>,
     /// The subject.
     pub subject: SafeText,
     /// The snippet after the subject.
@@ -47,6 +49,7 @@ impl From<MessageSummary> for Row {
             thread: message.thread,
             is_thread: false,
             from: SafeText::new(message.from.as_ref().map_or("", |from| from.display())),
+            address: message.from.as_ref().map(|from| from.address.clone()),
             subject: SafeText::new(message.subject.as_deref().unwrap_or("")),
             preview: SafeText::new(message.preview.as_deref().unwrap_or("")),
             when: message.received_at,
@@ -84,6 +87,11 @@ impl From<ThreadSummary> for Row {
             thread: thread.id,
             is_thread: thread.id.is_some(),
             from: SafeText::new(&from),
+            address: thread
+                .representative
+                .from
+                .as_ref()
+                .map(|from| from.address.clone()),
             subject: SafeText::new(&subject),
             preview: SafeText::new(thread.representative.preview.as_deref().unwrap_or("")),
             when: thread.last_at,

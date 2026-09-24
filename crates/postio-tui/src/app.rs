@@ -95,6 +95,8 @@ pub enum Effect {
     RefreshSidebar,
     /// Count a list again and answer with [`Input::Recounted`].
     Recount(ListScope),
+    /// Write the remote-image allow list, which the desktop app reads too.
+    SaveAllowlist(postio_ui::allowlist::RemoteImageAllowList),
     /// Send a command to the daemon, aimed with [`App::state`].
     Send(postio_core::Command),
     /// Read a page of the list and answer with [`Input::Page`].
@@ -154,6 +156,9 @@ pub struct App {
     resting: Option<postio_model::MessageId>,
     /// The first reader line in view.
     reader_top: usize,
+    /// Senders whose remote images are always allowed, shared with the
+    /// desktop app (`postio_ui::allowlist`).
+    allowlist: postio_ui::allowlist::RemoteImageAllowList,
 }
 
 /// Which pane the keyboard is in.
@@ -202,7 +207,14 @@ impl App {
             reading: None,
             resting: None,
             reader_top: 0,
+            allowlist: postio_ui::allowlist::RemoteImageAllowList::default(),
         }
+    }
+
+    /// The same app, honouring `allowlist`.
+    pub fn with_allowlist(mut self, allowlist: postio_ui::allowlist::RemoteImageAllowList) -> App {
+        self.allowlist = allowlist;
+        self
     }
 
     /// The first reader line in view.
@@ -430,6 +442,8 @@ impl App {
             }
             "back" if self.focus != Focus::List => self.focus = Focus::List,
             "expand_all" => self.toggle_folds(),
+            "show_images" => return self.allow_images(false),
+            "always_show_images" => return self.allow_images(true),
             "next_in_conversation" => self.walk_conversation(1),
             "prev_in_conversation" => self.walk_conversation(-1),
             "scroll_reader_down" => self.scroll_reader(1),
@@ -474,6 +488,39 @@ impl App {
         self.reading
             .as_ref()
             .map(|reading| reading.layout(chrono::Local::now()))
+    }
+
+    /// Allow the current message's remote images: this once, or from its
+    /// sender always -- which is written to the allow list the desktop app
+    /// reads too, so the sender is trusted in both.
+    fn allow_images(&mut self, always: bool) -> Vec<Effect> {
+        let Some(reading) = self.reading.as_mut() else {
+            return Vec::new();
+        };
+        let Some(member) = reading.members.get_mut(reading.current) else {
+            return Vec::new();
+        };
+        let nothing_held = member.held_back.remote_images + member.held_back.trackers == 0;
+        if nothing_held && !always {
+            return Vec::new();
+        }
+        member.images_allowed = true;
+        if !always {
+            return vec![Effect::Redraw];
+        }
+        let Some(address) = member.address.clone() else {
+            return vec![Effect::Redraw];
+        };
+        self.allowlist.allow(&address);
+        for member in &mut reading.members {
+            if member.address.as_deref() == Some(address.as_str()) {
+                member.images_allowed = true;
+            }
+        }
+        vec![
+            Effect::Redraw,
+            Effect::SaveAllowlist(self.allowlist.clone()),
+        ]
     }
 
     /// Scroll the reader by `pages` screenfuls, overlapping two lines so the
@@ -530,8 +577,11 @@ impl App {
                     members: vec![crate::conversation::Member {
                         id: row.id,
                         from: row.from.clone(),
+                        address: row.address.clone(),
                         when: row.when,
                         body: None,
+                        held_back: Default::default(),
+                        images_allowed: false,
                     }],
                     current: 0,
                 });
@@ -585,6 +635,7 @@ impl App {
             Absent, Rendering, absent_html, body_html, suits_reader_view,
         };
         let absent = |state| crate::reader::from_html(&absent_html(state));
+        let mut held_back = postio_ui::reader::document::HeldBack::default();
         let rendered = match answer {
             Ok(Body::Ready { body, .. }) if body.html.is_some() => {
                 // The rule every reader applies: reader view for bulk mail,
@@ -594,7 +645,10 @@ impl App {
                 } else {
                     Rendering::Original
                 };
+                // Blocked always: a terminal draws no image, so allowing them
+                // changes what the notice says and never what is fetched.
                 let drawn = body_html(&body, postio_body::RemoteImages::Blocked, rendering);
+                held_back = drawn.held_back;
                 crate::reader::from_html(&drawn.html)
             }
             Ok(Body::Ready { body, .. }) => {
@@ -616,6 +670,11 @@ impl App {
             return Vec::new();
         };
         member.body = Some(rendered);
+        member.held_back = held_back;
+        member.images_allowed = member
+            .address
+            .as_deref()
+            .is_some_and(|address| self.allowlist.is_allowed(address));
         // Bodies arrive in any order; keep the newest message's header in view.
         self.walk_conversation(0);
         vec![Effect::Redraw]
@@ -848,6 +907,7 @@ mod tests {
             thread: None,
             is_thread: false,
             from: SafeText::new("Ada"),
+            address: Some("ada@example.com".into()),
             subject: SafeText::new(&format!("Message {position}")),
             preview: SafeText::new(""),
             when: Utc.with_ymd_and_hms(2026, 9, 20, 9, 0, 0).unwrap(),
@@ -1473,6 +1533,50 @@ mod tests {
         assert!(app.reader_top() < at_second, "the reader moved up to it");
         update(&mut app, press('J'));
         assert_eq!(app.reading().unwrap().current, 1);
+    }
+
+    #[test]
+    fn blocked_remote_images_are_counted_and_i_a_trusts_the_sender_everywhere() {
+        let mut app = app((160, 40));
+        let opening = opened(&mut app, 5);
+        serve(&mut app, opening);
+        let message = row(0).id;
+        update(&mut app, Input::Rested(message));
+        update(
+            &mut app,
+            Input::Body {
+                message,
+                answer: Ok(postio_client::protocol::Body::Ready {
+                    body: postio_model::MessageBody {
+                        text: None,
+                        html: Some(
+                            "<p>Hi</p><img src=\"https://cdn.example.org/a.png\" alt=\"Hero\">"
+                                .into(),
+                        ),
+                    },
+                    encoding_problems: false,
+                }),
+            },
+        );
+        let drawn = reader_text(&app);
+        assert!(drawn.contains("1 remote image blocked"), "{drawn}");
+        assert!(
+            drawn.contains("i i"),
+            "the key that shows them is named: {drawn}"
+        );
+
+        update(&mut app, key(KeyCode::Tab, KeyModifiers::NONE));
+        update(&mut app, press('i'));
+        let effects = update(&mut app, press('a'));
+        let saved = effects.iter().find_map(|effect| match effect {
+            Effect::SaveAllowlist(list) => Some(list.clone()),
+            _ => None,
+        });
+        let saved = saved.expect("the allow list, shared with the desktop, is saved");
+        assert!(saved.is_allowed("ada@example.com"), "{saved:?}");
+        let drawn = reader_text(&app);
+        assert!(!drawn.contains("remote image blocked"), "{drawn}");
+        assert!(drawn.contains("allowed"), "{drawn}");
     }
 
     #[test]

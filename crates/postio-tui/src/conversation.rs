@@ -22,10 +22,17 @@ pub struct Member {
     pub id: MessageId,
     /// Who sent it.
     pub from: SafeText,
+    /// Their address, for the remote-image allow list.
+    pub address: Option<String>,
     /// When it arrived.
     pub when: DateTime<Utc>,
     /// Its body, once it has arrived.
     pub body: Option<Rendered>,
+    /// What the sanitiser held back from it.
+    pub held_back: postio_ui::reader::document::HeldBack,
+    /// Whether its remote images are allowed: this once, or by sender. The
+    /// terminal draws no image either way; this is what the notice says.
+    pub images_allowed: bool,
 }
 
 impl Member {
@@ -34,8 +41,11 @@ impl Member {
         Member {
             id: summary.id,
             from: SafeText::new(summary.from.as_ref().map_or("", |from| from.display())),
+            address: summary.from.as_ref().map(|from| from.address.clone()),
             when: summary.received_at,
             body: None,
+            held_back: Default::default(),
+            images_allowed: false,
         }
     }
 }
@@ -74,6 +84,17 @@ impl Reading {
                 ]));
             } else {
                 headers.push(0);
+            }
+            if member.images_allowed {
+                lines.push(Line::styled(
+                    "Remote images allowed — a terminal draws none",
+                    Style::default().add_modifier(Modifier::DIM),
+                ));
+            } else if member.held_back.remote_images + member.held_back.trackers > 0 {
+                lines.push(Line::styled(
+                    format!("{} · i i to show", member.held_back.summary()),
+                    Style::default().add_modifier(Modifier::DIM),
+                ));
             }
             match &member.body {
                 Some(body) => lines.extend(body.lines()),
@@ -118,8 +139,11 @@ mod tests {
         Member {
             id: MessageId::new(id),
             from: SafeText::new(from),
+            address: None,
             when: Utc.with_ymd_and_hms(2026, 9, 20, 9, 0, 0).unwrap(),
             body: body.map(crate::reader::from_text),
+            held_back: Default::default(),
+            images_allowed: false,
         }
     }
 
