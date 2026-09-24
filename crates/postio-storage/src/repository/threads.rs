@@ -1328,7 +1328,7 @@ impl<'a> ThreadRepository<'a> {
     }
 
     /// The members of a thread, oldest first.
-    async fn member_ids(&self, id: ThreadId) -> Result<Vec<MessageId>> {
+    pub async fn member_ids(&self, id: ThreadId) -> Result<Vec<MessageId>> {
         sql::all(
             self.connection,
             &format!(

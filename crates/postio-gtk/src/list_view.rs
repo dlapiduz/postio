@@ -846,6 +846,24 @@ impl MessageListView {
             .and_then(|item| item.row())
     }
 
+    /// The row after the cursor's, when the list holds it -- where `j` goes
+    /// next. Asks for nothing: a row not resident is not worth a page read
+    /// to guess at.
+    pub fn row_after_cursor(&self) -> Option<crate::list::Row> {
+        let next = self.cursor().selected().checked_add(1)?;
+        let model = self.model();
+        if next >= model.n_items() {
+            return None;
+        }
+        // Resident or nothing: `item` on a position the window does not hold
+        // is a page request.
+        model.peek(next)?;
+        model
+            .item(next)
+            .and_then(|item| item.downcast::<crate::list::MessageRow>().ok())
+            .and_then(|item| item.row())
+    }
+
     pub fn cursor_id(&self) -> Option<MessageId> {
         let imp = self.imp();
         imp.model.peek(imp.cursor.selected())

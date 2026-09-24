@@ -1835,6 +1835,16 @@ impl ConversationView {
         }
     }
 
+    /// Messages rendered ahead of being shown, for the document reader.
+    ///
+    /// Dropped when the pane has not built its reader yet: the first
+    /// conversation of a session is drawn as before.
+    pub fn offer_prepared(&self, prepared: Vec<postio_ui::reader::document::Prepared>) {
+        if let Some(reader) = self.document_reader() {
+            reader.offer_prepared(prepared);
+        }
+    }
+
     /// The one reader the whole conversation is drawn into, if the pane has
     /// built it yet (ADR 0032).
     ///

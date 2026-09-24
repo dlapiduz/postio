@@ -1015,6 +1015,13 @@ impl Reader {
         self.header.account_label()
     }
 
+    /// Take messages rendered ahead of being shown, so that drawing them
+    /// parses nothing on this thread. See
+    /// [`postio_ui::reader::document::RenderCache::offer`].
+    pub fn offer_prepared(&self, prepared: Vec<postio_ui::reader::document::Prepared>) {
+        self.renders.borrow_mut().offer(prepared);
+    }
+
     /// Render `body` into the pane.
     ///
     /// `sender` is the allow-list key: with a sender already on the standing
