@@ -3822,6 +3822,7 @@ dependencies = [
  "postio-config",
  "postio-core",
  "postio-gtk",
+ "postio-host",
  "postio-index",
  "postio-jmap",
  "postio-model",

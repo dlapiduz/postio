@@ -577,6 +577,7 @@ impl Transport for Local {
     }
 }
 
+pub mod parts;
 pub mod serve;
 
 #[cfg(test)]
