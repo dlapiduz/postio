@@ -68,6 +68,7 @@ mod gtk_composer_toolbar;
 mod gtk_composer_tracking_notice;
 mod gtk_composer_warm;
 mod gtk_contacts_edit;
+mod gtk_contacts_groups;
 mod gtk_contacts_join;
 mod gtk_contacts_pane;
 mod gtk_contacts_suggestions;
@@ -200,6 +201,10 @@ const CASES: &[(&str, fn())] = &[
     (
         "gtk_contacts_edit::e_edits_the_person_in_the_detail",
         gtk_contacts_edit::e_edits_the_person_in_the_detail,
+    ),
+    (
+        "gtk_contacts_groups::groups_are_made_filled_renamed_emptied_and_deleted_by_key",
+        gtk_contacts_groups::groups_are_made_filled_renamed_emptied_and_deleted_by_key,
     ),
     (
         "gtk_contacts_join::m_joins_the_marked_people_under_the_preselected_name",

@@ -106,10 +106,14 @@ pub fn d_deletes_the_person_under_the_cursor_and_r_restores_in_the_deleted_view(
     };
     let pane = window.contacts();
 
-    window.act(Command::ContactDelete { person: None });
+    window.act(Command::ContactDelete {
+        person: None,
+        group: None,
+    });
     pump();
     assert!(acted.borrow().contains(&Command::ContactDelete {
-        person: Some(ContactId::new(1))
+        person: Some(ContactId::new(1)),
+        group: None,
     }));
 
     // `r` outside the Deleted view has nobody to restore.

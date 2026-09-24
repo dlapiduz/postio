@@ -1756,6 +1756,48 @@ static SPECS: &[CommandSpec] = &[
         recovery: Recovery::None,
         requires: MAIL,
     },
+    CommandSpec {
+        id: CommandId::ContactGroupNew,
+        title: "New group",
+        default_binding: "g n",
+        alternate_bindings: &[],
+        contexts: ctx(CONTACTS),
+        destructive: false,
+        recovery: Recovery::Undo,
+        requires: MAIL,
+    },
+    CommandSpec {
+        id: CommandId::ContactGroupRename,
+        title: "Rename group",
+        default_binding: "R",
+        alternate_bindings: &[],
+        contexts: ctx(CONTACTS),
+        destructive: false,
+        recovery: Recovery::Undo,
+        requires: MAIL,
+    },
+    CommandSpec {
+        id: CommandId::ContactGroupAdd,
+        title: "Add to group",
+        // `l` for label: a group is the address book's way of labelling
+        // people, and `L` takes it off again.
+        default_binding: "l",
+        alternate_bindings: &[],
+        contexts: ctx(CONTACTS),
+        destructive: false,
+        recovery: Recovery::Undo,
+        requires: MAIL,
+    },
+    CommandSpec {
+        id: CommandId::ContactGroupRemove,
+        title: "Remove from group",
+        default_binding: "L",
+        alternate_bindings: &[],
+        contexts: ctx(CONTACTS),
+        destructive: false,
+        recovery: Recovery::Undo,
+        requires: MAIL,
+    },
 ];
 
 /// Every command, in cheat-sheet order.

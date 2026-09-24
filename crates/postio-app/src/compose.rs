@@ -50,7 +50,7 @@ use postio_storage::repository::{
 };
 use postio_storage::{BlobStore, Store};
 
-use crate::recipients::{Directory, preferred_address};
+use crate::recipients::Directory;
 
 /// How many recipient suggestions to offer at once — a popover, not a list
 /// the user scrolls.
@@ -943,11 +943,10 @@ async fn read_directory(
     let groups = ContactGroupRepository::new(connection);
     let mut named = Vec::new();
     for group in groups.list().await? {
-        let members = groups.members(group.id).await?;
-        named.push((
-            group.name,
-            members.iter().filter_map(preferred_address).collect(),
-        ));
+        // Each live member's preferred address, read now: a later change to
+        // the group changes no draft (FR-041).
+        let members = groups.expand(group.id).await?;
+        named.push((group.name, members));
     }
     let people = ContactRepository::new(connection)
         .people(DIRECTORY_LIMIT)

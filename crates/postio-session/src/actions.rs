@@ -40,19 +40,19 @@ use postio_core::dispatch::{CommandError, DispatcherBuilder};
 use postio_core::state::{Resolved, SharedState, ViewScope};
 use postio_core::undo::{UndoEntry, UndoKind, UndoStack};
 use postio_core::{
-    Command, CommandId, ContactAddressAction, ContactEditAction, ContactJoinAction,
-    ContactNewAction, Event, MessageTarget,
+    Command, CommandId, ContactAddressAction, ContactEditAction, ContactGroupNewAction,
+    ContactJoinAction, ContactNewAction, Event, MessageTarget,
 };
 use postio_model::ids::DraftId;
 use postio_model::mailbox::MailboxRole;
 use postio_model::{
-    AccountId, AddressId, ContactId, ContactState, DraftState, Flag, FlagSet, LabelId, MailboxId,
-    Message, MessageId, Operation, OperationTarget, ThreadId,
+    AccountId, AddressId, ContactGroupId, ContactId, ContactState, DraftState, Flag, FlagSet,
+    LabelId, MailboxId, Message, MessageId, Operation, OperationTarget, ThreadId,
 };
 use postio_storage::repository::{
-    ColumnFlag, ContactRepository, DraftRepository, FlagSource, LabelRepository, MailboxRepository,
-    MailboxRoleRepository, MessageRepository, MessageSet, OperationQueueRepository, ThreadOrder,
-    ThreadRepository,
+    ColumnFlag, ContactGroupRepository, ContactRepository, DraftRepository, FlagSource,
+    LabelRepository, MailboxRepository, MailboxRoleRepository, MessageRepository, MessageSet,
+    OperationQueueRepository, ThreadOrder, ThreadRepository,
 };
 use postio_storage::{Checkout, Store, WritePermit, WritePriority};
 
@@ -88,6 +88,10 @@ const WIRED: &[CommandId] = &[
     CommandId::ContactDelete,
     CommandId::ContactRestore,
     CommandId::SuggestionDismiss,
+    CommandId::ContactGroupNew,
+    CommandId::ContactGroupRename,
+    CommandId::ContactGroupAdd,
+    CommandId::ContactGroupRemove,
 ];
 
 /// How long [`Command::Snooze`] hides a message for, with no duration picker
@@ -351,11 +355,11 @@ impl Actions {
             }
             Command::ContactNew(action) => vec![self.new_contact(action).await?],
             Command::ContactEdit(action) => vec![self.edit_contact(action).await?],
-            Command::ContactDelete { person } => {
-                let person =
-                    person.ok_or_else(|| CommandError::rejected("Choose someone first"))?;
-                vec![self.delete_contact(person).await?]
-            }
+            Command::ContactDelete { person, group } => match (person, group) {
+                (Some(person), _) => vec![self.delete_contact(*person).await?],
+                (None, Some(group)) => vec![self.delete_group(*group).await?],
+                (None, None) => return Err(CommandError::rejected("Choose someone first")),
+            },
             Command::ContactRestore { person, state } => {
                 let person =
                     person.ok_or_else(|| CommandError::rejected("Choose someone first"))?;
@@ -379,6 +383,21 @@ impl Actions {
                     names_changed: false,
                 });
                 Vec::new()
+            }
+            Command::ContactGroupNew(action) => vec![self.new_group(action).await?],
+            Command::ContactGroupRename { group, name } => {
+                let (Some(group), Some(name)) = (group, name) else {
+                    return Err(CommandError::rejected("Name the group"));
+                };
+                vec![self.rename_group(*group, name).await?]
+            }
+            Command::ContactGroupAdd { group, people } => {
+                let group = group.ok_or_else(|| CommandError::rejected("Choose a group"))?;
+                vec![self.group_members(group, people, true).await?]
+            }
+            Command::ContactGroupRemove { group, people } => {
+                let group = group.ok_or_else(|| CommandError::rejected("Choose a group"))?;
+                vec![self.group_members(group, people, false).await?]
             }
             Command::MarkReadOnDwell { message } => {
                 self.set_flag(
@@ -2140,7 +2159,133 @@ impl Actions {
             true,
             vec![Command::ContactDelete {
                 person: Some(person),
+                group: None,
             }],
+        ))
+    }
+
+    // -- Groups (specs/005-contacts User Story 5) --------------------------
+
+    /// Make a group, or put a deleted one back.
+    async fn new_group(&self, action: &ContactGroupNewAction) -> Result<Applied, CommandError> {
+        let (connection, _permit) = self.connect().await?;
+        let groups = ContactGroupRepository::new(&connection);
+        let id = match action {
+            ContactGroupNewAction::Ask => return Err(CommandError::rejected("Name the group")),
+            ContactGroupNewAction::Create { name, members } => {
+                let name = name.trim();
+                if name.is_empty() {
+                    return Err(CommandError::rejected("A group needs a name"));
+                }
+                let mut group = postio_model::ContactGroup::new(name, Utc::now());
+                let id = groups.create(&mut group).await.map_err(contact_failure)?;
+                groups
+                    .add_members(id, members)
+                    .await
+                    .map_err(store_failure)?;
+                id
+            }
+            ContactGroupNewAction::Restore { group, members } => {
+                groups
+                    .restore(group, members)
+                    .await
+                    .map_err(contact_failure)?;
+                group.id
+            }
+        };
+        Ok(contacts_applied(
+            UndoKind::CreateGroup,
+            false,
+            vec![Command::ContactDelete {
+                person: None,
+                group: Some(id),
+            }],
+        ))
+    }
+
+    /// Rename a group; undo gives it its old name.
+    async fn rename_group(
+        &self,
+        group: ContactGroupId,
+        name: &str,
+    ) -> Result<Applied, CommandError> {
+        let name = name.trim();
+        if name.is_empty() {
+            return Err(CommandError::rejected("A group needs a name"));
+        }
+        let (connection, _permit) = self.connect().await?;
+        let groups = ContactGroupRepository::new(&connection);
+        let before = groups
+            .get(group)
+            .await
+            .map_err(store_failure)?
+            .ok_or_else(|| CommandError::rejected("That group is no longer here"))?;
+        groups
+            .set_name(group, name)
+            .await
+            .map_err(contact_failure)?;
+        Ok(contacts_applied(
+            UndoKind::RenameGroup,
+            false,
+            vec![Command::ContactGroupRename {
+                group: Some(group),
+                name: Some(before.name),
+            }],
+        ))
+    }
+
+    /// Delete a group -- never its people; undo puts it back whole.
+    async fn delete_group(&self, group: ContactGroupId) -> Result<Applied, CommandError> {
+        let (connection, _permit) = self.connect().await?;
+        let (group, members) = ContactGroupRepository::new(&connection)
+            .remove(group)
+            .await
+            .map_err(store_failure)?
+            .ok_or_else(|| CommandError::rejected("That group is no longer here"))?;
+        Ok(contacts_applied(
+            UndoKind::DeleteGroup,
+            false,
+            vec![Command::ContactGroupNew(ContactGroupNewAction::Restore {
+                group,
+                members,
+            })],
+        ))
+    }
+
+    /// Put people in a group, or take them out; undo reverses exactly the
+    /// memberships that changed.
+    async fn group_members(
+        &self,
+        group: ContactGroupId,
+        people: &[ContactId],
+        add: bool,
+    ) -> Result<Applied, CommandError> {
+        if people.is_empty() {
+            return Err(CommandError::rejected("Choose someone first"));
+        }
+        let (connection, _permit) = self.connect().await?;
+        let groups = ContactGroupRepository::new(&connection);
+        let changed = if add {
+            groups.add_members(group, people).await
+        } else {
+            groups.remove_members(group, people).await
+        }
+        .map_err(store_failure)?;
+        let inverse = if add {
+            Command::ContactGroupRemove {
+                group: Some(group),
+                people: changed,
+            }
+        } else {
+            Command::ContactGroupAdd {
+                group: Some(group),
+                people: changed,
+            }
+        };
+        Ok(contacts_applied(
+            UndoKind::GroupMembers,
+            false,
+            vec![inverse],
         ))
     }
 
@@ -6183,7 +6328,10 @@ mod tests {
             let world = world().await;
             let ada = person(&world, "Ada", &["ada@example.com"]).await;
             world
-                .run(Command::ContactDelete { person: Some(ada) })
+                .run(Command::ContactDelete {
+                    person: Some(ada),
+                    group: None,
+                })
                 .await
                 .expect("delete");
             let events = world.drained().await;
@@ -6203,7 +6351,10 @@ mod tests {
             );
 
             world
-                .run(Command::ContactDelete { person: Some(ada) })
+                .run(Command::ContactDelete {
+                    person: Some(ada),
+                    group: None,
+                })
                 .await
                 .expect("delete again");
             world
@@ -6249,6 +6400,91 @@ mod tests {
                     .expect("suggestions")
                     .is_empty()
             );
+        }
+
+        #[tokio::test]
+        async fn every_group_edit_undoes_exactly() {
+            use postio_core::ContactGroupNewAction;
+            use postio_storage::repository::ContactGroupRepository;
+            let world = world().await;
+            let ada = person(&world, "Ada", &["ada@example.com"]).await;
+            let grace = person(&world, "Grace", &["grace@example.org"]).await;
+            let connection = world.database.connect().await.expect("a connection");
+            let groups = ContactGroupRepository::new(&connection);
+            let members = async |name: &str| -> Option<Vec<ContactId>> {
+                let group = groups
+                    .list()
+                    .await
+                    .expect("list")
+                    .into_iter()
+                    .find(|g| g.name == name)?;
+                Some(
+                    groups
+                        .members(group.id)
+                        .await
+                        .expect("members")
+                        .iter()
+                        .map(|p| p.id)
+                        .collect(),
+                )
+            };
+
+            world
+                .run(Command::ContactGroupNew(ContactGroupNewAction::Create {
+                    name: "Family".into(),
+                    members: vec![ada],
+                }))
+                .await
+                .expect("create");
+            assert_eq!(changed(&world.drained().await), Some(false));
+            assert_eq!(members("Family").await, Some(vec![ada]));
+            let family = groups.list().await.expect("list")[0].id;
+
+            world
+                .run(Command::ContactGroupAdd {
+                    group: Some(family),
+                    people: vec![grace, ada],
+                })
+                .await
+                .expect("add");
+            world
+                .run(Command::ContactGroupRename {
+                    group: Some(family),
+                    name: Some("Kin".into()),
+                })
+                .await
+                .expect("rename");
+            world
+                .run(Command::ContactDelete {
+                    person: None,
+                    group: Some(family),
+                })
+                .await
+                .expect("delete the group");
+            assert_eq!(members("Kin").await, None);
+
+            world.run(Command::Undo).await.expect("undo the delete");
+            assert_eq!(members("Kin").await, Some(vec![ada, grace]));
+            world.run(Command::Undo).await.expect("undo the rename");
+            assert_eq!(members("Family").await, Some(vec![ada, grace]));
+            world.run(Command::Undo).await.expect("undo the add");
+            assert_eq!(
+                members("Family").await,
+                Some(vec![ada]),
+                "only grace, whom the add put there, comes out"
+            );
+            world
+                .run(Command::ContactGroupRemove {
+                    group: Some(family),
+                    people: vec![ada],
+                })
+                .await
+                .expect("remove");
+            assert_eq!(members("Family").await, Some(vec![]));
+            world.run(Command::Undo).await.expect("undo the remove");
+            assert_eq!(members("Family").await, Some(vec![ada]));
+            world.run(Command::Undo).await.expect("undo the create");
+            assert_eq!(members("Family").await, None);
         }
     }
 }

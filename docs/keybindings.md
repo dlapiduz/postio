@@ -147,6 +147,10 @@ command from inside a text field.
 | `v d` | Deleted contacts | Contacts |  | `contacts_toggle_deleted` |
 | `v s` | Possible duplicates | Contacts |  | `contacts_suggestions` |
 | `X` | Not the same person | Contacts |  | `suggestion_dismiss` |
+| `g n` | New group | Contacts | Undoable | `contact_group_new` |
+| `R` | Rename group | Contacts | Undoable | `contact_group_rename` |
+| `l` | Add to group | Contacts | Undoable | `contact_group_add` |
+| `L` | Remove from group | Contacts | Undoable | `contact_group_remove` |
 
 ## The one box
 

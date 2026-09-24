@@ -97,13 +97,6 @@ fn offered_addresses(person: &Contact) -> Vec<EmailAddress> {
         .collect()
 }
 
-/// The address a group member expands to: their preferred one (FR-041).
-pub fn preferred_address(person: &Contact) -> Option<EmailAddress> {
-    person
-        .preferred_address()
-        .map(|owned| EmailAddress::new(person_name(person), owned.address.address.clone()))
-}
-
 /// A person's name for a recipient header -- the one the user set, else the
 /// one the mail gave them -- when they have one beyond their address.
 fn person_name(person: &Contact) -> Option<String> {

@@ -21,10 +21,12 @@ use adw::prelude::*;
 use adw::subclass::prelude::*;
 use gtk::glib;
 use postio_core::{
-    Command, CommandId, ContactAddressAction, ContactEditAction, ContactJoinAction,
-    ContactNewAction, Context,
+    Command, CommandId, ContactAddressAction, ContactEditAction, ContactGroupNewAction,
+    ContactJoinAction, ContactNewAction, Context,
 };
-use postio_model::{AddressId, ContactDetail, ContactId, ContactListRow, ContactView};
+use postio_model::{
+    AddressId, ContactDetail, ContactGroupId, ContactId, ContactListRow, ContactView,
+};
 
 use super::join::JoinPanel;
 
@@ -45,6 +47,19 @@ type PageHandler = Box<dyn Fn(ContactView, u64, u32)>;
 type PersonHandler = Box<dyn Fn(ContactId)>;
 type CursorHandler = Box<dyn Fn(Option<ContactId>)>;
 type PeopleHandler = Box<dyn Fn(Vec<ContactId>)>;
+type GroupHandler = Box<dyn Fn(ContactGroupId)>;
+type NameHandler = Box<dyn Fn(String)>;
+
+/// What the group panel is asking.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum GroupPanel {
+    /// A name for a new group of these people.
+    New(Vec<ContactId>),
+    /// A new name for this group.
+    Rename(ContactGroupId),
+    /// Which group to put these people in.
+    Choose(Vec<ContactId>),
+}
 type TypedHandler = Box<dyn Fn(ContactId, String)>;
 
 mod imp {
@@ -107,6 +122,22 @@ mod imp {
         pub suggestions: gtk::ListBox,
         pub suggested: RefCell<Vec<postio_model::JoinSuggestion>>,
         pub suggestions_asked_handlers: RefCell<Vec<Box<dyn Fn()>>>,
+        /// The groups, above the people; the one the keyboard is on shows
+        /// its members in the list (FR-040).
+        pub groups_box: gtk::ListBox,
+        pub groups: RefCell<Vec<postio_model::ContactGroup>>,
+        pub shown_group: Cell<Option<ContactGroupId>>,
+        /// Set while the groups are being refilled, so that doing so does
+        /// not read as the user moving onto one.
+        pub filling_groups: Cell<bool>,
+        pub group_panel: gtk::Box,
+        pub group_title: gtk::Label,
+        pub group_entry: gtk::Entry,
+        pub group_choices: gtk::ListBox,
+        pub group_mode: RefCell<Option<GroupPanel>>,
+        pub groups_asked_handlers: RefCell<Vec<Box<dyn Fn()>>>,
+        pub group_rows_handlers: RefCell<Vec<GroupHandler>>,
+        pub group_mail_handlers: RefCell<Vec<NameHandler>>,
         pub join_asked_handlers: RefCell<Vec<PeopleHandler>>,
         pub add_address_handlers: RefCell<Vec<TypedHandler>>,
     }
@@ -262,6 +293,24 @@ impl ContactsPane {
 
         let column = gtk::Box::new(gtk::Orientation::Vertical, 0);
         column.set_hexpand(true);
+        imp.groups_box
+            .set_selection_mode(gtk::SelectionMode::Browse);
+        imp.groups_box.add_css_class("postio-contact-groups-list");
+        imp.groups_box
+            .update_property(&[gtk::accessible::Property::Label("Groups")]);
+        imp.groups_box.set_visible(false);
+        imp.groups_box.connect_row_selected(glib::clone!(
+            #[weak(rename_to = pane)]
+            self,
+            move |_, row| {
+                if !pane.imp().filling_groups.get()
+                    && let Some(row) = row
+                {
+                    pane.show_group_at(row.index());
+                }
+            }
+        ));
+        column.append(&imp.groups_box);
         column.append(&scroller);
         column.append(&imp.empty);
         column.append(&imp.hint);
@@ -446,6 +495,7 @@ impl ContactsPane {
         shell.add_css_class(CONTACTS_OPEN_CLASS);
         window.set_context(Context::Contacts);
         self.query_changed();
+        self.ask_groups();
         self.focus_list();
     }
 
@@ -640,9 +690,17 @@ impl ContactsPane {
                 self.confirm_moving();
                 return;
             }
+            if matches!(*self.imp().group_mode.borrow(), Some(GroupPanel::Choose(_))) {
+                if let Some(row) = self.imp().group_choices.selected_row() {
+                    self.choose_group(usize::try_from(row.index()).unwrap_or(0));
+                }
+                return;
+            }
         }
         let kind = if self.suggestions_open() {
             RowKind::Suggestion
+        } else if self.focused_group().is_some() {
+            RowKind::Group
         } else {
             RowKind::Person
         };
@@ -680,6 +738,23 @@ impl ContactsPane {
                     ContactView::Everyone | ContactView::Deleted => ContactView::Written,
                 };
                 self.set_view(next);
+            }
+            CommandId::ContactShowMail if self.focused_group().is_some() => {
+                let Some(group) = self.focused_group() else {
+                    return;
+                };
+                let name = self
+                    .imp()
+                    .groups
+                    .borrow()
+                    .iter()
+                    .find(|g| g.id == group)
+                    .map(|g| g.name.clone());
+                if let Some(name) = name {
+                    for handler in self.imp().group_mail_handlers.borrow().iter() {
+                        handler(name.clone());
+                    }
+                }
             }
             CommandId::ContactShowMail => match self.cursor_person() {
                 Some(person) => {
@@ -738,6 +813,32 @@ impl ContactsPane {
         imp.address_panel.append(&imp.address_prompt);
         imp.side.add_named(&imp.address_panel, Some("address"));
         imp.side.add_named(imp.editor.widget(), Some("editor"));
+        imp.group_panel.set_orientation(gtk::Orientation::Vertical);
+        imp.group_panel.set_spacing(8);
+        imp.group_panel.add_css_class("postio-contact-detail");
+        imp.group_title.set_xalign(0.0);
+        imp.group_title.add_css_class("postio-contact-name");
+        imp.group_entry.set_placeholder_text(Some("Group name"));
+        imp.group_entry
+            .update_property(&[gtk::accessible::Property::Label("Group name")]);
+        imp.group_choices
+            .set_selection_mode(gtk::SelectionMode::Browse);
+        imp.group_choices.add_css_class("postio-contact-choices");
+        imp.group_choices
+            .update_property(&[gtk::accessible::Property::Label("Groups to add to")]);
+        let hint = gtk::Label::new(Some("Return to confirm · Esc to cancel"));
+        hint.set_xalign(0.0);
+        hint.add_css_class("postio-contacts-hint");
+        imp.group_panel.append(&imp.group_title);
+        imp.group_panel.append(&imp.group_entry);
+        imp.group_panel.append(&imp.group_choices);
+        imp.group_panel.append(&hint);
+        imp.side.add_named(&imp.group_panel, Some("group"));
+        imp.group_entry.connect_activate(glib::clone!(
+            #[weak(rename_to = pane)]
+            self,
+            move |entry| pane.submit_group_name(&entry.text())
+        ));
         imp.side.set_visible_child_name("detail");
         imp.editor.connect_save({
             let pane = self.downgrade();
@@ -802,9 +903,63 @@ impl ContactsPane {
                 }
                 None => self.say("Choose someone first"),
             },
-            Command::ContactDelete { person: None } => match self.cursor_person() {
+            Command::ContactDelete {
+                person: None,
+                group: None,
+            } if self.focused_group().is_some() => self.act(Command::ContactDelete {
+                person: None,
+                group: self.focused_group(),
+            }),
+            Command::ContactGroupNew(ContactGroupNewAction::Ask) => {
+                self.open_group_panel(GroupPanel::New(self.marked()), "New group", "");
+            }
+            Command::ContactGroupRename { group: None, .. } => {
+                match self.focused_group().or(self.imp().shown_group.get()) {
+                    Some(group) => {
+                        let name = self
+                            .imp()
+                            .groups
+                            .borrow()
+                            .iter()
+                            .find(|g| g.id == group)
+                            .map(|g| g.name.clone())
+                            .unwrap_or_default();
+                        self.open_group_panel(GroupPanel::Rename(group), "Rename group", &name);
+                    }
+                    None => self.say("Choose a group first"),
+                }
+            }
+            Command::ContactGroupAdd { group: None, .. } => {
+                let people = self.acted_on();
+                if people.is_empty() {
+                    self.say("Choose someone first");
+                } else if self.imp().groups.borrow().is_empty() {
+                    self.say("Make a group first (g n)");
+                } else {
+                    self.open_group_panel(GroupPanel::Choose(people), "Add to group", "");
+                }
+            }
+            Command::ContactGroupRemove { group: None, .. } => match self.imp().shown_group.get() {
+                Some(group) => {
+                    let people = self.acted_on();
+                    if people.is_empty() {
+                        self.say("Choose someone first");
+                    } else {
+                        self.act(Command::ContactGroupRemove {
+                            group: Some(group),
+                            people,
+                        });
+                    }
+                }
+                None => self.say("Show a group first, then take people out of it"),
+            },
+            Command::ContactDelete {
+                person: None,
+                group: None,
+            } => match self.cursor_person() {
                 Some(row) => self.act(Command::ContactDelete {
                     person: Some(row.id),
+                    group: None,
                 }),
                 None => self.say("Choose someone first"),
             },
@@ -1004,6 +1159,236 @@ impl ContactsPane {
         }));
     }
 
+    // -- Groups (User Story 5) ---------------------------------------------
+
+    /// Called when the screen wants the groups; the answer is
+    /// [`show_groups`](Self::show_groups).
+    pub fn connect_groups_asked(&self, handler: impl Fn() + 'static) {
+        self.imp()
+            .groups_asked_handlers
+            .borrow_mut()
+            .push(Box::new(handler));
+    }
+
+    /// Called with the group the keyboard moved onto; the answer is its
+    /// members, through [`show_rows`](Self::show_rows).
+    pub fn connect_group_rows(&self, handler: impl Fn(ContactGroupId) + 'static) {
+        self.imp()
+            .group_rows_handlers
+            .borrow_mut()
+            .push(Box::new(handler));
+    }
+
+    /// Called with a group's name when `Return` asks for its mail.
+    pub fn connect_group_mail(&self, handler: impl Fn(String) + 'static) {
+        self.imp()
+            .group_mail_handlers
+            .borrow_mut()
+            .push(Box::new(handler));
+    }
+
+    fn ask_groups(&self) {
+        for handler in self.imp().groups_asked_handlers.borrow().iter() {
+            handler();
+        }
+    }
+
+    fn ask_group_rows(&self, group: ContactGroupId) {
+        for handler in self.imp().group_rows_handlers.borrow().iter() {
+            handler(group);
+        }
+    }
+
+    /// The groups, by name, above the people; hidden while there are none.
+    pub fn show_groups(&self, groups: Vec<postio_model::ContactGroup>) {
+        let imp = self.imp();
+        imp.filling_groups.set(true);
+        imp.groups_box.remove_all();
+        for group in &groups {
+            let label = gtk::Label::new(Some(&group.name));
+            label.set_xalign(0.0);
+            label.add_css_class("postio-contact-group");
+            imp.groups_box.append(&label);
+        }
+        imp.groups_box.set_visible(!groups.is_empty());
+        // The group on screen stays selected if it is still there.
+        let shown = imp.shown_group.get();
+        match shown.and_then(|id| groups.iter().position(|g| g.id == id)) {
+            Some(at) => {
+                if let Some(row) = imp.groups_box.row_at_index(at as i32) {
+                    imp.groups_box.select_row(Some(&row));
+                }
+            }
+            None => {
+                imp.groups_box.unselect_all();
+                if shown.is_some() {
+                    imp.shown_group.set(None);
+                    self.show_view_text();
+                    self.query_changed();
+                }
+            }
+        }
+        imp.groups.replace(groups);
+        imp.filling_groups.set(false);
+    }
+
+    /// The groups as drawn.
+    pub fn group_lines(&self) -> Vec<String> {
+        let mut lines = Vec::new();
+        let mut index = 0;
+        while let Some(row) = self.imp().groups_box.row_at_index(index) {
+            if let Some(label) = row.child().and_downcast::<gtk::Label>() {
+                lines.push(label.text().to_string());
+            }
+            index += 1;
+        }
+        lines
+    }
+
+    /// Puts the keyboard on the group at `position`, as Tab and the arrows
+    /// do -- which shows its members.
+    pub fn focus_group(&self, position: usize) {
+        let groups = &self.imp().groups_box;
+        if let Some(row) = i32::try_from(position)
+            .ok()
+            .and_then(|at| groups.row_at_index(at))
+        {
+            groups.select_row(Some(&row));
+            row.grab_focus();
+            self.show_group_at(row.index());
+        }
+    }
+
+    fn show_group_at(&self, index: i32) {
+        let imp = self.imp();
+        let Some(group) = usize::try_from(index)
+            .ok()
+            .and_then(|at| imp.groups.borrow().get(at).cloned())
+        else {
+            return;
+        };
+        if imp.shown_group.replace(Some(group.id)) == Some(group.id) {
+            return;
+        }
+        imp.title.set_text(&group.name);
+        imp.marks.borrow_mut().clear();
+        self.ask_group_rows(group.id);
+    }
+
+    /// Back to the view from a group's members.
+    fn leave_group(&self) {
+        let imp = self.imp();
+        imp.shown_group.set(None);
+        imp.filling_groups.set(true);
+        imp.groups_box.unselect_all();
+        imp.filling_groups.set(false);
+        self.show_view_text();
+        self.query_changed();
+        self.focus_list();
+    }
+
+    /// The group the keyboard is on, when it is on one.
+    fn focused_group(&self) -> Option<ContactGroupId> {
+        let imp = self.imp();
+        let row = imp.groups_box.selected_row()?;
+        if imp.groups_box.focus_child().is_none() && !row.has_focus() {
+            return None;
+        }
+        imp.groups
+            .borrow()
+            .get(usize::try_from(row.index()).ok()?)
+            .map(|g| g.id)
+    }
+
+    /// The group whose members the list is showing, if any.
+    pub fn shown_group(&self) -> Option<ContactGroupId> {
+        self.imp().shown_group.get()
+    }
+
+    /// Who a group edit acts on: the marked people, or the one under the
+    /// cursor.
+    fn acted_on(&self) -> Vec<ContactId> {
+        let marked = self.marked();
+        if marked.is_empty() {
+            self.cursor_person()
+                .map(|row| vec![row.id])
+                .unwrap_or_default()
+        } else {
+            marked
+        }
+    }
+
+    fn open_group_panel(&self, mode: GroupPanel, title: &str, name: &str) {
+        let imp = self.imp();
+        imp.group_title.set_text(title);
+        let choosing = matches!(mode, GroupPanel::Choose(_));
+        imp.group_entry.set_visible(!choosing);
+        imp.group_choices.set_visible(choosing);
+        imp.group_mode.replace(Some(mode));
+        self.show_side("group");
+        if choosing {
+            imp.group_choices.remove_all();
+            for group in imp.groups.borrow().iter() {
+                let label = gtk::Label::new(Some(&group.name));
+                label.set_xalign(0.0);
+                imp.group_choices.append(&label);
+            }
+            if let Some(first) = imp.group_choices.row_at_index(0) {
+                imp.group_choices.select_row(Some(&first));
+                first.grab_focus();
+            }
+        } else {
+            imp.group_entry.set_text(name);
+            imp.group_entry.grab_focus();
+        }
+    }
+
+    /// Whether the group panel is up.
+    pub fn group_panel_open(&self) -> bool {
+        self.imp().side.visible_child_name().as_deref() == Some("group")
+    }
+
+    /// Submits a group name as the entry's `Return` does.
+    pub fn submit_group_name(&self, text: &str) {
+        let name = text.trim().to_owned();
+        if name.is_empty() {
+            return;
+        }
+        let mode = self.imp().group_mode.borrow().clone();
+        let command = match mode {
+            Some(GroupPanel::New(members)) => {
+                self.imp().marks.borrow_mut().clear();
+                self.redraw_rows();
+                Command::ContactGroupNew(ContactGroupNewAction::Create { name, members })
+            }
+            Some(GroupPanel::Rename(group)) => Command::ContactGroupRename {
+                group: Some(group),
+                name: Some(name),
+            },
+            _ => return,
+        };
+        self.close_side();
+        self.focus_list();
+        self.act(command);
+    }
+
+    /// Picks the group at `position` in the chooser, as `Return` does.
+    pub fn choose_group(&self, position: usize) {
+        let people = match self.imp().group_mode.borrow().clone() {
+            Some(GroupPanel::Choose(people)) => people,
+            _ => return,
+        };
+        let Some(group) = self.imp().groups.borrow().get(position).map(|g| g.id) else {
+            return;
+        };
+        self.close_side();
+        self.focus_list();
+        self.act(Command::ContactGroupAdd {
+            group: Some(group),
+            people,
+        });
+    }
+
     // -- Possible duplicates (User Story 4) --------------------------------
 
     /// Called when the suggestions view wants its pairs; the answer is
@@ -1166,6 +1551,8 @@ impl ContactsPane {
         if self.imp().side.visible_child_name().as_deref() != Some("detail") {
             self.close_side();
             self.focus_list();
+        } else if self.imp().shown_group.get().is_some() {
+            self.leave_group();
         } else {
             self.close();
         }
@@ -1178,6 +1565,7 @@ impl ContactsPane {
         imp.adding.set(None);
         imp.moving.set(None);
         imp.editing.set(None);
+        imp.group_mode.replace(None);
         imp.address_entry.set_visible(true);
         self.show_side("detail");
     }
@@ -1196,7 +1584,11 @@ impl ContactsPane {
             .map(|selection| selection.selected())
             .filter(|at| *at != gtk::INVALID_LIST_POSITION);
         self.imp().keep.set(at);
-        self.query_changed();
+        self.ask_groups();
+        match self.imp().shown_group.get() {
+            Some(group) => self.ask_group_rows(group),
+            None => self.query_changed(),
+        }
         if self.suggestions_open() {
             self.ask_suggestions();
         }

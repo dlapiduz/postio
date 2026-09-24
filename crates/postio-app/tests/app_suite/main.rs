@@ -22,6 +22,7 @@ mod compose_detach;
 mod compose_recipients;
 mod compose_typing;
 mod composer_warm;
+mod contact_groups;
 mod contact_name_in_list_and_reader;
 mod contacts_delete_restore;
 mod contacts_join;
@@ -261,6 +262,10 @@ const CASES: &[(&str, fn())] = &[
     (
         "contact_name_in_list_and_reader::a_joined_persons_name_reaches_the_list_and_the_reader",
         contact_name_in_list_and_reader::a_joined_persons_name_reaches_the_list_and_the_reader,
+    ),
+    (
+        "contact_groups::a_group_made_by_key_fills_a_draft_with_preferred_addresses",
+        contact_groups::a_group_made_by_key_fills_a_draft_with_preferred_addresses,
     ),
     (
         "contacts_delete_restore::d_deletes_and_more_mail_does_not_bring_them_back",

@@ -87,6 +87,14 @@ pub enum UndoKind {
     DeleteContact,
     /// A deleted person was brought back.
     RestoreContact,
+    /// A group was made.
+    CreateGroup,
+    /// A group was renamed.
+    RenameGroup,
+    /// A group was deleted.
+    DeleteGroup,
+    /// People were put in or taken out of a group.
+    GroupMembers,
 }
 
 impl UndoKind {
@@ -120,6 +128,10 @@ impl UndoKind {
             UndoKind::EditContact => "Edited a contact".to_owned(),
             UndoKind::DeleteContact => "Deleted a contact".to_owned(),
             UndoKind::RestoreContact => "Restored a contact".to_owned(),
+            UndoKind::CreateGroup => "Made a group".to_owned(),
+            UndoKind::RenameGroup => "Renamed a group".to_owned(),
+            UndoKind::DeleteGroup => "Deleted a group".to_owned(),
+            UndoKind::GroupMembers => "Changed a group".to_owned(),
             UndoKind::Snooze => format!("Snoozed {count} {messages}"),
             UndoKind::Unsnooze => format!("Unsnoozed {count} {messages}"),
         }

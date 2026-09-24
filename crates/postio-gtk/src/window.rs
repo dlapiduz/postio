@@ -3171,9 +3171,16 @@ impl Window {
                 | postio_core::Command::ContactSetPreferred { address: None, .. }
                 | postio_core::Command::ContactNew(postio_core::ContactNewAction::Ask)
                 | postio_core::Command::ContactEdit(postio_core::ContactEditAction::Ask)
-                | postio_core::Command::ContactDelete { person: None }
+                | postio_core::Command::ContactDelete {
+                    person: None,
+                    group: None,
+                }
                 | postio_core::Command::ContactRestore { person: None, .. }
                 | postio_core::Command::SuggestionDismiss { pair: None }
+                | postio_core::Command::ContactGroupNew(postio_core::ContactGroupNewAction::Ask)
+                | postio_core::Command::ContactGroupRename { group: None, .. }
+                | postio_core::Command::ContactGroupAdd { group: None, .. }
+                | postio_core::Command::ContactGroupRemove { group: None, .. }
         ) {
             self.contacts().ask(&command);
             return;

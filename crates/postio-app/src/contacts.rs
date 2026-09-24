@@ -17,7 +17,7 @@ use postio_core::{Command, ContactAddressAction};
 use postio_gtk::window::Window;
 use postio_model::{AccountId, ContactId, ContactView, Draft};
 use postio_session::Wiring;
-use postio_storage::repository::{ContactCursor, ContactRepository};
+use postio_storage::repository::{ContactCursor, ContactGroupRepository, ContactRepository};
 
 use crate::search::ask;
 
@@ -298,6 +298,71 @@ fn install_edits(window: &Window, wiring: &Wiring) {
                 }
                 pane.show_join(postio_ui::contacts::join_name_choices(&people));
             });
+        }
+    });
+
+    // The groups above the people, and a group's members when the keyboard
+    // is on it (FR-040).
+    pane.connect_groups_asked({
+        let pane = pane.downgrade();
+        let database = wiring.database.clone();
+        let runtime = wiring.runtime.clone();
+        move || {
+            let answer = ask(&database, &runtime, move |connection| async move {
+                ContactGroupRepository::new(&connection)
+                    .list()
+                    .await
+                    .map_err(|error| tracing::warn!(%error, "could not list groups"))
+                    .ok()
+            });
+            let pane = pane.clone();
+            glib::spawn_future_local(async move {
+                let Ok(Some(groups)) = answer.recv().await else {
+                    return;
+                };
+                if let Some(pane) = pane.upgrade() {
+                    pane.show_groups(groups);
+                }
+            });
+        }
+    });
+    pane.connect_group_rows({
+        let pane = pane.downgrade();
+        let database = wiring.database.clone();
+        let runtime = wiring.runtime.clone();
+        move |group| {
+            let answer = ask(&database, &runtime, move |connection| async move {
+                ContactRepository::new(&connection)
+                    .group_rows(group, FILTER_CAP)
+                    .await
+                    .map_err(|error| tracing::warn!(%error, "could not list a group"))
+                    .ok()
+            });
+            let pane = pane.clone();
+            glib::spawn_future_local(async move {
+                let Ok(Some(rows)) = answer.recv().await else {
+                    return;
+                };
+                let Some(pane) = pane.upgrade() else {
+                    return;
+                };
+                // Only if the keyboard is still on that group.
+                if pane.shown_group() == Some(group) {
+                    pane.show_rows(rows);
+                }
+            });
+        }
+    });
+    // `Return` on a group: its mail, from or to any member (FR-042).
+    pane.connect_group_mail({
+        let window = window.downgrade();
+        move |name| {
+            let Some(window) = window.upgrade() else {
+                return;
+            };
+            window.contacts().close();
+            let query = postio_ui::contacts::group_mail_query(&name);
+            glib::idle_add_local_once(move || window.run_search(&query));
         }
     });
 

@@ -103,3 +103,7 @@ contact_restore	r
 contacts_toggle_deleted	v d
 contacts_suggestions	v s
 suggestion_dismiss	X
+contact_group_new	g n
+contact_group_rename	R
+contact_group_add	l
+contact_group_remove	L

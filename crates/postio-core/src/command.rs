@@ -26,8 +26,9 @@ use std::path::PathBuf;
 use std::str::FromStr;
 
 use postio_model::{
-    AccountId, AddressId, ContactId, ContactState, DraftId, EmailAddress, JoinReceipt, LabelId,
-    MailboxId, MailboxRole, MessageId, OperationRange, PersonEdit, PersonFields, ThreadId,
+    AccountId, AddressId, ContactGroup, ContactGroupId, ContactId, ContactState, DraftId,
+    EmailAddress, JoinReceipt, LabelId, MailboxId, MailboxRole, MessageId, OperationRange,
+    PersonEdit, PersonFields, ThreadId,
 };
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
@@ -270,6 +271,14 @@ command_ids! {
     ContactsSuggestions => "contacts_suggestions",
     /// Say the focused suggestion is two people, for good.
     SuggestionDismiss => "suggestion_dismiss",
+    /// Make a group of the marked people.
+    ContactGroupNew => "contact_group_new",
+    /// Rename the focused group.
+    ContactGroupRename => "contact_group_rename",
+    /// Put the marked people in a group.
+    ContactGroupAdd => "contact_group_add",
+    /// Take the marked people out of the group on screen.
+    ContactGroupRemove => "contact_group_remove",
 }
 
 impl fmt::Display for CommandId {
@@ -843,10 +852,13 @@ pub enum Command {
     ContactNew(ContactNewAction),
     /// Edit a person (FR-021), or put an edit back.
     ContactEdit(ContactEditAction),
-    /// Delete a person (FR-023). `None` means the focused one.
+    /// Delete a person (FR-023), or a group (FR-040). Both `None` means
+    /// whichever row is focused.
     ContactDelete {
         /// Who.
         person: Option<ContactId>,
+        /// Or which group.
+        group: Option<ContactGroupId>,
     },
     /// Bring a deleted person back (FR-023a). `None` means the focused one;
     /// `state` is what they were, which undo knows and a key does not.
@@ -865,6 +877,50 @@ pub enum Command {
     SuggestionDismiss {
         /// The two people.
         pair: Option<(ContactId, ContactId)>,
+    },
+    /// Make a group (FR-040), ask for its name, or put a deleted one back.
+    ContactGroupNew(ContactGroupNewAction),
+    /// Rename a group. `None`s mean the focused group, and asking.
+    ContactGroupRename {
+        /// Which.
+        group: Option<ContactGroupId>,
+        /// Its new name.
+        name: Option<String>,
+    },
+    /// Add people to a group. `None` means asking which.
+    ContactGroupAdd {
+        /// Which group.
+        group: Option<ContactGroupId>,
+        /// Who; empty means the marked people, or the one under the cursor.
+        people: Vec<ContactId>,
+    },
+    /// Take people out of a group. `None` means the group on screen.
+    ContactGroupRemove {
+        /// Which group.
+        group: Option<ContactGroupId>,
+        /// Who; empty means the marked people, or the one under the cursor.
+        people: Vec<ContactId>,
+    },
+}
+
+/// What a [`Command::ContactGroupNew`] asks for.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ContactGroupNewAction {
+    /// Ask for the name.
+    Ask,
+    /// Make this group of these people.
+    Create {
+        /// Its name.
+        name: String,
+        /// Its first members.
+        members: Vec<ContactId>,
+    },
+    /// Put a deleted group back -- undo's half.
+    Restore {
+        /// The group as it was.
+        group: ContactGroup,
+        /// Every member it had.
+        members: Vec<ContactId>,
     },
 }
 
@@ -1112,6 +1168,10 @@ impl Command {
             Command::ContactsToggleDeleted => CommandId::ContactsToggleDeleted,
             Command::ContactsSuggestions => CommandId::ContactsSuggestions,
             Command::SuggestionDismiss { .. } => CommandId::SuggestionDismiss,
+            Command::ContactGroupNew(_) => CommandId::ContactGroupNew,
+            Command::ContactGroupRename { .. } => CommandId::ContactGroupRename,
+            Command::ContactGroupAdd { .. } => CommandId::ContactGroupAdd,
+            Command::ContactGroupRemove { .. } => CommandId::ContactGroupRemove,
         }
     }
 
@@ -1250,7 +1310,10 @@ impl Command {
             },
             CommandId::ContactNew => Command::ContactNew(ContactNewAction::Ask),
             CommandId::ContactEdit => Command::ContactEdit(ContactEditAction::Ask),
-            CommandId::ContactDelete => Command::ContactDelete { person: None },
+            CommandId::ContactDelete => Command::ContactDelete {
+                person: None,
+                group: None,
+            },
             CommandId::ContactRestore => Command::ContactRestore {
                 person: None,
                 state: None,
@@ -1258,6 +1321,19 @@ impl Command {
             CommandId::ContactsToggleDeleted => Command::ContactsToggleDeleted,
             CommandId::ContactsSuggestions => Command::ContactsSuggestions,
             CommandId::SuggestionDismiss => Command::SuggestionDismiss { pair: None },
+            CommandId::ContactGroupNew => Command::ContactGroupNew(ContactGroupNewAction::Ask),
+            CommandId::ContactGroupRename => Command::ContactGroupRename {
+                group: None,
+                name: None,
+            },
+            CommandId::ContactGroupAdd => Command::ContactGroupAdd {
+                group: None,
+                people: Vec::new(),
+            },
+            CommandId::ContactGroupRemove => Command::ContactGroupRemove {
+                group: None,
+                people: Vec::new(),
+            },
         }
     }
 
