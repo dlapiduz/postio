@@ -40,13 +40,13 @@ use gtk::glib;
 use postio_model::message::MessageBody;
 use webkit6::prelude::*;
 
-use super::allowlist::RemoteImageAllowList;
 use super::banner::{DecodeNotice, RemoteImageBanner, UnsubscribeBanner};
 use super::message_header::MessageHeader;
 use super::notices::{Notice, NoticeSlot};
 use super::scheme::{self, BlobSource};
 use crate::widgets::ActionBar;
 use postio_body::sanitize::RemoteImages;
+use postio_ui::allowlist::RemoteImageAllowList;
 // The document itself — CSP, wrapper, fonts, markers, absent states,
 // sanitizing and containing the body — is postio-ui's (#567, #590, ADR 0019
 // Q6): one implementation for every frontend, re-exported here so existing

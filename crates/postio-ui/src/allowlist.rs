@@ -5,16 +5,20 @@
 //! touches this file. This is only the standing exception: "always allow
 //! images from this sender", kept across restarts.
 //!
-//! Same shape as `state.rs`'s `WindowState`, on purpose: a plain key file
-//! under `$XDG_STATE_HOME`, best-effort throughout. A missing or corrupt file
+//! A plain key file under `$XDG_STATE_HOME`, best-effort throughout. A missing or corrupt file
 //! means nobody is allow-listed yet, never a failure to open the reader.
 //! Allow-listing is view preference, not mail data — it does not belong in
 //! `postio-core`'s database any more than a dragged divider does.
 
+//!
+//! Moved from `postio-gtk` so every frontend honours the same standing
+//! exceptions (`specs/005-tui-frontend` T044). It reads and writes the file
+//! the desktop app always has -- the GLib key-file format, which for one
+//! group of boolean keys is a few lines of text -- so nothing already allowed
+//! is forgotten.
+
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
-
-use gtk::glib;
 
 /// The key-file group every allowed sender's key lives under.
 ///
@@ -38,21 +42,31 @@ impl RemoteImageAllowList {
 
     /// As [`load`](Self::load), from a path you name.
     pub fn load_from(path: &Path) -> Self {
-        let key_file = glib::KeyFile::new();
-        if key_file
-            .load_from_file(path, glib::KeyFileFlags::NONE)
-            .is_err()
-        {
-            return Self::default();
-        }
-        let Ok(keys) = key_file.keys(GROUP) else {
+        let Ok(text) = std::fs::read_to_string(path) else {
             return Self::default();
         };
-        let senders = keys
-            .iter()
-            .filter(|key| key_file.boolean(GROUP, key).unwrap_or(false))
-            .map(|key| key.to_string())
-            .collect();
+        let mut in_group = false;
+        let mut senders = BTreeSet::new();
+        for line in text.lines().map(str::trim) {
+            if line.is_empty() || line.starts_with('#') {
+                continue;
+            }
+            if let Some(group) = line
+                .strip_prefix('[')
+                .and_then(|rest| rest.strip_suffix(']'))
+            {
+                in_group = group == GROUP;
+                continue;
+            }
+            if !in_group {
+                continue;
+            }
+            if let Some((key, value)) = line.split_once('=')
+                && value.trim() == "true"
+            {
+                senders.insert(key.trim().to_owned());
+            }
+        }
         RemoteImageAllowList { senders }
     }
 
@@ -97,34 +111,38 @@ impl RemoteImageAllowList {
     }
 
     /// Persist to `$XDG_STATE_HOME/postio/remote-images.ini`.
-    pub fn save(&self) -> Result<(), glib::Error> {
+    pub fn save(&self) -> std::io::Result<()> {
         self.save_to(&Self::path())
     }
 
     /// As [`save`](Self::save), to a path you name — what the tests use, and
     /// what a caller uses when it is not writing to the real state
     /// directory.
-    pub fn save_to(&self, path: &Path) -> Result<(), glib::Error> {
+    pub fn save_to(&self, path: &Path) -> std::io::Result<()> {
         if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent).map_err(|error| {
-                glib::Error::new(
-                    glib::FileError::Failed,
-                    &format!("cannot create {}: {error}", parent.display()),
-                )
-            })?;
+            std::fs::create_dir_all(parent)?;
         }
-        let key_file = glib::KeyFile::new();
+        let mut text = format!("[{GROUP}]\n");
         for sender in &self.senders {
-            key_file.set_boolean(GROUP, sender, true);
+            text.push_str(&format!("{sender}=true\n"));
         }
-        key_file.save_to_file(path)
+        std::fs::write(path, text)
     }
 
     /// `$XDG_STATE_HOME/postio/remote-images.ini`.
+    ///
+    /// `$XDG_STATE_HOME`, else `~/.local/state`: where GLib's
+    /// `user_state_dir` puts it, so the desktop app finds the file it wrote.
     pub fn path() -> PathBuf {
-        glib::user_state_dir()
-            .join("postio")
-            .join("remote-images.ini")
+        let state = std::env::var_os("XDG_STATE_HOME")
+            .filter(|dir| !dir.is_empty())
+            .map(PathBuf::from)
+            .or_else(|| {
+                std::env::var_os("HOME")
+                    .map(|home| PathBuf::from(home).join(".local").join("state"))
+            })
+            .unwrap_or_else(|| PathBuf::from(".local/state"));
+        state.join("postio").join("remote-images.ini")
     }
 }
 
@@ -143,6 +161,21 @@ mod tests {
             std::env::temp_dir().join(format!("postio-allowlist-{}-{name}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         dir.join("remote-images.ini")
+    }
+
+    #[test]
+    fn the_file_the_desktop_app_wrote_is_read() {
+        // What GLib's key file wrote before this moved: nobody allowed then
+        // is forgotten now.
+        let path = scratch("glib-written");
+        std::fs::write(
+            &path,
+            "[AlwaysAllow]\nada@example.com=true\nbea@example.com=false\n",
+        )
+        .unwrap();
+        let list = RemoteImageAllowList::load_from(&path);
+        assert!(list.is_allowed("ada@example.com"));
+        assert!(!list.is_allowed("bea@example.com"));
     }
 
     #[test]
