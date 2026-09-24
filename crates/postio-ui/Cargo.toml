@@ -25,4 +25,5 @@ postio-search = { version = "0.3.0", path = "../postio-search" }
 postio-model = { version = "0.3.0", path = "../postio-model" }
 
 [dev-dependencies]
+tempfile = { workspace = true }
 postio-config = { version = "0.3.0", path = "../postio-config" }
