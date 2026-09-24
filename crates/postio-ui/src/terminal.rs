@@ -42,6 +42,98 @@ pub fn legacy_deliverable(chord: &Chord) -> bool {
     }
 }
 
+/// Text from a message, made safe to put in front of a terminal.
+///
+/// Mail is attacker-controlled, and a terminal obeys what it is sent: an
+/// `ESC ] 0 ;` in a subject retitles the window, an `ESC [ 2 J` clears the
+/// screen, and a right-to-left override makes a filename read as something
+/// it is not. This is the terminal's `<script>` (research R5). The only way
+/// to build one is [`SafeText::new`], which replaces every C0 control except
+/// newline and tab, `DEL`, every C1 control, and the bidirectional overrides
+/// and isolates with a visible stand-in, so what was there is still seen but
+/// never obeyed. A frontend that takes message text any other way has left
+/// this boundary, which is why a terminal view accepts `SafeText` and not
+/// `&str`.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct SafeText(String);
+
+impl SafeText {
+    /// `text`, with everything a terminal would act on made visible instead.
+    pub fn new(text: &str) -> SafeText {
+        SafeText(text.chars().map(stand_in).collect())
+    }
+
+    /// The safe text.
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+/// What a terminal is shown in place of `c`.
+///
+/// A C0 control becomes its Unicode control picture (`ESC` is `␛`), so a
+/// hostile subject still reads as what it tried to do. `DEL` is `␡`. C1
+/// controls and bidirectional overrides have no pictures and become `�`.
+fn stand_in(c: char) -> char {
+    match c {
+        '\n' | '\t' => c,
+        '\u{0}'..='\u{1f}' => char::from_u32(0x2400 + c as u32).unwrap_or('\u{fffd}'),
+        '\u{7f}' => '\u{2421}',
+        '\u{80}'..='\u{9f}' | '\u{202a}'..='\u{202e}' | '\u{2066}'..='\u{2069}' => '\u{fffd}',
+        _ => c,
+    }
+}
+
+impl std::fmt::Display for SafeText {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+#[cfg(test)]
+mod safe_text {
+    use super::SafeText;
+
+    #[test]
+    fn a_title_or_clear_sequence_is_seen_not_obeyed() {
+        let safe = SafeText::new("Invoice\u{1b}]0;pwned\u{7}\u{1b}[2J due");
+        assert!(!safe.as_str().contains('\u{1b}'), "{safe:?}");
+        assert!(!safe.as_str().contains('\u{7}'), "{safe:?}");
+        assert!(
+            safe.as_str().contains("]0;pwned"),
+            "what was there is still visible: {safe:?}"
+        );
+        assert!(safe.as_str().starts_with("Invoice") && safe.as_str().ends_with("due"));
+    }
+
+    #[test]
+    fn c1_controls_and_delete_are_replaced_too() {
+        // U+009B is a one-character CSI in terminals that honour 8-bit C1.
+        let safe = SafeText::new("a\u{9b}2Jb\u{7f}c\u{85}d");
+        for c in ['\u{9b}', '\u{7f}', '\u{85}'] {
+            assert!(!safe.as_str().contains(c), "{c:?} survived: {safe:?}");
+        }
+    }
+
+    #[test]
+    fn bidirectional_overrides_cannot_disguise_a_name() {
+        // "invoice\u{202e}fdp.exe" displays as "invoiceexe.pdf".
+        let safe = SafeText::new("invoice\u{202e}fdp.exe \u{2066}x\u{2069}");
+        for c in [
+            '\u{202a}', '\u{202b}', '\u{202c}', '\u{202d}', '\u{202e}', '\u{2066}', '\u{2067}',
+            '\u{2068}', '\u{2069}',
+        ] {
+            assert!(!safe.as_str().contains(c), "{c:?} survived: {safe:?}");
+        }
+    }
+
+    #[test]
+    fn ordinary_text_newlines_and_tabs_pass_untouched() {
+        let text = "Grüße, 山田さん 👋\n\tNext line — “quoted”";
+        assert_eq!(SafeText::new(text).as_str(), text);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -52,14 +144,22 @@ mod tests {
 
     #[test]
     fn plain_keys_and_letters_with_ctrl_arrive() {
-        for text in ["a", "A", "?", "Return", "Escape", "F5", "ctrl+k", "ctrl+a", "alt+x"] {
+        for text in [
+            "a", "A", "?", "Return", "Escape", "F5", "ctrl+k", "ctrl+a", "alt+x",
+        ] {
             assert!(legacy_deliverable(&chord(text)), "{text} should arrive");
         }
     }
 
     #[test]
     fn named_keys_with_modifiers_arrive() {
-        for text in ["shift+Up", "shift+Down", "shift+Tab", "ctrl+Left", "shift+F5"] {
+        for text in [
+            "shift+Up",
+            "shift+Down",
+            "shift+Tab",
+            "ctrl+Left",
+            "shift+F5",
+        ] {
             assert!(legacy_deliverable(&chord(text)), "{text} should arrive");
         }
     }
@@ -81,7 +181,10 @@ mod tests {
             "shift+space",
             "super+k",
         ] {
-            assert!(!legacy_deliverable(&chord(text)), "{text} should not arrive");
+            assert!(
+                !legacy_deliverable(&chord(text)),
+                "{text} should not arrive"
+            );
         }
     }
 }

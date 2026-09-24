@@ -87,7 +87,7 @@ Commits end `Refs: specs/005-tui-frontend` and the task id — never
 
 ### Terminal foundations
 
-- [ ] T025 [P] Write `crates/postio-ui/src/terminal.rs`: `SafeText::new(&str)` stripping C0 (except `\n`,`\t`), C1, ESC, DEL and bidi overrides/isolates, replacing each with a visible glyph; `SafeText` is the only way to build a span from mail text. Test first with the escape sequences of quickstart §5
+- [X] T025 [P] Write `crates/postio-ui/src/terminal.rs`: `SafeText::new(&str)` stripping C0 (except `\n`,`\t`), C1, ESC, DEL and bidi overrides/isolates, replacing each with a visible glyph; `SafeText` is the only way to build a span from mail text. Test first with the escape sequences of quickstart §5
 - [ ] T026 [P] Write `crates/postio-tui/src/app.rs`: `App` state per data-model.md "Terminal session" and a pure `update(&mut App, Event) -> Effects`; `Effects` are client calls, redraw, quit. Test first: `Resize` changes the layout without any client call
 - [ ] T027 [P] Write `crates/postio-tui/src/input.rs`: crossterm `KeyEvent` → `postio_ui::keymap::Chord` feeding `Resolver::from_commands` with `[keys]` overrides (as `postio-ffi/src/session.rs:299` does). Test first: a `[keys]` override of `archive` is honoured
 - [ ] T028 [P] Write `crates/postio-tui/src/term.rs`: enter/leave (raw mode, alternate screen, mouse, bracketed paste, keyboard flags), a panic hook that restores, SIGTSTP/SIGCONT handling, and `with_suspended(|| …)` for `$EDITOR`. Test first against a recording backend: leave restores every mode entered, in reverse order

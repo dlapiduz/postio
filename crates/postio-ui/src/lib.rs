@@ -33,6 +33,6 @@ pub mod selection;
 pub mod settings;
 pub mod sidebar;
 pub mod status;
-pub mod test_support;
 pub mod terminal;
+pub mod test_support;
 pub mod tokens;
