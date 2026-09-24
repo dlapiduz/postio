@@ -4,6 +4,7 @@
 #   scripts/worktree-reap.sh            # report: what would go, what stays, and why
 #   scripts/worktree-reap.sh --reap     # remove what the report says can go
 #   scripts/worktree-reap.sh --days 3   # a tree is stale after 3 quiet days (default 1)
+#   scripts/worktree-reap.sh --merged-hours 6   # rule 2's quiet (default 2)
 #
 # Fifty-two worktrees once held a 475 GB disk at 100%, each keeping its own
 # 11 GB target/ -- deliberately, since #76 forbids sharing one -- and more
@@ -13,12 +14,21 @@
 # sessions mostly end some other way. A landing on the full disk then died
 # reporting a compile error, or SIGBUS (#1428, #1460).
 #
-# Three rules, checked in this order; the first that applies wins:
+# Four rules, checked in this order; the first that applies wins:
 #
 #   1. A tree with uncommitted changes is reported and never touched.
-#   2. A tree with commits not on its base keeps them and loses only
+#   2. A clean tree whose branch's pull request has merged, quiet for
+#      --merged-hours (default 2), loses only target/. Squash merges put the
+#      work on main as a commit whose patch matches none of the branch's, so
+#      rule 3 below calls it unlanded for ever -- and the disk filled twice
+#      on 2026-09-24 with exactly these trees, each keeping 30 GB of build
+#      for work that had already merged. Hours rather than a day, because a
+#      session that has landed and moved on stops touching its tree at once;
+#      not minutes, because one that has just landed often reuses the tree
+#      for its next issue, build and all.
+#   3. A tree with commits not on its base keeps them and loses only
 #      target/ -- the expensive part, and the regenerable one.
-#   3. A clean tree whose every commit is upstream is build output and goes
+#   4. A clean tree whose every commit is upstream is build output and goes
 #      whole: the worktree, its local branch, and its claim lock.
 #
 # "Upstream" is by patch id (`git cherry`) against the base the tree was cut
@@ -44,11 +54,13 @@ CLAIMS="${POSTIO_CLAIMS:-$HOME/.cache/postio/claims}"
 
 REAP=0
 DAYS=1
+MERGED_HOURS=2
 while [ $# -gt 0 ]; do
     case "$1" in
         --reap) REAP=1; shift ;;
         --days) DAYS="${2:?--days needs a number}"; shift 2 ;;
-        -h|--help) sed -n '2,38p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+        --merged-hours) MERGED_HOURS="${2:?--merged-hours needs a number}"; shift 2 ;;
+        -h|--help) sed -n '2,48p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
         *) echo "unknown argument: $1" >&2; exit 2 ;;
     esac
 done
@@ -87,6 +99,20 @@ base_is_on_origin() {
     fi
     UNREACHABLE="$UNREACHABLE $base"
     return 1
+}
+
+# Branches whose pull request has merged, one per line. Asked of GitHub
+# once per run; POSTIO_MERGED_BRANCHES stands in for the answer, which is
+# how the self-test runs with no network. No answer -- no `gh`, no network --
+# is an empty list, and rule 2 then never applies: the others still do.
+if [ -n "${POSTIO_MERGED_BRANCHES+set}" ]; then
+    MERGED=$(printf '%b' "$POSTIO_MERGED_BRANCHES")
+else
+    MERGED=$(gh pr list --repo "$(git -C "$REPO_ROOT" remote get-url origin)" \
+        --state merged --limit 300 --json headRefName --jq '.[].headRefName' 2>/dev/null || true)
+fi
+is_merged() {
+    printf '%s\n' "$MERGED" | grep -qxF -- "$1"
 }
 
 # An upper bound, not a cost: on btrfs a seeded tree shares extents with the
@@ -134,7 +160,29 @@ while IFS= read -r tree; do
     fi
     unlanded=$(git -C "$tree" cherry "origin/$base" HEAD 2>/dev/null | grep -c '^+' || true)
 
-    age=$(( (NOW - $(last_touched "$gitdir" "$tree")) / 86400 ))
+    quiet=$(( NOW - $(last_touched "$gitdir" "$tree") ))
+    if is_merged "$branch"; then
+        hours=$(( quiet / 3600 ))
+        if [ "$hours" -lt "$MERGED_HOURS" ]; then
+            echo "keep    $name: merged, touched ${hours}h ago (target/ goes after ${MERGED_HOURS}h)"
+            kept=$((kept + 1))
+            continue
+        fi
+        if [ -d "$tree/target" ]; then
+            size=$(size_of "$tree/target")
+            if [ "$REAP" = 1 ]; then
+                rm -rf "$tree/target"
+                echo "dropped $name/target ($size): its pull request merged"
+                gone=$((gone + 1))
+            else
+                echo "target  $name: its pull request merged; would drop target/ ($size) and keep the rest"
+                going=$((going + 1))
+            fi
+            continue
+        fi
+    fi
+
+    age=$(( quiet / 86400 ))
     if [ "$age" -lt "$DAYS" ]; then
         echo "keep    $name: touched ${age}d ago (stale after ${DAYS}d)"
         kept=$((kept + 1))

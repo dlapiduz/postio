@@ -63,6 +63,14 @@ def quiet_for(tree: Path, days: int) -> None:
             os.utime(file, (stamp, stamp))
 
 
+def quiet_for_hours(tree: Path, hours: float) -> None:
+    """As `quiet_for`, in hours: the merged-branch rule counts those."""
+    stamp = time.time() - hours * 3600
+    for file in (gitdir(tree) / "index", gitdir(tree) / "HEAD", gitdir(tree) / "ORIG_HEAD", tree / ".git"):
+        if file.exists():
+            os.utime(file, (stamp, stamp))
+
+
 def main() -> int:
     with tempfile.TemporaryDirectory() as raw:
         box = Path(raw)
@@ -140,7 +148,24 @@ def main() -> int:
         (gitdir(orphan) / "postio-base").write_text("feature/gone\n", encoding="utf-8")
         quiet_for(orphan, 3)
 
-        everything = [landed, unlanded, dirty, fresh, initiative, orphan]
+        # Squash-merged: its PR merged, so the work is on main -- as a new
+        # commit whose patch matches none of the branch's, which is why the
+        # patch-id rule calls it unlanded for ever. Quiet for hours, not a
+        # day: a session that has moved on.
+        merged = tree("issue-7-merged")
+        merged_sha = commit(merged, "d.txt", "d")
+        with_target(merged)
+        quiet_for_hours(merged, 3)
+
+        # Merged just now: the session that landed it may be about to reuse
+        # this tree for its next issue, build and all.
+        just_merged = tree("issue-8-just-merged")
+        commit(just_merged, "e.txt", "e")
+        with_target(just_merged)
+
+        env["POSTIO_MERGED_BRANCHES"] = "issue-7-merged\nissue-8-just-merged"
+
+        everything = [landed, unlanded, dirty, fresh, initiative, orphan, merged, just_merged]
 
         report = patience.run(
             ["bash", "scripts/worktree-reap.sh"],
@@ -161,6 +186,10 @@ def main() -> int:
              "remove  issue-5-initiative" in out and "origin/feature/x" in out, out)
         case("a base origin no longer has keeps the tree",
              "keep    issue-6-orphan: cut from 'feature/gone'" in out, out)
+        case("a merged branch, quiet for hours, would lose only target/",
+             "target  issue-7-merged: its pull request merged" in out, out)
+        case("a branch merged just now keeps its build",
+             "keep    issue-8-just-merged: merged, touched 0h ago" in out, out)
         case("the report says how to act on it", "--reap" in out, out)
         case("the report removes nothing",
              all(t.exists() for t in everything) and (landed / "target" / "junk").exists(),
@@ -211,7 +240,12 @@ def main() -> int:
         case("the fresh tree is untouched", (fresh / "target" / "junk").exists(), out)
         case("the initiative tree is gone", not initiative.exists(), out)
         case("the orphan is kept", orphan.exists(), out)
-        case("it says what it did", "reaped 3, kept 3" in out, out)
+        case("the merged tree keeps its commit",
+             merged.exists() and git("rev-parse", "HEAD", cwd=merged) == merged_sha, out)
+        case("and loses its target/", not (merged / "target").exists(), out)
+        case("the just-merged tree keeps its target/",
+             (just_merged / "target" / "junk").exists(), out)
+        case("it says what it did", "reaped 4, kept 4" in out, out)
 
     if FAILURES:
         print(f"\n{len(FAILURES)} case(s) failed:", file=sys.stderr)
