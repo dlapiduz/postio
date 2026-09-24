@@ -37,6 +37,13 @@ pub enum Pointer {
         /// Whether Shift was held: extend, rather than move.
         shift: bool,
     },
+    /// The button moved while held down, now over this column.
+    Drag {
+        /// The column the pointer is over.
+        column: u16,
+    },
+    /// The button came up.
+    Release,
     /// A turn of the wheel.
     Wheel {
         /// What was under the pointer.
@@ -296,6 +303,8 @@ pub enum Effect {
     },
     /// Open the local draft behind a Drafts or Outbox row.
     Resume(postio_model::MessageId),
+    /// Remember the layout for the next run.
+    SaveLayout(crate::state::TerminalState),
     /// Open a link with the system's opener, the person having clicked it
     /// twice.
     OpenLink(String),
@@ -332,6 +341,12 @@ pub const AUTOSAVE: std::time::Duration = std::time::Duration::from_millis(1500)
 
 /// How many lines one turn of the wheel scrolls.
 const WHEEL: isize = 3;
+
+/// The narrowest the reading pane may be dragged.
+const MINIMUM_READER: u16 = 24;
+
+/// The narrowest the rest of the screen may be left by a drag.
+const MINIMUM_LIST: u16 = 40;
 
 /// Everything the terminal frontend knows.
 pub struct App {
@@ -412,6 +427,10 @@ pub struct App {
     /// A link clicked once: shown in full, and opened by a second click
     /// on it (US2 scenario 4).
     armed_link: Option<String>,
+    /// The layout remembered between runs: the dragged divider.
+    layout: crate::state::TerminalState,
+    /// Whether the divider is being dragged.
+    dragging: bool,
 }
 
 /// One section of the cheat sheet as it is drawn: its heading, and each
@@ -549,6 +568,8 @@ impl App {
             enhanced_keys: false,
             cheatsheet: None,
             armed_link: None,
+            layout: crate::state::TerminalState::default(),
+            dragging: false,
         }
     }
 
@@ -862,6 +883,23 @@ impl App {
         effects
     }
 
+    /// The same app, laid out as a previous run left it.
+    pub fn with_layout(mut self, layout: crate::state::TerminalState) -> App {
+        self.layout = layout;
+        self
+    }
+
+    /// The reading pane's width, once the divider has been dragged.
+    pub fn reader_columns(&self) -> Option<u16> {
+        self.layout.reader_columns
+    }
+
+    /// Put `reading` in the reader, as a message arriving would.
+    #[cfg(test)]
+    pub(crate) fn set_reading_for_tests(&mut self, reading: crate::conversation::Reading) {
+        self.reading = Some(reading);
+    }
+
     /// What is marked.
     pub fn selection(&self) -> &postio_ui::selection::SelectionState {
         &self.selection
@@ -922,8 +960,34 @@ impl App {
                     }
                     vec![Effect::Redraw]
                 }
-                Target::Divider | Target::Overlay => Vec::new(),
+                Target::Divider => {
+                    self.dragging = true;
+                    Vec::new()
+                }
+                Target::Overlay => Vec::new(),
             },
+            Pointer::Drag { column } => {
+                if !self.dragging {
+                    return Vec::new();
+                }
+                // The divider is the reading pane's first column, so the pane
+                // is what is right of the pointer. Never so narrow that either
+                // pane stops being one.
+                let widest = self.size.0.saturating_sub(MINIMUM_LIST).max(MINIMUM_READER);
+                let columns = self
+                    .size
+                    .0
+                    .saturating_sub(column)
+                    .clamp(MINIMUM_READER, widest);
+                self.layout.reader_columns = Some(columns);
+                vec![Effect::Redraw]
+            }
+            Pointer::Release => {
+                if !std::mem::take(&mut self.dragging) {
+                    return Vec::new();
+                }
+                vec![Effect::SaveLayout(self.layout), Effect::Redraw]
+            }
             Pointer::Wheel { hit, down } => {
                 let lines: isize = if down { WHEEL } else { -WHEEL };
                 match hit.target {

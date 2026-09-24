@@ -152,7 +152,8 @@ async fn main_loop(
         .with_allowlist(postio_ui::allowlist::RemoteImageAllowList::load())
         .with_downloads(downloads())
         .with_preview(preview)
-        .with_enhanced_keys(enhanced_keys);
+        .with_enhanced_keys(enhanced_keys)
+        .with_layout(crate::state::TerminalState::load());
 
     let (inputs, arriving) = async_channel::unbounded::<Input>();
     let (drafts, draft_jobs) = async_channel::unbounded::<Effect>();
@@ -218,6 +219,17 @@ fn pointer(
     hits: &crate::view::hit::Hits,
 ) -> Option<crate::app::Pointer> {
     use crossterm::event::{KeyModifiers, MouseButton, MouseEventKind};
+    // A drag and a release are about where the button went down, not about
+    // what is under the pointer now.
+    match mouse.kind {
+        MouseEventKind::Drag(MouseButton::Left) => {
+            return Some(crate::app::Pointer::Drag {
+                column: mouse.column,
+            });
+        }
+        MouseEventKind::Up(MouseButton::Left) => return Some(crate::app::Pointer::Release),
+        _ => {}
+    }
     let hit = hits.at(mouse.column, mouse.row)?;
     match mouse.kind {
         MouseEventKind::Down(MouseButton::Left) => Some(crate::app::Pointer::Click {
@@ -559,6 +571,13 @@ fn perform(
                     }
                     .map_err(|error| error.message().to_owned());
                     let _ = inputs.send(Input::PartWritten { written, open }).await;
+                });
+            }
+            Effect::SaveLayout(layout) => {
+                tokio::task::spawn_blocking(move || {
+                    if let Err(error) = layout.save() {
+                        tracing::info!(%error, "could not remember the layout");
+                    }
                 });
             }
             Effect::OpenLink(target) => {

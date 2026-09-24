@@ -44,7 +44,10 @@ pub fn draw(frame: &mut Frame, app: &App, theme: &Theme, now: DateTime<Local>) -
                 .map(|pane| match pane {
                     Pane::Sidebar => Constraint::Length(SIDEBAR),
                     Pane::List => Constraint::Min(40),
-                    Pane::Reader => Constraint::Percentage(45),
+                    Pane::Reader => match app.reader_columns() {
+                        Some(columns) => Constraint::Length(columns),
+                        None => Constraint::Percentage(45),
+                    },
                 })
                 .collect();
             let areas = Layout::horizontal(widths).split(body);
@@ -656,6 +659,69 @@ mod tests {
             .at(x, u16::try_from(y).unwrap())
             .expect("something is there");
         assert_eq!(hit.target, hit::Target::Row(2));
+    }
+
+    fn divider(hits: &hit::Hits, width: u16, height: u16) -> u16 {
+        (0..width)
+            .find(|x| {
+                (0..height).any(|y| {
+                    hits.at(*x, y)
+                        .is_some_and(|hit| hit.target == hit::Target::Divider)
+                })
+            })
+            .expect("a divider")
+    }
+
+    fn reading_something(app: &mut App) {
+        app.set_reading_for_tests(crate::conversation::Reading {
+            row: postio_model::MessageId::new(1),
+            members: vec![crate::conversation::tests::member_with_lines(1, 3)],
+            current: 0,
+        });
+    }
+
+    #[test]
+    fn dragging_the_divider_widens_the_list_and_the_width_is_remembered() {
+        // T074.
+        use crate::app::Pointer;
+        let mut app = with_sidebar((160, 16));
+        reading_something(&mut app);
+        let hits = hits_of(160, 16, &app);
+        let before = divider(&hits, 160, 16);
+        let press = hits.at(before, 3).expect("the divider is there");
+        update(
+            &mut app,
+            Input::Pointer(Pointer::Click {
+                hit: press,
+                ctrl: false,
+                shift: false,
+            }),
+        );
+        update(
+            &mut app,
+            Input::Pointer(Pointer::Drag { column: before + 5 }),
+        );
+        update(
+            &mut app,
+            Input::Pointer(Pointer::Drag {
+                column: before + 10,
+            }),
+        );
+        let effects = update(&mut app, Input::Pointer(Pointer::Release));
+        let after = divider(&hits_of(160, 16, &app), 160, 16);
+        assert_eq!(after, before + 10, "the list is ten columns wider");
+        let saved = effects
+            .iter()
+            .find_map(|effect| match effect {
+                crate::app::Effect::SaveLayout(state) => Some(*state),
+                _ => None,
+            })
+            .expect("the width is saved when the drag ends");
+
+        // A restart with what was saved draws the same.
+        let mut again = with_sidebar((160, 16)).with_layout(saved);
+        reading_something(&mut again);
+        assert_eq!(divider(&hits_of(160, 16, &again), 160, 16), after);
     }
 
     #[test]

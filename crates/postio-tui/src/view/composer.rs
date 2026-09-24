@@ -26,6 +26,7 @@ pub fn draw(
     theme: &Theme,
     hits: &mut Hits,
 ) {
+    hits.add(Rect::new(area.x, area.y, 1, area.height), Target::Divider);
     for y in area.y..area.y + area.height {
         frame.render_widget(
             Line::styled("│", theme.style(Role::Dim)),
