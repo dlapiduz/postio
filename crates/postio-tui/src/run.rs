@@ -594,6 +594,35 @@ fn perform(
                     let _ = inputs.send(Input::Discovered(found)).await;
                 });
             }
+            Effect::BeginOAuth(submission) => {
+                let client = client.clone();
+                let inputs = inputs.clone();
+                tokio::spawn(async move {
+                    let consent = client
+                        .begin_oauth(*submission)
+                        .await
+                        .map_err(|error| error.message().to_owned());
+                    let _ = inputs.send(Input::Consent(consent)).await;
+                });
+            }
+            Effect::FinishOAuth(address) => {
+                let client = client.clone();
+                let inputs = inputs.clone();
+                tokio::spawn(async move {
+                    let added = client
+                        .finish_oauth(address)
+                        .await
+                        .map_err(|error| error.message().to_owned());
+                    let _ = inputs.send(Input::AccountAdded(added)).await;
+                });
+            }
+            Effect::CancelOAuth(address) => {
+                let client = client.clone();
+                tokio::spawn(async move {
+                    let _ = client.cancel_oauth(address).await;
+                });
+            }
+            Effect::CopyText(text) => copy_to_clipboard(&text),
             Effect::AddAccount(submission) => {
                 let client = client.clone();
                 let inputs = inputs.clone();

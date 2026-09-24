@@ -850,6 +850,58 @@ mod tests {
     }
 
     #[test]
+    fn a_browser_sign_in_shows_the_whole_address_and_what_it_allows() {
+        use crossterm::event::{KeyCode, KeyEvent};
+        let keys = Keys::new(&postio_core::Keymap::resolve(&Default::default())).0;
+        let mut app = App::new((100, 40), keys);
+        update(
+            &mut app,
+            Input::Sidebar(crate::sidebar::Contents::default()),
+        );
+        for c in "ada@example.test".chars() {
+            update(&mut app, Input::Key(KeyEvent::from(KeyCode::Char(c))));
+        }
+        update(&mut app, Input::Key(KeyEvent::from(KeyCode::Enter)));
+        update(
+            &mut app,
+            Input::Discovered(Ok(postio_ui::onboarding::Status::Found(
+                postio_ui::onboarding::Settings {
+                    oauth_sign_in: true,
+                    ..Default::default()
+                },
+            ))),
+        );
+        for c in "postio-test".chars() {
+            update(&mut app, Input::Key(KeyEvent::from(KeyCode::Char(c))));
+        }
+        update(&mut app, Input::Key(KeyEvent::from(KeyCode::Enter)));
+        let url = format!(
+            "https://login.example.test/authorize?client_id=postio-test&state={}&end=here",
+            "x".repeat(120)
+        );
+        update(
+            &mut app,
+            Input::Consent(Ok(postio_ui::onboarding::BrowserSignIn {
+                provider: "Example".into(),
+                scopes: vec!["offline_access".into()],
+                redirect_uri: "http://127.0.0.1:41337/".into(),
+                authorize_url: url.clone(),
+            })),
+        );
+        let screen = screen(100, 40, &app);
+        let joined: String = screen.lines().map(str::trim).collect();
+        assert!(
+            joined.contains(&url),
+            "the whole address, wrapped:\n{screen}"
+        );
+        assert!(
+            screen.contains("Stay signed in without asking again"),
+            "{screen}"
+        );
+        assert!(screen.contains("Enter opens it"), "{screen}");
+    }
+
+    #[test]
     fn a_hostile_subject_in_the_composer_reaches_the_screen_harmless() {
         let mut app = with_sidebar((160, 16));
         let mut draft = postio_model::Draft::new(postio_model::AccountId::new(1));

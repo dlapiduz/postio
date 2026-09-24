@@ -73,6 +73,9 @@ pub enum Input {
         /// The body it saved.
         edited: Result<String, String>,
     },
+    /// The daemon answered an [`Effect::BeginOAuth`]: where the sign-in
+    /// waits for the person, or why it could not begin.
+    Consent(Result<postio_ui::onboarding::BrowserSignIn, String>),
     /// The daemon answered an [`Effect::Discover`].
     Discovered(Result<postio_ui::onboarding::Status, String>),
     /// The daemon answered an [`Effect::AddAccount`]: saved, or the sentence
@@ -314,6 +317,14 @@ pub enum Effect {
     EditConfig(Option<postio_ui::settings::Section>),
     /// Change an account, as the settings' account commands do.
     Account(postio_client::protocol::AccountOp),
+    /// Begin a browser sign-in for a new account.
+    BeginOAuth(Box<postio_ui::onboarding::Submission>),
+    /// Wait for the sign-in for this address to end.
+    FinishOAuth(String),
+    /// Give up the sign-in for this address.
+    CancelOAuth(String),
+    /// Put this text on the clipboard of the terminal's own machine.
+    CopyText(String),
     /// Look up a new account's servers.
     Discover(String),
     /// Prove and save a new account.
@@ -1035,6 +1046,22 @@ impl App {
             }
             crate::first_run::Asked::Add(submission) => {
                 vec![Effect::AddAccount(submission), Effect::Redraw]
+            }
+            crate::first_run::Asked::BeginOAuth(submission) => {
+                vec![Effect::BeginOAuth(submission), Effect::Redraw]
+            }
+            crate::first_run::Asked::Open(url) => {
+                let mut effects = self.say("Opening the sign-in in your browser");
+                effects.push(Effect::OpenLink(url));
+                effects
+            }
+            crate::first_run::Asked::Copy(url) => {
+                let mut effects = self.say("The sign-in address is on the clipboard");
+                effects.push(Effect::CopyText(url));
+                effects
+            }
+            crate::first_run::Asked::CancelOAuth(address) => {
+                vec![Effect::CancelOAuth(address), Effect::Redraw]
             }
             crate::first_run::Asked::Start(window) => {
                 self.first_run = None;
@@ -2674,6 +2701,22 @@ pub fn update(app: &mut App, input: Input) -> Vec<Effect> {
                 }
             }
             vec![Effect::Redraw]
+        }
+        Input::Consent(consent) => {
+            let Some(first_run) = app.first_run.as_mut() else {
+                return vec![Effect::Redraw];
+            };
+            match consent {
+                Ok(sign_in) => {
+                    first_run.consent(sign_in);
+                    // Its end comes back as the account being added, or not.
+                    vec![Effect::FinishOAuth(first_run.address()), Effect::Redraw]
+                }
+                Err(sentence) => {
+                    first_run.failed(sentence);
+                    vec![Effect::Redraw]
+                }
+            }
         }
         Input::AccountAdded(added) => {
             if let Some(first_run) = app.first_run.as_mut() {
@@ -4484,6 +4527,92 @@ pub(crate) mod tests {
         assert_eq!(
             repair.value(crate::first_run::Field::Address),
             "ada@example.com"
+        );
+    }
+
+    #[test]
+    fn a_browser_sign_in_shows_its_url_and_opens_it_only_when_asked() {
+        // US7 scenario 2.
+        use postio_ui::onboarding::{BrowserSignIn, Status};
+        let mut app = app((160, 40));
+        update(&mut app, Input::Sidebar(an_empty_store()));
+        typing(&mut app, "ada@example.test");
+        update(&mut app, key(KeyCode::Enter, KeyModifiers::NONE));
+        let mut settings = fastmail();
+        settings.oauth_sign_in = true;
+        update(&mut app, Input::Discovered(Ok(Status::Found(settings))));
+        assert_eq!(
+            app.first_run().unwrap().field(),
+            crate::first_run::Field::ClientId
+        );
+        typing(&mut app, "postio-test");
+        let effects = update(&mut app, key(KeyCode::Enter, KeyModifiers::NONE));
+        let begun = effects
+            .iter()
+            .find_map(|effect| match effect {
+                Effect::BeginOAuth(submission) => Some((**submission).clone()),
+                _ => None,
+            })
+            .expect("begun");
+        assert_eq!(begun.oauth_client.unwrap().client_id, "postio-test");
+
+        let url = "https://login.example.test/authorize?client_id=postio-test";
+        let effects = update(
+            &mut app,
+            Input::Consent(Ok(BrowserSignIn {
+                provider: "Example".into(),
+                scopes: vec!["offline_access".into()],
+                redirect_uri: "http://127.0.0.1:41337/".into(),
+                authorize_url: url.into(),
+            })),
+        );
+        assert!(
+            effects.contains(&Effect::FinishOAuth("ada@example.test".into())),
+            "waits for the end at once: {effects:?}"
+        );
+        assert!(
+            !effects
+                .iter()
+                .any(|effect| matches!(effect, Effect::OpenLink(_))),
+            "nothing is opened until the person acts: {effects:?}"
+        );
+        assert_eq!(
+            app.first_run().unwrap().status(),
+            &Status::WaitingForBrowser
+        );
+
+        let effects = update(&mut app, press('y'));
+        assert!(
+            effects.contains(&Effect::CopyText(url.into())),
+            "{effects:?}"
+        );
+        let effects = update(&mut app, key(KeyCode::Enter, KeyModifiers::NONE));
+        assert!(
+            effects.contains(&Effect::OpenLink(url.into())),
+            "{effects:?}"
+        );
+
+        update(&mut app, Input::AccountAdded(Ok(())));
+        assert_eq!(app.first_run().unwrap().status(), &Status::SyncWindow);
+    }
+
+    #[test]
+    fn escape_gives_up_a_browser_sign_in() {
+        use postio_ui::onboarding::{BrowserSignIn, Status};
+        let mut app = app((160, 40));
+        update(&mut app, Input::Sidebar(an_empty_store()));
+        typing(&mut app, "ada@example.test");
+        update(&mut app, key(KeyCode::Enter, KeyModifiers::NONE));
+        let mut settings = fastmail();
+        settings.oauth_sign_in = true;
+        update(&mut app, Input::Discovered(Ok(Status::Found(settings))));
+        typing(&mut app, "postio-test");
+        update(&mut app, key(KeyCode::Enter, KeyModifiers::NONE));
+        update(&mut app, Input::Consent(Ok(BrowserSignIn::default())));
+        let effects = update(&mut app, key(KeyCode::Esc, KeyModifiers::NONE));
+        assert!(
+            effects.contains(&Effect::CancelOAuth("ada@example.test".into())),
+            "{effects:?}"
         );
     }
 

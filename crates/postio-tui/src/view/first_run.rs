@@ -38,7 +38,55 @@ pub fn draw(frame: &mut Frame, area: Rect, run: &FirstRun, theme: &Theme) {
     ]));
     lines.push(Line::default());
 
-    if *status == Status::SyncWindow {
+    if let (Status::WaitingForBrowser, Some(sign_in)) = (status, run.sign_in()) {
+        lines.push(Line::styled(
+            fit(
+                &format!(
+                    "Sign in with {} in your browser.",
+                    SafeText::new(&sign_in.provider)
+                ),
+                columns,
+            ),
+            theme.style(Role::Text),
+        ));
+        lines.push(Line::default());
+        lines.push(Line::styled("It will let Postio:", theme.style(Role::Dim)));
+        for scope in &sign_in.scopes {
+            lines.push(Line::styled(
+                fit(
+                    &format!("  · {}", postio_ui::onboarding::plain_scope(scope)),
+                    columns,
+                ),
+                theme.style(Role::Text),
+            ));
+        }
+        lines.push(Line::default());
+        // The whole address, wrapped rather than cut: it is what a person
+        // checks before trusting it, and a copy has to be all of it.
+        let url = SafeText::new(&sign_in.authorize_url);
+        let characters: Vec<char> = url.as_str().chars().collect();
+        for chunk in characters.chunks(columns.max(1)) {
+            lines.push(Line::styled(
+                chunk.iter().collect::<String>(),
+                theme.style(Role::Link),
+            ));
+        }
+        lines.push(Line::default());
+        lines.push(Line::styled(
+            fit(
+                &format!("It comes back to {}.", SafeText::new(&sign_in.redirect_uri)),
+                columns,
+            ),
+            theme.style(Role::Dim),
+        ));
+        lines.push(Line::styled(
+            fit(
+                "Enter opens it in your browser · y copies it · Esc gives up",
+                columns,
+            ),
+            theme.style(Role::Accent),
+        ));
+    } else if *status == Status::SyncWindow {
         lines.push(Line::styled(
             "How far back should the first sync reach? A number picks.",
             theme.style(Role::Text),
@@ -59,6 +107,8 @@ pub fn draw(frame: &mut Frame, area: Rect, run: &FirstRun, theme: &Theme) {
                 Field::Password => "Password",
                 Field::Incoming => "Incoming",
                 Field::Outgoing => "Outgoing",
+                Field::ClientId => "Client id",
+                Field::ClientSecret => "Secret",
             };
             let here = run.field() == field && !status.is_busy();
             let style = if here {

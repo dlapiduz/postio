@@ -25,6 +25,10 @@ pub enum Field {
     Incoming,
     /// The outgoing server, when it has to be typed.
     Outgoing,
+    /// The OAuth client's id, for a provider that signs in in a browser.
+    ClientId,
+    /// Its secret, when the provider issued one.
+    ClientSecret,
 }
 
 /// What a key in the first run asks for.
@@ -38,6 +42,14 @@ pub enum Asked {
     Add(Box<Submission>),
     /// Sync this far back, and start.
     Start(SyncWindow),
+    /// Begin a browser sign-in.
+    BeginOAuth(Box<Submission>),
+    /// Open the consent URL, the person having asked.
+    Open(String),
+    /// Copy the consent URL to the clipboard.
+    Copy(String),
+    /// Give up the browser sign-in for this address.
+    CancelOAuth(String),
 }
 
 /// The first run, as far as it has got.
@@ -48,7 +60,11 @@ pub struct FirstRun {
     password: Input,
     incoming: Input,
     outgoing: Input,
+    client_id: Input,
+    client_secret: Input,
     field: Field,
+    /// Where a browser sign-in waits for the person.
+    sign_in: Option<postio_ui::onboarding::BrowserSignIn>,
     /// The servers, once found or typed.
     settings: Option<Settings>,
     /// Signing in again to an account that exists, not adding one.
@@ -76,7 +92,10 @@ impl Default for FirstRun {
             password: Input::default(),
             incoming: Input::default(),
             outgoing: Input::default(),
+            client_id: Input::default(),
+            client_secret: Input::default(),
             field: Field::Address,
+            sign_in: None,
             settings: None,
             repair: false,
         }
@@ -134,7 +153,34 @@ impl FirstRun {
             Field::Password => "•".repeat(self.password.value().chars().count()),
             Field::Incoming => self.incoming.value().to_owned(),
             Field::Outgoing => self.outgoing.value().to_owned(),
+            Field::ClientId => self.client_id.value().to_owned(),
+            Field::ClientSecret => "•".repeat(self.client_secret.value().chars().count()),
         }
+    }
+
+    /// Whether this provider signs in in a browser rather than with a
+    /// password.
+    pub fn browser(&self) -> bool {
+        self.settings
+            .as_ref()
+            .is_some_and(|settings| settings.oauth_sign_in)
+            && !self.manual()
+    }
+
+    /// Where the browser sign-in waits, while it does.
+    pub fn sign_in(&self) -> Option<&postio_ui::onboarding::BrowserSignIn> {
+        self.sign_in.as_ref()
+    }
+
+    /// The consent URL came back: the sign-in waits for the person.
+    pub fn consent(&mut self, sign_in: postio_ui::onboarding::BrowserSignIn) {
+        self.sign_in = Some(sign_in);
+        self.status = Status::WaitingForBrowser;
+    }
+
+    /// The address being signed in.
+    pub fn address(&self) -> String {
+        self.address.value().trim().to_owned()
     }
 
     /// The fields shown at this step, in order.
@@ -148,6 +194,12 @@ impl FirstRun {
                 Field::Outgoing,
                 Field::Password,
             ],
+            _ if self.browser() => vec![
+                Field::Address,
+                Field::Name,
+                Field::ClientId,
+                Field::ClientSecret,
+            ],
             _ => vec![Field::Address, Field::Name, Field::Password],
         }
     }
@@ -157,7 +209,11 @@ impl FirstRun {
         match &status {
             Status::Found(settings) => {
                 self.settings = Some(settings.clone());
-                self.field = Field::Password;
+                self.field = if settings.oauth_sign_in {
+                    Field::ClientId
+                } else {
+                    Field::Password
+                };
             }
             Status::Manual { suggestion } => {
                 self.settings = suggestion.clone();
@@ -181,8 +237,13 @@ impl FirstRun {
 
     /// The daemon could not be asked, or said no.
     pub fn failed(&mut self, sentence: String) {
+        self.sign_in = None;
+        self.field = if self.browser() {
+            Field::ClientId
+        } else {
+            Field::Password
+        };
         self.status = Status::Failed(sentence);
-        self.field = Field::Password;
     }
 
     /// The account is saved: the last question is how far back to sync.
@@ -196,6 +257,27 @@ impl FirstRun {
             return match key.code {
                 KeyCode::Char(digit @ '1'..='3') => {
                     Asked::Start(SyncWindow::ALL[usize::from(digit as u8 - b'1')])
+                }
+                _ => Asked::Nothing,
+            };
+        }
+        if self.status == Status::WaitingForBrowser {
+            // Nothing leaves this machine on its own: Enter opens the URL,
+            // `y` copies it, Escape gives the sign-in up.
+            let url = self
+                .sign_in
+                .as_ref()
+                .map(|sign_in| sign_in.authorize_url.clone())
+                .unwrap_or_default();
+            return match key.code {
+                KeyCode::Enter if !url.is_empty() => Asked::Open(url),
+                KeyCode::Char('y') if !url.is_empty() => Asked::Copy(url),
+                KeyCode::Esc => {
+                    self.sign_in = None;
+                    if let Some(settings) = self.settings.clone() {
+                        self.status = Status::Found(settings);
+                    }
+                    Asked::CancelOAuth(self.address())
                 }
                 _ => Asked::Nothing,
             };
@@ -226,6 +308,10 @@ impl FirstRun {
                 Asked::Discover(address)
             }
             KeyCode::Enter => match self.submission() {
+                Some(submission) if submission.oauth_client.is_some() => {
+                    self.status = Status::Connecting;
+                    Asked::BeginOAuth(Box::new(submission))
+                }
                 Some(submission) => {
                     self.status = Status::Connecting;
                     Asked::Add(Box::new(submission))
@@ -243,6 +329,8 @@ impl FirstRun {
                     Field::Password => &mut self.password,
                     Field::Incoming => &mut self.incoming,
                     Field::Outgoing => &mut self.outgoing,
+                    Field::ClientId => &mut self.client_id,
+                    Field::ClientSecret => &mut self.client_secret,
                 };
                 input.handle_event(&event);
                 Asked::Nothing
@@ -253,6 +341,23 @@ impl FirstRun {
     /// What would be submitted, once there is enough of it.
     fn submission(&self) -> Option<Submission> {
         let address = self.address.value().trim().to_owned();
+        if self.browser() {
+            let client_id = self.client_id.value().trim().to_owned();
+            if address.is_empty() || client_id.is_empty() {
+                return None;
+            }
+            let secret = self.client_secret.value().trim();
+            return Some(Submission {
+                address,
+                name: self.name.value().trim().to_owned(),
+                password: String::new(),
+                settings: self.settings.clone().unwrap_or_default(),
+                oauth_client: Some(postio_ui::onboarding::OAuthClientSubmission {
+                    client_id,
+                    client_secret: (!secret.is_empty()).then(|| secret.to_owned()),
+                }),
+            });
+        }
         if address.is_empty() || self.password.value().is_empty() {
             return None;
         }
