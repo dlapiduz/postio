@@ -340,7 +340,21 @@ impl Inner {
 #[derive(Clone)]
 pub struct Feed(Rc<Inner>);
 
+/// A callback's non-owning reference to a message feed.
+#[derive(Clone)]
+pub(crate) struct WeakFeed(std::rc::Weak<Inner>);
+
+impl WeakFeed {
+    pub(crate) fn upgrade(&self) -> Option<Feed> {
+        self.0.upgrade().map(Feed)
+    }
+}
+
 impl Feed {
+    pub(crate) fn downgrade(&self) -> WeakFeed {
+        WeakFeed(Rc::downgrade(&self.0))
+    }
+
     /// Feed `list` from `source`. Shows nothing until [`open`](Self::open).
     pub fn new(list: &MessageList, source: Rc<dyn MessageSource>) -> Self {
         Feed(Rc::new(Inner {
@@ -1071,7 +1085,21 @@ impl FolderInner {
 #[derive(Clone)]
 pub struct Folders(Rc<FolderInner>);
 
+/// A callback's non-owning reference to the folder feed.
+#[derive(Clone)]
+pub(crate) struct WeakFolders(std::rc::Weak<FolderInner>);
+
+impl WeakFolders {
+    pub(crate) fn upgrade(&self) -> Option<Folders> {
+        self.0.upgrade().map(Folders)
+    }
+}
+
 impl Folders {
+    pub(crate) fn downgrade(&self) -> WeakFolders {
+        WeakFolders(Rc::downgrade(&self.0))
+    }
+
     /// Feed `sidebar` from `source`. Shows nothing until [`open`](Self::open).
     pub fn new(sidebar: &crate::sidebar::Sidebar, source: Rc<dyn MailboxSource>) -> Self {
         let folders = Folders(Rc::new(FolderInner {

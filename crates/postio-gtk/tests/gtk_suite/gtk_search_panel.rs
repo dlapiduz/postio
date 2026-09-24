@@ -24,6 +24,28 @@ use postio_gtk::window::Window;
 use postio_gtk::{fonts, style};
 use postio_search::facets::{Facets, Refinement, Scope, ScopeCount};
 
+pub fn destroying_a_search_window_releases_its_surfaces() {
+    if adw::init().is_err() || gdk::Display::default().is_none() {
+        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
+        return;
+    }
+
+    let window = Window::default();
+    let finder = window.finder();
+    let weak_finder = finder.downgrade();
+    let view = View::attach(&window.shell(), &finder);
+    let weak_panel = view.panel().downgrade();
+
+    window.destroy();
+    drop(view);
+    drop(finder);
+    drop(window);
+    pump();
+
+    assert!(weak_finder.upgrade().is_none(), "finder stayed alive");
+    assert!(weak_panel.upgrade().is_none(), "search panel stayed alive");
+}
+
 pub fn the_scope_column_narrows_a_search_without_retyping_it() {
     if adw::init().is_err() || gdk::Display::default().is_none() {
         eprintln!("skipping: no display (see scripts/test-headless.sh --status)");

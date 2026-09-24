@@ -412,6 +412,10 @@ const CASES: &[(&str, fn())] = &[
         gtk_composer_focus::the_keyboard_walks_the_composer_in_a_defined_order as fn(),
     ),
     (
+        "gtk_composer_recipient_select::destroying_a_composer_releases_recipient_completion",
+        gtk_composer_recipient_select::destroying_a_composer_releases_recipient_completion as fn(),
+    ),
+    (
         "gtk_composer_recipient_select::clicking_a_suggestion_puts_that_one_in_the_field",
         gtk_composer_recipient_select::clicking_a_suggestion_puts_that_one_in_the_field as fn(),
     ),
@@ -453,6 +457,10 @@ const CASES: &[(&str, fn())] = &[
     (
         "gtk_feeds::the_panes_follow_the_account_the_sync_and_the_folder_you_pick",
         gtk_feeds::the_panes_follow_the_account_the_sync_and_the_folder_you_pick as fn(),
+    ),
+    (
+        "gtk_feeds::destroying_a_fed_window_releases_its_sources",
+        gtk_feeds::destroying_a_fed_window_releases_its_sources as fn(),
     ),
     (
         "gtk_first_frame::work_deferred_to_the_first_frame_runs_even_if_the_window_is_up",
@@ -630,6 +638,10 @@ const CASES: &[(&str, fn())] = &[
     (
         "gtk_search_live::the_readout_answers_the_query_on_screen_and_no_other",
         gtk_search_live::the_readout_answers_the_query_on_screen_and_no_other as fn(),
+    ),
+    (
+        "gtk_search_panel::destroying_a_search_window_releases_its_surfaces",
+        gtk_search_panel::destroying_a_search_window_releases_its_surfaces as fn(),
     ),
     (
         "gtk_search_panel::a_search_with_no_hits_does_not_leave_the_last_message_on_screen",

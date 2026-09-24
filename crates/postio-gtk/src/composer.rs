@@ -3923,8 +3923,7 @@ pub(crate) struct Completion {
 
 impl Completion {
     /// Wires completion onto `entry`. The returned value is not meant to be
-    /// kept: `entry`'s own signal connections hold it alive for as long as
-    /// the entry exists, which for a composer field is the app's lifetime.
+    /// kept: `entry`'s signal connections hold it until the field is destroyed.
     fn install(composer: &Composer, entry: &gtk::Entry) -> Rc<Self> {
         let list = gtk::ListBox::new();
         list.set_selection_mode(gtk::SelectionMode::Browse);
@@ -3941,6 +3940,17 @@ impl Completion {
         popover.add_css_class("postio-recipient-completion");
         popover.set_child(Some(&list));
         popover.set_parent(entry);
+        // This is a custom child, not an entry-owned widget. GTK requires us
+        // to unparent it before the entry is finalized; otherwise it warns
+        // and leaves the popover and its list alive after the composer goes.
+        entry.connect_destroy({
+            let popover = popover.downgrade();
+            move |_| {
+                if let Some(popover) = popover.upgrade() {
+                    popover.unparent();
+                }
+            }
+        });
 
         let this = Rc::new(Self {
             popover,
@@ -3960,15 +3970,18 @@ impl Completion {
         // interactive and was not: clicking moved GTK's own selection and
         // nothing ever acted on it, so the only way to take a suggestion was
         // the keyboard (#424).
-        this.list.connect_row_activated(glib::clone!(
-            #[strong]
-            this,
-            #[weak]
-            entry,
+        this.list.connect_row_activated({
+            // The list belongs to Completion. A strong clone here makes its
+            // own row handler keep the popover and list alive after the
+            // composer is destroyed.
+            let this = Rc::downgrade(&this);
+            let entry = entry.downgrade();
             move |_, row| {
-                this.accept_row(&entry, row);
+                if let (Some(this), Some(entry)) = (this.upgrade(), entry.upgrade()) {
+                    this.accept_row(&entry, row);
+                }
             }
-        ));
+        });
 
         let keys = gtk::EventControllerKey::new();
         // Capture, not the default bubble.
