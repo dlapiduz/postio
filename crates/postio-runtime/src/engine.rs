@@ -913,6 +913,12 @@ fn run(parts: EngineParts, store: Store, inbox: async_channel::Receiver<Job>, bu
                         announce_link(&parts, &mut state, moved);
                         wake_due_snoozes(&parts, &store).await;
                     }
+                    // Queued work, so a person's action is not left to the next
+                    // tick. `keep_watch` below wakes for it and returns, and the
+                    // loop comes straight back here: without this arm the drain
+                    // it woke for waited for `ticker` -- up to `POLL_INTERVAL`,
+                    // measured at 4.0 s, for a flag set on an idle app.
+                    () = wait_for_queued_work(&parts, &store) => {}
                     // The machine's own opinion of the network. It only ever moves
                     // the link between waiting and offline — the attempt count is
                     // the supervisor's, because NetworkManager knows about the
