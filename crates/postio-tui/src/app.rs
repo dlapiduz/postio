@@ -254,6 +254,9 @@ pub enum Effect {
     },
     /// Store the file at this path as an attachment of the draft.
     Attach(std::path::PathBuf),
+    /// Save this query as a saved search in `config.toml`, as the desktop's
+    /// Ctrl+S does.
+    SaveSearch(String),
     /// Run a search; its answer comes back as [`Input::Found`].
     Search {
         /// Which question this is, so an older answer can be dropped.
@@ -439,6 +442,8 @@ struct SearchBar {
     input: tui_input::Input,
     pacer: postio_ui::search::Pacer,
     outcome: Option<postio_ui::search::Outcome>,
+    /// Newest first rather than best match first.
+    newest_first: bool,
 }
 
 /// Which pane the keyboard is in.
@@ -829,7 +834,10 @@ impl App {
     /// keyboard is.
     fn open_palette(&mut self, finding: Finding) -> Vec<Effect> {
         let from = match self.focus {
-            Focus::Search | Focus::Palette => Focus::List,
+            // The finder's prefixes turn the bar into the palette; what it
+            // runs then runs over the list.
+            Focus::Search if finding == Finding::Folders || self.search.is_none() => Focus::List,
+            Focus::Palette => Focus::List,
             other => other,
         };
         self.palette = Some(PaletteState {
@@ -845,7 +853,8 @@ impl App {
     /// The registry's context for where the keyboard is.
     fn context_of(focus: Focus) -> postio_core::Context {
         match focus {
-            Focus::List | Focus::Search | Focus::Palette => postio_core::Context::List,
+            Focus::List | Focus::Palette => postio_core::Context::List,
+            Focus::Search => postio_core::Context::Search,
             Focus::Sidebar => postio_core::Context::Sidebar,
             Focus::Reader => postio_core::Context::Reader,
             Focus::Parts => postio_core::Context::Parts,
@@ -1169,7 +1178,7 @@ impl App {
                 search: postio_client::protocol::Search {
                     account,
                     query,
-                    newest_first: false,
+                    newest_first: bar.newest_first,
                 },
             },
             Effect::Redraw,
@@ -1547,6 +1556,22 @@ impl App {
             "search" => return self.open_search(),
             "command_palette" => return self.open_palette(Finding::Commands),
             "cheat_sheet" => self.cheatsheet = Some(self.focus),
+            "toggle_result_order" => {
+                if let Some(bar) = self.search.as_mut() {
+                    bar.newest_first = !bar.newest_first;
+                    return self.run_search();
+                }
+            }
+            "save_search" => {
+                if let Some(query) = self.search_query().map(str::trim)
+                    && !query.is_empty()
+                {
+                    let query = query.to_owned();
+                    let mut effects = self.say(&format!("Saved “{query}” to the sidebar"));
+                    effects.insert(0, Effect::SaveSearch(query));
+                    return effects;
+                }
+            }
             "cycle_pane" => {
                 // The composer is the reading pane while it is open.
                 let reader = if self.composer.is_some() && !self.detached {
@@ -2058,6 +2083,18 @@ pub fn update(app: &mut App, input: Input) -> Vec<Effect> {
         Input::Key(key) if app.focus == Focus::Composer => app.composer_key(&key),
         Input::Key(key) if app.focus == Focus::Search => app.search_key(&key),
         Input::Key(key) if app.focus == Focus::Palette => app.palette_key(&key),
+        // Over search results the list's keys come first, and what the list
+        // does not know is the search's: `o` for the order, Ctrl+S to save.
+        Input::Key(key) if app.focus == Focus::List && app.paging.showing_results() => {
+            match app.keys.press(&key, KeyContext::List, false) {
+                Outcome::Command(id) => app.command(&id),
+                Outcome::Pending(_) => Vec::new(),
+                Outcome::Unhandled => match app.keys.press(&key, KeyContext::Search, false) {
+                    Outcome::Command(id) => app.command(&id),
+                    Outcome::Pending(_) | Outcome::Unhandled => Vec::new(),
+                },
+            }
+        }
         Input::Key(key) => match app.keys.press(&key, app.key_context(), false) {
             Outcome::Command(id) => app.command(&id),
             Outcome::Pending(_) | Outcome::Unhandled => Vec::new(),
@@ -3335,6 +3372,68 @@ mod tests {
             "the hits are read: {effects:?}"
         );
         assert_eq!(app.search_readout().as_deref(), Some("2 hits · 11 ms"));
+    }
+
+    fn showing_results(app: &mut App) {
+        let opening = opened(app, 3);
+        serve(app, opening);
+        update(app, press('/'));
+        let asked = typing(app, "tide");
+        let sequence = searches(&asked).last().unwrap().0;
+        update(
+            app,
+            Input::Found {
+                sequence,
+                found: Ok(Some(found(&[3, 1]))),
+            },
+        );
+        update(app, key(KeyCode::Enter, KeyModifiers::NONE));
+        assert_eq!(app.focus(), Focus::List, "down in the results");
+    }
+
+    #[test]
+    fn over_the_results_o_reorders_and_ctrl_s_saves_the_search() {
+        let mut app = app((160, 40));
+        showing_results(&mut app);
+
+        let effects = update(&mut app, press('o'));
+        let again: Vec<_> = effects
+            .iter()
+            .filter_map(|effect| match effect {
+                Effect::Search { search, .. } => Some((search.query.clone(), search.newest_first)),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(again, vec![("tide".to_owned(), true)], "{effects:?}");
+
+        let effects = update(&mut app, ctrl('s'));
+        assert!(
+            effects.contains(&Effect::SaveSearch("tide".into())),
+            "{effects:?}"
+        );
+
+        // And the list's own keys still work there.
+        update(&mut app, press('j'));
+        assert_eq!(app.cursor(), 1);
+    }
+
+    #[test]
+    fn a_palette_opened_in_the_search_bar_offers_the_searchs_commands() {
+        let mut app = app((160, 40));
+        let opening = opened(&mut app, 3);
+        serve(&mut app, opening);
+        update(&mut app, press('/'));
+        typing(&mut app, "tide");
+        update(&mut app, ctrl('k'));
+        let titles: Vec<String> = app
+            .palette()
+            .unwrap()
+            .rows
+            .into_iter()
+            .map(|row| row.title)
+            .collect();
+        let order = postio_core::registry::get(postio_core::CommandId::ToggleResultOrder).title;
+        assert!(titles.iter().any(|title| title == order), "{titles:?}");
     }
 
     #[test]
