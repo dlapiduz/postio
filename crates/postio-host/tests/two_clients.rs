@@ -217,7 +217,7 @@ impl Daemon {
 impl Daemon {
     /// Whether the daemon has stopped serving, waiting at most `within`.
     pub fn stopped_within(&self, within: Duration) -> bool {
-        let deadline = std::time::Instant::now() + within;
+        let deadline = std::time::Instant::now() + postio_test_support::scaled(within);
         loop {
             if self
                 .serving

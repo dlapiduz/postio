@@ -606,12 +606,70 @@ impl postio_account::discovery::DiscoveryTransport for Offline {
     }
 }
 
-/// A host whose onboarding reaches no network: discovery reads the provider
-/// table, and the proof signs in to `mock`.
+/// A network whose one answer is `example.test`'s autoconfig document, as a
+/// provider publishes it; nothing else answers and nothing dials.
+struct Publishing;
+
+const AUTOCONFIG: &str = r#"<clientConfig version="1.1">
+  <emailProvider id="example.test">
+    <domain>example.test</domain>
+    <displayName>Example Mail</displayName>
+    <incomingServer type="imap">
+      <hostname>mail.example.test</hostname>
+      <port>993</port>
+      <socketType>SSL</socketType>
+      <username>%EMAILADDRESS%</username>
+      <authentication>password-cleartext</authentication>
+    </incomingServer>
+    <outgoingServer type="smtp">
+      <hostname>send.example.test</hostname>
+      <port>465</port>
+      <socketType>SSL</socketType>
+      <username>%EMAILADDRESS%</username>
+      <authentication>password-cleartext</authentication>
+    </outgoingServer>
+  </emailProvider>
+</clientConfig>"#;
+
+#[async_trait::async_trait]
+impl postio_account::discovery::DiscoveryTransport for Publishing {
+    async fn autoconfig(
+        &self,
+        _endpoint: postio_account::discovery::AutoconfigEndpoint<'_>,
+        _cancel: &postio_account::discovery::CancelToken,
+    ) -> Result<
+        postio_account::discovery::DiscoveryAutoconfig,
+        postio_account::discovery::TransportError,
+    > {
+        Ok(serde_xml_rs::from_str(AUTOCONFIG).expect("the document parses"))
+    }
+
+    async fn srv(
+        &self,
+        domain: &str,
+        cancel: &postio_account::discovery::CancelToken,
+    ) -> Result<
+        postio_account::discovery::DiscoverySrvReport,
+        postio_account::discovery::TransportError,
+    > {
+        Offline.srv(domain, cancel).await
+    }
+
+    async fn mx(
+        &self,
+        domain: &str,
+        cancel: &postio_account::discovery::CancelToken,
+    ) -> Result<Vec<String>, postio_account::discovery::TransportError> {
+        Offline.mx(domain, cancel).await
+    }
+}
+
+/// A host whose onboarding reaches no network: discovery reads
+/// [`Publishing`]'s document, and the proof signs in to `mock`.
 fn onboarding_world(mock: postio_account::backend::MockBackend) -> World {
     World::configured(move |wiring| {
         wiring
-            .with_discovery(std::sync::Arc::new(Offline))
+            .with_discovery(std::sync::Arc::new(Publishing))
             .with_mail(postio_session::MailOverride {
                 backend: std::sync::Arc::new(mock),
                 smtp: std::sync::Arc::new(postio_smtp::transport::ScriptedConnector::new(
@@ -622,17 +680,17 @@ fn onboarding_world(mock: postio_account::backend::MockBackend) -> World {
 }
 
 #[test]
-fn a_frontend_finds_a_known_providers_servers_through_the_daemon() {
+fn a_frontend_finds_a_domains_servers_through_the_daemon() {
     // US7: discovery, from the terminal, is the desktop's.
     let world = onboarding_world(postio_account::backend::MockBackend::new());
     let (client, _) = world.frontend(ClientKind::Tui);
     let status = world
         .rt
-        .block_on(client.discover("ada@fastmail.com".into()))
+        .block_on(client.discover("ada@example.test".into()))
         .expect("an answer");
     match status {
         postio_ui::onboarding::Status::Found(settings) => {
-            assert_eq!(settings.imap.host, "imap.fastmail.com");
+            assert_eq!(settings.imap.host, "mail.example.test");
         }
         other => panic!("{other:?}"),
     }
@@ -640,21 +698,21 @@ fn a_frontend_finds_a_known_providers_servers_through_the_daemon() {
 
 fn submission(password: &str) -> postio_ui::onboarding::Submission {
     postio_ui::onboarding::Submission {
-        address: "grace@fastmail.com".into(),
+        address: "grace@example.test".into(),
         name: "Grace".into(),
         password: password.into(),
         settings: postio_ui::onboarding::Settings {
             imap: postio_ui::onboarding::Server {
-                host: "imap.fastmail.com".into(),
+                host: "mail.example.test".into(),
                 port: 993,
                 security: postio_model::TransportSecurity::Tls,
             },
             smtp: postio_ui::onboarding::Server {
-                host: "smtp.fastmail.com".into(),
+                host: "send.example.test".into(),
                 port: 465,
                 security: postio_model::TransportSecurity::Tls,
             },
-            login: "grace@fastmail.com".into(),
+            login: "grace@example.test".into(),
             ..Default::default()
         },
         oauth_client: None,
@@ -673,7 +731,7 @@ fn a_frontend_adds_an_account_through_the_daemon() {
     assert!(
         accounts
             .iter()
-            .any(|account| account.address.address == "grace@fastmail.com")
+            .any(|account| account.address.address == "grace@example.test")
     );
 }
 
@@ -690,7 +748,7 @@ fn a_refused_password_is_said_as_the_desktop_says_it() {
         .expect_err("refused");
     let desktop =
         postio_session::onboarding::explain(&postio_account::backend::BackendError::Auth {
-            account: "grace@fastmail.com".into(),
+            account: "grace@example.test".into(),
             reason: "refused".into(),
         });
     assert_eq!(error.message(), desktop);
@@ -698,7 +756,7 @@ fn a_refused_password_is_said_as_the_desktop_says_it() {
     assert!(
         !accounts
             .iter()
-            .any(|account| account.address.address == "grace@fastmail.com"),
+            .any(|account| account.address.address == "grace@example.test"),
         "nothing is written for a refused sign-in"
     );
 }

@@ -39,5 +39,7 @@ tracing-subscriber = { workspace = true, features = ["fmt", "env-filter"] }
 postio-index.workspace = true
 postio-smtp.workspace = true
 postio-storage = { workspace = true, features = ["test-support"] }
+serde-xml-rs = { workspace = true }
+postio-test-support.workspace = true
 tempfile = { workspace = true }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread", "time"] }
