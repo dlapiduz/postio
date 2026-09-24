@@ -161,6 +161,9 @@ struct GateInner {
     /// own task next runs is a deadlock with no error message -- there is
     /// nobody left to run the task that releases it.
     free: tokio::sync::Notify,
+    /// Told whenever an interactive write finishes. See
+    /// [`WriteGate::interactive_writes`].
+    interactive_done: tokio::sync::Notify,
 }
 
 #[derive(Debug, Default)]
@@ -180,6 +183,7 @@ impl WriteGate {
             inner: Arc::new(GateInner {
                 state: Mutex::new(GateState::default()),
                 free: tokio::sync::Notify::new(),
+                interactive_done: tokio::sync::Notify::new(),
             }),
         }
     }
@@ -227,12 +231,25 @@ impl WriteGate {
                     crate::test_support::gate_log::granted(priority);
                     return WritePermit {
                         inner: Arc::clone(&self.inner),
+                        priority,
                     };
                 }
             }
 
             waiting.await;
         }
+    }
+
+    /// What an interactive write finishing wakes.
+    ///
+    /// Every action a person takes that the server must hear about -- a flag,
+    /// a move, a draft -- is written local-first through an interactive
+    /// permit, and its queue row with it. So this is what the sync engine
+    /// waits on for queued work, where it used to ask the store every half
+    /// second, all day. Enable the `Notified` before checking the queue, or a
+    /// write that lands in between is missed.
+    pub fn interactive_writes(&self) -> &tokio::sync::Notify {
+        &self.inner.interactive_done
     }
 
     /// Whether an interactive writer is waiting for the lock right now.
@@ -262,6 +279,7 @@ impl WriteGate {
 #[derive(Debug)]
 pub struct WritePermit {
     inner: Arc<GateInner>,
+    priority: WritePriority,
 }
 
 impl Drop for WritePermit {
@@ -279,6 +297,9 @@ impl Drop for WritePermit {
         // can wake the only task that still has to go back to sleep, and leave
         // the lock idle with a queue on it.
         self.inner.free.notify_waiters();
+        if self.priority == WritePriority::Interactive {
+            self.inner.interactive_done.notify_waiters();
+        }
     }
 }
 
