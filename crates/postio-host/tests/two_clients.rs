@@ -40,7 +40,11 @@ fn a_message(subject: &str, id: &str) -> MockMessage {
 /// An SMTP server that takes whatever it is sent.
 fn accepting() -> SmtpScript {
     SmtpScript::new("220 smtp.example.com ESMTP ready")
-        .on("EHLO", "250-smtp.example.com\r\n250 AUTH PLAIN")
+        .on(
+            "EHLO",
+            "250-smtp.example.com\r\n250-STARTTLS\r\n250 AUTH PLAIN",
+        )
+        .on("STARTTLS", "220 ready to start TLS")
         .on("AUTH PLAIN", "235 authenticated")
         .on("MAIL FROM", "250 ok")
         .on("RCPT TO", "250 ok")
@@ -61,6 +65,8 @@ pub struct Daemon {
     pub smtp: ScriptedConnector,
     /// The account's inbox, as the store knows it.
     pub inbox: MailboxId,
+    /// The store, for what a test reads directly.
+    pub store: postio_storage::Store,
     _dirs: (tempfile::TempDir, tempfile::TempDir),
 }
 
@@ -90,6 +96,13 @@ impl Daemon {
             for path in ["Archive", "Sent", "Drafts"] {
                 test_support::mailbox(&connection, &account, path).await;
             }
+            // Someone to send as, as every real account has.
+            let mut identity = postio_model::Identity::new(account.id, account.address.clone());
+            identity.is_default = true;
+            postio_storage::repository::IdentityRepository::new(&connection)
+                .create(&mut identity)
+                .await
+                .expect("an identity");
             secrets
                 .store(
                     &AccountKey::new(account.address.address.clone()),
@@ -105,6 +118,7 @@ impl Daemon {
             &test_support::blob_keys(),
         )
         .expect("a blob store");
+        let store = database.clone();
         let mail = postio_session::MailOverride {
             backend: Arc::new(mock.clone()),
             smtp: Arc::new(smtp.clone()),
@@ -131,6 +145,7 @@ impl Daemon {
             mock,
             smtp,
             inbox: inbox_id,
+            store,
             _dirs: (blobs_dir, runtime_dir),
         }
     }
@@ -288,4 +303,195 @@ fn an_archive_in_one_frontend_is_gone_from_the_other() {
         1,
         "moved once, not once per frontend"
     );
+}
+
+#[test]
+fn new_mail_is_fetched_once_and_reaches_both() {
+    // US6 scenario 2.
+    use postio_account::backend::{AppendMessage, MailboxEvent};
+    let daemon = Daemon::start(vec![a_message("Tide gate", "tide")]);
+    let (desktop, desktop_heard) = daemon.connect(ClientKind::Gtk);
+    let (terminal, terminal_heard) = daemon.connect(ClientKind::Tui);
+    daemon.until("the first sync", || daemon.inbox_rows(&desktop) == 1);
+    let fetched_before = daemon.mock.header_fetches().len();
+
+    // Mail arrives at the server, and the server says so to whoever idles.
+    let raw = "Message-ID: <later@example.com>\r\nFrom: Grace <grace@example.net>\r\nTo: \
+         test@example.com\r\nSubject: Interlock report\r\nDate: Tue, 22 Sep 2026 10:00:00 \
+         +0000\r\n\r\nAttached.\r\n"
+        .to_owned();
+    daemon
+        .rt
+        .block_on(
+            daemon
+                .mock
+                .append("INBOX", &AppendMessage::new(raw.into_bytes())),
+        )
+        .expect("delivered");
+    daemon
+        .mock
+        .push_event("INBOX", MailboxEvent::Exists { count: 2 });
+
+    let arrived = |event: &Event| {
+        matches!(
+            event,
+            Event::MessageListChanged { .. } | Event::NewMail { .. }
+        )
+    };
+    daemon.hear(&desktop_heard, arrived);
+    daemon.hear(&terminal_heard, arrived);
+    daemon.until("the new mail in both", || {
+        daemon.inbox_rows(&desktop) == 2 && daemon.inbox_rows(&terminal) == 2
+    });
+    let fetched = daemon.mock.header_fetches().len() - fetched_before;
+    assert!(fetched <= 1, "fetched {fetched} times for two frontends");
+}
+
+#[test]
+fn a_mixed_session_from_both_reaches_the_servers_exactly_once() {
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter("postio_session=error,postio_storage=warn")
+        .with_test_writer()
+        .try_init();
+    // US6 scenario 3 / SC-007: archive, flag, move and send, from both.
+    let daemon = Daemon::start(vec![
+        a_message("First", "first"),
+        a_message("Second", "second"),
+        a_message("Third", "third"),
+    ]);
+    let (desktop, desktop_heard) = daemon.connect(ClientKind::Gtk);
+    let (terminal, _) = daemon.connect(ClientKind::Tui);
+    daemon.until("the first sync", || daemon.inbox_rows(&desktop) == 3);
+    let accounts = daemon.rt.block_on(terminal.accounts()).expect("accounts");
+    let account = accounts[0].id;
+    let archive = daemon
+        .rt
+        .block_on(terminal.mailboxes(account))
+        .expect("folders")
+        .into_iter()
+        .find(|folder| folder.path == "Archive")
+        .expect("an archive")
+        .id;
+    let selection = || postio_core::MessageTarget::Selection;
+
+    // The desktop archives the first row, the terminal flags the next one,
+    // and the desktop moves what is then first to the archive by name.
+    let desktop_on_first = looking_at(&daemon, desktop, 0);
+    daemon
+        .rt
+        .block_on(desktop_on_first.send(postio_core::Command::Archive {
+            target: selection(),
+        }))
+        .expect("archived");
+    daemon.until("the archive", || daemon.inbox_rows(&terminal) == 2);
+    let terminal_on_first = looking_at(&daemon, terminal, 0);
+    daemon
+        .rt
+        .block_on(terminal_on_first.send(postio_core::Command::Flag {
+            target: selection(),
+            flagged: Some(true),
+        }))
+        .expect("flagged");
+    let desktop_on_second = looking_at(&daemon, desktop_on_first, 1);
+    daemon
+        .rt
+        .block_on(desktop_on_second.send(postio_core::Command::Move {
+            target: selection(),
+            to: Some(archive),
+        }))
+        .expect("moved");
+
+    // And the terminal sends one.
+    let mut draft = postio_model::Draft::new(account);
+    draft.to = vec![postio_model::EmailAddress::new(
+        None::<String>,
+        "grace@example.net",
+    )];
+    draft.subject = "Tide gate".into();
+    draft.body_markdown = Some("Looking **now**.".into());
+    draft.body.text = Some("Looking **now**.".into());
+    daemon
+        .rt
+        .block_on(terminal_on_first.queue_send(1, draft, None))
+        .expect("queued");
+
+    let submissions = || {
+        daemon
+            .smtp
+            .log()
+            .commands()
+            .iter()
+            .filter(|command| command.as_str() == "DATA")
+            .count()
+    };
+    if !(0..250).any(|_| {
+        std::thread::sleep(Duration::from_millis(40));
+        daemon.on_server("Archive") == 2
+    }) {
+        let rows: Vec<(i64, String)> = daemon.rt.block_on(async {
+            let connection = daemon.store.connect().await.expect("a connection");
+            let mut rows = connection
+                .query("SELECT id, op_type || ' ' || state || ' ' || coalesce(last_error, '') FROM operation_queue", ())
+                .await
+                .expect("the queue");
+            let mut out = Vec::new();
+            while let Ok(Some(row)) = rows.next().await {
+                out.push((row.get::<i64>(0).unwrap(), row.get::<String>(1).unwrap()));
+            }
+            out
+        });
+        let said: Vec<String> = std::iter::from_fn(|| desktop_heard.try_recv().ok())
+            .map(|envelope| format!("{:?}", envelope.event))
+            .filter(|event| event.contains("Rejected") || event.contains("Error"))
+            .collect();
+        panic!(
+            "moves: archive {} inbox {}; queue {rows:?}; desktop heard {said:?}",
+            daemon.on_server("Archive"),
+            daemon.on_server("INBOX"),
+        );
+    }
+    if !(0..250).any(|_| {
+        std::thread::sleep(Duration::from_millis(40));
+        submissions() == 1
+    }) {
+        let why = daemon.rt.block_on(async {
+            let connection = daemon.store.connect().await.expect("a connection");
+            let drafts = postio_storage::repository::DraftRepository::new(&connection)
+                .list_for_account(account)
+                .await
+                .expect("drafts");
+            let mut why = Vec::new();
+            for draft in drafts {
+                let failure =
+                    postio_storage::repository::OperationQueueRepository::new(&connection)
+                        .last_failure_for(postio_model::OperationTarget::Draft(draft.id))
+                        .await
+                        .expect("the queue");
+                why.push(format!("{:?}: {failure:?}", draft.state));
+            }
+            why
+        });
+        panic!(
+            "no submission: {why:?}; smtp said {:?}",
+            daemon.smtp.log().commands()
+        );
+    }
+    // Long enough for any second attempt, from either side, to have shown.
+    std::thread::sleep(Duration::from_millis(500));
+    assert_eq!(daemon.on_server("Archive"), 2, "each move made once");
+    assert_eq!(daemon.on_server("INBOX"), 1);
+    assert_eq!(submissions(), 1, "one submission for one send");
+    let flagged = daemon
+        .rt
+        .block_on(desktop_on_second.list_page(PageRequest {
+            scope: ListScope::Mailbox(daemon.inbox),
+            offset: 0,
+            limit: 50,
+        }))
+        .expect("a page");
+    let flagged = match flagged {
+        ListPage::Messages(page) => page.rows.iter().any(|row| row.flagged),
+        ListPage::Threads(page) => page.rows.iter().any(|row| row.representative.flagged),
+    };
+    assert!(flagged, "the terminal's flag is what the desktop sees");
 }
