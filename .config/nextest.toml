@@ -104,6 +104,17 @@ webkit = { max-threads = 1 }
 filter = 'binary(gtk_suite) + binary(gtk_reader) + binary(gtk_composer) + binary(gtk_accessibility) + binary(drag_out) + binary(webkit_probe) + binary(app_suite)'
 test-group = 'webkit'
 
+# The sync-wave cases, each a whole wave over an archive-sized fixture: ~31 s
+# alone, measured, and 183-190 s -- past their deadline -- in a full-workspace
+# run, where they share the machine with every other test process. Three
+# landings on 2026-09-24 failed on one of them this way, at a load average
+# near 1, so this is the suite starving them rather than the machine being
+# busy. Four cores each is what they need to finish inside the deadline; the
+# rest of the suite keeps running around them.
+[[profile.default.overrides]]
+filter = 'binary(runtime_suite) & test(/^sync_wave::/)'
+threads-required = 4
+
 # `app_suite` alone, for #1497, and nothing else.
 #
 # This was `package(postio-gtk) + package(postio-app)` with #957's name on it.
