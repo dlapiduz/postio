@@ -129,7 +129,9 @@ pub fn open_mailbox_and_open_message_switch_the_window_from_outside() {
     window.present();
     pump();
 
-    window.install_feeds(
+    // The caller owns the feeds for as long as this window accepts mailbox
+    // requests; dropping them would leave only non-owning UI callbacks.
+    let _feeds = window.install_feeds(
         AccountId::new(ACCOUNT),
         "ada@example.com",
         store.clone(),
