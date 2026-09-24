@@ -210,6 +210,8 @@ pub fn deliver_from(
                     };
                     deliver(&application, &notification);
                 }
+                // POSTIO-GLIB-SAFE: a watch channel's change is a
+                // `tokio::sync::Notify`, which needs no reactor.
                 if reconnected.changed().await.is_err() {
                     return;
                 }
