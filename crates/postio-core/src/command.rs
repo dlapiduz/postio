@@ -169,6 +169,8 @@ command_ids! {
     AddAccount => "add_account",
     /// Open `config.toml` in the user's editor.
     EditConfig => "edit_config",
+    /// Quit Postio.
+    Quit => "quit",
     /// Show or hide the sidebar.
     ToggleSidebar => "toggle_sidebar",
     /// Put the keyboard in the folder list.
@@ -662,6 +664,13 @@ pub enum Command {
     AddAccount,
     /// Open `config.toml` in the user's editor.
     EditConfig,
+    /// Quit Postio.
+    ///
+    /// The desktop app always had its window's close button for this and
+    /// never needed a command; a terminal has no close button, and a command
+    /// that is not in the registry does not exist (Principle II), so it is
+    /// one here and the desktop gains a key for it too.
+    Quit,
     /// Show or hide the sidebar.
     ToggleSidebar,
     /// Put the keyboard in the folder list.
@@ -888,6 +897,7 @@ impl Command {
             Command::Settings => CommandId::Settings,
             Command::AddAccount => CommandId::AddAccount,
             Command::EditConfig => CommandId::EditConfig,
+            Command::Quit => CommandId::Quit,
             Command::ToggleSidebar => CommandId::ToggleSidebar,
             Command::FocusSidebar => CommandId::FocusSidebar,
             Command::GoToInbox => CommandId::GoToInbox,
@@ -1008,6 +1018,7 @@ impl Command {
             CommandId::Settings => Command::Settings,
             CommandId::AddAccount => Command::AddAccount,
             CommandId::EditConfig => Command::EditConfig,
+            CommandId::Quit => Command::Quit,
             CommandId::ToggleSidebar => Command::ToggleSidebar,
             CommandId::FocusSidebar => Command::FocusSidebar,
             CommandId::GoToInbox => Command::GoToInbox,

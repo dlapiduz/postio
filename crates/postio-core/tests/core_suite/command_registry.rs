@@ -541,6 +541,8 @@ const WITHOUT_A_STORE: &[CommandId] = &[
     CommandId::CyclePane,
     CommandId::CyclePaneBack,
     CommandId::EditConfig,
+    // Leaving means the same with no store as with one (T039).
+    CommandId::Quit,
 ];
 
 /// Every command decides, and a new one cannot forget to.

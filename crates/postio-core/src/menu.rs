@@ -149,7 +149,7 @@ pub fn section_for(command: CommandId) -> Option<MenuSection> {
         // ── Edit ─────────────────────────────────────────────────────────
         C::Undo | C::SelectAll | C::ToggleSelection => Some(M::Edit),
         C::Search | C::SaveSearch => Some(M::Edit),
-        C::Settings | C::EditConfig | C::AddAccount => Some(M::App),
+        C::Settings | C::EditConfig | C::AddAccount | C::Quit => Some(M::App),
         // Settings surfaces act on the row the settings list has focus on.
         // They are commands so `[keys]` can reach them and so the palette
         // can offer them where they apply; a menu bar item for "rename the

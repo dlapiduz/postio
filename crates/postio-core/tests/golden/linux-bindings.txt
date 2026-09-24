@@ -54,6 +54,7 @@ cheat_sheet	?
 settings	ctrl+comma | alt+comma
 add_account	ctrl+shift+n | alt+n
 edit_config	ctrl+e
+quit	ctrl+q
 toggle_sidebar	ctrl+b
 focus_sidebar	g f
 go_to_inbox	g i

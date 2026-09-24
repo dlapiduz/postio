@@ -75,29 +75,30 @@ command from inside a text field.
 | `/` | Search | List, conversation, reader, search, folder list |  | `search` |
 | `ctrl+s` | Save search as folder | Search |  | `save_search` |
 | `c` | Compose | List, conversation, reader |  | `compose` |
-| `ctrl+Return` | Send | Composer | Undo briefly | `send` |
-| `ctrl+shift+Return` | Schedule send… | Composer |  | `schedule_send` |
+| `ctrl+Return` or `alt+Return` | Send | Composer | Undo briefly | `send` |
+| `ctrl+shift+Return` or `alt+S` | Schedule send… | Composer |  | `schedule_send` |
 | `ctrl+s` | Save draft | Composer |  | `save_draft` |
 | `ctrl+d` | Discard draft | Composer | Asks first | `discard_draft` |
-| `ctrl+shift+m` | Mark as sent | List, composer |  | `mark_sent` |
-| `ctrl+shift+r` | Retry send | List, composer |  | `retry_send` |
-| `ctrl+shift+x` | Cancel send | List, composer |  | `cancel_send` |
-| `ctrl+shift+a` | Attach file… | Composer |  | `attach_file` |
-| `ctrl+shift+o` | Detach composer | Composer |  | `detach_composer` |
-| `ctrl+shift+c` | Cc and Bcc | Composer |  | `copy_fields` |
-| `ctrl+shift+g` | Insert image… | Composer |  | `insert_image` |
+| `ctrl+shift+m` or `alt+m` | Mark as sent | List, composer |  | `mark_sent` |
+| `ctrl+shift+r` or `alt+r` | Retry send | List, composer |  | `retry_send` |
+| `ctrl+shift+x` or `alt+x` | Cancel send | List, composer |  | `cancel_send` |
+| `ctrl+shift+a` or `alt+a` | Attach file… | Composer |  | `attach_file` |
+| `ctrl+shift+o` or `alt+o` | Detach composer | Composer |  | `detach_composer` |
+| `ctrl+shift+c` or `alt+c` | Cc and Bcc | Composer |  | `copy_fields` |
+| `ctrl+shift+g` or `alt+g` | Insert image… | Composer |  | `insert_image` |
 | `ctrl+b` | Bold | Composer |  | `bold` |
-| `ctrl+i` | Italic | Composer |  | `italic` |
-| `ctrl+shift+8` | Bulleted list | Composer |  | `bullet_list` |
-| `ctrl+shift+7` | Numbered list | Composer |  | `numbered_list` |
-| `ctrl+shift+k` | Insert link… | Composer |  | `insert_link` |
-| `ctrl+shift+9` | Quote block | Composer |  | `quote_block` |
+| `ctrl+i` or `alt+i` | Italic | Composer |  | `italic` |
+| `ctrl+shift+8` or `alt+8` | Bulleted list | Composer |  | `bullet_list` |
+| `ctrl+shift+7` or `alt+7` | Numbered list | Composer |  | `numbered_list` |
+| `ctrl+shift+k` or `alt+k` | Insert link… | Composer |  | `insert_link` |
+| `ctrl+shift+9` or `alt+9` | Quote block | Composer |  | `quote_block` |
 | `u` | Undo | List, conversation, reader, account list |  | `undo` |
 | `ctrl+k` | Command palette | Everywhere |  | `command_palette` |
 | `?` | Keyboard shortcuts | List, conversation, reader |  | `cheat_sheet` |
-| `ctrl+comma` | Settings | Everywhere |  | `settings` |
-| `ctrl+shift+n` | Add account | Everywhere |  | `add_account` |
+| `ctrl+comma` or `alt+comma` | Settings | Everywhere |  | `settings` |
+| `ctrl+shift+n` or `alt+n` | Add account | Everywhere |  | `add_account` |
 | `ctrl+e` | Edit configuration | List, conversation, reader |  | `edit_config` |
+| `ctrl+q` | Quit Postio | Everywhere |  | `quit` |
 | `ctrl+b` | Toggle sidebar | List, conversation, reader |  | `toggle_sidebar` |
 | `g f` | Focus the folder list | List, conversation, reader, search |  | `focus_sidebar` |
 | `g i` | Go to inbox | List, conversation, reader, search, folder list |  | `go_to_inbox` |

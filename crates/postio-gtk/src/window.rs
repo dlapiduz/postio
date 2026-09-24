@@ -2450,6 +2450,9 @@ impl Window {
                 self.conversation().toggle_rail();
             }
             CommandId::Settings => self.toggle_settings(),
+            // The close button, from the keyboard: closing the last window
+            // ends the application exactly as the button always did.
+            CommandId::Quit => self.close(),
             CommandId::Search => self.open_finder(Mode::Search),
             // The header button already flips this property directly
             // (`window.rs`, `sidebar_toggle.connect_toggled`); this is the

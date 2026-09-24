@@ -1081,6 +1081,18 @@ static SPECS: &[CommandSpec] = &[
         requires: CHROME,
     },
     CommandSpec {
+        id: CommandId::Quit,
+        title: "Quit Postio",
+        default_binding: "mod+q",
+        alternate_bindings: &[],
+        // Universal, and chrome: quitting means the same with an empty window
+        // as with a full one.
+        contexts: ContextSet::ANY,
+        destructive: false,
+        recovery: Recovery::None,
+        requires: CHROME,
+    },
+    CommandSpec {
         id: CommandId::ToggleSidebar,
         title: "Toggle sidebar",
         default_binding: "mod+b",
