@@ -384,6 +384,17 @@ impl Default for MessageList {
 }
 
 impl MessageList {
+    /// Every row the list holds, in no particular order, asking the source
+    /// for nothing. See [`postio_ui::list::ListWindow::resident`].
+    pub fn held_rows(&self) -> Vec<Row> {
+        self.imp()
+            .window
+            .borrow()
+            .resident()
+            .filter_map(|entry| entry.row())
+            .collect()
+    }
+
     /// Call `on_filled` when a delivery gives contents to rows that already
     /// existed.
     ///

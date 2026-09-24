@@ -297,6 +297,15 @@ impl<T: ListRow> ListWindow<T> {
     /// page either side — if it is not resident.
     ///
     /// `None` for a position outside the current total.
+    /// Every row held, in no particular order, asking for nothing.
+    ///
+    /// For a caller that wants what is already here -- the subset of a
+    /// conversation the list holds -- where [`row_at`](Self::row_at) over
+    /// every position would ask for every page it does not hold.
+    pub fn resident(&self) -> impl Iterator<Item = &T> {
+        self.pages.values().flatten()
+    }
+
     pub fn row_at(&mut self, position: u32) -> Option<Lookup<'_, T>> {
         if position >= self.total {
             return None;
@@ -614,6 +623,31 @@ mod tests {
     /// delivery, for a test that does not care about staleness.
     fn deliver_fresh(window: &mut ListWindow<Fixture>, page: u32, total: u32) -> Delivered {
         window.deliver(window.generation(), page, page_rows(page, total))
+    }
+
+    #[test]
+    fn resident_rows_are_read_without_asking_for_anything() {
+        // A conversation open looked for the rows it already had by walking
+        // every position, and every position not held is a page request --
+        // five `j` presses in a large folder asked for 138 pages. What is
+        // held has to be readable without asking.
+        let mut window: ListWindow<Fixture> = ListWindow::new();
+        window.reset(10_000);
+        deliver_fresh(&mut window, 0, 10_000);
+        deliver_fresh(&mut window, 3, 10_000);
+
+        let mut held: Vec<MessageId> = window.resident().map(|row| row.id).collect();
+        held.sort();
+        let mut expected: Vec<MessageId> = page_rows(0, 10_000)
+            .into_iter()
+            .chain(page_rows(3, 10_000))
+            .map(|row| row.id)
+            .collect();
+        expected.sort();
+        assert_eq!(held, expected);
+        for page in [1, 2, 4] {
+            assert!(!window.is_pending(page), "page {page} was asked for");
+        }
     }
 
     #[test]
