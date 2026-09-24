@@ -1753,3 +1753,201 @@ fn the_host_makes_bodies_already_on_disk_searchable_once_it_catches_up() {
     let found = eventually(&world, search);
     assert_eq!(found.ids, vec![message]);
 }
+
+/// A mail server holding one message in `INBOX`, as a synced account's
+/// would.
+fn server_with_one_message() -> postio_account::backend::MockBackend {
+    use postio_account::backend::{MockBackend, MockMailbox, MockMessage};
+    let raw = "Message-ID: <tide@example.com>\r\nFrom: Ada <ada@example.com>\r\nTo: Test User \
+               <test@example.com>\r\nSubject: Tide gate\r\nDate: Tue, 22 Sep 2026 09:00:00 \
+               +0000\r\nContent-Type: text/plain; charset=utf-8\r\n\r\nThe tide gate \
+               opens at nine.\r\n";
+    MockBackend::builder()
+        .mailbox(MockMailbox::new("INBOX").message(MockMessage::from(raw.as_bytes().to_vec())))
+        .mailbox(MockMailbox::new("Archive"))
+        .mailbox(MockMailbox::new("Trash"))
+        .build()
+}
+
+/// A host whose account can sync from `mock`, with no background body
+/// fetching: a body arrives only because somebody asked for it.
+fn syncing_world(mock: postio_account::backend::MockBackend) -> World {
+    use postio_account::secret::{AccountKey, Password, SecretStore};
+    let secrets = std::sync::Arc::new(MemorySecretStore::new());
+    tokio::runtime::Builder::new_current_thread()
+        .build()
+        .expect("a runtime for the keyring")
+        .block_on(secrets.store(
+            &AccountKey::new("test@example.com".to_owned()),
+            &Password::new("password"),
+        ))
+        .expect("the password");
+    World::configured(move |wiring| {
+        wiring
+            .with_secrets(secrets)
+            .with_backfill(postio_runtime::BackfillPolicy {
+                background: false,
+                ..postio_runtime::BackfillPolicy::default()
+            })
+            .with_mail(postio_session::MailOverride {
+                backend: std::sync::Arc::new(mock),
+                smtp: std::sync::Arc::new(postio_smtp::transport::ScriptedConnector::new(
+                    postio_smtp::transport::SmtpScript::new("220 ready"),
+                )),
+            })
+    })
+}
+
+/// The inbox row with `subject`, once there is one.
+fn row_titled(world: &World, client: &Client, subject: &str) -> Option<MessageId> {
+    let page = world
+        .rt
+        .block_on(client.list_page(PageRequest {
+            scope: ListScope::Mailbox(world.inbox),
+            offset: 0,
+            limit: 20,
+        }))
+        .ok()?;
+    match page {
+        ListPage::Messages(page) => page
+            .rows
+            .into_iter()
+            .find(|row| row.subject.as_deref() == Some(subject))
+            .map(|row| row.id),
+        ListPage::Threads(page) => page
+            .rows
+            .into_iter()
+            .find(|row| row.representative.subject.as_deref() == Some(subject))
+            .map(|row| row.representative.id),
+    }
+}
+
+#[test]
+fn a_posted_fetch_body_brings_the_opened_messages_body_and_says_so() {
+    // `Req::FetchBody`: a person opened a message whose body was never
+    // fetched. With the background lane off, nothing else fetches it.
+    let mock = server_with_one_message();
+    let world = syncing_world(mock.clone());
+    let (client, events) = world.frontend(ClientKind::Tui);
+    world.host().start_syncing();
+    let message = eventually(&world, || row_titled(&world, &client, "Tide gate"));
+    assert_eq!(
+        world.rt.block_on(client.body(message)).expect("an answer"),
+        postio_client::protocol::Body::Partial,
+        "headers only, before anybody asks"
+    );
+    assert!(mock.body_fetches().is_empty(), "nothing fetched a body yet");
+
+    client.fetch_body(message);
+
+    world.hear(
+        &events,
+        |event| matches!(event, Event::BodyLoaded { message: loaded, .. } if *loaded == message),
+    );
+    match world.rt.block_on(client.body(message)).expect("an answer") {
+        postio_client::protocol::Body::Ready { body, .. } => {
+            let text = body.text.expect("a text part");
+            assert!(text.contains("The tide gate opens at nine."), "{text}");
+        }
+        other => panic!("the fetched body is not what `Body` answers: {other:?}"),
+    }
+    assert_eq!(
+        mock.body_fetches(),
+        vec!["INBOX".to_owned()],
+        "fetched once"
+    );
+}
+
+/// `count` messages in the inbox, oldest first, each with a raw-source blob
+/// of `size` bytes of its own, as `reclaim.rs` shapes a store to evict from.
+fn messages_with_blobs(world: &World, count: u8, size: usize) -> Vec<postio_model::ids::BlobId> {
+    let blobs = world.host().wiring().blobs.clone();
+    (0..count)
+        .map(|index| {
+            let blob = blobs.put(&vec![b'a' + index; size]).expect("a blob");
+            let stored = blob.clone();
+            another_message(world, move |message| {
+                message.received_at =
+                    chrono::DateTime::from_timestamp(1_000 + i64::from(index), 0).expect("a time");
+                message.server.uid = Some(postio_model::ids::Uid::new(u32::from(index) + 1));
+                message.server.uid_validity = Some(postio_model::ids::UidValidity::new(1));
+                message.raw_blob_id = Some(stored);
+            });
+            blob
+        })
+        .collect()
+}
+
+#[test]
+fn a_storage_ceiling_evicts_the_oldest_blobs_over_it_and_keeps_what_fits() {
+    // `Req::StorageCeiling`: `[storage] max_bytes` changed in a frontend.
+    let world = World::new();
+    let (client, _) = world.frontend(ClientKind::Gtk);
+    let written = messages_with_blobs(&world, 3, 40_000);
+    let blobs = world.host().wiring().blobs.clone();
+
+    // No ceiling is no eviction.
+    client.storage_ceiling(None);
+    world
+        .rt
+        .block_on(async { tokio::time::sleep(Duration::from_millis(300)).await });
+    assert!(
+        written.iter().all(|blob| blobs.contains(blob)),
+        "none taken"
+    );
+
+    let budget = blobs.len_of(&written[2]).expect("its size") + 16;
+    client.storage_ceiling(Some(budget));
+
+    eventually(&world, || {
+        (!blobs.contains(&written[0]) && !blobs.contains(&written[1])).then_some(())
+    });
+    assert!(
+        blobs.contains(&written[2]),
+        "the newest fits the ceiling and is kept"
+    );
+}
+
+#[test]
+fn start_sync_asked_twice_gives_the_account_one_engine() {
+    // `Req::StartSync`: every window asks once its first frame is up, and
+    // the daemon has usually asked already.
+    let mock = server_with_one_message();
+    let world = syncing_world(mock.clone());
+    let (client, _) = world.frontend(ClientKind::Gtk);
+    let (other, _) = world.frontend(ClientKind::Tui);
+    let running = || {
+        world
+            .host()
+            .inner
+            .engines
+            .running
+            .lock()
+            .expect("never poisoned")
+            .keys()
+            .copied()
+            .collect::<Vec<_>>()
+    };
+    world
+        .rt
+        .block_on(async { tokio::time::sleep(Duration::from_millis(300)).await });
+    assert!(running().is_empty(), "nothing syncs until it is asked to");
+    assert!(mock.header_fetches().is_empty());
+
+    // Two frontends at once, then one again once it is running.
+    client.start_sync();
+    other.start_sync();
+    eventually(&world, || row_titled(&world, &client, "Tide gate"));
+    client.start_sync();
+    world
+        .rt
+        .block_on(async { tokio::time::sleep(Duration::from_millis(500)).await });
+
+    assert_eq!(running(), vec![world.account], "one engine, the account's");
+    let inbox_syncs = mock
+        .header_fetches()
+        .iter()
+        .filter(|path| *path == "INBOX")
+        .count();
+    assert_eq!(inbox_syncs, 1, "the inbox was synced once, by one engine");
+}
