@@ -674,6 +674,7 @@ fn the_reader_renders_and_hardens_the_corpus() {
     // and the losers would return through the `no display` guard above and be
     // reported as passing (#355, `check-one-gtk-test-per-binary`).
     rendering_the_next_message_keeps_the_web_process();
+    a_new_reader_loads_nothing_until_it_is_asked_to();
     readers_share_one_web_process();
     two_readers_resolve_their_own_inline_images();
     fifty_conversations_hold_what_one_holds();
@@ -1963,6 +1964,34 @@ fn the_pane_is_painted_before_it_has_a_document() {
     );
 
     window.destroy();
+}
+
+/// Building a reader loads nothing (#1603).
+///
+/// The constructor used to end in `clear()`, which loads an empty document --
+/// and a view's first load is what starts its web process. The window's
+/// reader is built inside `reading::install`, before the first frame, so that
+/// load put a process start into the startup burst for a pane nobody had
+/// opened a message in. The pane is painted its ground colour without a
+/// document (`the_pane_is_painted_before_it_has_a_document`); a load waits
+/// until there is something to draw, or until `warm` is asked for.
+fn a_new_reader_loads_nothing_until_it_is_asked_to() {
+    if adw::init().is_err() || gdk::Display::default().is_none() {
+        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
+        return;
+    }
+    let before = postio_ui::test_support::renders_issued();
+    let reader = Reader::with_allowlist(
+        Rc::new(NoBlobs),
+        RemoteImageAllowList::default(),
+        scratch_path("loads-nothing"),
+    );
+    assert_eq!(reader.loads(), 0, "building a reader loaded a document");
+    assert_eq!(
+        postio_ui::test_support::renders_issued() - before,
+        0,
+        "building a reader handed a document to the engine"
+    );
 }
 
 fn readers_share_one_web_process() {

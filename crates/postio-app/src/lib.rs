@@ -507,6 +507,11 @@ pub async fn feed_the_window(window: &Window, wiring: &Wiring) -> Option<Wired> 
         move || {
             if let Some(window) = window.upgrade() {
                 window.composer().warm();
+                // The reading pane's web process too, now that its reader no
+                // longer starts one while it is built (#1603): on this idle
+                // turn rather than before the first frame, and before the
+                // first message is opened into it.
+                window.reader().warm();
             }
         }
     });
