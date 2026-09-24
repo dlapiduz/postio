@@ -72,6 +72,8 @@ struct Entry {
     /// The tasks that carry this client's events, stopped when it leaves:
     /// the hub never closes a subscription on its own.
     tasks: Vec<tokio::task::AbortHandle>,
+    /// This client's draft writes, in the order it made them.
+    drafts: compose::DraftWriter,
 }
 
 /// A request answered on arrival, or one left to be answered concurrently.
@@ -80,6 +82,9 @@ enum InOrder {
     Answered(Resp),
     /// A read, to answer on a task of its own.
     Later(Req),
+    /// Handed over in the order it arrived, answered when it lands: a draft
+    /// write, which must not overtake the one before it.
+    Pending(std::pin::Pin<Box<dyn std::future::Future<Output = Resp> + Send>>),
 }
 
 struct Queued {
@@ -289,6 +294,7 @@ impl Inner {
                 verbs,
                 sink,
                 tasks: vec![hearing.abort_handle(), sorting.abort_handle()],
+                drafts: compose::DraftWriter::spawn(self.wiring.database.clone(), self.runtime()),
             },
         );
         self.connected.send_modify(|count| *count += 1);
@@ -329,6 +335,51 @@ impl Inner {
                 self.wiring.store.note_removed(mailbox, messages);
                 InOrder::Answered(Resp::Done)
             }
+            Req::SaveDraft { generation, draft } => {
+                let Some(entry) = self.entry(client) else {
+                    return InOrder::Answered(Resp::Stopped);
+                };
+                let saved = entry.drafts.save(generation, *draft);
+                InOrder::Pending(Box::pin(async move {
+                    saved.await.map_or_else(Resp::Failed, Resp::DraftSaved)
+                }))
+            }
+            Req::QueueSend {
+                generation,
+                draft,
+                at,
+            } => {
+                let Some(entry) = self.entry(client) else {
+                    return InOrder::Answered(Resp::Stopped);
+                };
+                let account = draft.account_id;
+                let queued = entry.drafts.send(generation, *draft, at);
+                // Everybody's list moved -- the row left Drafts for the
+                // Outbox -- so the news goes to the hub, not only to the
+                // frontend that sent it.
+                let hub = self.hub.sink();
+                InOrder::Pending(Box::pin(async move {
+                    match queued.await {
+                        Ok(moved) => {
+                            if let Some(mailbox) = moved {
+                                hub.emit(Event::MessageListChanged { account, mailbox });
+                            }
+                            Resp::Queued(moved)
+                        }
+                        Err(error) => Resp::Failed(error),
+                    }
+                }))
+            }
+            Req::DiscardDraft { generation, known } => {
+                let Some(entry) = self.entry(client) else {
+                    return InOrder::Answered(Resp::Stopped);
+                };
+                let discarded = entry.drafts.discard(generation, known);
+                InOrder::Pending(Box::pin(async move {
+                    discarded.await;
+                    Resp::Done
+                }))
+            }
             other => InOrder::Later(other),
         }
     }
@@ -364,12 +415,63 @@ impl Inner {
     async fn answer(&self, client: ClientId, request: Req) -> Resp {
         let request = match self.answer_in_order(client, request) {
             InOrder::Answered(answered) => return answered,
+            InOrder::Pending(landing) => return landing.await,
             InOrder::Later(request) => request,
         };
         let store = &self.wiring.store;
         match request {
-            Req::Send(..) | Req::SendTracked(..) | Req::NoteRemoved(..) => {
+            Req::Send(..)
+            | Req::SendTracked(..)
+            | Req::NoteRemoved(..)
+            | Req::SaveDraft { .. }
+            | Req::QueueSend { .. }
+            | Req::DiscardDraft { .. } => {
                 unreachable!("answered in order above")
+            }
+            Req::Recipients { account, prefix } => {
+                Resp::Recipients(compose::recipients(&self.wiring.database, account, &prefix).await)
+            }
+            Req::ReplySource(message) => Resp::ReplySource(
+                compose::reply_source(&self.wiring.database, message)
+                    .await
+                    .map(Box::new),
+            ),
+            Req::DraftBehind(message) => Resp::Draft(
+                compose::draft_behind(&self.wiring.database, message)
+                    .await
+                    .map(Box::new),
+            ),
+            Req::CancelSend(draft) => Resp::Draft(
+                compose::cancel_queued_send(&self.wiring.database, draft)
+                    .await
+                    .map(Box::new),
+            ),
+            Req::SendFailure(draft) => {
+                Resp::SendFailure(compose::why_the_send_failed(&self.wiring.database, draft).await)
+            }
+            Req::DefaultSignature { account, selected } => Resp::Signature(
+                compose::default_signature(&self.wiring.database, account, selected).await,
+            ),
+            Req::Attach(path) => {
+                let blobs = self.wiring.blobs.clone();
+                let stored = tokio::task::spawn_blocking(move || {
+                    let mime_type = compose::guess_mime_type(&path);
+                    compose::attach_file(&blobs, &path, mime_type)
+                })
+                .await
+                .ok()
+                .flatten();
+                Resp::Attached(stored)
+            }
+            Req::InlineImage { bytes, mime_type } => {
+                let blobs = self.wiring.blobs.clone();
+                let stored = tokio::task::spawn_blocking(move || {
+                    compose::inline_attachment(&blobs, bytes, &mime_type)
+                })
+                .await
+                .ok()
+                .flatten();
+                Resp::Attached(stored)
             }
             Req::Page(page) => store
                 .list_page(page)
@@ -636,6 +738,15 @@ impl Transport for Local {
     fn call(&self, request: Req) -> Call<'_> {
         let request = match self.inner.answer_in_order(self.client, request) {
             InOrder::Answered(answered) => return Box::pin(async move { Ok(answered) }),
+            InOrder::Pending(landing) => {
+                // On the host's runtime, so the answer lands whatever
+                // executor the caller awaits on.
+                let (answer, answered) = tokio::sync::oneshot::channel();
+                self.inner.runtime().spawn(async move {
+                    let _ = answer.send(landing.await);
+                });
+                return Box::pin(async move { answered.await.map_err(|_| Disconnected) });
+            }
             InOrder::Later(request) => request,
         };
         let (answer, answered) = tokio::sync::oneshot::channel();
@@ -650,6 +761,10 @@ impl Transport for Local {
     fn post(&self, request: Req) {
         let request = match self.inner.answer_in_order(self.client, request) {
             InOrder::Answered(_) => return,
+            InOrder::Pending(landing) => {
+                self.inner.runtime().spawn(landing);
+                return;
+            }
             InOrder::Later(request) => request,
         };
         let inner = Arc::clone(&self.inner);
@@ -664,6 +779,7 @@ impl Transport for Local {
     }
 }
 
+pub mod compose;
 pub mod parts;
 pub mod serve;
 

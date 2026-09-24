@@ -13,13 +13,16 @@ use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
 
+use chrono::{DateTime, Utc};
 use postio_core::{Command, EventEnvelope, InvocationId, SharedState};
 use postio_model::ListScope;
+use postio_model::contact_group::RecipientCandidate;
 use postio_model::ids::{AccountId, MailboxId, MessageId};
 use postio_model::listing::{
     DraftCounts, ListPage, ListRows, MailStore, MessageSummary, PageRequest, Read, StoreError,
 };
 use postio_model::mailbox::Mailbox;
+use postio_model::{Draft, DraftId};
 
 use crate::counting::Counts;
 use crate::protocol::{Req, Resp};
@@ -76,6 +79,17 @@ impl Req {
             Req::Parts(_) => "Parts",
             Req::SavePart { .. } => "SavePart",
             Req::OpenPart { .. } => "OpenPart",
+            Req::SaveDraft { .. } => "SaveDraft",
+            Req::QueueSend { .. } => "QueueSend",
+            Req::DiscardDraft { .. } => "DiscardDraft",
+            Req::Recipients { .. } => "Recipients",
+            Req::ReplySource(_) => "ReplySource",
+            Req::DraftBehind(_) => "DraftBehind",
+            Req::CancelSend(_) => "CancelSend",
+            Req::SendFailure(_) => "SendFailure",
+            Req::DefaultSignature { .. } => "DefaultSignature",
+            Req::Attach(_) => "Attach",
+            Req::InlineImage { .. } => "InlineImage",
         }
     }
 }
@@ -231,6 +245,161 @@ impl Client {
         };
         self.read(request, "a part to open", |answer| match answer {
             Resp::Saved(path) => Some(path),
+            _ => None,
+        })
+        .await
+    }
+
+    /// Autosave `draft` as composition `generation`; the answer is its id.
+    pub async fn save_draft(&self, generation: u64, draft: Draft) -> Result<DraftId, StoreError> {
+        let request = Req::SaveDraft {
+            generation,
+            draft: Box::new(draft),
+        };
+        self.read(request, "a saved draft", |answer| match answer {
+            Resp::DraftSaved(id) => Some(id),
+            _ => None,
+        })
+        .await
+    }
+
+    /// Queue `draft` to send, now or at `at`.
+    pub async fn queue_send(
+        &self,
+        generation: u64,
+        draft: Draft,
+        at: Option<DateTime<Utc>>,
+    ) -> Result<Option<MailboxId>, StoreError> {
+        let request = Req::QueueSend {
+            generation,
+            draft: Box::new(draft),
+            at,
+        };
+        self.read(request, "a queued send", |answer| match answer {
+            Resp::Queued(moved) => Some(moved),
+            _ => None,
+        })
+        .await
+    }
+
+    /// Composition `generation` closed with nothing worth keeping.
+    pub async fn discard_draft(
+        &self,
+        generation: u64,
+        known: Option<DraftId>,
+    ) -> Result<(), StoreError> {
+        let request = Req::DiscardDraft { generation, known };
+        self.read(request, "a discard", |answer| match answer {
+            Resp::Done => Some(()),
+            _ => None,
+        })
+        .await
+    }
+
+    /// Recipient completion for `prefix`.
+    pub async fn recipients(
+        &self,
+        account: AccountId,
+        prefix: String,
+    ) -> Result<Vec<RecipientCandidate>, StoreError> {
+        let request = Req::Recipients { account, prefix };
+        self.read(request, "recipients", |answer| match answer {
+            Resp::Recipients(found) => Some(found),
+            _ => None,
+        })
+        .await
+    }
+
+    /// The message a reply to `message` is built from, and its account.
+    pub async fn reply_source(
+        &self,
+        message: MessageId,
+    ) -> Result<Option<(postio_model::Message, postio_model::Account)>, StoreError> {
+        self.read(
+            Req::ReplySource(message),
+            "a reply source",
+            |answer| match answer {
+                Resp::ReplySource(found) => Some(found.map(|found| *found)),
+                _ => None,
+            },
+        )
+        .await
+    }
+
+    /// The local draft behind a Drafts row.
+    pub async fn draft_behind(&self, message: MessageId) -> Result<Option<Draft>, StoreError> {
+        self.read(
+            Req::DraftBehind(message),
+            "a draft",
+            |answer| match answer {
+                Resp::Draft(found) => Some(found.map(|found| *found)),
+                _ => None,
+            },
+        )
+        .await
+    }
+
+    /// Take a queued draft back to edit, if it has not started sending.
+    pub async fn cancel_send(&self, draft: DraftId) -> Result<Option<Draft>, StoreError> {
+        self.read(
+            Req::CancelSend(draft),
+            "a cancelled send",
+            |answer| match answer {
+                Resp::Draft(found) => Some(found.map(|found| *found)),
+                _ => None,
+            },
+        )
+        .await
+    }
+
+    /// Why a draft's last send attempt gave up.
+    pub async fn send_failure(&self, draft: DraftId) -> Result<Option<String>, StoreError> {
+        self.read(
+            Req::SendFailure(draft),
+            "a send failure",
+            |answer| match answer {
+                Resp::SendFailure(why) => Some(why),
+                _ => None,
+            },
+        )
+        .await
+    }
+
+    /// The signature a new draft for `account` starts with.
+    pub async fn default_signature(
+        &self,
+        account: AccountId,
+        selected: Option<MailboxId>,
+    ) -> Result<Option<postio_model::SignatureId>, StoreError> {
+        let request = Req::DefaultSignature { account, selected };
+        self.read(request, "a signature", |answer| match answer {
+            Resp::Signature(found) => Some(found),
+            _ => None,
+        })
+        .await
+    }
+
+    /// Store the file at `path` as an attachment.
+    pub async fn attach(
+        &self,
+        path: std::path::PathBuf,
+    ) -> Result<Option<postio_model::Attachment>, StoreError> {
+        self.read(Req::Attach(path), "an attachment", |answer| match answer {
+            Resp::Attached(found) => Some(found),
+            _ => None,
+        })
+        .await
+    }
+
+    /// Store pasted image bytes as an inline part.
+    pub async fn inline_image(
+        &self,
+        bytes: Vec<u8>,
+        mime_type: String,
+    ) -> Result<Option<postio_model::Attachment>, StoreError> {
+        let request = Req::InlineImage { bytes, mime_type };
+        self.read(request, "an inline image", |answer| match answer {
+            Resp::Attached(found) => Some(found),
             _ => None,
         })
         .await

@@ -12,6 +12,7 @@ repository.workspace = true
 workspace = true
 
 [dependencies]
+chrono = { workspace = true, features = ["serde"] }
 async-channel = { workspace = true }
 postio-core.workspace = true
 postio-model.workspace = true

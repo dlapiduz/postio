@@ -413,3 +413,91 @@ fn a_frontend_lists_a_messages_parts_and_saves_one() {
     assert_eq!(written, to);
     assert_eq!(std::fs::read(&to).unwrap(), b"%PDF-1.7 the report");
 }
+
+/// A draft to `account`, saying `words`.
+fn a_draft(account: postio_model::AccountId, words: &str) -> postio_model::Draft {
+    let mut draft = postio_model::Draft::new(account);
+    draft.to = vec![postio_model::EmailAddress::new(
+        None::<String>,
+        "grace@example.net",
+    )];
+    draft.subject = "Tide gate".to_owned();
+    draft.body.text = Some(words.to_owned());
+    draft.body_markdown = Some(words.to_owned());
+    draft
+}
+
+fn drafts_in(world: &World, account: postio_model::AccountId) -> Vec<postio_model::Draft> {
+    world
+        .rt
+        .block_on(crate::compose::drafts_of(&world.database, account))
+        .expect("the drafts")
+}
+
+#[test]
+fn two_saves_made_back_to_back_write_one_draft() {
+    // An autosave tick and the next keystroke's tick, the second made before
+    // the first landed: the second carries no id yet, and must still update
+    // the row the first made rather than start another.
+    let world = World::new();
+    let (client, _) = world.frontend(ClientKind::Tui);
+    let account = world.rt.block_on(client.accounts()).expect("accounts")[0].id;
+
+    let (first, second) = world.rt.block_on(async {
+        let first = client.save_draft(1, a_draft(account, "Half a"));
+        let second = client.save_draft(1, a_draft(account, "Half a **sentence**"));
+        tokio::join!(first, second)
+    });
+
+    let first = first.expect("saved");
+    assert_eq!(second.expect("saved"), first);
+    let drafts = drafts_in(&world, account);
+    assert_eq!(drafts.len(), 1, "one composition, one row");
+    assert_eq!(
+        drafts[0].body_markdown.as_deref(),
+        Some("Half a **sentence**")
+    );
+}
+
+#[test]
+fn a_draft_sent_from_a_frontend_is_queued_and_a_discard_after_it_keeps_it() {
+    let world = World::new();
+    let (client, _) = world.frontend(ClientKind::Tui);
+    let account = world.rt.block_on(client.accounts()).expect("accounts")[0].id;
+
+    world.rt.block_on(async {
+        client
+            .save_draft(7, a_draft(account, "Ready"))
+            .await
+            .expect("saved");
+        client
+            .queue_send(7, a_draft(account, "Ready."), None)
+            .await
+            .expect("queued");
+        // Closing the composer after a send is a discard of that composition;
+        // it must not take the queued draft with it.
+        client.discard_draft(7, None).await.expect("answered");
+    });
+
+    let drafts = drafts_in(&world, account);
+    assert_eq!(drafts.len(), 1);
+    assert_eq!(drafts[0].state, postio_model::DraftState::Queued);
+    assert_eq!(drafts[0].body.text.as_deref(), Some("Ready."));
+}
+
+#[test]
+fn a_composition_closed_empty_leaves_no_draft() {
+    let world = World::new();
+    let (client, _) = world.frontend(ClientKind::Tui);
+    let account = world.rt.block_on(client.accounts()).expect("accounts")[0].id;
+
+    world.rt.block_on(async {
+        client
+            .save_draft(3, a_draft(account, "x"))
+            .await
+            .expect("saved");
+        client.discard_draft(3, None).await.expect("answered");
+    });
+
+    assert!(drafts_in(&world, account).is_empty());
+}

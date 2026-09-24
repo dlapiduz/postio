@@ -271,6 +271,13 @@ async fn connection(inner: Arc<Inner>, stream: tokio::net::UnixStream, uid: u32)
             crate::InOrder::Answered(answered) => {
                 let _ = out.send(Frame::Response { id, body: answered }).await;
             }
+            crate::InOrder::Pending(landing) => {
+                let out = out.clone();
+                tokio::spawn(async move {
+                    let answered = landing.await;
+                    let _ = out.send(Frame::Response { id, body: answered }).await;
+                });
+            }
             crate::InOrder::Later(request) => {
                 let inner = Arc::clone(&inner);
                 let out = out.clone();

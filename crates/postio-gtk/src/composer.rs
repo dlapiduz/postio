@@ -487,27 +487,7 @@ type ClosedHandler = Box<dyn Fn(Closing)>;
 /// What to call when the composer takes over the reading pane.
 type OpenedHandler = Box<dyn Fn()>;
 
-/// One row of recipient completion: a single address, or a named group that
-/// expands to every one of its members the moment it is accepted.
-///
-/// ADR 0007 Q3: there is no group address to insert instead — a draft's
-/// recipients have to be what the user can see, which is what keeps `Bcc`
-/// honest and stops a draft's recipients from silently changing if someone
-/// edits the group's membership after it was picked.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum RecipientCandidate {
-    /// One address, exactly as accepting it always worked.
-    Contact(EmailAddress),
-    /// A named group. `members` is the membership at the moment this
-    /// candidate was offered — accepting it inserts all of them as
-    /// individual addresses, never a group reference.
-    Group {
-        /// Display name, for the completion row.
-        name: String,
-        /// Every member's address, in the order they are inserted.
-        members: Vec<EmailAddress>,
-    },
-}
+pub use postio_model::contact_group::RecipientCandidate;
 
 /// Answers "what does `prefix` complete to" for recipient completion —
 /// contacts, previous correspondents and contact groups, ranked by frequency

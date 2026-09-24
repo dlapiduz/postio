@@ -18,14 +18,16 @@
 //! rows (research R2). [`MAX_FRAME`] refuses a length no real frame has, so
 //! a corrupt stream is an error rather than a gigabyte allocation.
 
+use chrono::{DateTime, Utc};
 use postio_core::{Command, EventEnvelope, InvocationId, StateSnapshot};
-use postio_model::Account;
 use postio_model::ListScope;
+use postio_model::contact_group::RecipientCandidate;
 use postio_model::ids::{AccountId, MailboxId, MessageId};
 use postio_model::listing::{
     DraftCounts, ListPage, ListRows, MessageSummary, PageRequest, StoreError,
 };
 use postio_model::mailbox::Mailbox;
+use postio_model::{Account, Draft, DraftId};
 use serde::{Deserialize, Serialize};
 
 /// The protocol's own version. Bumped with any change to [`Frame`]; the
@@ -142,6 +144,62 @@ pub enum Req {
         /// Which part.
         attachment: postio_model::ids::AttachmentId,
     },
+    /// Autosave a draft as composition `generation`. Answered in order with
+    /// every other draft write from this client (see `DraftWriter`).
+    SaveDraft {
+        /// Which composition: a second save of one before the first's id
+        /// came back still updates the same row.
+        generation: u64,
+        /// The draft as it stands.
+        draft: Box<Draft>,
+    },
+    /// Queue a draft to send, now or at `at`.
+    QueueSend {
+        /// Which composition.
+        generation: u64,
+        /// The draft as it stands.
+        draft: Box<Draft>,
+        /// When, for a scheduled send.
+        at: Option<DateTime<Utc>>,
+    },
+    /// A composition closed with nothing worth keeping: its row goes.
+    DiscardDraft {
+        /// Which composition.
+        generation: u64,
+        /// Its id, when the frontend knows it and the host may not.
+        known: Option<DraftId>,
+    },
+    /// Recipient completion for what has been typed so far.
+    Recipients {
+        /// Whose contacts.
+        account: AccountId,
+        /// What has been typed.
+        prefix: String,
+    },
+    /// The message a reply or forward is built from, and its account.
+    ReplySource(MessageId),
+    /// The local draft behind a Drafts row, if there is one.
+    DraftBehind(MessageId),
+    /// Take a queued draft back to edit it, if it has not started sending.
+    CancelSend(DraftId),
+    /// Why a draft's last send attempt gave up.
+    SendFailure(DraftId),
+    /// The signature a new draft starts with.
+    DefaultSignature {
+        /// Which account.
+        account: AccountId,
+        /// The mailbox selected, whose own signature overrides the account's.
+        selected: Option<MailboxId>,
+    },
+    /// Store the file at this path as an attachment.
+    Attach(std::path::PathBuf),
+    /// Store pasted image bytes as an inline part.
+    InlineImage {
+        /// The image.
+        bytes: Vec<u8>,
+        /// Its type, `image/…`.
+        mime_type: String,
+    },
 }
 
 /// The host's answer to one [`Req`].
@@ -175,6 +233,22 @@ pub enum Resp {
     Parts(Vec<postio_model::Attachment>),
     /// Where a part was written.
     Saved(std::path::PathBuf),
+    /// The id a saved draft has.
+    DraftSaved(DraftId),
+    /// A draft was queued; the Drafts folder whose list moved, if one did.
+    Queued(Option<MailboxId>),
+    /// Recipient suggestions, best first.
+    Recipients(Vec<RecipientCandidate>),
+    /// A reply's source message and its account.
+    ReplySource(Option<Box<(postio_model::Message, Account)>>),
+    /// A draft, or none.
+    Draft(Option<Box<Draft>>),
+    /// Why a send failed, if it did.
+    SendFailure(Option<String>),
+    /// A signature, or none.
+    Signature(Option<postio_model::SignatureId>),
+    /// A stored attachment, or none when the file could not be read.
+    Attached(Option<postio_model::Attachment>),
     /// The read could not be answered; the sentence is for the user.
     Failed(StoreError),
 }

@@ -3883,6 +3883,7 @@ name = "postio-client"
 version = "0.3.0"
 dependencies = [
  "async-channel",
+ "chrono",
  "postio-core",
  "postio-model",
  "serde",
