@@ -361,6 +361,21 @@ pub enum Req {
     /// awaited; the host keeps the latest for the frontend it elects to
     /// deliver notifications.
     Attention(postio_ui::notify::Attention),
+    /// Fetch this message's body ahead of the backfill: a person opened it.
+    /// Posted; the body arrives as `BodyLoaded`.
+    FetchBody(MessageId),
+    /// `[storage] max_bytes` changed: bring the blob store under it.
+    StorageCeiling(Option<u64>),
+    /// What a window opens on: the account to read, or the first-run screen
+    /// (repairing an account whose credential is missing, or a first run).
+    /// Removals left pending by the last run are carried out first.
+    StartupRoute,
+    /// Record one outbound connection a frontend made itself -- a discovery
+    /// probe, a connection test -- in the egress log (#151).
+    RecordEgress(postio_model::egress::EgressEvent),
+    /// Start syncing every enabled account that is not syncing yet: the
+    /// ones there were at startup, or one a frontend just added.
+    StartSync,
     /// Save an account whose credentials a frontend already proved: the
     /// password to the keyring first, then the row, as the desktop's
     /// first-run screen writes them (`postio_session::onboarding::persist`).
@@ -463,6 +478,8 @@ pub enum Resp {
     Privacy(PrivacyLog),
     /// Whether the orientation was seen before.
     Seen(bool),
+    /// What a window opens on.
+    Startup(StartupRoute),
     /// A report's text.
     Diagnosis(String),
     /// What discovery found, as the first-run screen shows it.
@@ -649,6 +666,19 @@ pub struct Found {
 pub struct Hits(pub postio_search::SearchResults);
 
 impl Eq for Hits {}
+
+/// What a window opens on, as the store's owner decides it.
+///
+/// An account is something to open only when the store holds a row **and**
+/// the keyring gives up a password for it; otherwise the first-run screen,
+/// prefilled from the row when there is one.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum StartupRoute {
+    /// Open it: there is a row, and a password to authenticate with.
+    Ready(Box<postio_model::Account>),
+    /// Show the first-run screen; `Some` is a repair of this account.
+    Onboard(Option<Box<postio_model::Account>>),
+}
 
 /// Everything that crosses the wire.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

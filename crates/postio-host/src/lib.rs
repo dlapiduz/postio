@@ -71,6 +71,20 @@ struct Inner {
     connected: tokio::sync::watch::Sender<usize>,
     /// `[sync]`'s notification settings: which folders' arrivals notify.
     notify: Mutex<postio_config::SyncConfig>,
+    /// The engine syncing each account, once started.
+    engines: Engines,
+}
+
+/// The engine syncing each account: at most one per account, however many
+/// times a frontend asks for sync to start.
+type Engines = Arc<EngineTable>;
+
+#[derive(Default)]
+struct EngineTable {
+    running: Mutex<HashMap<postio_model::AccountId, postio_runtime::Engine>>,
+    /// Held while engines start, so two asks at once -- the daemon's own at
+    /// startup and a window's -- cannot both find none running.
+    starting: tokio::sync::Mutex<()>,
 }
 
 /// One connected frontend, as the host holds it.
@@ -92,8 +106,83 @@ struct Entry {
     notices: async_channel::Sender<postio_ui::notify::Notification>,
 }
 
+/// Start syncing every enabled account that is not syncing yet.
+///
+/// From nothing, every account is started together, under the connection
+/// budget's judgement of the whole set; once some are running, each one
+/// missing joins them, as an account added while Postio runs does. Either
+/// way an account never gets a second engine.
+async fn start_sync(wiring: Wiring, engines: Engines) {
+    let _starting = engines.starting.lock().await;
+    let accounts = match wiring.database.connect().await {
+        Ok(connection) => postio_storage::repository::AccountRepository::new(&connection)
+            .list_enabled()
+            .await
+            .unwrap_or_else(|error| {
+                tracing::error!(%error, "cannot read the accounts: {error}");
+                Vec::new()
+            }),
+        Err(error) => {
+            tracing::error!(%error, "cannot read the accounts: {error}");
+            Vec::new()
+        }
+    };
+    if accounts.is_empty() {
+        return;
+    }
+    let running = engines.running.lock().expect("never poisoned").len();
+    if running == 0 {
+        match postio_session::engine::start_all(&accounts, &wiring).await {
+            Ok(started) => {
+                for (account, engine) in started {
+                    adopt(&wiring, &engines, account, engine);
+                }
+            }
+            Err(refusal) => {
+                tracing::error!(%refusal, "not starting the sync engines: {refusal}");
+            }
+        }
+        return;
+    }
+    let total = accounts.len();
+    for account in accounts {
+        if engines
+            .running
+            .lock()
+            .expect("never poisoned")
+            .contains_key(&account.id)
+        {
+            continue;
+        }
+        match postio_session::engine::start_joining(&account, total, &wiring).await {
+            Ok(Some(engine)) => adopt(&wiring, &engines, account.id, engine),
+            Ok(None) => {}
+            Err(refusal) => {
+                tracing::error!(%refusal, "not starting an account's sync: {refusal}");
+            }
+        }
+    }
+}
+
+/// Keep `engine` as `account`'s: retained so the process stops it before
+/// exiting, and in the slot `Refresh` reads if it is the first.
+fn adopt(
+    wiring: &Wiring,
+    engines: &Engines,
+    account: postio_model::AccountId,
+    engine: postio_runtime::Engine,
+) {
+    postio_runtime::retain(engine.clone());
+    wiring.engine.fill(engine.clone());
+    engines
+        .running
+        .lock()
+        .expect("never poisoned")
+        .insert(account, engine);
+}
+
 /// Start the sync of the account saved for `address`, and no other.
-async fn start_engine_for(wiring: &Wiring, address: &str) {
+async fn start_engine_for(wiring: &Wiring, engines: &Engines, address: &str) {
     let Ok(connection) = wiring.database.connect().await else {
         return;
     };
@@ -109,8 +198,7 @@ async fn start_engine_for(wiring: &Wiring, address: &str) {
     if let Some(account) = account
         && let Some(engine) = postio_session::engine::start(&account, wiring)
     {
-        postio_runtime::retain(engine.clone());
-        wiring.engine.fill(engine);
+        adopt(wiring, engines, account.id, engine);
     }
 }
 
@@ -276,6 +364,7 @@ impl Host {
             queue,
             connected: tokio::sync::watch::Sender::new(0),
             notify: Mutex::new(postio_config::SyncConfig::default()),
+            engines: Engines::default(),
             offers: Mutex::new(HashMap::new()),
             oauth_offers: Mutex::new(HashMap::new()),
             sign_ins: Mutex::new(HashMap::new()),
@@ -327,34 +416,27 @@ impl Host {
     /// app before (research R1b).
     pub fn start_syncing(&self) {
         let wiring = self.inner.wiring.clone();
+        let engines = Arc::clone(&self.inner.engines);
+        self.inner
+            .runtime()
+            .spawn(async move { start_sync(wiring, engines).await });
+    }
+
+    /// Start the passes that catch the store up with itself: the body
+    /// indexer, the header repair and index, and the disk reclaim
+    /// ([`maintenance::spawn_idle_passes`]).
+    pub fn start_idle_passes(&self) {
+        maintenance::spawn_idle_passes(&self.inner.wiring);
+    }
+
+    /// The same passes, `delay` from now: long enough for the first
+    /// frontend's first pages to have had the runtime to themselves, since
+    /// nobody is waiting on any of this (#1604).
+    pub fn start_idle_passes_after(&self, delay: std::time::Duration) {
+        let wiring = self.inner.wiring.clone();
         self.inner.runtime().spawn(async move {
-            let accounts = match wiring.database.connect().await {
-                Ok(connection) => postio_storage::repository::AccountRepository::new(&connection)
-                    .list_enabled()
-                    .await
-                    .unwrap_or_else(|error| {
-                        tracing::error!(%error, "cannot read the accounts: {error}");
-                        Vec::new()
-                    }),
-                Err(error) => {
-                    tracing::error!(%error, "cannot read the accounts: {error}");
-                    Vec::new()
-                }
-            };
-            if accounts.is_empty() {
-                return;
-            }
-            match postio_session::engine::start_all(&accounts, &wiring).await {
-                Ok(engines) => {
-                    for (_, engine) in engines {
-                        postio_runtime::retain(engine.clone());
-                        wiring.engine.fill(engine);
-                    }
-                }
-                Err(refusal) => {
-                    tracing::error!(%refusal, "not starting the sync engines: {refusal}");
-                }
-            }
+            tokio::time::sleep(delay).await;
+            maintenance::spawn_idle_passes(&wiring);
         });
     }
 
@@ -901,6 +983,26 @@ impl Inner {
                 .await;
                 Resp::SavedParts(u32::try_from(failed).unwrap_or(u32::MAX))
             }
+            Req::FetchBody(message) => {
+                self.fetch_body(message);
+                Resp::Done
+            }
+            Req::StorageCeiling(max_bytes) => {
+                maintenance::enforce_ceiling(&self.wiring, max_bytes);
+                Resp::Done
+            }
+            Req::StartupRoute => Resp::Startup(
+                startup::route(&self.wiring.database, self.wiring.secrets.as_ref()).await,
+            ),
+            Req::RecordEgress(event) => {
+                use postio_model::egress::EgressSink;
+                self.wiring.egress.record(event);
+                Resp::Done
+            }
+            Req::StartSync => {
+                start_sync(self.wiring.clone(), Arc::clone(&self.engines)).await;
+                Resp::Done
+            }
             Req::DraftCounts(account) => store
                 .draft_counts(account)
                 .await
@@ -950,6 +1052,30 @@ impl Inner {
         };
         self.hub.emit(Event::MailboxesChanged { account });
         Ok(())
+    }
+
+    /// Ask every engine for `message`'s body ahead of its backfill: a person
+    /// opened it. Each engine answers for its own account's mail. Over a
+    /// wiring whose engine someone else started, that one.
+    fn fetch_body(&self, message: postio_model::MessageId) {
+        let mut engines: Vec<postio_runtime::Engine> = self
+            .engines
+            .running
+            .lock()
+            .expect("never poisoned")
+            .values()
+            .cloned()
+            .collect();
+        if engines.is_empty() {
+            engines.extend(self.wiring.engine.get().cloned());
+        }
+        for engine in engines {
+            self.runtime().spawn(async move {
+                if let Err(error) = engine.request_body(message).await {
+                    tracing::warn!(message = message.get(), %error, "cannot fetch that body");
+                }
+            });
+        }
     }
 
     /// Rebuild `account`'s local search index, and return when it is over.
@@ -1038,6 +1164,7 @@ impl Inner {
         );
         let opener = Announcer(Mutex::new(Some(announce)));
         let wiring = self.wiring.clone();
+        let engines = Arc::clone(&self.engines);
         let scopes = offer.scopes.clone();
         let refresh = offer.refresh_token_lifetime_days;
         let provider = postio_session::onboarding::provider_name(&submission.settings);
@@ -1066,7 +1193,7 @@ impl Inner {
                 Err(postio_session::onboarding::SignInError::Failed(reason)) => Err(reason),
             };
             if outcome.is_ok() {
-                start_engine_for(&wiring, &submission.address).await;
+                start_engine_for(&wiring, &engines, &submission.address).await;
             }
             let _ = finished.send(Some(outcome));
         });
@@ -1147,7 +1274,7 @@ impl Inner {
         )
         .await?;
         // Its engine, and only its: the others are already running.
-        start_engine_for(&self.wiring, &submission.address).await;
+        start_engine_for(&self.wiring, &self.engines, &submission.address).await;
         Ok(())
     }
 
@@ -1423,6 +1550,7 @@ impl Transport for Local {
 
 pub mod compose;
 pub mod export;
+pub mod maintenance;
 pub mod notify;
 pub mod onboarding;
 pub mod parts;
@@ -1430,6 +1558,7 @@ pub mod reading;
 pub mod search;
 pub mod serve;
 pub mod settings;
+pub mod startup;
 
 #[cfg(test)]
 mod tests;

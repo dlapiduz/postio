@@ -20,6 +20,10 @@ use postio_session::logging;
 /// frontend and open the other without the store closing between them.
 const GRACE: Duration = Duration::from_secs(30);
 
+/// How long after the store opens its upkeep starts: the desktop app's
+/// delay after its first frame, so a frontend's first pages come first.
+const IDLE_PASSES_AFTER_OPENING: Duration = Duration::from_millis(750);
+
 const USAGE: &str = "usage: postio-daemon [--runtime-dir DIR] [--version]";
 
 fn main() -> ExitCode {
@@ -96,6 +100,10 @@ fn main() -> ExitCode {
     };
 
     host.start_syncing();
+    // The store's upkeep -- the body index, the header repair, the disk
+    // reclaim -- which the desktop app ran after its first frame when it
+    // owned the store; a moment after opening here, for the same reason.
+    host.start_idle_passes_after(IDLE_PASSES_AFTER_OPENING);
     host.serve(listener, GRACE);
     host.stop();
     tracing::info!("postio-daemon stopped");

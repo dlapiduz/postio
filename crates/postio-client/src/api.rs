@@ -133,9 +133,25 @@ impl Req {
             Req::OrientationSeen => "OrientationSeen",
             Req::RetireOrientation => "RetireOrientation",
             Req::Attention(_) => "Attention",
+            Req::FetchBody(_) => "FetchBody",
+            Req::StorageCeiling(_) => "StorageCeiling",
+            Req::StartupRoute => "StartupRoute",
+            Req::RecordEgress(_) => "RecordEgress",
+            Req::StartSync => "StartSync",
             Req::SaveAccount { .. } => "SaveAccount",
             Req::SaveOAuthAccount(_) => "SaveOAuthAccount",
         }
+    }
+}
+
+/// A frontend's egress sink: each connection it makes is posted to the
+/// store's owner, which writes the log.
+struct ClientEgress(Client);
+
+impl postio_model::egress::EgressSink for ClientEgress {
+    fn record(&self, event: postio_model::egress::EgressEvent) {
+        self.0.counts.record("RecordEgress");
+        self.0.transport.post(Req::RecordEgress(event));
     }
 }
 
@@ -186,6 +202,40 @@ impl Client {
     /// (`contracts/protocol.md`, Notifications).
     pub fn notifications(&self) -> async_channel::Receiver<postio_ui::notify::Notification> {
         self.transport.notifications()
+    }
+
+    /// Ask for `message`'s body ahead of the backfill, because a person
+    /// opened it. Posted: the body arrives as `Event::BodyLoaded`.
+    pub fn fetch_body(&self, message: MessageId) {
+        self.counts.record("FetchBody");
+        self.transport.post(Req::FetchBody(message));
+    }
+
+    /// `[storage] max_bytes` changed: the host brings the blobs under it.
+    pub fn storage_ceiling(&self, max_bytes: Option<u64>) {
+        self.counts.record("StorageCeiling");
+        self.transport.post(Req::StorageCeiling(max_bytes));
+    }
+
+    /// Start syncing every enabled account not syncing yet. Posted.
+    pub fn start_sync(&self) {
+        self.counts.record("StartSync");
+        self.transport.post(Req::StartSync);
+    }
+
+    /// What a window opens on: an account, or the first-run screen.
+    pub async fn startup_route(&self) -> Result<crate::protocol::StartupRoute, StoreError> {
+        self.read(Req::StartupRoute, "where to start", |answer| match answer {
+            Resp::Startup(route) => Some(route),
+            _ => None,
+        })
+        .await
+    }
+
+    /// Where a frontend's own outbound connections are recorded: the
+    /// host's egress log, one posted request per connection.
+    pub fn egress(&self) -> Arc<dyn postio_model::egress::EgressSink> {
+        Arc::new(ClientEgress(self.clone()))
     }
 
     /// Tell the host what this frontend is showing and whether it is in

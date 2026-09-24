@@ -1627,3 +1627,130 @@ fn a_browser_sign_in_a_frontend_completed_is_saved_with_its_endpoints() {
     assert_eq!(oauth.token_url, "https://auth.example.test/token");
     assert_eq!(oauth.scopes, "mail");
 }
+
+#[test]
+fn a_window_is_told_to_repair_an_account_the_keyring_has_no_password_for() {
+    let world = World::new();
+    let (client, _) = world.frontend(ClientKind::Gtk);
+    let route = world
+        .rt
+        .block_on(client.startup_route())
+        .expect("an answer");
+    match route {
+        postio_client::protocol::StartupRoute::Onboard(Some(account)) => {
+            assert_eq!(account.address.address, "test@example.com");
+        }
+        other => panic!("a row with no credential is not an account to open: {other:?}"),
+    }
+}
+
+#[test]
+fn a_window_opens_on_an_account_whose_password_the_keyring_has() {
+    use postio_account::secret::{AccountKey, Password, SecretStore};
+    let secrets = std::sync::Arc::new(MemorySecretStore::new());
+    let world = World::configured({
+        let secrets = secrets.clone();
+        move |wiring| wiring.with_secrets(secrets)
+    });
+    world
+        .rt
+        .block_on(secrets.store(
+            &AccountKey::new("test@example.com".to_owned()),
+            &Password::new("app-specific"),
+        ))
+        .expect("stored");
+    let (client, _) = world.frontend(ClientKind::Gtk);
+    let route = world
+        .rt
+        .block_on(client.startup_route())
+        .expect("an answer");
+    assert!(
+        matches!(route, postio_client::protocol::StartupRoute::Ready(_)),
+        "{route:?}"
+    );
+}
+
+/// Ask `read` until it answers `Some`, failing after a while: for work the
+/// host does on its own time.
+fn eventually<T>(world: &World, mut read: impl FnMut() -> Option<T>) -> T {
+    let deadline = std::time::Instant::now() + Duration::from_secs(20);
+    loop {
+        if let Some(found) = read() {
+            return found;
+        }
+        assert!(std::time::Instant::now() < deadline, "it never happened");
+        world.rt.block_on(async {
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        });
+    }
+}
+
+#[test]
+fn a_connection_a_frontend_made_itself_reaches_the_egress_log() {
+    use postio_model::egress::{EgressEvent, EgressOutcome, EgressSubsystem};
+    let world = World::new();
+    let (client, _) = world.frontend(ClientKind::Gtk);
+    client.egress().record(EgressEvent {
+        at: chrono::DateTime::from_timestamp(1_790_000_000, 0).expect("a time"),
+        subsystem: EgressSubsystem::Discovery,
+        account: None,
+        host: "autoconfig.example.test".into(),
+        port: 443,
+        outcome: EgressOutcome::Connected,
+    });
+    let host = eventually(&world, || {
+        let entries = world.rt.block_on(client.egress_log(10)).expect("the log");
+        entries.first().map(|entry| entry.host.clone())
+    });
+    assert_eq!(host, "autoconfig.example.test");
+}
+
+#[test]
+fn the_host_makes_bodies_already_on_disk_searchable_once_it_catches_up() {
+    let world = World::new();
+    let (client, _) = world.frontend(ClientKind::Gtk);
+    // A body on disk the index never heard of: stored, not indexed.
+    let message = another_message(&world, |message| {
+        message.subject = Some("Minutes".into());
+        message.sync.body_state = postio_model::BodyState::Full;
+    });
+    world.rt.block_on(async {
+        let connection = world.database.connect().await.expect("a connection");
+        // The index exists, as it does in every store opened for real.
+        postio_index::index::ensure_schema(&connection)
+            .await
+            .expect("the index");
+        MessageRepository::new(&connection)
+            .set_body(
+                message,
+                &postio_storage::repository::StoredBody {
+                    text: Some("Quarterly figures attached".to_owned()),
+                    html: None,
+                    headers: None,
+                    headers_truncated: false,
+                    encoding_problems: false,
+                },
+                postio_model::BodyState::Full,
+            )
+            .await
+            .expect("the body");
+    });
+
+    let search = || {
+        world
+            .rt
+            .block_on(client.search(postio_client::protocol::Search {
+                account: postio_model::AccountScope::Unified,
+                query: "quarterly".into(),
+                newest_first: true,
+            }))
+            .expect("an answer")
+            .filter(|found| found.ids.contains(&message))
+    };
+    assert_eq!(search(), None, "not searchable until the index catches up");
+
+    world.host().start_idle_passes();
+
+    let found = eventually(&world, search);
+    assert_eq!(found.ids, vec![message]);
+}

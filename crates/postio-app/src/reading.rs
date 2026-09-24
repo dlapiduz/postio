@@ -370,7 +370,6 @@ pub async fn install(
         offline: Rc::new(Cell::new(is_offline(&feeds.folders.status()))),
         queued: Cell::new(false),
         aimed: Cell::new(None),
-        engine: wiring.engine.clone(),
         ahead: RefCell::new(None),
         paints: Rc::new(Cell::new(0)),
     });
@@ -585,25 +584,21 @@ fn is_offline(status: &SyncStatus) -> bool {
 /// the [`Fill`] it came from — see [`Fill::fetcher`].
 #[derive(Clone)]
 struct BodyFetcher {
-    engine: postio_session::refresh::EngineSlot,
-    runtime: tokio::runtime::Handle,
+    client: Client,
 }
 
 impl BodyFetcher {
-    /// Ask the engine for `message`'s body if `loaded` says it is not here.
+    /// Ask the store's owner to fetch `message`'s body if `loaded` says it
+    /// is not here.
     ///
     /// [`Absent::Partial`] is "headers synced, body not fetched"; the
     /// backfill reaches it eventually, and this is what makes opening it now
-    /// jump the queue. Nothing to do without an engine — a window over a
-    /// store nobody is syncing — or for any other absence, which no fetch
-    /// would change.
+    /// jump the queue. The engines are the host's, so the ask is a posted
+    /// request: nothing here waits on it, and a store nobody is syncing
+    /// simply fetches nothing. Any other absence no fetch would change.
     fn request_if_partial(&self, message: MessageId, loaded: &Loaded) {
-        if let crate::compose::Body::Absent(Absent::Partial) = &loaded.body
-            && let Some(engine) = self.engine.get().cloned()
-        {
-            self.runtime.spawn(async move {
-                let _ = engine.request_body(message).await;
-            });
+        if let crate::compose::Body::Absent(Absent::Partial) = &loaded.body {
+            self.client.fetch_body(message);
         }
     }
 }
@@ -747,18 +742,6 @@ struct Fill {
     /// change it still names a message this pane is no longer displaying.
     /// Either of those would make it the wrong thing to skip on.
     aimed: Cell<Option<MessageId>>,
-    /// The engine, so showing a message whose body is not here yet is what
-    /// fetches it.
-    ///
-    /// The backfill reaches every body eventually, but "eventually" is a
-    /// queue tens of thousands of messages long on a first sync — so opening
-    /// one has to jump it to the front rather than wait its turn.
-    /// [`Absent::Partial`] is precisely "headers synced, body not fetched",
-    /// and its own doc says a `request_body` is what leaves that state; this
-    /// is the caller that keeps that promise. A slot rather than an `Engine`,
-    /// because the pane is built before an account's engine is adopted
-    /// (`adopt_engine`), and reads empty until it is.
-    engine: postio_session::refresh::EngineSlot,
     /// The conversation after the one on screen, read and rendered before
     /// anybody opened it -- see [`Fill::prepare_next`].
     ahead: RefCell<Option<Ahead>>,
@@ -962,8 +945,7 @@ impl Fill {
     /// See [`BodyFetcher`].
     fn fetcher(&self) -> BodyFetcher {
         BodyFetcher {
-            engine: self.engine.clone(),
-            runtime: self.runtime.clone(),
+            client: self.client.clone(),
         }
     }
 
