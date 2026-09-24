@@ -195,6 +195,8 @@ pub enum Req {
     Attach(std::path::PathBuf),
     /// Search, as the desktop's search bar does.
     Search(Search),
+    /// One of `postio-diag`'s reports, by name.
+    Diagnose(String),
     /// Store pasted image bytes as an inline part.
     InlineImage {
         /// The image.
@@ -253,6 +255,8 @@ pub enum Resp {
     Attached(Option<postio_model::Attachment>),
     /// What a search found, or nothing when the store could not be read.
     Found(Option<Found>),
+    /// A report's text.
+    Diagnosis(String),
     /// The read could not be answered; the sentence is for the user.
     Failed(StoreError),
 }

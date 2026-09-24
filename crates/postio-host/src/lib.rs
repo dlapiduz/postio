@@ -464,6 +464,25 @@ impl Inner {
                 Resp::Attached(stored)
             }
             Req::Search(search) => Resp::Found(self.search(search).await),
+            Req::Diagnose(report) => {
+                let file = self
+                    .wiring
+                    .database
+                    .path()
+                    .and_then(|path| std::fs::metadata(path).ok())
+                    .map_or(0, |meta| meta.len());
+                match self.wiring.database.connect().await {
+                    Ok(connection) => {
+                        match postio_session::diag::report(connection, file, &report).await {
+                            Ok(text) => Resp::Diagnosis(text),
+                            Err(reason) => {
+                                Resp::Failed(postio_model::listing::StoreError::new(reason))
+                            }
+                        }
+                    }
+                    Err(error) => Resp::Failed(postio_model::listing::StoreError::from(error)),
+                }
+            }
             Req::InlineImage { bytes, mime_type } => {
                 let blobs = self.wiring.blobs.clone();
                 let stored = tokio::task::spawn_blocking(move || {

@@ -4367,6 +4367,7 @@ dependencies = [
  "chrono",
  "mimalloc",
  "postio-account",
+ "postio-client",
  "postio-config",
  "postio-core",
  "postio-gmail",

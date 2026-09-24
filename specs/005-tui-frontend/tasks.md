@@ -220,7 +220,7 @@ daemon on a temporary runtime dir (quickstart "two_clients").
 - [X] T080 [US6] In `crates/postio-host/tests/two_clients.rs`: US6 scenario 3 / SC-007: a scripted mixed session from both clients (archive, flag, move, send) — the mock sees each remote effect exactly once and one submission per send
 - [X] T081 [US6] In `crates/postio-host/tests/two_clients.rs`: US6 scenario 4 and FR-043: disconnect one client mid-sync; the other keeps receiving events and the queue drains; then disconnect both and the daemon exits after the grace period
 - [X] T082 [US6] In `crates/postio-host/tests/two_clients.rs`: Draft crossing: a draft saved by the Gtk client with HTML is reopened by the Tui client as Markdown, and a Tui draft opens in the Gtk client with its formatting (FR-023)
-- [ ] T083 [US6] `postio-diag` asks the daemon rather than opening the store (`crates/postio-session/src/bin/postio-diag.rs`). Test first: `postio-diag` with a daemon running reports its state instead of "nothing running"
+- [X] T083 [US6] `postio-diag` asks the daemon rather than opening the store (`crates/postio-session/src/bin/postio-diag.rs`). Test first: `postio-diag` with a daemon running reports its state instead of "nothing running". *(Tested where the daemon answers, `Client::diagnose` against the host; the binary is the thin client of it.)*
 
 ---
 

@@ -42,6 +42,7 @@
 
 pub mod actions;
 pub mod blocking;
+pub mod diag;
 pub mod egress;
 pub mod engine;
 pub mod logging;

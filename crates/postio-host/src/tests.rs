@@ -536,3 +536,28 @@ fn a_frontend_searches_and_hears_which_messages_matched() {
     assert_eq!(found.hits, 1);
     assert!(!found.capped);
 }
+
+#[test]
+fn postio_diag_asks_the_daemon_for_its_reports() {
+    // T083: the daemon owns the store while it runs, so the diagnostic
+    // reports are its to run.
+    let world = World::new();
+    let (client, _) = world.frontend(ClientKind::Test);
+    let census = world
+        .rt
+        .block_on(client.diagnose("census".into()))
+        .expect("a report");
+    assert!(census.contains("messages"), "{census}");
+    assert!(
+        census
+            .lines()
+            .any(|line| line.starts_with("messages") && line.trim_end().ends_with('1')),
+        "the fixture's one message is counted: {census}"
+    );
+    assert!(
+        world
+            .rt
+            .block_on(client.diagnose("nonsense".into()))
+            .is_err()
+    );
+}

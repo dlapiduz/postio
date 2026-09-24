@@ -91,6 +91,7 @@ impl Req {
             Req::Attach(_) => "Attach",
             Req::InlineImage { .. } => "InlineImage",
             Req::Search(_) => "Search",
+            Req::Diagnose(_) => "Diagnose",
         }
     }
 }
@@ -401,6 +402,16 @@ impl Client {
         let request = Req::InlineImage { bytes, mime_type };
         self.read(request, "an inline image", |answer| match answer {
             Resp::Attached(found) => Some(found),
+            _ => None,
+        })
+        .await
+    }
+
+    /// One of `postio-diag`'s reports, run by the daemon on its own
+    /// connection.
+    pub async fn diagnose(&self, report: String) -> Result<String, StoreError> {
+        self.read(Req::Diagnose(report), "a report", |answer| match answer {
+            Resp::Diagnosis(text) => Some(text),
             _ => None,
         })
         .await
