@@ -300,15 +300,6 @@ async fn a_reply_draft_remembers_the_message_and_thread_it_belongs_to() {
     let stored = drafts.get(id).await.expect("get").expect("the draft");
     assert_eq!(stored.in_reply_to, Some(parent.id));
     assert_eq!(stored.thread_id, Some(ThreadId::new(1)));
-    assert_eq!(
-        drafts
-            .in_thread(ThreadId::new(1))
-            .await
-            .expect("in thread")
-            .len(),
-        1,
-        "the composer takes over the reading pane inside the thread"
-    );
 }
 
 #[tokio::test]

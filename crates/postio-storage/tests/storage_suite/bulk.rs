@@ -387,7 +387,7 @@ async fn a_bulk_enqueue_writes_one_row_per_message_naming_each_one() {
         assert_eq!(row.state, OperationState::Pending);
         assert_eq!(row.mailbox_id, Some(world.inbox));
         assert!(
-            row.is_undoable(),
+            row.inverse.is_some(),
             "the inverse is decided at enqueue time here as it is anywhere else"
         );
     }

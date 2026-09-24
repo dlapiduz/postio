@@ -62,13 +62,6 @@ pub struct QueuedOperation {
     pub source_remote_id: Option<RemoteId>,
 }
 
-impl QueuedOperation {
-    /// Whether undo can be offered for this row.
-    pub fn is_undoable(&self) -> bool {
-        self.inverse.is_some()
-    }
-}
-
 /// Reads and writes the mutation queue.
 ///
 /// # Enqueue is part of the caller's write
@@ -414,24 +407,6 @@ impl<'a> OperationQueueRepository<'a> {
             Ok(())
         })
         .await
-    }
-
-    /// Enqueues the inverse of a row that is already queued — this is undo.
-    ///
-    /// It goes onto the same queue, in the same state, behind everything
-    /// already there. There is deliberately no separate undo path: whatever
-    /// retry, backoff and conflict handling the drainer grows applies to undo
-    /// for free.
-    pub async fn enqueue_inverse(
-        &self,
-        queued: &QueuedOperation,
-        at: DateTime<Utc>,
-    ) -> Result<QueuedOperation> {
-        let inverse = queued.inverse.as_ref().ok_or(Error::NotUndoable {
-            op_type: queued.operation.op_type(),
-        })?;
-        self.enqueue(queued.account_id, queued.target, inverse, at)
-            .await
     }
 
     /// One row.

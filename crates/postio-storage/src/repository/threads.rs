@@ -424,24 +424,6 @@ impl<'a> ThreadRepository<'a> {
         .await
     }
 
-    /// Takes a message out of whatever thread it is in.
-    pub async fn remove_message(&self, message_id: MessageId) -> Result<()> {
-        sql::in_scope(self.connection, |transaction| async move {
-            let previous = thread_of(&transaction, message_id).await?;
-            sql::execute(
-                &transaction,
-                "UPDATE messages SET thread_id = NULL WHERE id = ?1",
-                [message_id.get()],
-            )
-            .await?;
-            if let Some(previous) = previous {
-                recompute_in(&transaction, previous).await?;
-            }
-            Ok(())
-        })
-        .await
-    }
-
     /// Recomputes a thread's aggregates from its members.
     pub async fn recompute(&self, id: ThreadId) -> Result<()> {
         recompute_in(self.connection, id).await
