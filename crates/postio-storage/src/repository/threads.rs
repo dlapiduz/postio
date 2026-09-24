@@ -267,6 +267,22 @@ first_at, last_at";
 /// any query here, so it resolves the same way regardless.
 const MEMBER: &str = "deleted_locally = 0 AND (snoozed_until IS NULL OR snoozed_until <= (strftime('%s','now') * 1000))";
 
+/// How many rows a folder's thread list has: one per conversation the
+/// folder holds, plus one per message it holds that belongs to no
+/// conversation -- the same predicate the window uses, so the number and the
+/// rows cannot disagree about what a row is.
+fn folder_count_sql() -> String {
+    // Distinct conversations, with a lone message standing for itself under
+    // its negated id, which no conversation id can equal. Read entirely
+    // from `idx_messages_mailbox_threads`: the old shape asked, for every
+    // message, whether a newer member of its conversation was here too --
+    // 786 ms on a real 60,907-message folder (#1534, #1607).
+    format!(
+        "SELECT count(DISTINCT coalesce(thread_id, -id)) FROM messages
+          WHERE mailbox_id = ?1 AND {MEMBER}"
+    )
+}
+
 impl<'a> ThreadRepository<'a> {
     /// Borrows a connection.
     pub fn new(connection: &'a Connection) -> Self {
@@ -1295,17 +1311,7 @@ impl<'a> ThreadRepository<'a> {
             Some(mailbox) => {
                 sql::one(
                     self.connection,
-                    &format!(
-                        "SELECT count(*) FROM messages rep
-                      WHERE rep.mailbox_id = ?1 AND rep.{MEMBER}
-                        AND NOT EXISTS (
-                                SELECT 1 FROM messages newer
-                                 WHERE newer.mailbox_id = ?1 AND newer.{MEMBER}
-                                   AND newer.thread_id IS NOT NULL
-                                   AND newer.thread_id = rep.thread_id
-                                   AND (newer.received_at, newer.id)
-                                       > (rep.received_at, rep.id))"
-                    ),
+                    &folder_count_sql(),
                     [mailbox.get()],
                     |row| row.col(0),
                 )
@@ -1313,6 +1319,12 @@ impl<'a> ThreadRepository<'a> {
             }
         };
         Ok(count as u32)
+    }
+
+    /// The SQL [`Self::count_of`] counts a folder with, so a test can ask the
+    /// planner about it.
+    pub fn explain_count_of(&self) -> String {
+        folder_count_sql()
     }
 
     /// The members of a thread, oldest first.

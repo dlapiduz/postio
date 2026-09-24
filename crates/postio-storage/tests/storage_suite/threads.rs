@@ -1278,3 +1278,34 @@ async fn two_unthreaded_messages_are_two_rows_rather_than_one() {
     assert_eq!(repository.page(&query).await.expect("a page").len(), 3);
     assert_eq!(repository.count_of(&query).await.expect("a count"), 3);
 }
+
+#[tokio::test]
+async fn a_folder_is_counted_from_an_index_alone() {
+    // #1607, #1610: the folder count was a correlated probe per message --
+    // 786 ms on a real 60,907-message folder, 260 ms on a seeded one of
+    // 60,000 -- and a first sync of the folder on screen pays it on every
+    // tick, because every tick moves the count's witness. Counted from a
+    // covering index it is 13 ms on the same seeded folder. The plan is the
+    // gate: every step reads an index it is covered by, and nothing reads a
+    // row or runs a subquery per message.
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    let (_, inbox) = test_support::account_with_inbox(&connection).await;
+    let sql = ThreadRepository::new(&connection).explain_count_of();
+    let plan: Vec<String> = postio_storage::sql::all(
+        &connection,
+        &format!("EXPLAIN QUERY PLAN {sql}"),
+        [inbox.get()],
+        |row| postio_storage::sql::RowExt::col(row, 3),
+    )
+    .await
+    .expect("a plan");
+    let uncovered: Vec<&String> = plan
+        .iter()
+        .filter(|step| !(step.contains("COVERING INDEX") || step.starts_with("USE ")))
+        .collect();
+    assert!(
+        uncovered.is_empty(),
+        "a folder count that reads more than an index: {uncovered:?}\n{plan:#?}"
+    );
+}
