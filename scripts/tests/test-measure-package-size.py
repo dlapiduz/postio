@@ -61,18 +61,17 @@ with tempfile.TemporaryDirectory() as scratch:
 
     # Plain files are not ELF, so they have no libraries: the sizes are the
     # files' own.
-    tui = sized(root / "bin" / "postio-tui", 1000)
-    daemon = sized(root / "bin" / "postio-daemon", 1000)
+    tui = sized(root / "bin" / "postio-tui", 2000)
     desktop = sized(root / "bin" / "postio", 5000)
-    under = run("binaries", str(tui), str(daemon), "--", str(desktop))
+    under = run("binaries", str(tui), "--", str(desktop))
     case(
         "binaries under half pass",
         under.returncode == 0 and "2000" in under.stdout and "5000" in under.stdout,
         under.stdout + under.stderr,
     )
 
-    heavy = sized(root / "bin" / "postio-heavy", 2000)
-    over = run("binaries", str(heavy), str(daemon), "--", str(desktop))
+    heavy = sized(root / "bin" / "postio-heavy", 2500)
+    over = run("binaries", str(heavy), "--", str(desktop))
     case("binaries at half or more fail", over.returncode == 1, over.stdout + over.stderr)
 
     # A stub `flatpak` answering `info --show-location` and `--show-runtime`

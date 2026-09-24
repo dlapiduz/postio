@@ -261,19 +261,6 @@ jobs:
             -o flatpak/cargo-sources.json
           echo "$(jq length flatpak/cargo-sources.json) crate sources pinned"
 
-      # The daemon refuses a frontend from a different build, and a build is
-      # its version *and* its commit (`BuildId`, specs/005-tui-frontend T021).
-      # Every package from this tag carries the same commit, so the desktop
-      # app and the terminal package share one daemon; one built without it
-      # would handshake as a bare version and be refused by the others.
-      # flatpak-builder passes no host environment through, so the manifest
-      # carries it.
-      - name: Stamp the build with its commit
-        run: |
-          COMMIT="$(git rev-parse --short=12 HEAD)"
-          jq --arg commit "$COMMIT" '."build-options".env.POSTIO_GIT_COMMIT = $commit' \
-            "$MANIFEST" > manifest.json && mv manifest.json "$MANIFEST"
-
       - name: Cache flatpak-builder state
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
@@ -370,9 +357,7 @@ jobs:
   # The terminal frontend's two packages (specs/005-tui-frontend R10): its own
   # Flatpak on the plain freedesktop runtime, and a standalone download. Both
   # after `flatpak`, which is what creates the release they attach to, and so
-  # after the suite. Each bumps the version the same way `flatpak` does and
-  # stamps the same commit, because a daemon from one package must accept
-  # the frontends of the others.
+  # after the suite. Each bumps the version the same way `flatpak` does.
   tui-flatpak:
     name: Terminal Flatpak bundle
     needs: [suite, flatpak]
@@ -394,12 +379,6 @@ jobs:
           printf -- '- Terminal package\n' > tui-notes.txt
           python3 scripts/release-bump.py "$VERSION" --notes-file tui-notes.txt
           cargo metadata --format-version 1 > /dev/null
-
-      - name: Stamp the build with its commit
-        run: |
-          COMMIT="$(git rev-parse --short=12 HEAD)"
-          jq --arg commit "$COMMIT" '."build-options".env.POSTIO_GIT_COMMIT = $commit' \
-            "$TUI_MANIFEST" > manifest.json && mv manifest.json "$TUI_MANIFEST"
 
       - name: Give flatpak a runtime directory
         run: |
@@ -473,10 +452,11 @@ jobs:
           subject-path: ${{ env.BUNDLE }}
           sbom-path: ${{ env.SBOM }}
 
-  # `postio-tui` and `postio-daemon`, for a machine without Flatpak -- a
-  # server reached over SSH is the usual one. It also builds the desktop
-  # executable, only to measure it: SC-004 compares the download's
-  # executables and the libraries they load against the desktop app's.
+  # `postio-tui`, for a machine without Flatpak -- a server reached over SSH
+  # is the usual one. It opens the store itself, as the desktop app does. It
+  # also builds the desktop executable, only to measure it: SC-004 compares
+  # the download's executable and the libraries it loads against the desktop
+  # app's.
   tui-tarball:
     name: Terminal download
     needs: [suite, flatpak]
@@ -495,16 +475,13 @@ jobs:
 
       - name: Build
         run: |
-          export POSTIO_GIT_COMMIT="$(git rev-parse --short=12 HEAD)"
           cargo build --profile release-tui -p postio-tui --bin postio-tui
-          cargo build --release -p postio-host --bin postio-daemon
           cargo build --release -p postio-app --bin postio
 
       - name: Is it under half the desktop app?
         run: |
           scripts/measure-package-size.sh binaries \
-            target/release-tui/postio-tui target/release/postio-daemon \
-            -- target/release/postio
+            target/release-tui/postio-tui -- target/release/postio
 
       - name: Package
         run: |
@@ -512,7 +489,7 @@ jobs:
           [ "$GITHUB_REF_TYPE" = tag ] || VERSION="$(git rev-parse --short HEAD)"
           DIR="postio-tui-${VERSION}"
           mkdir -p "$DIR"
-          install -m755 target/release-tui/postio-tui target/release/postio-daemon "$DIR/"
+          install -m755 target/release-tui/postio-tui "$DIR/"
           cp docs/book/src/terminal.md "$DIR/README.md"
           TARBALL="postio-tui-${VERSION}-x86_64-linux.tar.zst"
           tar --zstd -cf "$TARBALL" "$DIR"

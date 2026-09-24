@@ -16,7 +16,6 @@
         "--talk-name=org.freedesktop.Notifications",
         "--filesystem=xdg-data/postio:create",
         "--filesystem=xdg-config/postio:create",
-        "--filesystem=xdg-run/postio:create",
         "--filesystem=xdg-download"
     ],
     "build-options": {
@@ -36,9 +35,7 @@
             "buildsystem": "simple",
             "build-commands": [
                 "cargo --offline build --profile release-tui --package postio-tui --bin postio-tui",
-                "cargo --offline build --release --package postio-host --bin postio-daemon",
-                "install -Dm755 target/release-tui/postio-tui /app/bin/postio-tui",
-                "install -Dm755 target/release/postio-daemon /app/bin/postio-daemon"
+                "install -Dm755 target/release-tui/postio-tui /app/bin/postio-tui"
             ],
             "sources": [
                 {
