@@ -2502,3 +2502,83 @@ async fn a_queued_action_does_not_wait_out_a_sync_wave() {
         backend.calls()
     );
 }
+
+#[tokio::test]
+async fn an_idle_engine_does_not_poll_the_queue() {
+    // The engine asked the store whether any operation was due every 500 ms
+    // and checked its job channel every 50 ms, all day, on an idle app: two
+    // store reads and twenty wake-ups a second for nothing. A person's action
+    // reaches the queue through an interactive write, and a job through the
+    // channel; both now wake it, and a slow tick is left for retries that come
+    // due by time.
+    // No background body lane: the question is what an engine with nothing
+    // to do costs, and a backfill is something to do.
+    let (engine, database, report, _events, _backend, _directory) = engine_with_backfill(
+        |_| {},
+        postio_sync::BackfillPolicy {
+            background: false,
+            ..Default::default()
+        },
+    )
+    .await;
+    // Let the first connection and its sync settle into the watch.
+    tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+    let before = postio_runtime::engine::idle_wakeups();
+    tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+    let wakeups = postio_runtime::engine::idle_wakeups() - before;
+    // Three waits on a one-second close check, at most, and no queue poll:
+    // the queue's fallback is five seconds. The old waits woke ~66 times.
+    assert!(
+        wakeups <= 4,
+        "an idle engine's waits woke {wakeups} times on their own in three seconds"
+    );
+
+    // And an action still reaches the server promptly, woken rather than
+    // polled for.
+    let inbox = report
+        .mailbox(MailboxRole::Inbox)
+        .expect("the seed has an inbox")
+        .id;
+    {
+        let (connection, _permit) = database.interactive_write().await.expect("a write");
+        let message = postio_storage::repository::MessageRepository::new(&connection)
+            .page(&postio_storage::repository::ListQuery {
+                scope: postio_storage::repository::ListScope::Mailbox(inbox),
+                limit: 1,
+                after: None,
+            })
+            .await
+            .expect("a page")
+            .first()
+            .expect("the inbox has mail")
+            .id;
+        OperationQueueRepository::new(&connection)
+            .enqueue(
+                report.account.id,
+                OperationTarget::Message(message),
+                &Operation::SetFlags {
+                    flags: postio_model::FlagSet::from_iter([postio_model::Flag::Seen]),
+                },
+                Utc::now(),
+            )
+            .await
+            .expect("queued");
+    }
+    let started = std::time::Instant::now();
+    loop {
+        let connection = database.connect().await.expect("a connection");
+        let due = OperationQueueRepository::new(&connection)
+            .pending(report.account.id, Utc::now())
+            .await
+            .expect("the queue");
+        if due.is_empty() {
+            break;
+        }
+        assert!(
+            started.elapsed() < postio_test_support::scaled(std::time::Duration::from_secs(4)),
+            "a queued action waited out the fallback tick instead of waking the engine"
+        );
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+    drop(engine);
+}

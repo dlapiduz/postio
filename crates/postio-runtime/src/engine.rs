@@ -610,6 +610,8 @@ impl Engine {
         // Close first: this is what makes the loop's `recv` return, and
         // without it the wait below just spends its grace period.
         self.jobs.close();
+        // Wake a wait that would otherwise notice the close on its next tick.
+        JOB_SENT.notify_waiters();
         self.thread.join_bounded();
     }
 
@@ -735,6 +737,7 @@ impl Engine {
             .send(job(reply))
             .await
             .map_err(|_| EngineError::new("the sync engine has stopped"))?;
+        JOB_SENT.notify_waiters();
         answer
             .await
             .map_err(|_| EngineError::new("the sync engine dropped the work"))
@@ -749,6 +752,7 @@ impl Engine {
             .send(job(reply))
             .await
             .map_err(|_| EngineError::new("the sync engine has stopped"))?;
+        JOB_SENT.notify_waiters();
         answer
             .await
             .unwrap_or_else(|_| Err(EngineError::new("the sync engine dropped the work")))
@@ -939,8 +943,8 @@ fn run(parts: EngineParts, store: Store, inbox: async_channel::Receiver<Job>, bu
                 // mailbox long. See `sync_wave`.
                 while nothing_asked(&inbox)
                     && state.supervisor.link().is_online()
-                    && !has_queued_work(&parts, &store).await
                     && !state.to_sync.is_empty()
+                    && !has_queued_work(&parts, &store).await
                 {
                     state.busy.set("a sync wave");
                     if let Some(job) = sync_wave(&parts, &store, &mut state, &inbox).await {
@@ -1032,6 +1036,7 @@ fn run(parts: EngineParts, store: Store, inbox: async_channel::Receiver<Job>, bu
                 while Instant::now() < slice_ends
                     && nothing_asked(&inbox)
                     && state.supervisor.link().is_online()
+                    && !state.backfill.is_idle()
                     && !has_queued_work(&parts, &store).await
                     && pump_body(&parts, &store, &mut state, &inbox).await
                 {}
@@ -1050,13 +1055,15 @@ fn run(parts: EngineParts, store: Store, inbox: async_channel::Receiver<Job>, bu
                 while Instant::now() < slice_ends
                     && nothing_asked(&inbox)
                     && state.supervisor.link().is_online()
-                    && !has_queued_work(&parts, &store).await
                     && state.backfill.is_idle()
+                    && !state.backfill_covered
+                    && !has_queued_work(&parts, &store).await
                     && top_up_backfill(&parts, &store, &mut state).await > 0
                 {
                     while Instant::now() < slice_ends
                         && nothing_asked(&inbox)
                         && state.supervisor.link().is_online()
+                        && !state.backfill.is_idle()
                         && !has_queued_work(&parts, &store).await
                         && pump_body(&parts, &store, &mut state, &inbox).await
                     {}
@@ -1164,12 +1171,35 @@ struct State {
     backfill_covered: bool,
 }
 
+/// How many times any engine in this process has asked the store whether an
+/// operation is due. For tests: an idle engine should almost never ask.
+static QUEUE_CHECKS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// See [`QUEUE_CHECKS`].
+#[doc(hidden)]
+pub fn queue_checks() -> u64 {
+    QUEUE_CHECKS.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+/// How many times an engine's wait for a job or for queued work woke on its
+/// own clock rather than on a send or a write. For tests: this was twenty a
+/// second for jobs and two for the queue, all day; it is one a second and
+/// one every five now.
+static IDLE_WAKEUPS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// See [`IDLE_WAKEUPS`].
+#[doc(hidden)]
+pub fn idle_wakeups() -> u64 {
+    IDLE_WAKEUPS.load(std::sync::atomic::Ordering::Relaxed)
+}
+
 /// Whether the account's queue has anything due right now.
 ///
 /// Deliberately silent about failure: a connection this cannot check out is
 /// already being reported by whatever else wanted one, and a drain skipped for
 /// a tick costs five seconds.
 async fn has_queued_work(parts: &EngineParts, store: &Store) -> bool {
+    QUEUE_CHECKS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let Ok(connection) = store.connect_background().await else {
         return false;
     };
@@ -1257,10 +1287,31 @@ async fn handle_link_transition(parts: &EngineParts, store: &Store, state: &mut 
 /// `recv` would take the job and then be cancelled by the other branch of the
 /// `select!`, losing it. This only ever observes.
 async fn wait_for_job(inbox: &async_channel::Receiver<Job>) {
-    while nothing_asked(inbox) {
-        tokio::time::sleep(WATCH_FLOOR).await;
+    loop {
+        let sent = JOB_SENT.notified();
+        tokio::pin!(sent);
+        sent.as_mut().enable();
+        if !nothing_asked(inbox) {
+            return;
+        }
+        // Woken by a send, rather than looking twenty times a second. The
+        // tick is for the inbox closing, which no send announces.
+        tokio::select! {
+            () = sent => {}
+            () = tokio::time::sleep(CLOSE_CHECK) => {
+                IDLE_WAKEUPS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            }
+        }
     }
 }
+
+/// Told whenever any engine in this process is sent a job. Process-wide
+/// rather than per engine because every wait rechecks its own inbox: a wake
+/// meant for another account's engine costs one `is_empty`.
+static JOB_SENT: tokio::sync::Notify = tokio::sync::Notify::const_new();
+
+/// How often a wait notices the inbox has closed, which nothing announces.
+const CLOSE_CHECK: Duration = Duration::from_secs(1);
 
 /// Whether the engine may start — or keep doing — unattended work.
 ///
@@ -1278,7 +1329,7 @@ fn nothing_asked(inbox: &async_channel::Receiver<Job>) -> bool {
 /// observes.
 async fn wait_for_close(inbox: &async_channel::Receiver<Job>) {
     while !inbox.is_closed() {
-        tokio::time::sleep(WATCH_FLOOR).await;
+        tokio::time::sleep(CLOSE_CHECK).await;
     }
 }
 
@@ -1292,15 +1343,26 @@ async fn wait_for_close(inbox: &async_channel::Receiver<Job>) {
 /// connected reach the server while the user still remembers taking it.
 async fn wait_for_queued_work(parts: &EngineParts, store: &Store) {
     loop {
+        // Enabled before the check, so a write that lands between the check
+        // and the wait still wakes it.
+        let written = store.write_gate().interactive_writes().notified();
+        tokio::pin!(written);
+        written.as_mut().enable();
         if has_queued_work(parts, store).await {
             return;
         }
-        tokio::time::sleep(QUEUE_FLOOR).await;
+        // Woken by the interactive write a person's action makes, rather than
+        // asking the store every half second on an idle app. The tick is for
+        // what no write announces: an operation deferred until a retry comes
+        // due.
+        tokio::select! {
+            () = written => {}
+            () = tokio::time::sleep(POLL_INTERVAL) => {
+                IDLE_WAKEUPS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            }
+        }
     }
 }
-
-/// How often the queue is asked whether anything new is in it.
-const QUEUE_FLOOR: Duration = Duration::from_millis(500);
 
 /// The shortest a watch step will ever sleep.
 ///
