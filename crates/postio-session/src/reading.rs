@@ -100,6 +100,20 @@ pub async fn load_body_or_reason(
     id: MessageId,
     is_offline: bool,
 ) -> Body {
+    load_with_row(connection, id, is_offline).await.0
+}
+
+/// [`load_body_or_reason`], and the message row it read to decide.
+///
+/// For a caller that wants the row too -- the reading pane draws its header
+/// and parts tree from it -- and used to read it a second time: the row,
+/// its recipients, its attachments and its labels, twice per message opened.
+/// `None` for a draft this machine owns, whose row was never read.
+pub async fn load_with_row(
+    connection: &postio_storage::Checkout,
+    id: MessageId,
+    is_offline: bool,
+) -> (Body, Option<postio_model::Message>) {
     use Absent;
 
     // A draft's body is not in `messages` and never will be: the composer's
@@ -110,16 +124,19 @@ pub async fn load_body_or_reason(
     if let Ok(Some(draft)) = DraftRepository::new(connection).by_message(id).await {
         // A draft is the user's own text in Postio's own buffer: nothing
         // decoded it from anything, so there is nothing to caveat.
-        return Body::Ready {
-            body: draft.body,
-            encoding_problems: false,
-        };
+        return (
+            Body::Ready {
+                body: draft.body,
+                encoding_problems: false,
+            },
+            None,
+        );
     }
 
     let repository = MessageRepository::new(connection);
 
     // Has anything been downloaded for this message at all?
-    match repository.get(id).await {
+    let row = match repository.get(id).await {
         // `\Draft` is set, but the `by_message` lookup above found no local
         // buffer: this row belongs to another client's draft. Its body may
         // well be stored already, but showing it as an ordinary, readable
@@ -127,7 +144,7 @@ pub async fn load_body_or_reason(
         // exists to close -- there is nothing here this machine can edit,
         // whatever state the body is in.
         Ok(Some(message)) if message.flags.is_draft() => {
-            return Body::Absent(Absent::ForeignDraft);
+            return (Body::Absent(Absent::ForeignDraft), Some(message));
         }
         Ok(Some(message)) if !message.sync.body_state.has_body() => {
             let reason = if is_offline {
@@ -135,43 +152,46 @@ pub async fn load_body_or_reason(
             } else {
                 Absent::Partial
             };
-            return Body::Absent(reason);
+            return (Body::Absent(reason), Some(message));
         }
-        Ok(Some(_)) => {}
+        Ok(Some(message)) => message,
         // The row is gone, or unreadable. Either way there is nothing to
         // wait for, so do not tell the user to wait.
-        Ok(None) => return Body::Absent(Absent::Missing),
+        Ok(None) => return (Body::Absent(Absent::Missing), None),
         Err(error) => {
             tracing::warn!(message = id.get(), %error, "cannot read a message row");
-            return Body::Absent(Absent::Missing);
+            return (Body::Absent(Absent::Missing), None);
         }
-    }
+    };
 
     let stored = match repository.body(id).await {
         Ok(Some(stored)) => stored,
         // The row went between the two reads above and here.
-        Ok(None) => return Body::Absent(Absent::Missing),
+        Ok(None) => return (Body::Absent(Absent::Missing), Some(row)),
         Err(error) => {
             // Either the row will not read, or a stored part will not
             // decompress. Both are faults, and both leave the pane empty --
             // what the user needs is to be told it is empty because something
             // is wrong, not because they should wait.
             tracing::warn!(message = id.get(), %error, "cannot read a message's body");
-            return Body::Absent(Absent::Missing);
+            return (Body::Absent(Absent::Missing), Some(row));
         }
     };
 
     if stored.text.is_none() && stored.html.is_none() {
-        return Body::Absent(Absent::Empty);
+        return (Body::Absent(Absent::Empty), Some(row));
     }
 
-    Body::Ready {
-        encoding_problems: stored.encoding_problems,
-        body: postio_model::MessageBody {
-            text: stored.text,
-            html: stored.html,
+    (
+        Body::Ready {
+            encoding_problems: stored.encoding_problems,
+            body: postio_model::MessageBody {
+                text: stored.text,
+                html: stored.html,
+            },
         },
-    }
+        Some(row),
+    )
 }
 
 /// Where a rendered message resolves its `cid:` parts from.

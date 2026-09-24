@@ -26,6 +26,7 @@ mod inline_images;
 mod interactive_write;
 mod mailbox_roles;
 mod reachability;
+mod reading_cost;
 mod reclaim;
 mod reindex_account;
 mod store_key;

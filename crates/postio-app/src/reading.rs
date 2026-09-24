@@ -1326,12 +1326,19 @@ impl Fill {
 /// The parts are metadata the sync already stored -- `BODYSTRUCTURE`, not
 /// bytes -- so asking for them costs a row read and never a fetch.
 async fn load(connection: &postio_storage::Checkout, message: MessageId, offline: bool) -> Loaded {
-    let body = crate::compose::load_body_or_reason(connection, message, offline).await;
-    let fetched = MessageRepository::new(connection)
-        .get(message)
-        .await
-        .ok()
-        .flatten();
+    // The row the body was decided from, rather than a second read of it.
+    // A draft this machine owns is answered from its buffer without reading
+    // the row, so for that one the row is still read here.
+    let (body, fetched) =
+        postio_session::reading::load_with_row(connection, message, offline).await;
+    let fetched = match fetched {
+        Some(row) => Some(row),
+        None => MessageRepository::new(connection)
+            .get(message)
+            .await
+            .ok()
+            .flatten(),
+    };
     let (content_type, parts) = fetched
         .as_ref()
         .map(|message| (message.content_type.clone(), message.attachments.clone()))
