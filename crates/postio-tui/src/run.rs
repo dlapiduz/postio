@@ -249,6 +249,17 @@ fn perform(
         match effect {
             Effect::Quit => return Ok(true),
             Effect::Redraw => redraw = true,
+            Effect::Unsubscribe(message) => {
+                let client = client.clone();
+                let inputs = inputs.clone();
+                tokio::spawn(async move {
+                    let answer = client
+                        .unsubscribe(message)
+                        .await
+                        .map_err(|error| error.message().to_owned());
+                    let _ = inputs.send(Input::Unsubscribed(answer)).await;
+                });
+            }
             Effect::SaveAllowlist(list) => {
                 if let Err(error) = list.save() {
                     tracing::warn!(%error, "could not save the remote-image allow list: {error}");

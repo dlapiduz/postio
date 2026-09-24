@@ -403,6 +403,7 @@ impl Inner {
             },
             Req::Body(message) => self.body(message).await,
             Req::Conversation(thread) => self.conversation(thread).await,
+            Req::Unsubscribe(message) => self.unsubscribe(message).await,
             Req::DraftCounts(account) => store
                 .draft_counts(account)
                 .await
@@ -463,6 +464,49 @@ impl Inner {
             .message_rows(ids)
             .await
             .map_or_else(Resp::Failed, Resp::Rows)
+    }
+
+    /// Record that the person asked to leave `message`'s list, and name it.
+    ///
+    /// The list is its `List-Id`, else the sender's domain -- the desktop
+    /// reader's rule (#971), moved here from `postio-app` so every frontend
+    /// records it the same way. Only ever answered for a deliberate act.
+    async fn unsubscribe(&self, message: postio_model::MessageId) -> Resp {
+        use postio_model::listing::StoreError;
+        use postio_storage::repository::{MessageRepository, UnsubscribeRepository};
+        let connection = match self.wiring.database.connect().await {
+            Ok(connection) => connection,
+            Err(error) => return Resp::Failed(StoreError::from(error)),
+        };
+        let found = match MessageRepository::new(&connection).get(message).await {
+            Ok(found) => found,
+            Err(error) => return Resp::Failed(StoreError::from(error)),
+        };
+        let Some(found) = found else {
+            return Resp::Failed(StoreError::new("That message is gone."));
+        };
+        let list = found.list_id.clone().or_else(|| {
+            found
+                .from
+                .first()
+                .and_then(|from| from.domain())
+                .map(str::to_owned)
+        });
+        let Some(list) = list else {
+            return Resp::Failed(StoreError::new("This message names no list to leave."));
+        };
+        let mut activation = postio_model::UnsubscribeActivation::new(
+            found.account_id,
+            list.clone(),
+            chrono::Utc::now(),
+        );
+        match UnsubscribeRepository::new(&connection)
+            .record(&mut activation)
+            .await
+        {
+            Ok(_) => Resp::Unsubscribed(list),
+            Err(error) => Resp::Failed(StoreError::from(error)),
+        }
     }
 
     /// Put a command on the one queue. Never waits.

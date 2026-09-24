@@ -56,6 +56,9 @@ pub enum Input {
         /// The body, or why there is none.
         answer: Result<postio_client::protocol::Body, String>,
     },
+    /// The daemon answered an [`Effect::Unsubscribe`]: the list's name, or
+    /// why not.
+    Unsubscribed(Result<String, String>),
     /// What the sidebar holds, read afresh.
     Sidebar(crate::sidebar::Contents),
     /// A list was counted again, after an event said it changed.
@@ -95,6 +98,9 @@ pub enum Effect {
     RefreshSidebar,
     /// Count a list again and answer with [`Input::Recounted`].
     Recount(ListScope),
+    /// Leave the list this message came from; answer with
+    /// [`Input::Unsubscribed`].
+    Unsubscribe(postio_model::MessageId),
     /// Write the remote-image allow list, which the desktop app reads too.
     SaveAllowlist(postio_ui::allowlist::RemoteImageAllowList),
     /// Send a command to the daemon, aimed with [`App::state`].
@@ -444,6 +450,13 @@ impl App {
             "expand_all" => self.toggle_folds(),
             "show_images" => return self.allow_images(false),
             "always_show_images" => return self.allow_images(true),
+            "unsubscribe" => {
+                let reading = self.reading.as_ref();
+                return reading
+                    .and_then(|reading| reading.members.get(reading.current))
+                    .map(|member| vec![Effect::Unsubscribe(member.id)])
+                    .unwrap_or_default();
+            }
             "next_in_conversation" => self.walk_conversation(1),
             "prev_in_conversation" => self.walk_conversation(-1),
             "scroll_reader_down" => self.scroll_reader(1),
@@ -854,6 +867,10 @@ pub fn update(app: &mut App, input: Input) -> Vec<Effect> {
         Input::Host(event) => app.hear(&event),
         Input::Sidebar(contents) => app.fill_sidebar(&contents),
         Input::Rested(message) => app.rested(message),
+        Input::Unsubscribed(answer) => app.say(&match answer {
+            Ok(list) => format!("Asked to leave {list}"),
+            Err(reason) => reason,
+        }),
         Input::Body { message, answer } => app.show(message, answer),
         Input::Conversation { thread, members } => app.conversation(thread, members),
         Input::Recounted { scope, total } => app.recounted(scope, total),
@@ -1577,6 +1594,20 @@ mod tests {
         let drawn = reader_text(&app);
         assert!(!drawn.contains("remote image blocked"), "{drawn}");
         assert!(drawn.contains("allowed"), "{drawn}");
+    }
+
+    #[test]
+    fn x_asks_to_leave_the_list_of_the_message_being_read() {
+        let mut app = app((160, 40));
+        reading_a_conversation(&mut app);
+        update(&mut app, key(KeyCode::Tab, KeyModifiers::NONE));
+        let effects = update(&mut app, key(KeyCode::Char('X'), KeyModifiers::SHIFT));
+        assert!(
+            effects.contains(&Effect::Unsubscribe(MessageId::new(3))),
+            "the message being read, the newest: {effects:?}"
+        );
+        update(&mut app, Input::Unsubscribed(Ok("news.example.com".into())));
+        assert_eq!(app.notice(), Some("Asked to leave news.example.com"));
     }
 
     #[test]

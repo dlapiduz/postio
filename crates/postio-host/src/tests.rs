@@ -327,3 +327,46 @@ fn a_frontend_reads_a_conversations_messages_oldest_first() {
     let ids: Vec<MessageId> = members.iter().map(|row| row.id).collect();
     assert_eq!(ids, vec![world.message, later]);
 }
+
+#[test]
+fn unsubscribing_records_the_activation_against_the_messages_list() {
+    let world = World::new();
+    let (client, _) = world.frontend(ClientKind::Tui);
+    // The fixture message has no List-Id and no sender, so it names no list:
+    // a refusal, said as a sentence, and nothing recorded.
+    assert!(
+        world
+            .rt
+            .block_on(client.unsubscribe(world.message))
+            .is_err()
+    );
+
+    let (account, message) = world.rt.block_on(async {
+        let connection = world.database.connect().await.expect("a connection");
+        let first = MessageRepository::new(&connection)
+            .get(world.message)
+            .await
+            .expect("read")
+            .expect("there");
+        let mut listed = Message::new(first.account_id, world.inbox, Utc::now());
+        listed.list_id = Some("weekly.news.example.org".into());
+        let id = MessageRepository::new(&connection)
+            .create(&mut listed)
+            .await
+            .expect("a message");
+        (first.account_id, id)
+    });
+    let list = world
+        .rt
+        .block_on(client.unsubscribe(message))
+        .expect("unsubscribed");
+    assert_eq!(list, "weekly.news.example.org");
+    let recorded = world.rt.block_on(async {
+        let connection = world.database.connect().await.expect("a connection");
+        postio_storage::repository::UnsubscribeRepository::new(&connection)
+            .for_account(account)
+            .await
+            .expect("the activations")
+    });
+    assert_eq!(recorded.len(), 1);
+}

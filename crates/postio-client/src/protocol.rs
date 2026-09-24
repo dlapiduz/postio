@@ -120,6 +120,9 @@ pub enum Req {
     Body(MessageId),
     /// A conversation's messages, oldest first, as list rows.
     Conversation(postio_model::ThreadId),
+    /// Leave the list this message came from: record the activation, and
+    /// answer the list's name. Only ever on a person's deliberate act.
+    Unsubscribe(MessageId),
 }
 
 /// The host's answer to one [`Req`].
@@ -147,6 +150,8 @@ pub enum Resp {
     Accounts(Vec<Account>),
     /// A body.
     Body(Body),
+    /// The list a message was unsubscribed from.
+    Unsubscribed(String),
     /// The read could not be answered; the sentence is for the user.
     Failed(StoreError),
 }

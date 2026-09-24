@@ -72,6 +72,7 @@ impl Req {
             Req::Accounts => "Accounts",
             Req::Body(_) => "Body",
             Req::Conversation(_) => "Conversation",
+            Req::Unsubscribe(_) => "Unsubscribe",
         }
     }
 }
@@ -165,6 +166,19 @@ impl Client {
             "a conversation",
             |answer| match answer {
                 Resp::Rows(rows) => Some(rows),
+                _ => None,
+            },
+        )
+        .await
+    }
+
+    /// Leave the list `message` came from; the answer is the list's name.
+    pub async fn unsubscribe(&self, message: MessageId) -> Result<String, StoreError> {
+        self.read(
+            Req::Unsubscribe(message),
+            "an unsubscribe",
+            |answer| match answer {
+                Resp::Unsubscribed(list) => Some(list),
                 _ => None,
             },
         )
@@ -400,6 +414,19 @@ mod tests {
             vec![Req::Body(MessageId::new(9))]
         );
         assert_eq!(client.counts().of("Body"), 1);
+    }
+
+    #[tokio::test]
+    async fn an_unsubscribe_answers_the_lists_name() {
+        let (client, fake) = client(vec![Ok(Resp::Unsubscribed("news.example.com".into()))]);
+        assert_eq!(
+            client.unsubscribe(MessageId::new(4)).await,
+            Ok("news.example.com".to_owned())
+        );
+        assert_eq!(
+            *fake.asked.lock().unwrap(),
+            vec![Req::Unsubscribe(MessageId::new(4))]
+        );
     }
 
     #[tokio::test]

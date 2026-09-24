@@ -17,6 +17,7 @@ workspace = true
 
 [dependencies]
 async-channel = { workspace = true }
+chrono = { workspace = true, features = ["std"] }
 postio-client.workspace = true
 postio-core.workspace = true
 postio-config.workspace = true
@@ -31,7 +32,6 @@ tokio = { workspace = true, features = ["io-util", "macros", "net", "rt", "rt-mu
 tracing = { workspace = true }
 
 [dev-dependencies]
-chrono = { workspace = true }
 postio-storage = { workspace = true, features = ["test-support"] }
 tempfile = { workspace = true }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread", "time"] }
