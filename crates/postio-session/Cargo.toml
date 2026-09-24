@@ -36,7 +36,7 @@ postio-ui.workspace = true
 # crates that already carry one use, because a second `SecretString` type in
 # the graph would defeat the zeroing this exists for.
 secrecy = { workspace = true }
-tokio = { workspace = true, features = ["rt", "rt-multi-thread"] }
+tokio = { workspace = true, features = ["rt", "rt-multi-thread", "time"] }
 tracing = { workspace = true }
 tracing-journald = "0.3"
 tracing-log = "0.2"
