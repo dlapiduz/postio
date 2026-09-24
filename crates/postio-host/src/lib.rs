@@ -47,8 +47,9 @@ use postio_storage::{BlobStore, Store};
 /// Dropping it stops its runtime, and with it the engines.
 pub struct Host {
     inner: Arc<Inner>,
-    // Last: the runtime outlives everything spawned on it.
-    _bridge: Bridge,
+    // Last: the runtime outlives everything spawned on it. `None` for a host
+    // over a wiring whose runtime somebody else holds ([`Host::over`]).
+    _bridge: Option<Bridge>,
 }
 
 struct Inner {
@@ -60,7 +61,8 @@ struct Inner {
     oauth_offers: Mutex<HashMap<String, postio_account::discovery::OAuthOffer>>,
     /// The browser sign-ins under way, by address.
     sign_ins: Mutex<HashMap<String, SignIn>>,
-    hub: EventHub,
+    /// The event hub everybody hears, as a sink on it.
+    hub: EventSink,
     clients: Mutex<HashMap<ClientId, Entry>>,
     next_client: AtomicU64,
     queue: async_channel::Sender<Queued>,
@@ -217,6 +219,24 @@ impl Host {
             )
         });
 
+        Ok(Host::serving(wiring, hub.sink(), Some(bridge)))
+    }
+
+    /// Adopt a wiring built elsewhere -- the desktop app's, or an
+    /// integration suite's -- rather than opening the store again: its
+    /// runtime, its event hub, its engines' slot.
+    ///
+    /// Refused when the wiring's events go to a single reader rather than a
+    /// hub, since each client needs a subscription of its own.
+    pub fn over(wiring: Wiring) -> Result<Host, String> {
+        let hub = wiring.events.clone();
+        if hub.subscribe("host:probe").is_none() {
+            return Err("the wiring's events are not on a hub".to_owned());
+        }
+        Ok(Host::serving(wiring, hub, None))
+    }
+
+    fn serving(wiring: Wiring, hub: EventSink, bridge: Option<Bridge>) -> Host {
         let (queue, commands) = async_channel::unbounded::<Queued>();
         let inner = Arc::new(Inner {
             wiring,
@@ -230,15 +250,15 @@ impl Host {
             sign_ins: Mutex::new(HashMap::new()),
         });
         let pump = Arc::clone(&inner);
-        bridge.handle().spawn(async move {
+        inner.runtime().spawn(async move {
             while let Ok(queued) = commands.recv().await {
                 pump.run(queued).await;
             }
         });
-        Ok(Host {
+        Host {
             inner,
             _bridge: bridge,
-        })
+        }
     }
 
     /// The verbs each frontend's dispatcher answers, for a frontend that
@@ -329,7 +349,10 @@ impl Inner {
 
         // Everybody's news, from the engines and from every client's verbs.
         let label = format!("client:{kind:?}:{}", id.0).to_lowercase();
-        let everybody = self.hub.subscribe(&label);
+        let everybody = self
+            .hub
+            .subscribe(&label)
+            .expect("a host's events are on a hub: `start` and `over` both see to it");
         let to_client = outbox.clone();
         let hearing = self.runtime().spawn(async move {
             while let Some(envelope) = everybody.next_tracked().await {
@@ -343,7 +366,7 @@ impl Inner {
         // about themselves goes to this client alone, what they changed goes
         // to everybody (the hub, which includes this client).
         let (sink, own) = event_channel();
-        let hub = self.hub.sink();
+        let hub = self.hub.clone();
         let sorting = self.runtime().spawn(async move {
             while let Some(envelope) = own.next_tracked().await {
                 if is_feedback(&envelope.event) {
@@ -431,7 +454,7 @@ impl Inner {
                 // Everybody's list moved -- the row left Drafts for the
                 // Outbox -- so the news goes to the hub, not only to the
                 // frontend that sent it.
-                let hub = self.hub.sink();
+                let hub = self.hub.clone();
                 InOrder::Pending(Box::pin(async move {
                     match queued.await {
                         Ok(moved) => {
@@ -719,7 +742,7 @@ impl Inner {
             | AccountOp::SetDefault(account)
             | AccountOp::RebuildIndex(account) => account,
         };
-        self.hub.sink().emit(Event::MailboxesChanged { account });
+        self.hub.emit(Event::MailboxesChanged { account });
         Ok(())
     }
 

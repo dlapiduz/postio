@@ -805,3 +805,36 @@ fn the_host_says_which_verbs_a_frontend_can_send_it() {
     }
     assert!(!wired.contains(&postio_core::CommandId::Compose));
 }
+
+#[test]
+fn a_host_over_a_wiring_built_elsewhere_serves_its_store_and_its_news() {
+    // T018: the desktop's surfaces and its integration suites build a
+    // `Wiring` of their own; a host adopts it rather than opening another.
+    let world = World::new();
+    let hub = postio_core::bridge::EventHub::new();
+    let (commands, _queued) = postio_core::bridge::command_channel();
+    let blobs = postio_storage::BlobStore::open(world.blob_dir.clone(), &test_support::blob_keys())
+        .expect("a blob store");
+    let wiring = postio_session::Wiring::new(
+        world.database.clone(),
+        blobs,
+        world.rt.handle().clone(),
+        hub.sink(),
+        commands,
+    );
+    let host = Host::over(wiring).expect("a host over the wiring");
+    let client = host.connect(ClientKind::Gtk);
+    let events = client.events();
+
+    let accounts = world.rt.block_on(client.accounts()).expect("accounts");
+    assert_eq!(accounts.len(), 1);
+
+    let account = accounts[0].id;
+    hub.sink().emit(Event::MailboxesChanged { account });
+    let heard = world
+        .rt
+        .block_on(async { tokio::time::timeout(Duration::from_secs(5), events.recv()).await })
+        .expect("in time")
+        .expect("an event");
+    assert_eq!(heard.event, Event::MailboxesChanged { account });
+}
