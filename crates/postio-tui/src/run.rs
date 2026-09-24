@@ -108,7 +108,7 @@ pub fn run() -> ExitCode {
         .filter(|(_, filter)| filter.pinned)
         .map(|(key, filter)| filter.name.clone().unwrap_or_else(|| key.clone()))
         .collect();
-    let outcome = runtime.block_on(main_loop(client, keys, theme, state, saved));
+    let outcome = runtime.block_on(main_loop(client, keys, theme, state, saved, &mut session));
     let _ = session.leave(&mut Stdout);
     session.publish();
     match outcome {
@@ -137,6 +137,7 @@ async fn main_loop(
     theme: Theme,
     state: postio_core::SharedState,
     saved: Vec<String>,
+    session: &mut Session,
 ) -> io::Result<()> {
     let backend = CrosstermBackend::new(io::stdout());
     let mut terminal = Terminal::new(backend)?;
@@ -149,7 +150,11 @@ async fn main_loop(
     let (inputs, arriving) = async_channel::unbounded::<Input>();
     let (drafts, draft_jobs) = async_channel::unbounded::<Effect>();
     let writer = tokio::spawn(write_drafts(client.clone(), draft_jobs, inputs.clone()));
-    let senders = Senders { inputs, drafts };
+    let senders = Senders {
+        inputs,
+        drafts,
+        saved,
+    };
     let outcome = drive(
         &client,
         &mut app,
@@ -157,7 +162,7 @@ async fn main_loop(
         &theme,
         &arriving,
         &senders,
-        &saved,
+        session,
     )
     .await;
     // What was written is saved before leaving: quitting mid-sentence leaves
@@ -225,6 +230,23 @@ async fn resume(
 struct Senders {
     inputs: async_channel::Sender<Input>,
     drafts: async_channel::Sender<Effect>,
+    /// The pinned saved searches' names, for the sidebar.
+    saved: Vec<String>,
+}
+
+/// What the loop does after performing a batch of effects.
+enum Flow {
+    /// Wait for the next input.
+    Go,
+    /// Leave.
+    Quit,
+    /// Hand the terminal to the external editor, then carry on.
+    Edit {
+        /// Which composition.
+        generation: u64,
+        /// The body to edit.
+        markdown: String,
+    },
 }
 
 async fn drive(
@@ -234,17 +256,17 @@ async fn drive(
     theme: &Theme,
     arriving: &async_channel::Receiver<Input>,
     senders: &Senders,
-    saved: &[String],
+    session: &mut Session,
 ) -> io::Result<()> {
     let mut terminal_events = EventStream::new();
     let host_events = client.events();
 
-    let contents = sidebar_contents(client, saved.to_vec()).await;
+    let contents = sidebar_contents(client, senders.saved.clone()).await;
     let _ = update(app, Input::Sidebar(contents));
     if let Some(scope) = first_scope(client).await {
         let total = client.list_count(scope).await.unwrap_or(0);
         let effects = update(app, Input::Opened { scope, total });
-        if perform(client, app, terminal, theme, senders, saved, effects)? {
+        if let Flow::Quit = perform(client, app, terminal, theme, senders, effects)? {
             return Ok(());
         }
     }
@@ -272,8 +294,35 @@ async fn drive(
             },
         };
         let effects = update(app, input);
-        if perform(client, app, terminal, theme, senders, saved, effects)? {
-            return Ok(());
+        match perform(client, app, terminal, theme, senders, effects)? {
+            Flow::Go => {}
+            Flow::Quit => return Ok(()),
+            Flow::Edit {
+                generation,
+                markdown,
+            } => {
+                // The event stream reads the terminal on a thread of its own;
+                // left running, it would take the editor's keystrokes. So it
+                // goes, the screen is handed back to what it was, the editor
+                // runs, and both come back.
+                drop(terminal_events);
+                let edited = session
+                    .suspended(&mut Stdout, || {
+                        crate::external::edit(
+                            &markdown,
+                            &crate::external::directory(),
+                            &crate::external::editor(),
+                        )
+                    })?
+                    .map_err(|error| error.to_string());
+                session.publish();
+                terminal_events = EventStream::new();
+                // Whatever the editor drew is on the real screen now.
+                terminal.clear()?;
+                let _ = senders
+                    .inputs
+                    .try_send(Input::Edited { generation, edited });
+            }
         }
     }
 }
@@ -325,21 +374,34 @@ fn downloads() -> std::path::PathBuf {
 
 type Screen = Terminal<CrosstermBackend<io::Stdout>>;
 
-/// Do what `update` asked; `true` to leave.
+/// Do what `update` asked, and say what the loop does next.
 fn perform(
     client: &Client,
     app: &mut App,
     terminal: &mut Screen,
     theme: &Theme,
     senders: &Senders,
-    saved: &[String],
     effects: Vec<Effect>,
-) -> io::Result<bool> {
-    let Senders { inputs, drafts } = senders;
+) -> io::Result<Flow> {
+    let Senders {
+        inputs,
+        drafts,
+        saved,
+    } = senders;
     let mut redraw = false;
+    let mut flow = Flow::Go;
     for effect in effects {
         match effect {
-            Effect::Quit => return Ok(true),
+            Effect::Quit => return Ok(Flow::Quit),
+            Effect::EditExternally {
+                generation,
+                markdown,
+            } => {
+                flow = Flow::Edit {
+                    generation,
+                    markdown,
+                };
+            }
             Effect::Redraw => redraw = true,
             Effect::ReplySource { kind, message } => {
                 let client = client.clone();
@@ -557,7 +619,7 @@ fn perform(
     if redraw {
         draw(terminal, app, theme)?;
     }
-    Ok(false)
+    Ok(flow)
 }
 
 fn draw(terminal: &mut Screen, app: &App, theme: &Theme) -> io::Result<()> {

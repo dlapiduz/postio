@@ -264,6 +264,19 @@ impl Composer {
         self.edits
     }
 
+    /// Put `markdown` in place of the body: what the external editor saved.
+    /// Everything else about the draft stays as it was.
+    pub fn replace_body(&mut self, markdown: &str) {
+        let lines: Vec<String> = markdown
+            .split('\n')
+            .map(|line| SafeText::new(line).as_str().to_owned())
+            .collect();
+        let mut body = TextArea::new(lines);
+        body.set_cursor_line_style(ratatui::style::Style::default());
+        self.body = body;
+        self.edits += 1;
+    }
+
     /// The files this draft carries.
     pub fn attachments(&self) -> &[postio_model::Attachment] {
         &self.draft.attachments

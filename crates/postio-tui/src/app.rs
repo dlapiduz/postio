@@ -30,6 +30,13 @@ use postio_body::replying::ReplyKind;
 pub enum Input {
     /// The terminal is now this many columns and rows.
     Resize(u16, u16),
+    /// The external editor exited: what it saved, or why not.
+    Edited {
+        /// Which composition.
+        generation: u64,
+        /// The body it saved.
+        edited: Result<String, String>,
+    },
     /// Text was pasted, or files were dropped: a drop arrives as a paste of
     /// their paths.
     Paste(String),
@@ -213,6 +220,14 @@ pub enum Effect {
         draft: Box<postio_model::Draft>,
         /// When, for a scheduled send.
         at: Option<chrono::DateTime<chrono::Utc>>,
+    },
+    /// Hand the body to the person's own editor; the loop suspends the
+    /// screen while it runs.
+    EditExternally {
+        /// Which composition.
+        generation: u64,
+        /// The body, as typed.
+        markdown: String,
     },
     /// Store the file at this path as an attachment of the draft.
     Attach(std::path::PathBuf),
@@ -713,6 +728,13 @@ impl App {
     fn composer_command(&mut self, id: &str) -> Vec<Effect> {
         match id {
             "send" => self.send_draft(None),
+            "edit_externally" => match &self.composer {
+                Some(composer) => vec![Effect::EditExternally {
+                    generation: composer.generation(),
+                    markdown: composer.markdown(),
+                }],
+                None => Vec::new(),
+            },
             "attach_file" => {
                 self.path_prompt = Some(tui_input::Input::default());
                 vec![Effect::Redraw]
@@ -1484,6 +1506,20 @@ pub fn update(app: &mut App, input: Input) -> Vec<Effect> {
                 Vec::new()
             }
             Err(reason) => app.say(&reason),
+        },
+        Input::Edited { generation, edited } => match (edited, app.composer.as_mut()) {
+            (Ok(markdown), Some(composer)) if composer.generation() == generation => {
+                composer.replace_body(&markdown);
+                vec![
+                    Effect::Autosave {
+                        generation,
+                        edit: composer.edits(),
+                    },
+                    Effect::Redraw,
+                ]
+            }
+            (Ok(_), _) => app.say("The draft closed while it was in the editor"),
+            (Err(reason), _) => app.say(&format!("The editor did not save: {reason}")),
         },
         Input::Paste(pasted) => app.paste(&pasted),
         Input::Attached { path, attached } => match (attached, app.composer.as_mut()) {
@@ -2415,6 +2451,60 @@ mod tests {
             app.composer().unwrap().markdown(),
             "",
             "the path was not typed into the draft"
+        );
+    }
+
+    #[test]
+    fn the_body_goes_to_the_editor_and_comes_back_with_nothing_else_changed() {
+        // US3 scenario 6.
+        let mut app = app((160, 40));
+        addressed(&mut app, "Tide gate");
+        let before = app.composer().unwrap().draft();
+        let effects = update(&mut app, key(KeyCode::Char('e'), KeyModifiers::ALT));
+        let (generation, handed) = effects
+            .iter()
+            .find_map(|effect| match effect {
+                Effect::EditExternally {
+                    generation,
+                    markdown,
+                } => Some((*generation, markdown.clone())),
+                _ => None,
+            })
+            .expect("handed to the editor");
+        assert_eq!(handed, "Looking now.");
+
+        let effects = update(
+            &mut app,
+            Input::Edited {
+                generation,
+                edited: Ok("Looking now.\n\nFound it.".into()),
+            },
+        );
+        let after = app.composer().unwrap().draft();
+        assert_eq!(
+            after.body_markdown.as_deref(),
+            Some("Looking now.\n\nFound it.")
+        );
+        assert_eq!((after.to, after.subject), (before.to, before.subject));
+        assert!(
+            effects
+                .iter()
+                .any(|effect| matches!(effect, Effect::Autosave { .. })),
+            "{effects:?}"
+        );
+
+        update(
+            &mut app,
+            Input::Edited {
+                generation,
+                edited: Err("vi exited with 1".into()),
+            },
+        );
+        assert!(app.notice().unwrap().contains("vi exited with 1"));
+        assert_eq!(
+            app.composer().unwrap().markdown(),
+            "Looking now.\n\nFound it.",
+            "a failed edit changes nothing"
         );
     }
 
