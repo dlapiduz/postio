@@ -800,3 +800,46 @@ pub fn the_send_state_marks_are_four_glyphs_the_theme_actually_has() {
         );
     }
 }
+
+pub fn rows_under_one_cascade_read_one_palette() {
+    // Every row widget read its own palette off a probe label: twenty-eight
+    // CSS class switches, each a style recompute, twenty-six Pango contexts
+    // and fourteen icon lookups -- per row, so a list of fifty paid it fifty
+    // times over, and a reload that rebuilds them paid it again. Rows under
+    // the same cascade draw with the same palette.
+    if adw::init().is_err() || gdk::Display::default().is_none() {
+        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
+        return;
+    }
+    let display = gdk::Display::default().unwrap();
+    fonts::install().expect("the embedded fonts should install");
+    style::install(&display);
+
+    let before = postio_gtk::row::palette_reads();
+    let column = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    let rows: Vec<MessageRowView> = (0..50)
+        .map(|n| {
+            let row = MessageRowView::new();
+            row.set_row(Some(Row {
+                id: MessageId::new(n + 1),
+                ..canvas_row()
+            }));
+            column.append(&row);
+            row
+        })
+        .collect();
+    let window = gtk::Window::new();
+    style::track(&window);
+    window.set_child(Some(&column));
+    window.present();
+    pump();
+
+    for row in &rows {
+        row.measured_height(404);
+    }
+    let reads = postio_gtk::row::palette_reads() - before;
+    assert!(
+        reads <= 1,
+        "fifty rows under one window read the palette {reads} times"
+    );
+}
