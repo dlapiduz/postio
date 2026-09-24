@@ -1,0 +1,63 @@
+# FR-005 audit: what this branch did to the desktop's and macOS's tests
+
+FR-005 says no desktop or macOS function may be removed or degraded, and the
+tests that prove them stay unchanged except for import paths. This is the
+record T100 asks for: every test file under `postio-app`, `postio-gtk`,
+`postio-ffi` and `macos/` that differs from the merge base, and why.
+
+Rerun it before landing. The same commands give the same answer, with the
+branch head in place of the one named here:
+
+```bash
+base=$(git merge-base HEAD origin/main)
+git diff --stat "$base" HEAD -- crates/postio-app/tests crates/postio-gtk/tests crates/postio-ffi/tests macos/
+git diff "$base" HEAD -- crates/postio-gtk/src crates/postio-app/src crates/postio-ffi/src \
+  | grep -E '^-\s+fn [a-z_0-9]+\(' | sed -E 's/^-\s+fn ([a-z_0-9]+).*/\1/' | sort -u
+```
+
+For each function name the second command prints, compare its body at the
+merge base with its body at `HEAD`, wherever it now lives.
+
+## Integration suites: additions only
+
+`crates/postio-app/tests`, `crates/postio-ffi/tests` and `macos/` have no
+changes at all. `crates/postio-gtk/tests` has two new modules and nothing
+changed:
+- `gtk_banner_keys.rs`: the reader's banner keys;
+- `gtk_composer_markdown.rs`: a draft's Markdown survives the desktop
+  composer.
+
+The only other change is their two rows in `gtk_suite/main.rs`.
+
+## Unit tests that moved with their code: identical
+
+Two desktop modules moved to the shared, toolkit-free layer (FR-004), and
+their tests moved with them. Each test's body at the merge base and at the
+branch head is byte-for-byte identical.
+
+| Tests | Were in | Now in |
+|---|---|---|
+| 15, the status line: sync, backfill, connection state, age | `postio-gtk/src/feed.rs` | `postio-ui/src/status.rs` |
+| 10, the remote-image allow list | `postio-gtk/src/reader/allowlist.rs` | `postio-ui/src/allowlist.rs` |
+
+## One test changed in place, and why
+
+`postio-gtk/src/composer.rs`,
+`a_command_with_no_key_left_shows_no_hint_rather_than_a_blank_one`, from
+T017 (`c2f9126b`, "give every command a key a terminal sends").
+
+The test proves a rule: a composer command whose key was taken by a `[keys]`
+override shows no hint, rather than an empty one.
+- **Before:** it built that case by giving `save_draft` the key `send` had.
+  Send had no other key, so Send was left without one.
+- **Why that stopped working:** T017 gave Send a second default,
+  `alt+Return`, because a legacy terminal cannot deliver `Ctrl+Return`. So
+  the same override no longer leaves Send keyless, and there was no longer a
+  keyless command to check.
+- **After:** the test builds the same case the other way round. It gives
+  `send` the key `save_draft` has. Save draft has no alternate, so it is
+  left keyless, and the test checks that it shows no hint.
+
+The rule and the assertion's strength are unchanged. For the desktop the
+change is an addition: `Alt+Return` now also sends from the composer, and
+nothing it could do before is gone.
