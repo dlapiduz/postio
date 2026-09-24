@@ -16,6 +16,7 @@ chrono = { workspace = true, features = ["serde"] }
 async-channel = { workspace = true }
 postio-core.workspace = true
 postio-model.workspace = true
+postio-search.workspace = true
 postio-ui.workspace = true
 serde = { workspace = true }
 # The wire encoding. Self-describing on purpose: several model types have

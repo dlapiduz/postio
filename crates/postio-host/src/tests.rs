@@ -1092,3 +1092,145 @@ fn saving_every_part_writes_each_and_counts_what_could_not_be() {
     assert!(!out.path().join("nothing").exists());
     assert_eq!(client.counts().of("SaveParts"), 1, "one call for the batch");
 }
+
+/// A message in the fixture's inbox whose body says `body`, indexed the way
+/// the backfill indexes it.
+fn an_indexed_message(world: &World, subject: &str, body: &str) -> MessageId {
+    let message = another_message(world, |message| {
+        message.subject = Some(subject.into());
+        message.sync.body_state = postio_model::BodyState::Full;
+    });
+    world.rt.block_on(async {
+        let connection = world.database.connect().await.expect("a connection");
+        postio_index::index::ensure_schema(&connection)
+            .await
+            .expect("the index");
+        MessageRepository::new(&connection)
+            .set_body(
+                message,
+                &postio_storage::repository::StoredBody {
+                    text: Some(body.to_owned()),
+                    html: None,
+                    headers: None,
+                    headers_truncated: false,
+                    encoding_problems: false,
+                },
+                postio_model::BodyState::Full,
+            )
+            .await
+            .expect("the body");
+        postio_index::index::index_body(&connection, message.get(), Some(body))
+            .await
+            .expect("indexed");
+    });
+    message
+}
+
+#[test]
+fn the_desktop_search_answers_its_hits_with_an_excerpt_then_its_columns() {
+    // The desktop's bar draws more than the terminal's list: the focused
+    // hit's excerpt, the sender and folder from the index, and a second
+    // read for the scope counts beside the results.
+    let world = World::new();
+    let (client, _) = world.frontend(ClientKind::Gtk);
+    let account = world.rt.block_on(client.accounts()).expect("accounts")[0].id;
+    let matching = an_indexed_message(
+        &world,
+        "Tide gate",
+        "The interlock on the tide gate was tested on Thursday.",
+    );
+    let query = postio_search::parse("interlock", Utc::now().date_naive());
+    let scope = postio_model::AccountScope::Account(account);
+
+    let results = world
+        .rt
+        .block_on(client.search_hits(
+            scope,
+            query.clone(),
+            postio_search::facets::Scope::AllMail,
+            postio_search::ResultOrder::Relevance,
+            1,
+        ))
+        .expect("an answer")
+        .expect("the store was read");
+    assert_eq!(
+        results
+            .hits
+            .iter()
+            .map(|hit| hit.message_id)
+            .collect::<Vec<_>>(),
+        vec![matching]
+    );
+    assert_eq!(results.total_hits, 1);
+    let marked = postio_search::highlight::from_snippet(&results.hits[0].snippet);
+    assert_eq!(
+        marked
+            .matches
+            .iter()
+            .map(|range| &marked.text[range.clone()])
+            .collect::<Vec<_>>(),
+        vec!["interlock"],
+        "the focused hit is excerpted where it matched"
+    );
+
+    let facets = world
+        .rt
+        .block_on(client.facets(scope, query, postio_search::facets::Scope::AllMail))
+        .expect("an answer")
+        .expect("the counts ran");
+    assert_eq!(facets.hits(postio_search::facets::Scope::AllMail), 1);
+    assert_eq!(facets.hits(postio_search::facets::Scope::Inbox), 1);
+    assert_eq!(client.counts().of("SearchHits"), 1);
+    assert_eq!(client.counts().of("Facets"), 1);
+}
+
+#[test]
+fn a_search_preview_reads_the_stored_words_or_nothing() {
+    let world = World::new();
+    let (client, _) = world.frontend(ClientKind::Gtk);
+    let with_words = an_indexed_message(&world, "Minutes", "Half past twelve?");
+
+    let body = world
+        .rt
+        .block_on(client.stored_body(with_words))
+        .expect("an answer");
+    assert_eq!(body.text.as_deref(), Some("Half past twelve?"));
+
+    // Headers only: the preview keeps the excerpt it already drew.
+    let bare = world
+        .rt
+        .block_on(client.stored_body(world.message))
+        .expect("an answer");
+    assert_eq!(bare, postio_model::MessageBody::default());
+}
+
+#[test]
+fn messages_dragged_out_are_written_as_the_bytes_the_server_sent_in_one_call() {
+    let world = World::new();
+    let (client, _) = world.frontend(ClientKind::Gtk);
+    let blobs = postio_storage::BlobStore::open(world.blob_dir.clone(), &test_support::blob_keys())
+        .expect("the same blob store");
+    let one = blobs.put(b"Subject: one\r\n\r\nOne.\r\n").expect("stored");
+    let two = blobs.put(b"Subject: two\r\n\r\nTwo.\r\n").expect("stored");
+    let first = another_message(&world, |message| message.raw_blob_id = Some(one));
+    let second = another_message(&world, |message| message.raw_blob_id = Some(two));
+    let out = tempfile::tempdir().unwrap();
+
+    let written = world
+        .rt
+        .block_on(client.export_messages(vec![
+            (second, out.path().join("Two.eml")),
+            (first, out.path().join("One.eml")),
+        ]))
+        .expect("exported");
+    assert_eq!(
+        written,
+        vec![out.path().join("Two.eml"), out.path().join("One.eml")],
+        "in the order asked"
+    );
+    assert_eq!(
+        std::fs::read(out.path().join("One.eml")).unwrap(),
+        b"Subject: one\r\n\r\nOne.\r\n"
+    );
+    assert_eq!(client.counts().of("ExportMessages"), 1);
+}

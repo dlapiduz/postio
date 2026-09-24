@@ -181,6 +181,15 @@ pub enum Req {
         /// Which parts, and where each goes; the frontend chose them.
         parts: Vec<(postio_model::ids::AttachmentId, std::path::PathBuf)>,
     },
+    /// A message's stored words, or none: what a search preview draws under
+    /// the excerpt it already has. Never fetched, and no reason given -- a
+    /// preview with no body keeps the excerpt.
+    StoredBody(MessageId),
+    /// Write each message's raw source to its path, fetching what was never
+    /// downloaded, and answer the paths in the order asked. The first that
+    /// cannot be written ends the export: a drop of fewer files than were
+    /// dragged must say so.
+    ExportMessages(Vec<(MessageId, std::path::PathBuf)>),
     /// Autosave a draft as composition `generation`. Answered in order with
     /// every other draft write from this client (see `DraftWriter`).
     SaveDraft {
@@ -236,6 +245,33 @@ pub enum Req {
     Attach(std::path::PathBuf),
     /// Search, as the desktop's search bar does.
     Search(Search),
+    /// The desktop search's hits, as its surfaces draw them: the parsed
+    /// query the box built, excerpts for the first `snippets` hits, the
+    /// sender and folder of each, and the suggestion for a query that
+    /// found nothing.
+    SearchHits {
+        /// Which accounts.
+        account: postio_model::AccountScope,
+        /// The query, as the box parsed it.
+        query: postio_search::ParsedQuery,
+        /// The standing rescope from the results' left column.
+        scope: postio_search::facets::Scope,
+        /// Ranked, or newest first.
+        order: postio_search::ResultOrder,
+        /// How many hits, from the best, get an excerpt.
+        snippets: u32,
+    },
+    /// What the results' columns say about a search: its count in every
+    /// scope and the refinements worth offering. A read of its own, after
+    /// the hits, so the number being watched never waits for these.
+    Facets {
+        /// Which accounts: the scope the hits were counted under.
+        account: postio_model::AccountScope,
+        /// The query, as the box parsed it.
+        query: postio_search::ParsedQuery,
+        /// The scope on screen.
+        scope: postio_search::facets::Scope,
+    },
     /// One of `postio-diag`'s reports, by name.
     Diagnose(String),
     /// Change an account the way the settings' account commands do.
@@ -322,6 +358,15 @@ pub enum Resp {
     Attached(Option<postio_model::Attachment>),
     /// What a search found, or nothing when the store could not be read.
     Found(Option<Found>),
+    /// The desktop search's hits, or nothing when the store could not be
+    /// read.
+    Hits(Option<Box<Hits>>),
+    /// A search's facet counts, or nothing when they did not run.
+    Facets(Option<postio_search::facets::Facets>),
+    /// A message's stored words; empty when there are none here.
+    StoredBody(postio_model::MessageBody),
+    /// Where each exported message was written, in the order asked.
+    Exported(Vec<std::path::PathBuf>),
     /// A report's text.
     Diagnosis(String),
     /// What discovery found, as the first-run screen shows it.
@@ -418,6 +463,16 @@ pub struct Found {
     /// How long it took.
     pub elapsed: std::time::Duration,
 }
+
+/// What a desktop search found, as its surfaces draw it.
+///
+/// A wrapper only for [`Resp`]'s `Eq`: a hit's rank is an `f64`, which has
+/// no total equality. It is never NaN -- the executor folds `bm25` with
+/// finite weights -- so equality here is reflexive in practice.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Hits(pub postio_search::SearchResults);
+
+impl Eq for Hits {}
 
 /// Everything that crosses the wire.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -595,6 +650,60 @@ mod tests {
                 body,
             });
         }
+    }
+
+    #[test]
+    fn a_desktop_search_and_its_answers_round_trip() {
+        // The parsed query crosses as the box built it, operators and all,
+        // and the hits come back with their excerpts and their suggestion.
+        let query = postio_search::parse(
+            "from:ada@example.com -is:unread interlock",
+            chrono::NaiveDate::from_ymd_opt(2026, 9, 24).expect("a date"),
+        );
+        let account = postio_model::AccountScope::Account(AccountId::new(1));
+        round_trip(Frame::Request {
+            id: 1,
+            body: Req::SearchHits {
+                account,
+                query: query.clone(),
+                scope: postio_search::facets::Scope::Inbox,
+                order: postio_search::ResultOrder::Newest,
+                snippets: 1,
+            },
+        });
+        round_trip(Frame::Request {
+            id: 2,
+            body: Req::Facets {
+                account,
+                query,
+                scope: postio_search::facets::Scope::AllMail,
+            },
+        });
+        round_trip(Frame::Response {
+            id: 1,
+            body: Resp::Hits(Some(Box::new(Hits(postio_search::SearchResults {
+                hits: vec![postio_search::SearchHit {
+                    message_id: MessageId::new(3),
+                    thread_id: None,
+                    mailbox_id: MailboxId::new(2),
+                    subject: Some("Tide gate".into()),
+                    from: None,
+                    received_at: chrono::DateTime::from_timestamp(1_790_000_000, 0)
+                        .expect("a time"),
+                    snippet: "the interlock".into(),
+                    score: -1.5,
+                }],
+                total_hits: 1,
+                total_hits_capped: false,
+                elapsed: std::time::Duration::from_millis(4),
+                corpus_complete: true,
+                suggestion: None,
+            })))),
+        });
+        round_trip(Frame::Request {
+            id: 3,
+            body: Req::ExportMessages(vec![(MessageId::new(3), "/tmp/One.eml".into())]),
+        });
     }
 
     #[test]

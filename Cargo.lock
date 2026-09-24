@@ -4152,6 +4152,7 @@ dependencies = [
  "chrono",
  "postio-core",
  "postio-model",
+ "postio-search",
  "postio-ui",
  "serde",
  "serde_json",

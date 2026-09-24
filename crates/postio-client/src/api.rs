@@ -97,6 +97,10 @@ impl Req {
             Req::Attach(_) => "Attach",
             Req::InlineImage { .. } => "InlineImage",
             Req::Search(_) => "Search",
+            Req::SearchHits { .. } => "SearchHits",
+            Req::Facets { .. } => "Facets",
+            Req::StoredBody(_) => "StoredBody",
+            Req::ExportMessages(_) => "ExportMessages",
             Req::Diagnose(_) => "Diagnose",
             Req::Account(_) => "Account",
             Req::Discover(_) => "Discover",
@@ -611,6 +615,79 @@ impl Client {
             Resp::Found(found) => Some(found),
             _ => None,
         })
+        .await
+    }
+
+    /// The desktop search's hits for `query`, with excerpts for the first
+    /// `snippets`; `None` when the store could not be read.
+    pub async fn search_hits(
+        &self,
+        account: postio_model::AccountScope,
+        query: postio_search::ParsedQuery,
+        scope: postio_search::facets::Scope,
+        order: postio_search::ResultOrder,
+        snippets: u32,
+    ) -> Result<Option<postio_search::SearchResults>, StoreError> {
+        let request = Req::SearchHits {
+            account,
+            query,
+            scope,
+            order,
+            snippets,
+        };
+        self.read(request, "a search", |answer| match answer {
+            Resp::Hits(found) => Some(found.map(|hits| hits.0)),
+            _ => None,
+        })
+        .await
+    }
+
+    /// What the results' columns say about `query` under `account`; `None`
+    /// when the counts did not run.
+    pub async fn facets(
+        &self,
+        account: postio_model::AccountScope,
+        query: postio_search::ParsedQuery,
+        scope: postio_search::facets::Scope,
+    ) -> Result<Option<postio_search::facets::Facets>, StoreError> {
+        let request = Req::Facets {
+            account,
+            query,
+            scope,
+        };
+        self.read(request, "the facet counts", |answer| match answer {
+            Resp::Facets(found) => Some(found),
+            _ => None,
+        })
+        .await
+    }
+
+    /// `message`'s stored words; empty when none are here.
+    pub async fn stored_body(
+        &self,
+        message: MessageId,
+    ) -> Result<postio_model::MessageBody, StoreError> {
+        self.read(Req::StoredBody(message), "a body", |answer| match answer {
+            Resp::StoredBody(body) => Some(body),
+            _ => None,
+        })
+        .await
+    }
+
+    /// Write each message's raw source to its path; the answer is the paths
+    /// written, in the order asked.
+    pub async fn export_messages(
+        &self,
+        messages: Vec<(MessageId, std::path::PathBuf)>,
+    ) -> Result<Vec<std::path::PathBuf>, StoreError> {
+        self.read(
+            Req::ExportMessages(messages),
+            "an export",
+            |answer| match answer {
+                Resp::Exported(paths) => Some(paths),
+                _ => None,
+            },
+        )
         .await
     }
 

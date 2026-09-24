@@ -568,6 +568,43 @@ impl Inner {
                 Resp::Attached(stored)
             }
             Req::Search(search) => Resp::Found(self.search(search).await),
+            Req::SearchHits {
+                account,
+                query,
+                scope,
+                order,
+                snippets,
+            } => Resp::Hits(
+                search::hits(
+                    &self.wiring.database,
+                    account,
+                    &query,
+                    scope,
+                    order,
+                    snippets as usize,
+                )
+                .await
+                .map(|results| Box::new(postio_client::protocol::Hits(results))),
+            ),
+            Req::Facets {
+                account,
+                query,
+                scope,
+            } => Resp::Facets(search::facets(&self.wiring.database, account, &query, scope).await),
+            Req::StoredBody(message) => {
+                Resp::StoredBody(search::stored_body(&self.wiring.database, message).await)
+            }
+            Req::ExportMessages(messages) => match export::write_messages(
+                &self.wiring.database,
+                &self.wiring.blobs,
+                self.wiring.engine.get().cloned(),
+                &messages,
+            )
+            .await
+            {
+                Ok(written) => Resp::Exported(written),
+                Err(reason) => Resp::Failed(postio_model::listing::StoreError::new(reason)),
+            },
             Req::Account(op) => match self.account(op).await {
                 Ok(()) => Resp::Done,
                 Err(error) => Resp::Failed(error),
@@ -1237,8 +1274,10 @@ impl Transport for Local {
 }
 
 pub mod compose;
+pub mod export;
 pub mod parts;
 pub mod reading;
+pub mod search;
 pub mod serve;
 
 #[cfg(test)]
