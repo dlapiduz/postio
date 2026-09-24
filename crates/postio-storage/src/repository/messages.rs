@@ -92,6 +92,13 @@ pub struct MessageListRow {
     pub has_attachments: bool,
     /// Size in bytes.
     pub size: u64,
+    /// How many messages its conversation holds, when it has one.
+    ///
+    /// A column of the list query rather than a lookup per row: reading it
+    /// through `ThreadRepository::get` cost each row five statements --
+    /// the conversation's members, participants, folders and labels -- for
+    /// one number (#1613).
+    pub thread_count: Option<u32>,
 }
 
 impl MessageListRow {
@@ -679,7 +686,8 @@ messages.size, messages.send_state, messages.send_at,
 (SELECT addresses.address FROM recipients
     JOIN addresses ON addresses.id = recipients.address_id
   WHERE recipients.message_id = messages.id AND recipients.kind = 'from'
-  ORDER BY recipients.position LIMIT 1)";
+  ORDER BY recipients.position LIMIT 1),
+(SELECT threads.message_count FROM threads WHERE threads.id = messages.thread_id)";
 
 impl<'a> MessageRepository<'a> {
     /// Borrows a connection.
@@ -2610,6 +2618,7 @@ pub(crate) fn read_list_row(row: &Row) -> Result<MessageListRow> {
         send_at: row.col::<Option<i64>>(12)?.map(from_millis),
         has_attachments: row.col(9)?,
         size: row.col::<i64>(10)? as u64,
+        thread_count: row.col::<Option<i64>>(15)?.map(|count| count.max(0) as u32),
     })
 }
 

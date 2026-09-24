@@ -338,14 +338,7 @@ impl LocalStore {
                     .remember(request.offset + rows.len() as u32, last.cursor());
             }
 
-            // A loop rather than `map().collect()`: `summarise` reads the
-            // thread's participants, so it awaits, and a closure cannot.
-            let threads = ThreadRepository::new(&connection);
-            let mut summaries = Vec::with_capacity(rows.len());
-            for row in rows {
-                summaries.push(summarise(row, &threads).await?);
-            }
-            let rows = summaries;
+            let rows = rows.into_iter().map(summarise).collect();
             Ok(MessagePage { total, rows })
         })
         .await
@@ -571,12 +564,7 @@ impl LocalStore {
     async fn read_rows(&self, ids: Vec<MessageId>) -> Result<Vec<MessageSummary>, StoreError> {
         self.read(move |connection| async move {
             let rows = MessageRepository::new(&connection).rows_for(&ids).await?;
-            let threads = ThreadRepository::new(&connection);
-            let mut summaries = Vec::with_capacity(rows.len());
-            for row in rows {
-                summaries.push(summarise(row, &threads).await?);
-            }
-            Ok(summaries)
+            Ok(rows.into_iter().map(summarise).collect())
         })
         .await
     }
@@ -759,19 +747,9 @@ fn summarise_thread(row: ThreadListRow) -> Result<ThreadSummary, StoreError> {
     })
 }
 
-async fn summarise(
-    row: MessageListRow,
-    threads: &ThreadRepository<'_>,
-) -> Result<MessageSummary, StoreError> {
-    let thread_count = match row.thread_id {
-        Some(id) => threads
-            .get(id)
-            .await?
-            .map(|thread| thread.message_count)
-            .unwrap_or(1),
-        None => 1,
-    };
-    Ok(MessageSummary {
+fn summarise(row: MessageListRow) -> MessageSummary {
+    let thread_count = row.thread_count.unwrap_or(1);
+    MessageSummary {
         id: row.id,
         thread: row.thread_id,
         from: row.from,
@@ -785,7 +763,7 @@ async fn summarise(
         send_at: row.send_at,
         has_attachments: row.has_attachments,
         thread_count: thread_count.max(1),
-    })
+    }
 }
 
 /// The two windows underneath [`MailStore::list_page`], for callers that
