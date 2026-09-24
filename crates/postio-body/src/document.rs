@@ -370,7 +370,7 @@ impl Document {
     /// (issue #116's composer banner is the first) wants just the host, and
     /// parsing one out of a raw href belongs with the type that already
     /// knows what a valid href looks like. A `mailto:` link names no host at
-    /// all and is silently skipped, the same as any href [`url`] cannot find
+    /// all and is silently skipped, the same as any href [`url`](ammonia::Url) cannot find
     /// one in.
     pub fn link_hosts(&self) -> Vec<String> {
         let mut hosts = Vec::new();
