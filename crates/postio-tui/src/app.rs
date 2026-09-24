@@ -60,6 +60,25 @@ pub enum Input {
     /// The daemon answered an [`Effect::Unsubscribe`]: the list's name, or
     /// why not.
     Unsubscribed(Result<String, String>),
+    /// An [`Effect::Autosave`]'s time is up.
+    AutosaveDue {
+        /// Which composition asked.
+        generation: u64,
+        /// How many edits it had when it asked.
+        edit: u64,
+    },
+    /// The daemon answered an [`Effect::SaveDraft`]: the draft's id, or why
+    /// it could not be saved.
+    DraftSaved {
+        /// Which composition.
+        generation: u64,
+        /// Its id, or the sentence for the status line.
+        saved: Result<postio_model::DraftId, String>,
+    },
+    /// The daemon answered an [`Effect::Resume`]: the draft behind the row,
+    /// taken back from the Outbox if it was queued; nothing when there is no
+    /// local draft or its send has already started.
+    Resumed(Option<Box<postio_model::Draft>>),
     /// The daemon answered an [`Effect::ReplySource`]: the message and its
     /// account, or nothing when it could not be read.
     ReplySource {
@@ -139,6 +158,29 @@ pub enum Effect {
     Launch(std::path::PathBuf),
     /// Write the remote-image allow list, which the desktop app reads too.
     SaveAllowlist(postio_ui::allowlist::RemoteImageAllowList),
+    /// Ask again for [`Input::AutosaveDue`] after [`AUTOSAVE`].
+    Autosave {
+        /// Which composition.
+        generation: u64,
+        /// How many edits it has now.
+        edit: u64,
+    },
+    /// Save a draft through the daemon's draft writer.
+    SaveDraft {
+        /// Which composition.
+        generation: u64,
+        /// The draft.
+        draft: Box<postio_model::Draft>,
+    },
+    /// A composition closed with nothing worth keeping: drop its row.
+    DiscardDraft {
+        /// Which composition.
+        generation: u64,
+        /// Its id, when it has one.
+        known: Option<postio_model::DraftId>,
+    },
+    /// Open the local draft behind a Drafts or Outbox row.
+    Resume(postio_model::MessageId),
     /// Read the message a reply or forward starts from, and its account.
     ReplySource {
         /// Which draft to start.
@@ -165,6 +207,10 @@ pub enum Effect {
 /// row it passes would be a body per keystroke for mail nobody looked at
 /// (Principle V). Short enough that stopping on a row reads as immediate.
 pub const READ_REST: std::time::Duration = std::time::Duration::from_millis(120);
+
+/// How long the typing has to pause before a draft is saved: the desktop
+/// composer's autosave interval.
+pub const AUTOSAVE: std::time::Duration = std::time::Duration::from_millis(1500);
 
 /// Everything the terminal frontend knows.
 pub struct App {
@@ -367,12 +413,54 @@ impl App {
         vec![Effect::Redraw]
     }
 
-    /// Leave the composer, back to the list where it was.
+    /// Leave the composer, back to the list where it was: saving what was
+    /// written, and dropping a composition nothing was written in, by the
+    /// desktop's own rule (`postio_model::draft::closing`).
     fn close_composer(&mut self) -> Vec<Effect> {
-        self.composer = None;
+        let mut effects = Vec::new();
+        if let Some(composer) = self.composer.take() {
+            let generation = composer.generation();
+            let draft = composer.draft();
+            match postio_model::draft::closing(&draft) {
+                postio_model::draft::Closing::Keep => effects.push(Effect::SaveDraft {
+                    generation,
+                    draft: Box::new(draft),
+                }),
+                postio_model::draft::Closing::Drop => effects.push(Effect::DiscardDraft {
+                    generation,
+                    known: draft.id.is_assigned().then_some(draft.id),
+                }),
+            }
+        }
         self.focus = Focus::List;
         self.requested.front = crate::layout::Pane::List;
-        vec![Effect::Redraw]
+        effects.push(Effect::Redraw);
+        effects
+    }
+
+    /// A save is due, if nothing was typed since it was asked for.
+    fn autosave_due(&mut self, generation: u64, edit: u64) -> Vec<Effect> {
+        match &self.composer {
+            Some(composer) if composer.generation() == generation && composer.edits() == edit => {
+                vec![Effect::SaveDraft {
+                    generation,
+                    draft: Box::new(composer.draft()),
+                }]
+            }
+            _ => Vec::new(),
+        }
+    }
+
+    /// Whether the list on screen is where drafts are: the Drafts folder, or
+    /// the Outbox that is a view of it.
+    fn listing_drafts(&self) -> bool {
+        match self.scope {
+            Some(ListScope::Outbox(_)) => true,
+            Some(ListScope::Mailbox(mailbox)) => self.folders.iter().any(|folder| {
+                folder.id == mailbox && folder.role == postio_model::mailbox::MailboxRole::Drafts
+            }),
+            _ => false,
+        }
     }
 
     /// A key while the composer has the keyboard: a composer command if it
@@ -383,15 +471,23 @@ impl App {
             Outcome::Command(id) => self.composer_command(&id),
             Outcome::Pending(_) => Vec::new(),
             Outcome::Unhandled => {
-                let typed = self
-                    .composer
-                    .as_mut()
-                    .is_some_and(|composer| composer.type_key(*key));
-                if typed {
-                    vec![Effect::Redraw]
-                } else {
-                    Vec::new()
+                let Some(composer) = self.composer.as_mut() else {
+                    return Vec::new();
+                };
+                let before = composer.edits();
+                let mut effects = Vec::new();
+                if composer.type_key(*key) {
+                    effects.push(Effect::Redraw);
                 }
+                if composer.edits() != before {
+                    // Saved once the typing pauses: each edit asks for a
+                    // timer, and only the newest one's still matches.
+                    effects.push(Effect::Autosave {
+                        generation: composer.generation(),
+                        edit: composer.edits(),
+                    });
+                }
+                effects
             }
         }
     }
@@ -579,7 +675,16 @@ impl App {
             "select_all" => self
                 .selection
                 .select_all(postio_ui::selection::Reach::default()),
-            "quit" => return vec![Effect::Quit],
+            "quit" => {
+                // What is being written is saved on the way out.
+                let mut effects = if self.composer.is_some() {
+                    self.close_composer()
+                } else {
+                    Vec::new()
+                };
+                effects.push(Effect::Quit);
+                return effects;
+            }
             "reply" | "reply_all" | "forward" => {
                 let kind = match id {
                     "reply" => ReplyKind::Reply,
@@ -597,6 +702,11 @@ impl App {
                     .or_else(|| self.cursor_message());
                 if let Some(message) = message {
                     return vec![Effect::ReplySource { kind, message }];
+                }
+            }
+            "open_message" if self.listing_drafts() => {
+                if let Some(message) = self.cursor_message() {
+                    return vec![Effect::Resume(message)];
                 }
             }
             "compose" => {
@@ -1137,6 +1247,22 @@ pub fn update(app: &mut App, input: Input) -> Vec<Effect> {
             Ok(path) => app.say(&format!("Saved {}", path.display())),
             Err(reason) => app.say(&reason),
         },
+        Input::AutosaveDue { generation, edit } => app.autosave_due(generation, edit),
+        Input::DraftSaved { generation, saved } => match saved {
+            Ok(id) => {
+                if let Some(composer) = app.composer.as_mut()
+                    && composer.generation() == generation
+                {
+                    composer.adopt_id(id);
+                }
+                Vec::new()
+            }
+            Err(reason) => app.say(&reason),
+        },
+        Input::Resumed(found) => match found {
+            Some(draft) => app.compose(*draft),
+            None => app.say("That draft is not on this device, or is already sending"),
+        },
         Input::ReplySource { kind, found } => match found.map(|found| *found) {
             Some((message, account)) => {
                 app.compose(postio_body::replying::reply_draft(kind, &message, &account))
@@ -1525,6 +1651,157 @@ mod tests {
         let composer = app.composer().expect("composing");
         assert_eq!(composer.field(), crate::composer::Field::To);
         assert_eq!(composer.draft().account_id, postio_model::AccountId::new(1));
+    }
+
+    fn composing(app: &mut App) {
+        app.compose(postio_model::Draft::new(postio_model::AccountId::new(1)));
+    }
+
+    fn saves(effects: &[Effect]) -> Vec<postio_model::Draft> {
+        effects
+            .iter()
+            .filter_map(|effect| match effect {
+                Effect::SaveDraft { draft, .. } => Some((**draft).clone()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a_draft_is_saved_once_the_typing_pauses() {
+        // T056: each edit asks for a timer; only the newest one saves.
+        let mut app = app((160, 40));
+        composing(&mut app);
+        let first = update(&mut app, press('a'));
+        let second = update(&mut app, press('b'));
+        let due = |effects: &[Effect]| {
+            effects.iter().find_map(|effect| match effect {
+                Effect::Autosave { generation, edit } => Some((*generation, *edit)),
+                _ => None,
+            })
+        };
+        let (generation, early) = due(&first).expect("a timer for the first edit");
+        let (_, late) = due(&second).expect("and for the second");
+        assert_eq!(super::AUTOSAVE, std::time::Duration::from_millis(1500));
+
+        let stale = update(
+            &mut app,
+            Input::AutosaveDue {
+                generation,
+                edit: early,
+            },
+        );
+        assert!(
+            saves(&stale).is_empty(),
+            "a later edit is coming: {stale:?}"
+        );
+        let fresh = update(
+            &mut app,
+            Input::AutosaveDue {
+                generation,
+                edit: late,
+            },
+        );
+        let saved = saves(&fresh);
+        assert_eq!(saved.len(), 1, "{fresh:?}");
+        assert_eq!(saved[0].to[0].address, "ab");
+    }
+
+    #[test]
+    fn escape_keeps_what_was_written_and_drops_what_was_not() {
+        let mut app = app((160, 40));
+        composing(&mut app);
+        update(&mut app, press('a'));
+        let effects = update(&mut app, key(KeyCode::Esc, KeyModifiers::NONE));
+        assert_eq!(saves(&effects).len(), 1, "written, so kept: {effects:?}");
+
+        composing(&mut app);
+        let effects = update(&mut app, key(KeyCode::Esc, KeyModifiers::NONE));
+        assert!(saves(&effects).is_empty(), "{effects:?}");
+        assert!(
+            effects
+                .iter()
+                .any(|effect| matches!(effect, Effect::DiscardDraft { .. })),
+            "untouched, so dropped: {effects:?}"
+        );
+    }
+
+    #[test]
+    fn quitting_while_writing_saves_the_draft_first() {
+        // US3 scenario 5: closed without sending, the draft is in Drafts.
+        let mut app = app((160, 40));
+        composing(&mut app);
+        update(&mut app, press('a'));
+        let effects = update(&mut app, key(KeyCode::Char('q'), KeyModifiers::CONTROL));
+        let saved = effects
+            .iter()
+            .position(|effect| matches!(effect, Effect::SaveDraft { .. }));
+        let quit = effects.iter().position(|effect| *effect == Effect::Quit);
+        assert!(
+            matches!((saved, quit), (Some(saved), Some(quit)) if saved < quit),
+            "{effects:?}"
+        );
+    }
+
+    #[test]
+    fn a_saved_draft_keeps_the_id_the_host_gave_it() {
+        let mut app = app((160, 40));
+        composing(&mut app);
+        update(&mut app, press('a'));
+        let generation = app.composer().expect("composing").generation();
+        let id = postio_model::DraftId::new(41);
+        update(
+            &mut app,
+            Input::DraftSaved {
+                generation,
+                saved: Ok(id),
+            },
+        );
+        assert_eq!(app.composer().expect("composing").draft().id, id);
+
+        // An answer for a composition that has since closed is not this one's.
+        update(
+            &mut app,
+            Input::DraftSaved {
+                generation: generation + 7,
+                saved: Ok(postio_model::DraftId::new(99)),
+            },
+        );
+        assert_eq!(app.composer().expect("composing").draft().id, id);
+    }
+
+    #[test]
+    fn enter_on_a_row_in_drafts_reopens_the_draft() {
+        use postio_model::mailbox::{Mailbox, MailboxRole};
+        let mut app = app((160, 40));
+        let mut contents = sidebar_contents();
+        let mut drafts = Mailbox::new(postio_model::AccountId::new(1), "Drafts", None);
+        drafts.id = MailboxId::new(9);
+        drafts.role = MailboxRole::Drafts;
+        drafts.selectable = true;
+        contents.folders.push(drafts);
+        update(&mut app, Input::Sidebar(contents));
+        let opening = update(
+            &mut app,
+            Input::Opened {
+                scope: ListScope::Mailbox(MailboxId::new(9)),
+                total: 2,
+            },
+        );
+        serve(&mut app, opening);
+
+        let effects = update(&mut app, key(KeyCode::Enter, KeyModifiers::NONE));
+        assert!(
+            effects.contains(&Effect::Resume(MessageId::new(1))),
+            "{effects:?}"
+        );
+        let mut draft = postio_model::Draft::new(postio_model::AccountId::new(1));
+        draft.id = postio_model::DraftId::new(5);
+        draft.body_markdown = Some("Half **written**".into());
+        update(&mut app, Input::Resumed(Some(Box::new(draft))));
+        let composer = app.composer().expect("composing");
+        assert_eq!(composer.markdown(), "Half **written**");
+        assert_eq!(composer.draft().id, postio_model::DraftId::new(5));
     }
 
     #[test]

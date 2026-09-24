@@ -59,6 +59,9 @@ pub struct Composer {
     identities: Vec<postio_model::Identity>,
     /// Which of them this goes from.
     identity: usize,
+    /// How many times what would be saved has changed, so a save that was
+    /// asked for before the last edit knows it is stale.
+    edits: u64,
 }
 
 impl std::fmt::Debug for Composer {
@@ -137,6 +140,7 @@ impl Composer {
             quote,
             identities: Vec::new(),
             identity: 0,
+            edits: 0,
             draft,
         }
     }
@@ -215,24 +219,44 @@ impl Composer {
                     .identity
                     .checked_sub(1)
                     .unwrap_or(self.identities.len().saturating_sub(1));
+                self.edits += 1;
                 return true;
             }
             KeyCode::Right | KeyCode::Down | KeyCode::Char(' ') if self.field == Field::From => {
                 self.identity = (self.identity + 1) % self.identities.len().max(1);
+                self.edits += 1;
                 return true;
             }
             _ => {}
         }
-        match self.field {
-            Field::From => false,
-            Field::Body => self.body.input(key),
+        let (changed, moved) = match self.field {
+            Field::From => (false, false),
+            Field::Body => {
+                let before = self.body.cursor();
+                let changed = self.body.input(key);
+                (changed, self.body.cursor() != before)
+            }
             field => {
                 let event = crossterm::event::Event::Key(key);
                 self.line_mut(field)
                     .and_then(|input| input.handle_event(&event))
-                    .is_some_and(|changed| changed.value)
+                    .map_or((false, false), |state| (state.value, state.cursor))
             }
+        };
+        if changed {
+            self.edits += 1;
         }
+        changed || moved
+    }
+
+    /// How many times what would be saved has changed.
+    pub fn edits(&self) -> u64 {
+        self.edits
+    }
+
+    /// The id the host gave this draft's first save.
+    pub fn adopt_id(&mut self, id: postio_model::DraftId) {
+        self.draft.id = id;
     }
 
     /// The field `by` steps from the one the keyboard is in, over the
@@ -286,6 +310,7 @@ impl Composer {
                 }
             }
         }
+        self.edits += 1;
     }
 
     /// The Markdown in the body, as typed.

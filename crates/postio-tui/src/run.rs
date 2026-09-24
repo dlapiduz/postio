@@ -147,27 +147,96 @@ async fn main_loop(
         .with_downloads(downloads());
 
     let (inputs, arriving) = async_channel::unbounded::<Input>();
+    let (drafts, draft_jobs) = async_channel::unbounded::<Effect>();
+    let writer = tokio::spawn(write_drafts(client.clone(), draft_jobs, inputs.clone()));
+    let senders = Senders { inputs, drafts };
+    let outcome = drive(
+        &client,
+        &mut app,
+        &mut terminal,
+        &theme,
+        &arriving,
+        &senders,
+        &saved,
+    )
+    .await;
+    // What was written is saved before leaving: quitting mid-sentence leaves
+    // the draft in Drafts (US3 scenario 5). Bounded, so a daemon that has
+    // stopped answering cannot hold the terminal hostage.
+    drop(senders);
+    let _ = tokio::time::timeout(std::time::Duration::from_secs(3), writer).await;
+    outcome
+}
+
+/// Draft writes, sent one at a time in the order they were made. A save
+/// spawned on a task of its own could reach the daemon after the one made
+/// after it; the daemon keeps order among what arrives, not what was meant.
+async fn write_drafts(
+    client: Client,
+    jobs: async_channel::Receiver<Effect>,
+    inputs: async_channel::Sender<Input>,
+) {
+    while let Ok(job) = jobs.recv().await {
+        match job {
+            Effect::SaveDraft { generation, draft } => {
+                let saved = client
+                    .save_draft(generation, *draft)
+                    .await
+                    .map_err(|error| error.message().to_owned());
+                let _ = inputs.send(Input::DraftSaved { generation, saved }).await;
+            }
+            Effect::DiscardDraft { generation, known } => {
+                let _ = client.discard_draft(generation, known).await;
+            }
+            _ => {}
+        }
+    }
+}
+
+/// The local draft behind a row, taken back from the Outbox if it was
+/// queued, as the desktop does on opening one (#433).
+async fn resume(
+    client: &Client,
+    message: postio_model::MessageId,
+) -> Option<Box<postio_model::Draft>> {
+    let draft = client.draft_behind(message).await.ok().flatten()?;
+    let draft = if draft.state == postio_model::DraftState::Editing {
+        draft
+    } else {
+        client.cancel_send(draft.id).await.ok().flatten()?
+    };
+    Some(Box::new(draft))
+}
+
+/// Where the loop's work reports back: inputs for `update`, and draft
+/// writes for `write_drafts`.
+struct Senders {
+    inputs: async_channel::Sender<Input>,
+    drafts: async_channel::Sender<Effect>,
+}
+
+async fn drive(
+    client: &Client,
+    app: &mut App,
+    terminal: &mut Screen,
+    theme: &Theme,
+    arriving: &async_channel::Receiver<Input>,
+    senders: &Senders,
+    saved: &[String],
+) -> io::Result<()> {
     let mut terminal_events = EventStream::new();
     let host_events = client.events();
 
-    let contents = sidebar_contents(&client, saved.clone()).await;
-    let _ = update(&mut app, Input::Sidebar(contents));
-    if let Some(scope) = first_scope(&client).await {
+    let contents = sidebar_contents(client, saved.to_vec()).await;
+    let _ = update(app, Input::Sidebar(contents));
+    if let Some(scope) = first_scope(client).await {
         let total = client.list_count(scope).await.unwrap_or(0);
-        let effects = update(&mut app, Input::Opened { scope, total });
-        if perform(
-            &client,
-            &mut app,
-            &mut terminal,
-            &theme,
-            &inputs,
-            &saved,
-            effects,
-        )? {
+        let effects = update(app, Input::Opened { scope, total });
+        if perform(client, app, terminal, theme, senders, saved, effects)? {
             return Ok(());
         }
     }
-    draw(&mut terminal, &app, &theme)?;
+    draw(terminal, app, theme)?;
 
     loop {
         let input = tokio::select! {
@@ -189,16 +258,8 @@ async fn main_loop(
                 Err(_) => return Ok(()),
             },
         };
-        let effects = update(&mut app, input);
-        if perform(
-            &client,
-            &mut app,
-            &mut terminal,
-            &theme,
-            &inputs,
-            &saved,
-            effects,
-        )? {
+        let effects = update(app, input);
+        if perform(client, app, terminal, theme, senders, saved, effects)? {
             return Ok(());
         }
     }
@@ -257,10 +318,11 @@ fn perform(
     app: &mut App,
     terminal: &mut Screen,
     theme: &Theme,
-    inputs: &async_channel::Sender<Input>,
+    senders: &Senders,
     saved: &[String],
     effects: Vec<Effect>,
 ) -> io::Result<bool> {
+    let Senders { inputs, drafts } = senders;
     let mut redraw = false;
     for effect in effects {
         match effect {
@@ -336,6 +398,26 @@ fn perform(
                 if let Err(error) = list.save() {
                     tracing::warn!(%error, "could not save the remote-image allow list: {error}");
                 }
+            }
+            Effect::Autosave { generation, edit } => {
+                let inputs = inputs.clone();
+                tokio::spawn(async move {
+                    tokio::time::sleep(crate::app::AUTOSAVE).await;
+                    let _ = inputs.send(Input::AutosaveDue { generation, edit }).await;
+                });
+            }
+            // One writer, in order: see `write_drafts`.
+            effect @ (Effect::SaveDraft { .. } | Effect::DiscardDraft { .. }) => {
+                let _ = drafts.try_send(effect);
+            }
+            Effect::Resume(message) => {
+                let client = client.clone();
+                let inputs = inputs.clone();
+                tokio::spawn(async move {
+                    let _ = inputs
+                        .send(Input::Resumed(resume(&client, message).await))
+                        .await;
+                });
             }
             Effect::Rest(message) => {
                 let inputs = inputs.clone();
