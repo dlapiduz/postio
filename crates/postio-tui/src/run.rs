@@ -58,6 +58,18 @@ pub fn open(
 /// The whole program.
 pub fn run() -> ExitCode {
     let config_path = postio_config::paths::config_path().ok();
+    // The journal and never stderr, which is the screen this draws on; the
+    // file is watched, so `[logging]` retunes a running terminal as it does
+    // the desktop app.
+    let logging = postio_session::logging::init_to(
+        &config_path
+            .as_deref()
+            .map(postio_session::logging::config_at)
+            .unwrap_or_default(),
+        postio_session::logging::Destination::Journal,
+    );
+    let _log_watch = config_path.as_deref().and_then(|path| logging.watch(path));
+    tracing::info!(version = env!("CARGO_PKG_VERSION"), "postio-tui starting");
     let config = config_path
         .as_deref()
         .and_then(|path| std::fs::read_to_string(path).ok())

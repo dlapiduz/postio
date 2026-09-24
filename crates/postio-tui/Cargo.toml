@@ -32,6 +32,8 @@ postio-body.workspace = true
 postio-host.workspace = true
 postio-model.workspace = true
 postio-search.workspace = true
+# Logging, to journald: stderr is the screen this draws on.
+postio-session.workspace = true
 postio-ui.workspace = true
 # The link destinations in a message, from the parser tui-markdown already
 # brings.
@@ -58,7 +60,6 @@ unicode-width = "0.2"
 
 [dev-dependencies]
 postio-model = { workspace = true, features = ["test-corpus"] }
-postio-session.workspace = true
 postio-storage.workspace = true
 tempfile = { workspace = true }
 tokio = { workspace = true, features = ["net"] }

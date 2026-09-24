@@ -130,3 +130,15 @@ role's colour can be changed:
 [tui.colors]
 flagged = "#ff8800"
 ```
+
+## The log
+
+The terminal writes its log to the systemd journal, never to the screen:
+
+```bash
+journalctl --user -t postio-tui -f
+```
+
+`POSTIO_LOG` and `[logging]` in `config.toml` set the level, as for the
+desktop app, and a change to the file takes effect in a running terminal.
+On a machine without a journal the log goes nowhere.
