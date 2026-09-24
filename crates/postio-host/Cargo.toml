@@ -25,6 +25,7 @@ postio-model.workspace = true
 postio-runtime.workspace = true
 postio-session.workspace = true
 postio-storage.workspace = true
+postio-ui.workspace = true
 thiserror = { workspace = true }
 tokio = { workspace = true, features = ["io-util", "macros", "net", "rt", "rt-multi-thread", "signal", "sync", "time"] }
 tracing = { workspace = true }

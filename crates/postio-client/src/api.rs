@@ -70,6 +70,7 @@ impl Req {
             Req::Mailboxes(_) => "Mailboxes",
             Req::DraftCounts(_) => "DraftCounts",
             Req::Accounts => "Accounts",
+            Req::Body(_) => "Body",
         }
     }
 }
@@ -139,6 +140,15 @@ impl Client {
     pub async fn accounts(&self) -> Result<Vec<postio_model::Account>, StoreError> {
         self.read(Req::Accounts, "the accounts", |answer| match answer {
             Resp::Accounts(accounts) => Some(accounts),
+            _ => None,
+        })
+        .await
+    }
+
+    /// A message's body, or why there is none yet.
+    pub async fn body(&self, message: MessageId) -> Result<crate::protocol::Body, StoreError> {
+        self.read(Req::Body(message), "a body", |answer| match answer {
+            Resp::Body(body) => Some(body),
             _ => None,
         })
         .await
@@ -359,6 +369,20 @@ mod tests {
         let (client, fake) = client(vec![Ok(Resp::Accounts(Vec::new()))]);
         assert_eq!(client.accounts().await, Ok(Vec::new()));
         assert_eq!(*fake.asked.lock().unwrap(), vec![Req::Accounts]);
+    }
+
+    #[tokio::test]
+    async fn a_body_is_asked_for_by_message() {
+        let (client, fake) = client(vec![Ok(Resp::Body(crate::protocol::Body::Partial))]);
+        assert_eq!(
+            client.body(MessageId::new(9)).await,
+            Ok(crate::protocol::Body::Partial)
+        );
+        assert_eq!(
+            *fake.asked.lock().unwrap(),
+            vec![Req::Body(MessageId::new(9))]
+        );
+        assert_eq!(client.counts().of("Body"), 1);
     }
 
     #[tokio::test]

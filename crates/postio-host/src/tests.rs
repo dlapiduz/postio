@@ -271,3 +271,16 @@ fn a_frontend_can_list_the_accounts_for_its_sidebar() {
     assert_eq!(accounts.len(), 1);
     assert!(accounts[0].enabled);
 }
+
+#[test]
+fn a_frontend_reads_a_body_or_hears_why_there_is_none() {
+    let world = World::new();
+    let (client, _) = world.frontend(ClientKind::Tui);
+    // The fixture's message has headers and no body yet: the ordinary state
+    // of a mailbox mid-backfill, not a fault.
+    let body = world
+        .rt
+        .block_on(client.body(world.message))
+        .expect("an answer");
+    assert_eq!(body, postio_client::protocol::Body::Partial);
+}

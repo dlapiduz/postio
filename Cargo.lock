@@ -4002,6 +4002,7 @@ dependencies = [
  "postio-runtime",
  "postio-session",
  "postio-storage",
+ "postio-ui",
  "tempfile",
  "thiserror",
  "tokio",

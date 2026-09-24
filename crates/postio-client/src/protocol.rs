@@ -116,6 +116,8 @@ pub enum Req {
     DraftCounts(AccountId),
     /// Every account, in the sidebar's order.
     Accounts,
+    /// A message's body, or why there is none yet.
+    Body(MessageId),
 }
 
 /// The host's answer to one [`Req`].
@@ -141,8 +143,34 @@ pub enum Resp {
     DraftCounts(DraftCounts),
     /// The accounts.
     Accounts(Vec<Account>),
+    /// A body.
+    Body(Body),
     /// The read could not be answered; the sentence is for the user.
     Failed(StoreError),
+}
+
+/// A message's body as the store holds it, or which kind of "no body" this
+/// is. The frontend applies the reader's rules to it -- sanitising, reader
+/// view, folding -- with the same shared code every reader uses.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Body {
+    /// The words are here.
+    Ready {
+        /// The text and HTML parts.
+        body: postio_model::MessageBody,
+        /// Whether those words are a guess rather than what was sent.
+        encoding_problems: bool,
+    },
+    /// Headers are here; the body has not been fetched yet.
+    Partial,
+    /// Not fetched, and nothing is fetching: offline.
+    Offline,
+    /// Recorded, but the bytes are not in the store.
+    Missing,
+    /// Fetched, and there is no text or HTML part.
+    Empty,
+    /// A draft written by another client: nothing here to edit.
+    ForeignDraft,
 }
 
 /// Everything that crosses the wire.

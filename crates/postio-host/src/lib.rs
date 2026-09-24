@@ -401,11 +401,43 @@ impl Inner {
                     ),
                 Err(error) => Resp::Failed(postio_model::listing::StoreError::from(error)),
             },
+            Req::Body(message) => self.body(message).await,
             Req::DraftCounts(account) => store
                 .draft_counts(account)
                 .await
                 .map_or_else(Resp::Failed, Resp::DraftCounts),
         }
+    }
+
+    /// A message's body, or which kind of "no body" it is.
+    ///
+    /// "Offline" is not told apart from "not fetched yet" here: the host has
+    /// no reachability signal of its own yet, and saying "downloading" about
+    /// a body that is not is the milder of the two mistakes.
+    async fn body(&self, message: postio_model::MessageId) -> Resp {
+        use postio_client::protocol::Body;
+        use postio_session::reading::{Body as Stored, load_body_or_reason};
+        use postio_ui::reader::document::Absent;
+        let connection = match self.wiring.database.connect().await {
+            Ok(connection) => connection,
+            Err(error) => return Resp::Failed(postio_model::listing::StoreError::from(error)),
+        };
+        Resp::Body(
+            match load_body_or_reason(&connection, message, false).await {
+                Stored::Ready {
+                    body,
+                    encoding_problems,
+                } => Body::Ready {
+                    body,
+                    encoding_problems,
+                },
+                Stored::Absent(Absent::Partial) => Body::Partial,
+                Stored::Absent(Absent::Offline) => Body::Offline,
+                Stored::Absent(Absent::Missing) => Body::Missing,
+                Stored::Absent(Absent::Empty) => Body::Empty,
+                Stored::Absent(Absent::ForeignDraft) => Body::ForeignDraft,
+            },
+        )
     }
 
     /// Put a command on the one queue. Never waits.
