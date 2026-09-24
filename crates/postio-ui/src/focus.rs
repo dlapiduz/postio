@@ -126,6 +126,7 @@ mod tests {
             Context::Parts,
             Context::Accounts,
             Context::Keys,
+            Context::Contacts,
         ] {
             assert_eq!(next_pane(context, true), None, "{context:?}");
             assert_eq!(next_pane(context, false), None, "{context:?}");

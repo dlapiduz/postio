@@ -92,6 +92,7 @@ fn heading(context: Context) -> &'static str {
         // Same reasoning as `Accounts`, one section down: these keys reach
         // only the keybinding list, not the whole settings panel.
         Context::Keys => "Keybindings",
+        Context::Contacts => "Contacts",
     }
 }
 

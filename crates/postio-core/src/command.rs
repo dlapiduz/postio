@@ -237,6 +237,16 @@ command_ids! {
     /// Scroll the reading pane up by about a screenful, without moving the
     /// keyboard off the message list.
     ScrollReaderUp => "scroll_reader_up",
+    /// Open the Contacts screen over the reading pane.
+    OpenContacts => "open_contacts",
+    /// Show the mail from and to every address of the focused person.
+    ContactShowMail => "contact_show_mail",
+    /// Write to the focused person's preferred address.
+    ContactCompose => "contact_compose",
+    /// Move the keyboard to the Contacts filter.
+    ContactsFilter => "contacts_filter",
+    /// Show everyone from mail, or only the people the user made or wrote to.
+    ContactsToggleEveryone => "contacts_toggle_everyone",
 }
 
 impl fmt::Display for CommandId {
@@ -776,6 +786,19 @@ pub enum Command {
     ScrollReaderDown,
     /// Scroll the reading pane up by about a screenful.
     ScrollReaderUp,
+
+    // -- Contacts (specs/005-contacts) ----------------------------------
+    /// Open the Contacts screen.
+    OpenContacts,
+    /// Show the focused person's mail: a `with:` search over every address
+    /// they own.
+    ContactShowMail,
+    /// Open a draft to the focused person's preferred address.
+    ContactCompose,
+    /// Focus the Contacts filter.
+    ContactsFilter,
+    /// Toggle between the default view and everyone from mail.
+    ContactsToggleEveryone,
 }
 
 impl Command {
@@ -921,6 +944,11 @@ impl Command {
             Command::RenderPartOnce => CommandId::RenderPartOnce,
             Command::ScrollReaderDown => CommandId::ScrollReaderDown,
             Command::ScrollReaderUp => CommandId::ScrollReaderUp,
+            Command::OpenContacts => CommandId::OpenContacts,
+            Command::ContactShowMail => CommandId::ContactShowMail,
+            Command::ContactCompose => CommandId::ContactCompose,
+            Command::ContactsFilter => CommandId::ContactsFilter,
+            Command::ContactsToggleEveryone => CommandId::ContactsToggleEveryone,
         }
     }
 
@@ -1045,6 +1073,11 @@ impl Command {
             CommandId::RenderPartOnce => Command::RenderPartOnce,
             CommandId::ScrollReaderDown => Command::ScrollReaderDown,
             CommandId::ScrollReaderUp => Command::ScrollReaderUp,
+            CommandId::OpenContacts => Command::OpenContacts,
+            CommandId::ContactShowMail => Command::ContactShowMail,
+            CommandId::ContactCompose => Command::ContactCompose,
+            CommandId::ContactsFilter => Command::ContactsFilter,
+            CommandId::ContactsToggleEveryone => Command::ContactsToggleEveryone,
         }
     }
 

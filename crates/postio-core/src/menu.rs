@@ -189,6 +189,13 @@ pub fn section_for(command: CommandId) -> Option<MenuSection> {
         // command, and putting it in a menu invites the reader to be driven
         // from one.
         C::ScrollReaderDown | C::ScrollReaderUp => None,
+        // Contacts is a destination like the inbox, so it is in Go; the
+        // commands on the screen act on its focused row, like the settings
+        // surfaces above, and a global menu cannot say which person.
+        C::OpenContacts => Some(M::Go),
+        C::ContactShowMail | C::ContactCompose | C::ContactsFilter | C::ContactsToggleEveryone => {
+            None
+        }
         // The one-off render of a part the reader would not draw by itself.
         // Deliberately *not* a menu item: `PRODUCT.md`'s privacy rule is that
         // this happens on a deliberate activation on the part itself, and a

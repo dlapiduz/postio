@@ -47,10 +47,10 @@ command from inside a text field.
 | `g g` | First message | List, conversation, reader, search |  | `first_message` |
 | `G` | Last message | List, conversation, reader, search |  | `last_message` |
 | `Return` or `l` or `Right` | Open message | List, conversation, search |  | `open_message` |
-| `x` | Toggle selection | List, conversation, reader, search |  | `toggle_selection` |
-| `J` or `shift+Down` | Extend selection down | List, reader, search |  | `extend_selection_down` |
-| `K` or `shift+Up` | Extend selection up | List, reader, search |  | `extend_selection_up` |
-| `ctrl+a` | Select all | List, conversation, reader, search |  | `select_all` |
+| `x` | Toggle selection | List, conversation, reader, search, contacts |  | `toggle_selection` |
+| `J` or `shift+Down` | Extend selection down | List, reader, search, contacts |  | `extend_selection_down` |
+| `K` or `shift+Up` | Extend selection up | List, reader, search, contacts |  | `extend_selection_up` |
+| `ctrl+a` | Select all | List, conversation, reader, search, contacts |  | `select_all` |
 | `h` or `Left` | Previous view | List, conversation, reader |  | `prev_view` |
 | `Escape` | Back | Everywhere |  | `back` |
 | `o` | Toggle result order | Search |  | `toggle_result_order` |
@@ -92,7 +92,7 @@ command from inside a text field.
 | `ctrl+shift+7` | Numbered list | Composer |  | `numbered_list` |
 | `ctrl+shift+k` | Insert link… | Composer |  | `insert_link` |
 | `ctrl+shift+9` | Quote block | Composer |  | `quote_block` |
-| `u` | Undo | List, conversation, reader, account list |  | `undo` |
+| `u` | Undo | List, conversation, reader, account list, contacts |  | `undo` |
 | `ctrl+k` | Command palette | Everywhere |  | `command_palette` |
 | `?` | Keyboard shortcuts | List, conversation, reader |  | `cheat_sheet` |
 | `ctrl+comma` | Settings | Everywhere |  | `settings` |
@@ -131,6 +131,11 @@ command from inside a text field.
 | `H` | Render part once | Parts panel |  | `render_part_once` |
 | `Page_Down` or `space` | Scroll reading pane down | List, conversation, reader |  | `scroll_reader_down` |
 | `Page_Up` or `shift+space` | Scroll reading pane up | List, conversation, reader |  | `scroll_reader_up` |
+| `g c` | Contacts | List, conversation, reader, search, folder list |  | `open_contacts` |
+| `Return` or `o` | Show mail | Contacts |  | `contact_show_mail` |
+| `c` | Write to | Contacts |  | `contact_compose` |
+| `/` | Filter contacts | Contacts |  | `contacts_filter` |
+| `v e` | Everyone from mail | Contacts |  | `contacts_toggle_everyone` |
 
 ## The one box
 

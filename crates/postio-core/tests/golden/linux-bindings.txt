@@ -87,3 +87,8 @@ open_part_externally	x
 render_part_once	H
 scroll_reader_down	Page_Down | space
 scroll_reader_up	Page_Up | shift+space
+open_contacts	g c
+contact_show_mail	Return | o
+contact_compose	c
+contacts_filter	/
+contacts_toggle_everyone	v e

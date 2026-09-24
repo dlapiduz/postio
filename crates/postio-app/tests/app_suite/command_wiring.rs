@@ -148,7 +148,16 @@ const SEARCH_OWNED: &[CommandId] = &[CommandId::ToggleResultOrder];
 /// `Window::act` and proven end to end by `search_open.rs`; `AddLabel` was
 /// the other, removed by #766 when it had nothing behind it and brought back
 /// by #780 with a handler, which is why it is not listed here.
-const KNOWN_ORPHANS: &[(CommandId, &str)] = &[];
+const KNOWN_ORPHANS: &[(CommandId, &str)] = &[
+    // specs/005-contacts lands the Contacts screen's commands before the
+    // screen that answers them; each leaves this list with the task that
+    // wires it, and the sweep fails if one is taken off too early.
+    (CommandId::OpenContacts, "specs/005-contacts T036"),
+    (CommandId::ContactShowMail, "specs/005-contacts T038"),
+    (CommandId::ContactCompose, "specs/005-contacts T038"),
+    (CommandId::ContactsFilter, "specs/005-contacts T035"),
+    (CommandId::ContactsToggleEveryone, "specs/005-contacts T035"),
+];
 
 pub fn every_command_id_is_handled_locally_or_wired_to_the_bus() {
     crate::gtk_case(async {

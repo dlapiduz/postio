@@ -84,7 +84,8 @@ pub enum FailureReason {
 /// results are ranked across whatever scope the query ran in, so a single
 /// account would be wrong in unified scope, and relevance to the view is
 /// decided by the query itself. It gains the scope, not an account, with the
-/// search-scope work (#186).
+/// search-scope work (#186). [`ContactsChanged`](Self::ContactsChanged) is the
+/// other: people are shared across accounts, so no one account names them.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Event {
     // -- Data ------------------------------------------------------------
@@ -138,6 +139,22 @@ pub enum Event {
         account: AccountId,
         /// The message whose body is now available.
         message: MessageId,
+    },
+
+    /// People changed: made, edited, joined, split, deleted or restored, or
+    /// a group changed (specs/005-contacts).
+    ///
+    /// The second exception to "every data variant names its account":
+    /// people are shared across accounts, so there is no one account an
+    /// edit to a person belongs to. Subscribers refetch what is on screen:
+    /// the Contacts list its visible page, completion and the finder their
+    /// people -- and, when `names_changed`, the message list and an open
+    /// conversation their visible rows, because a name the user set is what
+    /// those rows draw for that person's mail (FR-032).
+    ContactsChanged {
+        /// Whether the name a message row would draw for someone may have
+        /// changed: a person renamed, joined, split, deleted or restored.
+        names_changed: bool,
     },
 
     // -- View ------------------------------------------------------------

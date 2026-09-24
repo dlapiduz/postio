@@ -302,8 +302,9 @@ fn contexts_round_trip_through_strings() {
     // (#881) is the tenth, still inside that widened ceiling. The ceiling
     // is no longer written down twice -- `context.rs`'s
     // `every_context_fits_the_set` derives it from the integer itself, so
-    // this is only the deliberate-act tripwire.
-    assert_eq!(Context::ALL.len(), 10);
+    // this is only the deliberate-act tripwire. `Contacts`
+    // (specs/005-contacts) is the eleventh.
+    assert_eq!(Context::ALL.len(), 11);
 }
 
 #[test]
@@ -659,6 +660,72 @@ fn a_command_can_need_more_than_one_thing_at_once() {
                 .any(|id| id == CommandId::Move),
             "Move survived {unmet:?}, so only one of its two requirements is \
              being evaluated"
+        );
+    }
+}
+
+/// specs/005-contacts, contracts/commands.md: the Contacts screen's first
+/// commands, and the shared ones it borrows.
+///
+/// Its own commands live in `Context::Contacts` and nowhere a message row is
+/// the target; `open_contacts` is reachable from every surface a person goes
+/// somewhere else from -- and, like the other `g` destinations, not from the
+/// composer, where `g` is a letter.
+#[test]
+fn the_contacts_screen_is_reachable_and_its_commands_live_in_its_context() {
+    let spec = |id: CommandId| {
+        registry::all()
+            .find(|spec| spec.id == id)
+            .unwrap_or_else(|| panic!("{id} is not in the registry"))
+    };
+
+    let open = spec(CommandId::OpenContacts);
+    assert_eq!(open.default_binding, "g c");
+    for context in [
+        Context::List,
+        Context::Reader,
+        Context::Sidebar,
+        Context::Search,
+    ] {
+        assert!(open.contexts.contains(context), "g c from {context}");
+    }
+    assert!(
+        !open.contexts.contains(Context::Composer),
+        "`g` is a letter in the composer"
+    );
+
+    let own = [
+        (CommandId::ContactShowMail, "Return"),
+        (CommandId::ContactCompose, "c"),
+        (CommandId::ContactsFilter, "/"),
+        (CommandId::ContactsToggleEveryone, "v e"),
+    ];
+    for (id, binding) in own {
+        let spec = spec(id);
+        assert_eq!(spec.default_binding, binding, "{id}'s default binding");
+        assert!(
+            spec.contexts.contains(Context::Contacts),
+            "{id} in Contacts"
+        );
+        assert!(
+            !spec.contexts.contains(Context::List),
+            "{id} acts on a person, and the message list has none"
+        );
+    }
+
+    // Borrowed: marking and undo mean the same thing on a person as on a
+    // message, so Contacts joins their contexts rather than copying them.
+    for id in [
+        CommandId::ToggleSelection,
+        CommandId::ExtendSelectionDown,
+        CommandId::ExtendSelectionUp,
+        CommandId::SelectAll,
+        CommandId::Undo,
+        CommandId::Back,
+    ] {
+        assert!(
+            spec(id).contexts.contains(Context::Contacts),
+            "{id} must work in Contacts"
         );
     }
 }

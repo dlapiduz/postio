@@ -544,6 +544,8 @@ pub enum KeyContext {
     Accounts,
     /// The keybinding list in settings, once the keyboard is in it.
     Keys,
+    /// The Contacts screen's list and detail (specs/005-contacts).
+    Contacts,
 }
 
 impl KeyContext {
@@ -581,6 +583,11 @@ impl KeyContext {
             // hatch sits in the same panel, and a fall-through here would
             // let a mail binding fire while the keyboard is on a rebind row.
             Self::Keys => &[Self::Keys, Self::Global],
+            // Not layered over `List`: the Contacts screen covers the reading
+            // pane, and `c` here writes to the focused *person* -- a
+            // fall-through to a mail binding would act on the message list
+            // behind the screen, which the user cannot see.
+            Self::Contacts => &[Self::Contacts, Self::Global],
         }
     }
 }
@@ -604,6 +611,7 @@ impl From<Context> for KeyContext {
             Context::Parts => Self::Parts,
             Context::Accounts => Self::Accounts,
             Context::Keys => Self::Keys,
+            Context::Contacts => Self::Contacts,
         }
     }
 }

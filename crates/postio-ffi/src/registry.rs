@@ -54,6 +54,8 @@ pub enum UiContext {
     Accounts,
     /// The keybinding list in settings.
     Keys,
+    /// The Contacts screen's list and detail.
+    Contacts,
 }
 
 impl From<postio_core::Context> for UiContext {
@@ -70,6 +72,7 @@ impl From<postio_core::Context> for UiContext {
             Context::Parts => UiContext::Parts,
             Context::Accounts => UiContext::Accounts,
             Context::Keys => UiContext::Keys,
+            Context::Contacts => UiContext::Contacts,
         }
     }
 }
@@ -95,6 +98,7 @@ impl From<UiContext> for postio_core::Context {
             UiContext::Parts => Context::Parts,
             UiContext::Accounts => Context::Accounts,
             UiContext::Keys => Context::Keys,
+            UiContext::Contacts => Context::Contacts,
         }
     }
 }

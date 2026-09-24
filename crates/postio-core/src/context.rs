@@ -75,6 +75,17 @@ pub enum Context {
     /// escape hatch is a `GtkTextView` over raw TOML, and a bare-letter
     /// binding must not fire while someone is typing there (#881).
     Keys,
+    /// The Contacts screen's list and detail, once the keyboard is in them
+    /// (specs/005-contacts).
+    ///
+    /// Scoped to the list and the detail rather than the whole screen, the
+    /// way `Accounts` and `Keys` are: the screen also holds a filter entry
+    /// and an editor, and a bare-letter binding must not fire while someone
+    /// types a name there. One context for every kind of row it shows --
+    /// person, address, group, suggestion -- and a command acts on the
+    /// focused row's kind; sub-contexts per kind would split one surface into
+    /// four cheat-sheet headings.
+    Contacts,
 }
 
 impl Context {
@@ -92,6 +103,7 @@ impl Context {
         // the ones people have learned (ADR 0005 Q6c).
         Context::Accounts,
         Context::Keys,
+        Context::Contacts,
     ];
 
     /// The stable serialized name, matching the `Deserialize` spelling.
@@ -107,6 +119,7 @@ impl Context {
             Context::Parts => "parts",
             Context::Accounts => "accounts",
             Context::Keys => "keys",
+            Context::Contacts => "contacts",
         }
     }
 

@@ -38,7 +38,7 @@ the row it wants. This keeps one binding per verb, which is what
 
 | id | Title | Binding | Contexts | D | R | Spec |
 |---|---|---|---|---|---|---|
-| `open_contacts` | Contacts | `g c` | any | | None | FR-001 |
+| `open_contacts` | Contacts | `g c` | the `g` destinations' surfaces (list, conversation, reader, search, folder list) — not the composer, where `g` is a letter | | None | FR-001 |
 | `contact_new` | New contact | `n` | Contacts | | Undo | FR-020 |
 | `contact_edit` | Edit contact | `e` | Contacts (person) | | Undo | FR-021 |
 | `contact_delete` | Delete | `#`, `Delete` | Contacts (person or group) | ✓ | Undo | FR-023, FR-040 |
@@ -65,13 +65,16 @@ the row it wants. This keeps one binding per verb, which is what
 hint, not data), so the registry rule does not apply.
 ² Import only adds; its summary says what it joined (research R9).
 
-Existing list-movement and selection commands (`move_down`/`move_up`,
-`toggle_selection` `x`, `extend_selection_*` `J`/`K`, `select_all`, `back`)
-gain `Context::Contacts` in their context sets rather than being duplicated —
-cursor and selection stay distinct (Principle II): `x` marks, `m` joins the
-*selection*. `back` (`Esc`) closes the screen (FR-001). **`undo` (`u`) gains
-`Context::Contacts`** — it is scoped to message surfaces and Accounts today,
-and every contacts edit is undone with it (FR-025).
+Movement follows the precedent `Context::Accounts` and `Context::Keys` set:
+the list's own arrow keys walk it, because `next_message`/`prev_message` would
+print "Next message" under a Contacts heading. What Contacts borrows are the
+commands that mean the same thing on a person as on a message:
+`toggle_selection` `x`, `extend_selection_*` `J`/`K`, `select_all`, `back` and
+**`undo` (`u`)** gain `Context::Contacts` in their context sets rather than
+being duplicated — cursor and selection stay distinct (Principle II): `x`
+marks, `m` joins the *selection*. `back` (`Esc`) closes the screen (FR-001).
+`undo` is scoped to message surfaces and Accounts otherwise, and every
+contacts edit is undone with it (FR-025).
 
 Every command has a default binding (Principle II;
 `every_command_has_an_id_a_title_and_a_default_binding`). 22 commands.

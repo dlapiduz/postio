@@ -331,6 +331,10 @@ const GO_SURFACES: &[Context] = &[
     Context::Sidebar,
 ];
 
+/// The Contacts screen, alone. Its commands act on a person, a group or a
+/// suggestion, none of which any other surface has.
+const CONTACTS: &[Context] = &[Context::Contacts];
+
 /// The registry itself. Ordered like [`CommandId::ALL`]; the cheat sheet reads
 /// it top to bottom.
 static SPECS: &[CommandSpec] = &[
@@ -398,7 +402,9 @@ static SPECS: &[CommandSpec] = &[
         // here than a mnemonic nobody has.
         default_binding: "x",
         alternate_bindings: &[],
-        contexts: ctx(LIST_SURFACES),
+        // Plus Contacts, where `x` marks a person the way it marks a message
+        // here -- the selection `m` joins (specs/005-contacts).
+        contexts: ctx(LIST_SURFACES).with(Context::Contacts),
         destructive: false,
         // Changing what an action *would* hit changes no durable state, so
         // there is nothing to undo and nothing to confirm.
@@ -413,8 +419,9 @@ static SPECS: &[CommandSpec] = &[
         // `LIST_SURFACES` minus the conversation: `J` walks the open
         // conversation's messages there (#1007), and there is no row
         // selection to extend while the keyboard is inside the pane.
-        // `shift+Down` still reaches this everywhere it ever did.
-        contexts: ctx(SELECTION_SURFACES),
+        // `shift+Down` still reaches this everywhere it ever did. Contacts
+        // too: a run of people is selected the way a run of messages is.
+        contexts: ctx(SELECTION_SURFACES).with(Context::Contacts),
         destructive: false,
         recovery: Recovery::None,
         requires: MAIL,
@@ -425,7 +432,7 @@ static SPECS: &[CommandSpec] = &[
         default_binding: "K",
         alternate_bindings: &["shift+Up"],
         // See `ExtendSelectionDown`.
-        contexts: ctx(SELECTION_SURFACES),
+        contexts: ctx(SELECTION_SURFACES).with(Context::Contacts),
         destructive: false,
         recovery: Recovery::None,
         requires: MAIL,
@@ -435,7 +442,7 @@ static SPECS: &[CommandSpec] = &[
         title: "Select all",
         default_binding: "mod+a",
         alternate_bindings: &[],
-        contexts: ctx(LIST_SURFACES),
+        contexts: ctx(LIST_SURFACES).with(Context::Contacts),
         destructive: false,
         recovery: Recovery::None,
         requires: MAIL,
@@ -1014,7 +1021,14 @@ static SPECS: &[CommandSpec] = &[
         // what ADR 0005 keeps refusing to ship -- so `u` reaches the toast
         // while it is up. Context-local state, context-local binding; the
         // global stack is untouched (ADR 0005 Q6c).
-        contexts: ctx(MESSAGE_SURFACES).with(Context::Accounts),
+        //
+        // Plus Contacts: every edit there -- a join, a detach, a delete -- is
+        // `Recovery::Undo` on the global stack, and a `u` that did nothing on
+        // the screen that made the edit would be the declaration nothing
+        // backs (specs/005-contacts FR-025).
+        contexts: ctx(MESSAGE_SURFACES)
+            .with(Context::Accounts)
+            .with(Context::Contacts),
         destructive: false,
         recovery: Recovery::None,
         requires: MAIL,
@@ -1564,6 +1578,64 @@ static SPECS: &[CommandSpec] = &[
         alternate_bindings: &["shift+space"],
         contexts: ctx(MESSAGE_SURFACES),
         destructive: false,
+        recovery: Recovery::None,
+        requires: MAIL,
+    },
+    // -- Contacts (specs/005-contacts, contracts/commands.md) -------------
+    CommandSpec {
+        id: CommandId::OpenContacts,
+        title: "Contacts",
+        // Beside `g i`, `g d`, `g s`: a destination. On the destinations'
+        // surfaces and not `ContextSet::ANY`, for the reason `GO_SURFACES`
+        // gives -- `g` is a letter in the composer.
+        default_binding: "g c",
+        alternate_bindings: &[],
+        contexts: ctx(GO_SURFACES),
+        destructive: false,
+        recovery: Recovery::None,
+        requires: MAIL,
+    },
+    CommandSpec {
+        id: CommandId::ContactShowMail,
+        title: "Show mail",
+        default_binding: "Return",
+        alternate_bindings: &["o"],
+        contexts: ctx(CONTACTS),
+        destructive: false,
+        recovery: Recovery::None,
+        requires: MAIL,
+    },
+    CommandSpec {
+        id: CommandId::ContactCompose,
+        title: "Write to",
+        // `c` is compose everywhere else; here it composes to the person.
+        default_binding: "c",
+        alternate_bindings: &[],
+        contexts: ctx(CONTACTS),
+        destructive: false,
+        recovery: Recovery::None,
+        requires: MAIL,
+    },
+    CommandSpec {
+        id: CommandId::ContactsFilter,
+        title: "Filter contacts",
+        default_binding: "/",
+        alternate_bindings: &[],
+        contexts: ctx(CONTACTS),
+        destructive: false,
+        recovery: Recovery::None,
+        requires: MAIL,
+    },
+    CommandSpec {
+        id: CommandId::ContactsToggleEveryone,
+        title: "Everyone from mail",
+        // `v` for view: the list's views are a family (`v d` shows the
+        // deleted), and a prefix keeps them together in the sheet.
+        default_binding: "v e",
+        alternate_bindings: &[],
+        contexts: ctx(CONTACTS),
+        destructive: false,
+        // Which people are shown is view state, not data.
         recovery: Recovery::None,
         requires: MAIL,
     },
