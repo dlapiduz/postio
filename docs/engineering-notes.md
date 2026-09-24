@@ -3043,7 +3043,7 @@ exercising a configuration that never ships.
 
 ## Dated entries, one file each
 
-- [An allocator swap saves tens of MiB here, not a gigabyte](notes/2026-09-23-mimalloc-versus-system-memory.md) — two release builds on the same synthetic store put the system allocator about 24 MiB lower at idle and 36 MiB lower after search; search latency and a full-size compatible store remain unproved (2026-09-23).
+- [Allocator A/B: small-store savings do not persist after a large search](notes/2026-09-24-allocator-ab-memory.md) — system allocation saved about 36 MiB after a small-store search, but neither allocator had a repeatable memory advantage after searching an older-schema 918 MiB mailbox; the 1 GiB peak remains unattributed (2026-09-24).
 
 Everything below this line used to be appended here, and two sessions
 appending in one day conflicted on every rebase (#1130). Each entry is now
