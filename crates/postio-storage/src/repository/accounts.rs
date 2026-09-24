@@ -98,6 +98,7 @@ impl<'a> AccountRepository<'a> {
 
             let id = AccountId::new(transaction.last_insert_rowid());
             account.id = id;
+            super::release_own_address(&transaction, &account.address).await?;
             for (position, identity) in account.identities.iter_mut().enumerate() {
                 identity.account_id = id;
                 identity.id =
@@ -543,6 +544,7 @@ async fn insert_identity(
     identity: &Identity,
     position: usize,
 ) -> Result<i64> {
+    super::release_own_address(connection, &identity.address).await?;
     sql::execute(
         connection,
         "INSERT INTO identities (account_id, display_name, address, address_name,
@@ -571,6 +573,7 @@ async fn update_identity(
     identity: &Identity,
     position: usize,
 ) -> Result<()> {
+    super::release_own_address(connection, &identity.address).await?;
     sql::execute(
         connection,
         "UPDATE identities

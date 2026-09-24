@@ -391,6 +391,13 @@ pub fn busy() -> crate::Error {
     crate::Error::Engine(turso::Error::Busy("database is locked".to_owned()))
 }
 
+/// Every statement the Contacts list issues, named, with placeholders bound
+/// by [`plan`] -- so a budget can ask the planner about exactly the SQL that
+/// runs rather than a copy that drifts from it (specs/005-contacts T019).
+pub fn contact_list_statements() -> Vec<(&'static str, String)> {
+    crate::repository::contact_list_statements()
+}
+
 #[cfg(test)]
 mod sweep_tests {
     use std::time::{Duration, SystemTime};

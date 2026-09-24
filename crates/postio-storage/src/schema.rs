@@ -274,6 +274,11 @@ CREATE TABLE contacts (
     times_seen          INTEGER NOT NULL DEFAULT 0,
     last_seen_at        INTEGER,
     written             INTEGER NOT NULL DEFAULT 0,
+    -- 1 when the person belongs in the Contacts list's default view: the user
+    -- made or imported them, or has written to them (FR-005). Kept rather
+    -- than derived because the view is an OR across two columns, which no
+    -- index serves; with this, the default view is a prefix of one.
+    listed              INTEGER NOT NULL DEFAULT 0,
     -- vCard identity, and the whole card as last imported, verbatim -- export
     -- edits the properties Postio models in place and leaves every other byte
     -- alone (R9). NULL for a person never imported.
@@ -735,7 +740,7 @@ CREATE INDEX idx_contact_terms_contact ON contact_terms (contact_id);
 
 -- The Contacts list's default view: people the user made, imported or has
 -- written to, by name, paged by keyset on (sort_key, id).
-CREATE INDEX idx_contacts_list_written ON contacts (state, written, sort_key, id);
+CREATE INDEX idx_contacts_list_default ON contacts (state, listed, sort_key, id);
 
 -- The everyone and Deleted views: every person in one state, by name.
 CREATE INDEX idx_contacts_list ON contacts (state, sort_key, id);

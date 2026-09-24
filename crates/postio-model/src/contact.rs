@@ -210,6 +210,52 @@ impl Contact {
     }
 }
 
+/// Which people the Contacts list shows (specs/005-contacts FR-005, FR-023a).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
+pub enum ContactView {
+    /// People the user made or imported, and people the user has written to.
+    /// A sender the user only ever received mail from is not here, though it
+    /// still completes in the composer.
+    #[default]
+    Written,
+    /// Every live person, however they came to be known.
+    Everyone,
+    /// People the user deleted, for restoring.
+    Deleted,
+}
+
+/// One row of the Contacts list: what the row draws, and where it sits.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ContactListRow {
+    /// The person.
+    pub id: ContactId,
+    /// Their displayed name ([`Contact::display_name`]).
+    pub name: String,
+    /// Their preferred address, if they have one.
+    pub preferred: Option<String>,
+    /// How many addresses they own.
+    pub address_count: u32,
+    /// When any of their addresses was last seen in mail.
+    pub last_seen_at: Option<DateTime<Utc>>,
+    /// How they came to exist, so the list can mark the ones the user made.
+    pub source: ContactSource,
+    /// Their state; only the Deleted view shows anything but `Live`.
+    pub state: ContactState,
+    /// The list's ordering key, which the next page seeks past.
+    pub sort_key: String,
+}
+
+/// Everything the Contacts detail view shows about one person (FR-006).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ContactDetail {
+    /// The person, with every address and what the mail says about each.
+    pub person: Contact,
+    /// The names of the groups they belong to.
+    pub groups: Vec<String>,
+    /// How many distinct messages involve any of their addresses.
+    pub messages: u64,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

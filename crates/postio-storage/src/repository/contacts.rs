@@ -25,8 +25,8 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use chrono::Utc;
 use postio_model::{
-    AddressId, Contact, ContactAddress, ContactId, ContactSource, ContactState, EmailAddress,
-    Message,
+    AddressId, Contact, ContactAddress, ContactDetail, ContactId, ContactListRow, ContactSource,
+    ContactState, ContactView, EmailAddress, Message,
 };
 
 use super::{from_millis, to_millis};
@@ -307,8 +307,8 @@ impl<'a> ContactRepository<'a> {
             sql::execute(
                 &transaction,
                 "INSERT INTO contacts (name, source, state, preferred_address, sort_key,
-                                       name_key, created_at, updated_at)
-                 VALUES (?1, 'user', 'live', ?2, '', '', ?3, ?3)",
+                                       name_key, listed, created_at, updated_at)
+                 VALUES (?1, 'user', 'live', ?2, '', '', 1, ?3, ?3)",
                 bind![name, first, now],
             )
             .await?;
@@ -370,6 +370,261 @@ impl<'a> ContactRepository<'a> {
         }
         Ok(people)
     }
+}
+
+/// Where the next page of a Contacts view starts: just past this row.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ContactCursor {
+    sort_key: String,
+    id: ContactId,
+}
+
+impl ContactCursor {
+    /// The cursor just past `row`.
+    pub fn after(row: &ContactListRow) -> Self {
+        Self {
+            sort_key: row.sort_key.clone(),
+            id: row.id,
+        }
+    }
+}
+
+impl ContactRepository<'_> {
+    /// One page of a Contacts view, by name, starting just past `after`.
+    ///
+    /// Keyset, never `OFFSET`: the next page seeks past the last row's
+    /// `(sort_key, id)`, and the cursor carries a bare `sort_key >= ?` in
+    /// front of the tie-break because this engine seeks on that and only
+    /// filters on the row value (docs/notes, 2026-09-12). One statement a
+    /// page however deep, rows bounded by `limit`.
+    pub async fn page(
+        &self,
+        view: ContactView,
+        after: Option<&ContactCursor>,
+        limit: u32,
+    ) -> Result<Vec<ContactListRow>> {
+        match after {
+            None => {
+                sql::all(
+                    self.connection,
+                    &first_page_sql(view),
+                    [i64::from(limit)],
+                    read_list_row,
+                )
+                .await
+            }
+            Some(cursor) => {
+                sql::all(
+                    self.connection,
+                    &next_page_sql(view),
+                    bind![cursor.sort_key, cursor.id.get(), i64::from(limit)],
+                    read_list_row,
+                )
+                .await
+            }
+        }
+    }
+
+    /// What the detail view shows about one person: every address with its
+    /// evidence, the groups they are in, and how many distinct messages
+    /// involve any of their addresses (FR-006) -- a message to two of their
+    /// addresses is one message, which is why this is a `DISTINCT` over
+    /// recipients rather than a sum of per-address counts.
+    ///
+    /// Four statements whatever the person: them, their addresses, their
+    /// groups, the count.
+    pub async fn detail(&self, id: ContactId) -> Result<Option<ContactDetail>> {
+        let Some(person) = self.get(id).await? else {
+            return Ok(None);
+        };
+        let groups: Vec<String> = sql::all(
+            self.connection,
+            "SELECT g.name FROM contact_group_members m
+               JOIN contact_groups g ON g.id = m.group_id
+              WHERE m.contact_id = ?1
+              ORDER BY g.name COLLATE NOCASE LIMIT 1000",
+            [id.get()],
+            |row| row.col(0),
+        )
+        .await?;
+        let messages = sql::scalar(
+            self.connection,
+            "SELECT count(DISTINCT r.message_id) FROM recipients r
+               JOIN addresses a ON a.id = r.address_id
+              WHERE a.contact_id = ?1 AND r.message_id IS NOT NULL",
+            [id.get()],
+        )
+        .await?;
+        Ok(Some(ContactDetail {
+            person,
+            groups,
+            messages: u64::try_from(messages).unwrap_or(0),
+        }))
+    }
+
+    /// How many people a view holds, for the list's length.
+    pub async fn count(&self, view: ContactView) -> Result<u64> {
+        let count = sql::scalar(
+            self.connection,
+            &format!(
+                "SELECT count(*) FROM contacts c WHERE {}",
+                view_predicate(view)
+            ),
+            (),
+        )
+        .await?;
+        Ok(u64::try_from(count).unwrap_or(0))
+    }
+
+    /// The people in a view matching every word of `text`, by name, at most
+    /// `cap` of them (specs/005-contacts FR-004, research R5).
+    ///
+    /// Each word is a prefix range over `contact_terms` -- a name, the
+    /// organisation, the name the mail gave, any part of any address -- never
+    /// a `LIKE` over everyone. The cap is what bounds the rows a keystroke
+    /// materialises; typing more is how a person narrows past it.
+    pub async fn filtered(
+        &self,
+        view: ContactView,
+        text: &str,
+        cap: u32,
+    ) -> Result<Vec<ContactListRow>> {
+        let words: Vec<String> = words(text).collect();
+        if words.is_empty() {
+            return self.page(view, None, cap).await;
+        }
+        let mut arguments: Vec<turso::Value> = Vec::new();
+        let mut clauses = Vec::new();
+        for word in &words {
+            let low = arguments.len() + 1;
+            clauses.push(format!(
+                "c.id IN (SELECT contact_id FROM contact_terms \
+                  WHERE term >= ?{low} AND term < ?{})",
+                low + 1
+            ));
+            arguments.push(turso::Value::Text(word.clone()));
+            arguments.push(turso::Value::Text(term_upper_bound(word)));
+        }
+        let limit = arguments.len() + 1;
+        arguments.push(turso::Value::Integer(i64::from(cap)));
+        sql::all(
+            self.connection,
+            &format!(
+                "SELECT {LIST_COLUMNS} FROM contacts c
+                   LEFT JOIN addresses pa ON pa.id = c.preferred_address
+                  WHERE {} AND {}
+                  ORDER BY c.sort_key, c.id LIMIT ?{limit}",
+                view_predicate(view),
+                clauses.join(" AND ")
+            ),
+            arguments,
+            read_list_row,
+        )
+        .await
+    }
+}
+
+/// A list row's columns, in the order [`read_list_row`] reads them. Needs `c`
+/// (contacts) and a `LEFT JOIN`ed `pa` (the preferred address).
+const LIST_COLUMNS: &str = "c.id,
+       coalesce(nullif(trim(c.name), ''), nullif(trim(c.seen_name), ''), pa.address, ''),
+       pa.address,
+       (SELECT count(*) FROM addresses x WHERE x.contact_id = c.id),
+       c.last_seen_at, c.source, c.state, c.sort_key";
+
+/// Which people a view holds. Each is a prefix of one of the list indexes, so
+/// a page is a seek: `idx_contacts_list_default` for the default view,
+/// `idx_contacts_list` for the other two.
+fn view_predicate(view: ContactView) -> &'static str {
+    match view {
+        ContactView::Written => "c.state = 'live' AND c.listed = 1",
+        ContactView::Everyone => "c.state = 'live'",
+        ContactView::Deleted => "c.state = 'deleted'",
+    }
+}
+
+fn first_page_sql(view: ContactView) -> String {
+    format!(
+        "SELECT {LIST_COLUMNS} FROM contacts c
+           LEFT JOIN addresses pa ON pa.id = c.preferred_address
+          WHERE {}
+          ORDER BY c.sort_key, c.id LIMIT ?1",
+        view_predicate(view)
+    )
+}
+
+fn next_page_sql(view: ContactView) -> String {
+    format!(
+        "SELECT {LIST_COLUMNS} FROM contacts c
+           LEFT JOIN addresses pa ON pa.id = c.preferred_address
+          WHERE {} AND c.sort_key >= ?1 AND (c.sort_key > ?1 OR c.id > ?2)
+          ORDER BY c.sort_key, c.id LIMIT ?3",
+        view_predicate(view)
+    )
+}
+
+/// Every statement the list issues, named -- for the budget that asks the
+/// planner about them.
+#[cfg(feature = "test-support")]
+pub(crate) fn list_statements() -> Vec<(&'static str, String)> {
+    vec![
+        ("written first", first_page_sql(ContactView::Written)),
+        ("written after", next_page_sql(ContactView::Written)),
+        ("everyone first", first_page_sql(ContactView::Everyone)),
+        ("everyone after", next_page_sql(ContactView::Everyone)),
+        ("deleted first", first_page_sql(ContactView::Deleted)),
+        ("deleted after", next_page_sql(ContactView::Deleted)),
+    ]
+}
+
+fn read_list_row(row: &Row) -> Result<ContactListRow> {
+    let source: String = row.col(5)?;
+    let state: String = row.col(6)?;
+    Ok(ContactListRow {
+        id: ContactId::new(row.col(0)?),
+        name: row.col(1)?,
+        preferred: row.col(2)?,
+        address_count: row.col(3)?,
+        last_seen_at: row.col::<Option<i64>>(4)?.map(from_millis),
+        source: ContactSource::from_name(&source).ok_or_else(|| Error::UnknownEnum {
+            column: "contacts.source",
+            value: source.clone(),
+        })?,
+        state: ContactState::from_name(&state).ok_or_else(|| Error::UnknownEnum {
+            column: "contacts.state",
+            value: state.clone(),
+        })?,
+        sort_key: row.col(7)?,
+    })
+}
+
+/// Takes `address` away from whichever person owns it, because it has become
+/// one of the user's own (an account's or an identity's). The user is never
+/// their own contact (spec edge case): the record path skips own addresses as
+/// it sees them, and this is the other half, for an address that was
+/// somebody's before it was the user's. Doing it at write time is what lets
+/// every list read go without a per-row exclusion.
+pub(crate) async fn release_own_address(
+    connection: &Connection,
+    address: &EmailAddress,
+) -> Result<()> {
+    let owner: Option<Option<i64>> = sql::first(
+        connection,
+        "SELECT contact_id FROM addresses WHERE address_normalized = ?1",
+        bind![address.normalized()],
+        |row| row.col(0),
+    )
+    .await?;
+    if let Some(Some(owner)) = owner {
+        sql::execute(
+            connection,
+            "UPDATE addresses SET contact_id = NULL WHERE address_normalized = ?1",
+            bind![address.normalized()],
+        )
+        .await?;
+        settle_after_losing_addresses(connection, owner).await?;
+    }
+    Ok(())
 }
 
 /// Records one correspondent, inside the message's transaction.
@@ -450,9 +705,9 @@ async fn record_in(connection: &Connection, account: i64, seen: &Seen<'_>, at: i
             sql::execute(
                 connection,
                 "INSERT INTO contacts (source, state, preferred_address, seen_name, sort_key,
-                                       name_key, times_seen, last_seen_at, written,
+                                       name_key, times_seen, last_seen_at, written, listed,
                                        created_at, updated_at)
-                 VALUES ('mail', 'live', ?1, ?2, ?3, ?4, 1, ?5, ?6, ?5, ?5)",
+                 VALUES ('mail', 'live', ?1, ?2, ?3, ?4, 1, ?5, ?6, ?6 > 0, ?5, ?5)",
                 bind![
                     address_id,
                     header_name,
@@ -484,6 +739,7 @@ async fn record_in(connection: &Connection, account: i64, seen: &Seen<'_>, at: i
                         connection,
                         "UPDATE contacts
                             SET times_seen = times_seen + 1, written = written + ?2,
+                                listed = max(listed, ?2 > 0),
                                 last_seen_at = max(coalesce(last_seen_at, ?3), ?3)
                           WHERE id = ?1",
                         bind![person, written, at],
@@ -502,6 +758,7 @@ async fn record_in(connection: &Connection, account: i64, seen: &Seen<'_>, at: i
                         connection,
                         "UPDATE contacts
                             SET times_seen = times_seen + 1, written = written + ?2,
+                                listed = max(listed, ?2 > 0),
                                 last_seen_at = max(coalesce(last_seen_at, ?3), ?3),
                                 seen_name = ?4, sort_key = ?5, name_key = ?6
                           WHERE id = ?1",
@@ -606,7 +863,13 @@ pub(super) async fn refresh(connection: &Connection, person: i64) -> Result<()> 
         .to_owned();
     sql::execute(
         connection,
-        "UPDATE contacts SET sort_key = ?2, name_key = ?3 WHERE id = ?1",
+        // `listed` here and not in the statement above: an UPDATE's
+        // expressions all read the row as it was, so this is the first point
+        // at which `written` holds its new value.
+        "UPDATE contacts
+            SET sort_key = ?2, name_key = ?3,
+                listed = CASE WHEN source <> 'mail' OR written > 0 THEN 1 ELSE 0 END
+          WHERE id = ?1",
         bind![person, sort_key(&displayed), name_key(&displayed)],
     )
     .await?;
