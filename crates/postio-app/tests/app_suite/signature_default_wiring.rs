@@ -150,10 +150,25 @@ pub fn compose_signs_with_the_selected_mailbox_or_account_default() {
             composer.is_open(),
             "`c` on a selected mailbox opened nothing"
         );
-        let body = composer.draft().body.text.unwrap_or_default();
+        // Awaited, not read at once: the signature default is read off the
+        // GTK thread since #1608 and arrives a turn after the composer opens,
+        // which is what a person sees too.
+        let signed = |text: &'static str| {
+            let composer = composer.clone();
+            move || {
+                composer
+                    .draft()
+                    .body
+                    .text
+                    .unwrap_or_default()
+                    .contains(text)
+            }
+        };
+        let support = signed("Support team");
         assert!(
-            body.contains("Support team"),
-            "the mailbox's own signature override did not reach the compose: {body:?}"
+            settle_until(async || support()).await,
+            "the mailbox's own signature override did not reach the compose: {:?}",
+            composer.draft().body.text
         );
         composer.discard();
         settle();
@@ -166,13 +181,9 @@ pub fn compose_signs_with_the_selected_mailbox_or_account_default() {
             composer.is_open(),
             "`c` on the plain mailbox opened nothing"
         );
+        let sales = signed("Sales team");
         assert!(
-            composer
-                .draft()
-                .body
-                .text
-                .unwrap_or_default()
-                .contains("Sales team"),
+            settle_until(async || sales()).await,
             "the account's default signature did not reach a mailbox with no \
              override of its own"
         );
