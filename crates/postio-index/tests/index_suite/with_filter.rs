@@ -153,3 +153,40 @@ async fn negated_with_is_everything_else() {
         sorted(vec![world.named_only, world.unrelated])
     );
 }
+
+#[tokio::test]
+async fn a_hit_from_a_named_person_carries_the_users_name() {
+    // FR-032 reaches search results too: the hit's sender is the name the
+    // user gave the address's owner, as in the list.
+    let world = world().await;
+    postio_storage::repository::ContactRepository::new(&world.connection)
+        .create(
+            Some("Ada Lovelace"),
+            &[address("ada@work.example"), address("ada@home.example")],
+        )
+        .await
+        .expect("the user names ada");
+    let parsed = parse("with:ada@work.example", at(12).date_naive());
+    let hits = search(
+        &world.connection,
+        &SearchRequest {
+            account: AccountScope::Unified,
+            query: &parsed,
+            scope: Scope::AllMail,
+            limit: 50,
+            order: postio_search::ResultOrder::Relevance,
+        },
+        at(12),
+    )
+    .await
+    .expect("search")
+    .hits;
+    let from_work = hits
+        .iter()
+        .find(|hit| hit.message_id == world.from_work)
+        .expect("the mail from ada's work address");
+    assert_eq!(
+        from_work.from.as_ref().and_then(|f| f.name.as_deref()),
+        Some("Ada Lovelace")
+    );
+}

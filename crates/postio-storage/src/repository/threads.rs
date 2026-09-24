@@ -1399,11 +1399,13 @@ impl<'a> ThreadRepository<'a> {
             return Ok(HashMap::new());
         }
         let sql = format!(
-            "SELECT messages.thread_id, recipients.name, addresses.address,
-                    min(messages.received_at) AS first_seen
+            "SELECT messages.thread_id, coalesce(named.name, recipients.name),
+                    addresses.address, min(messages.received_at) AS first_seen
                FROM messages
                JOIN recipients ON recipients.message_id = messages.id
                JOIN addresses ON addresses.id = recipients.address_id
+               LEFT JOIN contacts named
+                 ON named.id = addresses.contact_id AND named.state = 'live'
               WHERE messages.thread_id IN ({}) AND messages.{MEMBER}
                 AND recipients.kind = 'from'
               GROUP BY messages.thread_id, recipients.address_id

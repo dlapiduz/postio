@@ -45,6 +45,7 @@ mod messages;
 mod operations;
 mod reclaim_pages;
 mod schema_fidelity;
+mod sender_names;
 mod seed_is_honest;
 mod snoozed_due_index;
 mod statement_cache;

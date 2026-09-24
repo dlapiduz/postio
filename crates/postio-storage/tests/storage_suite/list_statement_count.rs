@@ -234,3 +234,57 @@ async fn an_ordinary_listing_is_one_statement_and_no_more_rows_than_it_returns()
         "a page of a mailbox must be a seek, not a scan"
     );
 }
+
+#[tokio::test]
+async fn naming_a_person_costs_a_page_nothing() {
+    // FR-032 resolves each row's sender name through the address's owner. That
+    // is a key seek inside the row's own sender lookup, and it must stay
+    // there: a page with a named sender on it costs the statements and rows
+    // it cost before anyone was named (research R7).
+    let database = test_support::memory().await;
+    let report = seed_small(&database, 11).await;
+    let inbox = report
+        .mailbox(MailboxRole::Inbox)
+        .expect("the seed makes an inbox");
+    let connection = database.connect().await.expect("a connection");
+    install(&connection);
+    let query = ListQuery {
+        scope: ListScope::Mailbox(inbox.id),
+        limit: 25,
+        after: None,
+    };
+    let messages = MessageRepository::new(&connection);
+    let first = messages.page(&query).await.expect("a first read");
+    let sender = first[0].from.clone().expect("the seed's mail has senders");
+
+    let before = counted_async(|| async {
+        messages.page(&query).await.expect("a page");
+    })
+    .await;
+    // The seed recorded its senders as sync would; the user names this one.
+    let owner = postio_storage::repository::ContactRepository::new(&connection)
+        .by_address(&sender.address)
+        .await
+        .expect("lookup")
+        .expect("the seed records its senders");
+    postio_storage::sql::execute(
+        &connection,
+        "UPDATE contacts SET name = 'Named By The User' WHERE id = ?1",
+        [owner.id.get()],
+    )
+    .await
+    .expect("name the sender");
+    let mut named = Vec::new();
+    let after = counted_async(|| async {
+        named = messages.page(&query).await.expect("a page");
+    })
+    .await;
+
+    assert_eq!(
+        named[0].from.as_ref().and_then(|f| f.name.as_deref()),
+        Some("Named By The User"),
+        "the page shows the name, or this proves nothing"
+    );
+    assert_eq!(after.statements, before.statements);
+    assert_eq!(after.rows, before.rows);
+}

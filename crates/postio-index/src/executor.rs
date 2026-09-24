@@ -1335,11 +1335,13 @@ impl Plan {
         // probe compares against a plain column -- the joined `a.id` or
         // `a.contact_id` rather than a nested subquery -- which is what keeps
         // it a key lookup rather than a walk per candidate (#746, and
-        // `hydrate_probes_contacts_by_address_key` pins it).
+        // `hydrate_probes_contacts_by_address_key` pins it). The name is the
+        // one the user gave the owner, when they did (specs/005-contacts
+        // FR-032) -- one more key seek, through the same joined address.
         format!(
             "SELECT
                  sub.id, sub.thread_id, sub.mailbox_id, sub.subject, sub.received_at,
-                 sender.name AS from_name, a.address AS from_address,
+                 coalesce(named.name, sender.name) AS from_name, a.address AS from_address,
                  {affinity} AS sender_times_seen,
                  0 AS unused
              FROM (SELECT
@@ -1349,7 +1351,9 @@ impl Plan {
                         ORDER BY r.position LIMIT 1) AS from_recipient
                    FROM messages m WHERE m.id IN ({placeholders})) sub
              LEFT JOIN recipients sender ON sender.id = sub.from_recipient
-             LEFT JOIN addresses a ON a.id = sender.address_id",
+             LEFT JOIN addresses a ON a.id = sender.address_id
+             LEFT JOIN contacts named
+               ON named.id = a.contact_id AND named.state = 'live'",
         )
     }
 
