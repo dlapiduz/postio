@@ -255,7 +255,7 @@ Postio does not model; export 4.0.
 - [X] T077 [P] Regenerate `docs/keybindings.md` (`POSTIO_UPDATE_DOCS=1 cargo test -p postio-ui`) and `docs/config.md` if it lists commands; `keybindings_doc.rs:169` and `:196` green
 - [X] T078 [P] Render the Contacts pane (wide and narrow, light and dark, populated, empty, filtered-to-nothing, Deleted view) through the `/gtk-design` render loop and fix what does not match the canvas tokens; attach nothing personal. (Done: marks now draw the list's check, the new lists take the row measure and selection tokens, the suggestions view clears the detail; the 900px clipping is the shell's and filed as #1649)
 - [X] T079 Walk quickstart.md end to end; run `scripts/check.sh`, `cargo clippy` on every touched crate with `-D warnings`, and the integration suites the diff touches; fix what fails
-- [ ] T080 Land with `scripts/issue-land.sh --detach`; the PR body closes #477 and #475 and names specs/005-contacts as the acceptance
+- [ ] T080 Land with `scripts/issue-land.sh --detach`; the PR body closes #477 and #475 and names specs/005-contacts as the acceptance **Held: the maintainer validates `feature/contacts` before anything lands on `main` (2026-09-24); do not run `issue-land.sh` until they say so.**
 
 ---
 
