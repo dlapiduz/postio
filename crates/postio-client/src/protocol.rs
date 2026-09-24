@@ -19,6 +19,7 @@
 //! a corrupt stream is an error rather than a gigabyte allocation.
 
 use postio_core::{Command, EventEnvelope, InvocationId, StateSnapshot};
+use postio_model::Account;
 use postio_model::ListScope;
 use postio_model::ids::{AccountId, MailboxId, MessageId};
 use postio_model::listing::{
@@ -113,6 +114,8 @@ pub enum Req {
     Mailboxes(AccountId),
     /// What the sidebar draws beside Drafts and the Outbox.
     DraftCounts(AccountId),
+    /// Every account, in the sidebar's order.
+    Accounts,
 }
 
 /// The host's answer to one [`Req`].
@@ -136,6 +139,8 @@ pub enum Resp {
     Mailboxes(Vec<Mailbox>),
     /// Draft counts.
     DraftCounts(DraftCounts),
+    /// The accounts.
+    Accounts(Vec<Account>),
     /// The read could not be answered; the sentence is for the user.
     Failed(StoreError),
 }

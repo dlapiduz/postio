@@ -391,6 +391,16 @@ impl Inner {
                 .mailboxes(account)
                 .await
                 .map_or_else(Resp::Failed, Resp::Mailboxes),
+            Req::Accounts => match self.wiring.database.connect().await {
+                Ok(connection) => postio_storage::repository::AccountRepository::new(&connection)
+                    .list()
+                    .await
+                    .map_or_else(
+                        |error| Resp::Failed(postio_model::listing::StoreError::from(error)),
+                        Resp::Accounts,
+                    ),
+                Err(error) => Resp::Failed(postio_model::listing::StoreError::from(error)),
+            },
             Req::DraftCounts(account) => store
                 .draft_counts(account)
                 .await

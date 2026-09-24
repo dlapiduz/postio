@@ -262,3 +262,12 @@ fn two_commands_sent_back_to_back_run_in_the_order_they_were_sent() {
     });
     assert_eq!(world.inbox_rows(&client), 1);
 }
+
+#[test]
+fn a_frontend_can_list_the_accounts_for_its_sidebar() {
+    let world = World::new();
+    let (client, _) = world.frontend(ClientKind::Tui);
+    let accounts = world.rt.block_on(client.accounts()).expect("the accounts");
+    assert_eq!(accounts.len(), 1);
+    assert!(accounts[0].enabled);
+}

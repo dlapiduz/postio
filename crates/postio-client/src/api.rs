@@ -69,6 +69,7 @@ impl Req {
             Req::NoteRemoved(..) => "NoteRemoved",
             Req::Mailboxes(_) => "Mailboxes",
             Req::DraftCounts(_) => "DraftCounts",
+            Req::Accounts => "Accounts",
         }
     }
 }
@@ -132,6 +133,15 @@ impl Client {
             Ok(answer) => take(answer).ok_or_else(|| unexpected(asked)),
             Err(disconnected) => Err(StoreError::new(disconnected.to_string())),
         }
+    }
+
+    /// Every account, in the sidebar's order.
+    pub async fn accounts(&self) -> Result<Vec<postio_model::Account>, StoreError> {
+        self.read(Req::Accounts, "the accounts", |answer| match answer {
+            Resp::Accounts(accounts) => Some(accounts),
+            _ => None,
+        })
+        .await
     }
 
     /// Run a command. Its effects arrive as events.
@@ -342,6 +352,13 @@ mod tests {
             *fake.posted.lock().unwrap(),
             vec![Req::NoteRemoved(MailboxId::new(2), vec![MessageId::new(3)])]
         );
+    }
+
+    #[tokio::test]
+    async fn the_accounts_are_asked_for_and_handed_back() {
+        let (client, fake) = client(vec![Ok(Resp::Accounts(Vec::new()))]);
+        assert_eq!(client.accounts().await, Ok(Vec::new()));
+        assert_eq!(*fake.asked.lock().unwrap(), vec![Req::Accounts]);
     }
 
     #[tokio::test]
