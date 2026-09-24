@@ -257,10 +257,31 @@ struct Palette {
     trash: Option<gtk::IconPaintable>,
 }
 
+/// How many palettes this process has read off the cascade. For tests.
+pub fn palette_reads() -> u64 {
+    PALETTE_READS.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+static PALETTE_READS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// A cascade, as a row can tell one from another: its hairline colour and
+/// its font.
+type PaletteKey = (gdk::RGBA, String);
+
+/// How many cascades' palettes are kept.
+const SHARED_PALETTE_LIMIT: usize = 8;
+
+thread_local! {
+    /// Palettes already read, by the cascade they were read under.
+    static SHARED_PALETTES: RefCell<Vec<(PaletteKey, Rc<Palette>)>> =
+        const { RefCell::new(Vec::new()) };
+}
+
 impl Palette {
     /// Read every role off `probe`, whose parent puts it under the same
     /// `:root` classes the rest of the window is under.
     fn read(probe: &gtk::Label) -> Self {
+        PALETTE_READS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let ink = |classes: &[&str]| {
             probe.set_css_classes(classes);
             Ink {
@@ -939,7 +960,39 @@ impl MessageRowView {
             return palette;
         }
         imp.laid.replace(None);
-        let palette = Rc::new(Palette::read(&imp.probe));
+        // Shared between every row under the same cascade: reading one is
+        // twenty-eight style recomputes on the probe, and a list of fifty
+        // rows read fifty identical palettes. The hairline colour is what
+        // already told a row its cascade had moved; the font is what a
+        // density change moves without touching any colour.
+        let key = (
+            hairline,
+            imp.sentinel
+                .pango_context()
+                .font_description()
+                .map(|font| font.to_str().to_string())
+                .unwrap_or_default(),
+        );
+        let shared = SHARED_PALETTES.with(|shared| {
+            shared
+                .borrow()
+                .iter()
+                .find(|(held, _)| *held == key)
+                .map(|(_, palette)| Rc::clone(palette))
+        });
+        let palette = shared.unwrap_or_else(|| {
+            let palette = Rc::new(Palette::read(&imp.probe));
+            SHARED_PALETTES.with(|shared| {
+                let mut shared = shared.borrow_mut();
+                // A handful of cascades at most -- light and dark, a density
+                // or two -- so the oldest goes rather than the list growing.
+                if shared.len() >= SHARED_PALETTE_LIMIT {
+                    shared.remove(0);
+                }
+                shared.push((key, Rc::clone(&palette)));
+            });
+            palette
+        });
         imp.palette.replace(Some(palette.clone()));
         palette
     }

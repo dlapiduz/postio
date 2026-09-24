@@ -593,6 +593,10 @@ const CASES: &[(&str, fn())] = &[
         gtk_reading_pane::the_reading_pane_shows_a_message_and_yields_it_to_the_composer as fn(),
     ),
     (
+        "gtk_row::rows_under_one_cascade_read_one_palette",
+        gtk_row::rows_under_one_cascade_read_one_palette as fn(),
+    ),
+    (
         "gtk_row::the_row_draws_the_canvas_anatomy_at_every_density",
         gtk_row::the_row_draws_the_canvas_anatomy_at_every_density as fn(),
     ),
