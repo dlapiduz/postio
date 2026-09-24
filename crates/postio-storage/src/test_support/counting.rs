@@ -61,11 +61,21 @@ pub struct Counts {
     /// module documentation is about. A `count(*)` over a hundred thousand
     /// messages returns one.
     pub rows: usize,
+
+    /// Statements compiled rather than taken from the connection's cache.
+    ///
+    /// Compiling is most of what a small statement costs this engine: a
+    /// first sync sampled with `eu-stack` spent more than half its busy time
+    /// in `Connection::prepare`, for SQL it had compiled a thousand times
+    /// already. A repeated write should compile nothing; this is how a test
+    /// says so.
+    pub compiles: usize,
 }
 
 thread_local! {
     static STATEMENTS: Cell<usize> = const { Cell::new(0) };
     static ROWS: Cell<usize> = const { Cell::new(0) };
+    static COMPILES: Cell<usize> = const { Cell::new(0) };
 }
 
 /// Count one statement. Called by [`crate::sql`].
@@ -76,6 +86,27 @@ pub(crate) fn statement() {
 /// Count `n` rows. Called by [`crate::sql`].
 pub(crate) fn rows(n: usize) {
     ROWS.with(|seen| seen.set(seen.get() + n));
+}
+
+/// Count one statement compiled. Called by [`crate::sql`].
+pub(crate) fn compile() {
+    COMPILES.with(|seen| seen.set(seen.get() + 1));
+}
+
+/// Note a statement taken through the engine's cache, counting a compile
+/// the first time this thread sees its SQL. Called by [`crate::sql`].
+///
+/// Approximate in one direction: the engine's cache is per connection and
+/// this is per thread, so a second connection's first compile goes unseen.
+/// What it is for -- a path that compiles on *every* call -- it sees exactly.
+pub(crate) fn cached(sql: &str) {
+    thread_local! {
+        static SEEN: std::cell::RefCell<std::collections::HashSet<String>> =
+            std::cell::RefCell::new(std::collections::HashSet::new());
+    }
+    if SEEN.with(|seen| seen.borrow_mut().insert(sql.to_owned())) {
+        compile();
+    }
 }
 
 /// Does nothing, and is kept so the call sites still read.
@@ -97,6 +128,7 @@ pub fn install_on(_store: &crate::Store) {}
 pub fn counted(body: impl FnOnce()) -> Counts {
     STATEMENTS.with(|seen| seen.set(0));
     ROWS.with(|seen| seen.set(0));
+    COMPILES.with(|seen| seen.set(0));
     body();
     here()
 }
@@ -112,6 +144,7 @@ where
 {
     STATEMENTS.with(|seen| seen.set(0));
     ROWS.with(|seen| seen.set(0));
+    COMPILES.with(|seen| seen.set(0));
     body().await;
     here()
 }
@@ -121,6 +154,7 @@ pub fn here() -> Counts {
     Counts {
         statements: STATEMENTS.with(Cell::get),
         rows: ROWS.with(Cell::get),
+        compiles: COMPILES.with(Cell::get),
     }
 }
 
@@ -128,6 +162,7 @@ pub fn here() -> Counts {
 pub fn reset() {
     STATEMENTS.with(|seen| seen.set(0));
     ROWS.with(|seen| seen.set(0));
+    COMPILES.with(|seen| seen.set(0));
 }
 
 /// Which steps of `sql`'s plan are full scans.

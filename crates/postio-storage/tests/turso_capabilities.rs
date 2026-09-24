@@ -10,6 +10,8 @@
 //! The rest prove the properties `spec.md` makes acceptance criteria: that the
 //! store opens, that it is encrypted, and that another key is refused.
 
+#![allow(clippy::disallowed_methods)] // the crate's own code prepares through `sql::statement`; a test may reach the engine directly
+
 use postio_storage::Store;
 use postio_storage::key::{Purpose, StoreKey};
 use postio_storage::sql;

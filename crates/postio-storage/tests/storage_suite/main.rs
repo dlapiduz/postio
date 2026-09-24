@@ -16,6 +16,8 @@
 //! that was checked before they were merged rather than assumed. A test that
 //! grows one has to move back out, or it will change what its neighbours see.
 
+#![allow(clippy::disallowed_methods)] // the crate's own code prepares through `sql::statement`; a test may reach the engine directly
+
 mod accounts;
 mod actions;
 mod blob;
@@ -42,6 +44,7 @@ mod reclaim_pages;
 mod schema_fidelity;
 mod seed_is_honest;
 mod snoozed_due_index;
+mod statement_cache;
 mod store_key;
 mod sync_state;
 mod threading;

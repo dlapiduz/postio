@@ -197,28 +197,28 @@ impl<'a> OperationQueueRepository<'a> {
                 _ => None,
             };
 
-            scope
-                .execute(
-                    "INSERT INTO operation_queue (account_id, op_type, target_kind, target_id,
+            sql::execute(
+                &scope,
+                "INSERT INTO operation_queue (account_id, op_type, target_kind, target_id,
                                               mailbox_id, payload, inverse, state, attempts,
                                               next_attempt_at, created_at, updated_at,
                                               source_remote_id)
                  VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 0, ?9, ?10, ?10, ?11)",
-                    bind![
-                        account_id,
-                        operation.op_type(),
-                        target.kind(),
-                        target.id(),
-                        mailbox_id.map(MailboxId::get),
-                        payload,
-                        encoded_inverse,
-                        OperationState::Pending.as_str(),
-                        next_attempt_at.map(to_millis),
-                        to_millis(at),
-                        source_remote_id,
-                    ],
-                )
-                .await?;
+                bind![
+                    account_id,
+                    operation.op_type(),
+                    target.kind(),
+                    target.id(),
+                    mailbox_id.map(MailboxId::get),
+                    payload,
+                    encoded_inverse,
+                    OperationState::Pending.as_str(),
+                    next_attempt_at.map(to_millis),
+                    to_millis(at),
+                    source_remote_id,
+                ],
+            )
+            .await?;
             let id = OperationId::new(scope.last_insert_rowid());
 
             refresh_pending_flag(&scope, target).await?;
@@ -316,7 +316,7 @@ impl<'a> OperationQueueRepository<'a> {
                 turso::Value::from(to_millis(at)),
             ];
             parameters.extend(arguments.into_iter().map(turso::Value::from));
-            let written = scope.execute(&sql, parameters).await?;
+            let written = sql::execute(&scope, &sql, parameters).await?;
             if written == 0 {
                 return Ok(None);
             }
@@ -326,12 +326,12 @@ impl<'a> OperationQueueRepository<'a> {
             // says "this message has something queued", and every row this wrote
             // is a message that now does.
             let (predicate, arguments) = set.predicate(1);
-            scope
-                .execute(
-                    &format!("UPDATE messages SET has_pending_operations = 1 WHERE {predicate}"),
-                    arguments,
-                )
-                .await?;
+            sql::execute(
+                &scope,
+                &format!("UPDATE messages SET has_pending_operations = 1 WHERE {predicate}"),
+                arguments,
+            )
+            .await?;
 
             Ok(Some(OperationRange::new(
                 OperationId::new(highest + 1),
@@ -395,7 +395,7 @@ impl<'a> OperationQueueRepository<'a> {
                     .map(|id| turso::Value::from(id.get()))
                     .collect::<Vec<_>>(),
             );
-            scope.execute(&sql, parameters).await?;
+            sql::execute(&scope, &sql, parameters).await?;
 
             // One statement rather than `refresh_pending_flag` per row, same as
             // `enqueue_set`: every id this wrote a row for is a message that now
@@ -404,9 +404,12 @@ impl<'a> OperationQueueRepository<'a> {
                 "UPDATE messages SET has_pending_operations = 1 WHERE id IN ({})",
                 super::messages::placeholders(ids.len(), 1)
             );
-            scope
-                .execute(&flag_sql, ids.iter().map(|id| id.get()).collect::<Vec<_>>())
-                .await?;
+            sql::execute(
+                &scope,
+                &flag_sql,
+                ids.iter().map(|id| id.get()).collect::<Vec<_>>(),
+            )
+            .await?;
 
             Ok(())
         })
@@ -433,12 +436,11 @@ impl<'a> OperationQueueRepository<'a> {
 
     /// One row.
     pub async fn get(&self, id: OperationId) -> Result<Option<QueuedOperation>> {
-        let mut statement = self
-            .connection
-            .prepare(&format!(
-                "SELECT {COLUMNS} FROM operation_queue WHERE id = ?1"
-            ))
-            .await?;
+        let mut statement = sql::statement(
+            self.connection,
+            &format!("SELECT {COLUMNS} FROM operation_queue WHERE id = ?1"),
+        )
+        .await?;
         crate::sql::first_of(&mut statement, [id.get()], read_queued).await
     }
 
@@ -452,15 +454,16 @@ impl<'a> OperationQueueRepository<'a> {
         account_id: AccountId,
         now: DateTime<Utc>,
     ) -> Result<Vec<QueuedOperation>> {
-        let mut statement = self
-            .connection
-            .prepare(&format!(
+        let mut statement = sql::statement(
+            self.connection,
+            &format!(
                 "SELECT {COLUMNS} FROM operation_queue
               WHERE account_id = ?1 AND state = ?2
                 AND (next_attempt_at IS NULL OR next_attempt_at <= ?3)
               ORDER BY id"
-            ))
-            .await?;
+            ),
+        )
+        .await?;
         sql::mapped(
             &mut statement,
             bind![
@@ -481,15 +484,16 @@ impl<'a> OperationQueueRepository<'a> {
     /// returns. Used by [`super::DraftRepository::cancel_send`] to find the
     /// `Send` a queued draft is waiting on.
     pub async fn pending_for(&self, target: OperationTarget) -> Result<Option<QueuedOperation>> {
-        let mut statement = self
-            .connection
-            .prepare(&format!(
+        let mut statement = sql::statement(
+            self.connection,
+            &format!(
                 "SELECT {COLUMNS} FROM operation_queue
               WHERE target_kind = ?1 AND target_id = ?2 AND state IN ('pending', 'in_flight')
               ORDER BY id
               LIMIT 1"
-            ))
-            .await?;
+            ),
+        )
+        .await?;
         crate::sql::first_of(
             &mut statement,
             bind![target.kind(), target.id()],
@@ -579,13 +583,12 @@ impl<'a> OperationQueueRepository<'a> {
     /// without a round trip is the difference between an explicable bug report
     /// and a mystery.
     pub async fn note(&self, id: OperationId, note: &str) -> Result<()> {
-        let changed = self
-            .connection
-            .execute(
-                "UPDATE operation_queue SET last_error = ?2 WHERE id = ?1",
-                bind![id.get(), note],
-            )
-            .await?;
+        let changed = sql::execute(
+            self.connection,
+            "UPDATE operation_queue SET last_error = ?2 WHERE id = ?1",
+            bind![id.get(), note],
+        )
+        .await?;
         if changed == 0 {
             return Err(Error::NotFound {
                 entity: "operation",
@@ -619,20 +622,20 @@ impl<'a> OperationQueueRepository<'a> {
     /// decision.
     pub async fn defer(&self, id: OperationId, retry_at: DateTime<Utc>, error: &str) -> Result<()> {
         sql::in_scope(self.connection, |scope| async move {
-            let changed = scope
-                .execute(
-                    "UPDATE operation_queue
+            let changed = sql::execute(
+                &scope,
+                "UPDATE operation_queue
                     SET state = ?2, attempts = attempts + 1, last_error = ?3,
                         next_attempt_at = ?4, updated_at = ?4
                   WHERE id = ?1",
-                    bind![
-                        id.get(),
-                        OperationState::Pending.as_str(),
-                        error,
-                        to_millis(retry_at),
-                    ],
-                )
-                .await?;
+                bind![
+                    id.get(),
+                    OperationState::Pending.as_str(),
+                    error,
+                    to_millis(retry_at),
+                ],
+            )
+            .await?;
             if changed == 0 {
                 return Err(Error::NotFound {
                     entity: "operation",
@@ -655,20 +658,19 @@ impl<'a> OperationQueueRepository<'a> {
         account_id: AccountId,
         at: DateTime<Utc>,
     ) -> Result<usize> {
-        let changed = self
-            .connection
-            .execute(
-                "UPDATE operation_queue
+        let changed = sql::execute(
+            self.connection,
+            "UPDATE operation_queue
                 SET state = ?2, next_attempt_at = NULL, updated_at = ?3
               WHERE account_id = ?1 AND state = ?4",
-                bind![
-                    account_id.get(),
-                    OperationState::Pending.as_str(),
-                    to_millis(at),
-                    OperationState::InFlight.as_str(),
-                ],
-            )
-            .await?;
+            bind![
+                account_id.get(),
+                OperationState::Pending.as_str(),
+                to_millis(at),
+                OperationState::InFlight.as_str(),
+            ],
+        )
+        .await?;
         Ok(changed as usize)
     }
 
@@ -680,9 +682,12 @@ impl<'a> OperationQueueRepository<'a> {
     pub async fn delete(&self, id: OperationId) -> Result<bool> {
         sql::in_scope(self.connection, |scope| async move {
             let target = self.get(id).await?.map(|queued| queued.target);
-            let deleted = scope
-                .execute("DELETE FROM operation_queue WHERE id = ?1", [id.get()])
-                .await?;
+            let deleted = sql::execute(
+                &scope,
+                "DELETE FROM operation_queue WHERE id = ?1",
+                [id.get()],
+            )
+            .await?;
             if let Some(target) = target {
                 refresh_pending_flag(&scope, target).await?;
             }
@@ -700,14 +705,13 @@ impl<'a> OperationQueueRepository<'a> {
         account_id: AccountId,
         before: DateTime<Utc>,
     ) -> Result<usize> {
-        let removed = self
-            .connection
-            .execute(
-                "DELETE FROM operation_queue
+        let removed = sql::execute(
+            self.connection,
+            "DELETE FROM operation_queue
               WHERE account_id = ?1 AND state IN ('done', 'failed') AND updated_at < ?2",
-                bind![account_id.get(), to_millis(before)],
-            )
-            .await?;
+            bind![account_id.get(), to_millis(before)],
+        )
+        .await?;
         Ok(removed as usize)
     }
 
@@ -727,23 +731,23 @@ impl<'a> OperationQueueRepository<'a> {
                 });
             };
 
-            scope
-                .execute(
-                    "UPDATE operation_queue
+            sql::execute(
+                &scope,
+                "UPDATE operation_queue
                     SET state = ?2,
                         attempts = attempts + ?3,
                         last_error = coalesce(?4, last_error),
                         updated_at = ?5
                   WHERE id = ?1",
-                    bind![
-                        id.get(),
-                        state.as_str(),
-                        i64::from(count_attempt),
-                        error,
-                        to_millis(at),
-                    ],
-                )
-                .await?;
+                bind![
+                    id.get(),
+                    state.as_str(),
+                    i64::from(count_attempt),
+                    error,
+                    to_millis(at),
+                ],
+            )
+            .await?;
             refresh_pending_flag(&scope, queued.target).await?;
             Ok(())
         })
@@ -766,19 +770,19 @@ async fn refresh_pending_flag(connection: &Connection, target: OperationTarget) 
         }
     };
 
-    connection
-        .execute(
-            &format!(
-                "UPDATE messages
+    sql::execute(
+        connection,
+        &format!(
+            "UPDATE messages
                 SET has_pending_operations = EXISTS (
                         SELECT 1 FROM operation_queue q
                          WHERE q.target_kind = ?2 AND q.target_id = ?1
                            AND q.state IN ('pending', 'in_flight'))
               WHERE {selector}"
-            ),
-            bind![target.id(), target.kind()],
-        )
-        .await?;
+        ),
+        bind![target.id(), target.kind()],
+    )
+    .await?;
     Ok(())
 }
 

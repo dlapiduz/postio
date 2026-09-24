@@ -627,33 +627,33 @@ impl Evictable {
                 // No `body_state` change: raw source was never what `full`
                 // meant. The text and every payload are still local, so the
                 // message is exactly as complete as it was.
-                connection
-                    .execute(
-                        "UPDATE messages SET raw_blob_id = NULL WHERE id = ?1",
-                        [message],
-                    )
-                    .await?;
+                sql::execute(
+                    connection,
+                    "UPDATE messages SET raw_blob_id = NULL WHERE id = ?1",
+                    [message],
+                )
+                .await?;
             }
             Reference::Payload {
                 attachment,
                 message,
             } => {
-                connection
-                    .execute(
-                        "UPDATE attachments SET blob_id = NULL WHERE id = ?1",
-                        [attachment],
-                    )
-                    .await?;
+                sql::execute(
+                    connection,
+                    "UPDATE attachments SET blob_id = NULL WHERE id = ?1",
+                    [attachment],
+                )
+                .await?;
                 // `full` means every part is local and one no longer is, so
                 // the honest state is `partial` -- which is also what makes
                 // the attachment chip offer "download" again (ADR 0017).
-                connection
-                    .execute(
-                        "UPDATE messages SET body_state = 'partial'
+                sql::execute(
+                    connection,
+                    "UPDATE messages SET body_state = 'partial'
                       WHERE id = ?1 AND body_state = 'full'",
-                        [message],
-                    )
-                    .await?;
+                    [message],
+                )
+                .await?;
             }
         }
         Ok(())

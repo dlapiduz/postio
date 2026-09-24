@@ -343,8 +343,7 @@ pub async fn account_with_inbox(connection: &Connection) -> (Account, MailboxId)
 /// If the statement will not prepare or the plan will not read, which for a
 /// query the caller just built means the SQL is wrong.
 pub async fn plan(connection: &Connection, sql: &str) -> String {
-    let mut statement = connection
-        .prepare(&format!("EXPLAIN QUERY PLAN {sql}"))
+    let mut statement = crate::sql::statement(connection, &format!("EXPLAIN QUERY PLAN {sql}"))
         .await
         .unwrap_or_else(|error| panic!("prepare {sql}: {error}"));
     let arguments = vec![1i64; placeholders(sql)];

@@ -348,7 +348,14 @@ async fn a_rolled_back_local_write_takes_its_operation_with_it() {
         )
         .await
         .expect("enqueue");
+    // What a session action does on an early `?`: the transaction and the
+    // checkout it was opened on go together. A dropped transaction is only
+    // rolled back by the engine's next uncached statement on that same
+    // handle, and the storage layer's statements are cached, so the handle
+    // going is what ends it.
     drop(transaction);
+    drop(connection);
+    let connection = database.connect().await.expect("checkout");
 
     assert!(
         !is_seen(&connection, message).await,
