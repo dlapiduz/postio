@@ -118,8 +118,10 @@ image, structure (lists, quotes, links) preserved, and quoted history folded.
 The user presses `e` to reply (or the compose, reply-all and forward keys),
 and the composer takes over the reading pane, as it does on the desktop. They
 write Markdown. Recipients autocomplete from contacts; Cc and Bcc appear on
-demand; the identity is pickable; the draft autosaves; files are attached by
-path. They can hand the body to their own `$EDITOR` and come back. `Ctrl+Enter`
+demand; the identity is pickable; the draft autosaves. Files arrive the way
+they do in any modern terminal app: dragged from the file manager onto the
+terminal, pasted as paths, or picked by typing a path; an image copied to the
+clipboard (a screenshot, say) is pasted straight in. They can hand the body to their own `$EDITOR` and come back. `Ctrl+Enter`
 sends, and the message goes to the Outbox at once, online or not.
 
 **Why this priority**: A mail client that cannot reply is a reader. It was
@@ -153,6 +155,18 @@ uses, with no remote reference in it.
    the draft has changed.
 7. **Given** no network, **When** the user sends, **Then** the message is in
    the Outbox immediately and leaves at most once when the link returns.
+8. **Given** the composer open, **When** the user drags one or more files from
+   the file manager onto the terminal, **Then** each is attached, listed with
+   name and size, and the body text is unchanged.
+9. **Given** an image on the clipboard, **When** the user pastes into the
+   composer body, **Then** the image is inserted inline at the cursor, shown
+   as a labelled placeholder, and sent as an inline image.
+10. **Given** one or more file paths on the clipboard, **When** the user
+    pastes, **Then** each existing file is attached; text that is not a path to
+    an existing file is pasted as text.
+11. **Given** a path that cannot be read, **When** it is dropped or pasted,
+    **Then** the user is told which file and why, and nothing else about the
+    draft changes.
 
 ---
 
@@ -292,6 +306,13 @@ first sync.
   reader renders what is on screen first.
 - **Images**: inline images appear as labelled placeholders that can be opened
   with the system viewer; remote images stay blocked per sender.
+- **Paste with no clipboard tool**: over SSH, or where no clipboard is
+  reachable, pasting an image says the clipboard is unavailable; pasted text
+  and dropped paths still work, because the terminal delivers those itself.
+- **A paste that looks like a path but is prose**: only text that names an
+  existing, readable file becomes an attachment; anything else is text.
+- **Huge or many files dropped at once**: each is attached without stalling
+  input, and the attachment size warning the desktop composer gives applies.
 - **Store locked or keyring unavailable**: the frontend says which, in words,
   and exits cleanly rather than opening empty.
 - **Other frontend quits mid-sync**: the surviving frontend takes over
@@ -322,10 +343,9 @@ first sync.
   autocomplete from contacts; search with operators; the command palette and
   cheat sheet; background sync; offline use; undo; notifications.
 - **FR-003**: Where a desktop capability has no terminal equivalent (a
-  pop-out composer window, drag-and-drop from a file manager, rendered
-  images), the terminal frontend MUST provide the nearest equivalent listed
-  in this spec (a composer tab/split, attaching by path, placeholders with
-  open-in-viewer) rather than omit the command.
+  pop-out composer window, rendered images), the terminal frontend MUST
+  provide the nearest equivalent listed in this spec (a composer tab/split,
+  placeholders with open-in-viewer) rather than omit the command.
 - **FR-004**: Behaviour that both frontends need MUST be expressed once, in
   the shared toolkit-free layers, and consumed by both. Logic currently held
   only in the desktop view layer that the terminal frontend needs MUST move
@@ -361,6 +381,14 @@ first sync.
   either frontend. A draft written in the desktop composer MUST open in the
   terminal composer as Markdown, and vice versa, without losing formatting the
   document model can represent.
+- **FR-025**: Files dragged onto the terminal while the composer is open MUST
+  be attached, as they are when dropped on the desktop composer.
+- **FR-026**: Pasting into the composer MUST attach each pasted path that
+  names an existing file, MUST insert a clipboard image inline at the cursor,
+  and MUST otherwise insert the text. The clipboard MUST be read only on the
+  user's paste, never speculatively.
+- **FR-027**: Attaching by typing or picking a path MUST remain available for
+  terminals and sessions where neither dropping nor pasting works.
 - **FR-024**: Every mutating action, send included, MUST be local-first:
   store write, enqueue, emit, repaint. The terminal frontend MUST NOT await
   the network for any visible outcome.
@@ -462,9 +490,16 @@ first sync.
 - **Markdown dialect** is CommonMark with the common extensions for tables,
   strikethrough and autolinks. Formatting the composer document model cannot
   represent is sent as its plain Markdown text.
-- **Images are not drawn in the grid** in this feature; they are labelled
-  placeholders that open in the system viewer. Terminal graphics protocols are
-  a possible later enhancement.
+- **Images are not drawn in the grid in this feature; they are the next
+  iteration** (maintainer, 2026-09-23). Here they are labelled placeholders
+  that open in the system viewer. Nothing in this feature may make drawing
+  them later harder: the placeholder occupies the place in the document the
+  image will.
+- **Drag and drop and paste follow the established terminal-app pattern**
+  (maintainer, 2026-09-23, citing Claude Code): a terminal delivers a dropped
+  file as its path in a bracketed paste, and an image on the clipboard is read
+  from the system clipboard when the user pastes. Both are what the composer
+  recognises.
 - **Notifications** use the desktop notification service where one is
   reachable and an in-screen notice otherwise.
 - **"Blazing fast"** means the constitution's existing budgets, which are
