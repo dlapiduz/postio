@@ -123,8 +123,12 @@ clipboard instead of opening.
 ## Colours
 
 Postio uses your terminal's colours. It follows `NO_COLOR`, in which case
-marks and weight carry every meaning, and `COLORTERM` for full colour. Any
-role's colour can be changed:
+marks and weight carry every meaning, and `COLORTERM` for full colour, where
+the accent and the raised background of the row under the cursor come from
+Postio's own design. The roles are `text`, `dim`, `accent`, `selection`,
+`focus`, `unread`, `flagged`, `link`, `quote`, `code`, `error`, `warning`,
+`success` and `surface`; `selection` and `surface` are backgrounds. Any role's
+colour can be changed:
 
 ```toml
 [tui.colors]
