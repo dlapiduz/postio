@@ -112,6 +112,18 @@ pub fn choosing_a_time_schedules_the_draft_for_sending() {
         settle();
 
         // ── and now ask the store, not the widget ────────────────────────────
+        // The write happens on the runtime (#1608), so the queue row lands a
+        // moment after the composer closes rather than inside the call.
+        let queued = async || {
+            let connection = database.connect().await.expect("a connection");
+            OperationQueueRepository::new(&connection)
+                .pending(account, send_at + Duration::minutes(1))
+                .await
+                .expect("read the queue")
+                .iter()
+                .any(|row| matches!(row.operation, Operation::Send { .. }))
+        };
+        crate::settle_until(queued).await;
         let connection = database.connect().await.expect("a connection");
         let queue = OperationQueueRepository::new(&connection);
         let all_pending = queue

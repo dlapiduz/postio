@@ -11,6 +11,7 @@ mod account_connection_wiring;
 mod add_account_wiring;
 mod aiming;
 mod attach_account;
+mod autosave_off_the_main_thread;
 mod body_arrives;
 mod bulk_keystroke;
 mod click_preview;
@@ -177,6 +178,11 @@ const CASES: &[(&str, fn())] = &[
     (
         "notify_off_the_main_thread::a_new_mail_notification_reads_nothing_on_the_main_thread",
         notify_off_the_main_thread::a_new_mail_notification_reads_nothing_on_the_main_thread
+            as fn(),
+    ),
+    (
+        "autosave_off_the_main_thread::autosave_writes_off_the_main_thread_and_keeps_one_row",
+        autosave_off_the_main_thread::autosave_writes_off_the_main_thread_and_keeps_one_row
             as fn(),
     ),
     (
