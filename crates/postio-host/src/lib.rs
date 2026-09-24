@@ -157,6 +157,17 @@ pub fn is_feedback(event: &Event) -> bool {
     )
 }
 
+/// Worker threads for the host's runtime: the desktop app's number, and its
+/// reason (#1502). The work is I/O-bound command handling -- the engines and
+/// the store have threads of their own -- and every idle worker is another
+/// malloc arena kept after a burst.
+const WORKER_THREADS: usize = 2;
+
+/// The blocking pool's ceiling, as the desktop app bounded it: the passes
+/// after the first frame and the odd synchronous read, without climbing
+/// toward tokio's default of 512 in a burst.
+const BLOCKING_THREADS: usize = 8;
+
 /// A frontend's verbs over the shared store: the session's actions and
 /// refresh, resolving against `state`.
 fn verbs(wiring: &Wiring, state: &SharedState) -> Dispatcher {
@@ -191,6 +202,8 @@ impl Host {
         )
         .build();
         let bridge = Bridge::builder()
+            .worker_threads(WORKER_THREADS)
+            .max_blocking_threads(BLOCKING_THREADS)
             .build_with_events(host_verbs, hub.sink())
             .map_err(|error| format!("Postio could not start its runtime: {error}"))?;
         let wiring = configure(Wiring {
@@ -226,6 +239,14 @@ impl Host {
             inner,
             _bridge: bridge,
         })
+    }
+
+    /// The verbs each frontend's dispatcher answers, for a frontend that
+    /// filters its gestures by them as the desktop's window does.
+    pub fn wired(&self) -> Vec<postio_core::CommandId> {
+        verbs(&self.inner.wiring, &SharedState::default())
+            .wired()
+            .collect()
     }
 
     /// The wiring every read and the engines hang off.

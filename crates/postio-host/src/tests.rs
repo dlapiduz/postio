@@ -789,3 +789,19 @@ fn the_finder_is_told_the_accounts_correspondents_and_labels() {
         ["Receipts"]
     );
 }
+
+#[test]
+fn the_host_says_which_verbs_a_frontend_can_send_it() {
+    // A frontend filters its gestures by what the bus answers, so the ones
+    // another consumer owns do not come back "not wired up in this build".
+    let world = World::new();
+    let wired = world.host.as_ref().expect("a host").wired();
+    for verb in [
+        postio_core::CommandId::Archive,
+        postio_core::CommandId::Undo,
+        postio_core::CommandId::Refresh,
+    ] {
+        assert!(wired.contains(&verb), "{verb:?} in {wired:?}");
+    }
+    assert!(!wired.contains(&postio_core::CommandId::Compose));
+}
