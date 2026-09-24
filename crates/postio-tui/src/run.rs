@@ -283,17 +283,33 @@ async fn write_drafts(
 
 /// The local draft behind a row, taken back from the Outbox if it was
 /// queued, as the desktop does on opening one (#433).
-async fn resume(
-    client: &Client,
-    message: postio_model::MessageId,
-) -> Option<Box<postio_model::Draft>> {
-    let draft = client.draft_behind(message).await.ok().flatten()?;
-    let draft = if draft.state == postio_model::DraftState::Editing {
-        draft
-    } else {
-        client.cancel_send(draft.id).await.ok().flatten()?
+async fn resume(client: &Client, message: postio_model::MessageId) -> Input {
+    let Some(draft) = client.draft_behind(message).await.ok().flatten() else {
+        return Input::Resumed {
+            found: None,
+            failure: None,
+        };
     };
-    Some(Box::new(draft))
+    let draft = if matches!(
+        draft.state,
+        postio_model::DraftState::Editing | postio_model::DraftState::Failed
+    ) {
+        Some(draft)
+    } else {
+        client.cancel_send(draft.id).await.ok().flatten()
+    };
+    // A failed send names what went wrong, where the person has come back to
+    // do something about it -- the desktop's rule (FR-066, #1487).
+    let failure = match &draft {
+        Some(draft) if draft.state == postio_model::DraftState::Failed => {
+            client.send_failure(draft.id).await.ok().flatten()
+        }
+        _ => None,
+    };
+    Input::Resumed {
+        found: draft.map(Box::new),
+        failure,
+    }
 }
 
 /// Where the loop's work reports back: inputs for `update`, and draft
@@ -651,6 +667,11 @@ fn perform(
                 });
             }
             Effect::OpenLink(target) => {
+                // POSTIO-CONSENT: asked for only by a second click on a link
+                // in the reader, the first having shown where it goes, or by
+                // Enter on the browser sign-in address the first run shows
+                // whole -- one deliberate activation, one open; never on
+                // render.
                 let opened = std::process::Command::new("xdg-open")
                     .arg(&target)
                     .stdin(std::process::Stdio::null())
@@ -671,6 +692,9 @@ fn perform(
                 // The system's opener, detached, its output away from the
                 // terminal. Where there is none -- a server over SSH -- the
                 // notice has already said where the file is.
+                // POSTIO-CONSENT: asked for only by the parts' Open command on
+                // one part the person chose, already written to disk; the
+                // opener is their own choice of application.
                 let launched = std::process::Command::new("xdg-open")
                     .arg(&path)
                     .stdin(std::process::Stdio::null())
@@ -766,9 +790,7 @@ fn perform(
                 let client = client.clone();
                 let inputs = inputs.clone();
                 tokio::spawn(async move {
-                    let _ = inputs
-                        .send(Input::Resumed(resume(&client, message).await))
-                        .await;
+                    let _ = inputs.send(resume(&client, message).await).await;
                 });
             }
             Effect::Rest(message) => {

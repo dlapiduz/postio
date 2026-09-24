@@ -209,6 +209,22 @@ impl Composer {
         self.field = Field::Cc;
     }
 
+    /// `copy_fields`: raise `Cc` and `Bcc`, or put them away again -- only
+    /// while both are empty, since a hidden row still holding an address
+    /// would still send to it, unseen. Refused, the keyboard goes to `Cc`,
+    /// so the refusal shows.
+    pub fn toggle_copy_fields(&mut self) {
+        let empty = self.cc.value().trim().is_empty() && self.bcc.value().trim().is_empty();
+        if !self.extra_recipients || !empty {
+            self.show_extra_recipients();
+            return;
+        }
+        self.extra_recipients = false;
+        if matches!(self.field, Field::Cc | Field::Bcc) {
+            self.field = Field::To;
+        }
+    }
+
     /// Type `key` into the field the keyboard is in. `Tab` and `Shift+Tab`
     /// move between fields. Answers whether anything changed.
     pub fn type_key(&mut self, key: KeyEvent) -> bool {
@@ -691,6 +707,26 @@ pub(crate) mod tests {
         composer.type_key(key(KeyCode::Enter, KeyModifiers::NONE));
         typed(&mut composer, "two");
         assert_eq!(composer.markdown(), "one\ntwo");
+    }
+
+    #[test]
+    fn cc_and_bcc_go_away_only_while_empty() {
+        // `copy_fields`' asymmetric half: a hidden row still holding an
+        // address would still send to it, unseen.
+        let mut composer = fresh();
+        composer.toggle_copy_fields();
+        assert!(composer.shows_extra_recipients());
+        assert_eq!(composer.field(), Field::Cc);
+        composer.toggle_copy_fields();
+        assert!(!composer.shows_extra_recipients(), "empty, so they go");
+        assert_eq!(composer.field(), Field::To, "and the keyboard leaves them");
+
+        composer.toggle_copy_fields();
+        composer.type_key(key(KeyCode::Tab, KeyModifiers::NONE));
+        typed(&mut composer, "archive@example.com");
+        composer.toggle_copy_fields();
+        assert!(composer.shows_extra_recipients(), "Bcc holds an address");
+        assert_eq!(composer.field(), Field::Cc, "the refusal is visible");
     }
 
     #[test]

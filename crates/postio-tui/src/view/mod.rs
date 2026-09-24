@@ -105,6 +105,7 @@ pub fn draw(frame: &mut Frame, app: &App, theme: &Theme, now: DateTime<Local>) -
                                 frame,
                                 *area,
                                 query,
+                                &app.search_chips(),
                                 app.search_caret(),
                                 app.search_readout().as_deref(),
                                 app.focus() == Focus::Search,
@@ -519,6 +520,37 @@ mod tests {
     }
 
     #[test]
+    fn a_whole_operator_is_marked_bold_and_a_half_typed_one_is_not() {
+        let mut app = with_sidebar((160, 16));
+        for c in "/from:ada is:".chars() {
+            update(
+                &mut app,
+                Input::Key(crossterm::event::KeyEvent::from(
+                    crossterm::event::KeyCode::Char(c),
+                )),
+            );
+        }
+        let drawn = buffer(160, 16, &app);
+        let screen = screen(160, 16, &app);
+        let (row, line) = screen
+            .lines()
+            .enumerate()
+            .find(|(_, line)| line.contains("/ from:ada is:"))
+            .unwrap_or_else(|| panic!("no bar:\n{screen}"));
+        let bold = |needle: &str| {
+            let column = line[..line.find(needle).expect("drawn")].chars().count();
+            drawn[(u16::try_from(column).unwrap(), u16::try_from(row).unwrap())]
+                .modifier
+                .contains(ratatui::style::Modifier::BOLD)
+        };
+        assert!(bold("from:ada"), "a whole operator reads as one");
+        assert!(
+            !bold("is:"),
+            "one still waiting for its value is in progress"
+        );
+    }
+
+    #[test]
     fn the_search_bar_sits_over_the_list_with_its_readout() {
         let mut app = with_sidebar((160, 16));
         update(
@@ -752,7 +784,7 @@ mod tests {
             assert!(first.contains(wanted), "{wanted} missing:\n{first}");
         }
 
-        for c in "ada@fastmail.com".chars() {
+        for c in "ada@example.test".chars() {
             update(&mut app, Input::Key(KeyEvent::from(KeyCode::Char(c))));
         }
         update(&mut app, Input::Key(KeyEvent::from(KeyCode::Enter)));
@@ -761,12 +793,12 @@ mod tests {
             Input::Discovered(Ok(postio_ui::onboarding::Status::Found(
                 postio_ui::onboarding::Settings {
                     imap: postio_ui::onboarding::Server {
-                        host: "imap.fastmail.com".into(),
+                        host: "imap.example.test".into(),
                         port: 993,
                         security: postio_model::TransportSecurity::Tls,
                     },
                     smtp: postio_ui::onboarding::Server {
-                        host: "smtp.fastmail.com".into(),
+                        host: "smtp.example.test".into(),
                         port: 465,
                         security: postio_model::TransportSecurity::Tls,
                     },
@@ -780,7 +812,7 @@ mod tests {
         }
         let found = screen(120, 30, &app);
         for wanted in [
-            "imap.fastmail.com:993 · TLS",
+            "imap.example.test:993 · TLS",
             "Fastmail",
             "Password",
             "••••••",

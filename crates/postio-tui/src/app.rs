@@ -169,7 +169,12 @@ pub enum Input {
     /// The daemon answered an [`Effect::Resume`]: the draft behind the row,
     /// taken back from the Outbox if it was queued; nothing when there is no
     /// local draft or its send has already started.
-    Resumed(Option<Box<postio_model::Draft>>),
+    Resumed {
+        /// The draft, or nothing.
+        found: Option<Box<postio_model::Draft>>,
+        /// Why its last send failed, for a draft that did.
+        failure: Option<String>,
+    },
     /// The daemon answered an [`Effect::ReplySource`]: the message and its
     /// account, or nothing when it could not be read.
     ReplySource {
@@ -1583,13 +1588,8 @@ impl App {
         self.search.as_ref().map(|bar| bar.input.value())
     }
 
-    /// Where the caret is in the search bar, in characters.
-    pub fn search_caret(&self) -> usize {
-        self.search.as_ref().map_or(0, |bar| bar.input.cursor())
-    }
-
     /// The operators in the query, as chips: Postio's query language, read
-    /// back as it is typed (`postio_ui::search`).
+    /// back as it is typed (`postio_ui::search`). The bar draws these.
     pub fn search_chips(&self) -> Vec<postio_ui::search::Chip> {
         self.search_query()
             .map(|query| {
@@ -1599,6 +1599,11 @@ impl App {
                 ))
             })
             .unwrap_or_default()
+    }
+
+    /// Where the caret is in the search bar, in characters.
+    pub fn search_caret(&self) -> usize {
+        self.search.as_ref().map_or(0, |bar| bar.input.cursor())
     }
 
     /// What the last search turned out to be, as the desktop says it.
@@ -1878,6 +1883,12 @@ impl App {
             // it is a tab, and the reading pane goes back to the reader.
             "detach_composer" => {
                 self.detached = !self.detached;
+                vec![Effect::Redraw]
+            }
+            "copy_fields" => {
+                if let Some(composer) = self.composer.as_mut() {
+                    composer.toggle_copy_fields();
+                }
                 vec![Effect::Redraw]
             }
             // Everything else the composer context reaches -- quitting, the
@@ -2942,8 +2953,14 @@ pub fn update(app: &mut App, input: Input) -> Vec<Effect> {
                 "Not sent: {reason}. The draft is still in Drafts."
             )),
         },
-        Input::Resumed(found) => match found {
-            Some(draft) => app.compose(*draft),
+        Input::Resumed { found, failure } => match found {
+            Some(draft) => {
+                let mut effects = app.compose(*draft);
+                if let Some(reason) = failure {
+                    effects.extend(app.say(&format!("Not sent — {reason}")));
+                }
+                effects
+            }
             None => app.say("That draft is not on this device, or is already sending"),
         },
         Input::ReplySource { kind, found } => match found.map(|found| *found) {
@@ -3336,6 +3353,14 @@ pub(crate) mod tests {
         assert_eq!(composer.draft().account_id, postio_model::AccountId::new(1));
     }
 
+    #[test]
+    fn copy_fields_raises_cc_and_bcc_in_the_composer() {
+        let mut app = app((160, 40));
+        composing(&mut app);
+        app.composer_command("copy_fields");
+        assert!(app.composer().unwrap().shows_extra_recipients());
+    }
+
     fn composing(app: &mut App) {
         app.compose(postio_model::Draft::new(postio_model::AccountId::new(1)));
     }
@@ -3481,10 +3506,37 @@ pub(crate) mod tests {
         let mut draft = postio_model::Draft::new(postio_model::AccountId::new(1));
         draft.id = postio_model::DraftId::new(5);
         draft.body_markdown = Some("Half **written**".into());
-        update(&mut app, Input::Resumed(Some(Box::new(draft))));
+        update(
+            &mut app,
+            Input::Resumed {
+                found: Some(Box::new(draft)),
+                failure: None,
+            },
+        );
         let composer = app.composer().expect("composing");
         assert_eq!(composer.markdown(), "Half **written**");
         assert_eq!(composer.draft().id, postio_model::DraftId::new(5));
+    }
+
+    #[test]
+    fn a_failed_draft_reopens_saying_why_it_was_not_sent() {
+        // FR-066, as the desktop says it (#1487): the person has come back to
+        // do something about it, so they are told what went wrong.
+        let mut app = app((160, 40));
+        let mut draft = postio_model::Draft::new(postio_model::AccountId::new(1));
+        draft.state = postio_model::DraftState::Failed;
+        update(
+            &mut app,
+            Input::Resumed {
+                found: Some(Box::new(draft)),
+                failure: Some("the server refused the recipient".into()),
+            },
+        );
+        assert!(app.composer().is_some());
+        assert_eq!(
+            app.notice(),
+            Some("Not sent — the server refused the recipient")
+        );
     }
 
     fn addressed(app: &mut App, subject: &str) {
@@ -4639,19 +4691,19 @@ pub(crate) mod tests {
         crate::sidebar::Contents::default()
     }
 
-    fn fastmail() -> postio_ui::onboarding::Settings {
+    fn discovered_settings() -> postio_ui::onboarding::Settings {
         postio_ui::onboarding::Settings {
             imap: postio_ui::onboarding::Server {
-                host: "imap.fastmail.com".into(),
+                host: "imap.example.test".into(),
                 port: 993,
                 security: postio_model::TransportSecurity::Tls,
             },
             smtp: postio_ui::onboarding::Server {
-                host: "smtp.fastmail.com".into(),
+                host: "smtp.example.test".into(),
                 port: 465,
                 security: postio_model::TransportSecurity::Tls,
             },
-            login: "ada@fastmail.com".into(),
+            login: "ada@example.test".into(),
             source: "Fastmail".into(),
             ..Default::default()
         }
@@ -4672,15 +4724,18 @@ pub(crate) mod tests {
         use postio_ui::onboarding::{Status, SyncWindow};
         let mut app = app((160, 40));
         update(&mut app, Input::Sidebar(an_empty_store()));
-        typing(&mut app, "ada@fastmail.com");
+        typing(&mut app, "ada@example.test");
         let effects = update(&mut app, key(KeyCode::Enter, KeyModifiers::NONE));
         assert!(
-            effects.contains(&Effect::Discover("ada@fastmail.com".into())),
+            effects.contains(&Effect::Discover("ada@example.test".into())),
             "{effects:?}"
         );
         assert_eq!(app.first_run().unwrap().status(), &Status::Probing);
 
-        update(&mut app, Input::Discovered(Ok(Status::Found(fastmail()))));
+        update(
+            &mut app,
+            Input::Discovered(Ok(Status::Found(discovered_settings()))),
+        );
         typing(&mut app, "correct horse");
         let effects = update(&mut app, key(KeyCode::Enter, KeyModifiers::NONE));
         let submitted = effects
@@ -4690,9 +4745,9 @@ pub(crate) mod tests {
                 _ => None,
             })
             .expect("submitted");
-        assert_eq!(submitted.address, "ada@fastmail.com");
+        assert_eq!(submitted.address, "ada@example.test");
         assert_eq!(submitted.password, "correct horse");
-        assert_eq!(submitted.settings, fastmail());
+        assert_eq!(submitted.settings, discovered_settings());
         assert_eq!(app.first_run().unwrap().status(), &Status::Connecting);
 
         // Refused: said as the desktop says it, and the password can be typed
@@ -4839,7 +4894,7 @@ pub(crate) mod tests {
         update(&mut app, Input::Sidebar(an_empty_store()));
         typing(&mut app, "ada@example.test");
         update(&mut app, key(KeyCode::Enter, KeyModifiers::NONE));
-        let mut settings = fastmail();
+        let mut settings = discovered_settings();
         settings.oauth_sign_in = true;
         update(&mut app, Input::Discovered(Ok(Status::Found(settings))));
         assert_eq!(
@@ -4904,7 +4959,7 @@ pub(crate) mod tests {
         update(&mut app, Input::Sidebar(an_empty_store()));
         typing(&mut app, "ada@example.test");
         update(&mut app, key(KeyCode::Enter, KeyModifiers::NONE));
-        let mut settings = fastmail();
+        let mut settings = discovered_settings();
         settings.oauth_sign_in = true;
         update(&mut app, Input::Discovered(Ok(Status::Found(settings))));
         typing(&mut app, "postio-test");

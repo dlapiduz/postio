@@ -11,13 +11,17 @@ use crate::view::fit;
 /// Draw the bar holding `query` in the top row of `area`, with `readout` at
 /// its right; answers the rest of `area`, for the list.
 ///
-/// The operators in the query are drawn as chips -- marked, in place -- so the
-/// query language is read back as it is typed, as the desktop's bar does
-/// (`postio_ui::search`). With `focused`, the terminal's cursor is at `caret`.
+/// The operators in the query are drawn as `chips` -- marked, in place -- so
+/// the query language is read back as it is typed, as the desktop's bar does
+/// (`postio_ui::search`); one still waiting for its value is marked without
+/// weight, in progress rather than wrong. With `focused`, the terminal's
+/// cursor is at `caret`.
+#[allow(clippy::too_many_arguments)]
 pub fn draw(
     frame: &mut Frame,
     area: Rect,
     query: &str,
+    chips: &[postio_ui::search::Chip],
     caret: usize,
     readout: Option<&str>,
     focused: bool,
@@ -30,7 +34,7 @@ pub fn draw(
     let parsed = postio_search::parse(query, chrono::Local::now().date_naive());
     let mut spans = vec![Span::styled("/ ", theme.style(Role::Accent))];
     let mut at = 0;
-    for token in parsed.tokens() {
+    for (index, token) in parsed.tokens().iter().enumerate() {
         let (start, end) = (token.span.start, token.span.end);
         if start > at {
             spans.push(Span::styled(
@@ -38,10 +42,10 @@ pub fn draw(
                 theme.style(Role::Text),
             ));
         }
-        let style = if token.is_operator() {
-            theme.style(Role::Accent).add_modifier(Modifier::BOLD)
-        } else {
-            theme.style(Role::Text)
+        let style = match chips.iter().find(|chip| chip.index == index) {
+            Some(chip) if chip.complete => theme.style(Role::Accent).add_modifier(Modifier::BOLD),
+            Some(_) => theme.style(Role::Accent),
+            None => theme.style(Role::Text),
         };
         spans.push(Span::styled(query[start..end].to_owned(), style));
         at = end;
