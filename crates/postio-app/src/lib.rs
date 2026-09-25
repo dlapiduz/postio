@@ -35,6 +35,7 @@ pub mod notifications;
 pub mod onboarding;
 pub mod orientation;
 pub mod reading;
+mod recipients;
 pub mod search;
 pub mod settings_accounts;
 pub mod settings_credential;

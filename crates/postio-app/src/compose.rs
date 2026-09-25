@@ -33,22 +33,24 @@
 //! tell it after the fact — which row to delete when the draft is dropped.
 
 use gtk::glib;
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 use chrono::Utc;
 use gtk::gio;
 use gtk::prelude::*;
-use postio_gtk::composer::{Closing, Composer, RecipientCandidate};
+use postio_gtk::composer::{Closing, Composer};
 use postio_gtk::window::Window;
 use postio_model::ids::{AccountId, MailboxId, MessageId};
 use postio_model::signature_default;
-use postio_model::{Attachment, Draft, DraftId, DraftState, EmailAddress, OperationTarget};
+use postio_model::{Attachment, Draft, DraftId, DraftState, OperationTarget};
 use postio_storage::repository::{
     AccountRepository, CancelSendOutcome, ContactGroupRepository, ContactRepository,
     DraftRepository, MailboxRepository, MessageRepository, OperationQueueRepository,
 };
 use postio_storage::{BlobStore, Store};
+
+use crate::recipients::{Directory, resolved_address};
 
 /// How many recipient suggestions to offer at once — a popover, not a list
 /// the user scrolls.
@@ -89,7 +91,7 @@ pub async fn install(
     install_send(&composer, &writer, Rc::clone(&last_id), account, announce);
     install_send_later(&composer, &writer, Rc::clone(&last_id));
     install_resume(window, &composer, database.clone(), last_id);
-    install_recipient_suggestions(&composer, database.clone(), account).await;
+    install_recipient_suggestions(&composer, database.clone(), account, &runtime);
     install_reply_source(&composer, database, showing, &runtime);
     install_attach(&composer, blobs.clone(), runtime.clone());
     install_inline_image(&composer, blobs.clone(), runtime).await;
@@ -893,75 +895,67 @@ async fn recover(
     composer.open(draft);
 }
 
-/// Recipient completion: contact groups whose name matches `prefix`, then
-/// contacts ranked by [`ContactRepository::search`] — groups first, since a
-/// group is a deliberate choice the user is more likely typing towards.
-async fn install_recipient_suggestions(composer: &Composer, database: Store, account: AccountId) {
+/// Recipient completion, answered from memory (see [`crate::recipients`]).
+///
+/// The directory is read off the GTK thread when this is installed and again
+/// each time the composer opens, so a contact first seen in mail that
+/// arrived meanwhile is offered in the next composition. Every keystroke is
+/// then [`Directory::suggest`] over what was read: no connection, no query,
+/// nothing on the thread that draws.
+fn install_recipient_suggestions(
+    composer: &Composer,
+    database: Store,
+    account: AccountId,
+    runtime: &tokio::runtime::Handle,
+) {
+    let directory: Rc<RefCell<Rc<Directory>>> = Rc::default();
+    let reload = {
+        let directory = Rc::clone(&directory);
+        let runtime = runtime.clone();
+        move || {
+            let answer = crate::search::ask(&database, &runtime, move |connection| async move {
+                read_directory(&connection, account)
+                    .await
+                    .map_err(|error| tracing::warn!(%error, "could not read the contacts"))
+                    .ok()
+            });
+            let directory = Rc::clone(&directory);
+            glib::spawn_future_local(async move {
+                if let Ok(Some(read)) = answer.recv().await {
+                    *directory.borrow_mut() = Rc::new(read);
+                }
+            });
+        }
+    };
+    reload();
+    composer.connect_opened(reload);
     composer.connect_recipient_suggestions(move |prefix| {
-        postio_session::blocking::now(async {
-            let connection = match database.connect().await {
-                Ok(connection) => connection,
-                Err(error) => {
-                    tracing::warn!(%error, "could not search contacts");
-                    return Vec::new();
-                }
-            };
-
-            let mut candidates: Vec<RecipientCandidate> = Vec::new();
-            let groups = ContactGroupRepository::new(&connection);
-            match groups.list(Some(account)).await {
-                Ok(list) => {
-                    let prefix_lower = prefix.to_lowercase();
-                    for group in list {
-                        if !group.name.to_lowercase().starts_with(&prefix_lower) {
-                            continue;
-                        }
-                        match groups.members(group.id).await {
-                            // A group with no members yet expands to nothing, so
-                            // offering it would be a suggestion that does nothing
-                            // when accepted.
-                            Ok(members) if !members.is_empty() => {
-                                candidates.push(RecipientCandidate::Group {
-                                    name: group.name,
-                                    members: members.iter().map(resolved_address).collect(),
-                                });
-                            }
-                            Ok(_) => {}
-                            Err(error) => tracing::warn!(%error, "could not read group members"),
-                        }
-                    }
-                }
-                Err(error) => tracing::warn!(%error, "could not search contact groups"),
-            }
-
-            match ContactRepository::new(&connection)
-                .search(Some(account), prefix, SUGGESTION_LIMIT)
-                .await
-            {
-                Ok(contacts) => candidates.extend(
-                    contacts
-                        .iter()
-                        .map(resolved_address)
-                        .map(RecipientCandidate::Contact),
-                ),
-                Err(error) => tracing::warn!(%error, "could not search contacts"),
-            }
-
-            candidates.truncate(SUGGESTION_LIMIT as usize);
-            candidates
-        })
+        let directory = Rc::clone(&directory.borrow());
+        directory.suggest(prefix, SUGGESTION_LIMIT as usize)
     });
 }
 
-/// The address a contact offers: the name the user set, or the last one seen
-/// on the address, over the addr-spec `record` accumulated sightings under.
-fn resolved_address(contact: &postio_model::Contact) -> EmailAddress {
-    let name = contact
-        .name
-        .clone()
-        .or_else(|| contact.address.name.clone());
-    EmailAddress::new(name, contact.address.address.clone())
+/// Every group (with its members) and contact `account` can complete, in
+/// the order they are offered.
+async fn read_directory(
+    connection: &postio_storage::Checkout,
+    account: AccountId,
+) -> postio_storage::Result<Directory> {
+    let groups = ContactGroupRepository::new(connection);
+    let mut named = Vec::new();
+    for group in groups.list(Some(account)).await? {
+        let members = groups.members(group.id).await?;
+        named.push((group.name, members.iter().map(resolved_address).collect()));
+    }
+    let contacts = ContactRepository::new(connection)
+        .search(Some(account), "", DIRECTORY_LIMIT)
+        .await?;
+    Ok(Directory::new(named, contacts))
 }
+
+/// The most contacts a directory holds: the same bound the search
+/// surface's `@` list reads with, for the same reason.
+const DIRECTORY_LIMIT: u32 = 50_000;
 
 /// `e`/`E`/`f` reply to whatever the reading pane is showing.
 ///
@@ -1120,6 +1114,7 @@ mod tests {
     //! has nothing for `tests/` to link against, so this one cannot move out
     //! the way `postio-gtk`'s toast tests did. See issue #41 and
     //! `scripts/checks/check-no-gtk-init-in-unit-tests.py`.
+    use postio_model::EmailAddress;
     use postio_session::reading::load_body_or_reason;
 
     use gtk::gdk;
