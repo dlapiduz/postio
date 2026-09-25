@@ -162,7 +162,9 @@ async fn an_unfinished_address_is_answered_with_the_one_in_the_mailbox() {
 
     assert_eq!(results.total_hits, 0, "the match itself stays exact");
     assert_eq!(
-        results.suggestion.map(|offer| (offer.term, offer.documents)),
+        results
+            .suggestion
+            .map(|offer| (offer.term, offer.documents)),
         Some(("riversidechoirparents".to_owned(), 3))
     );
 }

@@ -1494,9 +1494,9 @@ impl View {
     /// Say which word the list is for, when it is not the one typed. See
     /// [`Panel::set_instead`].
     pub fn set_instead(&self, instead: Option<&postio_search::Instead>) {
-        self.inner.panel.set_instead(
-            instead.map(|instead| (instead.term.as_str(), instead.typed.as_str())),
-        );
+        self.inner
+            .panel
+            .set_instead(instead.map(|instead| (instead.term.as_str(), instead.typed.as_str())));
     }
 
     /// Show or hide the search surface.
