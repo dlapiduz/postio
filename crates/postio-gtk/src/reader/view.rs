@@ -43,6 +43,7 @@ use webkit6::prelude::*;
 use super::allowlist::RemoteImageAllowList;
 use super::banner::{DecodeNotice, RemoteImageBanner, UnsubscribeBanner};
 use super::message_header::MessageHeader;
+use super::notices::{Notice, NoticeSlot};
 use super::scheme::{self, BlobSource};
 use crate::widgets::ActionBar;
 use postio_body::sanitize::RemoteImages;
@@ -98,11 +99,14 @@ pub struct Reader {
     view: webkit6::WebView,
     header: Rc<MessageHeader>,
     banner: Rc<RemoteImageBanner>,
-    decode_notice: Rc<DecodeNotice>,
     /// "Reader view — the sender's HTML layout is hidden", with the way
     /// back. Shown only while a message is actually drawn reduced.
     reader_notice: Rc<crate::widgets::NoticeBar>,
     unsubscribe_banner: Rc<UnsubscribeBanner>,
+    /// The one slot the four notices above share, so the body under them
+    /// starts at the same place whichever of them apply. See
+    /// [`super::notices`].
+    notices: Rc<NoticeSlot>,
     /// The list identifier [`Reader::set_unsubscribe`] last set — what a
     /// click on the banner's button reports to
     /// [`connect_unsubscribe_activated`](Reader::connect_unsubscribe_activated),
@@ -641,10 +645,13 @@ impl Reader {
         // it (#1435).
         let container = gtk::Box::new(gtk::Orientation::Vertical, 0);
         container.append(&header.widget());
-        container.append(&banner.widget());
-        container.append(&decode_notice.widget());
-        container.append(&reader_notice.widget());
-        container.append(&unsubscribe_banner.widget());
+        let notices = Rc::new(NoticeSlot::new([
+            decode_notice.widget(),
+            reader_notice.widget(),
+            banner.widget(),
+            unsubscribe_banner.widget(),
+        ]));
+        container.append(&notices.widget());
         container.append(&view);
         container.append(&chips.widget());
         // **Not appended last any more.** #498 put the bar under the chips,
@@ -664,9 +671,9 @@ impl Reader {
             view,
             header,
             banner,
-            decode_notice,
             reader_notice,
             unsubscribe_banner,
+            notices,
             unsubscribe_list: Rc::new(RefCell::new(None)),
             on_unsubscribe: Rc::new(RefCell::new(Vec::new())),
             actions,
@@ -727,6 +734,7 @@ impl Reader {
                 let page = Rc::clone(&reader.page);
                 let loads = Rc::clone(&reader.loads);
                 let place = Rc::clone(&reader.place);
+                let notices = Rc::clone(&reader.notices);
                 let allowlist_path = allowlist_path.clone();
                 let on_message_action = Rc::clone(&reader.on_message_action);
                 view.connect_decide_policy(move |view, decision, kind| {
@@ -771,6 +779,7 @@ impl Reader {
                                 page: &page,
                                 loads: &loads,
                                 place: &place,
+                                notices: &notices,
                             },
                             &compose_thread_document(
                                 &messages,
@@ -826,6 +835,7 @@ impl Reader {
             let page = Rc::clone(&reader.page);
             let loads = Rc::clone(&reader.loads);
             let place = Rc::clone(&reader.place);
+            let notices = Rc::clone(&reader.notices);
             let document = Rc::clone(&reader.document);
             reader.reader_notice.connect_action(move || {
                 let Some(notice) = weak.upgrade() else { return };
@@ -855,6 +865,7 @@ impl Reader {
                         page: &page,
                         loads: &loads,
                         place: &place,
+                        notices: &notices,
                     },
                     &banner,
                     &notice,
@@ -880,6 +891,7 @@ impl Reader {
             let page = Rc::clone(&reader.page);
             let loads = Rc::clone(&reader.loads);
             let place = Rc::clone(&reader.place);
+            let notices = Rc::clone(&reader.notices);
             let document = Rc::clone(&reader.document);
             let banner_weak = banner_weak.clone();
             reader.banner.connect_show_once(move || {
@@ -895,6 +907,7 @@ impl Reader {
                             page: &page,
                             loads: &loads,
                             place: &place,
+                            notices: &notices,
                         },
                         &banner,
                         &reader_notice,
@@ -926,6 +939,7 @@ impl Reader {
             let page = Rc::clone(&reader.page);
             let loads = Rc::clone(&reader.loads);
             let place = Rc::clone(&reader.place);
+            let notices = Rc::clone(&reader.notices);
             let document = Rc::clone(&reader.document);
             reader.banner.connect_always_allow(move || {
                 let Some(reader_notice) = notice_weak.upgrade() else {
@@ -951,6 +965,7 @@ impl Reader {
                             page: &page,
                             loads: &loads,
                             place: &place,
+                            notices: &notices,
                         },
                         &banner,
                         &reader_notice,
@@ -1012,9 +1027,18 @@ impl Reader {
         &self.view
     }
 
+    /// Show or hide the notice slot altogether.
+    ///
+    /// For a reader whose document says these things itself -- the
+    /// conversation's, where each message carries its own blocked-images
+    /// verb and the slot would be a bar of empty space above the thread.
+    pub fn set_notices_visible(&self, visible: bool) {
+        self.notices.widget().set_visible(visible);
+    }
+
     /// Whether the remote-image banner is currently shown.
     pub fn banner_visible(&self) -> bool {
-        self.banner.is_visible()
+        self.notices.shows(Notice::RemoteImages)
     }
 
     /// The message header (#319), for tests that want to assert on its
@@ -1082,6 +1106,7 @@ impl Reader {
         // outgoing message being the user themselves.
         if !ReaderAction::unsubscribable(state) {
             self.unsubscribe_banner.set_list(None);
+            self.notices.want(Notice::Unsubscribe, false);
         }
     }
 
@@ -1162,7 +1187,7 @@ impl Reader {
 
     /// Whether the unsubscribe banner is currently on screen.
     pub fn unsubscribe_banner_visible(&self) -> bool {
-        self.unsubscribe_banner.is_visible()
+        self.notices.shows(Notice::Unsubscribe)
     }
 
     /// The unsubscribe banner's label text — names the list a click would
@@ -1233,7 +1258,7 @@ impl Reader {
         // decoded perfectly, and a warning that is sometimes wrong is one
         // people learn to ignore. Callers turn it back on for the message
         // they are showing, through `set_encoding_problems`.
-        self.decode_notice.set_visible(false);
+        self.notices.want(Notice::Decode, false);
         self.set_unsubscribe(None);
         // Per-message, like the two above: a message drawn over one that
         // was being sent must not inherit its bar.
@@ -1416,12 +1441,11 @@ impl Reader {
         self.thread.replace(messages.to_vec());
         self.paints.set(self.paints.get() + 1);
         self.absent.set(None);
-        self.decode_notice.set_visible(false);
         self.set_unsubscribe(None);
         // Per-message, like the two above: a message drawn over one that
         // was being sent must not inherit its bar.
         self.set_send_state(None);
-        self.banner.set_visible(false);
+        self.notices.clear();
         load_document(&self.canvas(), document);
         self.watch_for_the_current_message();
     }
@@ -1505,7 +1529,7 @@ impl Reader {
 
     /// Whether the notice offering `View original` is on screen.
     pub fn reader_notice_visible(&self) -> bool {
-        self.reader_notice.is_visible()
+        self.notices.shows(Notice::ReaderView)
     }
 
     /// Press `View original` without a pointer, for a test.
@@ -1550,6 +1574,7 @@ impl Reader {
             page: &self.page,
             loads: &self.loads,
             place: &self.place,
+            notices: &self.notices,
         }
     }
 
@@ -1694,7 +1719,11 @@ impl Reader {
         // are from the keyboard while the pane explains why there is no body
         // yet. Only `clear()`'s "nothing selected at all" hides the bar.
         self.show_actions_unless_suppressed();
-        self.banner.set_visible(false);
+        // Every notice, not only the images banner: reader view, a decode
+        // caveat and the list were all about the message before, and a plate
+        // under them put them over a message they said nothing about.
+        self.set_unsubscribe(None);
+        self.notices.clear();
         load_document(
             &self.canvas(),
             &wrap_document(&absent_html(state), RemoteImages::Blocked, Sheet::Theme),
@@ -1767,12 +1796,12 @@ impl Reader {
     ///
     /// Call it after [`render`](Self::render), which clears it.
     pub fn set_encoding_problems(&self, problems: bool) {
-        self.decode_notice.set_visible(problems);
+        self.notices.want(Notice::Decode, problems);
     }
 
     /// Whether the decode caveat is on screen.
     pub fn shows_encoding_problems(&self) -> bool {
-        self.decode_notice.is_visible()
+        self.notices.shows(Notice::Decode)
     }
 
     /// Name the list this message belongs to, or say it belongs to none.
@@ -1785,6 +1814,8 @@ impl Reader {
     pub fn set_unsubscribe(&self, list_identifier: Option<&str>) {
         *self.unsubscribe_list.borrow_mut() = list_identifier.map(str::to_owned);
         self.unsubscribe_banner.set_list(list_identifier);
+        self.notices
+            .want(Notice::Unsubscribe, list_identifier.is_some());
     }
 
     /// Called with the list identifier when the unsubscribe banner's button
@@ -1819,9 +1850,8 @@ impl Reader {
         // below reads to decide that no bar belongs on it.
         self.showing.set(false);
         self.actions.set_visible(false);
-        self.banner.set_visible(false);
-        self.decode_notice.set_visible(false);
         self.set_unsubscribe(None);
+        self.notices.clear();
         // Per-message, like the two above: a message drawn over one that
         // was being sent must not inherit its bar.
         self.set_send_state(None);
@@ -1989,6 +2019,8 @@ struct Canvas<'a> {
     loads: &'a Rc<std::cell::Cell<u32>>,
     /// Where the reader is, and whether this load keeps it.
     place: &'a Place,
+    /// Which notices the drawn message raises.
+    notices: &'a NoticeSlot,
 }
 
 /// Hand `document` to WebKit, and count it.
@@ -2186,12 +2218,17 @@ fn render_open(
     // The count, before the visibility: a notice that appeared and then
     // changed what it said would flicker a number at the reader (#1008).
     banner.set_held_back(held_back);
-    banner.set_visible(remote == RemoteImages::Blocked && held_back.total() > 0);
+    canvas.notices.want(
+        Notice::RemoteImages,
+        remote == RemoteImages::Blocked && held_back.total() > 0,
+    );
 
     // Only while a message is actually drawn reduced. A notice offering to
     // show an original that is already on screen is a control that does
     // nothing, which is worse than no control.
-    reader_notice.set_visible(drawn.rendering == Rendering::Reader);
+    canvas
+        .notices
+        .want(Notice::ReaderView, drawn.rendering == Rendering::Reader);
     if drawn.rendering == Rendering::Reader && drawn.links_dropped > 0 {
         reader_notice.set_text(&format!(
             "Reader view — {} link{} kept of {}",

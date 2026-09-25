@@ -185,7 +185,14 @@ fn the_reader_renders_and_hardens_the_corpus() {
         "nothing has named a list yet"
     );
     reader.set_unsubscribe(Some("newsletter.example.com"));
-    assert!(reader.unsubscribe_banner_visible());
+    // Not on screen yet: the newsletter opened in reader view, and the
+    // notice saying so outranks the list in the reader's one notice slot --
+    // a rewrite must never be silent. Leaving reader view, below, is what
+    // brings the list up.
+    assert!(
+        !reader.unsubscribe_banner_visible() && reader.reader_notice_visible(),
+        "the slot shows one notice, and reader view's is the more important"
+    );
     assert!(
         reader
             .unsubscribe_banner_label()
@@ -212,6 +219,8 @@ fn the_reader_renders_and_hardens_the_corpus() {
         !reader.unsubscribe_banner_visible(),
         "render clears the previous message's banner until the caller sets a new one"
     );
+    // And the caller does, for this message, as the application would.
+    reader.set_unsubscribe(Some("newsletter.example.com"));
 
     // ── #1009: a newsletter opens in reader view, and `C-o` leaves it ──────
     // Rendered above, so the state is whatever `render` decided for it.
@@ -236,6 +245,10 @@ fn the_reader_renders_and_hardens_the_corpus() {
         !reader.reader_notice_visible(),
         "and the notice goes with it: an offer to show what is already on \
          screen is a control that does nothing"
+    );
+    assert!(
+        reader.unsubscribe_banner_visible(),
+        "with reader view gone, the list is the notice that applies"
     );
 
     // ── #1029: and it lands on the sender's own paper, not Postio's ───────

@@ -1796,6 +1796,10 @@ impl ConversationView {
                 // thread would be the stack's furniture with none of its use.
                 reader.header().widget().set_visible(false);
                 reader.set_actions_visible(false);
+                // The document says what the notices would -- each message
+                // carries its own blocked-images verb -- so the slot the
+                // single reader keeps for them would be a bar of nothing.
+                reader.set_notices_visible(false);
                 // A message's own verbs, from inside the document (#1365).
                 // The scope is the message id in decimal, which is what
                 // `ThreadMessage` puts in the URI; the mapping back lives
