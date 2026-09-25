@@ -140,6 +140,13 @@ pub enum Input {
         /// How many edits it had when it asked.
         edit: u64,
     },
+    /// A search's facets, for the search `sequence` asked.
+    Facets {
+        /// Which search.
+        sequence: u64,
+        /// Its counts, when the store could be read.
+        facets: Option<postio_search::facets::Facets>,
+    },
     /// A signature was saved or removed, or why it could not be: the
     /// store's sentence, which is for the person who typed.
     SignatureSaved(Result<(), String>),
@@ -346,6 +353,19 @@ pub enum Effect {
         sequence: u64,
         /// The search.
         search: postio_client::protocol::Search,
+    },
+    /// Count a search's facets: its matches in every scope, and what would
+    /// narrow them. Asked after its hits, so the count being watched never
+    /// waits for these.
+    Facets {
+        /// The search they are for.
+        sequence: u64,
+        /// Which accounts.
+        account: postio_model::AccountScope,
+        /// The query as typed.
+        query: String,
+        /// The scope searched.
+        scope: postio_search::facets::Scope,
     },
     /// Look up who a recipient being typed could be.
     Recipients {
@@ -728,6 +748,37 @@ struct SearchBar {
     outcome: Option<postio_ui::search::Outcome>,
     /// Newest first rather than best match first.
     newest_first: bool,
+    /// The standing rescope a facet picked.
+    scope: postio_search::facets::Scope,
+    /// What the results turned out to be made of, once asked.
+    facets: Option<postio_search::facets::Facets>,
+    /// The facet Tab is on.
+    facet: Option<usize>,
+}
+
+/// One of a search's facets, as the row under the bar offers it: a scope to
+/// search in, or a token that narrows what was found.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Facet {
+    /// What it says.
+    pub label: String,
+    /// How many matches it keeps, once counted.
+    pub count: Option<u64>,
+    /// Whether it is a scope, rather than a refinement.
+    pub scope: bool,
+    /// Whether it is the scope searched.
+    pub current: bool,
+    /// Whether Tab is on it.
+    pub chosen: bool,
+    /// What choosing it does.
+    does: FacetDoes,
+}
+
+/// What choosing a facet does.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum FacetDoes {
+    Scope(postio_search::facets::Scope),
+    Refine(String),
 }
 
 /// Which pane the keyboard is in.
@@ -1424,6 +1475,7 @@ impl App {
                     }
                     vec![Effect::Redraw]
                 }
+                Target::Facet(index) => self.choose_facet(index),
                 Target::Sidebar(index) => {
                     self.focus = Focus::Sidebar;
                     self.sidebar_cursor = index;
@@ -1998,7 +2050,27 @@ impl App {
             return Vec::new();
         };
         let before = bar.input.value().to_owned();
+        let offered = self.facets().len();
+        let Some(bar) = self.search.as_mut() else {
+            return Vec::new();
+        };
         match key.code {
+            // Tab walks the facets, as the desktop's Tab goes to its refine
+            // column, and past the last one comes back to the typing.
+            KeyCode::Tab | KeyCode::BackTab if offered > 0 => {
+                let forward = key.code == KeyCode::Tab;
+                bar.facet = match (bar.facet, forward) {
+                    (None, true) => Some(0),
+                    (None, false) => Some(offered - 1),
+                    (Some(at), true) => (at + 1 < offered).then_some(at + 1),
+                    (Some(at), false) => at.checked_sub(1),
+                };
+                return vec![Effect::Redraw];
+            }
+            KeyCode::Enter if bar.facet.is_some() => {
+                let chosen = bar.facet.take().unwrap_or_default();
+                return self.choose_facet(chosen);
+            }
             KeyCode::Enter => {
                 self.focus = Focus::List;
                 return vec![Effect::Redraw];
@@ -2027,6 +2099,8 @@ impl App {
         if bar.input.value() == before {
             return vec![Effect::Redraw];
         }
+        // A new question: Tab starts again from the typing.
+        bar.facet = None;
         // The finder's prefixes: typed first into an empty bar, they turn it
         // into another of its modes, as the desktop's box does.
         match bar.input.value() {
@@ -2047,6 +2121,80 @@ impl App {
                 return self.open_palette(Finding::Correspondents);
             }
             _ => {}
+        }
+        self.run_search()
+    }
+
+    /// The facets the row under the bar offers, while a search has an
+    /// answer: every scope with its count, then the refinements worth
+    /// offering -- none that keeps nothing, none that keeps everything.
+    pub fn facets(&self) -> Vec<Facet> {
+        use postio_search::facets::Scope;
+        let Some(bar) = self.search.as_ref() else {
+            return Vec::new();
+        };
+        let Some(outcome) = bar.outcome.as_ref() else {
+            return Vec::new();
+        };
+        let counted = bar.facets.as_ref();
+        let scopes = Scope::ALL.iter().map(|scope| Facet {
+            label: scope.label().to_owned(),
+            count: counted.map(|facets| facets.hits(*scope)),
+            scope: true,
+            current: *scope == bar.scope,
+            chosen: false,
+            does: FacetDoes::Scope(*scope),
+        });
+        let refinements = counted
+            .map(|facets| facets.suggested(outcome.hits))
+            .unwrap_or_default()
+            .into_iter()
+            .map(|refinement| Facet {
+                label: refinement.token.clone(),
+                count: Some(refinement.hits),
+                scope: false,
+                current: false,
+                chosen: false,
+                does: FacetDoes::Refine(refinement.token.clone()),
+            });
+        let mut facets: Vec<Facet> = scopes.chain(refinements).collect();
+        if let Some(chosen) = bar.facet.and_then(|at| facets.get_mut(at)) {
+            chosen.chosen = true;
+        }
+        facets
+    }
+
+    /// Why the facets offer no refinement, once they are counted and do not.
+    pub fn facets_note(&self) -> Option<&'static str> {
+        let bar = self.search.as_ref()?;
+        let outcome = bar.outcome.as_ref()?;
+        let counted = bar.facets.as_ref()?;
+        if !counted.suggested(outcome.hits).is_empty() {
+            return None;
+        }
+        Some(if outcome.hits == 0 {
+            postio_ui::search::NOTHING_MATCHED
+        } else {
+            postio_ui::search::NOTHING_TO_NARROW
+        })
+    }
+
+    /// Search in the scope, or narrow by the token, of facet `at`: never
+    /// retyped, and a refinement is a chip Backspace takes off again.
+    fn choose_facet(&mut self, at: usize) -> Vec<Effect> {
+        let Some(facet) = self.facets().into_iter().nth(at) else {
+            return Vec::new();
+        };
+        let Some(bar) = self.search.as_mut() else {
+            return Vec::new();
+        };
+        bar.facet = None;
+        match facet.does {
+            FacetDoes::Scope(scope) => bar.scope = scope,
+            FacetDoes::Refine(token) => {
+                let query = postio_search::facets::append(bar.input.value(), &token);
+                bar.input = tui_input::Input::default().with_value(query);
+            }
         }
         self.run_search()
     }
@@ -2084,6 +2232,7 @@ impl App {
                     account,
                     query,
                     newest_first: bar.newest_first,
+                    scope: bar.scope,
                 },
             },
             Effect::Redraw,
@@ -2111,12 +2260,21 @@ impl App {
                     corpus_complete: found.corpus_complete,
                     unreachable: Vec::new(),
                 });
+                let facets = Effect::Facets {
+                    sequence,
+                    account: self.account.map_or(
+                        postio_model::AccountScope::Unified,
+                        postio_model::AccountScope::Account,
+                    ),
+                    query: bar.input.value().to_owned(),
+                    scope: bar.scope,
+                };
                 let total = self.paging.show_results(found.ids);
                 self.selection.clear();
                 self.list.reset(total);
                 self.cursor = 0;
                 self.top = 0;
-                vec![Effect::Redraw]
+                vec![facets, Effect::Redraw]
             }
             Ok(None) => self.say("The search could not be run"),
             Err(reason) => self.say(&reason),
@@ -2375,10 +2533,19 @@ impl App {
     }
 
     /// How many list rows fit: the screen but for its top bar and status
-    /// line, two lines to a row.
+    /// line, and a search's facets while they are shown, three lines to a
+    /// row.
     pub fn list_height(&self) -> u32 {
+        let facets = u16::from(
+            self.search
+                .as_ref()
+                .is_some_and(|bar| bar.outcome.is_some()),
+        );
         u32::from(
-            self.size.1.saturating_sub(crate::layout::CHROME_ROWS) / crate::layout::LIST_ROW_LINES,
+            self.size
+                .1
+                .saturating_sub(crate::layout::CHROME_ROWS + facets)
+                / crate::layout::LIST_ROW_LINES,
         )
     }
 
@@ -3743,6 +3910,14 @@ pub fn update(app: &mut App, input: Input) -> Vec<Effect> {
             )),
         },
         Input::Found { sequence, found } => app.found(sequence, found),
+        Input::Facets { sequence, facets } => {
+            if let Some(bar) = app.search.as_mut()
+                && bar.pacer.accepts(sequence)
+            {
+                bar.facets = facets;
+            }
+            vec![Effect::Redraw]
+        }
         Input::Notified(notification) => {
             let safe = |text: &str| postio_ui::terminal::SafeText::new(text).to_string();
             let (title, body) = (safe(&notification.title), safe(&notification.body));
@@ -5308,6 +5483,107 @@ pub(crate) mod tests {
             corpus_complete: true,
             elapsed: std::time::Duration::from_millis(11),
         }
+    }
+
+    #[test]
+    fn a_search_is_scoped_and_refined_from_its_facets_without_retyping() {
+        use postio_search::facets::{Facets, Refinement, Scope, ScopeCount};
+        let mut app = app((160, 40));
+        let opening = opened(&mut app, 3);
+        serve(&mut app, opening);
+        update(&mut app, press('/'));
+        let mut latest = 0;
+        for c in "tide".chars() {
+            latest = searches(&update(&mut app, press(c))).last().unwrap().0;
+        }
+        let effects = update(
+            &mut app,
+            Input::Found {
+                sequence: latest,
+                found: Ok(Some(found(&[1, 2, 3]))),
+            },
+        );
+        assert!(
+            effects.contains(&Effect::Facets {
+                sequence: latest,
+                account: postio_model::AccountScope::Unified,
+                query: "tide".into(),
+                scope: Scope::AllMail,
+            }),
+            "the counts are asked for after the hits: {effects:?}"
+        );
+        update(
+            &mut app,
+            Input::Facets {
+                sequence: latest,
+                facets: Some(Facets {
+                    scopes: vec![
+                        ScopeCount {
+                            scope: Scope::AllMail,
+                            hits: 3,
+                        },
+                        ScopeCount {
+                            scope: Scope::Inbox,
+                            hits: 2,
+                        },
+                        ScopeCount {
+                            scope: Scope::Lists,
+                            hits: 0,
+                        },
+                    ],
+                    refinements: vec![
+                        Refinement {
+                            token: "is:unread".into(),
+                            hits: 1,
+                        },
+                        // Keeps every match: narrows nothing, so not offered.
+                        Refinement {
+                            token: "has:attachment".into(),
+                            hits: 3,
+                        },
+                    ],
+                }),
+            },
+        );
+        let offered: Vec<(String, Option<u64>)> = app
+            .facets()
+            .iter()
+            .map(|facet| (facet.label.clone(), facet.count))
+            .collect();
+        assert_eq!(
+            offered,
+            [
+                ("All mail".to_owned(), Some(3)),
+                ("Inbox only".to_owned(), Some(2)),
+                ("Lists".to_owned(), Some(0)),
+                ("is:unread".to_owned(), Some(1)),
+            ]
+        );
+        assert!(app.facets()[0].current, "the scope searched");
+
+        // Tab walks them; Enter on a refinement adds its token.
+        for _ in 0..4 {
+            update(&mut app, key(KeyCode::Tab, KeyModifiers::NONE));
+        }
+        assert!(app.facets()[3].chosen);
+        let effects = update(&mut app, key(KeyCode::Enter, KeyModifiers::NONE));
+        assert_eq!(searches(&effects).last().unwrap().1, "tide is:unread");
+        assert_eq!(app.search_query(), Some("tide is:unread"));
+        assert_eq!(app.focus(), Focus::Search, "still searching");
+
+        // Enter on a scope searches there, the query untouched.
+        update(&mut app, key(KeyCode::Tab, KeyModifiers::NONE));
+        update(&mut app, key(KeyCode::Tab, KeyModifiers::NONE));
+        let effects = update(&mut app, key(KeyCode::Enter, KeyModifiers::NONE));
+        let scoped = effects
+            .iter()
+            .find_map(|effect| match effect {
+                Effect::Search { search, .. } => Some(search.clone()),
+                _ => None,
+            })
+            .expect("searched again");
+        assert_eq!(scoped.scope, Scope::Inbox);
+        assert_eq!(scoped.query, "tide is:unread");
     }
 
     #[test]

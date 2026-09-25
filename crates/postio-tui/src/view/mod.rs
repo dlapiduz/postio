@@ -126,9 +126,24 @@ pub fn draw(frame: &mut Frame, app: &App, theme: &Theme, now: DateTime<Local>) -
                         );
                     }
                     Pane::List => {
+                        // A search's facets take the list's first line.
+                        let facets = app.facets();
+                        let area = if facets.is_empty() || area.height < 2 {
+                            *area
+                        } else {
+                            search::draw_facets(
+                                frame,
+                                Rect::new(area.x, area.y, area.width, 1),
+                                &facets,
+                                app.facets_note(),
+                                theme,
+                                &mut hits,
+                            );
+                            Rect::new(area.x, area.y + 1, area.width, area.height - 1)
+                        };
                         list::draw(
                             frame,
-                            *area,
+                            area,
                             &app.visible(),
                             app.top(),
                             theme,
@@ -725,6 +740,106 @@ mod tests {
         assert!(
             !bar.contains("Search all mail"),
             "the query replaces the placeholder: {bar}"
+        );
+    }
+
+    #[test]
+    fn a_searchs_facets_sit_over_its_results_and_take_a_click() {
+        use crossterm::event::{KeyCode, KeyEvent};
+        use postio_search::facets::{Facets, Refinement, Scope, ScopeCount};
+        let mut app = with_sidebar((160, 16));
+        update(&mut app, Input::Key(KeyEvent::from(KeyCode::Char('/'))));
+        let sequence = update(&mut app, Input::Key(KeyEvent::from(KeyCode::Char('t'))))
+            .iter()
+            .find_map(|effect| match effect {
+                crate::app::Effect::Search { sequence, .. } => Some(*sequence),
+                _ => None,
+            })
+            .expect("searched");
+        update(
+            &mut app,
+            Input::Found {
+                sequence,
+                found: Ok(Some(postio_client::protocol::Found {
+                    ids: vec![
+                        postio_model::MessageId::new(4),
+                        postio_model::MessageId::new(5),
+                    ],
+                    hits: 2,
+                    capped: false,
+                    corpus_complete: true,
+                    elapsed: std::time::Duration::from_millis(7),
+                })),
+            },
+        );
+        update(
+            &mut app,
+            Input::Facets {
+                sequence,
+                facets: Some(Facets {
+                    scopes: vec![
+                        ScopeCount {
+                            scope: Scope::AllMail,
+                            hits: 2,
+                        },
+                        ScopeCount {
+                            scope: Scope::Inbox,
+                            hits: 1,
+                        },
+                    ],
+                    refinements: vec![Refinement {
+                        token: "is:unread".into(),
+                        hits: 1,
+                    }],
+                }),
+            },
+        );
+        let mut hits = hit::Hits::default();
+        let drawn = {
+            let backend = ratatui::backend::TestBackend::new(160, 16);
+            let mut terminal = ratatui::Terminal::new(backend).unwrap();
+            let theme = Theme::new(
+                crate::caps::Colour::None,
+                crate::caps::Background::Unknown,
+                &Default::default(),
+            )
+            .0;
+            terminal
+                .draw(|frame| hits = draw(frame, &app, &theme, chrono::Local::now()))
+                .unwrap();
+            screen(160, 16, &app)
+        };
+        let facets = drawn
+            .lines()
+            .find(|line| line.contains("All mail"))
+            .unwrap_or_else(|| panic!("no facet row:\n{drawn}"));
+        for wanted in ["All mail 2", "Inbox only 1", "Lists 0", "is:unread 1"] {
+            assert!(facets.contains(wanted), "{wanted} missing: {facets}");
+        }
+        let row = u16::try_from(
+            drawn
+                .lines()
+                .position(|line| line.contains("All mail"))
+                .unwrap(),
+        )
+        .unwrap();
+        let at = facets.find("is:unread").unwrap();
+        let column = u16::try_from(facets[..at].chars().count()).unwrap();
+        let hit = hits.at(column, row).expect("the chip takes a click");
+        assert_eq!(hit.target, hit::Target::Facet(3));
+
+        // Nothing to narrow by: said, not left blank.
+        update(
+            &mut app,
+            Input::Facets {
+                sequence,
+                facets: Some(Facets::default()),
+            },
+        );
+        let drawn = screen(160, 16, &app);
+        assert!(
+            drawn.contains("Every match is alike"),
+            "said, as far as the pane is wide:\n{drawn}"
         );
     }
 

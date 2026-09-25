@@ -628,12 +628,27 @@ fn a_frontend_searches_and_hears_which_messages_matched() {
             account: postio_model::AccountScope::Account(account),
             query: "interlock".into(),
             newest_first: false,
+            scope: postio_search::facets::Scope::AllMail,
         }))
         .expect("an answer")
         .expect("the store was read");
     assert_eq!(found.ids, vec![matching]);
     assert_eq!(found.hits, 1);
     assert!(!found.capped);
+
+    // The scope a facet picks: the message is in the inbox, so none of it
+    // is list mail.
+    let listed = world
+        .rt
+        .block_on(client.search(postio_client::protocol::Search {
+            account: postio_model::AccountScope::Account(account),
+            query: "interlock".into(),
+            newest_first: false,
+            scope: postio_search::facets::Scope::Lists,
+        }))
+        .expect("an answer")
+        .expect("the store was read");
+    assert_eq!(listed.hits, 0, "{listed:?}");
 }
 
 /// A network that answers nothing: discovery falls back to the provider
@@ -1689,6 +1704,7 @@ fn the_host_makes_bodies_already_on_disk_searchable_once_it_catches_up() {
                 account: postio_model::AccountScope::Unified,
                 query: "quarterly".into(),
                 newest_first: true,
+                scope: postio_search::facets::Scope::AllMail,
             }))
             .expect("an answer")
             .filter(|found| found.ids.contains(&message))

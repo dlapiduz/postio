@@ -82,7 +82,7 @@ single command.
 | Feature | Desktop | Terminal | Notes |
 |---|---|---|---|
 | The query language, operators shown as chips | ✓ | ✓ | |
-| Facets: refine by sender, folder, date | ✓ | ✗ | |
+| Facets: search in a scope (all mail, inbox only, lists), refine by what the matches share | ✓ | ✓ | A row over the results; Tab walks it, Enter or a click picks |
 | The finder's modes (`>` `#` `+` `@`), the palette, the key list | ✓ | ✓ | |
 
 ## Settings

@@ -562,6 +562,8 @@ pub struct Search {
     pub query: String,
     /// Newest first rather than best match first.
     pub newest_first: bool,
+    /// The standing rescope a facet picks, the query left as typed.
+    pub scope: postio_search::facets::Scope,
 }
 
 /// What a search found: the matching messages, best first, and what the

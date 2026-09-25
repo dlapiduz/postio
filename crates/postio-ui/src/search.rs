@@ -332,6 +332,15 @@ fn elapsed(elapsed: Duration) -> String {
     }
 }
 
+/// What a search's refinements say when there are none to offer.
+///
+/// Never a blank space and never a shrug: the two reasons a shortlist can be
+/// empty are different, and which one it is decides what the next keystroke
+/// should be.
+pub const NOTHING_MATCHED: &str = "Nothing matched, so there is nothing to narrow.";
+/// [`NOTHING_MATCHED`]'s other half: there were matches, all alike.
+pub const NOTHING_TO_NARROW: &str = "Every match is alike — nothing left to narrow by.";
+
 /// Which question is outstanding, so an answer to an older one can be thrown
 /// away instead of drawn.
 ///

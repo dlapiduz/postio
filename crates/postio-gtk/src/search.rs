@@ -411,13 +411,9 @@ impl Live {
 // Scope and refine — canvas 2b's left column
 // ---------------------------------------------------------------------------
 
-/// What the refine column says when it has nothing to offer.
-///
-/// Never a blank space and never a shrug: the two reasons a shortlist can be
-/// empty are different, and which one it is decides what the next keystroke
-/// should be.
-const NOTHING_MATCHED: &str = "Nothing matched, so there is nothing to narrow.";
-const NOTHING_TO_NARROW: &str = "Every match is alike — nothing left to narrow by.";
+// What the refine column says when it has nothing to offer: postio-ui's, so
+// the terminal's facet row says the same.
+use postio_ui::search::{NOTHING_MATCHED, NOTHING_TO_NARROW};
 
 /// What the offer says. A statement of what the other word would find, not a
 /// question: the app has already looked, so "did you mean" asks something it

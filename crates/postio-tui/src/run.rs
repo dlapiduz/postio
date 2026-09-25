@@ -903,6 +903,20 @@ fn perform(
                     let _ = inputs.send(Input::Attached { path, attached }).await;
                 });
             }
+            Effect::Facets {
+                sequence,
+                account,
+                query,
+                scope,
+            } => {
+                let client = client.clone();
+                let inputs = inputs.clone();
+                tokio::spawn(async move {
+                    let parsed = postio_search::parse(&query, chrono::Local::now().date_naive());
+                    let facets = client.facets(account, parsed, scope).await.ok().flatten();
+                    let _ = inputs.send(Input::Facets { sequence, facets }).await;
+                });
+            }
             Effect::Search { sequence, search } => {
                 let client = client.clone();
                 let inputs = inputs.clone();

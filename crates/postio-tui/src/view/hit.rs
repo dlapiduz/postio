@@ -23,6 +23,8 @@ pub enum Target {
     ComposerField(crate::composer::Field),
     /// One of the composer's buttons, by the command it runs.
     ComposerAction(&'static str),
+    /// One of a search's facets, by its place in the row.
+    Facet(usize),
     /// The line between the list and the reading pane, for dragging.
     Divider,
     /// Something drawn over everything else: clicks there land on nothing

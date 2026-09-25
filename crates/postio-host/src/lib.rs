@@ -1290,9 +1290,10 @@ impl Inner {
         Ok(())
     }
 
-    /// A search, as the desktop's bar runs it: every folder but drafts,
-    /// junk and trash unless the query names one, up to the desktop's hit
-    /// limit, with no excerpts -- a terminal list shows none.
+    /// A search, as the desktop's bar runs it: in the scope asked (every
+    /// folder but drafts, junk and trash, unless the query names one, by
+    /// default), up to the desktop's hit limit, with no excerpts -- a
+    /// terminal list shows none.
     async fn search(
         &self,
         search: postio_client::protocol::Search,
@@ -1314,7 +1315,7 @@ impl Inner {
             &connection,
             search.account,
             &query,
-            postio_search::facets::Scope::AllMail,
+            search.scope,
             order,
             0,
         )

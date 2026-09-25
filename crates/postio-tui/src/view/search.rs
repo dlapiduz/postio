@@ -5,8 +5,10 @@ use ratatui::layout::{Position, Rect};
 use ratatui::style::Modifier;
 use ratatui::text::{Line, Span};
 
+use crate::app::Facet;
 use crate::theme::{Role, Theme};
 use crate::view::fit;
+use crate::view::hit::{Hits, Target};
 
 /// Draw the field holding `query` in the top row of `area`, with `readout`
 /// at its right.
@@ -82,5 +84,80 @@ pub fn draw(
                     .min(area.width.saturating_sub(1)),
             area.y,
         ));
+    }
+}
+
+/// Draw a search's facets on the line `area`: the scopes with their counts,
+/// the one searched marked, then the refinements, each a click that does
+/// what Enter on it does. Whatever does not fit is left off the end.
+pub fn draw_facets(
+    frame: &mut Frame,
+    area: Rect,
+    facets: &[Facet],
+    note: Option<&str>,
+    theme: &Theme,
+    hits: &mut Hits,
+) {
+    let mut x = area.x + 1;
+    let end = area.x + area.width;
+    let mut refining = false;
+    for (index, facet) in facets.iter().enumerate() {
+        if !facet.scope && !refining {
+            // The two kinds apart, as the desktop's column and chips are.
+            refining = true;
+            x = x.saturating_add(2);
+            if x < end {
+                frame.render_widget(
+                    Line::styled("│", theme.style(Role::Dim)),
+                    Rect::new(x, area.y, 1, 1),
+                );
+            }
+            x = x.saturating_add(2);
+        }
+        let count = facet
+            .count
+            .map(|count| format!(" {count}"))
+            .unwrap_or_default();
+        let width = u16::try_from(
+            unicode_width::UnicodeWidthStr::width(facet.label.as_str()) + count.len() + 2,
+        )
+        .unwrap_or(u16::MAX);
+        if x.saturating_add(width) > end {
+            break;
+        }
+        let mut label = theme.style(if facet.scope {
+            Role::Text
+        } else {
+            Role::Accent
+        });
+        if facet.current {
+            label = label.add_modifier(Modifier::BOLD | Modifier::UNDERLINED);
+        }
+        let rect = Rect::new(x, area.y, width, 1);
+        if facet.chosen {
+            frame
+                .buffer_mut()
+                .set_style(rect, theme.style(Role::Surface));
+        }
+        frame.render_widget(
+            Line::from(vec![
+                Span::raw(" "),
+                Span::styled(facet.label.clone(), label),
+                Span::styled(count, theme.style(Role::Dim)),
+            ]),
+            rect,
+        );
+        hits.add(rect, Target::Facet(index));
+        x = x.saturating_add(width);
+    }
+    if let Some(note) = note {
+        let x = x.saturating_add(3);
+        let room = usize::from(end.saturating_sub(x));
+        if room > 0 {
+            frame.render_widget(
+                Line::styled(fit(note, room), theme.style(Role::Dim)),
+                Rect::new(x, area.y, end - x, 1),
+            );
+        }
     }
 }

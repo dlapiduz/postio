@@ -296,20 +296,57 @@ fn main() {
     let mut colour = Colour::TrueColor;
     match state.as_str() {
         "search" => {
-            let sequence = typed(&mut app, "/from:mira tide").unwrap_or_default();
+            let sequence = typed(&mut app, "/tide").unwrap_or_default();
             update(
                 &mut app,
                 Input::Found {
                     sequence,
                     found: Ok(Some(postio_client::protocol::Found {
-                        ids: vec![MessageId::new(1)],
-                        hits: 1,
+                        ids: vec![MessageId::new(1), MessageId::new(3), MessageId::new(5)],
+                        hits: 3,
                         capped: false,
                         corpus_complete: true,
                         elapsed: std::time::Duration::from_millis(7),
                     })),
                 },
             );
+            use postio_search::facets::{Facets, Refinement, Scope, ScopeCount};
+            update(
+                &mut app,
+                Input::Facets {
+                    sequence,
+                    facets: Some(Facets {
+                        scopes: vec![
+                            ScopeCount {
+                                scope: Scope::AllMail,
+                                hits: 3,
+                            },
+                            ScopeCount {
+                                scope: Scope::Inbox,
+                                hits: 2,
+                            },
+                            ScopeCount {
+                                scope: Scope::Lists,
+                                hits: 0,
+                            },
+                        ],
+                        refinements: vec![
+                            Refinement {
+                                token: "is:unread".into(),
+                                hits: 2,
+                            },
+                            Refinement {
+                                token: "from:mira".into(),
+                                hits: 1,
+                            },
+                        ],
+                    }),
+                },
+            );
+            key(&mut app, KeyCode::Tab, KeyModifiers::NONE);
+            key(&mut app, KeyCode::Tab, KeyModifiers::NONE);
+            key(&mut app, KeyCode::Tab, KeyModifiers::NONE);
+            key(&mut app, KeyCode::Tab, KeyModifiers::NONE);
         }
         "palette" => {
             key(&mut app, KeyCode::Char('k'), KeyModifiers::CONTROL);
