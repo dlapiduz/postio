@@ -67,7 +67,53 @@ pub async fn execute_with_snippets(
     order: ResultOrder,
     snippets: usize,
 ) -> Option<SearchResults> {
-    let mut results = search(
+    let mut results = run(connection, account, query, scope, order).await?;
+
+    // A word that found nothing is answered with the word that was meant,
+    // when the index offered one and it finds something here (ADR 0037,
+    // amended). The box keeps what was typed; `instead` is what lets the
+    // surface say the list is for a different word. The executor only ever
+    // offers for a single bare, unquoted word, so the offer *is* the query.
+    //
+    // Here and not in the executor, because the executor also answers saved
+    // searches and rules, which must match exactly what they say.
+    let mut shown = std::borrow::Cow::Borrowed(query);
+    if results.total_hits == 0
+        && let Some(offer) = results.suggestion.clone()
+    {
+        let offered = postio_search::parse(&offer.term, Utc::now().date_naive());
+        if let Some(mut found) = run(connection, account, &offered, scope, order).await
+            && found.total_hits > 0
+        {
+            let typed = query
+                .text_terms()
+                .next()
+                .map(|term| term.value.clone())
+                .unwrap_or_default();
+            found.instead = Some(postio_search::Instead {
+                typed,
+                term: offer.term,
+            });
+            results = found;
+            shown = std::borrow::Cow::Owned(offered);
+        }
+    }
+
+    // Excerpts point at the word that matched, which after a rewrite is not
+    // the one typed.
+    snippet_hits(connection, &shown, &mut results, snippets).await;
+    Some(results)
+}
+
+/// One run of the executor for the box: the caller's scope, the hit limit.
+async fn run(
+    connection: &Checkout,
+    account: AccountScope,
+    query: &ParsedQuery,
+    scope: Scope,
+    order: ResultOrder,
+) -> Option<SearchResults> {
+    search(
         connection,
         &SearchRequest {
             // The caller's own scope, passed through. It was hardcoded to
@@ -87,9 +133,7 @@ pub async fn execute_with_snippets(
     )
     .await
     .map_err(|error| tracing::warn!(%error, "the search did not run"))
-    .ok()?;
-    snippet_hits(connection, query, &mut results, snippets).await;
-    Some(results)
+    .ok()
 }
 
 /// Cuts each hit's excerpt out of its own body text.

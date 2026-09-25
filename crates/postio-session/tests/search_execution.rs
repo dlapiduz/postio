@@ -126,3 +126,54 @@ async fn a_query_matching_nothing_is_an_empty_result_rather_than_a_failure() {
     let results = run(&database, account, "aardvark").await;
     assert!(results.hits.is_empty());
 }
+
+// ---------------------------------------------------------------------------
+// A word that found nothing is answered with the word that was meant, shown
+// as such (ADR 0037, amended): the box keeps what was typed, the results are
+// for the offered word, and the panel says which. Quotes opt out.
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn a_misspelled_word_shows_the_mail_for_the_word_it_meant() {
+    let (database, account) = store().await;
+    let results = run(&database, account, "quartrly").await;
+    assert_eq!(results.hits.len(), 2, "the two messages that say quarterly");
+    assert_eq!(
+        results.instead,
+        Some(postio_search::Instead {
+            typed: "quartrly".to_owned(),
+            term: "quarterly".to_owned(),
+        }),
+        "and the surface is told these are for a different word"
+    );
+    assert!(
+        results.hits.iter().all(|hit| !hit.snippet.is_empty()),
+        "the excerpt points at the word that matched, not the one typed"
+    );
+}
+
+#[tokio::test]
+async fn an_unfinished_word_shows_the_mail_for_the_word_it_begins() {
+    let (database, account) = store().await;
+    let results = run(&database, account, "quart").await;
+    assert_eq!(results.hits.len(), 2);
+    assert_eq!(
+        results.instead.map(|instead| instead.term).as_deref(),
+        Some("quarterly")
+    );
+}
+
+#[tokio::test]
+async fn a_quoted_word_is_searched_for_exactly() {
+    let (database, account) = store().await;
+    let results = run(&database, account, "\"quartrly\"").await;
+    assert!(results.hits.is_empty());
+    assert_eq!(results.instead, None);
+}
+
+#[tokio::test]
+async fn a_word_that_found_mail_is_shown_as_typed() {
+    let (database, account) = store().await;
+    let results = run(&database, account, "quarterly").await;
+    assert_eq!(results.instead, None);
+}

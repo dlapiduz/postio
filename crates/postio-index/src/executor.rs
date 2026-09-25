@@ -310,6 +310,7 @@ pub async fn search(
         total_hits_capped,
         elapsed,
         corpus_complete: corpus_complete(connection, request).await?,
+        instead: None,
     })
 }
 
@@ -353,7 +354,12 @@ async fn suggestion_for(
     let Some(term) = terms.next() else {
         return Ok(None);
     };
-    if terms.next().is_some() || term.negated || query.filters().next().is_some() {
+    // A quoted word asked for itself, exactly -- see `TextTerm::quoted`.
+    if terms.next().is_some()
+        || term.negated
+        || term.quoted
+        || query.filters().next().is_some()
+    {
         return Ok(None);
     }
     let Some(metadata_query) = postio_search::suggest::widened(&term.value) else {

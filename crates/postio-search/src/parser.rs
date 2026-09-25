@@ -108,7 +108,12 @@ fn classify(raw: &str, today: NaiveDate) -> Option<TokenKind> {
     if value.is_empty() {
         return None;
     }
-    Some(TokenKind::Text(TextTerm { negated, value }))
+    let quoted = body.starts_with('"');
+    Some(TokenKind::Text(TextTerm {
+        negated,
+        value,
+        quoted,
+    }))
 }
 
 /// Splits `keyword:value` at the first colon, provided no quote opened before

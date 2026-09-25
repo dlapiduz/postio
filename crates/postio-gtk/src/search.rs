@@ -2192,6 +2192,7 @@ mod tests {
             corpus_complete: true,
             // Fourteen hits, so there is nothing to suggest instead.
             suggestion: None,
+            instead: None,
         };
         assert_eq!(Outcome::of(&results), outcome(14, false, 11));
 

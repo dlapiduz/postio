@@ -108,6 +108,24 @@ async fn a_word_the_mailbox_does_not_resemble_gets_no_offer() {
 }
 
 #[tokio::test]
+async fn a_quoted_word_is_taken_at_its_word() {
+    // Quotes say "this word, exactly": the one way to search for `hanah`
+    // itself once the box answers a bare `hanah` with `hannah`.
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    postio_index::index::ensure_schema(&connection)
+        .await
+        .expect("schema");
+    let (account, mailbox) = test_support::account_with_inbox(&connection).await;
+    from(&connection, &account, mailbox, "hannah").await;
+
+    let results = results_for(&connection, &account, "\"hanah\"").await;
+
+    assert_eq!(results.total_hits, 0);
+    assert_eq!(results.suggestion, None);
+}
+
+#[tokio::test]
 async fn a_query_with_a_filter_is_left_alone() {
     // `from:ada hanah` found nothing, and the filter is at least as likely to
     // be why. Correcting the word would answer a question nobody asked.

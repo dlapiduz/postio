@@ -432,6 +432,20 @@ fn quoted_free_text_is_one_term() {
 }
 
 #[test]
+fn a_quoted_word_says_it_was_quoted() {
+    // Quotes are how a person says "this word, exactly" -- the search box
+    // rewrites a bare word that found nothing, and never a quoted one.
+    let quoted: Vec<(String, bool)> = q(r#""hanah" hannah"#)
+        .text_terms()
+        .map(|term| (term.value.clone(), term.quoted))
+        .collect();
+    assert_eq!(
+        quoted,
+        vec![("hanah".to_owned(), true), ("hannah".to_owned(), false)]
+    );
+}
+
+#[test]
 fn an_unterminated_quote_is_still_a_value() {
     // Half-typed phrase: the user is mid-keystroke, this must not error.
     assert_eq!(
