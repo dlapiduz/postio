@@ -428,3 +428,100 @@ pub fn a_redraw_queued_before_the_pane_was_taken_does_not_land_after() {
 
     window.close();
 }
+
+/// Returning to the conversation pane never shows the last thread it held.
+///
+/// The pane keeps its document while the single-message reader has the
+/// pane, and the next conversation's document is drawn only once its bodies
+/// are read. Shown in between, it put the thread from before under -- or,
+/// holding the header back with the document, beside -- the one the cursor
+/// had just landed on: somebody else's mail, for as long as the read took.
+pub fn a_pane_shown_again_does_not_show_the_thread_it_held_before() {
+    if adw::init().is_err() || gdk::Display::default().is_none() {
+        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
+        return;
+    }
+    let display = gdk::Display::default().unwrap();
+    fonts::install().expect("the embedded fonts should install");
+    style::install(&display);
+
+    let pane = ConversationView::new();
+    pane.set_one_document(true);
+    pane.set_reader_factory(|_message| Some(stub_reader()));
+    let window = gtk::Window::new();
+    window.set_child(Some(&pane));
+    window.present();
+
+    let thread = |thread: i64, ids: std::ops::RangeInclusive<i64>| -> Vec<Row> {
+        ids.map(|id| {
+            let mut row = message(id, true);
+            row.thread = Some(ThreadId::new(thread));
+            row.subject = Some(format!("Thread {thread}"));
+            row.thread_count = 2;
+            row
+        })
+        .collect()
+    };
+    let first = thread(1, 1..=2);
+    pane.open(first.clone());
+    for row in &first {
+        let body = postio_model::MessageBody {
+            text: Some(format!("first thread body {}", row.id.get())),
+            ..Default::default()
+        };
+        pane.set_thread_body(row.id, body);
+    }
+    settle_for(std::time::Duration::from_millis(100));
+    let reader = pane.document_reader().expect("a document reader");
+    assert!(
+        reader.test_document().contains("first thread body"),
+        "the first thread was never drawn, so nothing below means anything"
+    );
+
+    // The reader takes the pane, then a different conversation opens and
+    // the pane is shown again before its bodies have been read.
+    pane.cancel_pending_redraw();
+    pane.set_visible(false);
+    pane.open(thread(2, 11..=12));
+    pane.set_visible(true);
+    settle_for(std::time::Duration::from_millis(20));
+
+    let veiled = reader.widget().opacity() == 0.0;
+    let drawing_first = reader.test_document().contains("first thread body");
+    assert!(
+        veiled || !drawing_first,
+        "the pane came back showing the thread it held before"
+    );
+    assert_eq!(
+        pane.header().subject(),
+        "Thread 2",
+        "and its header names the conversation the cursor is on"
+    );
+
+    // And once its own bodies are here, its own document is what shows.
+    for id in 11..=12 {
+        let body = postio_model::MessageBody {
+            text: Some(format!("second thread body {id}")),
+            ..Default::default()
+        };
+        pane.set_thread_body(MessageId::new(id), body);
+    }
+    let deadline = std::time::Instant::now() + postio_test_support::patience();
+    while std::time::Instant::now() < deadline
+        && !(reader.test_document().contains("second thread body")
+            && reader.widget().opacity() == 1.0)
+    {
+        settle_for(std::time::Duration::from_millis(10));
+    }
+    assert!(
+        reader.test_document().contains("second thread body"),
+        "the second thread was never drawn"
+    );
+    assert_eq!(
+        reader.widget().opacity(),
+        1.0,
+        "the veil outlived the document it was waiting for"
+    );
+
+    window.close();
+}

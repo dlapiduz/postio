@@ -1283,6 +1283,10 @@ const CASES: &[(&str, fn())] = &[
         gtk_rail::the_rail_lists_a_thread_and_marks_what_is_on_screen as fn(),
     ),
     (
+        "gtk_conversation::a_pane_shown_again_does_not_show_the_thread_it_held_before",
+        gtk_conversation::a_pane_shown_again_does_not_show_the_thread_it_held_before as fn(),
+    ),
+    (
         "gtk_rail::the_same_thread_again_keeps_the_rails_rows_and_scroll",
         gtk_rail::the_same_thread_again_keeps_the_rails_rows_and_scroll as fn(),
     ),
