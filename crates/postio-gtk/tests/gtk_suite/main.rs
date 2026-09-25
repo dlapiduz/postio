@@ -1481,6 +1481,10 @@ const CASES: &[(&str, fn())] = &[
         gtk_window_open_message::open_mailbox_and_open_message_switch_the_window_from_outside as fn(),
     ),
     (
+        "list_model::giving_up_a_first_page_there_is_none_of_ends_the_wait",
+        list_model::giving_up_a_first_page_there_is_none_of_ends_the_wait as fn(),
+    ),
+    (
         "list_model::an_empty_list_has_nothing_in_it",
         list_model::an_empty_list_has_nothing_in_it as fn(),
     ),

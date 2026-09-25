@@ -662,3 +662,35 @@ pub fn a_held_delivery_is_not_postponed_by_a_window_that_is_repainting() {
          window that is repainting postponed it indefinitely"
     );
 }
+
+/// A source with nothing to read ends the wait when its first page is given
+/// up on, the way a first page that brought no rows does.
+///
+/// A search with no hits has no page 0, so the feed gives it up rather than
+/// asking. A list that was already showing rows changed over at that point;
+/// one that was empty -- a search typed before the folder's first page had
+/// landed -- stayed "loading" for good, and the list-state pane, which
+/// withholds "nothing matched" while a list loads, showed nothing at all.
+pub fn giving_up_a_first_page_there_is_none_of_ends_the_wait() {
+    let model = MessageList::new();
+    let filled = Rc::new(std::cell::Cell::new(0));
+    model.connect_filled({
+        let filled = filled.clone();
+        move |_| filled.set(filled.get() + 1)
+    });
+
+    let nothing = Fake::new(0);
+    model.set_source(nothing.clone());
+    assert!(model.is_loading(), "a new source is waited for");
+
+    model.give_up(model.generation(), 0);
+    assert!(
+        !model.is_loading(),
+        "a source with no first page to give is still waited for"
+    );
+    assert_eq!(
+        filled.get(),
+        1,
+        "whoever draws the empty state was never told the wait was over"
+    );
+}
