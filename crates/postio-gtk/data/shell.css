@@ -2313,8 +2313,7 @@ button.postio-compose-more {
   color: var(--postio-ink-secondary);
 }
 
-/* `3/6 ⌄` at the `To` row's trailing edge, below the ladder's floor
-   (screen 29).
+/* `3/6 ⌄` ahead of the verbs, below the ladder's floor (screen 29).
    Mono, because it is a position you count with, and outlined rather than
    filled: it opens something, which is a quieter act than the header's verbs
    and must not compete with them. */
@@ -2330,9 +2329,8 @@ button.postio-compose-more {
   margin-left: var(--postio-space-2);
 }
 
-/* The toggle inside is a whole button, 34px tall on its own; the `To` row
-   it sits on is the `Cc` disclosure's height, and the counter must not be
-   what makes the conversation's header taller than the reader's (#1671). */
+/* The toggle inside is a whole button, 34px on its own; the counter is an
+   outlined chip beside the verbs, not a fifth verb. */
 .conversation-counter > button {
   min-height: 0;
   padding-top: 0;
