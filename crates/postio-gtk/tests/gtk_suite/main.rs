@@ -1297,6 +1297,11 @@ const CASES: &[(&str, fn())] = &[
         gtk_reader_notices::the_body_starts_at_the_same_place_whatever_the_notices as fn(),
     ),
     (
+        "gtk_reader_notices::the_body_starts_at_the_same_place_whoever_the_message_went_to",
+        gtk_reader_notices::the_body_starts_at_the_same_place_whoever_the_message_went_to
+            as fn(),
+    ),
+    (
         "gtk_reader_notices::a_waiting_plate_carries_no_notice_from_the_message_before",
         gtk_reader_notices::a_waiting_plate_carries_no_notice_from_the_message_before
             as fn(),
