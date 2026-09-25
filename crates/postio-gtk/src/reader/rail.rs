@@ -156,12 +156,36 @@ impl RailColumn {
     /// rail is built from the thread model and every message has a row the
     /// moment the conversation is known (FR-040) — not when its body arrives,
     /// which is the wait the rail exists to let you skip.
+    ///
+    /// Synced in place rather than rebuilt: the same thread arriving again
+    /// -- the list's one row, then the whole conversation, then a re-read
+    /// after a flag changed -- touches nothing, and a thread that grew keeps
+    /// the rows it had. Removing and re-appending every row reset the rail's
+    /// own scroll and selection on each of those, which is the column
+    /// jumping under a person who had scrolled it.
     pub fn show_thread(&self, rows: &[Row]) {
-        while let Some(child) = self.list.first_child() {
-            self.list.remove(&child);
+        if *self.rows.borrow() == rows {
+            return;
         }
-        for row in rows {
-            self.list.append(&self.draw(row, rows.len()));
+        let total = rows.len();
+        let held = self.rows.borrow().len();
+        for (index, row) in rows.iter().enumerate() {
+            match self.list.row_at_index(index as i32) {
+                Some(holder) => {
+                    let unchanged = self.rows.borrow().get(index) == Some(row) && held == total;
+                    if !unchanged {
+                        self.fill(&holder, row, total);
+                    }
+                }
+                None => {
+                    let holder = gtk::ListBoxRow::new();
+                    self.fill(&holder, row, total);
+                    self.list.append(&holder);
+                }
+            }
+        }
+        while let Some(extra) = self.list.row_at_index(total as i32) {
+            self.list.remove(&extra);
         }
         self.rows.replace(rows.to_vec());
         // A thread arriving while the window is narrow must not undo the
@@ -171,7 +195,7 @@ impl RailColumn {
     }
 
     /// One row: number, sender, and a length where there is one worth saying.
-    fn draw(&self, row: &Row, total: usize) -> gtk::ListBoxRow {
+    fn fill(&self, holder: &gtk::ListBoxRow, row: &Row, total: usize) {
         let line = gtk::Box::new(gtk::Orientation::Horizontal, 6);
         line.add_css_class("postio-rail-row");
 
@@ -205,13 +229,11 @@ impl RailColumn {
             line.append(&length);
         }
 
-        let holder = gtk::ListBoxRow::new();
         holder.set_child(Some(&line));
         // The visible row is deliberately terse, so the accessible name
         // carries what the eye gets from position and typography. The brief:
         // *"Message 3 of 6, Tessa Vaughn, 84 lines"*.
         holder.update_property(&[gtk::accessible::Property::Label(&announce(row, total))]);
-        holder
     }
 
     /// Take the middle step of the ladder, or come back off it.
@@ -233,6 +255,20 @@ impl RailColumn {
         }
         for text in of_class(self.widget(), "postio-rail-initials") {
             text.set_visible(narrow);
+        }
+    }
+
+    /// Draw the rail's contents, or keep only its column.
+    ///
+    /// A one-message conversation has nothing to index (FR-045), so nothing
+    /// in the column is drawn -- but the column itself stays where the
+    /// window has room for one, so the body beside it keeps its width from
+    /// one conversation to the next. See `postio_ui::reader::rail::column`.
+    pub fn set_drawn(&self, drawn: bool) {
+        let mut next = self.root.first_child();
+        while let Some(child) = next {
+            child.set_visible(drawn);
+            next = child.next_sibling();
         }
     }
 
