@@ -387,3 +387,151 @@ pub fn a_body_that_lands_quickly_never_shows_the_waiting_plate() {
         bridge.shutdown();
     });
 }
+
+/// A message with an HTML body, not in any thread, `hours` ago.
+async fn seed_html_message(database: &Store, seat: &Seat, name: &str, hours: i64) -> MessageId {
+    let connection = database.connect().await.expect("a connection");
+    let repository = MessageRepository::new(&connection);
+    let mut message = postio_model::Message::new(
+        seat.account,
+        seat.mailbox,
+        chrono::Utc::now() - chrono::Duration::hours(hours),
+    );
+    message.subject = Some(format!("{name} subject"));
+    message.from = vec![postio_model::EmailAddress::new(
+        Some("Ada Lovelace"),
+        "ada@example.com",
+    )];
+    message.sync.body_state = postio_model::BodyState::Full;
+    message.flags.insert(postio_model::Flag::Seen);
+    let id = repository.create(&mut message).await.expect("a message");
+    repository
+        .set_body(
+            id,
+            &StoredBody {
+                text: None,
+                html: Some(format!("<p>the {name} body, in <b>HTML</b></p>")),
+                headers: None,
+                headers_truncated: false,
+                encoding_problems: false,
+            },
+            postio_model::BodyState::Full,
+        )
+        .await
+        .expect("a body");
+    id
+}
+
+/// Moving through mail sanitises nothing on the thread that draws the
+/// window.
+///
+/// Every message the cursor settled on went through html5ever twice on the
+/// main thread -- once to decide whether it reads as bulk, once to sanitise
+/// it -- and so did every message of a thread the first time it was drawn.
+/// The reads already happened on the runtime; the parses now happen there
+/// too, and the main thread only hands WebKit a document. Counted the way
+/// `postio_ui::test_support` counts everything else: per thread, so the
+/// runtime's parses do not show up here and the main thread's cannot hide.
+pub fn moving_through_mail_sanitises_nothing_on_the_main_thread() {
+    crate::gtk_case(async {
+        let state_dir = tempfile::tempdir().expect("a state directory");
+        // SAFETY: first statement of a single-threaded test, before the app runs.
+        unsafe { std::env::set_var("XDG_STATE_HOME", state_dir.path()) };
+        if skip_without_display() {
+            return;
+        }
+
+        let database = test_support::memory().await;
+        let directory = tempfile::tempdir().expect("a blob directory");
+        let blobs = BlobStore::open(
+            directory.path().to_path_buf(),
+            &postio_storage::test_support::blob_keys(),
+        )
+        .expect("a blob store");
+        let (account, inbox) = {
+            let connection = database.connect().await.expect("a connection");
+            test_support::account_with_inbox(&connection).await
+        };
+        let seat = Seat {
+            account: account.id,
+            mailbox: inbox,
+        };
+        // Newest first: a single message, a thread, a single message.
+        seed_html_message(&database, &seat, "first", 1).await;
+        let (_, thread) = seed_thread(&database, &seat, "middle", 3, 3).await;
+        {
+            // The thread's bodies as HTML too, so every message costs both
+            // parses when it is drawn.
+            let connection = database.connect().await.expect("a connection");
+            for (index, id) in thread.iter().enumerate() {
+                MessageRepository::new(&connection)
+                    .set_body(
+                        *id,
+                        &StoredBody {
+                            text: None,
+                            html: Some(format!("<p>{}</p>", body_of("middle", index))),
+                            headers: None,
+                            headers_truncated: false,
+                            encoding_problems: false,
+                        },
+                        postio_model::BodyState::Full,
+                    )
+                    .await
+                    .expect("an HTML body");
+            }
+        }
+        seed_html_message(&database, &seat, "last", 5).await;
+
+        let (bridge, _replies) = Bridge::new(handler_fn(|_, _| async {})).expect("a runtime");
+        let (sink, _events) = event_channel();
+        let wiring = Wiring::new(database, blobs, bridge.handle(), sink, bridge.commands());
+
+        let window = Window::default();
+        window.present();
+        settle();
+        let _wired = feed_the_window(&window, &wiring)
+            .await
+            .expect("the store has an account");
+        let list = window.list();
+        assert!(
+            settle_until(async || list.model().n_items() == 3).await,
+            "the three seeded rows never reached the list"
+        );
+        assert!(
+            settle_until(async || window.reader().test_document().contains("the first body")).await,
+            "the first message never filled the pane"
+        );
+        watch_for(std::time::Duration::from_millis(300), || {}).await;
+
+        let sanitised = postio_ui::test_support::bodies_sanitised();
+        let judged = postio_ui::test_support::bulk_judged();
+
+        window.handle_key(gdk::Key::j, gdk::ModifierType::empty());
+        let pane = window.conversation();
+        assert!(
+            settle_until(async || pane.thread_document().is_some_and(|document| {
+                (0..3).all(|index| document.contains(&body_of("middle", index)))
+            }))
+            .await,
+            "`j` never drew the thread whole"
+        );
+        window.handle_key(gdk::Key::j, gdk::ModifierType::empty());
+        assert!(
+            settle_until(async || window.reader().test_document().contains("the last body")).await,
+            "`j` never drew the last message"
+        );
+
+        let sanitised = postio_ui::test_support::bodies_sanitised() - sanitised;
+        let judged = postio_ui::test_support::bulk_judged() - judged;
+        assert_eq!(
+            (sanitised, judged),
+            (0, 0),
+            "moving over two messages and a three-message thread sanitised \
+             {sanitised} bodies and parsed {judged} for reader view on the main \
+             thread; both belong on the runtime, beside the read"
+        );
+
+        window.destroy();
+        bridge.shutdown();
+    });
+}

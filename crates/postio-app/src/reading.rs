@@ -32,6 +32,7 @@
 //! corrected it. The arrival is pushed, never polled — the same rule the rest
 //! of this file follows.
 
+use postio_gtk::reader::RemoteImageAllowList;
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
@@ -876,13 +877,33 @@ impl Fill {
     /// One read serves the three callers — the pane following the cursor, a
     /// conversation entry, and a repaint when a body lands — so none of them
     /// can drift on what a message is.
-    fn read(&self, message: MessageId) -> async_channel::Receiver<Option<Loaded>> {
+    ///
+    /// With `allow`, the body is also judged and sanitised on the runtime
+    /// under the policy the allow list gives its sender -- see
+    /// [`prepare_loaded`] -- so the pane it is for only loads a document.
+    fn read(
+        &self,
+        message: MessageId,
+        allow: Option<(RemoteImageAllowList, Pane)>,
+    ) -> async_channel::Receiver<Option<Loaded>> {
         let offline = self.offline.get();
-        crate::search::ask(
+        let answer = crate::search::ask(
             &self.database,
             &self.runtime,
             move |connection| async move { Some(load(&connection, message, offline).await) },
-        )
+        );
+        match allow {
+            Some((allow, pane)) => {
+                crate::search::then_off_thread(&self.runtime, answer, move |loaded| {
+                    let scope = match pane {
+                        Pane::Single => None,
+                        Pane::Conversation => Some(message.get().to_string()),
+                    };
+                    prepare_loaded(loaded, &allow, scope.as_deref())
+                })
+            }
+            None => answer,
+        }
     }
 
     /// Read every one of `messages` on one reader turn, handing each back as
@@ -892,10 +913,44 @@ impl Fill {
     /// per message was a runtime task, a store turn and a main-context
     /// wake-up each. Streamed rather than collected, so the first message
     /// paints without waiting for the thirtieth.
-    fn read_each(&self, messages: Vec<MessageId>) -> async_channel::Receiver<(MessageId, Loaded)> {
+    ///
+    /// With `allow`, each body is also judged and sanitised on the blocking
+    /// pool as it comes off the reader, in order, and handed back prepared
+    /// under its message's scope -- the conversation document's first draw
+    /// used to do both parses for every message on the main thread.
+    fn read_each(
+        &self,
+        messages: Vec<MessageId>,
+        allow: Option<RemoteImageAllowList>,
+    ) -> async_channel::Receiver<(MessageId, Loaded)> {
         THREAD_CROSSINGS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let offline = self.offline.get();
         let (sender, receiver) = async_channel::unbounded();
+        let sender = match allow {
+            Some(allow) => {
+                // Read, then prepared: the reader is let go of as soon as the
+                // reads are done, and the sanitising never holds it.
+                let (read, prepare) = async_channel::unbounded::<(MessageId, Loaded)>();
+                let allow = std::sync::Arc::new(allow);
+                self.runtime.spawn(async move {
+                    while let Ok((message, loaded)) = prepare.recv().await {
+                        let allow = std::sync::Arc::clone(&allow);
+                        let prepared = tokio::task::spawn_blocking(move || {
+                            prepare_loaded(loaded, &allow, Some(&message.get().to_string()))
+                        })
+                        .await;
+                        let Ok(loaded) = prepared else {
+                            return;
+                        };
+                        if sender.send((message, loaded)).await.is_err() {
+                            return;
+                        }
+                    }
+                });
+                read
+            }
+            None => sender,
+        };
         let database = self.database.clone();
         self.runtime.spawn(async move {
             let reader = match database.read().await {
@@ -923,10 +978,15 @@ impl Fill {
     /// awaited where the widgets are — and each caller used to spell the
     /// crossing out itself. A read that comes back empty (the message went
     /// away underneath it) is simply not painted.
-    fn read_then(&self, message: MessageId, then: impl FnOnce(Loaded) + 'static) {
+    fn read_then(
+        &self,
+        message: MessageId,
+        allow: Option<(RemoteImageAllowList, Pane)>,
+        then: impl FnOnce(Loaded) + 'static,
+    ) {
         // Started before the spawn: `read` borrows `self`, and a `'static`
         // task cannot carry that borrow.
-        let answer = self.read(message);
+        let answer = self.read(message, allow);
         glib::spawn_future_local(async move {
             let Ok(Some(loaded)) = answer.recv().await else {
                 return;
@@ -1084,7 +1144,10 @@ impl Fill {
             let _ = early.send_blocking(answer);
         }
         if !ids.is_empty() {
-            let rest = self.read_each(ids);
+            let allow = pane
+                .document_reader()
+                .map(|reader| reader.allowlist_snapshot());
+            let rest = self.read_each(ids, allow);
             glib::spawn_future_local(async move {
                 // POSTIO-GLIB-SAFE: a channel receive; the reads run on the
                 // runtime in `read_each`.
@@ -1104,10 +1167,15 @@ impl Fill {
         glib::spawn_future_local(async move {
             // POSTIO-GLIB-SAFE: a channel receive; the reads run on the
             // runtime in `read_each`, or ran ahead in `prepare_next`.
-            while let Ok((id, loaded)) = answers.recv().await {
+            while let Ok((id, mut loaded)) = answers.recv().await {
                 let Some(row) = rows.get(&id) else {
                     continue;
                 };
+                // Sanitised on the runtime; the document's redraw takes it
+                // rather than parsing the body again here.
+                if let Some(prepared) = loaded.prepared.take() {
+                    pane.offer_prepared(vec![prepared]);
+                }
                 // Not here yet. Fetch it, so a conversation the backfill
                 // has not reached fills in as it is opened rather than
                 // staying a stack of empty headers -- `body_arrived`
@@ -1141,7 +1209,8 @@ impl Fill {
         let reader = reader.clone();
         let offline_now = self.offline.clone();
         let fetch = self.fetcher();
-        self.read_then(message, move |loaded| {
+        let allow = Some((reader.allowlist_snapshot(), Pane::Single));
+        self.read_then(message, allow, move |loaded| {
             // Not here yet? Fetch it. The conversation stack builds one
             // of these per message, so this is what makes a thread whose
             // bodies the backfill has not reached fill in as it is read.
@@ -1168,7 +1237,7 @@ impl Fill {
                 } => {
                     let root = root_type(loaded.content_type.as_deref(), &body, &loaded.parts);
                     reader.set_attachments(&root, &loaded.parts);
-                    reader.render(&body, loaded.sender.as_deref());
+                    reader.render_prepared(&body, loaded.sender.as_deref(), loaded.prepared);
                     // After `render`, which clears it: the caveat belongs
                     // to this message and must not outlive it (#901).
                     reader.set_encoding_problems(encoding_problems);
@@ -1245,7 +1314,8 @@ impl Fill {
 
         let painter = self.painter(window);
         let fetch = self.fetcher();
-        self.read_then(message, move |loaded| {
+        let allow = Some((window.reader().allowlist_snapshot(), Pane::Single));
+        self.read_then(message, allow, move |loaded| {
             if !painter.still_showing(message) {
                 return;
             }
@@ -1311,7 +1381,13 @@ impl Fill {
         // that is not open is not inserted into the pane's map.
         let conversation = window.conversation();
         if conversation.rows().iter().any(|row| row.id == message) {
-            self.read_then(message, move |loaded| {
+            let allow = conversation
+                .document_reader()
+                .map(|reader| (reader.allowlist_snapshot(), Pane::Conversation));
+            self.read_then(message, allow, move |mut loaded| {
+                if let Some(prepared) = loaded.prepared.take() {
+                    conversation.offer_prepared(vec![prepared]);
+                }
                 if let crate::compose::Body::Ready { body, .. } = loaded.body {
                     conversation.set_thread_body(message, body);
                 }
@@ -1328,7 +1404,8 @@ impl Fill {
             return;
         };
         let painter = self.painter(window);
-        self.read_then(message, move |loaded| {
+        let allow = Some((window.reader().allowlist_snapshot(), Pane::Single));
+        self.read_then(message, allow, move |loaded| {
             // The cursor can still have moved between queueing this and
             // the store answering — the same race `fill` guards, reached
             // by a different road.
@@ -1409,6 +1486,7 @@ async fn load(connection: &postio_storage::Checkout, message: MessageId, offline
         sender,
         send_state,
         list_identifier,
+        prepared: None,
     }
 }
 
@@ -1439,6 +1517,9 @@ struct Loaded {
     /// has one, the sender's domain otherwise. `None` only when the message
     /// itself is gone, since every message has at least one of the two.
     list_identifier: Option<String>,
+    /// The body judged and sanitised on the runtime, when the read was asked
+    /// to (`Fill::read`), so the pane only hands WebKit a document.
+    prepared: Option<postio_ui::reader::document::Prepared>,
 }
 
 /// What [`postio_gtk::reader::Reader::set_unsubscribe`] shows for `message`,
@@ -1452,6 +1533,43 @@ fn list_identifier(message: &Message) -> Option<String> {
             .and_then(|from| from.domain())
             .map(str::to_owned)
     })
+}
+
+/// Which pane a body is being prepared for: they stamp references
+/// differently -- see [`prepare_loaded`].
+#[derive(Clone, Copy)]
+enum Pane {
+    /// The single reader, or a stacked conversation's reader for one message.
+    Single,
+    /// The conversation document, which names each message by its id.
+    Conversation,
+}
+
+/// Judge and sanitise `loaded`'s body for a reading pane, under the policy
+/// `allow` gives its sender.
+///
+/// `scope` names the message inside a conversation document, whose
+/// references are stamped with it; `None` is the single reader. A message
+/// with no body is handed back as it was. For the blocking pool: both
+/// parses are html5ever over the whole body.
+fn prepare_loaded(mut loaded: Loaded, allow: &RemoteImageAllowList, scope: Option<&str>) -> Loaded {
+    use postio_ui::reader::document::{RemoteImages, prepare, prepare_message};
+    if let crate::compose::Body::Ready { body, .. } = &loaded.body {
+        let remote = if loaded
+            .sender
+            .as_deref()
+            .is_some_and(|sender| allow.is_allowed(sender))
+        {
+            RemoteImages::Allowed
+        } else {
+            RemoteImages::Blocked
+        };
+        loaded.prepared = Some(match scope {
+            Some(scope) => prepare(scope, body, remote),
+            None => prepare_message(body, remote),
+        });
+    }
+    loaded
 }
 
 /// Draw `loaded` into the window's single reading pane.
@@ -1528,7 +1646,7 @@ fn paint(
                 signature,
             });
             if !already_showing {
-                window.show_message(&body, loaded.sender.as_deref());
+                window.show_prepared_message(&body, loaded.sender.as_deref(), loaded.prepared);
             }
             // Outside the `already_showing` guard on purpose. That guard is
             // about not repainting a document that has not changed, and this

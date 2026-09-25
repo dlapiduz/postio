@@ -1059,13 +1059,26 @@ impl Preview {
     /// a body, and a body that landed in the wrong preview would be worse
     /// than one that never landed.
     pub fn set_body(&self, message: MessageId, body: &MessageBody, sender: Option<&str>) {
+        self.set_prepared_body(message, body, sender, None);
+    }
+
+    /// [`set_body`](Self::set_body), with the body already judged and
+    /// sanitised off the main thread -- see
+    /// [`Reader::render_prepared`](crate::reader::Reader::render_prepared).
+    pub fn set_prepared_body(
+        &self,
+        message: MessageId,
+        body: &MessageBody,
+        sender: Option<&str>,
+        prepared: Option<postio_ui::reader::document::Prepared>,
+    ) {
         let imp = self.imp();
         if *imp.focused.borrow() != Some(message) {
             return;
         }
         let reader = self.reader();
         reader.set_highlight(imp.terms.borrow().clone());
-        reader.render(body, sender);
+        reader.render_prepared(body, sender, prepared);
         imp.body.set_visible(true);
         imp.filler.set_visible(false);
         imp.snippet.set_visible(false);
@@ -1109,6 +1122,13 @@ impl Preview {
         for handler in imp.on_open.borrow().iter() {
             handler(message);
         }
+    }
+
+    /// Which remote-image policy the preview draws `sender`'s mail under,
+    /// for a body being prepared off the main thread -- see
+    /// [`Reader::remote_images_for`](crate::reader::Reader::remote_images_for).
+    pub fn remote_images_for(&self, sender: Option<&str>) -> crate::reader::RemoteImages {
+        self.reader().remote_images_for(sender)
     }
 
     /// The hardened reader, built the first time a body actually arrives.
