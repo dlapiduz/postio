@@ -445,6 +445,77 @@ pub fn a_search_that_found_nothing_offers_the_word_that_was_meant() {
     assert!(offer_button(&view).is_none());
 }
 
+/// A word that found nothing is answered with the word that was meant, and
+/// the column says so (ADR 0037, amended).
+///
+/// Which word the results are for is decided by `postio-session` with no
+/// display; what needs one is that the list is never silently about a word
+/// the box does not show, and that the typed word is one press away --
+/// quoted, which is how the query language says "this word, exactly".
+pub fn results_for_another_word_say_so_and_offer_the_typed_one() {
+    if adw::init().is_err() || gdk::Display::default().is_none() {
+        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
+        return;
+    }
+    let display = gdk::Display::default().unwrap();
+    fonts::install().expect("the embedded fonts should install");
+    style::install(&display);
+
+    let window = Window::default();
+    let view = View::attach(&window.shell(), &window.finder());
+    window.present();
+    pump();
+
+    let finder = window.finder();
+    window.open_finder(Mode::Search);
+    finder.set_query(Query {
+        mode: Mode::Search,
+        text: "hanah".to_owned(),
+    });
+    pump();
+
+    view.set_instead(Some(&postio_search::Instead {
+        typed: "hanah".to_owned(),
+        term: "hannah".to_owned(),
+    }));
+    pump();
+
+    let said = find(view.panel().upcast_ref(), &|widget| {
+        widget.is_mapped()
+            && widget
+                .downcast_ref::<gtk::Label>()
+                .is_some_and(|label| label.text() == "Showing results for hannah")
+    });
+    assert!(said.is_some(), "the column names the word the list is for");
+
+    let exact = exact_button(&view).expect("the typed word is one press away");
+    assert_eq!(exact.label().as_deref(), Some("\"hanah\""));
+    exact.emit_clicked();
+    pump();
+    assert_eq!(
+        finder.query().text,
+        "\"hanah\"",
+        "quoted, so the box searches for exactly what was typed"
+    );
+
+    view.set_instead(None);
+    pump();
+    assert!(exact_button(&view).is_none(), "withdrawn with the rewrite");
+}
+
+/// The button that searches for the typed word exactly, if the column shows one.
+fn exact_button(view: &View) -> Option<gtk::Button> {
+    find(view.panel().upcast_ref(), &|widget| {
+        widget.is_mapped()
+            && widget.downcast_ref::<gtk::Button>().is_some_and(|button| {
+                button
+                    .tooltip_text()
+                    .is_some_and(|spoken| spoken.starts_with("Search exactly for "))
+            })
+    })
+    .and_then(|widget| widget.downcast::<gtk::Button>().ok())
+}
+
 /// Reading a message, then searching for something that is not there, leaves
 /// the message on screen beside a list saying nothing matched.
 ///

@@ -67,6 +67,7 @@ mod resume_queued_draft;
 mod search_close_without_escape;
 mod search_index;
 mod search_live;
+mod search_instead;
 mod search_no_matches;
 mod search_open;
 mod search_results;
@@ -423,6 +424,10 @@ const CASES: &[(&str, fn())] = &[
     (
         "search_no_matches::a_search_with_no_hits_says_so_rather_than_naming_the_inbox",
         search_no_matches::a_search_with_no_hits_says_so_rather_than_naming_the_inbox as fn(),
+    ),
+    (
+        "search_instead::a_misspelled_word_lists_the_mail_it_meant_and_says_so",
+        search_instead::a_misspelled_word_lists_the_mail_it_meant_and_says_so as fn(),
     ),
     (
         "search_open::opening_a_previewed_result_shows_it_in_the_reading_pane",

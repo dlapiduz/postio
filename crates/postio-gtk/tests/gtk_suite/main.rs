@@ -665,6 +665,10 @@ const CASES: &[(&str, fn())] = &[
         gtk_search_panel::a_search_that_found_nothing_offers_the_word_that_was_meant as fn(),
     ),
     (
+        "gtk_search_panel::results_for_another_word_say_so_and_offer_the_typed_one",
+        gtk_search_panel::results_for_another_word_say_so_and_offer_the_typed_one as fn(),
+    ),
+    (
         "gtk_search_panel::the_scope_column_narrows_a_search_without_retyping_it",
         gtk_search_panel::the_scope_column_narrows_a_search_without_retyping_it as fn(),
     ),

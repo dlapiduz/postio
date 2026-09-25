@@ -476,6 +476,11 @@ async fn install_run(
                     // this is what somebody staring at an empty list is
                     // waiting to be told.
                     view.set_suggestion(results.suggestion.as_ref());
+                    // And which word the list is for, when the box answered a
+                    // word that found nothing with the one that was meant.
+                    // Beside the offer, for the same reason: it is what the
+                    // list below it means.
+                    view.set_instead(results.instead.as_ref());
                     // POSTIO-GLIB-SAFE: nothing under this await wants a reactor. The
                     // network work it reaches is spawned onto the runtime and answers over a
                     // channel -- `onboarding::probe_with_offer` is the shape -- and what is
