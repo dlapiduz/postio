@@ -1901,22 +1901,7 @@ fn sync_rows(list: &gtk::ListBox, mailboxes: &[Mailbox], sidebar: &Sidebar) {
 
 /// `name  count`, at the canvas' 36px.
 fn folder_row(mailbox: &Mailbox) -> gtk::ListBoxRow {
-    let name = gtk::Label::new(None);
-    name.add_css_class("postio-folder-name");
-    name.set_xalign(0.0);
-    name.set_hexpand(true);
-    name.set_ellipsize(pango::EllipsizeMode::End);
-
-    let count = gtk::Label::new(None);
-    count.add_css_class("postio-folder-count");
-
-    let line = gtk::Box::new(gtk::Orientation::Horizontal, 10);
-    line.append(&name);
-    line.append(&count);
-
-    let row = gtk::ListBoxRow::new();
-    row.add_css_class("postio-folder");
-    row.set_child(Some(&line));
+    let row = crate::widgets::nav_row("postio-folder");
     update_row(&row, mailbox);
     row
 }
@@ -2002,19 +1987,10 @@ fn update_row(row: &gtk::ListBoxRow, mailbox: &Mailbox) {
         row.set_data("postio-mailbox-role", mailbox.role.as_str().to_owned())
     };
 
-    let Some(line) = row.child().and_then(|c| c.downcast::<gtk::Box>().ok()) else {
-        return;
-    };
-    let Some(name) = line
-        .first_child()
-        .and_then(|c| c.downcast::<gtk::Label>().ok())
-    else {
-        return;
-    };
-    let Some(count) = name
-        .next_sibling()
-        .and_then(|c| c.downcast::<gtk::Label>().ok())
-    else {
+    let (Some(name), Some(count)) = (
+        crate::widgets::nav_name(row),
+        crate::widgets::nav_count(row),
+    ) else {
         return;
     };
 

@@ -857,22 +857,10 @@ pub fn spoken_refinement(refinement: &Refinement) -> String {
 
 /// One scope row: the name, and how many of the matches are in it.
 fn scope_row(scope: Scope) -> gtk::ListBoxRow {
-    let name = gtk::Label::new(Some(scope.label()));
-    name.add_css_class("postio-folder-name");
-    name.set_xalign(0.0);
-    name.set_hexpand(true);
-    name.set_ellipsize(pango::EllipsizeMode::End);
-
-    let count = gtk::Label::new(None);
-    count.add_css_class("postio-folder-count");
-
-    let line = gtk::Box::new(gtk::Orientation::Horizontal, 10);
-    line.append(&name);
-    line.append(&count);
-
-    let row = gtk::ListBoxRow::new();
-    row.add_css_class("postio-folder");
-    row.set_child(Some(&line));
+    let row = crate::widgets::nav_row("postio-folder");
+    if let Some(name) = crate::widgets::nav_name(&row) {
+        name.set_text(scope.label());
+    }
     set_scope_count(&row, scope, 0);
     row
 }
@@ -883,11 +871,7 @@ fn scope_row(scope: Scope) -> gtk::ListBoxRow {
 /// empty scope is a fact worth knowing before switching to it, where an inbox
 /// with nothing unread is just an ordinary inbox.
 fn set_scope_count(row: &gtk::ListBoxRow, scope: Scope, hits: u64) {
-    let Some(count) = row
-        .child()
-        .and_then(|line| line.last_child())
-        .and_then(|label| label.downcast::<gtk::Label>().ok())
-    else {
+    let Some(count) = crate::widgets::nav_count(row) else {
         return;
     };
     count.set_text(&hits.to_string());
