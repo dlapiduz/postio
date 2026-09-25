@@ -38,6 +38,8 @@ use adw::subclass::prelude::*;
 use gtk::glib;
 use postio_core::{Availability, Context, Keymap, Scope};
 
+use crate::widgets::plate;
+
 pub use postio_ui::cheatsheet::{Row, Section, sections, spoken};
 
 // ---------------------------------------------------------------------------
@@ -165,27 +167,24 @@ impl CheatSheet {
 
     fn build(&self) {
         let imp = self.imp();
-        self.add_css_class("postio-cheatsheet");
-        self.set_halign(gtk::Align::Center);
-        self.set_valign(gtk::Align::Center);
-
         // A dialog to a screen reader, because that is what it behaves like:
         // it takes the keyboard and `Escape` closes it.
-        self.set_accessible_role(gtk::AccessibleRole::Dialog);
-        self.update_property(&[gtk::accessible::Property::Label("Keyboard shortcuts")]);
+        plate::dress(self, "postio-cheatsheet", "Keyboard shortcuts");
 
-        let heading = gtk::Label::new(Some("Keyboard shortcuts"));
-        heading.set_xalign(0.0);
-        heading.add_css_class("postio-cheatsheet-heading");
-
-        let column = gtk::Box::new(gtk::Orientation::Vertical, 12);
-        column.append(&heading);
+        imp.columns.add_css_class("postio-cheatsheet-body");
+        let column = gtk::Box::new(gtk::Orientation::Vertical, 0);
+        column.append(&plate::header("postio-cheatsheet", "Keyboard shortcuts"));
         column.append(&imp.columns);
         self.set_child(Some(&column));
 
-        // `Escape` closes it. So does `?`, which is what the user pressed to
-        // open it — a sheet that a second press of its own key cannot close is
-        // one people get stuck in.
+        let sheet = self.downgrade();
+        plate::connect_escape(self, move || {
+            sheet.upgrade().inspect(CheatSheet::dismiss).is_some()
+        });
+
+        // So does `?`, which is what the user pressed to open it — a sheet
+        // that a second press of its own key cannot close is one people get
+        // stuck in.
         let keys = gtk::EventControllerKey::new();
         keys.set_propagation_phase(gtk::PropagationPhase::Capture);
         keys.connect_key_pressed(glib::clone!(
@@ -194,7 +193,7 @@ impl CheatSheet {
             #[upgrade_or]
             glib::Propagation::Proceed,
             move |_, key, _, _| {
-                if matches!(key, gtk::gdk::Key::Escape | gtk::gdk::Key::question) {
+                if key == gtk::gdk::Key::question {
                     sheet.dismiss();
                     return glib::Propagation::Stop;
                 }

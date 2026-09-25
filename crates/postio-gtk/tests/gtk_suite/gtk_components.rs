@@ -136,3 +136,70 @@ pub fn a_rebind_reaches_the_headers_key_caps() {
     );
     window.destroy();
 }
+
+/// The four surfaces that float over the window and take the keyboard are
+/// one plate: the same look, a dialog to a screen reader, and a title bar of
+/// one height. They were five hand-built copies with headers of 42px and
+/// 44px and three different roles.
+pub fn every_overlay_is_one_plate() {
+    let Some(window) = window() else {
+        return;
+    };
+    let overlays: Vec<(&str, gtk::Widget)> = vec![
+        (
+            "cheat sheet",
+            postio_gtk::cheatsheet::CheatSheet::new().upcast(),
+        ),
+        ("parts", postio_gtk::parts::PartsPanel::new().upcast()),
+        (
+            "unavailable",
+            postio_gtk::unavailable::Unavailable::new().upcast(),
+        ),
+        (
+            "onboarding",
+            postio_gtk::onboarding::Onboarding::new().upcast(),
+        ),
+    ];
+    let column = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    for (_, overlay) in &overlays {
+        overlay.set_visible(true);
+        column.append(overlay);
+    }
+    window.set_child(Some(&column));
+    window.present();
+    pump();
+
+    let mut heights = Vec::new();
+    for (name, overlay) in &overlays {
+        assert!(
+            overlay.has_css_class("postio-plate"),
+            "the {name} is not a plate"
+        );
+        assert_eq!(
+            overlay.accessible_role(),
+            gtk::AccessibleRole::Dialog,
+            "the {name} takes the keyboard, so it is a dialog"
+        );
+        let header = descendants(overlay)
+            .into_iter()
+            .find(|widget| widget.has_css_class("postio-plate-header"))
+            .unwrap_or_else(|| panic!("the {name} has no plate header"));
+        heights.push((*name, header.height()));
+    }
+    let first = heights[0].1;
+    assert!(
+        first >= 44,
+        "a plate header is the canvas' 44px: {heights:?}"
+    );
+    assert!(
+        heights.iter().all(|(_, height)| *height == first),
+        "plate headers disagree on their height: {heights:?}"
+    );
+
+    let finder = postio_gtk::finder::Finder::new();
+    assert!(
+        finder.has_css_class("postio-plate"),
+        "the box's results hang on the same surface"
+    );
+    window.destroy();
+}
