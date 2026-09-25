@@ -466,6 +466,10 @@ mod panel_imp {
         /// hidden until there is something to offer.
         pub(super) suggestion: gtk::Box,
         pub(super) on_suggest: RefCell<Vec<RefineHandler>>,
+        /// Which word the list is for, when it is not the one typed: a line
+        /// saying so and a button back to the typed word. Hidden otherwise.
+        pub(super) instead: gtk::Box,
+        pub(super) on_exact: RefCell<Vec<RefineHandler>>,
         /// The footer's key line, kept so a rebind can rewrite it (#828).
         pub(super) keys: gtk::Label,
         /// The tokens currently drawn, in the order they are drawn.
@@ -486,6 +490,8 @@ mod panel_imp {
                 nothing: gtk::Label::new(None),
                 suggestion: gtk::Box::new(gtk::Orientation::Vertical, 6),
                 on_suggest: RefCell::new(Vec::new()),
+                instead: gtk::Box::new(gtk::Orientation::Vertical, 6),
+                on_exact: RefCell::new(Vec::new()),
                 keys: gtk::Label::new(None),
                 offered: RefCell::new(Vec::new()),
                 scope: Cell::new(Scope::default()),
@@ -645,6 +651,53 @@ impl Panel {
         self.imp().on_suggest.borrow_mut().push(Box::new(handler));
     }
 
+    /// Say which word the list is for, when it is not the one typed, or
+    /// withdraw that.
+    ///
+    /// `Some((term, typed))`: the results are for `term` because `typed`
+    /// found nothing (ADR 0037, amended). At the top of the column, since it
+    /// changes what every row below means -- the list is not answering the
+    /// letters in the box. The button beside it searches for `typed` itself,
+    /// quoted, which is how the query language says "this word, exactly".
+    pub fn set_instead(&self, instead: Option<(&str, &str)>) {
+        let imp = self.imp();
+        while let Some(child) = imp.instead.first_child() {
+            imp.instead.remove(&child);
+        }
+        let Some((term, typed)) = instead else {
+            imp.instead.set_visible(false);
+            return;
+        };
+
+        let said = gtk::Label::new(Some(&format!("Showing results for {term}")));
+        said.add_css_class("postio-refine-empty");
+        said.set_xalign(0.0);
+        said.set_wrap(true);
+        imp.instead.append(&said);
+
+        let exact = format!("\"{typed}\"");
+        let button =
+            crate::widgets::chip_button(&exact, &format!("Search exactly for {typed} instead"));
+        button.connect_clicked(glib::clone!(
+            #[weak(rename_to = panel)]
+            self,
+            move |_| {
+                for handler in panel.imp().on_exact.borrow().iter() {
+                    handler(&exact);
+                }
+            }
+        ));
+        imp.instead.append(&button);
+        imp.instead.set_visible(true);
+    }
+
+    /// Called when the typed word is asked for exactly, with the query to
+    /// put in the box -- the word in quotes. Replaces what is there, as
+    /// taking an offer does.
+    pub fn connect_exact(&self, handler: impl Fn(&str) + 'static) {
+        self.imp().on_exact.borrow_mut().push(Box::new(handler));
+    }
+
     /// Called when the user picks a scope.
     pub fn connect_scope(&self, handler: impl Fn(Scope) + 'static) {
         self.imp().on_scope.borrow_mut().push(Box::new(handler));
@@ -736,6 +789,9 @@ impl Panel {
         imp.nothing.set_visible(false);
 
         let column = gtk::Box::new(gtk::Orientation::Vertical, 0);
+        imp.instead.set_visible(false);
+        imp.instead.set_margin_bottom(12);
+        column.append(&imp.instead);
         column.append(&crate::widgets::kicker("Scope"));
         column.append(&imp.scopes);
 
@@ -1326,6 +1382,22 @@ impl View {
             }
         });
 
+        // Asking for the typed word exactly replaces the box's text with it,
+        // quoted: the same replace a taken offer makes, and a query the user
+        // could have typed.
+        view.panel().connect_exact({
+            let finder = finder.downgrade();
+            move |exact| {
+                let Some(finder) = finder.upgrade() else {
+                    return;
+                };
+                finder.set_query(crate::finder::Query {
+                    mode: crate::finder::Mode::Search,
+                    text: exact.to_owned(),
+                });
+            }
+        });
+
         // The scope is *not* written into the box — switching it must not
         // mean editing what was typed. So the same query is simply asked
         // again, against the new scope, which whoever answers reads off the
@@ -1417,6 +1489,14 @@ impl View {
         self.inner
             .panel
             .set_suggestion(offer.map(|offer| (offer.term.as_str(), offer.documents)));
+    }
+
+    /// Say which word the list is for, when it is not the one typed. See
+    /// [`Panel::set_instead`].
+    pub fn set_instead(&self, instead: Option<&postio_search::Instead>) {
+        self.inner.panel.set_instead(
+            instead.map(|instead| (instead.term.as_str(), instead.typed.as_str())),
+        );
     }
 
     /// Show or hide the search surface.
