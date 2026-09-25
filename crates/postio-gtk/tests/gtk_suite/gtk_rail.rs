@@ -434,7 +434,8 @@ fn shown_labels(root: &gtk::Widget) -> Vec<String> {
 /// Let the window lay itself out: a size is only allocated on a frame, and
 /// `settle` does not wait for one.
 fn lay_out() {
-    let until = std::time::Instant::now() + std::time::Duration::from_millis(200);
+    let until = std::time::Instant::now()
+        + postio_test_support::scaled(std::time::Duration::from_millis(200));
     while std::time::Instant::now() < until {
         crate::settle();
         std::thread::sleep(std::time::Duration::from_millis(5));
