@@ -114,29 +114,44 @@ pub(crate) fn sync_keys(button: &gtk::Button, keymap: &Keymap) {
 /// `win.compose` -- see the composer's action handler for what that does in
 /// each state -- this only changes what it says while it does it.
 pub(crate) fn sync_compose(button: &gtk::Button, composing: bool, keymap: &Keymap) {
-    let (icon, text, command, tooltip) = if composing {
+    // Both faces in one stack, sized to the wider: the button is one width
+    // whichever it shows, so opening a composer does not move everything
+    // packed beside it (39px, measured, on every open and close).
+    let faces = gtk::Stack::builder()
+        .hhomogeneous(true)
+        .vhomogeneous(true)
+        .transition_type(gtk::StackTransitionType::None)
+        .build();
+    for (name, icon, text, command) in [
         (
-            "window-close-symbolic",
-            "Composing",
-            CommandId::Back,
-            "Close the composer",
-        )
-    } else {
-        (
+            "idle",
             "document-edit-symbolic",
             "Compose",
             CommandId::Compose,
-            "Compose a message",
-        )
-    };
+        ),
+        (
+            "composing",
+            "window-close-symbolic",
+            "Composing",
+            CommandId::Back,
+        ),
+    ] {
+        let content = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+        content.append(&gtk::Image::from_icon_name(icon));
+        content.append(&keyhint::labelled(
+            text,
+            hints::key(keymap, command).as_deref(),
+        ));
+        faces.add_named(&content, Some(name));
+    }
+    faces.set_visible_child_name(if composing { "composing" } else { "idle" });
+    button.set_child(Some(&faces));
 
-    let content = gtk::Box::new(gtk::Orientation::Horizontal, 8);
-    content.append(&gtk::Image::from_icon_name(icon));
-    content.append(&keyhint::labelled(
-        text,
-        hints::key(keymap, command).as_deref(),
-    ));
-    button.set_child(Some(&content));
+    let tooltip = if composing {
+        "Close the composer"
+    } else {
+        "Compose a message"
+    };
     button.set_tooltip_text(Some(tooltip));
     button.update_property(&[gtk::accessible::Property::Label(tooltip)]);
 }

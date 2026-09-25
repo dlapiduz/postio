@@ -67,7 +67,26 @@ fn descendants(root: &gtk::Widget) -> Vec<gtk::Widget> {
     out
 }
 
-/// The caps drawn inside the first widget wearing `class`.
+/// Whether `widget` is on the page a stack is showing, all the way up to
+/// `root` -- a stack's other faces are there but not drawn.
+fn shown_within(widget: &gtk::Widget, root: &gtk::Widget) -> bool {
+    let mut current = widget.clone();
+    while &current != root {
+        let Some(parent) = current.parent() else {
+            return true;
+        };
+        if let Some(stack) = parent.downcast_ref::<gtk::Stack>()
+            && stack.visible_child().as_ref() != Some(&current)
+        {
+            return false;
+        }
+        current = parent;
+    }
+    true
+}
+
+/// The caps drawn inside the first widget wearing `class` -- the ones a
+/// person would see, so a stack's hidden face does not count.
 fn caps_in(root: &gtk::Widget, class: &str) -> Vec<String> {
     let Some(owner) = descendants(root)
         .into_iter()
@@ -78,6 +97,7 @@ fn caps_in(root: &gtk::Widget, class: &str) -> Vec<String> {
     descendants(&owner)
         .into_iter()
         .filter(|widget| widget.has_css_class("postio-keyhint"))
+        .filter(|widget| shown_within(widget, &owner))
         .filter_map(|widget| widget.downcast::<gtk::Label>().ok())
         .map(|label| label.label().to_string())
         .collect()
@@ -315,5 +335,45 @@ pub fn a_type_role_resolves_to_its_size() {
         "a title is larger than body text"
     );
     gtk::style_context_remove_provider_for_display(&gdk::Display::default().unwrap(), &provider);
+    window.destroy();
+}
+
+/// The header's compose button is one width whether it says `Compose` or
+/// `Composing`.
+///
+/// It swapped its label in place, so opening the composer widened the
+/// button by the difference and moved everything packed beside it -- 39px
+/// in the measured window, on every open and close.
+pub fn the_compose_button_holds_its_width_while_composing() {
+    if adw::init().is_err() || gdk::Display::default().is_none() {
+        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
+        return;
+    }
+    let display = gdk::Display::default().unwrap();
+    fonts::install().expect("the embedded fonts should install");
+    style::install(&display);
+
+    let window = postio_gtk::window::Window::default();
+    window.present();
+    pump();
+    let root: gtk::Widget = window.clone().upcast();
+    let compose = descendants(&root)
+        .into_iter()
+        .find(|widget| widget.has_css_class("postio-compose"))
+        .expect("the header's compose button");
+    let idle = width(&compose);
+
+    window
+        .composer()
+        .open(postio_model::Draft::new(postio_model::ids::AccountId::new(
+            1,
+        )));
+    pump();
+    assert!(window.composer().is_open(), "the composer did not open");
+    let composing = width(&compose);
+    assert_eq!(
+        idle, composing,
+        "the compose button is {idle}px idle and {composing}px while composing"
+    );
     window.destroy();
 }
