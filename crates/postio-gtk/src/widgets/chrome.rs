@@ -8,8 +8,15 @@
 
 use adw::prelude::*;
 
-/// A section heading in letterspaced small caps: `THEME`, `MESSAGE LIST`,
+/// A section heading in letterspaced capitals: `THEME`, `MESSAGE LIST`,
 /// `SCOPES REQUESTED`.
+///
+/// Written in sentence case at the call site (`kicker("Message list")`) and
+/// drawn in capitals by the stylesheet, so no pane has to remember which case
+/// its neighbours shouted in. The look is the canvas' section heading --
+/// 10px Barlow Condensed, 0.18em, faint -- and it is defined exactly once, by
+/// the token generator in `postio_ui::tokens`; `shell.css` may inset a
+/// kicker but not restyle it.
 ///
 /// Not a `<h2>`: it labels the group beneath it for a sighted reader, and
 /// the group itself carries the accessible name a screen reader uses. Two
@@ -32,4 +39,66 @@ pub fn stat_line(text: &str) -> gtk::Label {
     label.set_xalign(0.0);
     label.set_ellipsize(gtk::pango::EllipsizeMode::End);
     label
+}
+
+#[cfg(test)]
+mod tests {
+    /// Declarations that decide what a kicker looks like, as opposed to where
+    /// one sits. A contextual rule may inset a kicker; it may not restyle it.
+    const LOOK: [&str; 6] = [
+        "font-family",
+        "font-size",
+        "font-weight",
+        "letter-spacing",
+        "text-transform",
+        "color",
+    ];
+
+    #[test]
+    fn the_kicker_is_styled_once_by_the_generated_tokens() {
+        let shell = include_str!("../../data/shell.css");
+        let tokens = include_str!("../../data/tokens.css");
+
+        let restyled: Vec<String> = rules(shell)
+            .filter(|(selector, _)| selector.contains(".postio-kicker"))
+            .filter(|(_, body)| looks(body))
+            .map(|(selector, _)| selector.trim().to_owned())
+            .collect();
+        assert!(
+            restyled.is_empty(),
+            "shell.css restyles the kicker the token generator owns: {restyled:?}"
+        );
+
+        let defined = rules(tokens)
+            .filter(|(selector, body)| selector.contains(".postio-kicker") && looks(body))
+            .count();
+        assert!(defined > 0, "tokens.css must define the kicker");
+    }
+
+    fn looks(body: &str) -> bool {
+        body.split(';').any(|declaration| {
+            let property = declaration.split(':').next().unwrap_or("").trim();
+            LOOK.contains(&property)
+        })
+    }
+
+    /// `(selector, declarations)` for each rule, comments dropped.
+    fn rules(css: &str) -> impl Iterator<Item = (String, String)> + '_ {
+        let mut text = String::with_capacity(css.len());
+        let mut rest = css;
+        while let Some(start) = rest.find("/*") {
+            text.push_str(&rest[..start]);
+            rest = rest[start..]
+                .find("*/")
+                .map_or("", |end| &rest[start + end + 2..]);
+        }
+        text.push_str(rest);
+        text.split('}')
+            .filter_map(|rule| {
+                let (selector, body) = rule.split_once('{')?;
+                Some((selector.to_owned(), body.to_owned()))
+            })
+            .collect::<Vec<_>>()
+            .into_iter()
+    }
 }
