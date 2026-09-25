@@ -322,33 +322,33 @@ pub async fn search(
 /// filter in the query — `from:ada hanah` — the filter is the likelier reason
 /// nothing matched. Both cases are left alone rather than answered badly.
 ///
-/// # Where the vocabulary comes from on this engine
+/// # Where the candidates come from
 ///
-/// SQLite's `fts5vocab` — a virtual table over the index's own term
-/// dictionary — has no equivalent here: the engine's full-text index keeps
-/// its terms to itself. But `search_documents` is an ordinary table holding
-/// the already-folded text the index was built from, so the vocabulary is
-/// rebuilt from its newest [`VOCABULARY_DOCUMENTS`] rows instead. A sample,
-/// deliberately: the intended word is overwhelmingly a name that recurs, and
-/// a term that appears nowhere in the last few thousand messages is a weak
-/// offer anyway. Term counts count documents, not occurrences, which is what
-/// `fts5vocab('row')` reported and what the ranking expects.
+/// From the index's own term dictionary, through the fork of the engine this
+/// workspace builds on (the `[patch]` in the root `Cargo.toml`): an unquoted
+/// `word~N` is expanded to every term that begins within `N` edits of the
+/// word, and `word*` to every term that begins with it —
+/// [`postio_search::suggest::widened`] builds the string. So what is read is
+/// the handful of messages holding a word *like* the one typed, from every
+/// message in the store, bodies included; and the word the offer names is
+/// recovered from their text, because the index answers with rows, not with
+/// the terms it expanded to.
 ///
-/// This runs only on a search that found nothing -- which, because terms
-/// match whole words, is every pause while a name is still being typed. So
-/// the vocabulary is built once and kept until the index moves: see
-/// [`vocabulary`].
+/// This replaced a vocabulary rebuilt from the newest 5,000 senders and
+/// subjects: a sample, so a list whose mail was older than that was never
+/// offered, and a word only a body held never was either. The widened query
+/// is only ever run here, on a search that found nothing — the query itself
+/// stays exact, which is ADR 0037's whole point.
 ///
-/// # What it does not read
-///
-/// Body terms. `search_documents` holds senders, recipients, subjects,
-/// filenames and list ids, which is where the names people mistype live; the
-/// body index is a separate table and a much larger vocabulary. Consulting
-/// it too is a later question, and one for measurement rather than taste.
+/// Documents are counted within what was read, which is at most
+/// [`SUGGESTION_DOCUMENTS`] of each half: enough to rank candidates against
+/// each other, and the count the offer shows is then "at least".
 async fn suggestion_for(
     connection: &Connection,
     query: &postio_search::ParsedQuery,
 ) -> Result<Option<postio_search::suggest::Suggestion>> {
+    use std::collections::{HashMap, HashSet};
+
     let mut terms = query.text_terms();
     let Some(term) = terms.next() else {
         return Ok(None);
@@ -356,89 +356,22 @@ async fn suggestion_for(
     if terms.next().is_some() || term.negated || query.filters().next().is_some() {
         return Ok(None);
     }
+    let Some(metadata_query) = postio_search::suggest::widened(&term.value) else {
+        return Ok(None);
+    };
+    // The body column is folded on the way in, so its query is folded the
+    // same way — the rule every body query here keeps (ADR 0038).
+    let body_query = postio_search::suggest::widened(&postio_model::fold::fold(&term.value));
 
-    let vocabulary = vocabulary(connection).await?;
-
-    // A wider net than the rule needs: `postio-search` owns how far a word
-    // may be mistyped, and this only has to avoid carrying every term across
-    // the boundary to find out.
-    let typed = term.value.chars().count() as i64;
-    let band = (typed - MOST_EDITS_CONSIDERED)..=(typed + MOST_EDITS_CONSIDERED);
-    let counts: Vec<(String, u64)> = vocabulary
-        .iter()
-        .filter(|(word, _)| band.contains(&(word.chars().count() as i64)))
-        .map(|(word, documents)| (word.clone(), *documents))
-        .collect();
-
-    // Commonest first, so the cap keeps the terms most likely to be the
-    // intended word.
-    let mut vocabulary = counts;
-    vocabulary.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
-    vocabulary.truncate(VOCABULARY_CAP as usize);
-
-    Ok(postio_search::suggest::suggest(
-        &term.value,
-        vocabulary
-            .iter()
-            .map(|(text, documents)| postio_search::suggest::Term {
-                text,
-                documents: *documents,
-            }),
-    ))
-}
-
-/// What the vocabulary was built from: the newest document's id and a
-/// digest of its text. Moves when a message is indexed; two stores in one
-/// process do not share one by accident.
-type VocabularyWitness = (i64, u64);
-
-/// Words and how many of the sampled documents hold each.
-type Vocabulary = std::sync::Arc<std::collections::HashMap<String, u64>>;
-
-/// Every word in the newest [`VOCABULARY_DOCUMENTS`] documents, with how many
-/// of them hold it -- built once and kept until the index moves.
-///
-/// Terms match whole words, so a name typed letter by letter is a zero-hit
-/// search at every pause until it is complete, and each rebuilt this from
-/// five thousand rows before the readout answered (#1613). What it is built
-/// from moves only when mail is indexed, and the witness is one row.
-async fn vocabulary(connection: &Connection) -> Result<Vocabulary> {
-    use std::collections::{HashMap, HashSet};
-    use std::hash::{Hash, Hasher};
-    use std::sync::{Arc, Mutex};
-
-    static BUILT: Mutex<Option<(VocabularyWitness, Vocabulary)>> = Mutex::new(None);
-
-    let newest = sql::first(
-        connection,
-        "SELECT message_id, coalesce(sender, '') || coalesce(subject, '')
-           FROM search_documents
-          ORDER BY message_id DESC
-          LIMIT 1",
-        (),
-        |row| Ok((row.col::<i64>(0)?, row.opt_text(1)?.unwrap_or_default())),
-    )
-    .await?;
-    let witness: VocabularyWitness = newest.map_or((0, 0), |(id, text)| {
-        let mut digest = std::collections::hash_map::DefaultHasher::new();
-        text.hash(&mut digest);
-        (id, digest.finish())
-    });
-    if let Some((built, words)) = BUILT.lock().expect("not poisoned").as_ref()
-        && *built == witness
-    {
-        return Ok(Arc::clone(words));
-    }
-
-    let documents = sql::all(
+    let mut texts: Vec<Vec<Option<String>>> = sql::all(
         connection,
         "SELECT sender, recipients, subject, filenames, list_id
            FROM search_documents
-          ORDER BY message_id DESC
-          LIMIT ?1",
-        [VOCABULARY_DOCUMENTS],
+          WHERE fts_match(sender, recipients, subject, filenames, list_id, ?1)
+          LIMIT ?2",
+        (metadata_query, SUGGESTION_DOCUMENTS),
         |row| {
-            Ok([
+            Ok(vec![
                 row.opt_text(0)?,
                 row.opt_text(1)?,
                 row.opt_text(2)?,
@@ -448,24 +381,48 @@ async fn vocabulary(connection: &Connection) -> Result<Vocabulary> {
         },
     )
     .await?;
+    if let Some(body_query) = body_query {
+        texts.extend(
+            sql::all(
+                connection,
+                "SELECT body_search FROM message_search_bodies
+                  WHERE fts_match(body_search, ?1)
+                  LIMIT ?2",
+                (body_query, SUGGESTION_DOCUMENTS),
+                |row| Ok(vec![row.opt_text(0)?]),
+            )
+            .await?,
+        );
+    }
+
+    // Each document counts a word once, however often it repeats it. Split
+    // the way the index's tokenizer splits, and lowercased the way it folds.
     let mut counts: HashMap<String, u64> = HashMap::new();
-    for document in &documents {
-        // Each document counts a term once, however often it repeats it.
-        let mut seen: HashSet<&str> = HashSet::new();
+    for document in &texts {
+        let mut seen: HashSet<String> = HashSet::new();
         for text in document.iter().flatten() {
             for word in text
                 .split(|c: char| !c.is_alphanumeric())
                 .filter(|word| !word.is_empty())
             {
-                if seen.insert(word) {
-                    *counts.entry(word.to_owned()).or_default() += 1;
+                let word = word.to_lowercase();
+                if !seen.contains(&word) {
+                    *counts.entry(word.clone()).or_default() += 1;
+                    seen.insert(word);
                 }
             }
         }
     }
-    let words = Arc::new(counts);
-    *BUILT.lock().expect("not poisoned") = Some((witness, Arc::clone(&words)));
-    Ok(words)
+
+    Ok(postio_search::suggest::suggest(
+        &term.value,
+        counts
+            .iter()
+            .map(|(text, documents)| postio_search::suggest::Term {
+                text,
+                documents: *documents,
+            }),
+    ))
 }
 
 /// Whether every message in the searched scope has a body to search.
@@ -565,29 +522,13 @@ const LARGE_TOKEN: &str = "larger:1M";
 /// spend the whole shortlist on them and crowd out `is:unread`.
 const REFINE_FOLDERS: usize = 2;
 
-/// The widest a suggestion's length may differ from what was typed.
+/// How many documents of each half a suggestion reads.
 ///
-/// A pre-filter, not the rule: `postio_search::suggest` decides how far a word
-/// of a given length may be mistyped, and this only spares the boundary the
-/// whole vocabulary. It must stay at or above that rule's widest tolerance or
-/// it would quietly overrule it.
-const MOST_EDITS_CONSIDERED: i64 = 2;
-
-/// How many terms a suggestion considers, commonest first.
-///
-/// A mailbox holds far more distinct terms than any of them is worth
-/// comparing, and the intended word is overwhelmingly a common one — a name
-/// in hundreds of messages rather than a token that appeared once. This runs
-/// only on a search that found nothing, so it never sits on the typing path.
-const VOCABULARY_CAP: i64 = 4_096;
-
-/// How many of the newest documents the vocabulary is rebuilt from.
-///
-/// The bound on the scan [`suggestion_for`] pays, since this engine keeps no
-/// term dictionary to read instead. Five thousand rows of short metadata
-/// columns read and tokenize in a few milliseconds, and only on a search
-/// that already found nothing.
-const VOCABULARY_DOCUMENTS: i64 = 5_000;
+/// The index has already narrowed to messages holding a word like the one
+/// typed, so this bounds only how common a candidate can be *shown* to be —
+/// ranking needs relative counts, not totals. And it runs only on a search
+/// that found nothing.
+const SUGGESTION_DOCUMENTS: i64 = 50;
 
 /// Measures what the query's result set is made of: how it splits across the
 /// scopes, and which narrowings are worth offering.
