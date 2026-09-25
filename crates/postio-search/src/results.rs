@@ -21,7 +21,7 @@ use postio_model::{EmailAddress, MailboxId, MessageId, ThreadId};
 /// ranking is not what the reader wants (#499). It lives here rather than in
 /// `postio-index` because the frontend draws the control and must never link
 /// SQLite.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum ResultOrder {
     /// Ranked: the best answer first.
     #[default]
@@ -50,7 +50,7 @@ impl ResultOrder {
 }
 
 /// One ranked, snippeted result.
-#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct SearchHit {
     /// The message.
     pub message_id: MessageId,
@@ -74,7 +74,7 @@ pub struct SearchHit {
 }
 
 /// What one search produced, for the canvas 2b readout.
-#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct SearchResults {
     /// This page of hits, best match first.
     pub hits: Vec<SearchHit>,
