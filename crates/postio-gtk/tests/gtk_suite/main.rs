@@ -45,6 +45,7 @@ mod gtk_accelerators;
 mod gtk_capture;
 mod gtk_cheatsheet;
 mod gtk_checkrow;
+mod gtk_components;
 mod gtk_composer_action_row;
 mod gtk_composer_attachments;
 mod gtk_composer_autosave;
@@ -311,6 +312,10 @@ const CASES: &[(&str, fn())] = &[
     (
         "gtk_settings_ui::the_density_line_says_what_the_choice_costs",
         gtk_settings_ui::the_density_line_says_what_the_choice_costs as fn(),
+    ),
+    (
+        "gtk_components::a_kicker_is_capitals_whatever_its_source_case",
+        gtk_components::a_kicker_is_capitals_whatever_its_source_case as fn(),
     ),
     (
         "gtk_checkrow::showing_the_files_value_is_not_changing_it",

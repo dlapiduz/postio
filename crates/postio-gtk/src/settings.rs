@@ -2950,12 +2950,12 @@ impl SettingsPanel {
 
         let interval = stat_line("");
         let left = gtk::Box::new(gtk::Orientation::Vertical, 0);
-        left.append(&kicker("CHECK FOR MAIL"));
+        left.append(&kicker("Check for mail"));
         check_for_mail.widget().set_margin_top(8);
         left.append(check_for_mail.widget());
         interval.set_margin_top(10);
         left.append(&interval);
-        let attachments_kicker = kicker("DOWNLOAD ATTACHMENTS");
+        let attachments_kicker = kicker("Download attachments");
         attachments_kicker.set_margin_top(20);
         left.append(&attachments_kicker);
         attachments.widget().set_margin_top(8);
@@ -2966,7 +2966,7 @@ impl SettingsPanel {
         checks.append(sync_on_startup.widget());
         checks.append(notify.widget());
         left.append(&checks);
-        let roles_kicker = kicker("NOTIFY FOR");
+        let roles_kicker = kicker("Notify for");
         roles_kicker.set_margin_top(18);
         left.append(&roles_kicker);
         notify_roles.set_margin_top(8);
@@ -3006,7 +3006,7 @@ impl SettingsPanel {
         stats.append(&sync_now);
 
         let right = gtk::Box::new(gtk::Orientation::Vertical, 0);
-        right.append(&kicker("LOCAL STORE"));
+        right.append(&kicker("Local store"));
         stats.set_margin_top(8);
         right.append(&stats);
 
@@ -3450,10 +3450,10 @@ impl SettingsPanel {
         ));
 
         let left = gtk::Box::new(gtk::Orientation::Vertical, 0);
-        left.append(&kicker("THEME"));
+        left.append(&kicker("Theme"));
         theme.widget().set_margin_top(8);
         left.append(theme.widget());
-        let density_kicker = kicker("ROW DENSITY");
+        let density_kicker = kicker("Row density");
         density_kicker.set_margin_top(22);
         left.append(&density_kicker);
         density.widget().set_margin_top(8);
@@ -3462,7 +3462,7 @@ impl SettingsPanel {
         left.append(&density_stat);
 
         let right = gtk::Box::new(gtk::Orientation::Vertical, 10);
-        right.append(&kicker("MESSAGE LIST"));
+        right.append(&kicker("Message list"));
         let checks = gtk::Box::new(gtk::Orientation::Vertical, 6);
         checks.set_margin_top(4);
         checks.append(hover_actions.widget());
@@ -3554,10 +3554,10 @@ impl SettingsPanel {
         ));
 
         let column = gtk::Box::new(gtk::Orientation::Vertical, 0);
-        column.append(&kicker("SIGNATURE ON A REPLY"));
+        column.append(&kicker("Signature on a reply"));
         on_reply.widget().set_margin_top(8);
         column.append(on_reply.widget());
-        let forward_kicker = kicker("SIGNATURE ON A FORWARD");
+        let forward_kicker = kicker("Signature on a forward");
         forward_kicker.set_margin_top(22);
         column.append(&forward_kicker);
         on_forward.widget().set_margin_top(8);
@@ -4231,19 +4231,19 @@ impl SettingsPanel {
         imp.egress_empty.set_xalign(0.0);
         imp.egress_empty.set_wrap(true);
 
-        imp.privacy_pane.append(&kicker("REMOTE IMAGES ALLOWED"));
+        imp.privacy_pane.append(&kicker("Remote images allowed"));
         imp.privacy_pane.append(&imp.privacy_scroller);
         imp.privacy_pane.append(&imp.privacy_empty);
-        let unsubscribe_title = kicker("MAILING LISTS LEFT");
+        let unsubscribe_title = kicker("Mailing lists left");
         unsubscribe_title.set_margin_top(18);
         imp.privacy_pane.append(&unsubscribe_title);
         imp.privacy_pane.append(&imp.unsubscribe_scroller);
         imp.privacy_pane.append(&imp.unsubscribe_empty);
-        let receipts_title = kicker("READ RECEIPTS");
+        let receipts_title = kicker("Read receipts");
         receipts_title.set_margin_top(18);
         imp.privacy_pane.append(&receipts_title);
         imp.privacy_pane.append(&imp.read_receipt_count);
-        let egress_title = kicker("RECENT CONNECTIONS");
+        let egress_title = kicker("Recent connections");
         egress_title.set_margin_top(18);
         imp.privacy_pane.append(&egress_title);
         imp.privacy_pane.append(&imp.egress_scroller);

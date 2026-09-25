@@ -2117,19 +2117,6 @@ button.postio-compose-more {
   outline-offset: 2px;
 }
 
-/* A section heading in letterspaced small caps: THEME, MESSAGE LIST,
-   SCOPES REQUESTED. The text arrives already uppercase — Pango's own
-   case transform is not reliably applied to every face here, and a kicker
-   that is uppercase in one pane and not the next is exactly the drift
-   these shared classes exist to stop. */
-.postio-kicker {
-  font-family: var(--postio-font-heading);
-  font-weight: var(--postio-font-heading-weight);
-  font-size: 0.7159rem;
-  letter-spacing: 0.09em;
-  color: var(--postio-dim);
-}
-
 /* A line of mono facts under a group. Almost entirely number, and numbers
    that do not line up read as a mistake. */
 .postio-stat-line {

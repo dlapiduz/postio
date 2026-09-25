@@ -1446,7 +1446,7 @@ impl Onboarding {
         imp.browser_box.append(&explanation);
         imp.browser_box.append(&imp.browser_flow);
         imp.browser_box
-            .append(&crate::widgets::kicker("SCOPES REQUESTED"));
+            .append(&crate::widgets::kicker("Scopes requested"));
         imp.browser_box.append(&imp.browser_scopes);
         imp.browser_box.append(&keyring);
         imp.browser_box.append(&browser_actions);
