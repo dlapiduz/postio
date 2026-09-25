@@ -310,6 +310,36 @@ fn install_order_toggle(window: &Window, finder: &Finder, feeds: &Feeds, order: 
 /// or a connection that could not be checked out — reaches the caller as
 /// `None`, which every caller here treats as "draw nothing", because a search
 /// that could not run has no answer and must not invent one.
+/// Carry what [`ask`] answered through the blocking pool, where `then`
+/// runs on it, and hand back what that made.
+///
+/// For work that is CPU rather than I/O -- sanitising a body is two
+/// html5ever parses -- and that must be done neither while holding the
+/// reader `ask` borrowed nor on the main thread, where every message the
+/// cursor settled on used to pay for it.
+pub(crate) fn then_off_thread<T, U>(
+    runtime: &tokio::runtime::Handle,
+    answer: Answer<T>,
+    then: impl FnOnce(T) -> U + Send + 'static,
+) -> Answer<U>
+where
+    T: Send + 'static,
+    U: Send + 'static,
+{
+    let (sender, receiver) = async_channel::bounded(1);
+    runtime.spawn(async move {
+        let Ok(answer) = answer.recv().await else {
+            return;
+        };
+        let made = match answer {
+            Some(value) => tokio::task::spawn_blocking(move || then(value)).await.ok(),
+            None => None,
+        };
+        let _ = sender.send(made).await;
+    });
+    receiver
+}
+
 pub(crate) fn ask<T, F, Fut>(
     database: &Store,
     runtime: &tokio::runtime::Handle,
@@ -624,13 +654,20 @@ async fn preview(
     // show anything at all.
     let message = hit.message_id;
     let sender = hit.from.as_ref().map(|from| from.address.clone());
+    // Judged and sanitised on the runtime, under the policy the preview
+    // would draw this sender with, so the main thread only loads it.
+    let remote = view.preview().remote_images_for(sender.as_deref());
     let answer = ask(database, runtime, move |connection| async move {
         Some(crate::compose::load_body(&connection, message).await)
+    });
+    let answer = then_off_thread(runtime, answer, move |body| {
+        let prepared = postio_ui::reader::document::prepare_message(&body, remote);
+        (body, prepared)
     });
     glib::spawn_future_local({
         let view = view.clone();
         async move {
-            let Ok(Some(body)) = answer.recv().await else {
+            let Ok(Some((body, prepared))) = answer.recv().await else {
                 return;
             };
             let preview = view.preview();
@@ -640,7 +677,7 @@ async fn preview(
             if preview.focused() != Some(message) {
                 return;
             }
-            preview.set_body(message, &body, sender.as_deref());
+            preview.set_prepared_body(message, &body, sender.as_deref(), Some(prepared));
         }
     });
 }

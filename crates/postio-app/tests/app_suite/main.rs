@@ -114,6 +114,10 @@ const IGNORED: &[&str] = &["parts_open_wiring::opening_and_open_with_ing_a_part_
 
 const CASES: &[(&str, fn())] = &[
     (
+        "reader_stability::moving_through_mail_sanitises_nothing_on_the_main_thread",
+        reader_stability::moving_through_mail_sanitises_nothing_on_the_main_thread as fn(),
+    ),
+    (
         "reader_stability::a_body_that_lands_quickly_never_shows_the_waiting_plate",
         reader_stability::a_body_that_lands_quickly_never_shows_the_waiting_plate as fn(),
     ),

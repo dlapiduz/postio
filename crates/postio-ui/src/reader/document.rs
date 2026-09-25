@@ -932,6 +932,49 @@ pub struct Prepared {
     rendered: Rendered,
 }
 
+impl Prepared {
+    /// Whether this was prepared from exactly `body`, under exactly these
+    /// two decisions -- the only case in which it may stand in for
+    /// sanitising `body` now.
+    pub fn serves(&self, body: &MessageBody, remote: RemoteImages, rendering: Rendering) -> bool {
+        self.remote == remote && self.rendering == rendering && self.body == *body
+    }
+
+    /// The reader-view verdict for `body`, if this was prepared from it.
+    pub fn verdict_for(&self, body: &MessageBody) -> Option<bool> {
+        (self.body == *body).then_some(self.verdict)
+    }
+
+    /// What the sanitiser made of it.
+    pub fn rendered(&self) -> &Rendered {
+        &self.rendered
+    }
+}
+
+/// Render `body` for the single-message reader ahead of time: the same as
+/// [`prepare`], with no scope stamped on its references, which is what
+/// [`body_html`] draws for one message on its own.
+///
+/// For a worker: the reader-view verdict and the sanitising are the two
+/// html5ever parses a message costs, and the main thread is where neither
+/// belongs -- each is paid on every message the cursor settles on.
+pub fn prepare_message(body: &MessageBody, remote: RemoteImages) -> Prepared {
+    let verdict = suits_reader_view(body);
+    let rendering = if verdict {
+        Rendering::Reader
+    } else {
+        Rendering::Original
+    };
+    Prepared {
+        scope: String::new(),
+        body: body.clone(),
+        remote,
+        verdict,
+        rendering,
+        rendered: body_html(body, remote, rendering),
+    }
+}
+
 /// Render `body` for the message `scope` ahead of time, as a conversation
 /// would draw it by default: reader view if it reads as bulk, the original
 /// if not, under `remote`.
@@ -977,6 +1020,10 @@ pub struct RenderCache {
     offered: std::collections::HashMap<String, Prepared>,
 }
 
+/// How many messages rendered ahead [`RenderCache::offer`] holds before it
+/// forgets the ones nobody drew: a long thread's worth, several times over.
+const OFFERED_LIMIT: usize = 512;
+
 #[derive(Debug)]
 struct Held {
     body: MessageBody,
@@ -1021,13 +1068,23 @@ impl RenderCache {
         rendered
     }
 
-    /// Take messages rendered ahead of being shown, in place of whatever was
+    /// Take messages rendered ahead of being shown, beside whatever was
     /// offered before.
+    ///
+    /// Added to rather than replacing: a thread's bodies are prepared as
+    /// they are read, one at a time, and each offer must not throw away the
+    /// ones before it that have not been drawn yet. A drawn one is taken out
+    /// as it is used; what is never drawn -- the cursor moved on first -- is
+    /// dropped wholesale once more than [`OFFERED_LIMIT`] have gathered.
     pub fn offer(&mut self, prepared: Vec<Prepared>) {
-        self.offered = prepared
-            .into_iter()
-            .map(|prepared| (prepared.scope.clone(), prepared))
-            .collect();
+        if self.offered.len() + prepared.len() > OFFERED_LIMIT {
+            self.offered.clear();
+        }
+        self.offered.extend(
+            prepared
+                .into_iter()
+                .map(|prepared| (prepared.scope.clone(), prepared)),
+        );
     }
 
     /// [`suits_reader_view`] for the message `scope`.
@@ -1120,6 +1177,51 @@ mod render_cache_tests {
         let sanitised = crate::test_support::bodies_sanitised();
         cache.render("9", &reply, RemoteImages::Blocked, Rendering::Original);
         assert_eq!(crate::test_support::bodies_sanitised() - sanitised, 1);
+    }
+
+    #[test]
+    fn bodies_offered_one_at_a_time_are_all_kept_until_drawn() {
+        // A thread's bodies are prepared as they are read and offered one
+        // by one; replacing on each offer kept only the last, and the rest
+        // were sanitised again on the main thread when the thread was drawn.
+        let first = body("<p>One.</p>");
+        let second = body("<p>Two.</p>");
+        let mut cache = RenderCache::default();
+        cache.offer(vec![prepare("1", &first, RemoteImages::Blocked)]);
+        cache.offer(vec![prepare("2", &second, RemoteImages::Blocked)]);
+
+        let sanitised = crate::test_support::bodies_sanitised();
+        cache.render("1", &first, RemoteImages::Blocked, Rendering::Original);
+        cache.render("2", &second, RemoteImages::Blocked, Rendering::Original);
+        assert_eq!(
+            crate::test_support::bodies_sanitised() - sanitised,
+            0,
+            "an earlier offer was thrown away by a later one"
+        );
+    }
+
+    #[test]
+    fn a_message_prepared_for_the_single_reader_is_what_it_would_draw() {
+        let newsletter = body("<table><tr><td>Weekly digest</td></tr></table>");
+        let prepared = prepare_message(&newsletter, RemoteImages::Blocked);
+        let rendering = if suits_reader_view(&newsletter) {
+            Rendering::Reader
+        } else {
+            Rendering::Original
+        };
+        assert_eq!(
+            prepared.verdict_for(&newsletter),
+            Some(rendering == Rendering::Reader)
+        );
+        assert!(prepared.serves(&newsletter, RemoteImages::Blocked, rendering));
+        assert_eq!(
+            *prepared.rendered(),
+            body_html(&newsletter, RemoteImages::Blocked, rendering),
+            "the single reader's references carry no scope, and nor may this"
+        );
+        // Anything else is not what it was prepared for.
+        assert!(!prepared.serves(&newsletter, RemoteImages::Allowed, rendering));
+        assert_eq!(prepared.verdict_for(&body("<p>Other.</p>")), None);
     }
 
     #[test]

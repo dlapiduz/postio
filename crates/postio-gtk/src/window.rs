@@ -1127,8 +1127,20 @@ impl Window {
     /// sender is allowed, which is [`crate::reader::Reader`]'s own rule and
     /// is not something this can bypass.
     pub fn show_message(&self, body: &postio_model::MessageBody, sender: Option<&str>) {
+        self.show_prepared_message(body, sender, None);
+    }
+
+    /// [`show_message`](Self::show_message), with the body already judged
+    /// and sanitised off the main thread -- see
+    /// [`Reader::render_prepared`](crate::reader::Reader::render_prepared).
+    pub fn show_prepared_message(
+        &self,
+        body: &postio_model::MessageBody,
+        sender: Option<&str>,
+        prepared: Option<postio_ui::reader::document::Prepared>,
+    ) {
         let reader = self.reader();
-        reader.render(body, sender);
+        reader.render_prepared(body, sender, prepared);
         // A single message takes the pane back from a conversation (#755):
         // the cursor moved to a row that is not one, so the stack would be
         // showing mail the user has left.

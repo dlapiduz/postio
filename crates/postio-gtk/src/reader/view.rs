@@ -77,6 +77,11 @@ struct Open {
     /// from ordinary correspondence, which is also `Rendering::Original` and
     /// must keep following the theme.
     bulk: bool,
+    /// The body already judged and sanitised off the main thread, when the
+    /// caller had it done there (`Reader::render_prepared`). Used only while
+    /// it serves exactly this body, policy and rendering; a banner or notice
+    /// that changes either is drawn as before.
+    prepared: Option<postio_ui::reader::document::Prepared>,
 }
 
 /// Called with how many remote references the pane is currently holding
@@ -1036,6 +1041,25 @@ impl Reader {
         self.notices.widget().set_visible(visible);
     }
 
+    /// Which remote-image policy this reader draws `sender`'s mail under.
+    ///
+    /// What a caller preparing a body off the main thread has to prepare it
+    /// for: the allow list lives here, and a body prepared under the wrong
+    /// policy is simply drawn again when shown.
+    pub fn remote_images_for(&self, sender: Option<&str>) -> RemoteImages {
+        if sender.is_some_and(|sender| self.allowlist.borrow().is_allowed(sender)) {
+            RemoteImages::Allowed
+        } else {
+            RemoteImages::Blocked
+        }
+    }
+
+    /// The allow list as it stands, for a worker that has to decide a
+    /// policy before it knows whose message it is reading.
+    pub fn allowlist_snapshot(&self) -> RemoteImageAllowList {
+        self.allowlist.borrow().clone()
+    }
+
     /// Whether the remote-image banner is currently shown.
     pub fn banner_visible(&self) -> bool {
         self.notices.shows(Notice::RemoteImages)
@@ -1250,6 +1274,25 @@ impl Reader {
     /// allow" is used — both re-render through this same [`Open`] state, so
     /// a caller never has to.
     pub fn render(&self, body: &MessageBody, sender: Option<&str>) {
+        self.render_prepared(body, sender, None);
+    }
+
+    /// [`render`](Self::render), with the two parses a message costs
+    /// already done elsewhere.
+    ///
+    /// `prepared` is `postio_ui::reader::document::prepare_message` run on a
+    /// worker, under the policy [`remote_images_for`](Self::remote_images_for)
+    /// gives this sender. Whether `body` is bulk mail and what the sanitiser
+    /// makes of it are both html5ever over the whole body, and both were paid
+    /// on the main thread for every message the cursor settled on. With it,
+    /// this only hands WebKit a document; without it, or when it was
+    /// prepared for something else, it draws exactly as `render` always has.
+    pub fn render_prepared(
+        &self,
+        body: &MessageBody,
+        sender: Option<&str>,
+        prepared: Option<postio_ui::reader::document::Prepared>,
+    ) {
         self.paints.set(self.paints.get() + 1);
         self.absent.set(None);
         // Cleared here rather than left to the caller. A caveat that outlived
@@ -1275,7 +1318,10 @@ impl Reader {
             .as_ref()
             .is_some_and(|open| open.body == *body);
         self.place.keep.set(same);
-        let bulk = postio_ui::reader::document::suits_reader_view(body);
+        let bulk = prepared
+            .as_ref()
+            .and_then(|prepared| prepared.verdict_for(body))
+            .unwrap_or_else(|| postio_ui::reader::document::suits_reader_view(body));
         let rendering = if bulk {
             Rendering::Reader
         } else {
@@ -1286,6 +1332,7 @@ impl Reader {
             sender: sender.map(str::to_owned),
             rendering,
             bulk,
+            prepared,
         });
         self.show_actions_unless_suppressed();
         let allowed = sender.is_some_and(|sender| self.allowlist.borrow().is_allowed(sender));
@@ -2194,19 +2241,21 @@ fn render_open(
     remote: RemoteImages,
     rendered: &Rc<RefCell<Vec<RenderedHandler>>>,
 ) {
-    let (body, sender, rendering, bulk) = {
+    let (drawn, sender, bulk) = {
         let guard = open.borrow();
         let Some(current) = guard.as_ref() else {
             return;
         };
-        (
-            current.body.clone(),
-            current.sender.clone(),
-            current.rendering,
-            current.bulk,
-        )
+        // What was sanitised off the main thread, when it was for exactly
+        // this; the sanitiser here otherwise, as it always was.
+        let drawn = match current.prepared.as_ref() {
+            Some(prepared) if prepared.serves(&current.body, remote, current.rendering) => {
+                prepared.rendered().clone()
+            }
+            _ => body_html(&current.body, remote, current.rendering),
+        };
+        (drawn, current.sender.clone(), current.bulk)
     };
-    let drawn = body_html(&body, remote, rendering);
     let held_back = drawn.held_back;
     let content = drawn.html.clone();
     // After sanitizing and quote-folding, never before: ammonia would strip
