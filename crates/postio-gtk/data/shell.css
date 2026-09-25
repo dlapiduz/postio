@@ -891,6 +891,38 @@ button.postio-compose {
   color: var(--postio-ink);
 }
 
+/* ── The plate (`widgets::plate`) ────────────────────────────────────
+   The surface an overlay is drawn on: the cheat sheet, the parts panel, the
+   unavailable screen, onboarding, and the box's results. A hairline, the
+   control radius, the surface ground, and the token's large lift -- which,
+   unlike the literal it replaced, deepens in the dark scheme. */
+.postio-plate {
+  border: 1px solid var(--postio-hairline);
+  border-radius: var(--postio-radius-md);
+  background-color: var(--postio-surface);
+  box-shadow: var(--postio-shadow-lg);
+}
+
+/* The canvas' title bar: 44px over a hairline, one height for every plate
+   (they were 42 and 44). */
+.postio-plate-header {
+  min-height: 44px;
+  padding: 0 18px;
+  box-shadow: inset 0 -1px var(--postio-hairline);
+}
+
+/* A plate's name, as the canvas sets it over Parts, Add account and Sync
+   window: 12px Barlow Condensed, 0.16em, capitals. A size up from the
+   section kicker, because it names the whole surface. */
+.postio-plate-title {
+  font-family: var(--postio-font-heading);
+  font-weight: var(--postio-font-heading-weight);
+  font-size: 0.8182rem;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--postio-ink-secondary);
+}
+
 /* ── The box's results ───────────────────────────────────────────────
    `postio-cfd.1` folded the command palette and the query bar into one
    box in the header; this is the plate its results hang from, directly
@@ -906,10 +938,6 @@ button.postio-compose {
   margin-left: 62px;
   min-width: 420px;
   padding: 8px;
-  border: 1px solid var(--postio-hairline);
-  border-radius: var(--postio-radius-md);
-  background-color: var(--postio-surface);
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
 }
 
 .postio-finder-list {
@@ -961,20 +989,8 @@ button.postio-compose {
    The same plate as the palette, centred rather than dropped from the top:
    this one is read, not typed into. No transition — the canvas' motion
    budget applies to an overlay as much as to a pane. */
-.postio-cheatsheet {
-  padding: 20px 24px;
-  border: 1px solid var(--postio-hairline);
-  border-radius: var(--postio-radius-md);
-  background-color: var(--postio-surface);
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
-}
-
-.postio-cheatsheet-heading {
-  font-family: var(--postio-font-heading);
-  font-weight: var(--postio-font-heading-weight);
-  font-size: 1.0227rem;
-  color: var(--postio-ink);
-  margin-bottom: 4px;
+.postio-cheatsheet-body {
+  padding: 16px 24px 20px;
 }
 
 .postio-cheatsheet-title {
@@ -1056,16 +1072,6 @@ button.postio-compose {
    No transition — a panel that fades in is one you read before it is there. */
 .postio-parts {
   min-width: 640px;
-  border: 1px solid var(--postio-hairline);
-  border-radius: var(--postio-radius-md);
-  background-color: var(--postio-surface);
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
-}
-
-.postio-parts-header {
-  min-height: 42px;
-  padding: 0 16px;
-  box-shadow: inset 0 -1px var(--postio-hairline);
 }
 
 /* `multipart/mixed · 4 parts · 1.2 MB`. Mono: it is a type and two counts. */
@@ -1205,16 +1211,6 @@ button.postio-compose {
    application, not like an error. */
 .postio-unavailable {
   min-width: 560px;
-  border: 1px solid var(--postio-hairline);
-  border-radius: var(--postio-radius-md);
-  background-color: var(--postio-surface);
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
-}
-
-.postio-unavailable-header {
-  min-height: 44px;
-  padding: 0 18px;
-  box-shadow: inset 0 -1px var(--postio-hairline);
 }
 
 .postio-unavailable-body {
@@ -1249,16 +1245,6 @@ button.postio-compose {
    a surface the application puts in front of you, not a dialog. */
 .postio-onboarding {
   min-width: 640px;
-  border: 1px solid var(--postio-hairline);
-  border-radius: var(--postio-radius-md);
-  background-color: var(--postio-surface);
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
-}
-
-.postio-onboarding-header {
-  min-height: 44px;
-  padding: 0 18px;
-  box-shadow: inset 0 -1px var(--postio-hairline);
 }
 
 /* `step 1 of 1`. Mono, and it is the whole promise of this screen: there is

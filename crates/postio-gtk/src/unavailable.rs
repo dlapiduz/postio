@@ -165,18 +165,8 @@ impl Unavailable {
 
     fn build(&self) {
         let imp = self.imp();
-        self.add_css_class("postio-unavailable");
-        self.set_halign(gtk::Align::Center);
-        self.set_valign(gtk::Align::Center);
-        self.set_accessible_role(gtk::AccessibleRole::Group);
-
-        let kicker = crate::widgets::kicker("Cannot open");
-        kicker.set_hexpand(true);
-        kicker.set_accessible_role(gtk::AccessibleRole::Presentation);
-
-        let header = gtk::Box::new(gtk::Orientation::Horizontal, 12);
-        header.add_css_class("postio-unavailable-header");
-        header.append(&kicker);
+        crate::widgets::plate::dress(self, "postio-unavailable", "Postio cannot open your mail");
+        let header = crate::widgets::plate::header("postio-unavailable", "Cannot open");
 
         let title = gtk::Label::new(Some("Postio cannot open your mail"));
         title.add_css_class("postio-unavailable-title");

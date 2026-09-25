@@ -1146,7 +1146,9 @@ impl Finder {
 
     fn build(&self) {
         let imp = self.imp();
-        self.add_css_class("postio-finder");
+        // The plate's surface, not a dressed plate: it hangs from the search
+        // field rather than sitting centred, and it is a list, not a dialog.
+        crate::widgets::plate::surface(self, "postio-finder");
         self.set_halign(gtk::Align::Start);
         self.set_valign(gtk::Align::Start);
         self.set_visible(false);

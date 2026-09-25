@@ -39,7 +39,7 @@ use postio_model::Attachment;
 use postio_model::ids::AttachmentId;
 use postio_ui::hints::{self, Hint};
 
-use crate::widgets::{KeyLine, keyhint};
+use crate::widgets::{KeyLine, keyhint, plate};
 
 /// One node of the tree, flattened into the order the keyboard walks it.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -832,14 +832,8 @@ impl PartsPanel {
 
     fn build(&self) {
         let imp = self.imp();
-        self.add_css_class("postio-parts");
-        self.set_halign(gtk::Align::Center);
-        self.set_valign(gtk::Align::Center);
+        plate::dress(self, "postio-parts", "Message parts");
         self.set_visible(false);
-        self.set_accessible_role(gtk::AccessibleRole::Group);
-
-        let kicker = crate::widgets::kicker("Parts");
-        kicker.set_accessible_role(gtk::AccessibleRole::Presentation);
 
         imp.summary.add_css_class("postio-parts-summary");
         imp.summary.set_xalign(0.0);
@@ -850,9 +844,7 @@ impl PartsPanel {
         imp.blocked.add_css_class("postio-parts-blocked");
         imp.blocked.set_visible(false);
 
-        let header = gtk::Box::new(gtk::Orientation::Horizontal, 12);
-        header.add_css_class("postio-parts-header");
-        header.append(&kicker);
+        let header = plate::header("postio-parts", "Parts");
         header.append(&imp.summary);
         header.append(&imp.blocked);
 
