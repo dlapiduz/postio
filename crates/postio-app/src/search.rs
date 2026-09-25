@@ -1036,9 +1036,37 @@ mod tests {
         // one token.
         let (database, account) = a_message_with_a_body("the maildir is rebuilt nightly").await;
 
+        // Quoted, because the box answers a bare word that found nothing
+        // with the word it begins (ADR 0037, amended) -- `mail` would come
+        // back as `maildir`. Quotes ask for the word exactly.
         assert!(
-            search_for(&database, account, "mail").await.hits.is_empty(),
+            search_for(&database, account, "\"mail\"")
+                .await
+                .hits
+                .is_empty(),
             "the query does not match, so there is nothing to highlight"
+        );
+
+        // And when the box does answer `mail` with `maildir`, what is marked
+        // is the whole word that matched, not the letters that were typed.
+        let rewritten = search_for(&database, account, "mail").await;
+        assert_eq!(
+            rewritten
+                .instead
+                .as_ref()
+                .map(|instead| instead.term.as_str()),
+            Some("maildir")
+        );
+        let marked = postio_search::highlight::from_snippet(&rewritten.hits[0].snippet);
+        assert_eq!(
+            marked
+                .matches
+                .iter()
+                .map(|range| &marked.text[range.clone()])
+                .collect::<Vec<_>>(),
+            vec!["maildir"],
+            "snippet: {:?}",
+            rewritten.hits[0].snippet
         );
 
         let results = search_for(&database, account, "maildir").await;
