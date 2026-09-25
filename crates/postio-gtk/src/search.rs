@@ -1177,7 +1177,11 @@ impl Preview {
             "Open",
             hints::key(Keymap::defaults(), CommandId::OpenMessage).as_deref(),
         )));
-        imp.open.add_css_class("suggested-action");
+        crate::widgets::button::style(
+            &imp.open,
+            crate::widgets::button::Kind::Primary,
+            crate::widgets::button::Size::Regular,
+        );
         imp.open.set_halign(gtk::Align::Start);
         imp.open
             .update_property(&[gtk::accessible::Property::Label("Open this message")]);

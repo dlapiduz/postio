@@ -101,6 +101,16 @@ impl ActionBar {
                     ),
                 });
                 KeycapButton::arm(&button);
+                // In a bar every verb is a button you can see the edges of
+                // (#1174, "both bars" in screen 17): the non-primary ones are
+                // secondary rather than the ghosts a lone keycap is.
+                if !action.primary {
+                    super::button::style(
+                        &button.widget(),
+                        super::button::Kind::Secondary,
+                        super::button::Size::Regular,
+                    );
+                }
                 root.append(&button.widget());
                 button
             })

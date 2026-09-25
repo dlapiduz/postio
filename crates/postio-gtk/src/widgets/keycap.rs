@@ -94,12 +94,12 @@ impl KeycapButton {
         button.add_css_class(class);
         button.add_css_class("postio-keycap-button");
         button.update_property(&[gtk::accessible::Property::Label(label)]);
-        if primary {
-            button.add_css_class("suggested-action");
+        let kind = if primary {
+            super::button::Kind::Primary
         } else {
-            button.add_css_class("flat");
-            button.add_css_class("postio-ghost");
-        }
+            super::button::Kind::Ghost
+        };
+        super::button::style(&button, kind, super::button::Size::Regular);
 
         Self {
             button,

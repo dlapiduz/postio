@@ -19,6 +19,7 @@ use postio_core::{CommandId, Keymap};
 use postio_ui::hints;
 
 use crate::finder;
+use crate::widgets::button::{self, Kind, Size};
 use crate::widgets::keyhint;
 
 /// How wide the search field is allowed to get, from the canvas.
@@ -210,8 +211,8 @@ fn keys_button() -> gtk::Button {
     let button = gtk::Button::builder()
         .tooltip_text("Keyboard shortcuts")
         .build();
-    button.add_css_class("flat");
-    button.add_css_class("postio-ghost");
+    button.add_css_class("postio-header-keys");
+    button::style(&button, Kind::Ghost, Size::Regular);
     button.update_property(&[gtk::accessible::Property::Label("Keyboard shortcuts")]);
     button
 }
@@ -220,8 +221,8 @@ fn keys_button() -> gtk::Button {
 /// [`sync_compose`]'s.
 fn compose_button() -> gtk::Button {
     let button = gtk::Button::new();
-    button.add_css_class("suggested-action");
     button.add_css_class("postio-compose");
+    button::style(&button, Kind::Primary, Size::Regular);
     // The composer installs `win.compose` when it is mounted; naming the
     // action here rather than taking a callback keeps the button working
     // whether or not a composer is in the window, and keeps the mouse path

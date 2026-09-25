@@ -891,7 +891,13 @@ impl PartsPanel {
         imp.note.set_vexpand(true);
         imp.note.set_valign(gtk::Align::Start);
 
+        // What `gtk_parts` finds the panel's own buttons by.
         imp.render_once.add_css_class("postio-parts-action");
+        crate::widgets::button::style(
+            &imp.render_once,
+            crate::widgets::button::Kind::Secondary,
+            crate::widgets::button::Size::Small,
+        );
         imp.render_once.set_halign(gtk::Align::Start);
         imp.render_once.set_visible(false);
         imp.render_once
@@ -904,8 +910,13 @@ impl PartsPanel {
             move |_| panel.render_once()
         ));
 
-        imp.save.add_css_class("suggested-action");
+        // What `gtk_parts` finds the panel's own buttons by.
         imp.save.add_css_class("postio-parts-action");
+        crate::widgets::button::style(
+            &imp.save,
+            crate::widgets::button::Kind::Primary,
+            crate::widgets::button::Size::Small,
+        );
         imp.save
             .update_property(&[gtk::accessible::Property::Label("Save this part")]);
         imp.save.connect_clicked(glib::clone!(
@@ -914,8 +925,13 @@ impl PartsPanel {
             move |_| panel.save_part()
         ));
 
-        imp.external.add_css_class("flat");
+        // What `gtk_parts` finds the panel's own buttons by.
         imp.external.add_css_class("postio-parts-action");
+        crate::widgets::button::style(
+            &imp.external,
+            crate::widgets::button::Kind::Ghost,
+            crate::widgets::button::Size::Small,
+        );
         imp.external
             .update_property(&[gtk::accessible::Property::Label(
                 "Open this part with the desktop's own handler",
