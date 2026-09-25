@@ -67,6 +67,28 @@ fn number(view: &webkit6::WebView, script: &str) -> f64 {
     answer.get()
 }
 
+/// A string the engine computes in `view`, or empty if it never answered.
+fn text(view: &webkit6::WebView, script: &str) -> String {
+    let answer: Rc<std::cell::RefCell<Option<String>>> = Rc::default();
+    let slot = Rc::clone(&answer);
+    view.evaluate_javascript(
+        &format!("String({script})"),
+        None,
+        None,
+        None::<&gtk::gio::Cancellable>,
+        move |outcome| {
+            if let Ok(value) = outcome {
+                slot.replace(Some(value.to_str().to_string()));
+            }
+        },
+    );
+    let deadline = std::time::Instant::now() + postio_test_support::patience();
+    while answer.borrow().is_none() && std::time::Instant::now() < deadline {
+        settle_for(std::time::Duration::from_millis(5));
+    }
+    answer.take().unwrap_or_default()
+}
+
 /// Wait until `view` has finished loading and has somewhere to scroll.
 fn wait_laid_out(view: &webkit6::WebView) {
     let deadline = std::time::Instant::now() + postio_test_support::patience();
@@ -225,10 +247,17 @@ pub fn showing_a_messages_images_keeps_its_place() {
     settle_for(std::time::Duration::from_millis(100));
 
     let after = number(&view, &format!("{READING_TOP}({reading})"));
+    let placed = text(
+        &view,
+        "document.documentElement.dataset.postioPlaced || 'never placed'",
+    );
+    let scrolled = number(&view, "window.scrollY");
+    eprintln!("restore: {placed}; scrollY {scrolled}; paragraph {reading} {reading_at} -> {after}");
     assert!(
         (after - reading_at).abs() < 2.0,
         "showing the images moved the paragraph being read from {reading_at}px \
-         to {after}px on screen"
+         to {after}px on screen (paragraph {reading}; restore: {placed}; scrollY now \
+         {scrolled})"
     );
 
     window.close();
