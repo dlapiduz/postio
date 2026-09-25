@@ -667,9 +667,7 @@ impl Panel {
         };
 
         let said = gtk::Label::new(Some(&format!("Showing results for {term}")));
-        said.add_css_class("postio-refine-empty");
-        said.set_xalign(0.0);
-        said.set_wrap(true);
+        crate::widgets::empty_note(&said, "postio-refine-empty");
         imp.instead.append(&said);
 
         let exact = format!("\"{typed}\"");
@@ -780,9 +778,7 @@ impl Panel {
         imp.chips
             .update_property(&[gtk::accessible::Property::Label("Refine the search")]);
 
-        imp.nothing.add_css_class("postio-refine-empty");
-        imp.nothing.set_xalign(0.0);
-        imp.nothing.set_wrap(true);
+        crate::widgets::empty_note(&imp.nothing, "postio-refine-empty");
         imp.nothing.set_visible(false);
 
         let column = gtk::Box::new(gtk::Orientation::Vertical, 0);

@@ -82,7 +82,7 @@ use postio_model::ids::SignatureId;
 use postio_model::{Account, AccountId, MailboxRole, UnsubscribeActivation};
 
 use crate::keymap::{Chord, ChordFromGdk};
-use crate::widgets::{CheckRow, SegmentedControl, kicker, stat_line};
+use crate::widgets::{CheckRow, ListOrEmpty, SegmentedControl, kicker, stat_line};
 
 /// How long to let typing settle before writing the buffer back to disk.
 ///
@@ -461,15 +461,7 @@ pub use postio_ui::account::badge as account_badge;
 /// the control. Unlike the settings rows that carry a second description
 /// line, there is none here: a host or a port names itself.
 fn detail_row(label: &str, control: &impl IsA<gtk::Widget>) -> gtk::Box {
-    let title = gtk::Label::new(Some(label));
-    title.set_xalign(0.0);
-    title.add_css_class("postio-settings-account-detail-label");
-
-    let row = gtk::Box::new(gtk::Orientation::Vertical, 2);
-    row.add_css_class("postio-settings-account-detail-row");
-    row.append(&title);
-    row.append(control);
-    row
+    crate::widgets::field(label, control, "postio-settings-account-detail-row")
 }
 
 // ---------------------------------------------------------------------------
@@ -1237,8 +1229,11 @@ impl SettingsPanel {
         for sender in &senders {
             imp.privacy_list.append(&self.privacy_row(sender));
         }
-        imp.privacy_scroller.set_visible(!senders.is_empty());
-        imp.privacy_empty.set_visible(senders.is_empty());
+        ListOrEmpty::show(
+            &imp.privacy_scroller,
+            &imp.privacy_empty,
+            !senders.is_empty(),
+        );
     }
 
     /// Revokes `sender`'s remote-image exception and writes the allow-list
@@ -1352,9 +1347,11 @@ impl SettingsPanel {
             imp.unsubscribe_list
                 .append(&self.unsubscribe_activation_row(activation));
         }
-        imp.unsubscribe_scroller
-            .set_visible(!activations.is_empty());
-        imp.unsubscribe_empty.set_visible(activations.is_empty());
+        ListOrEmpty::show(
+            &imp.unsubscribe_scroller,
+            &imp.unsubscribe_empty,
+            !activations.is_empty(),
+        );
     }
 
     /// One past activation: the list it left, and when.
@@ -1511,8 +1508,7 @@ impl SettingsPanel {
             ))]);
             imp.egress_list.append(&row);
         }
-        imp.egress_scroller.set_visible(!entries.is_empty());
-        imp.egress_empty.set_visible(entries.is_empty());
+        ListOrEmpty::show(&imp.egress_scroller, &imp.egress_empty, !entries.is_empty());
     }
 
     /// One account's row: name and address, what its mail weighs, and an
@@ -2133,9 +2129,7 @@ impl SettingsPanel {
             // Not a blank frame: an account that has never synced has no
             // folders to offer, and saying which it is beats an empty row.
             let empty = gtk::Label::new(Some("Folders appear after the first sync."));
-            empty.set_xalign(0.0);
-            empty.set_wrap(true);
-            empty.add_css_class("postio-settings-account-detail-mailboxes-empty");
+            crate::widgets::empty_note(&empty, "postio-settings-account-detail-mailboxes-empty");
             group.append(&empty);
             return;
         }
@@ -2283,9 +2277,7 @@ impl SettingsPanel {
         // until there is something to say, and never a raw store error:
         // "UNIQUE constraint failed" is not an answer anybody can act on.
         let error = gtk::Label::new(None);
-        error.add_css_class("postio-settings-signature-error");
-        error.set_xalign(0.0);
-        error.set_wrap(true);
+        crate::widgets::callout(&error, "postio-settings-signature-error");
         error.set_visible(false);
         imp.signature_editor.append(&error);
         let _ = imp.signature_editor_error.set(error);
@@ -2735,8 +2727,7 @@ impl SettingsPanel {
             imp.filters_list
                 .append(&self.filter_row(key, &config.filters[key], &pinned));
         }
-        imp.filters_scroller.set_visible(!order.is_empty());
-        imp.filters_empty.set_visible(order.is_empty());
+        ListOrEmpty::show(&imp.filters_scroller, &imp.filters_empty, !order.is_empty());
     }
 
     /// Applies `mutate` to the buffer's current `[filters]` state and writes
@@ -4134,88 +4125,48 @@ impl SettingsPanel {
         imp.accounts_pane.append(&accounts_scroll);
 
         // ── filters: one row each, name/query, pinned, reorder, delete ───
-        imp.filters_list
-            .add_css_class("postio-settings-filters-list");
-        imp.filters_list
-            .set_selection_mode(gtk::SelectionMode::None);
-        imp.filters_list
-            .update_property(&[gtk::accessible::Property::Label("Saved searches")]);
-
-        imp.filters_scroller.set_child(Some(&imp.filters_list));
-        imp.filters_scroller
-            .set_policy(gtk::PolicyType::Never, gtk::PolicyType::Automatic);
-        imp.filters_scroller.set_vexpand(true);
-        imp.filters_scroller
-            .add_css_class("postio-settings-filters");
+        ListOrEmpty::dress(
+            &imp.filters_list,
+            &imp.filters_scroller,
+            &imp.filters_empty,
+            "postio-settings-filters",
+            "Saved searches",
+            None,
+        );
         imp.filters_scroller.set_visible(false);
-
-        imp.filters_empty
-            .add_css_class("postio-settings-filters-empty");
-        imp.filters_empty.set_xalign(0.0);
-        imp.filters_empty.set_wrap(true);
         imp.filters_empty.set_visible(false);
 
         imp.filters_pane.append(&imp.filters_scroller);
         imp.filters_pane.append(&imp.filters_empty);
 
         // ── privacy: one row per allow-listed sender (#871) ───────────────
-        imp.privacy_list
-            .add_css_class("postio-settings-privacy-list");
-        imp.privacy_list
-            .set_selection_mode(gtk::SelectionMode::None);
-        imp.privacy_list
-            .update_property(&[gtk::accessible::Property::Label(
-                "Senders always allowed to load remote images",
-            )]);
-
-        imp.privacy_scroller.set_child(Some(&imp.privacy_list));
-        imp.privacy_scroller
-            .set_policy(gtk::PolicyType::Never, gtk::PolicyType::Automatic);
-        imp.privacy_scroller
-            .set_max_content_height(ACCOUNTS_MAX_HEIGHT);
-        imp.privacy_scroller.set_propagate_natural_height(true);
-        imp.privacy_scroller
-            .add_css_class("postio-settings-privacy");
-        imp.privacy_scroller.set_visible(false);
-
-        imp.privacy_empty
-            .add_css_class("postio-settings-privacy-empty");
-        imp.privacy_empty.set_xalign(0.0);
-        imp.privacy_empty.set_wrap(true);
-        // Visible from the start. `set_remote_image_allowlist` may not have
+        ListOrEmpty::dress(
+            &imp.privacy_list,
+            &imp.privacy_scroller,
+            &imp.privacy_empty,
+            "postio-settings-privacy",
+            "Senders always allowed to load remote images",
+            Some(ACCOUNTS_MAX_HEIGHT),
+        );
+        // Empty from the start. `set_remote_image_allowlist` may not have
         // been called yet, and "no senders are always allowed" is equally
         // true before the list is handed over and after it arrives empty —
         // whereas a heading with nothing under it is true of neither.
-        imp.privacy_empty.set_visible(true);
+        ListOrEmpty::show(&imp.privacy_scroller, &imp.privacy_empty, false);
 
         // ── privacy: one row per past unsubscribe activation (#971) ──────
         // A second list under the same pane as `privacy_list`, so it gets
         // its own heading to tell the two apart — the only pane here that
         // holds two lists.
-        imp.unsubscribe_list
-            .add_css_class("postio-settings-unsubscribe-list");
-        imp.unsubscribe_list
-            .set_selection_mode(gtk::SelectionMode::None);
-        imp.unsubscribe_list
-            .update_property(&[gtk::accessible::Property::Label(
-                "Mailing lists left through one-click unsubscribe",
-            )]);
-
-        imp.unsubscribe_scroller
-            .set_child(Some(&imp.unsubscribe_list));
-        imp.unsubscribe_scroller
-            .set_policy(gtk::PolicyType::Never, gtk::PolicyType::Automatic);
-        imp.unsubscribe_scroller
-            .set_max_content_height(ACCOUNTS_MAX_HEIGHT);
-        imp.unsubscribe_scroller.set_propagate_natural_height(true);
-        imp.unsubscribe_scroller
-            .add_css_class("postio-settings-unsubscribe");
+        ListOrEmpty::dress(
+            &imp.unsubscribe_list,
+            &imp.unsubscribe_scroller,
+            &imp.unsubscribe_empty,
+            "postio-settings-unsubscribe",
+            "Mailing lists left through one-click unsubscribe",
+            Some(ACCOUNTS_MAX_HEIGHT),
+        );
         imp.unsubscribe_scroller.set_visible(false);
-
-        imp.unsubscribe_empty
-            .add_css_class("postio-settings-unsubscribe-empty");
-        imp.unsubscribe_empty.set_xalign(0.0);
-        imp.unsubscribe_empty.set_wrap(true);
         imp.unsubscribe_empty.set_visible(false);
 
         // ── privacy: the read-receipt count, a fact rather than a toggle
@@ -4227,23 +4178,15 @@ impl SettingsPanel {
         self.set_read_receipt_count(0);
 
         // ── egress: the connections Postio opened, auditable (#151) ──────
-        imp.egress_list.add_css_class("postio-settings-egress-list");
-        imp.egress_list.set_selection_mode(gtk::SelectionMode::None);
-        imp.egress_list
-            .update_property(&[gtk::accessible::Property::Label("Recent connections")]);
-        imp.egress_scroller.set_child(Some(&imp.egress_list));
-        imp.egress_scroller
-            .set_policy(gtk::PolicyType::Never, gtk::PolicyType::Automatic);
-        imp.egress_scroller
-            .set_max_content_height(ACCOUNTS_MAX_HEIGHT);
-        imp.egress_scroller.set_propagate_natural_height(true);
-        imp.egress_scroller.add_css_class("postio-settings-egress");
+        ListOrEmpty::dress(
+            &imp.egress_list,
+            &imp.egress_scroller,
+            &imp.egress_empty,
+            "postio-settings-egress",
+            "Recent connections",
+            Some(ACCOUNTS_MAX_HEIGHT),
+        );
         imp.egress_scroller.set_visible(false);
-
-        imp.egress_empty
-            .add_css_class("postio-settings-egress-empty");
-        imp.egress_empty.set_xalign(0.0);
-        imp.egress_empty.set_wrap(true);
 
         imp.privacy_pane.append(&kicker("Remote images allowed"));
         imp.privacy_pane.append(&imp.privacy_scroller);

@@ -1157,7 +1157,7 @@ impl Finder {
         imp.list.add_css_class("postio-finder-list");
         imp.list.set_accessible_role(gtk::AccessibleRole::ListBox);
 
-        imp.empty.add_css_class("postio-finder-empty");
+        crate::widgets::empty_note(&imp.empty, "postio-finder-empty");
         imp.empty.set_visible(false);
 
         imp.scroller

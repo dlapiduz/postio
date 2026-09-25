@@ -253,6 +253,17 @@ fn every_widget_a_screen_reader_meets_has_a_role_and_a_name() {
 
     require_an_accessibility_backend();
 
+    // ── a field's caption is its control's name ─────────────────────────
+    // Onboarding said so and the settings account detail did not, so every
+    // host and port there was announced as "text field". `widgets::field`
+    // is the one way a form labels a control now; this holds it to it.
+    let entry = gtk::Entry::new();
+    let _field = postio_gtk::widgets::field("IMAP host", &entry, "postio-audit-field");
+    assert!(
+        gtk::test_accessible_has_relation(&entry, AccessibleRelation::LabelledBy),
+        "a field's control is not labelled by its caption"
+    );
+
     // ── a mode says which one it is, and how to leave it ─────────────────
     // The ⌫ chip on the field is decoration -- announcing a bare glyph reads
     // as furniture -- so the fact it carries belongs to the field the user is

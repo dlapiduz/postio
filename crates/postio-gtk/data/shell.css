@@ -462,8 +462,6 @@ button.postio-icon-button:hover {
 /* Why there is nothing on offer. Never a blank column. */
 .postio-refine-empty {
   padding: 0 18px;
-  font-size: 0.8523rem;
-  color: var(--postio-faint);
 }
 
 /* The keys this column offers, at its foot, the way the canvas draws them. */
@@ -1069,8 +1067,6 @@ button.postio-icon-button:hover {
 
 .postio-finder-empty {
   padding: 16px 8px;
-  font-size: 0.8523rem;
-  color: var(--postio-faint);
 }
 
 /* ── The ? cheat sheet ───────────────────────────────────────────────
@@ -1341,7 +1337,9 @@ button.postio-icon-button:hover {
   padding: 22px 26px 26px;
 }
 
-.postio-onboarding-label {
+/* A field's caption (`widgets::field`): onboarding's, the account
+   detail's -- one look, and the control's accessible name. */
+.postio-field-label {
   font-size: 0.8864rem;
   color: var(--postio-ink-secondary);
 }
@@ -1385,18 +1383,6 @@ button.postio-icon-button:hover {
 .postio-onboarding-help {
   padding: 0;
   font-size: 0.8523rem;
-}
-
-/* Why it did not work. The accent's warning cousin rather than a red banner:
-   nothing has gone wrong with Postio, the server said no. */
-.postio-onboarding-failed {
-  padding: 10px 12px;
-  border-radius: var(--postio-radius-sm);
-  border: 1px solid var(--postio-selected-border);
-  background-color: var(--postio-selected-bg);
-  font-size: 0.8864rem;
-  line-height: 1.5;
-  color: var(--postio-ink);
 }
 
 /* The browser sign-in step (#1179, Design/screens/23). Never a login form:
@@ -1764,16 +1750,25 @@ button.postio-settings-keys-binding.postio-settings-keys-capturing {
   background-color: transparent;
 }
 
-/* Why a signature would not save -- a name already taken, so far. The
-   accent's warning cousin, like every other refusal in this app: nothing has
-   gone wrong, the store said no. */
-.postio-settings-signature-error {
-  padding: var(--postio-space-2) var(--postio-space-3);
+/* Why something was refused (`widgets::callout`): a sign-in the server
+   declined, a signature name already taken. The accent's warning cousin
+   rather than a red banner -- nothing has gone wrong with Postio, the
+   other side said no. */
+.postio-callout {
+  padding: 10px 12px;
   border-radius: var(--postio-radius-sm);
   border: 1px solid var(--postio-selected-border);
   background-color: var(--postio-selected-bg);
-  color: var(--postio-ink);
   font-size: 0.8864rem;
+  line-height: 1.5;
+  color: var(--postio-ink);
+}
+
+/* Why a list has nothing in it (`widgets::empty_note`). One quiet line,
+   the look the box's and the refine column's empties already had. */
+.postio-empty-note {
+  font-size: 0.8523rem;
+  color: var(--postio-faint);
 }
 
 /* What the last connection test found (#980). Under the servers it is about,
