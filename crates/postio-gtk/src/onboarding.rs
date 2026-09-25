@@ -1515,9 +1515,7 @@ impl Onboarding {
         imp.sync_window_box.append(&imp.sync_estimate);
         imp.sync_window_box.append(&imp.start_sync);
 
-        imp.status_line.add_css_class("postio-onboarding-failed");
-        imp.status_line.set_xalign(0.0);
-        imp.status_line.set_wrap(true);
+        crate::widgets::callout(&imp.status_line, "postio-onboarding-failed");
         imp.status_line.set_visible(false);
         // A live region, so a screen reader hears the failure rather than
         // only a sighted user seeing it appear.
@@ -1582,22 +1580,7 @@ impl Onboarding {
 
 /// A labelled field, the way the canvas draws one.
 fn field(label: &str, entry: &impl IsA<gtk::Widget>) -> gtk::Box {
-    let caption = gtk::Label::new(Some(label));
-    caption.add_css_class("postio-onboarding-label");
-    caption.set_xalign(0.0);
-
-    let column = gtk::Box::new(gtk::Orientation::Vertical, 5);
-    column.append(&caption);
-    column.append(entry);
-    // The label names the field for a screen reader, rather than being read
-    // as a stray line of text above it.
-    entry
-        .as_ref()
-        .update_relation(&[gtk::accessible::Relation::LabelledBy(&[
-            caption.upcast_ref()
-        ])]);
-    caption.set_accessible_role(gtk::AccessibleRole::Presentation);
-    column
+    crate::widgets::field(label, entry, "postio-onboarding-field")
 }
 
 /// The domain of an address, for the card's heading.
