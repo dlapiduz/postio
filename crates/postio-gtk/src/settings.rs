@@ -3657,19 +3657,22 @@ impl SettingsPanel {
         lines.append(&name_entry);
         lines.append(&query_label);
 
-        let pinned = gtk::Switch::new();
+        // A checkbox, not a switch: pinned is a value written to the file,
+        // and ADR 0029 Q2 keeps switches for acts.
+        let pinned = CheckRow::new("In sidebar");
         pinned.set_active(filter.pinned);
-        pinned.update_property(&[gtk::accessible::Property::Label(&format!(
-            "Show {title} in the sidebar"
-        ))]);
-        pinned.connect_active_notify(glib::clone!(
+        pinned
+            .widget()
+            .update_property(&[gtk::accessible::Property::Label(&format!(
+                "Show {title} in the sidebar"
+            ))]);
+        pinned.connect_toggled(glib::clone!(
             #[weak(rename_to = panel)]
             self,
             #[strong]
             key,
-            move |switch| {
+            move |active| {
                 let key = key.clone();
-                let active = switch.is_active();
                 panel.apply_filters_mutation(move |config| {
                     config.set_filter_pinned(&key, active);
                 });
@@ -3736,7 +3739,8 @@ impl SettingsPanel {
         box_.set_margin_start(12);
         box_.set_margin_end(12);
         box_.append(&lines);
-        box_.append(&pinned);
+        pinned.widget().set_valign(gtk::Align::Center);
+        box_.append(pinned.widget());
         box_.append(&up);
         box_.append(&down);
         box_.append(&delete);
