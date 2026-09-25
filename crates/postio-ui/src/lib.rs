@@ -19,6 +19,7 @@ pub mod editor;
 pub mod finder;
 pub mod focus;
 pub mod format;
+pub mod hints;
 pub mod keymap;
 pub mod list;
 pub mod list_state;
