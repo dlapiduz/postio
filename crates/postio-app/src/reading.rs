@@ -414,6 +414,7 @@ pub async fn install(window: &Window, wiring: &Wiring, feeds: &Feeds, showing: S
         aimed: Cell::new(None),
         engine: wiring.engine.clone(),
         ahead: RefCell::new(None),
+        paints: Rc::new(Cell::new(0)),
     });
     window.list().connect_cursor_moved(glib::clone!(
         #[weak]
@@ -652,13 +653,29 @@ impl BodyFetcher {
 /// What draws the single reading pane, for a closure that has outlived the
 /// [`Fill`] it came from — see [`Fill::painter`]: the cells [`paint`] reads,
 /// and the window it paints into.
+#[derive(Clone)]
 struct Painter {
     window: Window,
     showing: Showing,
     opened: Rc<RefCell<Option<Opened>>>,
     named_accounts: Rc<Vec<(postio_model::AccountId, String)>>,
     offline: Rc<Cell<bool>>,
+    /// Which paint is the latest, so a waiting plate held back by
+    /// [`PLATE_DELAY`] stands down when anything paints after it.
+    paints: Rc<Cell<u64>>,
 }
+
+/// How long a message with no body leaves the pane as it was before saying
+/// so.
+///
+/// Drawing the plate is a full document load, and on most cursor moves in a
+/// mailbox still backfilling the body it explains arrives a moment later --
+/// so the pane flashed Postio's own "waiting" words for a wait nobody had
+/// time to see. Under this, the previous message stays put and the body is
+/// drawn straight over it; past it, the wait is long enough to be worth
+/// explaining. Below what a person notices as a change and well above a
+/// local fetch.
+const PLATE_DELAY: std::time::Duration = std::time::Duration::from_millis(150);
 
 impl Painter {
     /// Whether the pane still wants `message` by the time its read answered.
@@ -672,7 +689,36 @@ impl Painter {
     }
 
     /// Draw `loaded` as `message` — see [`paint`].
+    ///
+    /// A message with no body is held back for [`PLATE_DELAY`] unless the
+    /// pane is already on it: the header, chips and plate all wait, so the
+    /// pane changes once -- to the body, if it lands in time -- rather than
+    /// to the plate and then again.
     fn paint(&self, message: MessageId, loaded: Loaded) {
+        let paint = self.paints.get().wrapping_add(1);
+        self.paints.set(paint);
+        let absent = matches!(loaded.body, crate::compose::Body::Absent(_));
+        let on_it = self.window.reading()
+            && self
+                .opened
+                .borrow()
+                .as_ref()
+                .is_some_and(|opened| opened.signature.0 == message);
+        if absent && !on_it {
+            let painter = self.clone();
+            glib::timeout_add_local_once(PLATE_DELAY, move || {
+                if painter.paints.get() != paint || !painter.still_showing(message) {
+                    return;
+                }
+                painter.paint_now(message, loaded);
+            });
+            return;
+        }
+        self.paint_now(message, loaded);
+    }
+
+    /// Draw `loaded` as `message` now — see [`paint`].
+    fn paint_now(&self, message: MessageId, loaded: Loaded) {
         paint(
             &self.window,
             &self.opened,
@@ -757,6 +803,8 @@ struct Fill {
     /// The conversation after the one on screen, read and rendered before
     /// anybody opened it -- see [`Fill::prepare_next`].
     ahead: RefCell<Option<Ahead>>,
+    /// Which single-pane paint is the latest — see [`Painter::paint`].
+    paints: Rc<Cell<u64>>,
 }
 
 /// A conversation read and rendered ahead of `j`.
@@ -903,6 +951,7 @@ impl Fill {
             opened: self.opened.clone(),
             named_accounts: Rc::clone(&self.named_accounts),
             offline: Rc::clone(&self.offline),
+            paints: Rc::clone(&self.paints),
         }
     }
 

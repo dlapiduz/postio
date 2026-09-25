@@ -241,3 +241,149 @@ pub fn moving_onto_a_thread_draws_it_once_whole_and_under_its_own_header() {
         bridge.shutdown();
     });
 }
+
+/// A body that lands quickly is never preceded by the "waiting" plate.
+///
+/// The pane drew the plate the moment it knew there was no body -- a full
+/// document load -- and the body a beat later, which is a flash of Postio
+/// explaining a wait nobody had time to notice. Below a short threshold the
+/// pane now leaves what it had on screen and draws the body straight away;
+/// only a wait long enough to notice is explained.
+pub fn a_body_that_lands_quickly_never_shows_the_waiting_plate() {
+    crate::gtk_case(async {
+        let state_dir = tempfile::tempdir().expect("a state directory");
+        // SAFETY: first statement of a single-threaded test, before the app runs.
+        unsafe { std::env::set_var("XDG_STATE_HOME", state_dir.path()) };
+        if skip_without_display() {
+            return;
+        }
+
+        let database = test_support::memory().await;
+        let directory = tempfile::tempdir().expect("a blob directory");
+        let blobs = BlobStore::open(
+            directory.path().to_path_buf(),
+            &postio_storage::test_support::blob_keys(),
+        )
+        .expect("a blob store");
+        let (account, inbox) = {
+            let connection = database.connect().await.expect("a connection");
+            test_support::account_with_inbox(&connection).await
+        };
+        // Two plain messages, no thread: the newest has its body, the one
+        // below it does not yet.
+        let late = {
+            let connection = database.connect().await.expect("a connection");
+            let repository = MessageRepository::new(&connection);
+            let mut late = postio_model::Message::new(
+                account.id,
+                inbox,
+                chrono::Utc::now() - chrono::Duration::hours(2),
+            );
+            late.subject = Some("Late".into());
+            late.sync.body_state = postio_model::BodyState::HeadersOnly;
+            let late = repository.create(&mut late).await.expect("a message");
+            let mut here = postio_model::Message::new(account.id, inbox, chrono::Utc::now());
+            here.subject = Some("Here".into());
+            here.sync.body_state = postio_model::BodyState::Full;
+            let here = repository.create(&mut here).await.expect("a message");
+            repository
+                .set_body(
+                    here,
+                    &StoredBody {
+                        text: Some("the body that was already here".into()),
+                        html: None,
+                        headers: None,
+                        headers_truncated: false,
+                        encoding_problems: false,
+                    },
+                    postio_model::BodyState::Full,
+                )
+                .await
+                .expect("a body");
+            late
+        };
+
+        let (bridge, _replies) = Bridge::new(handler_fn(|_, _| async {})).expect("a runtime");
+        let (sink, _events) = event_channel();
+        let wiring = Wiring::new(
+            database.clone(),
+            blobs,
+            bridge.handle(),
+            sink,
+            bridge.commands(),
+        );
+
+        let window = Window::default();
+        window.present();
+        settle();
+        let wired = feed_the_window(&window, &wiring)
+            .await
+            .expect("the store has an account");
+        let list = window.list();
+        assert!(
+            settle_until(async || list.model().n_items() == 2).await,
+            "the two seeded messages never reached the list"
+        );
+        assert!(
+            settle_until(async || window
+                .reader()
+                .test_document()
+                .contains("the body that was already here"))
+            .await,
+            "the first message never filled the pane"
+        );
+
+        // `j` onto the message with no body, and its body lands 40ms later --
+        // well inside the time it takes to notice a plate at all.
+        window.handle_key(gdk::Key::j, gdk::ModifierType::empty());
+        let mut plates = 0;
+        watch_for(std::time::Duration::from_millis(40), || {
+            if window.reader().absent().is_some() {
+                plates += 1;
+            }
+        })
+        .await;
+        {
+            let connection = database.connect().await.expect("a connection");
+            MessageRepository::new(&connection)
+                .set_body(
+                    late,
+                    &StoredBody {
+                        text: Some("the body that came late".into()),
+                        html: None,
+                        headers: None,
+                        headers_truncated: false,
+                        encoding_problems: false,
+                    },
+                    postio_model::BodyState::Full,
+                )
+                .await
+                .expect("the late body");
+        }
+        wired.feeds.apply(&postio_core::Event::BodyLoaded {
+            account: account.id,
+            message: late,
+        });
+        watch_for(std::time::Duration::from_millis(600), || {
+            if window.reader().absent().is_some() {
+                plates += 1;
+            }
+        })
+        .await;
+
+        assert!(
+            window
+                .reader()
+                .test_document()
+                .contains("the body that came late"),
+            "the late body never reached the pane"
+        );
+        assert_eq!(
+            plates, 0,
+            "the waiting plate flashed up for a body that landed in 40ms"
+        );
+
+        window.destroy();
+        bridge.shutdown();
+    });
+}
