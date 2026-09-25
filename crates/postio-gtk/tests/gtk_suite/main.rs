@@ -1395,6 +1395,11 @@ const CASES: &[(&str, fn())] = &[
         gtk_reader_fonts::the_faces_are_fetched_over_the_scheme_and_not_carried_by_the_document as fn(),
     ),
     (
+        "gtk_reader_fonts::a_warmed_reader_draws_its_first_message_with_every_face_already_fetched",
+        gtk_reader_fonts::a_warmed_reader_draws_its_first_message_with_every_face_already_fetched
+            as fn(),
+    ),
+    (
         "gtk_shell::hiding_the_focused_pane_keeps_focus_in_the_workspace",
         gtk_shell::hiding_the_focused_pane_keeps_focus_in_the_workspace as fn(),
     ),

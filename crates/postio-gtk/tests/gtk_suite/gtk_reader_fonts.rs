@@ -203,3 +203,70 @@ fn pump_for(duration: Duration) {
         std::thread::sleep(std::time::Duration::from_millis(10));
     }
 }
+
+/// The first message is never drawn in invisible type.
+///
+/// The faces are `font-display: block`: text in a face the engine has not
+/// fetched yet is not painted until it arrives, so nothing ever reflows from
+/// a fallback face. The engine keeps a face once fetched -- the measurement
+/// above finds a second message fetching none -- so the wait was only ever
+/// paid by the first message to use each face in a web process. That is the
+/// first message after startup, the one a person is looking hardest at, and
+/// its fetch is answered by a main thread that is at its busiest then.
+///
+/// Warming the reader fetches every face, so the first message fetches none.
+pub fn a_warmed_reader_draws_its_first_message_with_every_face_already_fetched() {
+    if adw::init().is_err() || gdk::Display::default().is_none() {
+        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
+        return;
+    }
+
+    let window = gtk::Window::new();
+    window.set_default_size(600, 500);
+    let source: Rc<dyn BlobSource> = Rc::new(|_: &str| None);
+    let reader = Reader::with_allowlist(
+        source,
+        RemoteImageAllowList::default(),
+        scratch_path("warm-allowlist"),
+    );
+    let requested: Rc<RefCell<Vec<String>>> = Rc::new(RefCell::new(Vec::new()));
+    let requested_for_view = Rc::clone(&requested);
+    reader
+        .view()
+        .connect_resource_load_started(move |_, resource, _| {
+            if let Some(uri) = resource.uri()
+                && uri.starts_with(&format!("{FONT_SCHEME}:"))
+            {
+                requested_for_view.borrow_mut().push(uri.to_string());
+            }
+        });
+    window.set_child(Some(&reader.widget()));
+    window.present();
+    pump();
+
+    // What the application does on its first idle turn.
+    let finished = track_load_finished(&reader);
+    reader.warm();
+    wait_for(&finished, Duration::from_secs(5));
+    pump_for(Duration::from_millis(500));
+    let warmed = requested.borrow().len();
+
+    requested.borrow_mut().clear();
+    let finished = track_load_finished(&reader);
+    reader.render(
+        &body("<p>Plain, <b>bold</b>, <i>italic</i> and <code>mono</code>.</p>"),
+        None,
+    );
+    wait_for(&finished, Duration::from_secs(5));
+    pump_for(Duration::from_millis(500));
+
+    assert_eq!(
+        requested.borrow().as_slice(),
+        &[] as &[String],
+        "the first message waited on faces the warm-up did not fetch ({warmed} \
+         fetched while warming); under `font-display: block` its text is \
+         invisible until they arrive"
+    );
+
+    window.close();
+}

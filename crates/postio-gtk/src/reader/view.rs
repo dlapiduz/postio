@@ -1018,8 +1018,22 @@ impl Reader {
     /// and has finished starting by the time a real message is rendered into
     /// it, which is why this is called on a spare rather than on the reader
     /// somebody is waiting for.
+    ///
+    /// And it fetches every face on the way (`document::warming_document`),
+    /// so the first message is not drawn in invisible type while its faces
+    /// are fetched -- they are `font-display: block`, and the engine keeps a
+    /// face once it has it, so only the first message ever waited.
+    ///
+    /// Only into a reader that has drawn nothing: warming one that already
+    /// shows a message would replace the message.
     pub fn warm(&self) {
-        self.view.load_html("", None);
+        if self.loads.get() > 0 || self.paints.get() > 0 {
+            return;
+        }
+        self.view.load_html(
+            &postio_ui::reader::document::warming_document(),
+            Some(DOCUMENT_BASE_URI),
+        );
     }
 
     pub fn widget(&self) -> gtk::Widget {
