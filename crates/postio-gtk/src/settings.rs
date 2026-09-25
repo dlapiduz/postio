@@ -864,14 +864,12 @@ mod imp {
                 ui_box: gtk::Box::new(gtk::Orientation::Vertical, 0),
                 privacy_list: gtk::ListBox::new(),
                 privacy_scroller: gtk::ScrolledWindow::new(),
-                privacy_empty: gtk::Label::new(Some(
-                    "No senders are always allowed to load remote images.",
-                )),
+                privacy_empty: gtk::Label::new(Some(postio_ui::privacy::NO_ALLOWED)),
                 remote_image_allowlist: RefCell::new(None),
                 unsubscribe_list: gtk::ListBox::new(),
                 unsubscribe_scroller: gtk::ScrolledWindow::new(),
-                egress_empty: gtk::Label::new(Some("Nothing has connected out yet this session.")),
-                unsubscribe_empty: gtk::Label::new(Some("No mailing lists have been left yet.")),
+                egress_empty: gtk::Label::new(Some(postio_ui::privacy::NO_CONNECTIONS)),
+                unsubscribe_empty: gtk::Label::new(Some(postio_ui::privacy::NO_LISTS_LEFT)),
                 unsubscribe_activations: RefCell::new(Vec::new()),
                 read_receipt_count: gtk::Label::new(None),
                 keys_list: gtk::ListBox::new(),
@@ -1308,17 +1306,9 @@ impl SettingsPanel {
     /// "configurable" default here would already have lost the argument a
     /// toggle exists to make.
     pub fn set_read_receipt_count(&self, count: u64) {
-        let text = match count {
-            0 => "No messages have requested a read receipt.".to_owned(),
-            1 => "1 message has requested a read receipt; none have been sent \
-                  automatically."
-                .to_owned(),
-            n => format!(
-                "{n} messages have requested a read receipt; none have been \
-                 sent automatically."
-            ),
-        };
-        self.imp().read_receipt_count.set_label(&text);
+        self.imp()
+            .read_receipt_count
+            .set_label(&postio_ui::privacy::read_receipts(count));
     }
 
     /// The read-receipt count line's current text. For tests.
@@ -1357,7 +1347,10 @@ impl SettingsPanel {
         list.set_hexpand(true);
         list.set_ellipsize(gtk::pango::EllipsizeMode::End);
 
-        let when = activation.activated_at.format("%Y-%m-%d").to_string();
+        let when = activation
+            .activated_at
+            .format(postio_ui::privacy::LEFT_WHEN)
+            .to_string();
         let when_label = gtk::Label::new(Some(&when));
         when_label.add_css_class("postio-settings-unsubscribe-when");
         when_label.set_xalign(1.0);
@@ -1471,16 +1464,11 @@ impl SettingsPanel {
                 &entry
                     .at
                     .with_timezone(&chrono::Local)
-                    .format("%d %b %H:%M")
+                    .format(postio_ui::privacy::CONNECTION_WHEN)
                     .to_string(),
             ));
             when.add_css_class("postio-settings-egress-when");
-            let what = gtk::Label::new(Some(&format!(
-                "{} · {}:{}",
-                entry.subsystem.as_str(),
-                entry.host,
-                entry.port
-            )));
+            let what = gtk::Label::new(Some(&postio_ui::privacy::connection(entry)));
             what.set_hexpand(true);
             what.set_xalign(0.0);
             what.set_ellipsize(gtk::pango::EllipsizeMode::End);
@@ -4151,17 +4139,17 @@ impl SettingsPanel {
         imp.egress_scroller.set_visible(false);
 
         let privacy = SettingsGroup::on(&imp.privacy_pane);
-        privacy.section("Remote images allowed");
+        privacy.section(postio_ui::privacy::ALLOWED);
         privacy
             .append(&imp.privacy_scroller)
             .append(&imp.privacy_empty);
-        privacy.section("Mailing lists left");
+        privacy.section(postio_ui::privacy::LISTS_LEFT);
         privacy
             .append(&imp.unsubscribe_scroller)
             .append(&imp.unsubscribe_empty);
-        privacy.section("Read receipts");
+        privacy.section(postio_ui::privacy::READ_RECEIPTS);
         privacy.append(&imp.read_receipt_count);
-        privacy.section("Recent connections");
+        privacy.section(postio_ui::privacy::CONNECTIONS);
         privacy
             .append(&imp.egress_scroller)
             .append(&imp.egress_empty);

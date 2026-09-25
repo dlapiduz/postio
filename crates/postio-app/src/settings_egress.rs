@@ -10,10 +10,9 @@ use gtk::prelude::*;
 use postio_client::Client;
 use postio_gtk::window::Window;
 
-/// How many connections the panel lists. An audit surface, not an archive:
-/// the store keeps everything, and the newest screenful answers "what has
-/// this thing been talking to".
-const EGRESS_ROWS: u32 = 50;
+/// How many connections the panel lists: `postio_ui::privacy`'s, which the
+/// terminal's pane asks for too.
+const EGRESS_ROWS: u32 = postio_ui::privacy::CONNECTION_ROWS;
 
 /// Wire the settings panel's connection list to the store's owner.
 pub async fn install(window: &Window, client: Client) {
