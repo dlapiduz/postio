@@ -167,7 +167,8 @@ pub fn a_late_body_does_not_throw_the_reader_back_to_the_top() {
 
 /// The index of the first paragraph whose bottom is below the top of the
 /// viewport: the one a person is reading.
-const READING_INDEX: &str = "[...document.querySelectorAll('p')].findIndex(p => p.getBoundingClientRect().bottom > 0)";
+const READING_INDEX: &str =
+    "[...document.querySelectorAll('p')].findIndex(p => p.getBoundingClientRect().bottom > 0)";
 
 /// A function of a paragraph index: where that paragraph's top sits on screen.
 const READING_TOP: &str = "(i => document.querySelectorAll('p')[i].getBoundingClientRect().top)";
