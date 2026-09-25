@@ -166,6 +166,13 @@ fn main() {
                 folder(5, "Trash", MailboxRole::Trash, 0),
                 folder(6, "Projects", MailboxRole::Regular, 2),
                 folder(7, "Reading group", MailboxRole::Regular, 0),
+                {
+                    // A folder nested under another, as a server reports it.
+                    let mut year = folder(8, "Projects/2026", MailboxRole::Regular, 1);
+                    year.name = "2026".into();
+                    year.parent_id = Some(MailboxId::new(6));
+                    year
+                },
             ],
             counts: Vec::new(),
             saved: Vec::new(),

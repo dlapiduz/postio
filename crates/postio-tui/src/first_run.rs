@@ -451,6 +451,10 @@ mod tests {
 
         let another = FirstRun::another();
         assert_eq!(another.heading(), "Add an account");
-        assert!(another.hint().contains("Esc goes back"), "{}", another.hint());
+        assert!(
+            another.hint().contains("Esc goes back"),
+            "{}",
+            another.hint()
+        );
     }
 }

@@ -943,7 +943,7 @@ mod tests {
         let saved = effects
             .iter()
             .find_map(|effect| match effect {
-                crate::app::Effect::SaveLayout(state) => Some(*state),
+                crate::app::Effect::SaveLayout(state) => Some(state.clone()),
                 _ => None,
             })
             .expect("the width is saved when the drag ends");

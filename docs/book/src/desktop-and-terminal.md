@@ -35,7 +35,7 @@ names it. That list and this table change together.
 | Saved searches in the sidebar | ✓ | ◐ | Shown and run; rename, delete and reorder are missing |
 | Go-to keys (inbox, sent, drafts, flagged) | ✓ | ✓ | |
 | Back to the previous view | ✓ | ✓ | |
-| Collapse a folder in the sidebar | ✓ | ✗ | |
+| Folders nested as the server keeps them; fold one | ✓ | ✓ | Space, or a click on its mark; both apps remember what is folded, each in its own file |
 | The conversation rail | ✓ | — | The terminal has none |
 | Cursor and selection kept apart; multiple selection | ✓ | ✓ | |
 | Archive, delete, move, flag, mark unread, label, snooze, undo | ✓ | ✓ | |

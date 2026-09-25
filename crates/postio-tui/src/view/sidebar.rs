@@ -98,6 +98,12 @@ pub fn draw(
     }
 }
 
+/// The column, in from the pane's edge, of the disclosure mark on a line
+/// `depth` levels down: after the cursor's bar and two columns a level.
+pub fn mark_column(depth: u8) -> u16 {
+    1 + 2 * u16::from(depth)
+}
+
 fn one<'a>(
     line: &sidebar::Line,
     here: bool,
@@ -119,7 +125,15 @@ fn one<'a>(
         .count
         .map(|count| count.to_string())
         .unwrap_or_default();
-    let room = width.saturating_sub(INDENT + count.len() + 2);
+    // Two columns a level, and a disclosure mark before a folder with
+    // children: open or folded, as the desktop's arrow says.
+    let nest = " ".repeat(2 * usize::from(line.depth));
+    let mark = match (line.folds, line.collapsed) {
+        (None, _) => " ",
+        (Some(_), false) => "▾",
+        (Some(_), true) => "▸",
+    };
+    let room = width.saturating_sub(INDENT + nest.len() + count.len() + 2);
     let label = fit(line.label.as_str(), room);
     let pad = room.saturating_sub(unicode_width::UnicodeWidthStr::width(label.as_str()));
     let style = match (here, focused) {
@@ -128,7 +142,9 @@ fn one<'a>(
     };
     Line::from(vec![
         Span::styled(bar, theme.style(Role::Focus)),
-        Span::raw(" ".repeat(INDENT - 1)),
+        Span::raw(nest),
+        Span::styled(mark, theme.style(Role::Dim)),
+        Span::raw(" ".repeat(INDENT - 2)),
         Span::styled(label, style),
         Span::raw(" ".repeat(pad + 1)),
         Span::styled(count, theme.style(Role::Accent)),
@@ -163,5 +179,36 @@ mod tests {
             "A D A @ E X A M P L E . C O M"
         );
         assert_eq!(heading("ada@example.com", 20), "ADA@EXAMPLE.COM");
+    }
+
+    #[test]
+    fn a_nested_folder_sits_under_its_parent_whose_mark_says_it_folds() {
+        use crate::caps::{Background, Colour};
+        use postio_model::MailboxId;
+        use postio_ui::terminal::SafeText;
+        let theme = Theme::new(Colour::None, Background::Unknown, &Default::default()).0;
+        let line = |label: &str, depth, folds: Option<i64>, collapsed| sidebar::Line {
+            label: SafeText::new(label),
+            count: None,
+            opens: None,
+            searches: None,
+            heading: false,
+            depth,
+            folds: folds.map(MailboxId::new),
+            collapsed,
+        };
+        let drawn = |line: &sidebar::Line| -> String {
+            one(line, false, false, 30, &theme)
+                .spans
+                .iter()
+                .map(|span| span.content.as_ref())
+                .collect::<String>()
+                .trim_end()
+                .to_owned()
+        };
+        assert_eq!(drawn(&line("Inbox", 0, None, false)), "   Inbox");
+        assert_eq!(drawn(&line("Archives", 0, Some(1), false)), " ▾ Archives");
+        assert_eq!(drawn(&line("2024", 1, None, false)), "     2024");
+        assert_eq!(drawn(&line("Archives", 0, Some(1), true)), " ▸ Archives");
     }
 }

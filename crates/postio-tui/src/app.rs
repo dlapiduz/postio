@@ -442,6 +442,8 @@ pub struct App {
     focus: Focus,
     /// The sidebar's lines.
     sidebar: Vec<crate::sidebar::Line>,
+    /// What the sidebar was last built from, to build it again folded.
+    sidebar_contents: crate::sidebar::Contents,
     /// The account's labels, as the finder's `+` offers them.
     labels: Vec<postio_model::Label>,
     /// The account's correspondents, as the finder's `@` offers them.
@@ -709,6 +711,7 @@ impl App {
             notice_undo: None,
             focus: Focus::List,
             sidebar: Vec::new(),
+            sidebar_contents: crate::sidebar::Contents::default(),
             sidebar_cursor: 0,
             trackers: postio_ui::status::Trackers::default(),
             account: None,
@@ -1295,6 +1298,15 @@ impl App {
                 Target::Sidebar(index) => {
                     self.focus = Focus::Sidebar;
                     self.sidebar_cursor = index;
+                    // The mark folds; so does anywhere on a container that
+                    // has nothing to open.
+                    if let Some(line) = self.sidebar.get(index)
+                        && line.folds.is_some()
+                        && (line.opens.is_none()
+                            || hit.column == crate::view::sidebar::mark_column(line.depth))
+                    {
+                        return self.toggle_folder();
+                    }
                     // Landing on it by the mouse does what landing on it by
                     // the keys does.
                     self.walk_sidebar(0)
@@ -1357,7 +1369,7 @@ impl App {
                 if !std::mem::take(&mut self.dragging) {
                     return Vec::new();
                 }
-                vec![Effect::SaveLayout(self.layout), Effect::Redraw]
+                vec![Effect::SaveLayout(self.layout.clone()), Effect::Redraw]
             }
             Pointer::Wheel { hit, down } => {
                 let lines: isize = if down { WHEEL } else { -WHEEL };
@@ -2377,6 +2389,7 @@ impl App {
                 self.focus = Focus::Settings;
             }
             "edit_config" => return vec![Effect::EditConfig(None)],
+            "toggle_folder" => return self.toggle_folder(),
             "add_account" => {
                 self.first_run = Some(crate::first_run::FirstRun::another());
                 self.focus = Focus::FirstRun;
@@ -2959,7 +2972,15 @@ impl App {
 
     /// Take in the sidebar's contents, keeping the cursor on the list shown.
     fn fill_sidebar(&mut self, contents: &crate::sidebar::Contents) -> Vec<Effect> {
-        self.sidebar = crate::sidebar::lines(contents);
+        // The line the keyboard is on, while it is on the sidebar: a refresh
+        // leaves it there rather than jumping back to the open list.
+        let here = (self.focus == Focus::Sidebar)
+            .then(|| self.sidebar.get(self.sidebar_cursor))
+            .flatten()
+            .filter(|line| !line.heading)
+            .map(|line| (line.opens, line.searches.clone(), line.folds));
+        self.sidebar = crate::sidebar::lines(contents, &self.layout.collapsed_folders);
+        self.sidebar_contents = contents.clone();
         self.folders = contents.folders.clone();
         self.accounts = contents.accounts.clone();
         for account in &contents.accounts {
@@ -2968,10 +2989,17 @@ impl App {
         if let Some(scope) = self.scope {
             self.account = self.account_of(scope);
         }
-        self.sidebar_cursor = self
-            .sidebar
-            .iter()
-            .position(|line| line.opens.is_some() && line.opens == self.scope)
+        self.sidebar_cursor = here
+            .and_then(|here| {
+                self.sidebar
+                    .iter()
+                    .position(|line| (line.opens, line.searches.clone(), line.folds) == here)
+            })
+            .or_else(|| {
+                self.sidebar
+                    .iter()
+                    .position(|line| line.opens.is_some() && line.opens == self.scope)
+            })
             .or_else(|| self.sidebar.iter().position(|line| line.opens.is_some()))
             .unwrap_or(0);
         if contents.accounts.is_empty() {
@@ -2987,13 +3015,9 @@ impl App {
         // while the first run was still asking for one: it is done, unless
         // it is this run's own account and the last question is still open,
         // or the run was asked for from the mail, which it leaves by itself.
-        if self
-            .first_run
-            .as_ref()
-            .is_some_and(|run| {
-                !run.leavable() && *run.status() != postio_ui::onboarding::Status::SyncWindow
-            })
-        {
+        if self.first_run.as_ref().is_some_and(|run| {
+            !run.leavable() && *run.status() != postio_ui::onboarding::Status::SyncWindow
+        }) {
             self.first_run = None;
             self.focus = Focus::List;
         }
@@ -3011,6 +3035,29 @@ impl App {
         effects
     }
 
+    /// Fold or unfold the folder under the sidebar cursor, and remember it.
+    fn toggle_folder(&mut self) -> Vec<Effect> {
+        let Some(folder) = self
+            .sidebar
+            .get(self.sidebar_cursor)
+            .and_then(|line| line.folds)
+        else {
+            return Vec::new();
+        };
+        let collapsed = &mut self.layout.collapsed_folders;
+        if !collapsed.remove(&folder) {
+            collapsed.insert(folder);
+        }
+        self.sidebar =
+            crate::sidebar::lines(&self.sidebar_contents, &self.layout.collapsed_folders);
+        self.sidebar_cursor = self
+            .sidebar
+            .iter()
+            .position(|line| line.folds == Some(folder))
+            .unwrap_or(0);
+        vec![Effect::SaveLayout(self.layout.clone()), Effect::Redraw]
+    }
+
     /// Move the sidebar cursor by `step` rows that open something, and open
     /// what it lands on -- as the desktop sidebar opens a folder when the
     /// selection moves to it.
@@ -3019,7 +3066,9 @@ impl App {
             .sidebar
             .iter()
             .enumerate()
-            .filter(|(_, line)| line.opens.is_some() || line.searches.is_some())
+            .filter(|(_, line)| {
+                line.opens.is_some() || line.searches.is_some() || line.folds.is_some()
+            })
             .map(|(index, _)| index)
             .collect();
         let Some(here) = openable
@@ -3981,7 +4030,6 @@ pub(crate) mod tests {
         "move_saved_search_down",
         "move_saved_search_up",
         "rename_saved_search",
-        "toggle_folder",
     ];
 
     fn opens(effects: &[Effect]) -> Vec<ListScope> {
@@ -5664,6 +5712,94 @@ pub(crate) mod tests {
         update(&mut app, key(KeyCode::Esc, KeyModifiers::NONE));
         assert!(app.first_run().is_none());
         assert_eq!(app.focus(), Focus::List);
+    }
+
+    #[test]
+    fn space_in_the_sidebar_folds_a_folder_and_remembers_it() {
+        let mut app = app((160, 40));
+        let mut contents = sidebar_contents();
+        let account = contents.accounts[0].id;
+        let parent = MailboxId::new(76);
+        let mut archives = postio_model::mailbox::Mailbox::new(account, "Archives", Some('/'));
+        archives.id = parent;
+        let mut child = postio_model::mailbox::Mailbox::new(account, "Archives/2024", Some('/'));
+        child.id = MailboxId::new(77);
+        child.parent_id = Some(parent);
+        contents.folders.extend([archives, child]);
+        update(&mut app, Input::Sidebar(contents.clone()));
+        let child_row = |app: &App| {
+            app.sidebar
+                .iter()
+                .any(|line| line.opens == Some(ListScope::Mailbox(MailboxId::new(77))))
+        };
+        assert!(child_row(&app));
+
+        app.focus = Focus::Sidebar;
+        app.sidebar_cursor = app
+            .sidebar
+            .iter()
+            .position(|line| line.folds == Some(parent))
+            .expect("the parent folds");
+        let effects = update(&mut app, press(' '));
+        assert!(!child_row(&app), "folded away");
+        assert!(
+            effects.iter().any(|effect| matches!(
+                effect,
+                Effect::SaveLayout(layout) if layout.collapsed_folders.contains(&parent)
+            )),
+            "{effects:?}"
+        );
+        assert_eq!(
+            app.sidebar[app.sidebar_cursor].folds,
+            Some(parent),
+            "the cursor stays on the folder"
+        );
+
+        // A refresh keeps it folded; Space again opens it.
+        update(&mut app, Input::Sidebar(contents));
+        assert!(!child_row(&app));
+        update(&mut app, press(' '));
+        assert!(child_row(&app));
+    }
+
+    #[test]
+    fn a_click_on_a_folders_mark_folds_it_without_opening_it() {
+        let mut app = app((160, 40));
+        let mut contents = sidebar_contents();
+        let account = contents.accounts[0].id;
+        let parent = MailboxId::new(76);
+        let mut archives = postio_model::mailbox::Mailbox::new(account, "Archives", Some('/'));
+        archives.id = parent;
+        let mut child = postio_model::mailbox::Mailbox::new(account, "Archives/2024", Some('/'));
+        child.id = MailboxId::new(77);
+        child.parent_id = Some(parent);
+        contents.folders.extend([archives, child]);
+        update(&mut app, Input::Sidebar(contents));
+        let row = app
+            .sidebar
+            .iter()
+            .position(|line| line.folds == Some(parent))
+            .unwrap();
+
+        let effects = update(
+            &mut app,
+            Input::Pointer(Pointer::Click {
+                hit: crate::view::hit::Hit {
+                    target: crate::view::hit::Target::Sidebar(row),
+                    column: crate::view::sidebar::mark_column(0),
+                    row: 0,
+                },
+                ctrl: false,
+                shift: false,
+            }),
+        );
+        assert!(app.layout.collapsed_folders.contains(&parent));
+        assert!(
+            !effects.iter().any(
+                |effect| matches!(effect, Effect::Open(ListScope::Mailbox(id)) if *id == parent)
+            ),
+            "{effects:?}"
+        );
     }
 
     fn in_settings(app: &mut App) {

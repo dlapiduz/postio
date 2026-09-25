@@ -48,6 +48,11 @@ one noted below the table.
 | 10, the remote-image allow list | `postio-gtk/src/reader/allowlist.rs` | `postio-ui/src/allowlist.rs` |
 | 3, deciding a new-mail notification | `postio-app/src/notifications.rs` | `postio-host/src/notify.rs` |
 
+The desktop's folder tree (`folder_rows`, `ancestors_of`, `FolderRow`,
+`MAX_DEPTH`) moved to `postio-ui/src/sidebar.rs` without its tests:
+`postio-gtk::sidebar` re-exports the names, so its tree tests stay where they
+were and did not change at all.
+
 Two of the three notification tests are identical; the third,
 `mail_landing_in_the_open_mailbox_of_the_active_window_is_not_posted`,
 differs by one import path (`notify::Suppressed` is imported as
