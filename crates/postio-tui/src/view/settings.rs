@@ -185,8 +185,13 @@ fn signatures(
 /// of it is read back from the store, and none of it is in the file.
 fn privacy(pane: &mut Vec<Line>, app: &App, in_list: bool, columns: usize, theme: &Theme) {
     use postio_ui::privacy;
+    // In capitals, as the terminal sets every heading; the words are the
+    // desktop's.
     let kicker = |text: &'static str| {
-        Line::styled(text, theme.style(Role::Dim).add_modifier(Modifier::BOLD))
+        Line::styled(
+            text.to_uppercase(),
+            theme.style(Role::Dim).add_modifier(Modifier::BOLD),
+        )
     };
     let empty = |text: &'static str| {
         Line::styled(fit(&format!("  {text}"), columns), theme.style(Role::Dim))

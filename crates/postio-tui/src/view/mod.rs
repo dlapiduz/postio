@@ -1248,18 +1248,19 @@ mod tests {
             },
         );
         let screen = screen(160, 30, &app);
+        let heading = |text: &str| text.to_uppercase();
         for wanted in [
-            postio_ui::privacy::ALLOWED,
-            postio_ui::privacy::NO_ALLOWED,
-            postio_ui::privacy::LISTS_LEFT,
-            postio_ui::privacy::NO_LISTS_LEFT,
-            postio_ui::privacy::READ_RECEIPTS,
-            "2 messages have requested a read receipt",
-            postio_ui::privacy::CONNECTIONS,
-            "imap · imap.example.com:993",
-            "connected",
+            heading(postio_ui::privacy::ALLOWED),
+            postio_ui::privacy::NO_ALLOWED.to_owned(),
+            heading(postio_ui::privacy::LISTS_LEFT),
+            postio_ui::privacy::NO_LISTS_LEFT.to_owned(),
+            heading(postio_ui::privacy::READ_RECEIPTS),
+            "2 messages have requested a read receipt".to_owned(),
+            heading(postio_ui::privacy::CONNECTIONS),
+            "imap · imap.example.com:993".to_owned(),
+            "connected".to_owned(),
         ] {
-            assert!(screen.contains(wanted), "{wanted} missing:\n{screen}");
+            assert!(screen.contains(&wanted), "{wanted} missing:\n{screen}");
         }
         assert!(
             !screen.contains("config.toml"),
