@@ -492,7 +492,7 @@ async fn edit_account(wiring: &Wiring, id: postio_model::ids::AccountId, edit: A
 /// turn `enabled` back on (`onboarding::configure`) and the row should say
 /// so without waiting for the next full refresh.
 pub(crate) async fn refresh(window: &Window, wiring: &Wiring) {
-    let Ok(connection) = wiring.database.connect().await else {
+    let Ok(connection) = wiring.database.read().await else {
         return;
     };
     match AccountRepository::new(&connection).list().await {

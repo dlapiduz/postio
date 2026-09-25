@@ -1740,7 +1740,7 @@ pub async fn reindex_account(
 /// not return it -- so the fallback is the same as no marker at all.
 pub async fn composing_account(database: &Store) -> Option<postio_model::Account> {
     let connection = database
-        .connect()
+        .read()
         .await
         .map_err(|error| tracing::error!(%error, "cannot read the accounts: {error}"))
         .ok()?;
@@ -1764,7 +1764,7 @@ pub async fn composing_account(database: &Store) -> Option<postio_model::Account
 /// indexed read before the window is presented.
 pub async fn first_account(database: &Store) -> Option<postio_model::Account> {
     let connection = database
-        .connect()
+        .read()
         .await
         .map_err(|error| tracing::error!(%error, "cannot read the accounts: {error}"))
         .ok()?;
