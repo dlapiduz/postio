@@ -31,6 +31,8 @@ pub struct Contents {
 /// A saved search from `config.toml`'s `[filters]`.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Saved {
+    /// Its key in `[filters]`, which a rename leaves alone.
+    pub key: String,
     /// What the sidebar calls it.
     pub name: String,
     /// The query it runs.
@@ -48,6 +50,9 @@ pub struct Line {
     pub opens: Option<ListScope>,
     /// The saved search it runs, for a saved search's line.
     pub searches: Option<String>,
+    /// That saved search's `[filters]` key, which renaming, moving and
+    /// deleting it go by.
+    pub saved: Option<String>,
     /// Whether it is a heading rather than a row.
     pub heading: bool,
     /// How deep the folder nests under the account's other folders.
@@ -109,6 +114,7 @@ pub fn lines(contents: &Contents, collapsed: &HashSet<MailboxId>) -> Vec<Line> {
             lines.push(Line {
                 label: SafeText::new(&saved.name),
                 searches: Some(saved.query.clone()),
+                saved: Some(saved.key.clone()),
                 ..row()
             });
         }
@@ -131,6 +137,7 @@ fn row() -> Line {
         count: None,
         opens: None,
         searches: None,
+        saved: None,
         heading: false,
         depth: 0,
         folds: None,
@@ -191,6 +198,7 @@ mod tests {
                 },
             )],
             saved: vec![Saved {
+                key: "unread-from-ada".into(),
                 name: "Unread from Ada".into(),
                 query: "from:ada is:unread".into(),
             }],

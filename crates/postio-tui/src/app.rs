@@ -366,6 +366,8 @@ pub enum Effect {
     SaveSyncWindow(postio_ui::onboarding::SyncWindow),
     /// Remember the layout for the next run.
     SaveLayout(crate::state::TerminalState),
+    /// Rename, move or delete a saved search in `config.toml`.
+    EditSearch(crate::config_file::SearchEdit),
     /// Open a link with the system's opener, the person having clicked it
     /// twice.
     OpenLink(String),
@@ -444,6 +446,10 @@ pub struct App {
     sidebar: Vec<crate::sidebar::Line>,
     /// What the sidebar was last built from, to build it again folded.
     sidebar_contents: crate::sidebar::Contents,
+    /// The saved search the palette is naming, while it is.
+    renaming: Option<String>,
+    /// The saved search a first `delete_saved_search` asked about.
+    deleting: Option<String>,
     /// The account's labels, as the finder's `+` offers them.
     labels: Vec<postio_model::Label>,
     /// The account's correspondents, as the finder's `@` offers them.
@@ -547,6 +553,8 @@ enum Finding {
     Roles(postio_model::AccountId),
     /// Then which folder that role is, or automatic.
     RoleFolder(postio_model::AccountId, postio_model::mailbox::MailboxRole),
+    /// A new name for the saved search in `App::renaming`.
+    Rename,
 }
 
 /// How many lists `prev_view` can go back through.
@@ -618,6 +626,8 @@ enum PaletteAction {
         postio_model::mailbox::MailboxRole,
         Option<String>,
     ),
+    /// Call the saved search being renamed this.
+    Rename(String),
 }
 
 /// Rows offered by title, matched against `query` with the palette's
@@ -712,6 +722,8 @@ impl App {
             focus: Focus::List,
             sidebar: Vec::new(),
             sidebar_contents: crate::sidebar::Contents::default(),
+            renaming: None,
+            deleting: None,
             sidebar_cursor: 0,
             trackers: postio_ui::status::Trackers::default(),
             account: None,
@@ -1556,6 +1568,7 @@ impl App {
                 Finding::Correspondents => "@",
                 Finding::Roles(_) => "Role",
                 Finding::RoleFolder(..) => "Folder",
+                Finding::Rename => "Name",
             },
             query,
             rows,
@@ -1645,6 +1658,22 @@ impl App {
                     });
                 best_first(query, offered)
             }
+            Finding::Rename => {
+                let name = query.trim();
+                let title = if name.is_empty() {
+                    "Go back to its first name".to_owned()
+                } else {
+                    format!("Rename to “{}”", postio_ui::terminal::SafeText::new(name))
+                };
+                vec![(
+                    PaletteRow {
+                        title,
+                        chord: None,
+                        positions: Vec::new(),
+                    },
+                    PaletteAction::Rename(name.to_owned()),
+                )]
+            }
             Finding::RoleFolder(account, role) => {
                 let offered = std::iter::once((
                     "Automatic".to_owned(),
@@ -1713,6 +1742,16 @@ impl App {
                         self.say(&format!("{other} is not something this terminal can run"))
                     }
                     Some(PaletteAction::Open(scope)) => vec![Effect::Open(scope), Effect::Redraw],
+                    Some(PaletteAction::Rename(name)) => match self.renaming.take() {
+                        Some(key) => vec![
+                            Effect::EditSearch(crate::config_file::SearchEdit::Rename {
+                                key,
+                                name,
+                            }),
+                            Effect::Redraw,
+                        ],
+                        None => vec![Effect::Redraw],
+                    },
                     Some(PaletteAction::PickRole(account, role)) => {
                         self.open_palette(Finding::RoleFolder(account, role))
                     }
@@ -2288,6 +2327,10 @@ impl App {
     /// `postio_core::aim` -- the rule every frontend shares for what a verb
     /// acts on -- mirrored into [`App::state`], and sent.
     fn command(&mut self, id: &str) -> Vec<Effect> {
+        // A delete asked about is kept by any other command.
+        if id != "delete_saved_search" {
+            self.deleting = None;
+        }
         let last = self.list.total().saturating_sub(1);
         match id {
             "next_message" => self.move_to(self.cursor.saturating_add(1)),
@@ -2390,6 +2433,10 @@ impl App {
             }
             "edit_config" => return vec![Effect::EditConfig(None)],
             "toggle_folder" => return self.toggle_folder(),
+            "rename_saved_search"
+            | "move_saved_search_up"
+            | "move_saved_search_down"
+            | "delete_saved_search" => return self.saved_search_command(id),
             "add_account" => {
                 self.first_run = Some(crate::first_run::FirstRun::another());
                 self.focus = Focus::FirstRun;
@@ -3033,6 +3080,47 @@ impl App {
             effects.push(Effect::Open(ListScope::Mailbox(inbox.id)));
         }
         effects
+    }
+
+    /// Rename, move or delete the saved search under the sidebar cursor, as
+    /// the desktop's sidebar does. Deleting has no undo, so it asks first:
+    /// the same command again deletes, anything else keeps it.
+    fn saved_search_command(&mut self, id: &str) -> Vec<Effect> {
+        use crate::config_file::SearchEdit;
+        let Some(line) = self.sidebar.get(self.sidebar_cursor) else {
+            return Vec::new();
+        };
+        let Some(key) = line.saved.clone() else {
+            return Vec::new();
+        };
+        let name = line.label.to_string();
+        let edit = match id {
+            "rename_saved_search" => {
+                self.renaming = Some(key);
+                let effects = self.open_palette(Finding::Rename);
+                if let Some(palette) = self.palette.as_mut() {
+                    palette.input = tui_input::Input::default().with_value(name);
+                }
+                return effects;
+            }
+            "move_saved_search_up" => SearchEdit::Move { key, up: true },
+            "move_saved_search_down" => SearchEdit::Move { key, up: false },
+            _ if self.deleting.as_deref() == Some(key.as_str()) => {
+                self.deleting = None;
+                SearchEdit::Delete { key }
+            }
+            _ => {
+                self.deleting = Some(key);
+                let again = self
+                    .keys
+                    .key_for(KeyContext::Sidebar, "delete_saved_search")
+                    .unwrap_or_else(|| "the same key".to_owned());
+                return self.say(&format!(
+                    "Delete “{name}”? Press {again} again to delete it; anything else keeps it"
+                ));
+            }
+        };
+        vec![Effect::EditSearch(edit), Effect::Redraw]
     }
 
     /// Fold or unfold the folder under the sidebar cursor, and remember it.
@@ -4025,12 +4113,7 @@ pub(crate) mod tests {
     /// at `docs/book/src/desktop-and-terminal.md`. Taking one off is how
     /// the fix proves itself; the list is allowed to shrink and never to
     /// grow.
-    const GAPS: &[&str] = &[
-        "delete_saved_search",
-        "move_saved_search_down",
-        "move_saved_search_up",
-        "rename_saved_search",
-    ];
+    const GAPS: &[&str] = &[];
 
     fn opens(effects: &[Effect]) -> Vec<ListScope> {
         effects
@@ -5802,6 +5885,88 @@ pub(crate) mod tests {
         );
     }
 
+    #[test]
+    fn a_saved_search_is_renamed_moved_and_deleted_from_the_sidebar() {
+        use crate::config_file::SearchEdit;
+        let mut app = app((160, 40));
+        let mut contents = sidebar_contents();
+        contents.saved = vec![
+            crate::sidebar::Saved {
+                key: "from-ada".into(),
+                name: "from:ada".into(),
+                query: "from:ada".into(),
+            },
+            crate::sidebar::Saved {
+                key: "unread".into(),
+                name: "Unread".into(),
+                query: "is:unread".into(),
+            },
+        ];
+        update(&mut app, Input::Sidebar(contents));
+        app.focus = Focus::Sidebar;
+        app.sidebar_cursor = app
+            .sidebar
+            .iter()
+            .position(|line| line.saved.as_deref() == Some("from-ada"))
+            .expect("its line");
+        let edits = |effects: Vec<Effect>| -> Vec<SearchEdit> {
+            effects
+                .into_iter()
+                .filter_map(|effect| match effect {
+                    Effect::EditSearch(edit) => Some(edit),
+                    _ => None,
+                })
+                .collect()
+        };
+
+        // Rename: the palette, holding the name it has.
+        update(&mut app, press('r'));
+        assert_eq!(app.focus(), Focus::Palette);
+        assert_eq!(app.palette().expect("asking").query, "from:ada");
+        for _ in 0.."from:ada".len() {
+            update(&mut app, key(KeyCode::Backspace, KeyModifiers::NONE));
+        }
+        typing(&mut app, "Ada");
+        let effects = update(&mut app, key(KeyCode::Enter, KeyModifiers::NONE));
+        assert_eq!(
+            edits(effects),
+            [SearchEdit::Rename {
+                key: "from-ada".into(),
+                name: "Ada".into()
+            }]
+        );
+        assert_eq!(app.focus(), Focus::Sidebar, "back where it was asked");
+
+        let effects = update(&mut app, key(KeyCode::Down, KeyModifiers::SHIFT));
+        assert_eq!(
+            edits(effects),
+            [SearchEdit::Move {
+                key: "from-ada".into(),
+                up: false
+            }]
+        );
+
+        // Delete asks first; anything else between is a no.
+        assert!(edits(update(&mut app, press('d'))).is_empty());
+        assert!(
+            app.notice().unwrap_or_default().contains("again"),
+            "{:?}",
+            app.notice()
+        );
+        update(&mut app, press(' '));
+        assert_eq!(app.focus(), Focus::Sidebar);
+        assert!(
+            edits(update(&mut app, press('d'))).is_empty(),
+            "asked again"
+        );
+        assert_eq!(
+            edits(update(&mut app, press('d'))),
+            [SearchEdit::Delete {
+                key: "from-ada".into()
+            }]
+        );
+    }
+
     fn in_settings(app: &mut App) {
         update(app, Input::Sidebar(sidebar_contents()));
         let opening = opened(app, 3);
@@ -6124,6 +6289,7 @@ pub(crate) mod tests {
         let mut app = app((160, 40));
         let mut contents = sidebar_contents();
         contents.saved = vec![crate::sidebar::Saved {
+            key: "unread-from-ada".into(),
             name: "Unread from Ada".into(),
             query: "from:ada is:unread".into(),
         }];

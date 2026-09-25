@@ -192,6 +192,7 @@ mod tests {
             count: None,
             opens: None,
             searches: None,
+            saved: None,
             heading: false,
             depth,
             folds: folds.map(MailboxId::new),

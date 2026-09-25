@@ -961,6 +961,28 @@ fn perform(
                     }
                 });
             }
+            Effect::EditSearch(edit) => {
+                let client = client.clone();
+                let inputs = inputs.clone();
+                tokio::spawn(async move {
+                    let edited = tokio::task::spawn_blocking(move || {
+                        crate::config_file::path()
+                            .ok_or_else(|| "There is no config.toml here".to_owned())
+                            .and_then(|path| crate::config_file::edit_search(&path, &edit))
+                    })
+                    .await
+                    .unwrap_or_else(|error| Err(error.to_string()));
+                    match edited {
+                        Ok(names) => {
+                            let contents = sidebar_contents(&client, names).await;
+                            let _ = inputs.send(Input::Sidebar(contents)).await;
+                        }
+                        Err(reason) => {
+                            tracing::warn!(%reason, "could not change the saved search");
+                        }
+                    }
+                });
+            }
             Effect::RefreshSidebar => {
                 let client = client.clone();
                 let inputs = inputs.clone();

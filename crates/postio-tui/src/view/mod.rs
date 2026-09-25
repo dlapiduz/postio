@@ -360,6 +360,7 @@ mod tests {
                 folders: vec![inbox],
                 counts: Vec::new(),
                 saved: vec![crate::sidebar::Saved {
+                    key: "unread-from-ada".into(),
                     name: "Unread from Ada".into(),
                     query: "from:ada is:unread".into(),
                 }],

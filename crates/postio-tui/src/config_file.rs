@@ -20,27 +20,81 @@ pub fn text(path: &Path) -> String {
     std::fs::read_to_string(path).unwrap_or_default()
 }
 
+/// A change to a saved search, as the desktop's sidebar makes them.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SearchEdit {
+    /// Call it `name`; empty goes back to its key.
+    Rename {
+        /// Its `[filters]` key.
+        key: String,
+        /// What to call it.
+        name: String,
+    },
+    /// One place earlier (`up`) or later in the sidebar.
+    Move {
+        /// Its `[filters]` key.
+        key: String,
+        /// Toward the top.
+        up: bool,
+    },
+    /// Take it out of the file.
+    Delete {
+        /// Its `[filters]` key.
+        key: String,
+    },
+}
+
 /// Add `query` to `[filters]` at `path` as a pinned saved search, as the
 /// desktop's Ctrl+S does, and answer the pinned searches now.
 pub fn save_search(path: &Path, query: &str) -> Result<Vec<Saved>, String> {
+    rewrite(path, |config| {
+        config.save_filter(query);
+    })
+}
+
+/// Make `edit` to `[filters]` at `path`, through the same `postio_config`
+/// calls the desktop's sidebar makes, and answer the pinned searches now.
+pub fn edit_search(path: &Path, edit: &SearchEdit) -> Result<Vec<Saved>, String> {
+    use postio_config::filters::Reorder;
+    rewrite(path, |config| {
+        match edit {
+            SearchEdit::Rename { key, name } => config.rename_filter(key, name),
+            SearchEdit::Move { key, up } => {
+                config.move_filter(key, if *up { Reorder::Up } else { Reorder::Down })
+            }
+            SearchEdit::Delete { key } => config.delete_filter(key),
+        };
+    })
+}
+
+/// Change the filters in the file at `path` with `change`, leaving the rest
+/// of it as it was.
+fn rewrite(
+    path: &Path,
+    change: impl FnOnce(&mut postio_config::Config),
+) -> Result<Vec<Saved>, String> {
     let original = text(path);
     let mut config = postio_config::Config::from_toml_str(&original).unwrap_or_default();
-    config.save_filter(query);
+    change(&mut config);
     let patched = postio_config::patch_filters(&original, &config.filters)
         .map_err(|error| error.to_string())?;
     postio_config::Config::write_text_to_path(&patched, path).map_err(|error| error.to_string())?;
     Ok(pinned(&config))
 }
 
-/// The pinned saved searches in `config`, in the sidebar's order.
+/// The pinned saved searches in `config`, in the sidebar's order -- the
+/// one a reorder on either app writes.
 pub fn pinned(config: &postio_config::Config) -> Vec<Saved> {
     config
-        .filters
-        .iter()
-        .filter(|(_, filter)| filter.pinned)
-        .map(|(key, filter)| Saved {
-            name: filter.name.clone().unwrap_or_else(|| key.clone()),
-            query: filter.query.clone(),
+        .ordered_filter_keys()
+        .into_iter()
+        .filter_map(|key| {
+            let filter = config.filters.get(&key)?;
+            Some(Saved {
+                name: filter.name.clone().unwrap_or_else(|| key.clone()),
+                query: filter.query.clone(),
+                key,
+            })
         })
         .collect()
 }
@@ -89,5 +143,51 @@ mod tests {
             text(&path).contains("# my own notes"),
             "the rest of the file is left as it was"
         );
+    }
+
+    #[test]
+    fn a_saved_search_is_renamed_moved_and_deleted_in_the_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        std::fs::write(&path, "# my own notes\n").unwrap();
+        save_search(&path, "from:ada").unwrap();
+        let pinned = save_search(&path, "is:unread").unwrap();
+        let keys: Vec<String> = pinned.iter().map(|saved| saved.key.clone()).collect();
+        assert_eq!(keys.len(), 2);
+
+        let pinned = edit_search(
+            &path,
+            &SearchEdit::Rename {
+                key: keys[0].clone(),
+                name: "Ada".into(),
+            },
+        )
+        .unwrap();
+        assert_eq!(pinned[0].name, "Ada");
+        assert_eq!(pinned[0].query, "from:ada");
+
+        // The order is the file's, which the desktop reads too.
+        let pinned = edit_search(
+            &path,
+            &SearchEdit::Move {
+                key: keys[0].clone(),
+                up: false,
+            },
+        )
+        .unwrap();
+        let order: Vec<&str> = pinned.iter().map(|saved| saved.query.as_str()).collect();
+        assert_eq!(order, ["is:unread", "from:ada"]);
+        assert_eq!(pinned_at(&path).unwrap(), pinned, "as the file says");
+
+        let pinned = edit_search(
+            &path,
+            &SearchEdit::Delete {
+                key: keys[1].clone(),
+            },
+        )
+        .unwrap();
+        assert_eq!(pinned.len(), 1);
+        assert_eq!(pinned[0].name, "Ada");
+        assert!(text(&path).contains("# my own notes"));
     }
 }

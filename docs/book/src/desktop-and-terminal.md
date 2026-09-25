@@ -14,7 +14,9 @@ The terminal's gaps are tracked by a test,
 `every_command_is_answered_here_or_by_the_dispatcher` in
 `crates/postio-tui/src/app.rs`. It fails for any command the terminal neither
 handles itself nor passes on to something that does, unless its `GAPS` list
-names it. That list and this table change together.
+names it. The list is empty now: every command does something in both apps.
+What is left below is how they do it, and the features that are not a
+single command.
 
 ## Accounts
 
@@ -32,7 +34,7 @@ names it. That list and this table change together.
 | Feature | Desktop | Terminal | Notes |
 |---|---|---|---|
 | Folders and the Flagged, Snoozed, Drafts and Outbox views | ✓ | ✓ | |
-| Saved searches in the sidebar | ✓ | ◐ | Shown and run; rename, delete and reorder are missing |
+| Saved searches in the sidebar: run, rename, reorder, delete | ✓ | ✓ | `r`, `Shift+↑`/`Shift+↓`, `d` (twice: it asks first, as the desktop does) |
 | Go-to keys (inbox, sent, drafts, flagged) | ✓ | ✓ | |
 | Back to the previous view | ✓ | ✓ | |
 | Folders nested as the server keeps them; fold one | ✓ | ✓ | Space, or a click on its mark; both apps remember what is folded, each in its own file |
