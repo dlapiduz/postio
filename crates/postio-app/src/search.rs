@@ -325,25 +325,13 @@ fn install_order_toggle(window: &Window, finder: &Finder, feeds: &Feeds, order: 
     });
 }
 
-/// Read the store on the runtime and answer over a channel.
-///
-/// `work` runs on the blocking pool with a connection of its own — checked
-/// out ahead of background work already queued for one
-/// (`Database::connection_interactive`), because every caller here is a
-/// person waiting on the answer: a search, a reading-pane body. Without that
-/// priority this queued behind a first sync's backfill on the same pool
-/// `Database::connection` draws from, which is #672 — #425 gave writes a
-/// queue with a priority in it and never touched this. `None` from `work` —
-/// or a connection that could not be checked out — reaches the caller as
-/// `None`, which every caller here treats as "draw nothing", because a search
-/// that could not run has no answer and must not invent one.
-/// Carry what [`ask`] answered through the blocking pool, where `then`
-/// runs on it, and hand back what that made.
+/// Carry an answer through the blocking pool, where `then` runs on it, and
+/// hand back what that made.
 ///
 /// For work that is CPU rather than I/O -- sanitising a body is two
-/// html5ever parses -- and that must be done neither while holding the
-/// reader `ask` borrowed nor on the main thread, where every message the
-/// cursor settled on used to pay for it.
+/// html5ever parses -- and that must be done neither on the runtime task
+/// that read it nor on the main thread, where every message the cursor
+/// settled on used to pay for it.
 pub(crate) fn then_off_thread<T, U>(
     runtime: &tokio::runtime::Handle,
     answer: Answer<T>,
@@ -367,39 +355,8 @@ where
     receiver
 }
 
-pub(crate) fn ask<T, F, Fut>(
-    database: &Store,
-    runtime: &tokio::runtime::Handle,
-    work: F,
-) -> Answer<T>
-where
-    T: Send + 'static,
-    F: FnOnce(Checkout) -> Fut + Send + 'static,
-    Fut: std::future::Future<Output = Option<T>> + Send,
-{
-    let (sender, receiver) = async_channel::bounded(1);
-    let database = database.clone();
-    runtime.spawn(async move {
-        // A turn on a warm reader rather than a connection of its own: a
-        // search run took four cold caches per keystroke (#1602).
-        let answer = match database.read().await {
-            Ok(reader) => {
-                let answer = work(reader.checkout()).await;
-                drop(reader);
-                answer
-            }
-            Err(error) => {
-                tracing::warn!(%error, "no connection to read the index with");
-                None
-            }
-        };
-        let _ = sender.send_blocking(answer);
-    });
-    receiver
-}
-
-/// What [`ask`] hands back: one answer, or none.
-type Answer<T> = async_channel::Receiver<Option<T>>;
+/// One answer, or none.
+pub(crate) type Answer<T> = async_channel::Receiver<Option<T>>;
 
 /// Run a search when the box says a query is due.
 #[allow(clippy::too_many_arguments)]
