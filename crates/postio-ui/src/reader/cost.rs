@@ -64,6 +64,7 @@ thread_local! {
     pub(crate) static SURFACES_CREATED: Cell<u64> = const { Cell::new(0) };
     pub(crate) static SURFACES_RELEASED: Cell<u64> = const { Cell::new(0) };
     pub(crate) static PAGES_REQUESTED: Cell<u64> = const { Cell::new(0) };
+    pub(crate) static WAITED_OUT: Cell<u64> = const { Cell::new(0) };
 }
 
 /// Add to a counter.
@@ -112,6 +113,17 @@ pub fn note_surface_created() {
 /// process behind it can go, not whether a Rust value went out of scope.
 pub fn note_surface_released() {
     bump(&SURFACES_RELEASED, 1);
+}
+
+/// A conversation stopped waiting for the rest of itself and drew what it
+/// had, because its deadline passed.
+///
+/// Every one is a pane that showed nothing new for the whole deadline. It is
+/// the right answer when a body really is on its way and slow; it is a
+/// stall when the pane was waiting for something that was never coming --
+/// a body this machine does not have yet.
+pub fn note_waited_out() {
+    bump(&WAITED_OUT, 1);
 }
 
 /// A page of the message list was asked for.

@@ -42,6 +42,19 @@ async fn seed_thread(
     count: usize,
     hours: i64,
 ) -> (ThreadId, Vec<MessageId>) {
+    seed_thread_without(database, seat, name, count, hours, None).await
+}
+
+/// [`seed_thread`], with message `missing` left headers-only: its body never
+/// arrived, as the backfill leaves a message it has not reached.
+async fn seed_thread_without(
+    database: &Store,
+    seat: &Seat,
+    name: &str,
+    count: usize,
+    hours: i64,
+    missing: Option<usize>,
+) -> (ThreadId, Vec<MessageId>) {
     let connection = database.connect().await.expect("a connection");
     let mut thread = postio_model::Thread::new(seat.account);
     let thread = ThreadRepository::new(&connection)
@@ -65,7 +78,11 @@ async fn seed_thread(
             Some("Grace Hopper"),
             "grace@example.com",
         )];
-        message.sync.body_state = postio_model::BodyState::Full;
+        message.sync.body_state = if missing == Some(index) {
+            postio_model::BodyState::HeadersOnly
+        } else {
+            postio_model::BodyState::Full
+        };
         message.flags.insert(postio_model::Flag::Seen);
         let id = MessageRepository::new(&connection)
             .create(&mut message)
@@ -75,6 +92,10 @@ async fn seed_thread(
             .add_message(thread, id)
             .await
             .expect("join the message to the thread");
+        if missing == Some(index) {
+            ids.push(id);
+            continue;
+        }
         MessageRepository::new(&connection)
             .set_body(
                 id,
@@ -235,6 +256,89 @@ pub fn moving_onto_a_thread_draws_it_once_whole_and_under_its_own_header() {
             mismatches.is_empty(),
             "the header and the document disagreed about which thread is open: \
              {mismatches:?}"
+        );
+
+        window.destroy();
+        bridge.shutdown();
+    });
+}
+
+/// A thread with a message this machine has no body for yet is drawn at
+/// once, not at the deadline.
+///
+/// The pane waits for a thread to be whole before drawing it, so one
+/// keystroke is one document. But "whole" counted every body, and a body the
+/// backfill has not reached is not on its way in the next few hundred
+/// milliseconds -- so every such thread, which mid-sync is most of them, sat
+/// on the previous document for the whole deadline. Measured: Return on a
+/// thread painted nothing new for 464ms.
+pub fn a_thread_missing_a_body_is_drawn_without_waiting_for_it() {
+    crate::gtk_case(async {
+        let state_dir = tempfile::tempdir().expect("a state directory");
+        // SAFETY: first statement of a single-threaded test, before the app runs.
+        unsafe { std::env::set_var("XDG_STATE_HOME", state_dir.path()) };
+        if skip_without_display() {
+            return;
+        }
+
+        let database = test_support::memory().await;
+        let directory = tempfile::tempdir().expect("a blob directory");
+        let blobs = BlobStore::open(
+            directory.path().to_path_buf(),
+            &postio_storage::test_support::blob_keys(),
+        )
+        .expect("a blob store");
+        let (account, inbox) = {
+            let connection = database.connect().await.expect("a connection");
+            test_support::account_with_inbox(&connection).await
+        };
+        let seat = Seat {
+            account: account.id,
+            mailbox: inbox,
+        };
+        seed_thread(&database, &seat, "alpha", 3, 1).await;
+        seed_thread_without(&database, &seat, "charlie", 3, 5, Some(1)).await;
+
+        let (bridge, _replies) = Bridge::new(handler_fn(|_, _| async {})).expect("a runtime");
+        let (sink, _events) = event_channel();
+        let wiring = Wiring::new(database, blobs, bridge.handle(), sink, bridge.commands());
+
+        let window = Window::default();
+        window.present();
+        settle();
+        let _wired = feed_the_window(&window, &wiring)
+            .await
+            .expect("the store has an account");
+
+        let list = window.list();
+        assert!(
+            settle_until(async || list.model().n_items() == 2).await,
+            "the two seeded threads never reached the list"
+        );
+        let pane = window.conversation();
+        assert!(
+            settle_until(async || pane
+                .thread_document()
+                .is_some_and(|document| holds_whole(&document, "alpha", 3)))
+            .await,
+            "the window never showed the first thread whole"
+        );
+        watch_for(std::time::Duration::from_millis(500), || {}).await;
+
+        let waited = postio_ui::test_support::redraws_waited_out();
+        window.handle_key(gdk::Key::j, gdk::ModifierType::empty());
+        assert!(
+            settle_until(async || pane
+                .thread_document()
+                .is_some_and(|document| drawing(&document, &["charlie"]).is_some()))
+            .await,
+            "`j` never drew the thread with the missing body"
+        );
+        assert_eq!(
+            postio_ui::test_support::redraws_waited_out() - waited,
+            0,
+            "the pane waited out its deadline for a body this machine does not \
+             have, so the previous thread stayed on screen the whole time"
         );
 
         window.destroy();

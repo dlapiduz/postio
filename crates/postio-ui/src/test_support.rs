@@ -59,6 +59,12 @@ pub fn surfaces_held() -> i64 {
     cost::read(&cost::SURFACES_CREATED) as i64 - cost::read(&cost::SURFACES_RELEASED) as i64
 }
 
+/// How many times a conversation drew at its deadline rather than whole.
+/// See [`crate::reader::cost::note_waited_out`].
+pub fn redraws_waited_out() -> u64 {
+    cost::read(&cost::WAITED_OUT)
+}
+
 /// How many list pages this process has asked the store for.
 ///
 /// The bound on opening a folder: a screen's worth, whatever the folder
