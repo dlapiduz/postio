@@ -69,6 +69,8 @@ pub struct FirstRun {
     settings: Option<Settings>,
     /// Signing in again to an account that exists, not adding one.
     repair: bool,
+    /// Asked for from the mail, with an account already there to go back to.
+    another: bool,
 }
 
 /// Without the password, which nothing prints.
@@ -98,6 +100,7 @@ impl Default for FirstRun {
             sign_in: None,
             settings: None,
             repair: false,
+            another: false,
         }
     }
 }
@@ -115,6 +118,40 @@ impl FirstRun {
             settings: Some(settings),
             repair: true,
             ..FirstRun::default()
+        }
+    }
+
+    /// Adding an account beside the ones there are.
+    pub fn another() -> Self {
+        FirstRun {
+            another: true,
+            ..FirstRun::default()
+        }
+    }
+
+    /// Whether there is mail to go back to: this was asked for, not the
+    /// first screen of a store with no account.
+    pub fn leavable(&self) -> bool {
+        self.repair || self.another
+    }
+
+    /// What the screen is for.
+    pub fn heading(&self) -> &'static str {
+        if self.repair {
+            "Sign in again"
+        } else if self.another {
+            "Add an account"
+        } else {
+            "Add your first account"
+        }
+    }
+
+    /// The keys, while nothing more pressing is to be said.
+    pub fn hint(&self) -> &'static str {
+        if self.leavable() {
+            "Enter moves on. Tab changes field. Esc goes back."
+        } else {
+            "Enter moves on. Tab changes field. Ctrl+Q quits."
         }
     }
 
@@ -400,4 +437,20 @@ fn typed_server(typed: &str, default_port: u16) -> Option<Server> {
         port,
         security,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_heading_and_the_way_out_say_which_run_this_is() {
+        let first = FirstRun::default();
+        assert_eq!(first.heading(), "Add your first account");
+        assert!(!first.hint().contains("Esc"), "nothing to go back to");
+
+        let another = FirstRun::another();
+        assert_eq!(another.heading(), "Add an account");
+        assert!(another.hint().contains("Esc goes back"), "{}", another.hint());
+    }
 }

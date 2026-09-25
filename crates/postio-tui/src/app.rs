@@ -1181,6 +1181,20 @@ impl App {
         let Some(first_run) = self.first_run.as_mut() else {
             return Vec::new();
         };
+        // Escape goes back to the mail there is, except while a browser
+        // sign-in waits: there it gives the sign-in up, one step back.
+        if key.code == crossterm::event::KeyCode::Esc
+            && first_run.leavable()
+            && *first_run.status() != postio_ui::onboarding::Status::WaitingForBrowser
+        {
+            self.first_run = None;
+            self.focus = if self.settings.is_some() {
+                Focus::Settings
+            } else {
+                Focus::List
+            };
+            return vec![Effect::Redraw];
+        }
         match first_run.key(*key) {
             crate::first_run::Asked::Nothing => vec![Effect::Redraw],
             crate::first_run::Asked::Discover(address) => {
@@ -2363,6 +2377,10 @@ impl App {
                 self.focus = Focus::Settings;
             }
             "edit_config" => return vec![Effect::EditConfig(None)],
+            "add_account" => {
+                self.first_run = Some(crate::first_run::FirstRun::another());
+                self.focus = Focus::FirstRun;
+            }
             "toggle_result_order" => {
                 if let Some(bar) = self.search.as_mut() {
                     bar.newest_first = !bar.newest_first;
@@ -2967,11 +2985,14 @@ impl App {
         }
         // An account arrived from elsewhere -- added on the desktop, say --
         // while the first run was still asking for one: it is done, unless
-        // it is this run's own account and the last question is still open.
+        // it is this run's own account and the last question is still open,
+        // or the run was asked for from the mail, which it leaves by itself.
         if self
             .first_run
             .as_ref()
-            .is_some_and(|run| *run.status() != postio_ui::onboarding::Status::SyncWindow)
+            .is_some_and(|run| {
+                !run.leavable() && *run.status() != postio_ui::onboarding::Status::SyncWindow
+            })
         {
             self.first_run = None;
             self.focus = Focus::List;
@@ -3956,7 +3977,6 @@ pub(crate) mod tests {
     /// the fix proves itself; the list is allowed to shrink and never to
     /// grow.
     const GAPS: &[&str] = &[
-        "add_account",
         "delete_saved_search",
         "move_saved_search_down",
         "move_saved_search_up",
@@ -5619,6 +5639,31 @@ pub(crate) mod tests {
             "{effects:?}"
         );
         assert!(app.first_run().is_none());
+    }
+
+    #[test]
+    fn a_second_account_is_added_from_the_mail_and_can_be_left() {
+        use postio_ui::onboarding::Status;
+        let mut app = app((160, 40));
+        update(&mut app, Input::Sidebar(sidebar_contents()));
+        let opening = opened(&mut app, 3);
+        serve(&mut app, opening);
+
+        update(&mut app, key(KeyCode::Char('n'), KeyModifiers::ALT));
+        assert_eq!(app.focus(), Focus::FirstRun);
+        let run = app.first_run().expect("asking for the account");
+        assert_eq!(run.status(), &Status::Idle);
+        assert!(!run.repairing(), "a new account, not the one there");
+
+        // Mail keeps arriving while the address is typed; it does not close
+        // what was asked for.
+        typing(&mut app, "grace@example.test");
+        update(&mut app, Input::Sidebar(sidebar_contents()));
+        assert_eq!(app.focus(), Focus::FirstRun, "still asking");
+
+        update(&mut app, key(KeyCode::Esc, KeyModifiers::NONE));
+        assert!(app.first_run().is_none());
+        assert_eq!(app.focus(), Focus::List);
     }
 
     fn in_settings(app: &mut App) {

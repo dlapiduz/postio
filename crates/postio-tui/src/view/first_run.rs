@@ -28,7 +28,7 @@ pub fn draw(frame: &mut Frame, area: Rect, run: &FirstRun, theme: &Theme) {
 
     lines.push(Line::from(vec![
         Span::styled(
-            "Add your first account",
+            run.heading(),
             theme.style(Role::Text).add_modifier(Modifier::BOLD),
         ),
         Span::styled(
@@ -169,10 +169,7 @@ pub fn draw(frame: &mut Frame, area: Rect, run: &FirstRun, theme: &Theme) {
             ),
             other => match other.message() {
                 Some(message) => (message.to_owned(), Role::Error),
-                None => (
-                    "Enter moves on. Tab changes field. Ctrl+Q quits.".to_owned(),
-                    Role::Dim,
-                ),
+                None => (run.hint().to_owned(), Role::Dim),
             },
         };
         for part in sentence.split('\n') {

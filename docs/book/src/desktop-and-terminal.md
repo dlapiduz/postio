@@ -22,7 +22,7 @@ names it. That list and this table change together.
 |---|---|---|---|
 | First run: find the servers, sign in with a password | ✓ | ✓ | The same steps and sentences |
 | Sign in with a browser (OAuth) | ✓ | ✓ | The terminal shows the whole address; Enter opens it, `y` copies it |
-| Add a second account | ✓ | ✗ | |
+| Add a second account | ✓ | ✓ | `Alt+N` from anywhere; Escape goes back to the mail |
 | Enable, disable, remove (with undo), make default, rebuild index, update credential | ✓ | ✓ | From Settings |
 | Map a folder's role (Sent, Archive, …) | ✓ | ✓ | `M` asks for the role, then the folder |
 | Cycle the account scope, including all accounts at once | ✓ | ✓ | |
