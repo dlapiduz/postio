@@ -75,6 +75,24 @@ mod tests {
         assert!(defined > 0, "tokens.css must define the kicker");
     }
 
+    #[test]
+    fn a_type_role_is_named_not_retyped() {
+        let shell = include_str!("../../data/shell.css");
+        let retyped: Vec<&str> = postio_ui::tokens::TYPE_ROLES
+            .iter()
+            .filter(|(_, size)| shell.contains(&format!("font-size: {size};")))
+            .map(|(role, _)| *role)
+            .collect();
+        assert!(
+            retyped.is_empty(),
+            "shell.css retypes these roles' sizes instead of var(--postio-text-…): {retyped:?}"
+        );
+        assert!(
+            !shell.contains("0.8863rem"),
+            "13px is 0.8864rem; 0.8863rem is a second, rounded-differently copy"
+        );
+    }
+
     fn looks(body: &str) -> bool {
         body.split(';').any(|declaration| {
             let property = declaration.split(':').next().unwrap_or("").trim();

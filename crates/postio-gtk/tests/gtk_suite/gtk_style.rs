@@ -318,6 +318,7 @@ fn is_colour_token(name: &str) -> bool {
         || name.starts_with("--postio-radius-")
         || name.starts_with("--postio-shadow-")
         || name.starts_with("--postio-font-")
+        || name.starts_with("--postio-text-")
         || name.starts_with("--postio-chip-"))
 }
 
