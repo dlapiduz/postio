@@ -63,7 +63,7 @@ headerbar.postio-header button.toggle:checked {
   min-height: 32px;
   padding: 0 8px;
   border: 1px solid var(--postio-hairline);
-  border-radius: var(--postio-radius-md);
+  border-radius: var(--postio-radius-sm);
   background-color: var(--postio-surface);
 }
 
@@ -72,7 +72,7 @@ headerbar.postio-header button.toggle:checked {
 }
 
 .postio-search text {
-  font-size: 0.8863rem;
+  font-size: var(--postio-text-body);
   color: var(--postio-ink);
   background: none;
 }
@@ -94,7 +94,7 @@ headerbar.postio-header button.toggle:checked {
    because it is a character the user typed, not a picture. */
 .postio-search-marker {
   font-family: var(--postio-font-mono);
-  font-size: 0.7841rem;
+  font-size: var(--postio-text-small);
   color: var(--postio-accent);
 }
 
@@ -104,7 +104,7 @@ headerbar.postio-header button.toggle:checked {
    empty box never carries a stale number. */
 .postio-readout {
   font-family: var(--postio-font-mono);
-  font-size: 0.7159rem;
+  font-size: var(--postio-text-meta);
   color: var(--postio-dim);
   margin-left: 4px;
 }
@@ -118,14 +118,14 @@ headerbar.postio-header button.toggle:checked {
    which is the standalone cap the focused row draws. */
 .postio-keyhint {
   font-family: var(--postio-font-mono);
-  font-size: 0.7159rem;
+  font-size: var(--postio-text-meta);
   opacity: 0.75;
 }
 
 /* A hint that is not a control: what it does, then its cap
    (`widgets::keyhint::chip`). The words are secondary ink, the cap mono. */
 .postio-keyhint-label {
-  font-size: 0.8182rem;
+  font-size: var(--postio-text-label);
   color: var(--postio-ink-secondary);
 }
 
@@ -134,7 +134,7 @@ headerbar.postio-header button.toggle:checked {
    each surface adds only its own inset. */
 .postio-keyline {
   font-family: var(--postio-font-mono);
-  font-size: 0.7159rem;
+  font-size: var(--postio-text-meta);
   line-height: 1.7;
   color: var(--postio-faint);
 }
@@ -164,13 +164,13 @@ button.postio-button:focus-visible {
 button.postio-button-regular {
   min-height: 30px;
   padding: 0 13px;
-  font-size: 0.8523rem;
+  font-size: var(--postio-text-ui);
 }
 
 button.postio-button-small {
   min-height: 26px;
   padding: 0 10px;
-  font-size: 0.7841rem;
+  font-size: var(--postio-text-small);
 }
 
 button.postio-button-primary {
@@ -371,7 +371,7 @@ button.postio-icon-button:hover {
 
 .postio-folder-count {
   font-family: var(--postio-font-mono);
-  font-size: 0.7841rem;
+  font-size: var(--postio-text-small);
   color: var(--postio-dim);
 }
 
@@ -540,14 +540,14 @@ button.postio-icon-button:hover {
 .postio-thread-index,
 .postio-thread-when {
   font-family: var(--postio-font-mono);
-  font-size: 0.6818rem;
+  font-size: var(--postio-text-micro);
   color: var(--postio-faint);
 }
 
 .postio-thread-sender,
 .postio-thread-line {
   font-family: var(--postio-font-body);
-  font-size: 0.8864rem;
+  font-size: var(--postio-text-body);
   font-weight: 400;
   color: var(--postio-ink-secondary);
 }
@@ -610,7 +610,7 @@ button.postio-icon-button:hover {
 }
 
 .postio-row-sender {
-  font-size: 0.9204rem;
+  font-size: var(--postio-text-reading);
   font-weight: 400;
   color: var(--postio-ink-secondary);
 }
@@ -625,7 +625,7 @@ button.postio-icon-button:hover {
 }
 
 .postio-row-subject {
-  font-size: 0.8863rem;
+  font-size: var(--postio-text-body);
   font-weight: 400;
   color: var(--postio-ink-secondary);
 }
@@ -644,7 +644,7 @@ button.postio-icon-button:hover {
    `--postio-faint` (3:1, the key hint's floor below) in every state, read
    or unread. */
 .postio-row-snippet {
-  font-size: 0.8182rem;
+  font-size: var(--postio-text-label);
   color: var(--postio-dim);
 }
 
@@ -661,7 +661,7 @@ button.postio-icon-button:hover {
 }
 
 .postio-row-badge {
-  font-size: 0.6818rem;
+  font-size: var(--postio-text-micro);
   color: var(--postio-dim);
 }
 
@@ -669,7 +669,7 @@ button.postio-icon-button:hover {
    is what makes an unread run visible down the left edge at a glance. */
 .postio-row-avatar {
   font-family: var(--postio-font-heading);
-  font-size: 0.8182rem;
+  font-size: var(--postio-text-label);
   font-weight: 500;
   color: var(--postio-dim);
 }
@@ -679,7 +679,7 @@ button.postio-icon-button:hover {
 }
 
 .postio-row-hint {
-  font-size: 0.7159rem;
+  font-size: var(--postio-text-meta);
   color: var(--postio-faint);
 }
 
@@ -748,13 +748,13 @@ button.postio-icon-button:hover {
 .postio-list-title {
   font-family: var(--postio-font-heading);
   font-weight: var(--postio-font-heading-weight);
-  font-size: 1.3636rem;
+  font-size: var(--postio-text-title);
   color: var(--postio-ink);
 }
 
 .postio-list-meta {
   font-family: var(--postio-font-mono);
-  font-size: 0.7841rem;
+  font-size: var(--postio-text-small);
   color: var(--postio-dim);
 }
 
@@ -945,7 +945,7 @@ button.postio-icon-button:hover {
 }
 
 .postio-liststate-detail {
-  font-size: 0.8863rem;
+  font-size: var(--postio-text-body);
   line-height: 1.5;
   color: var(--postio-ink-secondary);
 }
@@ -973,7 +973,7 @@ button.postio-icon-button:hover {
 .postio-orientation-title {
   font-family: var(--postio-font-heading);
   font-weight: var(--postio-font-heading-weight);
-  font-size: 0.8863rem;
+  font-size: var(--postio-text-body);
   color: var(--postio-ink);
 }
 
@@ -1003,7 +1003,7 @@ button.postio-icon-button:hover {
 .postio-plate-title {
   font-family: var(--postio-font-heading);
   font-weight: var(--postio-font-heading-weight);
-  font-size: 0.8182rem;
+  font-size: var(--postio-text-label);
   letter-spacing: 0.16em;
   text-transform: uppercase;
   color: var(--postio-ink-secondary);
@@ -1045,7 +1045,7 @@ button.postio-icon-button:hover {
 }
 
 .postio-finder-title {
-  font-size: 0.8863rem;
+  font-size: var(--postio-text-body);
   color: var(--postio-ink);
 }
 
@@ -1057,7 +1057,7 @@ button.postio-icon-button:hover {
    the same face the focused row's key hints use. */
 .postio-finder-cap {
   font-family: var(--postio-font-mono);
-  font-size: 0.7159rem;
+  font-size: var(--postio-text-meta);
   color: var(--postio-dim);
 }
 
@@ -1078,7 +1078,7 @@ button.postio-icon-button:hover {
 }
 
 .postio-cheatsheet-title {
-  font-size: 0.8523rem;
+  font-size: var(--postio-text-ui);
   color: var(--postio-ink);
 }
 
@@ -1118,7 +1118,7 @@ button.postio-icon-button:hover {
    part of what is being read. */
 .postio-preview-kicker {
   font-family: var(--postio-font-mono);
-  font-size: 0.7159rem;
+  font-size: var(--postio-text-meta);
   color: var(--postio-dim);
   margin-bottom: 10px;
 }
@@ -1142,7 +1142,7 @@ button.postio-icon-button:hover {
 
 /* Why there is no body yet, or no result focused. Never a blank pane. */
 .postio-preview-note {
-  font-size: 0.8523rem;
+  font-size: var(--postio-text-ui);
   color: var(--postio-faint);
 }
 
@@ -1161,14 +1161,14 @@ button.postio-icon-button:hover {
 /* `multipart/mixed · 4 parts · 1.2 MB`. Mono: it is a type and two counts. */
 .postio-parts-summary {
   font-family: var(--postio-font-mono);
-  font-size: 0.7159rem;
+  font-size: var(--postio-text-meta);
   color: var(--postio-dim);
 }
 
 /* The canvas' outline tag. Steel rather than red — nothing has gone wrong,
    the reader did exactly what it promises to do. */
 .postio-parts-blocked {
-  font-size: 0.7159rem;
+  font-size: var(--postio-text-meta);
   border-color: var(--postio-selected-border);
   color: var(--postio-accent-text);
 }
@@ -1206,7 +1206,7 @@ button.postio-icon-button:hover {
    and a MIME type is an identifier rather than prose. */
 .postio-parts-name {
   font-family: var(--postio-font-mono);
-  font-size: 0.7841rem;
+  font-size: var(--postio-text-small);
   color: var(--postio-ink-secondary);
 }
 
@@ -1216,7 +1216,7 @@ button.postio-icon-button:hover {
 }
 
 .postio-parts-size {
-  font-size: 0.7159rem;
+  font-size: var(--postio-text-meta);
   color: var(--postio-faint);
 }
 
@@ -1235,7 +1235,7 @@ button.postio-icon-button:hover {
 
 .postio-parts-meta {
   font-family: var(--postio-font-mono);
-  font-size: 0.7159rem;
+  font-size: var(--postio-text-meta);
   color: var(--postio-dim);
 }
 
@@ -1244,7 +1244,7 @@ button.postio-icon-button:hover {
    12.5px for the reason `.postio-thread-line` gives: at 12.5px and weight 400
    the cap-height strokes wash out and `HTML` renders as `HIML`. */
 .postio-parts-note {
-  font-size: 0.8864rem;
+  font-size: var(--postio-text-body);
   line-height: 1.6;
   color: var(--postio-ink-secondary);
 }
@@ -1271,13 +1271,13 @@ button.postio-icon-button:hover {
 }
 
 .postio-attachment-name {
-  font-size: 0.7841rem;
+  font-size: var(--postio-text-small);
   color: var(--postio-ink-secondary);
 }
 
 .postio-attachment-size {
   font-family: var(--postio-font-mono);
-  font-size: 0.7159rem;
+  font-size: var(--postio-text-meta);
   color: var(--postio-faint);
 }
 
@@ -1306,13 +1306,13 @@ button.postio-icon-button:hover {
 /* `SecretError`'s own sentence, which carries the unlock hint. Prose, and
    the one thing on this screen the user has to actually read. */
 .postio-unavailable-reason {
-  font-size: 0.8864rem;
+  font-size: var(--postio-text-body);
   line-height: 1.5;
   color: var(--postio-ink);
 }
 
 .postio-unavailable-note {
-  font-size: 0.8523rem;
+  font-size: var(--postio-text-ui);
   line-height: 1.5;
   color: var(--postio-ink-secondary);
 }
@@ -1329,7 +1329,7 @@ button.postio-icon-button:hover {
    no second page and nothing is being held back for later. */
 .postio-onboarding-step {
   font-family: var(--postio-font-mono);
-  font-size: 0.7159rem;
+  font-size: var(--postio-text-meta);
   color: var(--postio-dim);
 }
 
@@ -1340,7 +1340,7 @@ button.postio-icon-button:hover {
 /* A field's caption (`widgets::field`): onboarding's, the account
    detail's -- one look, and the control's accessible name. */
 .postio-field-label {
-  font-size: 0.8864rem;
+  font-size: var(--postio-text-body);
   color: var(--postio-ink-secondary);
 }
 
@@ -1357,7 +1357,7 @@ button.postio-icon-button:hover {
 }
 
 .postio-onboarding-card-heading {
-  font-size: 0.8864rem;
+  font-size: var(--postio-text-body);
   font-weight: 500;
   color: var(--postio-ink);
 }
@@ -1374,7 +1374,7 @@ button.postio-icon-button:hover {
    screen the user has to actually read, and iCloud's is the difference
    between the password working and not. */
 .postio-onboarding-note {
-  font-size: 0.8864rem;
+  font-size: var(--postio-text-body);
   line-height: 1.5;
   color: var(--postio-ink-secondary);
   margin-top: 4px;
@@ -1382,7 +1382,7 @@ button.postio-icon-button:hover {
 
 .postio-onboarding-help {
   padding: 0;
-  font-size: 0.8523rem;
+  font-size: var(--postio-text-ui);
 }
 
 /* The browser sign-in step (#1179, Design/screens/23). Never a login form:
@@ -1391,7 +1391,7 @@ button.postio-icon-button:hover {
    actually asks for. */
 .postio-onboarding-browser-flow {
   font-family: var(--postio-font-mono);
-  font-size: 0.7841rem;
+  font-size: var(--postio-text-small);
   padding: 10px 12px;
   border: 1px solid var(--postio-hairline);
   background-color: var(--postio-ground);
@@ -1399,7 +1399,7 @@ button.postio-icon-button:hover {
 }
 
 .postio-onboarding-scope {
-  font-size: 0.8523rem;
+  font-size: var(--postio-text-ui);
   color: var(--postio-ink);
 }
 
@@ -1429,7 +1429,7 @@ button.postio-icon-button:hover {
 .postio-settings-window-title {
   font-family: var(--postio-font-heading);
   font-weight: var(--postio-font-heading-weight);
-  font-size: 0.8523rem;
+  font-size: var(--postio-text-ui);
   letter-spacing: 0.12em;
   color: var(--postio-ink);
 }
@@ -1442,7 +1442,7 @@ button.postio-icon-button:hover {
 /* The same chip vocabulary the query bar uses for an operator: a small
    labelled tag, not a bespoke pill. */
 .postio-settings-tag {
-  font-size: 0.7159rem;
+  font-size: var(--postio-text-meta);
   background-color: var(--postio-selected-bg);
   color: var(--postio-selected-accent-text);
 }
@@ -1497,7 +1497,7 @@ button.postio-icon-button:hover {
 }
 
 .postio-settings-nav-row label {
-  font-size: 0.8523rem;
+  font-size: var(--postio-text-ui);
   color: var(--postio-ink-secondary);
 }
 
@@ -1537,7 +1537,7 @@ button.postio-icon-button:hover {
 }
 
 .postio-settings-pane-description {
-  font-size: 0.8523rem;
+  font-size: var(--postio-text-ui);
   color: var(--postio-ink-secondary);
 }
 
@@ -1575,7 +1575,7 @@ button.postio-icon-button:hover {
 
 .postio-settings-view text {
   font-family: var(--postio-font-mono);
-  font-size: 0.8182rem;
+  font-size: var(--postio-text-label);
   color: var(--postio-ink);
   background: none;
 }
@@ -1602,13 +1602,13 @@ button.postio-icon-button:hover {
 /* `[ui] in config.toml` — which table this pane writes. */
 .postio-settings-footer-target {
   font-family: var(--postio-font-mono);
-  font-size: 0.7159rem;
+  font-size: var(--postio-text-meta);
   color: var(--postio-ink-secondary);
 }
 
 .postio-settings-footer {
   font-family: var(--postio-font-mono);
-  font-size: 0.7159rem;
+  font-size: var(--postio-text-meta);
   color: var(--postio-faint);
 }
 
@@ -1623,7 +1623,7 @@ button.postio-icon-button:hover {
 
 button.postio-settings-keys-binding {
   font-family: var(--postio-font-mono);
-  font-size: 0.7841rem;
+  font-size: var(--postio-text-small);
   min-height: 24px;
   min-width: 26px;
   padding: 0 8px;
@@ -1688,7 +1688,7 @@ button.postio-settings-keys-binding.postio-settings-keys-capturing {
   min-width: 34px;
   min-height: 34px;
   font-family: var(--postio-font-mono);
-  font-size: 0.7841rem;
+  font-size: var(--postio-text-small);
   border: 1px solid var(--postio-hairline);
   background-color: var(--postio-ground);
   color: var(--postio-ink-secondary);
@@ -1700,13 +1700,13 @@ button.postio-settings-keys-binding.postio-settings-keys-capturing {
 }
 
 .postio-settings-account-metadata {
-  font-size: 0.7841rem;
+  font-size: var(--postio-text-small);
 }
 
 /* `default`, beside the address. A word, never a colour alone. */
 .postio-settings-account-default {
   font-family: var(--postio-font-mono);
-  font-size: 0.7159rem;
+  font-size: var(--postio-text-meta);
   padding: 1px 6px;
   background-color: var(--postio-selected-bg);
   color: var(--postio-selected-accent-text);
@@ -1759,7 +1759,7 @@ button.postio-settings-keys-binding.postio-settings-keys-capturing {
   border-radius: var(--postio-radius-sm);
   border: 1px solid var(--postio-selected-border);
   background-color: var(--postio-selected-bg);
-  font-size: 0.8864rem;
+  font-size: var(--postio-text-body);
   line-height: 1.5;
   color: var(--postio-ink);
 }
@@ -1767,7 +1767,7 @@ button.postio-settings-keys-binding.postio-settings-keys-capturing {
 /* Why a list has nothing in it (`widgets::empty_note`). One quiet line,
    the look the box's and the refine column's empties already had. */
 .postio-empty-note {
-  font-size: 0.8523rem;
+  font-size: var(--postio-text-ui);
   color: var(--postio-faint);
 }
 
@@ -1779,7 +1779,7 @@ button.postio-settings-keys-binding.postio-settings-keys-capturing {
   border-radius: var(--postio-radius-sm);
   background-color: var(--postio-hover-bg);
   color: var(--postio-ink-secondary);
-  font-size: 0.8864rem;
+  font-size: var(--postio-text-body);
   line-height: 1.5;
 }
 
@@ -1822,7 +1822,7 @@ button.postio-settings-keys-binding.postio-settings-keys-capturing {
 .postio-compose-heading {
   font-family: var(--postio-font-heading);
   font-weight: var(--postio-font-heading-weight);
-  font-size: 1.3636rem;
+  font-size: var(--postio-text-title);
   color: var(--postio-ink);
 }
 
@@ -1857,7 +1857,7 @@ button.postio-settings-keys-binding.postio-settings-keys-capturing {
   outline: none;
   min-height: 26px;
   padding: 0;
-  font-size: 0.9204rem;
+  font-size: var(--postio-text-reading);
   color: var(--postio-ink);
 }
 
@@ -1870,13 +1870,13 @@ button.postio-settings-keys-binding.postio-settings-keys-capturing {
 }
 
 .postio-compose-identity {
-  font-size: 0.9204rem;
+  font-size: var(--postio-text-reading);
   color: var(--postio-ink-secondary);
 }
 
 button.postio-compose-more {
   font-family: var(--postio-font-mono);
-  font-size: 0.7159rem;
+  font-size: var(--postio-text-meta);
   padding: 2px 6px;
   min-height: 0;
   color: var(--postio-dim);
@@ -2006,7 +2006,7 @@ button.postio-compose-more {
   background-color: var(--postio-surface);
   box-shadow: none;
   font-family: var(--postio-font-body);
-  font-size: 0.8523rem;
+  font-size: var(--postio-text-ui);
   font-weight: 400;
   color: var(--postio-ink-secondary);
 }
@@ -2045,7 +2045,7 @@ button.postio-compose-more {
 .postio-check {
   min-height: 26px;
   color: var(--postio-ink);
-  font-size: 0.8523rem;
+  font-size: var(--postio-text-ui);
 }
 
 .postio-check check {
@@ -2085,7 +2085,7 @@ button.postio-compose-more {
    that do not line up read as a mistake. */
 .postio-stat-line {
   font-family: var(--postio-font-mono);
-  font-size: 0.7841rem;
+  font-size: var(--postio-text-small);
   color: var(--postio-dim);
 }
 
@@ -2108,7 +2108,7 @@ button.postio-compose-more {
 
 .postio-notice-label {
   color: var(--postio-ink-secondary);
-  font-size: 0.8523rem;
+  font-size: var(--postio-text-ui);
 }
 
 /* ── The conversation pane's own chrome (canvas turn 8a, #1004/#1005/#1006)
@@ -2199,7 +2199,7 @@ button.postio-compose-more {
    than a row. */
 .postio-rail-heading {
   font-family: var(--postio-font-heading);
-  font-size: 0.7159rem;
+  font-size: var(--postio-text-meta);
   letter-spacing: 0.08em;
   text-transform: uppercase;
   color: var(--postio-faint);
@@ -2219,7 +2219,7 @@ button.postio-compose-more {
    agree with. */
 .postio-rail-number {
   font-family: var(--postio-font-mono);
-  font-size: 0.7159rem;
+  font-size: var(--postio-text-meta);
   color: var(--postio-faint);
 }
 
@@ -2233,7 +2233,7 @@ button.postio-compose-more {
    single name. */
 .postio-rail-length {
   font-family: var(--postio-font-mono);
-  font-size: 0.7159rem;
+  font-size: var(--postio-text-meta);
   color: var(--postio-faint);
 }
 
@@ -2267,7 +2267,7 @@ button.postio-compose-more {
 
 .postio-rail-hint {
   font-family: var(--postio-font-mono);
-  font-size: 0.7159rem;
+  font-size: var(--postio-text-meta);
   color: var(--postio-faint);
 }
 
@@ -2294,7 +2294,7 @@ button.postio-compose-more {
    rail is already the least important thing in the pane. */
 .postio-rail-hide {
   font-family: var(--postio-font-mono);
-  font-size: 0.7159rem;
+  font-size: var(--postio-text-meta);
   color: var(--postio-faint);
   background: none;
   border: none;
@@ -2313,7 +2313,7 @@ button.postio-compose-more {
    different faces would make it read as a name that had been cut off. */
 .postio-rail-initials {
   font-family: var(--postio-font-mono);
-  font-size: 0.7159rem;
+  font-size: var(--postio-text-meta);
   color: var(--postio-ink-secondary);
 }
 
@@ -2323,7 +2323,7 @@ button.postio-compose-more {
    and must not compete with them. */
 .conversation-counter {
   font-family: var(--postio-font-mono);
-  font-size: 0.7159rem;
+  font-size: var(--postio-text-meta);
   color: var(--postio-ink-secondary);
   background: none;
   border: 1px solid var(--postio-hairline-strong);
