@@ -118,6 +118,7 @@ mod gtk_prev_view;
 mod gtk_rail;
 mod gtk_reader_account;
 mod gtk_reader_actions;
+mod gtk_reader_anchor;
 mod gtk_reader_fonts;
 mod gtk_reader_outgoing;
 mod gtk_reader_pane_owner;
@@ -1285,6 +1286,14 @@ const CASES: &[(&str, fn())] = &[
     (
         "gtk_conversation::a_pane_shown_again_does_not_show_the_thread_it_held_before",
         gtk_conversation::a_pane_shown_again_does_not_show_the_thread_it_held_before as fn(),
+    ),
+    (
+        "gtk_reader_anchor::a_late_body_does_not_throw_the_reader_back_to_the_top",
+        gtk_reader_anchor::a_late_body_does_not_throw_the_reader_back_to_the_top as fn(),
+    ),
+    (
+        "gtk_reader_anchor::showing_a_messages_images_keeps_its_place",
+        gtk_reader_anchor::showing_a_messages_images_keeps_its_place as fn(),
     ),
     (
         "gtk_rail::the_same_thread_again_keeps_the_rails_rows_and_scroll",
