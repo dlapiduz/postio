@@ -712,9 +712,25 @@ async fn mail_that_arrives_during_a_long_download_is_still_noticed() {
     let before = stored_in(&database, mailbox.id).await;
 
     // Let the backfill actually get going, so what follows lands in the
-    // middle of a download rather than racing its start.
-    tokio::time::sleep(postio_test_support::scaled(Duration::from_secs(1))).await;
-    let running = engine.backfill_progress().await.expect("progress");
+    // middle of a download rather than racing its start. Waited for, not
+    // slept: a sleep is stretched by `POSTIO_TEST_PATIENCE` while the mock's
+    // latency is not, so on CI (patience 3) the sleep outlasted the whole
+    // queue and the test failed its own precondition -- the download it
+    // meant to interrupt was already over.
+    let running = tokio::time::timeout(
+        postio_test_support::scaled(Duration::from_secs(10)),
+        async {
+            loop {
+                let progress = engine.backfill_progress().await.expect("progress");
+                if progress.in_flight > 0 || progress.stored + progress.failed > 0 {
+                    return progress;
+                }
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+        },
+    )
+    .await
+    .expect("the backfill never started");
     assert!(
         running.pending > 100,
         "the backfill drained before the test could ask its question, so a \
