@@ -59,9 +59,6 @@ pub struct MessageHeader {
     /// leading marks after (the conversation's participant chips, #1671).
     from_row: gtk::Box,
     from_label: gtk::Label,
-    /// The `To`/`Cc` row, whose trailing edge a surface may add to without
-    /// adding height (the conversation's scoping note and counter, #1671).
-    recipients_row: gtk::Box,
     account_row: gtk::Box,
     account_swatch: gtk::Box,
     account_name: gtk::Label,
@@ -202,7 +199,6 @@ impl MessageHeader {
             verbs,
             from_row: top_row,
             from_label,
-            recipients_row,
             account_row,
             account_swatch,
             account_name,
@@ -260,15 +256,6 @@ impl MessageHeader {
     /// count the date column carries there.
     pub fn add_before_date(&self, widget: &impl IsA<gtk::Widget>) {
         self.from_row.insert_child_after(widget, Some(&self.sender));
-    }
-
-    /// Place `widget` at the trailing end of the `To`/`Cc` row.
-    ///
-    /// For the conversation pane's position counter (#1671), on the row
-    /// that already holds a button -- the `Cc` disclosure -- styled the same
-    /// way so it carries it without growing.
-    pub fn add_after_recipients(&self, widget: &impl IsA<gtk::Widget>) {
-        self.recipients_row.append(widget);
     }
 
     /// Shows or hides subject, sender and date, leaving recipients alone.

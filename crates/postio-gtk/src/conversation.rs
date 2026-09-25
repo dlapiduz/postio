@@ -606,8 +606,8 @@ pub const DOCUMENT_ACTIONS: [crate::widgets::Action; 4] = [
 /// `To`, who the newest message went to -- the message the verbs answer.
 /// What only a thread has goes *on* those rows, never on a row of its own:
 /// the participant chips after `From` and the scoping note before the
-/// count, and the position counter at the end of the `To` row, beside the
-/// `Cc` disclosure that already sets that row's height.
+/// count, and the position counter ahead of the verbs, on the row the verb
+/// bar's buttons already make the tallest.
 pub struct Header {
     header: crate::reader::MessageHeader,
     expand_all: std::rc::Rc<crate::widgets::KeycapButton>,
@@ -631,7 +631,7 @@ pub struct Header {
     /// the scoping note in row 2 is required". Beside the count it
     /// qualifies, as it was beside the old meta line.
     scoping: gtk::Label,
-    /// `3/6 ⌄` at the `To` row's trailing edge, below the ladder's floor.
+    /// `3/6 ⌄` ahead of the verbs, below the ladder's floor.
     ///
     /// A `MenuButton` rather than a button and a popover wired together: it
     /// brings the open-on-click, close-on-`Esc` and close-on-click-outside
@@ -709,15 +709,14 @@ impl Header {
         counter.set_valign(gtk::Align::Center);
         counter.set_popover(Some(&index));
         counter.set_visible(false);
-        // In a *vertical* box of its own, which reports no baseline. The
-        // `To` row lines its field name up by baseline, and the counter's
-        // smaller mono text put its baseline 3px higher in a box of the
-        // same height -- so a row aligning the two grew to 21px, and the
-        // body under the header moved whenever the counter appeared
-        // (#1671). A horizontal box would pass the baseline straight up.
-        let counter_slot = gtk::Box::new(gtk::Orientation::Vertical, 0);
-        counter_slot.append(&counter);
-        header.add_after_recipients(&counter_slot);
+        // Ahead of the verbs, on the subject row, and nowhere shorter. On
+        // the `To` row it was a button in an 18px row of text, and whether
+        // it fitted came down to font metrics: it grew that row by 3px on
+        // the workstation and, once baseline alignment was ruled out, by 2px
+        // more on CI (#1671). The subject row is as tall as the verb bar,
+        // a row of whole buttons with padding, so a counter cannot be what
+        // sets its height on any machine.
+        verbs.prepend(&counter);
 
         Header {
             header,
