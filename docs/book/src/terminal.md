@@ -10,6 +10,9 @@ They take turns, though. Only one of them can have your mail open at a time,
 so close one before opening the other
 ([ADR 0041](https://github.com/dlapiduz/postio/blob/main/docs/decisions/0041-one-app-opens-the-store-at-a-time.md)).
 
+Where the two apps still differ is set out in
+[The desktop app and the terminal, side by side](desktop-and-terminal.md).
+
 ## Running it
 
 From a checkout:

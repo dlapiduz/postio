@@ -4,6 +4,7 @@
 
 - [Installing Postio](install.md)
 - [Postio in a terminal](terminal.md)
+  - [The desktop app and the terminal, side by side](desktop-and-terminal.md)
 - [Keyboard reference](keyboard.md)
 - [config.toml reference](config.md)
 - [How sync works](sync.md)
