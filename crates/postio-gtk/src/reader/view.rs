@@ -1283,9 +1283,10 @@ impl Reader {
     }
 
     /// Run one of the banners' commands, as its button would: `show_images`,
-    /// `always_show_images` or `unsubscribe`. Only when the banner is there to
-    /// offer it -- a key on a message with nothing to show or no list to leave
-    /// does nothing. Returns whether it ran.
+    /// `always_show_images` or `unsubscribe`. Only when the message has what
+    /// the banner offers -- images held back, a list to leave -- whichever
+    /// notice the slot happens to be showing; a key on a message with nothing
+    /// to show or no list to leave does nothing. Returns whether it ran.
     ///
     /// The registry entries these answer were buttons and nothing else, so a
     /// person without a pointer could not reach them (Principle II;
@@ -1293,11 +1294,13 @@ impl Reader {
     pub fn run_banner_command(&self, command: postio_core::CommandId) -> bool {
         use postio_core::CommandId;
         match command {
-            CommandId::ShowImages if self.banner.is_visible() => self.banner.emit_show_once(),
-            CommandId::AlwaysShowImages if self.banner.is_visible() => {
+            CommandId::ShowImages if self.notices.wanted(Notice::RemoteImages) => {
+                self.banner.emit_show_once()
+            }
+            CommandId::AlwaysShowImages if self.notices.wanted(Notice::RemoteImages) => {
                 self.banner.emit_always_allow()
             }
-            CommandId::Unsubscribe if self.unsubscribe_banner.is_visible() => {
+            CommandId::Unsubscribe if self.notices.wanted(Notice::Unsubscribe) => {
                 self.unsubscribe_banner.emit_unsubscribe()
             }
             _ => return false,
