@@ -365,6 +365,13 @@ struct Anchor {
     offset: f64,
     /// `window.scrollY`, for a document with no messages to anchor to.
     y: f64,
+    /// For a single message: the text block at the pane's top edge, as its
+    /// tag and its place among the document's blocks of that tag, and how far
+    /// down it the edge is. A block, not a pixel: showing the images adds
+    /// room above whatever is being read, and a pixel restore then moves the
+    /// words by exactly that much. Images are removed, not replaced, while
+    /// blocked, so counting blocks of one tag is stable across the two.
+    block: Option<(String, u32, f64)>,
 }
 
 /// Keeping the reader's place across a reload of the same content.
@@ -393,6 +400,16 @@ struct Place {
 /// Reports where the page is scrolled to, once per frame at most.
 const SCROLL_REPORTER: &str = "(() => {\
   let pending = false;\
+  const BLOCKS = 'P,LI,TD,TH,H1,H2,H3,H4,H5,H6,BLOCKQUOTE,PRE,DIV';\
+  const block = () => {\
+    let el = document.elementFromPoint(8, 1);\
+    while (el && el !== document.body && !BLOCKS.split(',').includes(el.tagName)) {\
+      el = el.parentElement;\
+    }\
+    if (!el || el === document.body) { return ''; }\
+    const index = Array.prototype.indexOf.call(document.getElementsByTagName(el.tagName), el);\
+    return el.tagName + '\\n' + index + '\\n' + (-el.getBoundingClientRect().top);\
+  };\
   const post = () => {\
     pending = false;\
     let element = '', offset = 0;\
@@ -401,7 +418,7 @@ const SCROLL_REPORTER: &str = "(() => {\
       if (box.bottom > 0) { element = el.id; offset = -box.top; break; }\
     }\
     window.webkit.messageHandlers.postioScroll.postMessage(\
-      element + '\\n' + offset + '\\n' + window.scrollY);\
+      element + '\\n' + offset + '\\n' + window.scrollY + '\\n' + (element ? '' : block()));\
   };\
   addEventListener('scroll', () => {\
     if (!pending) { pending = true; requestAnimationFrame(post); }\
@@ -440,10 +457,24 @@ impl Place {
         if !offset.is_finite() || !y.is_finite() {
             return;
         }
+        let tag = parts.next().unwrap_or_default();
+        let index = parts.next().and_then(|part| part.parse::<u32>().ok());
+        let into = parts.next().and_then(|part| part.parse::<f64>().ok());
+        let block = match (index, into) {
+            (Some(index), Some(into))
+                if !tag.is_empty()
+                    && tag.chars().all(|c| c.is_ascii_alphanumeric())
+                    && into.is_finite() =>
+            {
+                Some((tag.to_owned(), index, into))
+            }
+            _ => None,
+        };
         self.anchor.replace(Some(Anchor {
             element: element.to_owned(),
             offset,
             y,
+            block,
         }));
     }
 
@@ -484,20 +515,52 @@ impl Place {
 /// than the top.
 fn restore_script(anchor: &Anchor) -> String {
     // The element id is Postio's own (`message_anchor`), but it arrives back
-    // from the page, so it is quoted as data rather than trusted.
+    // from the page, so it is quoted as data rather than trusted. The block's
+    // tag was checked alphanumeric when it was reported.
     let quoted: String = anchor
         .element
         .chars()
         .filter(|character| character.is_ascii_alphanumeric() || matches!(character, '-' | '_'))
         .collect();
+    let (tag, index, into) = anchor
+        .block
+        .clone()
+        .unwrap_or_else(|| (String::new(), 0, 0.0));
+    // Placed once now, before the first paint, and again each time an image
+    // settles -- an image's box is only its final size once it has loaded or
+    // failed, and that can be after the first paint -- until the person
+    // scrolls somewhere else, which is theirs to decide.
     format!(
         "(() => {{\
            const id = \"{quoted}\";\
-           if (id) {{\
-             const el = document.getElementById(id);\
-             if (el) {{ window.scrollTo(0, el.getBoundingClientRect().top + window.scrollY + {offset}); }}\
-           }} else {{\
-             window.scrollTo(0, {y});\
+           const tag = \"{tag}\";\
+           const target = () => {{\
+             if (id) {{\
+               const el = document.getElementById(id);\
+               return el ? el.getBoundingClientRect().top + window.scrollY + {offset} : null;\
+             }}\
+             if (tag) {{\
+               const el = document.getElementsByTagName(tag)[{index}];\
+               if (el) {{ return el.getBoundingClientRect().top + window.scrollY + {into}; }}\
+             }}\
+             return {y};\
+           }};\
+           let placed = null;\
+           const place = () => {{\
+             const y = target();\
+             if (y === null) {{ return; }}\
+             window.scrollTo(0, y);\
+             placed = window.scrollY;\
+           }};\
+           place();\
+           const again = () => {{\
+             if (placed !== null && Math.abs(window.scrollY - placed) < 2) {{ place(); }}\
+           }};\
+           for (const img of document.images) {{\
+             if (!img.complete) {{\
+               img.addEventListener('load', again, {{ once: true }});\
+               img.addEventListener('error', again, {{ once: true }});\
+             }}\
            }}\
          }})()",
         offset = anchor.offset,
