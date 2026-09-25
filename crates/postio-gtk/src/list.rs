@@ -922,6 +922,15 @@ impl MessageList {
             return;
         }
         self.imp().window.borrow_mut().abandon(generation, page);
+        // Given up on under the question in force: the answer is that there
+        // is nothing, which ends the wait exactly as a first page that
+        // brought no rows does in `deliver_for`. A search with no hits gets
+        // here -- it has no page 0 to ask for -- and without this a list that
+        // was empty when it arrived stayed "loading", so the pane withheld
+        // "nothing matched" for good.
+        if generation == self.generation() && self.imp().loading.replace(false) {
+            self.emit_by_name::<()>("filled", &[]);
+        }
         let complete = {
             let mut slot = self.imp().refresh.borrow_mut();
             match slot.as_mut() {
