@@ -166,7 +166,7 @@ flatpak/
 └── dev.postio.PostioTui.json# NEW  org.freedesktop.Platform
 .github/workflows/release.yml# + tui-flatpak and tui-tarball jobs, same suite gate
 scripts/checks/check-crate-boundaries.py  # + postio-tui, postio-client, postio-ui
-docs/decisions/0041-one-app-opens-the-store-at-a-time.md  # NEW (Proposed)
+docs/decisions/0041-one-app-opens-the-store-at-a-time.md  # NEW (Accepted 2026-09-25)
 ```
 
 **Structure Decision**: Three new crates. `postio-client` and `postio-host`

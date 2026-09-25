@@ -91,7 +91,7 @@ request on the protocol. This is the bulk of the non-terminal work, and it is
 also FR-004's "logic once": the same requests are what the terminal frontend
 makes. `postio-gtk` and `postio-ui` never name the store, so they are
 unaffected. This decision outlives the feature and binds all later work, so it
-is recorded as **ADR 0041** (Proposed on this branch).
+is recorded as **ADR 0041** (Accepted 2026-09-25).
 
 **Spike T0.3 result (2026-09-23, T007)**: the daemon adds two costs to a
 cold start, and both are small. Starting a process of the daemon's size is
