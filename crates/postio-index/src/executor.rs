@@ -355,11 +355,7 @@ async fn suggestion_for(
         return Ok(None);
     };
     // A quoted word asked for itself, exactly -- see `TextTerm::quoted`.
-    if terms.next().is_some()
-        || term.negated
-        || term.quoted
-        || query.filters().next().is_some()
-    {
+    if terms.next().is_some() || term.negated || term.quoted || query.filters().next().is_some() {
         return Ok(None);
     }
     let Some(metadata_query) = postio_search::suggest::widened(&term.value) else {

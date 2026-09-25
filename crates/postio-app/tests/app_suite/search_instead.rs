@@ -140,10 +140,7 @@ pub fn a_misspelled_word_lists_the_mail_it_meant_and_says_so() {
             .flush();
 
         let expected = format!("Showing results for {word}");
-        let said = settle_until(async || {
-            said_in(view.panel().upcast_ref(), &expected)
-        })
-        .await;
+        let said = settle_until(async || said_in(view.panel().upcast_ref(), &expected)).await;
         assert!(
             said,
             "searching `{typo}` should list the mail for `{word}` and say so; the \
