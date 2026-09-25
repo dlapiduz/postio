@@ -57,14 +57,6 @@ const ENTRIES: &[Entry] = &[
         description: "Show per-row actions when the pointer rests over a row.",
     },
     Entry {
-        path: "ui.show_key_hints",
-        kind: "boolean",
-        default: "true",
-        description: "Show the focused row's key hints (`e reply`, `a archive`). \
-                       Off leaves every binding in force -- this only stops the row from \
-                       naming them.",
-    },
-    Entry {
         path: "ui.sender_avatars",
         kind: "boolean",
         default: "true",

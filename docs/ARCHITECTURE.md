@@ -121,7 +121,7 @@ its own loop. No GTK type appears in that module, and none may.
 `PRODUCT.md` §8 wants every command to have a keyboard shortcut, a palette entry
 and an accessible action. There is **one enumerable table** — `postio-core::registry` —
 and the keymap, the `Ctrl+K` palette, the `?` cheat sheet, the right-click menu,
-the key hints on the focused row and `docs/keybindings.md` are all *derived*
+the action bars' key caps and `docs/keybindings.md` are all *derived*
 from it.
 
 **Why:** three hand-maintained lists drift within a release. One table cannot.

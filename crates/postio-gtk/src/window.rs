@@ -3440,7 +3440,6 @@ impl Window {
     /// the rows already on screen rather than at the next start.
     pub fn apply_ui(&self, ui: &postio_config::UiConfig) {
         self.list().set_show_actions(ui.show_hover_actions);
-        self.list().set_show_hints(ui.show_key_hints);
     }
 
     /// Reopen where the last session left off.

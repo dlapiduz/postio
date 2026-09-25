@@ -815,24 +815,8 @@ impl Session {
             density: self.ui.density.into(),
             theme: self.ui.theme.into(),
             show_hover_actions: self.ui.show_hover_actions,
-            show_key_hints: self.ui.show_key_hints,
             sender_avatars: self.ui.sender_avatars,
         }
-    }
-    /// The key hints the focused row announces, in canvas order.
-    ///
-    /// From this session's keymap, so a rebinding reaches the hint: a row
-    /// that taught the wrong key would be worse than one that taught none.
-    /// `postio_ui::row::hints` decides which verbs get one, and both
-    /// frontends show the same two.
-    pub fn row_hints(&self) -> Vec<crate::RowHintFfi> {
-        postio_ui::row::hints(&self.keymap())
-            .into_iter()
-            .map(|(key, label)| crate::RowHintFfi {
-                key,
-                label: label.to_string(),
-            })
-            .collect()
     }
 }
 

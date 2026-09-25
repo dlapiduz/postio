@@ -30,9 +30,18 @@
 //!
 //! Canvas 1b, left to right and top to bottom: an avatar chip of initials,
 //! then a column carrying sender · thread-count badge · attachment ·
-//! time, the subject, the snippet, and — on the focused row only — the key
-//! hints that teach the keyboard. Unread is the canvas' own treatment,
-//! weight and full-strength ink rather than a dot.
+//! time, the subject, and the snippet. Unread is the canvas' own
+//! treatment, weight and full-strength ink rather than a dot.
+//!
+//! # One height per density
+//!
+//! Nothing a row can *be* — focused, the cursor, selected, hovered — changes
+//! how tall it is. Those states change what the row draws and only ever
+//! queue a draw. The focused row used to grow a line of key hints, and every
+//! row below it moved down by that line whenever the keyboard moved: a list
+//! that reflows under the cursor is a list you cannot aim at. The hints are
+//! gone (maintainer, 2026-09-25); the keyboard is taught by the action bars,
+//! the palette and the cheat sheet instead.
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
@@ -42,8 +51,6 @@ use adw::subclass::prelude::*;
 use chrono::Local;
 use gtk::{gdk, glib, graphene, gsk, pango};
 use postio_config::Density;
-use postio_core::Keymap;
-use std::borrow::Cow;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 /// How many row widgets this process has built.
@@ -64,29 +71,6 @@ static ROWS_BUILT: AtomicU64 = AtomicU64::new(0);
 use postio_ui::conversation::participants as participants_line;
 
 use crate::list::Row;
-// The hints moved to `postio_ui::row`: which two verbs a focused row
-// announces, and in what order, is a decision about teaching the keyboard --
-// not about how GTK draws text. Both frontends show the same two.
-pub use postio_ui::row::hints;
-
-/// The hints for a keymap alone.
-#[cfg(test)]
-fn hints_for(keymap: &Keymap) -> Vec<(String, &'static str)> {
-    hints(keymap)
-}
-
-/// The hints a row shows. Every hint applies to every row now: none of them
-/// depends on whether the row stands for more than one message.
-fn hints_for_row(keymap: &Keymap, _row: Option<&Row>) -> Vec<(String, &'static str)> {
-    hints(keymap)
-}
-
-/// [`hints_for`] against the registry's own bindings, for the tests that
-/// check a rebind reaches the hint without caring what the row's default is.
-#[cfg(test)]
-fn default_hints() -> Vec<(String, &'static str)> {
-    hints_for(&Keymap::resolve(&Default::default()))
-}
 // `initials` and `timestamp` moved to `postio_ui::row`: what two letters
 // stand for a sender, and whether a time reads as `09:14`, `Thu` or `12 Aug`,
 // are answers a mail client gives once. Two frontends deriving them apart is
@@ -169,9 +153,9 @@ struct Ink {
 
 /// Which of the four variants a role is drawn in.
 ///
-/// Selected and focused are different states — selection is what an action
-/// will hit, focus is where the keyboard is — and only selection changes the
-/// ink. Focus changes what the row *reveals*.
+/// Selected and the cursor are different states — selection is what an
+/// action will hit, the cursor is where the keyboard is — and only selection
+/// changes the ink. The cursor wears an edge instead.
 fn tone(selected: bool, unread: bool) -> usize {
     usize::from(selected) * 2 + usize::from(unread)
 }
@@ -219,14 +203,13 @@ struct Palette {
     time: [Ink; 4],
     avatar: [Ink; 4],
     badge: Ink,
+    /// The hover actions' glyph ink.
     hint: Ink,
-    key: Ink,
     hairline: gdk::RGBA,
     /// The higher-contrast rule [`top_edge`] picks over a selected or cursor
     /// row's own tint.
     hairline_strong: gdk::RGBA,
     selected_edge: gdk::RGBA,
-    key_edge: gdk::RGBA,
     selected_bg: gdk::RGBA,
     /// The ground under a row that is in the selection, as against the one
     /// the cursor is on.
@@ -313,11 +296,9 @@ impl Palette {
             avatar: four("postio-row-avatar"),
             badge: ink(&["postio-row-badge"]),
             hint: ink(&["postio-row-hint"]),
-            key: ink(&["postio-key"]),
             hairline: paint(&["postio-row-edge", "hairline"]),
             hairline_strong: paint(&["postio-row-edge", "hairline", "strong"]),
             selected_edge: paint(&["postio-row-edge", "selected"]),
-            key_edge: paint(&["postio-row-edge", "key"]),
             selected_bg: paint(&["postio-row-ground", "selected"]),
             checked_bg: paint(&["postio-row-ground", "checked"]),
             checked_mark: paint(&["postio-row-ground", "check-mark"]),
@@ -420,12 +401,12 @@ const RUN: f32 = 8.0;
 /// The accent edge a selected row wears, and the hairline between rows.
 const EDGE: f32 = 3.0;
 
-/// A key cap's padding and corner, matching `.postio-key`.
+/// The thread-count badge's padding and corner, matching `.postio-key`.
 const CAP: (f32, f32, f32) = (4.0, 1.0, 2.0);
 
 /// The laid-out row: the pango layouts and where they go.
 ///
-/// Rebuilt whenever the data, the width, the state or the style changes,
+/// Rebuilt whenever the data, the width, the tone or the style changes,
 /// which on a scrolling list means once per row as it comes into view —
 /// the same cost any list pays, and nothing per frame.
 struct Laid {
@@ -435,17 +416,14 @@ struct Laid {
     badge: Option<pango::Layout>,
     subject: pango::Layout,
     snippet: Option<pango::Layout>,
-    hints: Vec<(pango::Layout, pango::Layout)>,
     /// Baseline of the sender line, from the top of the content.
     line1: f32,
     /// Top of each of the following lines, from the top of the content.
     subject_y: f32,
     snippet_y: f32,
-    hints_y: f32,
     height: f32,
     width: i32,
     tone: usize,
-    focused: bool,
 }
 
 mod imp {
@@ -454,16 +432,6 @@ mod imp {
     pub struct MessageRowView {
         pub(super) row: RefCell<Option<Row>>,
         pub(super) density: Cell<Density>,
-        /// The live keymap the focused row's key hints are generated from,
-        /// together with `row` — see [`super::MessageRowView::hints`]. Kept
-        /// as the keymap rather than the derived hints so a row change picks
-        /// up the same hints a keymap change would, with no ordering
-        /// dependency between `set_row` and `set_keymap` on bind.
-        /// Borrowed from [`Keymap::defaults`] until a live keymap arrives, so
-        /// a row costs nothing to build. GTK builds one of these per row it
-        /// realises: resolving the defaults here was quadratic per row, and
-        /// owning a copy of them was a hundred allocations per row (#1216).
-        pub(super) keymap: RefCell<Cow<'static, Keymap>>,
         pub(super) first: Cell<bool>,
         /// Whether an action would hit this row.
         pub(super) selected: Cell<bool>,
@@ -476,19 +444,7 @@ mod imp {
         /// Whether the row offers its actions under the pointer at all —
         /// `[ui].show_hover_actions`.
         pub(super) actions: Cell<bool>,
-        /// Whether the focused row may reveal its key hints at all —
-        /// `[ui].show_key_hints`. Every binding stays in force either way;
-        /// this only stops the row from naming them (#422).
-        pub(super) hints_enabled: Cell<bool>,
         pub(super) hovered: Cell<bool>,
-        /// Whether the keyboard is on this row.
-        ///
-        /// Stored rather than asked for, because `measure` reads it and a
-        /// measurement that depends on where the focus happens to be *during*
-        /// a layout pass is one that changes between passes. GTK's size
-        /// negotiation does not converge on that, and a list that will not
-        /// converge simply stops painting.
-        pub(super) focused: Cell<bool>,
         /// The invisible label the palette is read off. Never measured,
         /// never allocated, never drawn — only asked what the cascade says.
         pub(super) probe: gtk::Label,
@@ -502,9 +458,9 @@ mod imp {
         pub(super) sentinel: gtk::Label,
         pub(super) palette: RefCell<Option<Rc<Palette>>>,
         pub(super) laid: RefCell<Option<Laid>>,
-        /// The window whose focus this row is watching, and the handler
-        /// watching it.
-        pub(super) watch: RefCell<Option<(gtk::Window, glib::SignalHandlerId)>>,
+        /// The row's fixed geometry at this density and cascade. Reset with
+        /// the palette and the density, never by the row's data or state.
+        pub(super) frame: Cell<Option<super::Frame>>,
     }
 
     impl Default for MessageRowView {
@@ -513,21 +469,17 @@ mod imp {
             MessageRowView {
                 row: RefCell::new(None),
                 density: Cell::new(Density::default()),
-                keymap: RefCell::new(Cow::Borrowed(Keymap::defaults())),
-
                 first: Cell::new(false),
                 selected: Cell::new(false),
                 cursor: Cell::new(false),
                 index: Cell::new(0),
                 actions: Cell::new(true),
-                hints_enabled: Cell::new(true),
                 hovered: Cell::new(false),
-                focused: Cell::new(false),
                 probe: gtk::Label::new(None),
                 sentinel: gtk::Label::new(None),
                 palette: RefCell::new(None),
                 laid: RefCell::new(None),
-                watch: RefCell::new(None),
+                frame: Cell::new(None),
             }
         }
     }
@@ -544,10 +496,14 @@ mod imp {
             self.parent_constructed();
             let obj = self.obj();
             obj.add_css_class("postio-row");
+            // A subject in a taller fallback script draws into the same slot
+            // as any other (see `frame`), so what overflows it is clipped
+            // here rather than painted over the next row.
+            obj.set_overflow(gtk::Overflow::Hidden);
             // Focusable so the widget works on its own — in a test, a bench,
             // or any surface that is not a `GtkListView`. Inside one,
             // `crate::list_view` turns this off: there the list item takes
-            // the keyboard, and `shows_hints` follows it up the tree.
+            // the keyboard.
             obj.set_focusable(true);
             // The picture of a row, not the row: `GtkListItemWidget` around
             // it carries the `ListItem` role and the name, because that is
@@ -626,43 +582,11 @@ mod imp {
             self.obj().restyle();
         }
 
-        /// Selection, hover and focus all change what the row draws, and
-        /// focus changes how tall it is.
-        fn state_flags_changed(&self, previous: &gtk::StateFlags) {
-            self.parent_state_flags_changed(previous);
-            self.laid.replace(None);
-            self.obj().queue_resize();
-            self.obj().refresh_focus();
-        }
-
-        /// The focused row is the row the keyboard is on, which is a fact
-        /// about the window rather than about this widget — and one no
-        /// state flag on this widget reports while the window is not the
-        /// active one. So the row watches the window's focus directly, and
-        /// keeps showing its hints when you alt-tab away and come back.
-        fn root(&self) {
-            self.parent_root();
-            let obj = self.obj();
-            let Some(window) = obj.root().and_downcast::<gtk::Window>() else {
-                return;
-            };
-            let id = window.connect_notify_local(
-                Some("focus-widget"),
-                glib::clone!(
-                    #[weak]
-                    obj,
-                    move |_, _| obj.refresh_focus()
-                ),
-            );
-            self.watch.replace(Some((window, id)));
-        }
-
-        fn unroot(&self) {
-            if let Some((window, id)) = self.watch.take() {
-                window.disconnect(id);
-            }
-            self.parent_unroot();
-        }
+        // No `state_flags_changed`, and no watch on the window's focus.
+        // Focus, hover and selection change what a row draws, never its
+        // height, and each of them reaches the row through a setter that
+        // queues a draw. Re-measuring on every state flag was what let the
+        // focused row push the rest of the list down.
     }
 }
 
@@ -694,7 +618,10 @@ impl MessageRowView {
         imp.row.replace(row);
         self.update_property(&[gtk::accessible::Property::Label(&self.spoken())]);
         imp.laid.replace(None);
-        self.queue_resize();
+        // A draw, not a resize: what a row says never changes its height
+        // (see `frame`), so rebinding one — a page landing, a flag flipping
+        // in place — has no reason to send the list back through layout.
+        self.queue_draw();
     }
 
     /// The message currently on screen, if any.
@@ -720,6 +647,7 @@ impl MessageRowView {
     pub fn set_density(&self, density: Density) {
         if self.imp().density.replace(density) != density {
             self.imp().laid.replace(None);
+            self.imp().frame.set(None);
             self.queue_resize();
         }
     }
@@ -729,33 +657,6 @@ impl MessageRowView {
         self.imp().density.get()
     }
 
-    /// The key and label pairs the focused row would reveal right now.
-    ///
-    /// A function of both the keymap and the row: `Thread` drops out when
-    /// the row has nothing to thread (`thread_count <= 1`), matching the
-    /// badge's own test so the two can never disagree.
-    ///
-    /// Public for the same reason [`Self::spoken`] is: a hint the row draws
-    /// but nothing can read back is a hint nothing can prove correct.
-    pub fn hints(&self) -> Vec<(String, &'static str)> {
-        let imp = self.imp();
-        hints_for_row(&imp.keymap.borrow(), imp.row.borrow().as_ref())
-    }
-
-    /// Regenerate the focused row's key hints from the live keymap.
-    ///
-    /// A rebind changes what the hints say without a restart, the same
-    /// promise `postio-gtk::config` already keeps for the resolver, the
-    /// palette and the cheat sheet.
-    pub fn set_keymap(&self, keymap: &Keymap) {
-        let imp = self.imp();
-        if **imp.keymap.borrow() != *keymap {
-            imp.keymap.replace(Cow::Owned(keymap.clone()));
-            imp.laid.replace(None);
-            self.queue_resize();
-        }
-    }
-
     /// Mark the row as part of the selection — what an action will hit.
     ///
     /// Selection lives on the `GtkListItem` around the row and its state
@@ -763,8 +664,9 @@ impl MessageRowView {
     /// That is not a workaround: selection is a fact about the *model*, and
     /// a row reading it off its own widget state would be reading a copy.
     pub fn set_selected(&self, selected: bool) {
+        // A draw, not a resize: the tone changes the ink, and `lay_out`
+        // notices a different tone by itself. The height does not move.
         if self.imp().selected.replace(selected) != selected {
-            self.imp().laid.replace(None);
             self.queue_draw();
         }
     }
@@ -782,7 +684,6 @@ impl MessageRowView {
     /// and steel edge, a selected row wears a check.
     pub fn set_cursor(&self, cursor: bool) {
         if self.imp().cursor.replace(cursor) != cursor {
-            self.imp().laid.replace(None);
             self.queue_draw();
         }
     }
@@ -884,59 +785,6 @@ impl MessageRowView {
         }
     }
 
-    /// Whether the row may reveal key hints at all.
-    ///
-    /// `[ui].show_key_hints`. Off means no row ever shows one, focused or
-    /// not — every binding still works, this only stops the row from
-    /// naming it, for someone who already knows the keyboard (#422).
-    pub fn set_show_key_hints(&self, show: bool) {
-        if self.imp().hints_enabled.replace(show) != show {
-            self.queue_draw();
-        }
-    }
-
-    /// Whether the key hints are showing — the focused row, and only it.
-    ///
-    /// `is_focus` rather than `has_focus`: the question is which row the
-    /// keyboard would act on, and that stays true while the window is in the
-    /// background. A row that forgot its hints on alt-tab would be teaching
-    /// the keyboard only while you were not using it.
-    pub fn shows_hints(&self) -> bool {
-        self.imp().hints_enabled.get() && self.holds_keyboard() && self.imp().row.borrow().is_some()
-    }
-
-    /// Whether the keyboard is on this row, asked rather than remembered.
-    ///
-    /// Either place counts: inside a `GtkListView` the focus lands on the
-    /// list item wrapping this widget, and anywhere else — a test, a bench,
-    /// the row used as a plain widget — on the widget itself.
-    ///
-    /// Live, because the remembered answer could be another row's (#753).
-    /// The signals that maintain it fire when focus *moves*, and recycling
-    /// is the case where focus did not move and the row underneath the
-    /// widget changed: scrolling hands a widget that was on the focused row
-    /// to a row with no claim on it, and the stale flag rode along. Asking
-    /// costs two pointer comparisons, which is cheaper than the bookkeeping
-    /// that would keep a cache honest through recycling.
-    fn holds_keyboard(&self) -> bool {
-        self.is_focus() || self.parent().is_some_and(|parent| parent.is_focus())
-    }
-
-    /// Note that the keyboard has arrived or left, and re-lay the row.
-    ///
-    /// [`shows_hints`](Self::shows_hints) reads the live answer, so this
-    /// exists for its side effect rather than for the flag: the hints take
-    /// vertical space, so a row that gains or loses them has to be measured
-    /// again. The remembered value is only how that change is detected.
-    fn refresh_focus(&self) {
-        let focused = self.holds_keyboard();
-        if self.imp().focused.replace(focused) == focused {
-            return;
-        }
-        self.imp().laid.replace(None);
-        self.queue_resize();
-    }
-
     /// The row's height at the width it has, for a test that wants to check
     /// the three densities against each other.
     pub fn measured_height(&self, width: i32) -> f32 {
@@ -948,6 +796,7 @@ impl MessageRowView {
         let imp = self.imp();
         imp.palette.replace(None);
         imp.laid.replace(None);
+        imp.frame.set(None);
         self.queue_resize();
     }
 
@@ -960,6 +809,7 @@ impl MessageRowView {
             return palette;
         }
         imp.laid.replace(None);
+        imp.frame.set(None);
         // Shared between every row under the same cascade: reading one is
         // twenty-eight style recomputes on the probe, and a list of fifty
         // rows read fifty identical palettes. The hairline colour is what
@@ -1001,7 +851,6 @@ impl MessageRowView {
     /// holds. Returns a summary; the layouts themselves stay cached.
     fn lay_out(&self, width: i32) -> Summary {
         let imp = self.imp();
-        let focused = self.shows_hints();
         let selected = imp.selected.get();
         let unread = imp.row.borrow().as_ref().is_some_and(|row| !row.seen);
         let tone = tone(selected, unread);
@@ -1009,7 +858,6 @@ impl MessageRowView {
         if let Some(laid) = imp.laid.borrow().as_ref()
             && laid.width == width
             && laid.tone == tone
-            && laid.focused == focused
         {
             return Summary {
                 height: laid.height,
@@ -1018,20 +866,13 @@ impl MessageRowView {
 
         let palette = self.palette();
         let metrics = Metrics::for_density(imp.density.get());
-        let laid = self.build(width, &metrics, &palette, tone, focused);
+        let laid = self.build(width, &metrics, &palette, tone);
         let height = laid.height;
         imp.laid.replace(Some(laid));
         Summary { height }
     }
 
-    fn build(
-        &self,
-        width: i32,
-        metrics: &Metrics,
-        palette: &Palette,
-        tone: usize,
-        focused: bool,
-    ) -> Laid {
+    fn build(&self, width: i32, metrics: &Metrics, palette: &Palette, tone: usize) -> Laid {
         let context = self.pango_context();
         let line = |ink: &Ink, text: &str| {
             let layout = pango::Layout::new(&context);
@@ -1040,7 +881,6 @@ impl MessageRowView {
             layout
         };
         let row = self.imp().row.borrow().clone();
-        let unread = row.as_ref().is_some_and(|row| !row.seen);
 
         let column_x = metrics.inset + metrics.avatar + metrics.gap;
         let column = (width as f32 - column_x - metrics.inset).max(40.0);
@@ -1114,49 +954,7 @@ impl MessageRowView {
             &initials(row.as_ref().and_then(|row| row.from.as_ref())),
         );
 
-        // Key hints are the focused row's alone: the app teaches its own
-        // keyboard without the list carrying the clutter on every line.
-        let hints = if focused {
-            hints_for_row(&self.imp().keymap.borrow(), row.as_ref())
-                .iter()
-                .map(|(key, label)| (line(&palette.key, key), line(&palette.hint, label)))
-                .collect()
-        } else {
-            Vec::new()
-        };
-
-        // Baselines, so the sender, the badge and the time sit on one line
-        // rather than on three near-misses.
-        let baseline = |layout: &pango::Layout| layout.baseline() as f32 / pango::SCALE as f32;
-        let mut line1 = baseline(&sender).max(baseline(&time));
-        if let Some(badge) = &badge {
-            line1 = line1.max(baseline(badge));
-        }
-        let below = |layout: &pango::Layout| layout.pixel_size().1 as f32 - baseline(layout);
-        let mut line1_h = line1 + below(&sender).max(below(&time));
-        if let Some(badge) = &badge {
-            line1_h = line1_h.max(line1 + below(badge));
-        }
-
-        let subject_y = line1_h + metrics.subject_gap;
-        let snippet_y = subject_y + subject.pixel_size().1 as f32;
-        let mut content = snippet_y;
-        if let Some(snippet) = &snippet {
-            content += snippet.pixel_size().1 as f32;
-        }
-        let hints_y = content + metrics.hints_gap;
-        if !hints.is_empty() {
-            let cap = hints
-                .iter()
-                .map(|(key, label)| {
-                    (key.pixel_size().1 as f32 + CAP.1 * 2.0).max(label.pixel_size().1 as f32)
-                })
-                .fold(0.0f32, f32::max);
-            content = hints_y + cap;
-        }
-
-        let height = metrics.pad_y * 2.0 + content.max(metrics.avatar);
-        let _ = unread;
+        let frame = self.frame(metrics, palette);
         Laid {
             avatar,
             sender,
@@ -1164,16 +962,63 @@ impl MessageRowView {
             badge,
             subject,
             snippet,
-            hints,
-            line1,
-            subject_y,
-            snippet_y,
-            hints_y,
-            height,
+            line1: frame.line1,
+            subject_y: frame.subject_y,
+            snippet_y: frame.snippet_y,
+            height: frame.height,
             width,
             tone,
-            focused,
         }
+    }
+
+    /// Where the lines sit and how tall the row is, at this density under
+    /// this cascade — and nothing else.
+    ///
+    /// Measured off a reference string in every role's face and every tone,
+    /// never off the row's own text: a thread badge in the mono face or a
+    /// subject that falls back to a taller script font used to make one row
+    /// taller than the next, which is the list moving under the eye. What
+    /// the row *says* is drawn into these slots; it does not size them.
+    fn frame(&self, metrics: &Metrics, palette: &Palette) -> Frame {
+        let imp = self.imp();
+        if let Some(frame) = imp.frame.get() {
+            return frame;
+        }
+        let context = self.pango_context();
+        let probe = |ink: &Ink| {
+            let layout = pango::Layout::new(&context);
+            layout.set_font_description(Some(&ink.font));
+            layout.set_text(REFERENCE);
+            let baseline = layout.baseline() as f32 / pango::SCALE as f32;
+            let height = layout.pixel_size().1 as f32;
+            (baseline, height - baseline)
+        };
+        let mut above = 0.0f32;
+        let mut below = 0.0f32;
+        let mut subject = 0.0f32;
+        let mut snippet = 0.0f32;
+        for tone in 0..4 {
+            for ink in [&palette.sender[tone], &palette.time[tone], &palette.badge] {
+                let (a, b) = probe(ink);
+                above = above.max(a);
+                below = below.max(b);
+            }
+            let (a, b) = probe(&palette.subject[tone]);
+            subject = subject.max(a + b);
+            let (a, b) = probe(&palette.snippet[tone]);
+            snippet = snippet.max(a + b);
+        }
+        let subject_y = above + below + metrics.subject_gap;
+        let snippet_y = subject_y + subject;
+        let content = snippet_y + if metrics.snippet { snippet } else { 0.0 };
+        let frame = Frame {
+            line1: above,
+            subject_y,
+            snippet_y,
+            height: metrics.pad_y * 2.0 + content.max(metrics.avatar),
+        };
+        imp.frame.set(Some(frame));
+        frame
     }
 
     fn draw(&self, snapshot: &gtk::Snapshot) {
@@ -1205,7 +1050,8 @@ impl MessageRowView {
         //   cursor    where the keyboard is — the 3px accent edge, always
         //   selected  what an action will hit — its own deeper ground, and
         //             a steel check where the avatar was
-        //   focused   the keyboard is *here*, in this window — the key hints
+        //   hovered   where the pointer is — a lighter ground, and the
+        //             actions in the timestamp's place
         //
         // The pairing used to be different, and that was the bug. The ground
         // carried *both* cursor and selection, as two steps of one colour —
@@ -1226,12 +1072,10 @@ impl MessageRowView {
         //
         // The edge is also this widget's focus ring: it paints its own
         // pixels, so no CSS `outline` reaches it. It follows the *cursor*
-        // rather than `shows_hints()` — gating it on the hints flag meant
-        // `[ui] show_key_hints = false` silently deleted the focus
-        // indicator, and gating it on window focus meant clicking into the
-        // reading pane did too. The canvas draws it on the current row
-        // unconditionally (`Design/Mail Client.dc.html:76`); only the key
-        // caps are the flag's business.
+        // rather than keyboard focus: gating it on window focus meant
+        // clicking into the reading pane silently deleted it. The canvas
+        // draws it on the current row unconditionally
+        // (`Design/Mail Client.dc.html:76`).
         if selected {
             fill(&palette.checked_bg, 0.0, 0.0, width, height);
         } else if cursor {
@@ -1478,25 +1322,6 @@ impl MessageRowView {
                 top + laid.snippet_y,
             );
         }
-
-        // ── the key hints, on the focused row and nowhere else ───────
-        let mut x = column_x;
-        for (key, label) in &laid.hints {
-            let (kw, kh) = key.pixel_size();
-            let cap_w = kw as f32 + CAP.0 * 2.0;
-            let cap_h = kh as f32 + CAP.1 * 2.0;
-            let y = top + laid.hints_y;
-            snapshot.append_border(
-                &gsk::RoundedRect::from_rect(rect(x, y, cap_w, cap_h), CAP.2),
-                &[1.0; 4],
-                &[palette.key_edge; 4],
-            );
-            text(key, &palette.key.color, x + CAP.0, y + CAP.1);
-            x += cap_w + 6.0;
-            let (lw, lh) = label.pixel_size();
-            text(label, &palette.hint.color, x, y + (cap_h - lh as f32) / 2.0);
-            x += lw as f32 + 10.0;
-        }
     }
 }
 
@@ -1517,6 +1342,20 @@ fn initials_source(row: &Row) -> String {
         .as_ref()
         .map(|from| from.display().to_string())
         .unwrap_or_else(|| "unknown sender".to_string())
+}
+
+/// What [`MessageRowView::frame`] measures its lines with: a capital, and
+/// a descender, in the script the row's own faces are designed for.
+const REFERENCE: &str = "Ag";
+
+/// A row's fixed geometry: the same for every row at one density.
+#[derive(Clone, Copy, Debug)]
+struct Frame {
+    /// Baseline of the sender line, from the top of the content.
+    line1: f32,
+    subject_y: f32,
+    snippet_y: f32,
+    height: f32,
 }
 
 /// The one number `lay_out` hands back; the layouts stay cached.
@@ -1554,27 +1393,6 @@ mod tests {
     }
 
     #[test]
-    fn hints_read_the_live_keymap_not_a_hard_coded_key() {
-        let defaults = default_hints();
-        assert_eq!(
-            defaults,
-            vec![("e".to_string(), "reply"), ("a".to_string(), "archive")],
-            "the registry's own bindings, canvas order"
-        );
-
-        let mut overrides = postio_config::KeyBindings::default();
-        overrides
-            .overrides_mut()
-            .insert("archive".to_string(), "x".to_string());
-        let rebound = hints_for(&Keymap::resolve(&overrides));
-        assert_eq!(
-            rebound,
-            vec![("e".to_string(), "reply"), ("x".to_string(), "archive")],
-            "a rebind in [keys] must reach the hint, not just the resolver"
-        );
-    }
-
-    #[test]
     fn a_selected_or_cursor_row_still_draws_a_boundary_above_itself() {
         // Not first: an ordinary row gets the ordinary hairline.
         assert_eq!(top_edge(false, false, false), Some(Edge::Hairline));
@@ -1589,24 +1407,6 @@ mod tests {
         assert_eq!(top_edge(false, false, true), None);
         assert_eq!(top_edge(true, false, true), None);
         assert_eq!(top_edge(false, true, true), None);
-    }
-
-    #[test]
-    fn a_command_that_lost_its_key_drops_its_hint_rather_than_naming_the_wrong_one() {
-        // Taking `a` for something else in the same context leaves Archive
-        // with no key at all — reachable only from the palette. A hint that
-        // kept printing "a archive" here would be teaching a key that does
-        // something else.
-        let mut overrides = postio_config::KeyBindings::default();
-        overrides
-            .overrides_mut()
-            .insert("forward".to_string(), "a".to_string());
-        let hints = hints_for(&Keymap::resolve(&overrides));
-        assert_eq!(
-            hints,
-            vec![("e".to_string(), "reply")],
-            "archive lost its key to forward, so its hint disappears rather than lying"
-        );
     }
 
     #[test]
