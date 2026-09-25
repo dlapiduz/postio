@@ -1348,9 +1348,15 @@ impl Onboarding {
         // -- the buttons ----------------------------------------------------
 
         imp.connect_label.set_text("Connect");
-        let connect_hint = gtk::Label::new(Some("Ret"));
-        connect_hint.add_css_class("postio-keyhint");
-        connect_hint.set_accessible_role(gtk::AccessibleRole::Presentation);
+        let connect_hint = crate::widgets::keyhint::cap(
+            &postio_ui::hints::fixed(
+                "Return",
+                "connect",
+                "Return in any field submits the form; it is the entry's own \
+                 activation, not a command in the registry",
+            )
+            .key,
+        );
         let connect_child = gtk::Box::new(gtk::Orientation::Horizontal, 8);
         connect_child.append(&imp.connect_label);
         connect_child.append(&connect_hint);
@@ -1379,11 +1385,15 @@ impl Onboarding {
             }
         ));
 
-        let hint = gtk::Label::new(Some("Tab between fields"));
-        hint.add_css_class("postio-onboarding-hint");
+        let tab = crate::widgets::KeyLine::new("postio-onboarding-hint");
+        tab.set([&postio_ui::hints::fixed(
+            "Tab",
+            "between fields",
+            "moving between a form's fields is the toolkit's focus order",
+        )]);
+        let hint = tab.widget().clone();
         hint.set_hexpand(true);
         hint.set_xalign(1.0);
-        hint.set_accessible_role(gtk::AccessibleRole::Presentation);
 
         imp.buttons.set_orientation(gtk::Orientation::Horizontal);
         imp.buttons.set_spacing(12);

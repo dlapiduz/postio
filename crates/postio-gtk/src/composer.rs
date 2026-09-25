@@ -81,7 +81,9 @@ use postio_model::{
 use postio_model::{reply, signature};
 
 use crate::shell::Pane;
+use crate::widgets::keyhint;
 use crate::window::Window;
+use postio_ui::hints;
 
 /// A field of the composer the keyboard can be in.
 ///
@@ -757,6 +759,9 @@ mod imp {
         /// allocation rather than the row overflowing the window with a
         /// bare edge-clip, or a button's own label losing a word.
         pub escape: gtk::Label,
+        /// `Attach another ctrl+shift+a`, over the attachment list. A box
+        /// so `set_keymap` can redraw what is in it.
+        pub attach_hint: gtk::Box,
         pub warning: gtk::Label,
         /// Issue #116: "this reply quotes a link to a domain other than the
         /// sender's own" — purely informational, next to `warning` but a
@@ -877,6 +882,7 @@ mod imp {
                 schedule_send: gtk::MenuButton::new(),
                 save: gtk::Button::new(),
                 escape: gtk::Label::new(None),
+                attach_hint: gtk::Box::new(gtk::Orientation::Horizontal, 0),
                 warning: gtk::Label::new(None),
                 tracking_notice: gtk::Label::new(None),
                 attachments_box: gtk::Box::new(gtk::Orientation::Vertical, 6),
@@ -2107,12 +2113,22 @@ impl Composer {
         ));
 
         if let Some(button) = window.compose_button() {
-            sync_compose_button(&button, false);
+            crate::header::sync_compose(&button, false, &window.keymap_in_force());
             self.connect_opened({
                 let button = button.clone();
-                move || sync_compose_button(&button, true)
+                let window = window.downgrade();
+                move || {
+                    if let Some(window) = window.upgrade() {
+                        crate::header::sync_compose(&button, true, &window.keymap_in_force());
+                    }
+                }
             });
-            self.connect_closed(move |_outcome| sync_compose_button(&button, false));
+            let window = window.downgrade();
+            self.connect_closed(move |_outcome| {
+                if let Some(window) = window.upgrade() {
+                    crate::header::sync_compose(&button, false, &window.keymap_in_force());
+                }
+            });
         }
     }
 
@@ -2574,8 +2590,8 @@ impl Composer {
         row.upcast()
     }
 
-    /// The attachment list's own row: a header naming the `ctrl+shift+a`
-    /// hint per canvas 2a, and the rows themselves — hidden entirely until
+    /// The attachment list's own row: a header naming attach's key per
+    /// canvas 2a, and the rows themselves — hidden entirely until
     /// there is something to show.
     fn build_attachments(&self) -> gtk::Box {
         let imp = self.imp();
@@ -2585,7 +2601,7 @@ impl Composer {
         title.set_xalign(0.0);
         title.set_hexpand(true);
         header.append(&title);
-        header.append(&labelled("Attach another", "C-⇧-A"));
+        header.append(&imp.attach_hint);
 
         imp.attachments_list
             .set_selection_mode(gtk::SelectionMode::None);
@@ -3296,8 +3312,6 @@ impl Composer {
         let row = gtk::Box::new(gtk::Orientation::Horizontal, 12);
         row.add_css_class("postio-compose-actions");
 
-        imp.send
-            .set_child(Some(&labelled_for(CommandId::Send, "Send")));
         imp.send.add_css_class("suggested-action");
         imp.send
             .update_property(&[gtk::accessible::Property::Label("Send")]);
@@ -3307,8 +3321,6 @@ impl Composer {
             move |_| composer.send()
         ));
 
-        imp.schedule_send
-            .set_child(Some(&labelled_for(CommandId::ScheduleSend, "Schedule…")));
         imp.schedule_send.add_css_class("flat");
         imp.schedule_send.add_css_class("postio-ghost");
         imp.schedule_send
@@ -3347,8 +3359,6 @@ impl Composer {
         imp.schedule_send
             .insert_action_group("compose-schedule", Some(&schedule_actions));
 
-        imp.save
-            .set_child(Some(&labelled_for(CommandId::SaveDraft, "Save draft")));
         imp.save.add_css_class("flat");
         imp.save.add_css_class("postio-ghost");
         imp.save
@@ -3359,7 +3369,6 @@ impl Composer {
             move |_| composer.save()
         ));
 
-        imp.escape.set_label("Esc keeps the draft");
         imp.escape.add_css_class("postio-compose-escape");
         imp.escape.set_hexpand(true);
         imp.escape.set_xalign(1.0);
@@ -3374,6 +3383,9 @@ impl Composer {
         row.append(&imp.schedule_send);
         row.append(&imp.save);
         row.append(&imp.escape);
+        // The registry's own keys until `Window` hands over the keymap in
+        // force, so the row is never drawn without its hints.
+        self.set_keymap(Keymap::defaults());
         row
     }
 
@@ -3397,14 +3409,29 @@ impl Composer {
         let hints = action_hints(keymap);
         let child = |index: usize| -> gtk::Widget {
             let (_, text) = ACTION_BUTTONS[index];
-            match &hints[index].1 {
-                Some(key) => labelled(text, key),
-                None => gtk::Label::new(Some(text)).upcast(),
-            }
+            keyhint::labelled(text, hints[index].1.as_deref())
         };
         imp.send.set_child(Some(&child(0)));
         imp.schedule_send.set_child(Some(&child(1)));
         imp.save.set_child(Some(&child(2)));
+
+        while let Some(old) = imp.attach_hint.first_child() {
+            imp.attach_hint.remove(&old);
+        }
+        imp.attach_hint.append(&keyhint::labelled(
+            "Attach another",
+            hints::key(keymap, CommandId::AttachFile).as_deref(),
+        ));
+
+        // `Back` is what `Esc` runs here: it closes the composer and keeps
+        // the draft, so the reminder names whatever key `Back` has.
+        let escape = hints::hint(keymap, CommandId::Back, "keeps the draft");
+        imp.escape.set_label(&hints::line(escape.iter()));
+        imp.escape.set_visible(escape.is_some());
+
+        if let Some(button) = imp.window.upgrade().and_then(|w| w.compose_button()) {
+            crate::header::sync_compose(&button, self.is_open(), keymap);
+        }
     }
 
     // -- Test support -----------------------------------------------------
@@ -3867,13 +3894,11 @@ fn schedule_presets(now: DateTime<Local>) -> [(&'static str, DateTime<Local>); 4
     ]
 }
 
-/// A button label with the key that reaches it, as the header bar does it.
 /// The three buttons the action row draws, in the order it draws them, with
 /// the command each one stands for.
 ///
 /// `Discard` is deliberately absent — see [`Composer::build_actions`] for
-/// why — and `Esc` is not a registered command, so the footer's escape hint
-/// stays literal.
+/// why. The footer's `Esc` reminder is `Back`'s key, redrawn beside these.
 const ACTION_BUTTONS: &[(CommandId, &str)] = &[
     (CommandId::Send, "Send"),
     (CommandId::ScheduleSend, "Schedule…"),
@@ -3892,58 +3917,6 @@ fn action_hints(keymap: &Keymap) -> Vec<(CommandId, Option<String>)> {
         .iter()
         .map(|(id, _)| (*id, keymap.binding(*id).map(str::to_owned)))
         .collect()
-}
-
-/// [`labelled`] with the key read from the registry's defaults, for a button
-/// built before any `config.toml` has been read.
-///
-/// `Window::apply_keymap` replaces it the moment a real keymap exists, so a
-/// composer that opens before the config watcher has run still shows the
-/// right key rather than a blank.
-fn labelled_for(id: CommandId, text: &str) -> gtk::Widget {
-    let keymap = Keymap::resolve(&Default::default());
-    labelled(text, keymap.binding(id).unwrap_or_default())
-}
-
-fn labelled(text: &str, key: &str) -> gtk::Widget {
-    let label = gtk::Label::new(Some(text));
-    let hint = gtk::Label::new(Some(key));
-    hint.add_css_class("postio-keyhint");
-    hint.set_accessible_role(gtk::AccessibleRole::Presentation);
-
-    let row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
-    row.append(&label);
-    row.append(&hint);
-    row.upcast()
-}
-
-/// Redraws the header's `Compose` button for whether the composer has the
-/// reading pane. The button never stops naming `win.compose` — see
-/// `mount`'s action handler for what that does in each state — this only
-/// changes what it says while it does it.
-fn sync_compose_button(button: &gtk::Button, composing: bool) {
-    let (icon, text, key, tooltip) = if composing {
-        (
-            "window-close-symbolic",
-            "Composing",
-            "Esc",
-            "Close the composer",
-        )
-    } else {
-        (
-            "document-edit-symbolic",
-            "Compose",
-            "c",
-            "Compose a message",
-        )
-    };
-
-    let content = gtk::Box::new(gtk::Orientation::Horizontal, 8);
-    content.append(&gtk::Image::from_icon_name(icon));
-    content.append(&labelled(text, key));
-    button.set_child(Some(&content));
-    button.set_tooltip_text(Some(tooltip));
-    button.update_property(&[gtk::accessible::Property::Label(tooltip)]);
 }
 
 /// Keeps the pop-out button saying which way it goes.
@@ -4902,7 +4875,7 @@ mod tests {
         // already show, and on macOS it is what makes `mod` mean Command
         // rather than Control.
         assert_eq!(
-            keys_of(&Keymap::resolve(&Default::default())),
+            keys_of(Keymap::defaults()),
             vec![
                 Some("ctrl+Return".to_string()),
                 Some("ctrl+shift+Return".to_string()),

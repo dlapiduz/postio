@@ -37,6 +37,9 @@ use gtk::{gdk, gio, glib, graphene, pango};
 use postio_core::{CommandId, Keymap};
 use postio_model::Attachment;
 use postio_model::ids::AttachmentId;
+use postio_ui::hints::{self, Hint};
+
+use crate::widgets::{KeyLine, keyhint};
 
 /// One node of the tree, flattened into the order the keyboard walks it.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -268,31 +271,15 @@ const HINT_COMMANDS: [(CommandId, &str); 5] = [
 /// The panel's own keys, drawn at the tree's foot — generated from `keymap`
 /// rather than typed in once, so `postio-14b`'s fix cannot go stale the way
 /// the footer it replaced already had: it never mentioned `H` at all.
-fn hints_for(keymap: &Keymap) -> String {
-    let mut parts = Vec::new();
-    let walk = match (
-        keymap.binding(CommandId::NextPart),
-        keymap.binding(CommandId::PrevPart),
-    ) {
-        (Some(next), Some(prev)) => Some(format!("{next}/{prev} walk")),
-        (Some(next), None) => Some(format!("{next} walk")),
-        (None, Some(prev)) => Some(format!("{prev} walk")),
-        (None, None) => None,
-    };
-    parts.extend(walk);
-    for (id, label) in HINT_COMMANDS {
-        if let Some(key) = keymap.binding(id) {
-            parts.push(format!("{key} {label}"));
-        }
-    }
-    parts.join(" · ")
-}
-
-/// The registry's own bindings, so a panel built with no keymap yet — every
-/// widget test, and the first frame before `postio-gtk::config` reads
-/// `config.toml` — still reads correctly rather than blank.
-fn default_hints() -> String {
-    hints_for(&Keymap::resolve(&Default::default()))
+fn hints_for(keymap: &Keymap) -> Vec<Hint> {
+    let walk = hints::pair(keymap, CommandId::NextPart, CommandId::PrevPart, "walk");
+    walk.into_iter()
+        .chain(
+            HINT_COMMANDS
+                .into_iter()
+                .filter_map(|(id, label)| hints::hint(keymap, id, label)),
+        )
+        .collect()
 }
 
 /// What the detail pane says about a part nothing has fetched.
@@ -754,7 +741,18 @@ impl PartsPanel {
     /// promise [`crate::row::MessageRowView::set_keymap`] already keeps for the
     /// message list's own hints.
     pub fn set_keymap(&self, keymap: &Keymap) {
-        self.imp().keys.set_text(&hints_for(keymap));
+        let imp = self.imp();
+        KeyLine::adopt(&imp.keys, "postio-parts-keys").set(&hints_for(keymap));
+        for (button, command, text) in [
+            (&imp.render_once, CommandId::RenderPartOnce, "Render once"),
+            (&imp.save, CommandId::SavePart, "Save part"),
+            (&imp.external, CommandId::OpenPartExternally, "Open with…"),
+        ] {
+            button.set_child(Some(&keyhint::labelled(
+                text,
+                hints::key(keymap, command).as_deref(),
+            )));
+        }
     }
 
     // -- internals ---------------------------------------------------------
@@ -885,13 +883,6 @@ impl PartsPanel {
         scroller.set_max_content_height(TREE_MAX_HEIGHT);
         scroller.set_child(Some(&imp.tree));
 
-        imp.keys.set_text(&default_hints());
-        imp.keys.add_css_class("postio-parts-keys");
-        imp.keys.set_xalign(0.0);
-        imp.keys.set_wrap(true);
-        imp.keys
-            .set_accessible_role(gtk::AccessibleRole::Presentation);
-
         let left = gtk::Box::new(gtk::Orientation::Vertical, 0);
         left.add_css_class("postio-parts-column");
         left.set_size_request(TREE_WIDTH, -1);
@@ -908,8 +899,6 @@ impl PartsPanel {
         imp.note.set_vexpand(true);
         imp.note.set_valign(gtk::Align::Start);
 
-        imp.render_once
-            .set_child(Some(&crate::header::labelled("Render once", "H")));
         imp.render_once.add_css_class("postio-parts-action");
         imp.render_once.set_halign(gtk::Align::Start);
         imp.render_once.set_visible(false);
@@ -923,8 +912,6 @@ impl PartsPanel {
             move |_| panel.render_once()
         ));
 
-        imp.save
-            .set_child(Some(&crate::header::labelled("Save part", "s")));
         imp.save.add_css_class("suggested-action");
         imp.save.add_css_class("postio-parts-action");
         imp.save
@@ -935,8 +922,6 @@ impl PartsPanel {
             move |_| panel.save_part()
         ));
 
-        imp.external
-            .set_child(Some(&crate::header::labelled("Open with…", "x")));
         imp.external.add_css_class("flat");
         imp.external.add_css_class("postio-parts-action");
         imp.external
@@ -994,6 +979,10 @@ impl PartsPanel {
         ));
         self.imp().tree.add_controller(drag);
 
+        // The registry's own keys, so a panel built before any `config.toml`
+        // has been read -- every widget test, and the first frame -- still
+        // names them rather than drawing blank buttons.
+        self.set_keymap(Keymap::defaults());
         self.refresh_detail();
     }
 }
@@ -1504,6 +1493,7 @@ mod tests {
 
     #[test]
     fn hints_read_the_live_keymap_not_a_hard_coded_string() {
+        let default_hints = || hints::line(&hints_for(Keymap::defaults()));
         assert_eq!(
             default_hints(),
             "j/k walk · Return open · s save · S save all · x xdg-open · H render once",
@@ -1514,7 +1504,7 @@ mod tests {
         overrides
             .overrides_mut()
             .insert("save_part".to_string(), "y".to_string());
-        let rebound = hints_for(&Keymap::resolve(&overrides));
+        let rebound = hints::line(&hints_for(&Keymap::resolve(&overrides)));
         assert_eq!(
             rebound, "j/k walk · Return open · y save · S save all · x xdg-open · H render once",
             "a rebind of `save_part` changes what the footer teaches, live"

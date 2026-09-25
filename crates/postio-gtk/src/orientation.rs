@@ -10,6 +10,9 @@
 
 use adw::prelude::*;
 use postio_core::{CommandId, Keymap};
+use postio_ui::hints;
+
+use crate::widgets::keyhint;
 
 /// What the strip is about, in the heading face.
 ///
@@ -23,19 +26,8 @@ const TITLE: &str = "Postio is keyboard-first";
 type Retired = std::rc::Rc<std::cell::RefCell<Vec<Box<dyn Fn()>>>>;
 
 /// One clause of the orientation: what it does, and the key that does it.
-///
-/// The same shape [`crate::list_state`] draws its named states' hints in,
-/// and drawn with the same `.postio-keyhint` chip, because this is the same
-/// promise: a key named on screen beside what it does. The key is a
-/// `String` rather than a `&'static str` — it comes from the live keymap
-/// and there is no static to borrow.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Hint {
-    /// What the key does, in the vocabulary `docs/PRODUCT.md` §8 uses.
-    pub label: &'static str,
-    /// The key in force right now, as the cheat sheet spells it.
-    pub key: String,
-}
+/// The shared shape every key hint is drawn from.
+pub use postio_ui::hints::Hint;
 
 /// What the plate teaches, rendered from the keymap in force.
 ///
@@ -46,32 +38,23 @@ pub struct Hint {
 /// rather than printed as a lie, so an empty answer is possible and means
 /// there is nothing here worth showing.
 pub fn hints(keymap: &Keymap) -> Vec<Hint> {
-    let mut hints = Vec::new();
-    if let Some(key) = keymap.binding(CommandId::CommandPalette) {
-        hints.push(Hint {
-            label: "Command palette",
-            key: key.to_string(),
-        });
-    }
-    if let Some(key) = keymap.binding(CommandId::CheatSheet) {
-        hints.push(Hint {
-            label: "Every key",
-            key: key.to_string(),
-        });
-    }
-    // One clause, not two: `j` and `k` are one idea, and a strip that spends
-    // two of its three slots saying "next" and "previous" teaches less than
-    // one that says movement and then stops.
-    if let (Some(next), Some(prev)) = (
-        keymap.binding(CommandId::NextMessage),
-        keymap.binding(CommandId::PrevMessage),
-    ) {
-        hints.push(Hint {
-            label: "Move between messages",
-            key: format!("{next}/{prev}"),
-        });
-    }
-    hints
+    // One clause, not two, for movement: `j` and `k` are one idea, and a
+    // strip that spends two of its three slots saying "next" and "previous"
+    // teaches less than one that says movement and then stops.
+    [
+        hints::hint(keymap, CommandId::CommandPalette, "Command palette"),
+        hints::hint(keymap, CommandId::CheatSheet, "Every key"),
+        hints::pair(
+            keymap,
+            CommandId::NextMessage,
+            CommandId::PrevMessage,
+            "Move between messages",
+        )
+        .filter(|hint| hint.key.contains('/')),
+    ]
+    .into_iter()
+    .flatten()
+    .collect()
 }
 
 /// The whole strip as one sentence, for a screen reader.
@@ -207,7 +190,7 @@ impl OrientationStrip {
         let hints = hints(keymap);
         for hint in &hints {
             let child = gtk::FlowBoxChild::new();
-            child.set_child(Some(&chip(hint)));
+            child.set_child(Some(&keyhint::chip(hint, "postio-orientation-hint")));
             child.set_focusable(false);
             child.set_accessible_role(gtk::AccessibleRole::Presentation);
             self.hints.append(&child);
@@ -277,32 +260,6 @@ impl Default for OrientationStrip {
     fn default() -> Self {
         Self::new()
     }
-}
-
-/// One hint, drawn the way the list's named states draw theirs: what it
-/// does, then the key in the mono face every key hint in the app wears.
-fn chip(hint: &Hint) -> gtk::Box {
-    let row = gtk::Box::new(gtk::Orientation::Horizontal, 6);
-    row.add_css_class("postio-orientation-hint");
-    row.set_accessible_role(gtk::AccessibleRole::Presentation);
-
-    let label = gtk::Label::new(Some(hint.label));
-    label.add_css_class("postio-orientation-hint-label");
-    // The last thing to give, and it still gives: at the column's own 280px
-    // minimum even one chip per line is too wide for "Move between
-    // messages", and a label that cannot wrap would take the button off the
-    // end with it. It never wraps at any width somebody reads mail at.
-    label.set_wrap(true);
-    label.set_xalign(0.0);
-    label.set_accessible_role(gtk::AccessibleRole::Presentation);
-    row.append(&label);
-
-    let key = gtk::Label::new(Some(&hint.key));
-    key.add_css_class("postio-keyhint");
-    key.set_accessible_role(gtk::AccessibleRole::Presentation);
-    row.append(&key);
-
-    row
 }
 
 #[cfg(test)]

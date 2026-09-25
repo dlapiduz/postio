@@ -54,3 +54,85 @@ pub fn a_kicker_is_capitals_whatever_its_source_case() {
     );
     window.destroy();
 }
+
+/// Every widget under `root`, depth first.
+fn descendants(root: &gtk::Widget) -> Vec<gtk::Widget> {
+    let mut out = Vec::new();
+    let mut child = root.first_child();
+    while let Some(widget) = child {
+        out.push(widget.clone());
+        out.extend(descendants(&widget));
+        child = widget.next_sibling();
+    }
+    out
+}
+
+/// The caps drawn inside the first widget wearing `class`.
+fn caps_in(root: &gtk::Widget, class: &str) -> Vec<String> {
+    let Some(owner) = descendants(root)
+        .into_iter()
+        .find(|widget| widget.has_css_class(class))
+    else {
+        panic!("nothing wears `{class}`");
+    };
+    descendants(&owner)
+        .into_iter()
+        .filter(|widget| widget.has_css_class("postio-keyhint"))
+        .filter_map(|widget| widget.downcast::<gtk::Label>().ok())
+        .map(|label| label.label().to_string())
+        .collect()
+}
+
+/// A `[keys]` rebind reaches the header's caps, which used to be the
+/// literals `c` and `?` and went on saying them after the keyboard had
+/// moved (docs/PRODUCT.md §8: hints are derived, never typed in).
+pub fn a_rebind_reaches_the_headers_key_caps() {
+    if adw::init().is_err() || gdk::Display::default().is_none() {
+        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
+        return;
+    }
+    let display = gdk::Display::default().unwrap();
+    fonts::install().expect("the embedded fonts should install");
+    style::install(&display);
+
+    let window = postio_gtk::window::Window::default();
+    let root: gtk::Widget = window.clone().upcast();
+    assert_eq!(caps_in(&root, "postio-compose"), vec!["c".to_string()]);
+
+    let mut overrides = postio_config::KeyBindings::default();
+    overrides
+        .overrides_mut()
+        .insert("compose".to_string(), "w".to_string());
+    overrides
+        .overrides_mut()
+        .insert("cheat_sheet".to_string(), "F1".to_string());
+    window.apply_keymap(postio_core::Keymap::resolve(&overrides));
+
+    assert_eq!(
+        caps_in(&root, "postio-compose"),
+        vec!["w".to_string()],
+        "the compose button still names the key compose no longer has"
+    );
+    let keys = descendants(&root)
+        .into_iter()
+        .filter(|widget| widget.has_css_class("postio-ghost"))
+        .find(|widget| {
+            widget
+                .downcast_ref::<gtk::Button>()
+                .and_then(|button| button.tooltip_text())
+                .is_some_and(|tip| tip == "Keyboard shortcuts")
+        })
+        .expect("the header's Keys button");
+    let caps: Vec<String> = descendants(&keys)
+        .into_iter()
+        .filter(|widget| widget.has_css_class("postio-keyhint"))
+        .filter_map(|widget| widget.downcast::<gtk::Label>().ok())
+        .map(|label| label.label().to_string())
+        .collect();
+    assert_eq!(
+        caps,
+        vec!["F1".to_string()],
+        "the Keys button missed the rebind"
+    );
+    window.destroy();
+}

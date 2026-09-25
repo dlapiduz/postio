@@ -200,10 +200,10 @@ impl Unavailable {
         reassurance.set_wrap(true);
         reassurance.set_max_width_chars(56);
 
-        // `Ret` is written down rather than read from a keymap because
-        // Enter here is not a bound command — it is the default action of
-        // the only button on a screen with one button. Everything else about
-        // the cap is the shared one, so it matches the reader's and the
+        // A fixed hint rather than one read from a keymap, because Enter
+        // here is not a bound command — it is the default action of the
+        // only button on a screen with one button. Everything else about the
+        // cap is the shared one, so it matches the reader's and the
         // composer's exactly.
         let retry = Rc::new(crate::widgets::KeycapButton::new(
             None,
@@ -212,7 +212,14 @@ impl Unavailable {
             true,
         ));
         crate::widgets::KeycapButton::arm(&retry);
-        retry.set_key(Some("Ret"));
+        retry.set_key(Some(
+            &postio_ui::hints::fixed(
+                "Return",
+                "try again",
+                "the default action of the screen's only button",
+            )
+            .key,
+        ));
         let button = retry.widget();
         button.set_halign(gtk::Align::Start);
         button.set_tooltip_text(Some("Open the store again"));

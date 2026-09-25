@@ -319,6 +319,10 @@ const CASES: &[(&str, fn())] = &[
         gtk_components::a_kicker_is_capitals_whatever_its_source_case as fn(),
     ),
     (
+        "gtk_components::a_rebind_reaches_the_headers_key_caps",
+        gtk_components::a_rebind_reaches_the_headers_key_caps as fn(),
+    ),
+    (
         "gtk_checkrow::showing_the_files_value_is_not_changing_it",
         gtk_checkrow::showing_the_files_value_is_not_changing_it as fn(),
     ),

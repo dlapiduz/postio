@@ -122,6 +122,23 @@ headerbar.postio-header button.toggle:checked {
   opacity: 0.75;
 }
 
+/* A hint that is not a control: what it does, then its cap
+   (`widgets::keyhint::chip`). The words are secondary ink, the cap mono. */
+.postio-keyhint-label {
+  font-size: 0.8182rem;
+  color: var(--postio-ink-secondary);
+}
+
+/* A footer of hints in one mono line: `j/k walk · Return open · s save`
+   (`widgets::KeyLine`). Canvas 3g's and 2b's foot, at the canvas' 10.5px;
+   each surface adds only its own inset. */
+.postio-keyline {
+  font-family: var(--postio-font-mono);
+  font-size: 0.7159rem;
+  line-height: 1.7;
+  color: var(--postio-faint);
+}
+
 /* Industry sets buttons in the heading face — Barlow Condensed, semibold.
    The canvas keeps that and only changes the size. */
 button.postio-ghost,
@@ -373,10 +390,6 @@ button.postio-compose {
 /* The keys this column offers, at its foot, the way the canvas draws them. */
 .postio-panel-keys {
   padding: 0 18px;
-  font-family: var(--postio-font-mono);
-  font-size: 0.7841rem;
-  line-height: 1.7;
-  color: var(--postio-faint);
 }
 
 /* `idle · imap` / `last sync 12s`, pinned to the foot. */
@@ -855,11 +868,6 @@ button.postio-compose {
   margin-top: 4px;
 }
 
-.postio-liststate-hint-label {
-  font-size: 0.8182rem;
-  color: var(--postio-ink-secondary);
-}
-
 /* ── The first-run keyboard orientation (ADR 0012 Q4) ────────────────
    Once, after the first sync, and never again. Deliberately the same strip
    vocabulary as `.postio-liststate-banner` above — a hairline under it,
@@ -881,11 +889,6 @@ button.postio-compose {
   font-weight: var(--postio-font-heading-weight);
   font-size: 0.8863rem;
   color: var(--postio-ink);
-}
-
-.postio-orientation-hint-label {
-  font-size: 0.8182rem;
-  color: var(--postio-ink-secondary);
 }
 
 /* ── The box's results ───────────────────────────────────────────────
@@ -1134,10 +1137,6 @@ button.postio-compose {
 /* The keys this column offers, at its foot, where the artboard draws them. */
 .postio-parts-keys {
   padding: 12px 14px 4px;
-  font-family: var(--postio-font-mono);
-  font-size: 0.7159rem;
-  line-height: 1.7;
-  color: var(--postio-faint);
 }
 
 .postio-parts-detail {
@@ -1318,12 +1317,6 @@ button.postio-compose {
 .postio-onboarding-help {
   padding: 0;
   font-size: 0.8523rem;
-}
-
-.postio-onboarding-hint {
-  font-family: var(--postio-font-mono);
-  font-size: 0.7159rem;
-  color: var(--postio-dim);
 }
 
 /* Why it did not work. The accent's warning cousin rather than a red banner:

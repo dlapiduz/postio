@@ -44,6 +44,9 @@ use adw::prelude::*;
 use adw::subclass::prelude::*;
 use gtk::glib;
 
+use postio_core::{CommandId, Keymap};
+use postio_ui::hints::{self, Hint};
+
 use crate::sidebar::{SyncStatus, age};
 
 /// The list pane's state machine, derived rather than stored.
@@ -56,20 +59,34 @@ pub use postio_ui::list_state::{
     describe_wait, is_current,
 };
 
-/// One key hint: what it does, and the key that does it.
+/// One key hint a state offers: what it does, the command that does it, and
+/// the key the canvas draws for it.
 ///
-/// Every key named here is already a live [`postio_core::CommandId`] with
-/// its own binding and palette entry — this widget only points at it, the
-/// same way the focused row's key hints do, rather than growing a fourth
-/// clickable-button idiom the app does not otherwise have.
-type Hint = (&'static str, &'static str);
+/// Every key named here is a live [`CommandId`] with its own binding and
+/// palette entry — this widget only points at it, the same way the focused
+/// row's key hints do, rather than growing a fourth clickable-button idiom
+/// the app does not otherwise have. The key shown is the keymap's
+/// ([`resolve`]), preferring the canvas' where that is one of the command's
+/// keys: `R` for Refresh rather than its primary `F5`.
+type Offer = (&'static str, CommandId, &'static str);
+
+/// The offers as hints, from the keymap in force. A command the keymap has
+/// left without a key drops out rather than printing a blank.
+fn resolve(offers: &[Offer], keymap: &Keymap) -> Vec<Hint> {
+    offers
+        .iter()
+        .filter_map(|(label, command, preferred)| {
+            hints::hint_as(keymap, *command, preferred, label)
+        })
+        .collect()
+}
 
 struct Content {
     icon: &'static str,
     icon_class: &'static str,
     title: String,
     detail: String,
-    hints: Vec<Hint>,
+    hints: Vec<Offer>,
 }
 
 fn plural(count: u64, noun: &str) -> String {
@@ -109,7 +126,10 @@ fn describe(state: &State, now: Instant) -> Content {
                     "{lead}{} still in the local store and searchable. {synced}",
                     plural(*stored, "message")
                 ),
-                hints: vec![("Search all mail", "/"), ("Compose", "c")],
+                hints: vec![
+                    ("Search all mail", CommandId::Search, "/"),
+                    ("Compose", CommandId::Compose, "c"),
+                ],
             }
         }
         State::Offline { queued } => Content {
@@ -124,14 +144,14 @@ fn describe(state: &State, now: Instant) -> Content {
                     plural(*queued, "change")
                 )
             },
-            hints: vec![("Retry now", "R")],
+            hints: vec![("Retry now", CommandId::Refresh, "R")],
         },
         State::Failing { reason } => Content {
             icon: "dialog-error-symbolic",
             icon_class: "failing",
             title: "Sync failed".to_string(),
             detail: format!("{reason} Local mail is untouched."),
-            hints: vec![("Retry now", "R")],
+            hints: vec![("Retry now", CommandId::Refresh, "R")],
         },
         // The query is echoed back rather than described, because what to
         // change is the thing the user cannot see from here: the box holds
@@ -163,7 +183,7 @@ fn describe(state: &State, now: Instant) -> Content {
                     if absent.len() == 1 { "its" } else { "their" },
                 ),
             },
-            hints: vec![("Back to the folder", "Esc")],
+            hints: vec![("Back to the folder", CommandId::Back, "Escape")],
         },
         // The one plate in the family that offers no verb, and that is
         // correct rather than an omission: the work is in flight, so `R`
@@ -191,7 +211,7 @@ fn describe(state: &State, now: Instant) -> Content {
                 naming(accounts),
                 if accounts.len() == 1 { "its" } else { "their" },
             ),
-            hints: vec![("Retry now", "R")],
+            hints: vec![("Retry now", CommandId::Refresh, "R")],
         },
     }
 }
@@ -219,6 +239,9 @@ mod imp {
         pub title: gtk::Label,
         pub detail: gtk::Label,
         pub hints: gtk::Box,
+        /// The keymap the hints are read from; the registry's own until
+        /// the window hands over the one in force.
+        pub keymap: RefCell<Keymap>,
         pub inputs: RefCell<(SyncStatus, u64, u64, u64, Option<String>)>,
         /// The folder in view, by the name the sidebar shows, when it is
         /// not the inbox -- what an empty plate is titled with (#1535). Its
@@ -256,6 +279,7 @@ mod imp {
                 title: gtk::Label::new(None),
                 detail: gtk::Label::new(None),
                 hints: gtk::Box::new(gtk::Orientation::Horizontal, 16),
+                keymap: RefCell::new(Keymap::defaults().clone()),
                 inputs: RefCell::new((SyncStatus::default(), 0, 0, 0, None)),
                 place: RefCell::new(None),
                 accounts: RefCell::new(None),
@@ -337,6 +361,13 @@ impl ListStateView {
         imp.detail
             .set_accessible_role(gtk::AccessibleRole::Presentation);
 
+        self.render();
+    }
+
+    /// Name the keys the keymap in force binds, redrawing the state on
+    /// screen if there is one.
+    pub fn set_keymap(&self, keymap: &Keymap) {
+        *self.imp().keymap.borrow_mut() = keymap.clone();
         self.render();
     }
 
@@ -552,10 +583,10 @@ impl ListStateView {
             imp.title.set_text(&content.title);
             imp.detail.set_text(&content.detail);
 
-            let spoken = content
-                .hints
+            let hints = resolve(&content.hints, &imp.keymap.borrow());
+            let spoken = hints
                 .iter()
-                .map(|(label, key)| format!("{label}, press {key}"))
+                .map(|hint| format!("{}, press {}", hint.label, hint.key))
                 .collect::<Vec<_>>()
                 .join(". ");
             self.update_property(&[gtk::accessible::Property::Label(&format!(
@@ -566,8 +597,11 @@ impl ListStateView {
             while let Some(child) = imp.hints.first_child() {
                 imp.hints.remove(&child);
             }
-            for hint in &content.hints {
-                imp.hints.append(&hint_widget(hint));
+            for hint in &hints {
+                imp.hints.append(&crate::widgets::keyhint::chip(
+                    hint,
+                    "postio-liststate-hint",
+                ));
             }
 
             let placement = state.placement(item_count);
@@ -684,24 +718,6 @@ fn banner_container(
     row
 }
 
-fn hint_widget((label, key): &Hint) -> gtk::Box {
-    let row = gtk::Box::new(gtk::Orientation::Horizontal, 6);
-    row.add_css_class("postio-liststate-hint");
-    row.set_accessible_role(gtk::AccessibleRole::Presentation);
-
-    let text = gtk::Label::new(Some(label));
-    text.add_css_class("postio-liststate-hint-label");
-    text.set_accessible_role(gtk::AccessibleRole::Presentation);
-
-    let key = gtk::Label::new(Some(key));
-    key.add_css_class("postio-keyhint");
-    key.set_accessible_role(gtk::AccessibleRole::Presentation);
-
-    row.append(&text);
-    row.append(&key);
-    row
-}
-
 #[cfg(test)]
 mod tests {
     use std::time::Duration;
@@ -743,7 +759,10 @@ mod tests {
             content.detail
         );
         // Never a dead end: every named state names a key.
-        assert_eq!(content.hints, vec![("Back to the folder", "Esc")]);
+        assert_eq!(
+            hints::line(&resolve(&content.hints, Keymap::defaults())),
+            "Escape Back to the folder"
+        );
     }
 
     #[test]
@@ -766,9 +785,16 @@ mod tests {
         ] {
             let content = describe(&state, now);
             assert!(!content.hints.is_empty(), "{} offers no key", content.title);
-            for (label, key) in &content.hints {
-                assert!(!label.is_empty());
-                assert!(!key.is_empty());
+            let hints = resolve(&content.hints, Keymap::defaults());
+            assert_eq!(
+                hints.len(),
+                content.hints.len(),
+                "{} names an unbound key",
+                content.title
+            );
+            for hint in &hints {
+                assert!(!hint.label.is_empty());
+                assert!(!hint.key.is_empty());
             }
         }
     }

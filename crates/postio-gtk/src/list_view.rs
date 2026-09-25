@@ -77,10 +77,13 @@ pub use postio_ui::dwell::DWELL_TO_READ;
 /// triage is made of. Everything else a selection can do stays one `Ctrl+K`
 /// away — a bar that grew a button per command would be a toolbar, which is
 /// the thing this app is not.
-const BULK_ACTIONS: [(CommandId, &str, &str); 3] = [
-    (CommandId::Archive, "Archive", "a"),
-    (CommandId::Delete, "Delete", "d"),
-    (CommandId::Move, "Move", "m"),
+///
+/// Each button's key is the keymap's, redrawn by
+/// [`MessageListView::set_keymap`], so a rebound archive says its new key.
+const BULK_ACTIONS: [(CommandId, &str); 3] = [
+    (CommandId::Archive, "Archive"),
+    (CommandId::Delete, "Delete"),
+    (CommandId::Move, "Move"),
 ];
 
 mod imp {
@@ -237,7 +240,7 @@ mod imp {
                 commands: RefCell::new(Vec::new()),
                 show_actions: Rc::new(Cell::new(true)),
                 show_hints: Rc::new(Cell::new(true)),
-                keymap: Rc::new(RefCell::new(Keymap::resolve(&Default::default()))),
+                keymap: Rc::new(RefCell::new(Keymap::defaults().clone())),
                 mailbox: RefCell::new(String::new()),
                 unread: std::cell::Cell::new(0),
                 export: RefCell::new(None),
@@ -379,8 +382,25 @@ impl MessageListView {
     /// the same promise already kept for the resolver, the palette and the
     /// cheat sheet.
     pub fn set_keymap(&self, keymap: Keymap) {
+        self.relabel_bulk(&keymap);
         self.imp().keymap.replace(keymap.clone());
         self.each_row(|row| row.set_keymap(&keymap));
+    }
+
+    /// Redraw the bulk bar's key caps from `keymap`, in [`BULK_ACTIONS`]'
+    /// order -- the order the buttons were appended in.
+    fn relabel_bulk(&self, keymap: &Keymap) {
+        let mut child = self.imp().bulk.first_child();
+        for (id, title) in BULK_ACTIONS {
+            let Some(button) = child.and_downcast_ref::<gtk::Button>().cloned() else {
+                break;
+            };
+            button.set_child(Some(&crate::widgets::keyhint::labelled(
+                title,
+                postio_ui::hints::key(keymap, id).as_deref(),
+            )));
+            child = button.next_sibling();
+        }
     }
 
     /// The keymap in force, for the rows that bind after this and for a test
@@ -1155,13 +1175,12 @@ impl MessageListView {
 
         imp.bulk.set_visible(false);
         imp.bulk.set_valign(gtk::Align::Center);
-        for (id, title, key) in BULK_ACTIONS {
+        for (id, title) in BULK_ACTIONS {
             let button = gtk::Button::builder()
                 .tooltip_text(format!("{title} the selection"))
                 .build();
             button.add_css_class("flat");
             button.add_css_class("postio-ghost");
-            button.set_child(Some(&crate::header::labelled(title, key)));
             button.update_property(&[gtk::accessible::Property::Label(&format!(
                 "{title} the selection"
             ))]);
@@ -1172,6 +1191,7 @@ impl MessageListView {
             ));
             imp.bulk.append(&button);
         }
+        self.relabel_bulk(&imp.keymap.borrow());
 
         let header = gtk::Box::new(gtk::Orientation::Horizontal, 10);
         header.add_css_class("postio-list-header");

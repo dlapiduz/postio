@@ -247,14 +247,14 @@ fn section_widget(section: &Section) -> gtk::Box {
         title.add_css_class("postio-cheatsheet-title");
         grid.attach(&title, 0, line, 1, 1);
 
-        let key = gtk::Label::new(Some(row.binding.as_deref().unwrap_or("—")));
+        // A dash for a palette-only command: "this exists and has no key"
+        // is an answer, and the sheet is where it is given.
+        let key = crate::widgets::keyhint::cap(row.binding.as_deref().unwrap_or("—"));
         key.set_xalign(1.0);
-        key.add_css_class("postio-keyhint");
         grid.attach(&key, 1, line, 1, 1);
 
         // Read as one sentence rather than as two stray fragments.
         title.update_property(&[gtk::accessible::Property::Label(&spoken(row))]);
-        key.set_accessible_role(gtk::AccessibleRole::Presentation);
     }
     group.append(&grid);
     group

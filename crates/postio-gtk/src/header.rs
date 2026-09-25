@@ -7,15 +7,19 @@
 //! Every control here shows the key that reaches it. That is the whole
 //! argument of the design: the mouse is a discoverability affordance for the
 //! keyboard, so a button that hides its shortcut is a button that teaches
-//! nothing. The bindings shown are the canvas' — `c` compose, `?` keys, `/`
-//! search — and become overridable when the keymap lands (E6).
+//! nothing. The keys shown are the keymap's (`postio_ui::hints`): `c`
+//! compose, `?` keys and `/` search by default, and whatever `[keys]` says
+//! after a rebind — [`set_keymap`] redraws them.
 //!
 //! Compose is wired to the `win.compose` action the composer installs; the
 //! rest of the actions arrive with their own issues.
 
 use adw::prelude::*;
+use postio_core::{CommandId, Keymap};
+use postio_ui::hints;
 
 use crate::finder;
+use crate::widgets::keyhint;
 
 /// How wide the search field is allowed to get, from the canvas.
 pub const SEARCH_MAX_WIDTH: i32 = 600;
@@ -44,6 +48,8 @@ pub struct Header {
     pub search: finder::Field,
     /// `Compose c`, wired to the `win.compose` action.
     pub compose: gtk::Button,
+    /// `Keys ?`, which opens the cheat sheet.
+    pub keys: gtk::Button,
 }
 
 /// Build the header bar.
@@ -74,16 +80,64 @@ pub fn build() -> Header {
 
     // Packed in reverse: pack_end works outwards from the window controls.
     let compose = compose_button();
+    let keys = keys_button();
     bar.pack_end(&menu_button());
     bar.pack_end(&compose);
-    bar.pack_end(&keys_button());
+    bar.pack_end(&keys);
 
-    Header {
+    let header = Header {
         bar,
         sidebar_toggle,
         search,
         compose,
-    }
+        keys,
+    };
+    sync_keys(&header.keys, Keymap::defaults());
+    sync_compose(&header.compose, false, Keymap::defaults());
+    header
+}
+
+/// Redraw the `Keys` button's cap from `keymap`.
+///
+/// The compose button is redrawn by [`sync_compose`], because what it says
+/// depends on whether a composer has the pane as well as on the keymap.
+pub(crate) fn sync_keys(button: &gtk::Button, keymap: &Keymap) {
+    button.set_child(Some(&keyhint::labelled(
+        "Keys",
+        hints::key(keymap, CommandId::CheatSheet).as_deref(),
+    )));
+}
+
+/// Redraw the header's compose button: `Compose c`, or `Composing Esc`
+/// while a composer has the reading pane. The button never stops naming
+/// `win.compose` -- see the composer's action handler for what that does in
+/// each state -- this only changes what it says while it does it.
+pub(crate) fn sync_compose(button: &gtk::Button, composing: bool, keymap: &Keymap) {
+    let (icon, text, command, tooltip) = if composing {
+        (
+            "window-close-symbolic",
+            "Composing",
+            CommandId::Back,
+            "Close the composer",
+        )
+    } else {
+        (
+            "document-edit-symbolic",
+            "Compose",
+            CommandId::Compose,
+            "Compose a message",
+        )
+    };
+
+    let content = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    content.append(&gtk::Image::from_icon_name(icon));
+    content.append(&keyhint::labelled(
+        text,
+        hints::key(keymap, command).as_deref(),
+    ));
+    button.set_child(Some(&content));
+    button.set_tooltip_text(Some(tooltip));
+    button.update_property(&[gtk::accessible::Property::Label(tooltip)]);
 }
 
 /// The one box: accent magnifier, mode marker, chips, text, and the `/` cap.
@@ -117,11 +171,10 @@ fn search_field() -> (gtk::Widget, finder::Field) {
     readout.add_css_class("postio-readout");
     readout.set_visible(false);
 
-    let hint = gtk::Label::new(Some("/"));
-    hint.add_css_class("postio-key");
     // The hint is decoration for the field's own label; announcing it would
-    // read as a stray slash.
-    hint.set_accessible_role(gtk::AccessibleRole::Presentation);
+    // read as a stray slash. `Finder` rewrites it from its keymap.
+    let hint =
+        keyhint::framed_cap(&hints::key(Keymap::defaults(), CommandId::Search).unwrap_or_default());
 
     // `space-2` from the design system, rounded to the pixel GTK works in.
     let frame = gtk::Box::new(gtk::Orientation::Horizontal, 7);
@@ -152,31 +205,23 @@ fn search_field() -> (gtk::Widget, finder::Field) {
     (frame.upcast(), field)
 }
 
-/// `Keys ?` — the cheat sheet, which arrives in E6.
+/// `Keys ?` — the cheat sheet. Its content is [`sync_keys`]'s.
 fn keys_button() -> gtk::Button {
     let button = gtk::Button::builder()
         .tooltip_text("Keyboard shortcuts")
         .build();
     button.add_css_class("flat");
     button.add_css_class("postio-ghost");
-    button.set_child(Some(&labelled("Keys", "?")));
     button.update_property(&[gtk::accessible::Property::Label("Keyboard shortcuts")]);
     button
 }
 
-/// `Compose c` — the one suggested action in the whole bar.
+/// `Compose c` — the one suggested action in the whole bar. Its content is
+/// [`sync_compose`]'s.
 fn compose_button() -> gtk::Button {
-    let content = gtk::Box::new(gtk::Orientation::Horizontal, 8);
-    content.append(&gtk::Image::from_icon_name("document-edit-symbolic"));
-    content.append(&labelled("Compose", "c"));
-
-    let button = gtk::Button::builder()
-        .tooltip_text("Compose a message")
-        .build();
+    let button = gtk::Button::new();
     button.add_css_class("suggested-action");
     button.add_css_class("postio-compose");
-    button.set_child(Some(&content));
-    button.update_property(&[gtk::accessible::Property::Label("Compose a message")]);
     // The composer installs `win.compose` when it is mounted; naming the
     // action here rather than taking a callback keeps the button working
     // whether or not a composer is in the window, and keeps the mouse path
@@ -199,20 +244,4 @@ fn menu_button() -> gtk::MenuButton {
     button.add_css_class("flat");
     button.update_property(&[gtk::accessible::Property::Label("Main menu")]);
     button
-}
-
-/// A label and the key that reaches it, set in the mono face.
-pub(crate) fn labelled(text: &str, key: &str) -> gtk::Widget {
-    let label = gtk::Label::new(Some(text));
-
-    // The shortcut is already in the button's accessible label; a screen
-    // reader announcing a bare "c" after "Compose" is noise.
-    let hint = gtk::Label::new(Some(key));
-    hint.add_css_class("postio-keyhint");
-    hint.set_accessible_role(gtk::AccessibleRole::Presentation);
-
-    let row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
-    row.append(&label);
-    row.append(&hint);
-    row.upcast()
 }
