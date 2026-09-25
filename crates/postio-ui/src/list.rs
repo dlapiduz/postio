@@ -164,6 +164,132 @@ pub struct Delivered {
     pub reconciled: bool,
 }
 
+/// One step of turning the rows a stretch of the list held into the rows it
+/// holds now. See [`splices`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Splice {
+    /// Take `count` rows out at `at`.
+    Remove {
+        /// Where, counted from the start of the stretch, in the state the
+        /// steps before this one left.
+        at: u32,
+        /// How many.
+        count: u32,
+    },
+    /// Put `count` rows in at `at`: the new stretch's rows `from..from + count`.
+    Insert {
+        /// Where, counted from the start of the stretch, in the state the
+        /// steps before this one left.
+        at: u32,
+        /// How many.
+        count: u32,
+        /// Where they start in the new stretch.
+        from: usize,
+    },
+}
+
+/// The fewest positional steps that turn `old` into `new`: removals first,
+/// bottom up, then insertions, top down, each position counted in the state
+/// the steps before it left.
+///
+/// This is what lets a list re-read a stretch it is showing and tell its
+/// view only what moved. A row whose message is in both, in the same order
+/// relative to the others that stay, stays -- the same object, the same
+/// widget, updated in place by whoever applies this -- and every other row
+/// is an insertion or a removal *at its position*. Announcing the stretch as
+/// replaced instead is what rebuilt every widget in it and let the list
+/// flash skeletons on a resync (maintainer, 2026-09-25).
+///
+/// Which rows stay is the longest run of shared messages whose order did not
+/// change, so a conversation that moved to the top is one removal and one
+/// insertion, and mail landing above a page pushes one row off its end
+/// rather than shifting fifty. A position `old` knew nothing about (`None`,
+/// a placeholder) is always replaced.
+pub fn splices(old: &[Option<MessageId>], new: &[MessageId]) -> Vec<Splice> {
+    let mut held: HashMap<MessageId, usize> = HashMap::with_capacity(old.len());
+    for (index, id) in old.iter().enumerate() {
+        if let Some(id) = id {
+            held.entry(*id).or_insert(index);
+        }
+    }
+    let shared: Vec<(usize, usize)> = new
+        .iter()
+        .enumerate()
+        .filter_map(|(to, id)| held.get(id).map(|from| (*from, to)))
+        .collect();
+    let mut keep_old = vec![false; old.len()];
+    let mut keep_new = vec![false; new.len()];
+    for (index, kept) in longest_in_order(&shared).into_iter().enumerate() {
+        if kept {
+            let (from, to) = shared[index];
+            keep_old[from] = true;
+            keep_new[to] = true;
+        }
+    }
+
+    let mut script = Vec::new();
+    let mut end = old.len();
+    while end > 0 {
+        if keep_old[end - 1] {
+            end -= 1;
+            continue;
+        }
+        let mut start = end;
+        while start > 0 && !keep_old[start - 1] {
+            start -= 1;
+        }
+        script.push(Splice::Remove {
+            at: start as u32,
+            count: (end - start) as u32,
+        });
+        end = start;
+    }
+    let mut start = 0;
+    while start < new.len() {
+        if keep_new[start] {
+            start += 1;
+            continue;
+        }
+        let mut end = start;
+        while end < new.len() && !keep_new[end] {
+            end += 1;
+        }
+        script.push(Splice::Insert {
+            at: start as u32,
+            count: (end - start) as u32,
+            from: start,
+        });
+        start = end;
+    }
+    script
+}
+
+/// Which of `pairs` -- `(old position, new position)`, in new order -- form
+/// the longest run whose old positions also increase. Patience sorting, so a
+/// stretch of a few hundred rows costs nothing worth measuring.
+fn longest_in_order(pairs: &[(usize, usize)]) -> Vec<bool> {
+    let mut tails: Vec<usize> = Vec::new();
+    let mut before: Vec<Option<usize>> = vec![None; pairs.len()];
+    for (index, (from, _)) in pairs.iter().enumerate() {
+        let slot = tails.partition_point(|tail| pairs[*tail].0 < *from);
+        if slot > 0 {
+            before[index] = Some(tails[slot - 1]);
+        }
+        if slot == tails.len() {
+            tails.push(index);
+        } else {
+            tails[slot] = index;
+        }
+    }
+    let mut kept = vec![false; pairs.len()];
+    let mut at = tails.last().copied();
+    while let Some(index) = at {
+        kept[index] = true;
+        at = before[index];
+    }
+    kept
+}
+
 /// The paging and generation bookkeeping behind a windowed message list.
 ///
 /// A plain struct with no interior mutability and no toolkit reference of
@@ -179,6 +305,10 @@ pub struct ListWindow<T> {
     /// Bumped by [`reset`](Self::reset). A reply from an older generation is
     /// answering a question nobody is asking any more.
     generation: u64,
+    /// Replies to drop when they land, per page: asked for at offsets a
+    /// [`splice`](Self::splice) has since moved, so applying one would put
+    /// every row in it one place out.
+    discard: HashMap<u32, u32>,
 }
 
 impl<T> Default for ListWindow<T> {
@@ -189,6 +319,7 @@ impl<T> Default for ListWindow<T> {
             recent: VecDeque::new(),
             pending: HashSet::new(),
             generation: 0,
+            discard: HashMap::new(),
         }
     }
 }
@@ -231,12 +362,32 @@ impl<T: ListRow> ListWindow<T> {
     /// Callers that need the row count `set_source` used to report as
     /// "removed" should read [`total`](Self::total) before calling this.
     pub fn reset(&mut self, total: u32) -> u64 {
+        let next = self.generation + 1;
+        self.adopt(total, next);
+        next
+    }
+
+    /// [`reset`](Self::reset) to a generation the caller already handed out:
+    /// a list that keeps showing the scope it is leaving until the new one's
+    /// first page lands stamps that page's request with the generation it
+    /// will be answered under, and adopts it when the answer arrives.
+    pub fn adopt(&mut self, total: u32, generation: u64) {
         self.pages.clear();
         self.recent.clear();
         self.pending.clear();
+        self.discard.clear();
         self.total = total;
-        self.generation += 1;
-        self.generation
+        self.generation = generation;
+    }
+
+    /// Move to `generation` keeping every held page: the rows are still
+    /// right, but nothing asked for under the old generation may land on
+    /// them. What a list does when it puts back a scope it had set aside,
+    /// rows and all, rather than reading it again.
+    pub fn renumber(&mut self, generation: u64) {
+        self.pending.clear();
+        self.discard.clear();
+        self.generation = generation;
     }
 
     /// Drop everything cached and ask again, keeping both the scope and the
@@ -250,6 +401,7 @@ impl<T: ListRow> ListWindow<T> {
         self.pages.clear();
         self.recent.clear();
         self.pending.clear();
+        self.discard.clear();
         self.total
     }
 
@@ -334,6 +486,132 @@ impl<T: ListRow> ListWindow<T> {
         // Past a page nobody holds, every row would sit one position out.
         self.pages.retain(|held, _| *held <= last);
         self.recent.retain(|held| *held <= last);
+        true
+    }
+
+    /// Replace `removed` rows at `position` with `inserted`, inside the run
+    /// of held pages that holds it -- one [`Splice`] step, applied.
+    ///
+    /// A run is held pages back to back, every one of them full but the
+    /// last, so its rows are exactly the positions it covers. The run is
+    /// re-cut into pages after the change: a row pushed off the end of one
+    /// page is the first of the next, and a run that grew past its last full
+    /// page ends on a new short one, which [`row_at`](Self::row_at) already
+    /// treats as a page to ask for again once a row past it is wanted.
+    ///
+    /// When the run's length changes, everything after it is one row out per
+    /// row gained or lost: pages held past it are dropped, and a page asked
+    /// for at the old offsets has its answer dropped when it lands -- it is
+    /// askable again from now. `false`, with nothing changed, when no held
+    /// run covers the change; the end of a run counts, for a stretch that
+    /// grew there.
+    pub fn splice(&mut self, position: u32, removed: u32, inserted: Vec<T>) -> bool {
+        if position.saturating_add(removed) > self.total {
+            return false;
+        }
+        let full = |pages: &HashMap<u32, Vec<T>>, page: u32| {
+            pages
+                .get(&page)
+                .is_some_and(|rows| rows.len() == PAGE_SIZE as usize)
+        };
+        let page = position / PAGE_SIZE;
+        let index = (position % PAGE_SIZE) as usize;
+        let anchor = if self
+            .pages
+            .get(&page)
+            .is_some_and(|rows| index <= rows.len())
+        {
+            page
+        } else if index == 0 && page > 0 && full(&self.pages, page - 1) {
+            page - 1
+        } else {
+            return false;
+        };
+        let mut first = anchor;
+        while first > 0 && full(&self.pages, first - 1) {
+            first -= 1;
+        }
+        let mut last = anchor;
+        while full(&self.pages, last) && self.pages.contains_key(&(last + 1)) {
+            last += 1;
+        }
+        let start = first * PAGE_SIZE;
+        let mut rows: Vec<T> = Vec::new();
+        for held in first..=last {
+            rows.extend(self.pages.remove(&held).unwrap_or_default());
+        }
+        let offset = (position - start) as usize;
+        if offset + removed as usize > rows.len() {
+            // The change reaches past what the run holds. Put it back as it
+            // was and refuse.
+            self.rechunk(first, rows);
+            return false;
+        }
+        let before = rows.len();
+        let added = inserted.len() as u32;
+        rows.splice(offset..offset + removed as usize, inserted);
+        let grew = rows.len() != before;
+        let after_run = first + (rows.len() as u32).div_ceil(PAGE_SIZE).max(1);
+        self.rechunk(first, rows);
+        self.total = self.total - removed + added;
+        if grew {
+            self.pages.retain(|held, _| *held < after_run);
+            let moved: Vec<u32> = self
+                .pending
+                .iter()
+                .copied()
+                .filter(|pending| *pending >= first)
+                .collect();
+            for pending in moved {
+                self.pending.remove(&pending);
+                *self.discard.entry(pending).or_insert(0) += 1;
+            }
+        }
+        self.recent.retain(|held| self.pages.contains_key(held));
+        let mut touched: Vec<u32> = (first..after_run)
+            .filter(|held| self.pages.contains_key(held))
+            .collect();
+        touched.retain(|held| !self.recent.contains(held));
+        self.recent.extend(touched);
+        true
+    }
+
+    /// Put `rows` back as pages from `first` on, the last of them short if
+    /// it has to be.
+    fn rechunk(&mut self, first: u32, rows: Vec<T>) {
+        let mut page = first;
+        let mut rest = rows.into_iter().peekable();
+        while rest.peek().is_some() {
+            let chunk: Vec<T> = rest.by_ref().take(PAGE_SIZE as usize).collect();
+            self.pages.insert(page, chunk);
+            page += 1;
+        }
+    }
+
+    /// Forget every held page `keep` says no to, asking for nothing.
+    ///
+    /// For a refresh that re-read only the pages somebody is looking at: the
+    /// rest are one row out for every row the refresh moved, so they go, and
+    /// are read again at their new offsets when they are next wanted.
+    pub fn retain_pages(&mut self, keep: impl Fn(u32) -> bool) {
+        self.pages.retain(|page, _| keep(*page));
+        self.recent.retain(|page| keep(*page));
+    }
+
+    /// Say that the answer for `page` has been taken, without delivering it
+    /// here -- a refresh holds its pages until they have all landed, then
+    /// applies them as splices.
+    pub fn answered(&mut self, generation: u64, page: u32) -> bool {
+        if generation != self.generation {
+            return false;
+        }
+        if let Some(count) = self.discard.get_mut(&page)
+            && *count > 0
+        {
+            *count -= 1;
+            return false;
+        }
+        self.pending.remove(&page);
         true
     }
 
@@ -439,6 +717,14 @@ impl<T: ListRow> ListWindow<T> {
         if generation != self.generation {
             return;
         }
+        // The failure of a request a splice already disowned says nothing
+        // about the one asked since.
+        if let Some(count) = self.discard.get_mut(&page)
+            && *count > 0
+        {
+            *count -= 1;
+            return;
+        }
         self.pending.remove(&page);
     }
 
@@ -448,7 +734,11 @@ impl<T: ListRow> ListWindow<T> {
     /// [`ListRow::reconcile`] rather than replaced outright, so a
     /// redelivered page does not invalidate anything holding onto them.
     pub fn deliver(&mut self, generation: u64, page: u32, rows: Vec<T>) -> Delivered {
-        if generation != self.generation {
+        let disowned = self.discard.get(&page).is_some_and(|count| *count > 0);
+        if generation != self.generation || disowned {
+            if disowned && generation == self.generation {
+                *self.discard.get_mut(&page).expect("just read") -= 1;
+            }
             return Delivered {
                 stale: true,
                 changed: None,
@@ -692,6 +982,220 @@ mod tests {
         for page in [1, 2, 4] {
             assert!(!window.is_pending(page), "page {page} was asked for");
         }
+    }
+
+    // ── refreshing a stretch in place ────────────────────────────────────
+
+    fn ids(values: &[i64]) -> Vec<MessageId> {
+        values.iter().map(|value| MessageId::new(*value)).collect()
+    }
+
+    /// Run `splices` over `old` the way a toolkit applies it -- each step to
+    /// the state the one before left -- and hand back what that produces.
+    fn applied(old: &[i64], new: &[i64]) -> (Vec<i64>, Vec<Splice>) {
+        let before: Vec<Option<MessageId>> = old.iter().map(|v| Some(MessageId::new(*v))).collect();
+        let script = splices(&before, &ids(new));
+        let mut current: Vec<i64> = old.to_vec();
+        for step in &script {
+            match *step {
+                Splice::Remove { at, count } => {
+                    current.drain(at as usize..(at + count) as usize);
+                }
+                Splice::Insert { at, count, from } => {
+                    for offset in 0..count as usize {
+                        current.insert(at as usize + offset, new[from + offset]);
+                    }
+                }
+            }
+        }
+        (current, script)
+    }
+
+    #[test]
+    fn an_unchanged_stretch_needs_no_splice_at_all() {
+        let (after, script) = applied(&[1, 2, 3, 4], &[1, 2, 3, 4]);
+        assert_eq!(after, vec![1, 2, 3, 4]);
+        assert!(script.is_empty(), "{script:?}");
+    }
+
+    #[test]
+    fn mail_at_the_top_is_one_insert_and_what_fell_off_the_end_one_remove() {
+        // A page is fifty rows: one new row at the top pushes the last one
+        // into the next page. Two positional steps, and every row between
+        // keeps its place in the list's eyes -- no replace of the stretch.
+        let (after, script) = applied(&[1, 2, 3, 4], &[9, 1, 2, 3]);
+        assert_eq!(after, vec![9, 1, 2, 3]);
+        assert_eq!(
+            script,
+            vec![
+                Splice::Remove { at: 3, count: 1 },
+                Splice::Insert {
+                    at: 0,
+                    count: 1,
+                    from: 0
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn a_row_that_left_is_one_remove_and_the_next_page_fills_in_behind() {
+        let (after, script) = applied(&[1, 2, 3, 4], &[1, 3, 4, 5]);
+        assert_eq!(after, vec![1, 3, 4, 5]);
+        assert_eq!(
+            script,
+            vec![
+                Splice::Remove { at: 1, count: 1 },
+                Splice::Insert {
+                    at: 3,
+                    count: 1,
+                    from: 3
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn a_conversation_that_moved_to_the_top_is_taken_out_and_put_back() {
+        let (after, script) = applied(&[1, 2, 3, 4, 5], &[4, 1, 2, 3, 5]);
+        assert_eq!(after, vec![4, 1, 2, 3, 5]);
+        assert_eq!(script.len(), 2, "{script:?}");
+    }
+
+    #[test]
+    fn neighbouring_changes_are_announced_as_one_run() {
+        let (after, script) = applied(&[1, 2, 3, 4, 5, 6], &[7, 8, 1, 2, 5, 6]);
+        assert_eq!(after, vec![7, 8, 1, 2, 5, 6]);
+        assert_eq!(
+            script,
+            vec![
+                Splice::Remove { at: 2, count: 2 },
+                Splice::Insert {
+                    at: 0,
+                    count: 2,
+                    from: 0
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn a_stretch_that_grew_or_shrank_at_the_end_splices_the_end() {
+        assert_eq!(applied(&[1, 2], &[1, 2, 3]).0, vec![1, 2, 3]);
+        assert_eq!(applied(&[1, 2, 3], &[1, 2]).0, vec![1, 2]);
+        assert_eq!(applied(&[1, 2, 3], &[]).0, Vec::<i64>::new());
+        assert_eq!(applied(&[], &[4, 5]).0, vec![4, 5]);
+    }
+
+    #[test]
+    fn a_position_nothing_was_known_about_is_replaced() {
+        let before = vec![Some(MessageId::new(1)), None, Some(MessageId::new(3))];
+        let script = splices(&before, &ids(&[1, 2, 3]));
+        assert_eq!(
+            script,
+            vec![
+                Splice::Remove { at: 1, count: 1 },
+                Splice::Insert {
+                    at: 1,
+                    count: 1,
+                    from: 1
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn any_old_stretch_splices_into_any_new_one() {
+        // Not a proof, but a thousand shapes of it: whatever moved, left or
+        // arrived, the steps land exactly on what was read.
+        let mut seed: u64 = 0x5eed;
+        let mut next = move |bound: u64| {
+            seed = seed
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
+            (seed >> 33) % bound
+        };
+        for _ in 0..1000 {
+            let old: Vec<i64> = (1..=next(12) as i64).collect();
+            let mut new: Vec<i64> = old.iter().copied().filter(|_| next(4) != 0).collect();
+            for _ in 0..next(4) {
+                let at = next(new.len() as u64 + 1) as usize;
+                new.insert(at, 100 + next(50) as i64);
+            }
+            new.dedup();
+            let mut seen = std::collections::HashSet::new();
+            new.retain(|id| seen.insert(*id));
+            if new.len() > 1 && next(3) == 0 {
+                let a = next(new.len() as u64) as usize;
+                let moved = new.remove(a);
+                new.insert(0, moved);
+            }
+            assert_eq!(applied(&old, &new).0, new, "{old:?} -> {new:?}");
+        }
+    }
+
+    #[test]
+    fn splicing_a_held_run_reflows_its_pages_and_keeps_the_total_honest() {
+        let mut window: ListWindow<Fixture> = ListWindow::new();
+        window.reset(200);
+        for page in 0..2 {
+            deliver_fresh(&mut window, page, 200);
+        }
+        deliver_fresh(&mut window, 3, 200);
+        // One in at the top of the run: every held row moves down one, the
+        // last of page 0 becoming the first of page 1.
+        assert!(window.splice(0, 0, vec![row(999)]));
+        assert_eq!(window.total(), 201);
+        assert_eq!(window.peek(0), Some(MessageId::new(1000)));
+        assert_eq!(window.peek(50), Some(MessageId::new(50)), "carried across");
+        assert_eq!(held(&window, 0).len(), 50);
+        assert_eq!(held(&window, 1).len(), 51 - 1, "the run keeps whole pages");
+        assert_eq!(
+            window.peek(100),
+            Some(MessageId::new(100)),
+            "the row pushed past the run's last page is held on a new short page"
+        );
+        assert!(
+            !window.resident_pages().contains(&3),
+            "a page past the run is one row out now, so it goes"
+        );
+
+        // And one out, which pulls the rows after it back up.
+        assert!(window.splice(10, 1, Vec::new()));
+        assert_eq!(window.total(), 200);
+        assert_eq!(window.peek(10), Some(MessageId::new(11)));
+        assert_eq!(window.peek(49), Some(MessageId::new(50)));
+    }
+
+    #[test]
+    fn a_splice_outside_every_held_run_is_refused() {
+        let mut window: ListWindow<Fixture> = ListWindow::new();
+        window.reset(200);
+        deliver_fresh(&mut window, 0, 200);
+        assert!(!window.splice(120, 1, Vec::new()));
+        assert_eq!(window.total(), 200);
+        // The end of a held run is still inside it: that is where a stretch
+        // that grew puts its new rows.
+        assert!(window.splice(50, 0, vec![row(500)]));
+        assert_eq!(window.peek(50), Some(MessageId::new(501)));
+    }
+
+    #[test]
+    fn a_page_asked_for_before_a_splice_moved_it_is_not_applied_out_of_line() {
+        let mut window: ListWindow<Fixture> = ListWindow::new();
+        window.reset(200);
+        deliver_fresh(&mut window, 0, 200);
+        let Some(Lookup::Missing { request }) = window.row_at(120) else {
+            panic!("page 2 should have been missing");
+        };
+        assert!(request.contains(&2));
+        assert!(window.splice(0, 0, vec![row(999)]));
+        let landed = deliver_fresh(&mut window, 2, 200);
+        assert!(
+            landed.stale,
+            "page 2 was read at the old offsets, one row out from where it would land"
+        );
+        assert!(!window.is_pending(2), "and it can be asked for again");
     }
 
     fn held(window: &ListWindow<Fixture>, page: u32) -> Vec<i64> {
