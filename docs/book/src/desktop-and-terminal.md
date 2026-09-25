@@ -91,7 +91,7 @@ single command.
 |---|---|---|---|
 | Every section of `config.toml` | panes | `$EDITOR` | The terminal opens the file at the section |
 | The signature editor | ✓ | ✗ | |
-| The connection log and the privacy log | ✓ | ✗ | |
+| The privacy pane: senders allowed remote images, lists left, read receipts, recent connections | ✓ | ✓ | The same words from the same place; `d` on a sender asks for its images again |
 
 ## Everything else
 

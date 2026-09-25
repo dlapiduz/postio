@@ -15,6 +15,9 @@ use postio_ui::terminal::SafeText;
 /// The navigation's width.
 const NAV: u16 = 26;
 
+/// The widest a connection's "who and where" is set.
+const CONNECTION: usize = 44;
+
 /// Draw the settings over `area`.
 pub fn draw(frame: &mut Frame, area: Rect, app: &App, theme: &Theme) {
     let Some(settings) = app.settings() else {
@@ -37,7 +40,7 @@ pub fn draw(frame: &mut Frame, area: Rect, app: &App, theme: &Theme) {
             .filter(|section| section.group() == group)
         {
             let here = *section == settings.current();
-            let (mark, role) = match (here, settings.in_accounts()) {
+            let (mark, role) = match (here, settings.in_list()) {
                 (true, false) => ("› ", Role::Surface),
                 (true, true) => ("› ", Role::Accent),
                 _ => ("  ", Role::Text),
@@ -73,9 +76,9 @@ pub fn draw(frame: &mut Frame, area: Rect, app: &App, theme: &Theme) {
     ];
     if section == Section::Accounts {
         let accounts = app.accounts();
-        let cursor = settings.account(accounts.len());
+        let cursor = settings.row(accounts.len());
         for (index, account) in accounts.iter().enumerate() {
-            let here = settings.in_accounts() && index == cursor;
+            let here = settings.in_list() && index == cursor;
             let state = match (account.enabled, account.is_default) {
                 (false, _) => "disabled",
                 (true, true) => "default",
@@ -106,6 +109,8 @@ pub fn draw(frame: &mut Frame, area: Rect, app: &App, theme: &Theme) {
             ),
             theme.style(Role::Dim),
         ));
+    } else if section == Section::Privacy {
+        privacy(&mut pane, app, settings.in_list(), columns, theme);
     } else {
         let table = section.table().unwrap_or("the whole file");
         pane.push(Line::styled(
@@ -122,5 +127,123 @@ pub fn draw(frame: &mut Frame, area: Rect, app: &App, theme: &Theme) {
             break;
         }
         frame.render_widget(line, Rect::new(x, row, width, 1));
+    }
+}
+
+/// The privacy pane, as the desktop's: who may load remote images, the
+/// lists left, the read receipts asked for, and every connection made. All
+/// of it is read back from the store, and none of it is in the file.
+fn privacy(pane: &mut Vec<Line>, app: &App, in_list: bool, columns: usize, theme: &Theme) {
+    use postio_ui::privacy;
+    let kicker = |text: &'static str| {
+        Line::styled(text, theme.style(Role::Dim).add_modifier(Modifier::BOLD))
+    };
+    let empty = |text: &'static str| {
+        Line::styled(fit(&format!("  {text}"), columns), theme.style(Role::Dim))
+    };
+    let log = app.privacy();
+
+    pane.push(kicker(privacy::ALLOWED));
+    let senders: Vec<&str> = app.allowlist().senders().collect();
+    if senders.is_empty() {
+        pane.push(empty(privacy::NO_ALLOWED));
+    }
+    let cursor = app
+        .settings()
+        .map_or(0, |settings| settings.row(senders.len()));
+    for (index, sender) in senders.iter().enumerate() {
+        let here = in_list && index == cursor;
+        // An address the person allowed, but it came from a message.
+        let sender = SafeText::new(sender);
+        pane.push(Line::from(vec![
+            Span::styled(if here { "› " } else { "  " }, theme.style(Role::Accent)),
+            Span::styled(
+                fit(sender.as_str(), columns.saturating_sub(2)),
+                theme.style(if here { Role::Surface } else { Role::Text }),
+            ),
+        ]));
+    }
+
+    pane.push(Line::default());
+    pane.push(kicker(privacy::LISTS_LEFT));
+    let left = log
+        .map(|log| log.log.activations.as_slice())
+        .unwrap_or_default();
+    if left.is_empty() {
+        pane.push(empty(privacy::NO_LISTS_LEFT));
+    }
+    for activation in left {
+        let when = activation
+            .activated_at
+            .format(privacy::LEFT_WHEN)
+            .to_string();
+        let list = SafeText::new(&activation.list_identifier);
+        pane.push(Line::from(vec![
+            Span::styled(format!("  {when}  "), theme.style(Role::Dim)),
+            Span::styled(
+                fit(list.as_str(), columns.saturating_sub(when.len() + 4)),
+                theme.style(Role::Text),
+            ),
+        ]));
+    }
+
+    pane.push(Line::default());
+    pane.push(kicker(privacy::READ_RECEIPTS));
+    pane.push(Line::styled(
+        fit(
+            &format!(
+                "  {}",
+                privacy::read_receipts(log.map_or(0, |log| log.log.read_receipts))
+            ),
+            columns,
+        ),
+        theme.style(Role::Text),
+    ));
+
+    pane.push(Line::default());
+    pane.push(Line::styled(
+        fit(
+            "Tab to the senders · d asks for remote images again",
+            columns,
+        ),
+        theme.style(Role::Dim),
+    ));
+
+    pane.push(Line::default());
+    pane.push(kicker(privacy::CONNECTIONS));
+    let connections = log
+        .map(|log| log.connections.as_slice())
+        .unwrap_or_default();
+    if connections.is_empty() {
+        pane.push(empty(privacy::NO_CONNECTIONS));
+    }
+    for connection in connections {
+        let when = connection
+            .at
+            .with_timezone(&chrono::Local)
+            .format(privacy::CONNECTION_WHEN)
+            .to_string();
+        let outcome = connection.outcome.as_str();
+        // The host is what a server or an autoconfig answer named.
+        let what = SafeText::new(&privacy::connection(connection)).to_string();
+        // A column wide enough for a host, not the whole pane: the outcome
+        // belongs beside what it is about.
+        let room = columns
+            .saturating_sub(when.len() + outcome.len() + 6)
+            .min(CONNECTION);
+        let what = fit(&what, room);
+        let pad = room.saturating_sub(unicode_width::UnicodeWidthStr::width(what.as_str()));
+        pane.push(Line::from(vec![
+            Span::styled(format!("  {when}  "), theme.style(Role::Dim)),
+            Span::styled(what, theme.style(Role::Text)),
+            Span::raw(" ".repeat(pad + 2)),
+            Span::styled(
+                outcome,
+                theme.style(match connection.outcome {
+                    postio_model::egress::EgressOutcome::Connected => Role::Dim,
+                    postio_model::egress::EgressOutcome::Failed => Role::Warning,
+                }),
+            ),
+        ]));
     }
 }

@@ -1068,6 +1068,57 @@ mod tests {
     }
 
     #[test]
+    fn the_privacy_section_shows_what_left_this_machine() {
+        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+        let mut app = with_sidebar((160, 30));
+        update(
+            &mut app,
+            Input::Key(KeyEvent::new(KeyCode::Char(','), KeyModifiers::ALT)),
+        );
+        while app.settings().expect("open").current() != postio_ui::settings::Section::Privacy {
+            update(
+                &mut app,
+                Input::Key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE)),
+            );
+        }
+        update(
+            &mut app,
+            Input::Privacy {
+                log: postio_client::protocol::PrivacyLog {
+                    activations: Vec::new(),
+                    read_receipts: 2,
+                },
+                connections: vec![postio_model::egress::EgressEvent {
+                    at: chrono::Utc::now(),
+                    subsystem: postio_model::egress::EgressSubsystem::Imap,
+                    account: None,
+                    host: "imap.example.com".into(),
+                    port: 993,
+                    outcome: postio_model::egress::EgressOutcome::Connected,
+                }],
+            },
+        );
+        let screen = screen(160, 30, &app);
+        for wanted in [
+            postio_ui::privacy::ALLOWED,
+            postio_ui::privacy::NO_ALLOWED,
+            postio_ui::privacy::LISTS_LEFT,
+            postio_ui::privacy::NO_LISTS_LEFT,
+            postio_ui::privacy::READ_RECEIPTS,
+            "2 messages have requested a read receipt",
+            postio_ui::privacy::CONNECTIONS,
+            "imap · imap.example.com:993",
+            "connected",
+        ] {
+            assert!(screen.contains(wanted), "{wanted} missing:\n{screen}");
+        }
+        assert!(
+            !screen.contains("config.toml"),
+            "nothing of it is in the file:\n{screen}"
+        );
+    }
+
+    #[test]
     fn a_browser_sign_in_shows_the_whole_address_and_what_it_allows() {
         use crossterm::event::{KeyCode, KeyEvent};
         let keys = Keys::new(&postio_core::Keymap::resolve(&Default::default())).0;

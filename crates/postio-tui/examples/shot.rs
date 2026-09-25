@@ -140,7 +140,9 @@ fn main() {
     let state = args.next().unwrap_or_default();
 
     let keys = Keys::new(&postio_core::Keymap::resolve(&Default::default())).0;
-    let mut app = App::new((width, height), keys);
+    let mut allowed = postio_ui::allowlist::RemoteImageAllowList::default();
+    allowed.allow("newsletter@example.org");
+    let mut app = App::new((width, height), keys).with_allowlist(allowed);
 
     let mut account =
         postio_model::Account::new("Ada", EmailAddress::new(None::<String>, "ada@example.com"));
@@ -318,6 +320,51 @@ fn main() {
         }
         "compose" => {
             typed(&mut app, "c");
+        }
+        "privacy" => {
+            key(&mut app, KeyCode::Char(','), KeyModifiers::ALT);
+            while app
+                .settings()
+                .is_some_and(|settings| settings.current() != postio_ui::settings::Section::Privacy)
+            {
+                key(&mut app, KeyCode::Down, KeyModifiers::NONE);
+            }
+            let at = |hour, minute| Utc.with_ymd_and_hms(2026, 9, 24, hour, minute, 0).unwrap();
+            let connection = |hour, minute, subsystem, host: &str, port, failed| {
+                postio_model::egress::EgressEvent {
+                    at: at(hour, minute),
+                    subsystem,
+                    account: None,
+                    host: host.into(),
+                    port,
+                    outcome: if failed {
+                        postio_model::egress::EgressOutcome::Failed
+                    } else {
+                        postio_model::egress::EgressOutcome::Connected
+                    },
+                }
+            };
+            use postio_model::egress::EgressSubsystem::{Imap, Smtp};
+            update(
+                &mut app,
+                Input::Privacy {
+                    log: postio_client::protocol::PrivacyLog {
+                        activations: vec![postio_model::UnsubscribeActivation {
+                            id: postio_model::ids::UnsubscribeActivationId::new(1),
+                            account_id: AccountId::new(1),
+                            list_identifier: "weekly.example.org".into(),
+                            activated_at: at(9, 12),
+                        }],
+                        read_receipts: 3,
+                    },
+                    connections: vec![
+                        connection(14, 58, Imap, "imap.example.com", 993, false),
+                        connection(14, 41, Smtp, "smtp.example.com", 465, false),
+                        connection(14, 40, Smtp, "smtp.example.com", 465, true),
+                        connection(14, 12, Imap, "imap.example.com", 993, false),
+                    ],
+                },
+            );
         }
         "undo" => {
             update(

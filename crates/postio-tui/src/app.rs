@@ -140,6 +140,13 @@ pub enum Input {
         /// How many edits it had when it asked.
         edit: u64,
     },
+    /// The privacy pane's log, as the store has it now.
+    Privacy {
+        /// Unsubscribes and read-receipt requests.
+        log: postio_client::protocol::PrivacyLog,
+        /// The newest outbound connections, newest first.
+        connections: Vec<postio_model::egress::EgressEvent>,
+    },
     /// The host answered an [`Effect::SaveDraft`]: the draft's id, or why
     /// it could not be saved.
     DraftSaved {
@@ -368,6 +375,8 @@ pub enum Effect {
     SaveLayout(crate::state::TerminalState),
     /// Rename, move or delete a saved search in `config.toml`.
     EditSearch(crate::config_file::SearchEdit),
+    /// Read the privacy pane's log: what left this machine.
+    ReadPrivacy,
     /// Open a link with the system's opener, the person having clicked it
     /// twice.
     OpenLink(String),
@@ -446,6 +455,8 @@ pub struct App {
     sidebar: Vec<crate::sidebar::Line>,
     /// What the sidebar was last built from, to build it again folded.
     sidebar_contents: crate::sidebar::Contents,
+    /// The privacy pane's log, once read.
+    privacy: Option<Privacy>,
     /// The saved search the palette is naming, while it is.
     renaming: Option<String>,
     /// The saved search a first `delete_saved_search` asked about.
@@ -535,6 +546,15 @@ pub enum Tone {
 /// One section of the cheat sheet as it is drawn: its heading, and each
 /// command with the key this terminal can send for it.
 pub type SheetSection = (&'static str, Vec<(&'static str, String)>);
+
+/// What the privacy pane shows that is not in `config.toml`.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Privacy {
+    /// Unsubscribes and read-receipt requests.
+    pub log: postio_client::protocol::PrivacyLog,
+    /// The newest outbound connections, newest first.
+    pub connections: Vec<postio_model::egress::EgressEvent>,
+}
 
 /// Which of the finder's modes the palette is in (`postio_ui::finder`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -722,6 +742,7 @@ impl App {
             focus: Focus::List,
             sidebar: Vec::new(),
             sidebar_contents: crate::sidebar::Contents::default(),
+            privacy: None,
             renaming: None,
             deleting: None,
             sidebar_cursor: 0,
@@ -1087,41 +1108,62 @@ impl App {
         self.settings.as_ref()
     }
 
+    /// The privacy pane's log, once read.
+    pub fn privacy(&self) -> Option<&Privacy> {
+        self.privacy.as_ref()
+    }
+
+    /// The senders allowed remote images, which the privacy pane lists.
+    pub fn allowlist(&self) -> &postio_ui::allowlist::RemoteImageAllowList {
+        &self.allowlist
+    }
+
     /// The accounts the settings list, in the sidebar's order.
     pub fn accounts(&self) -> &[postio_model::Account] {
         &self.accounts
     }
 
     /// A key in the settings: the arrows walk the sections, Enter edits
-    /// the one under the cursor, Tab goes into the accounts, where the
-    /// registry's account commands act on the account under the cursor.
+    /// the one under the cursor, Tab goes into the section's list -- the
+    /// accounts, where the registry's account commands act on the account
+    /// under the cursor, or the senders allowed remote images.
     fn settings_key(&mut self, key: &KeyEvent) -> Vec<Effect> {
         use crossterm::event::KeyCode;
+        use postio_ui::settings::Section;
         let Some(settings) = self.settings.as_mut() else {
             return Vec::new();
         };
-        let count = self.accounts.len();
-        if !settings.in_accounts() {
+        let count = match settings.current() {
+            Section::Privacy => self.allowlist.senders().count(),
+            _ => self.accounts.len(),
+        };
+        if !settings.in_list() {
+            let was = settings.current();
             match key.code {
                 KeyCode::Up | KeyCode::Char('k') => settings.step(-1),
                 KeyCode::Down | KeyCode::Char('j') => settings.step(1),
-                KeyCode::Tab => settings.set_in_accounts(true),
-                KeyCode::Enter if settings.current() == postio_ui::settings::Section::Accounts => {
-                    settings.set_in_accounts(true);
+                KeyCode::Tab => settings.set_in_list(true),
+                KeyCode::Enter if matches!(was, Section::Accounts | Section::Privacy) => {
+                    settings.set_in_list(true);
                 }
-                KeyCode::Enter => return vec![Effect::EditConfig(Some(settings.current()))],
+                KeyCode::Enter => return vec![Effect::EditConfig(Some(was))],
                 _ => {
                     if let Outcome::Command(id) = self.keys.press(key, KeyContext::Global, false) {
                         return self.settings_command(&id);
                     }
                 }
             }
+            // The privacy log is read as the pane comes up, as the desktop
+            // reads it when its panel is shown: what it says is now.
+            if settings.current() == Section::Privacy && was != Section::Privacy {
+                return vec![Effect::ReadPrivacy, Effect::Redraw];
+            }
             return vec![Effect::Redraw];
         }
         match key.code {
-            KeyCode::Up | KeyCode::Char('k') => settings.step_account(-1, count),
-            KeyCode::Down | KeyCode::Char('j') => settings.step_account(1, count),
-            KeyCode::Tab | KeyCode::BackTab => settings.set_in_accounts(false),
+            KeyCode::Up | KeyCode::Char('k') => settings.step_row(-1, count),
+            KeyCode::Down | KeyCode::Char('j') => settings.step_row(1, count),
+            KeyCode::Tab | KeyCode::BackTab => settings.set_in_list(false),
             _ => {
                 return match self.keys.press(key, KeyContext::Accounts, false) {
                     Outcome::Command(id) => self.settings_command(&id),
@@ -1139,9 +1181,30 @@ impl App {
         let Some(settings) = self.settings.as_mut() else {
             return Vec::new();
         };
+        if settings.current() == postio_ui::settings::Section::Privacy && settings.in_list() {
+            // The one thing to do to an allowed sender is what the desktop's
+            // trash button does: ask again. Removing is `d` here as it is
+            // for an account.
+            if id == "remove_account" {
+                let row = settings.row(self.allowlist.senders().count());
+                let sender = self.allowlist.senders().nth(row).map(str::to_owned);
+                if let Some(sender) = sender {
+                    self.allowlist.revoke(&sender);
+                    let mut effects = self.say(&format!(
+                        "Remote images from {sender} will be asked for again"
+                    ));
+                    effects.insert(0, Effect::SaveAllowlist(self.allowlist.clone()));
+                    return effects;
+                }
+                return Vec::new();
+            }
+            if id != "back" {
+                return self.command(id);
+            }
+        }
         let account = self
             .accounts
-            .get(settings.account(self.accounts.len()))
+            .get(settings.row(self.accounts.len()))
             .cloned();
         let op = match (id, &account) {
             ("back", _) => {
@@ -3375,6 +3438,10 @@ pub fn update(app: &mut App, input: Input) -> Vec<Effect> {
             Err(reason) => app.say(&reason),
         },
         Input::AutosaveDue { generation, edit } => app.autosave_due(generation, edit),
+        Input::Privacy { log, connections } => {
+            app.privacy = Some(Privacy { log, connections });
+            vec![Effect::Redraw]
+        }
         Input::DraftSaved { generation, saved } => match saved {
             Ok(id) => {
                 if let Some(composer) = app.composer.as_mut()
@@ -5973,6 +6040,42 @@ pub(crate) mod tests {
         serve(app, opening);
         update(app, key(KeyCode::Char(','), KeyModifiers::ALT));
         assert_eq!(app.focus(), Focus::Settings);
+    }
+
+    #[test]
+    fn the_privacy_section_reads_its_log_and_revokes_an_allowed_sender() {
+        use postio_ui::settings::Section;
+        let mut app = app((160, 40));
+        in_settings(&mut app);
+        app.allowlist.allow("news@example.com");
+        let mut effects = Vec::new();
+        while app.settings().expect("open").current() != Section::Privacy {
+            effects = update(&mut app, key(KeyCode::Down, KeyModifiers::NONE));
+        }
+        assert!(effects.contains(&Effect::ReadPrivacy), "{effects:?}");
+        update(
+            &mut app,
+            Input::Privacy {
+                log: postio_client::protocol::PrivacyLog {
+                    activations: Vec::new(),
+                    read_receipts: 2,
+                },
+                connections: Vec::new(),
+            },
+        );
+        assert_eq!(app.privacy().expect("read").log.read_receipts, 2);
+
+        update(&mut app, key(KeyCode::Tab, KeyModifiers::NONE));
+        assert!(app.settings().unwrap().in_list(), "on the senders");
+        let effects = update(&mut app, press('d'));
+        assert!(
+            effects.iter().any(|effect| matches!(
+                effect,
+                Effect::SaveAllowlist(list) if !list.is_allowed("news@example.com")
+            )),
+            "{effects:?}"
+        );
+        assert!(!app.allowlist.is_allowed("news@example.com"));
     }
 
     #[test]

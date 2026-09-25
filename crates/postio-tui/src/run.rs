@@ -961,6 +961,22 @@ fn perform(
                     }
                 });
             }
+            Effect::ReadPrivacy => {
+                let client = client.clone();
+                let inputs = inputs.clone();
+                tokio::spawn(async move {
+                    let log = client.privacy_log().await;
+                    let connections = client.egress_log(postio_ui::privacy::CONNECTION_ROWS).await;
+                    match (log, connections) {
+                        (Ok(log), Ok(connections)) => {
+                            let _ = inputs.send(Input::Privacy { log, connections }).await;
+                        }
+                        (Err(error), _) | (_, Err(error)) => {
+                            tracing::warn!(%error, "could not read the privacy log");
+                        }
+                    }
+                });
+            }
             Effect::EditSearch(edit) => {
                 let client = client.clone();
                 let inputs = inputs.clone();

@@ -4,8 +4,9 @@
 //! settings. The sections are `postio_ui::settings::Section::ALL`, grouped and
 //! described as the desktop's navigation has them; a section of the file is
 //! shown as it stands, and edited in the person's own editor at that section.
-//! The one section that is not text is the accounts, where the registry's
-//! account commands act on the account under the cursor.
+//! Two sections are not text: the accounts, where the registry's account
+//! commands act on the account under the cursor, and privacy, which reads
+//! back what left this machine and lets an allowed sender be asked again.
 
 use postio_model::AccountId;
 use postio_ui::settings::Section;
@@ -14,8 +15,9 @@ use postio_ui::settings::Section;
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Settings {
     section: usize,
-    in_accounts: bool,
-    account: usize,
+    in_list: bool,
+    /// The row in the section's list: an account, or an allowed sender.
+    row: usize,
     /// The account just removed, for `undo`.
     removed: Option<AccountId>,
 }
@@ -35,28 +37,30 @@ impl Settings {
     pub fn step(&mut self, step: isize) {
         let last = Section::ALL.len() - 1;
         self.section = self.section.saturating_add_signed(step).min(last);
-        self.in_accounts = false;
+        self.in_list = false;
     }
 
-    /// Whether the keyboard is in the account list rather than the sections.
-    pub fn in_accounts(&self) -> bool {
-        self.in_accounts
+    /// Whether the keyboard is in the section's list rather than the
+    /// sections.
+    pub fn in_list(&self) -> bool {
+        self.in_list
     }
 
-    /// Put the keyboard in the account list, or back in the sections.
-    pub fn set_in_accounts(&mut self, inside: bool) {
-        self.in_accounts = inside && self.current() == Section::Accounts;
+    /// Put the keyboard in the section's list, or back in the sections. Only
+    /// the accounts and privacy have one.
+    pub fn set_in_list(&mut self, inside: bool) {
+        self.in_list = inside && matches!(self.current(), Section::Accounts | Section::Privacy);
     }
 
-    /// The account the cursor is on, of `count`.
-    pub fn account(&self, count: usize) -> usize {
-        self.account.min(count.saturating_sub(1))
+    /// The row the cursor is on, of `count`.
+    pub fn row(&self, count: usize) -> usize {
+        self.row.min(count.saturating_sub(1))
     }
 
-    /// Move the account cursor by `step`, of `count`.
-    pub fn step_account(&mut self, step: isize, count: usize) {
-        self.account = self
-            .account
+    /// Move the row cursor by `step`, of `count`.
+    pub fn step_row(&mut self, step: isize, count: usize) {
+        self.row = self
+            .row
             .saturating_add_signed(step)
             .min(count.saturating_sub(1));
     }
