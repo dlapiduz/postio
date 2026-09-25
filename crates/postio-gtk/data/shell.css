@@ -438,64 +438,6 @@ button.postio-compose {
   background-color: var(--postio-surface);
 }
 
-.postio-thread-header {
-  padding: 14px 18px 12px;
-  box-shadow: inset 0 -1px var(--postio-hairline);
-}
-
-/* The subject, in the heading face. Condensed, because a thread subject is
-   long and this column is 404px wide. */
-.postio-thread-subject {
-  font-family: var(--postio-font-heading);
-  font-weight: var(--postio-font-heading-weight);
-  font-size: 1.0227rem;
-  color: var(--postio-ink);
-}
-
-/* `6 messages · 4 people · Esc back to Inbox`. Mono, because it is counts
-   and a key. */
-.postio-thread-meta {
-  font-family: var(--postio-font-mono);
-  font-size: 0.7159rem;
-  color: var(--postio-dim);
-}
-
-.postio-thread-back {
-  min-width: 26px;
-  min-height: 26px;
-  padding: 0;
-}
-
-/* Unread-only and the order toggle. Quiet until they are doing something —
-   an option that looks like a button you must press is one people press. */
-.postio-thread-toggle {
-  min-height: 22px;
-  padding: 2px 8px;
-  font-family: var(--postio-font-mono);
-  font-size: 0.6818rem;
-  color: var(--postio-dim);
-}
-
-.postio-thread-toggle:checked {
-  background-color: var(--postio-selected-bg);
-  color: var(--postio-selected-accent-text);
-}
-
-.postio-thread-rows {
-  background: none;
-}
-
-/* The row widget a `GtkListView` wraps each item in. `crate::thread_row`
-   paints the row's own ground and its steel edge, because it draws its own
-   pixels — so the item widget itself stays out of the way entirely. */
-.postio-thread-rows > row {
-  padding: 0;
-  border: none;
-  border-radius: 0;
-  background: none;
-  box-shadow: none;
-}
-
 /* ── What the thread row's probe reads ───────────────────────────────
    `crate::thread_row` draws in one `snapshot()`, which gives up the cascade
    for the row's internals. These classes hand it back: an invisible label
@@ -555,27 +497,6 @@ button.postio-compose {
 
 .postio-thread-ground.hover {
   color: var(--postio-hover-bg);
-}
-
-/* Why the column is empty, when a filter has emptied it. */
-.postio-thread-empty {
-  padding: 16px 18px;
-  font-size: 0.8523rem;
-  color: var(--postio-faint);
-}
-
-/* `j/k in thread · A archive thread · Esc back`, pinned to the foot the way
-   the artboard draws it. */
-.postio-thread-footer {
-  min-height: 28px;
-  padding: 3px 18px;
-  box-shadow: inset 0 1px var(--postio-hairline);
-}
-
-.postio-thread-keys {
-  font-family: var(--postio-font-mono);
-  font-size: 0.7159rem;
-  color: var(--postio-dim);
 }
 
 /* ── The message list's rows (canvas 1b) ─────────────────────────────
@@ -1058,16 +979,6 @@ button.postio-compose {
   color: var(--postio-ink);
 }
 
-/* ── The / query bar ─────────────────────────────────────────────────
-   Over the list, not a dialog: search is primary navigation (canvas 2b).
-   No transition at all — the bar has to be typeable the instant it is
-   asked for. */
-.postio-searchbar {
-  padding: 8px 12px;
-  background-color: var(--postio-surface);
-  box-shadow: inset 0 -1px var(--postio-hairline);
-}
-
 .postio-chips {
   padding: 0 2px;
 }
@@ -1481,18 +1392,6 @@ button.postio-compose {
   border-radius: var(--postio-radius-sm);
 }
 
-.postio-settings-header {
-  min-height: 42px;
-  padding: 0 16px;
-  box-shadow: inset 0 -1px var(--postio-hairline);
-}
-
-.postio-settings-path {
-  font-family: var(--postio-font-mono);
-  font-size: 0.75rem;
-  color: var(--postio-ink-secondary);
-}
-
 /* The same chip vocabulary the query bar uses for an operator: a small
    labelled tag, not a bespoke pill. */
 .postio-settings-tag {
@@ -1824,19 +1723,6 @@ button.postio-settings-keys-binding.postio-settings-keys-capturing {
   color: var(--postio-accent-text);
 }
 
-/* What an account's mail weighs, under its name (#411).
-
-   Secondary to the name in the ordinary way -- the identity is what the row
-   is for and the size is a fact about it -- and dimmed through the token
-   rather than libadwaita's `dim-label`, so high contrast can bring it back
-   up with everything else that fades. Proportional, not the mono face the
-   status line uses: that line is almost entirely number and sits in a
-   column of them; this one is a sentence with two numbers in it. */
-.postio-settings-account-weight {
-  font-size: 0.7841rem;
-  color: var(--postio-dim);
-}
-
 /* The canvas' "Revert file": a quiet, bordered button, not the ghost style
    the header's own controls use — Revert is a recovery action and reads as
    one rather than blending into the row. */
@@ -1853,7 +1739,6 @@ button.postio-settings-revert {
 button.postio-settings-revert:hover {
   background-color: var(--postio-hover-bg);
 }
-
 
 /* The account's signatures (#1086). Rows rather than bare text: each one
    opens an editor, so it has to look like something you can press. */
@@ -2100,38 +1985,6 @@ button.postio-compose-more {
   min-height: 24px;
 }
 
-/* The conversation pane (ADR 0015 Q4): a stack of messages, read ones
-   collapsed to the one-line header the drill-in column already draws.
-
-   Entries are separated by the same hairline the list uses between rows,
-   because they are the same kind of boundary — one message ending and the
-   next beginning. Focus is drawn by the header itself (it wears the row's
-   own selected treatment), so nothing here dims anything: this is the one
-   surface where prose is actually read. */
-.conversation-entry {
-  box-shadow: inset 0 -1px var(--postio-hairline);
-}
-
-/* Reply, reply-all and forward, under the header of an expanded message.
-   Mono, because they sit with the key hints and the timestamps rather than
-   with the prose, and quiet until the message they belong to is the one
-   being read. */
-.conversation-actions {
-  padding: 0 var(--postio-space-3) var(--postio-space-2);
-}
-
-.conversation-actions button {
-  color: var(--postio-ink-secondary);
-  font-family: var(--postio-font-mono);
-  font-size: 0.85em;
-  min-height: 24px;
-  padding: 2px var(--postio-space-2);
-}
-
-.conversation-actions button:hover {
-  color: var(--postio-accent-text);
-}
-
 /* ── The shared controls (#1002) ─────────────────────────────────────
    A button with its key beside it, a row of them, and a one-line notice.
    Postio had three or four hand-rolled copies of each; these are the
@@ -2370,17 +2223,6 @@ button.postio-compose-more {
   font-family: var(--postio-font-mono);
   font-size: 0.7955rem;
   color: var(--postio-faint);
-}
-
-/* `--------  5 earlier messages · Ada, Bo  [Show]  --------` */
-.conversation-divider {
-  padding: var(--postio-space-2) var(--postio-space-4);
-}
-
-.conversation-divider-label {
-  font-family: var(--postio-font-mono);
-  font-size: 0.7955rem;
-  color: var(--postio-dim);
 }
 
 /* The conversation's verbs, against the per-message ones inside an entry. */

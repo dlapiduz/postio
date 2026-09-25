@@ -345,7 +345,6 @@ pub fn generate(tokens: &Tokens, source: &str) -> Result<String, TokenError> {
     writeln!(
         out,
         ".postio-heading,\n\
-         .postio-title,\n\
          .postio-kicker {{\n\
          \x20 font-family: var(--postio-font-heading);\n\
          \x20 font-weight: var(--postio-font-heading-weight);\n\
@@ -365,17 +364,8 @@ pub fn generate(tokens: &Tokens, source: &str) -> Result<String, TokenError> {
     writeln!(
         out,
         ".postio-mono,\n\
-         .postio-count,\n\
-         .postio-meta,\n\
          .postio-key {{\n\
          \x20 font-family: var(--postio-font-mono);\n\
-         }}\n"
-    )
-    .unwrap();
-    writeln!(
-        out,
-        ".postio-meta {{\n\
-         \x20 color: var(--postio-dim);\n\
          }}\n"
     )
     .unwrap();
@@ -387,16 +377,6 @@ pub fn generate(tokens: &Tokens, source: &str) -> Result<String, TokenError> {
          \x20 border: 1px solid var(--postio-key-border);\n\
          \x20 border-radius: var(--postio-radius-sm);\n\
          \x20 padding: 1px 4px;\n\
-         }}\n"
-    )
-    .unwrap();
-    writeln!(
-        out,
-        "/* A hairline divider — the Industry rule, one device-pixel of ink. */\n\
-         .postio-hairline {{\n\
-         \x20 background-color: var(--postio-hairline);\n\
-         \x20 min-width: 1px;\n\
-         \x20 min-height: 1px;\n\
          }}"
     )
     .unwrap();

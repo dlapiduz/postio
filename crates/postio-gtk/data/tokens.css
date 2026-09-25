@@ -303,7 +303,6 @@
 }
 
 .postio-heading,
-.postio-title,
 .postio-kicker {
   font-family: var(--postio-font-heading);
   font-weight: var(--postio-font-heading-weight);
@@ -317,14 +316,8 @@
 }
 
 .postio-mono,
-.postio-count,
-.postio-meta,
 .postio-key {
   font-family: var(--postio-font-mono);
-}
-
-.postio-meta {
-  color: var(--postio-dim);
 }
 
 /* A key hint: the mnemonic shown on the focused row, never a decoration. */
@@ -333,11 +326,4 @@
   border: 1px solid var(--postio-key-border);
   border-radius: var(--postio-radius-sm);
   padding: 1px 4px;
-}
-
-/* A hairline divider — the Industry rule, one device-pixel of ink. */
-.postio-hairline {
-  background-color: var(--postio-hairline);
-  min-width: 1px;
-  min-height: 1px;
 }
