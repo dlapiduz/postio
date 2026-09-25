@@ -114,7 +114,8 @@ type BackfillExclusionHandler = Box<dyn Fn(MailboxId, bool)>;
 // are re-exported so nothing in this crate had to change, and so every
 // comment that names `SyncStatus` still reads.
 pub use postio_ui::status::SyncStatus;
-pub(crate) use postio_ui::status::age;
+#[cfg(test)]
+use postio_ui::status::age;
 
 /// The count a folder shows, or `None` when it shows none.
 // Moved to `postio-ui` in #1155 so the macOS sidebar draws the same order and

@@ -18,9 +18,10 @@
 
 use std::time::Instant;
 
-use postio_core::ConnectionState;
+use postio_core::{CommandId, ConnectionState, Keymap};
 
-use crate::status::SyncStatus;
+use crate::hints::{self, Hint};
+use crate::status::{SyncStatus, age};
 
 /// What the list pane shows in place of rows.
 ///
@@ -370,6 +371,192 @@ pub fn derive_aggregate(
         });
     }
     None
+}
+
+/// One key hint a state offers: what it does, the command that does it, and
+/// the key the canvas draws for it.
+///
+/// Every key named here is a live [`CommandId`] with its own binding and
+/// palette entry — this widget only points at it, the same way the focused
+/// row's key hints do, rather than growing a fourth clickable-button idiom
+/// the app does not otherwise have. The key shown is the keymap's
+/// ([`resolve`]), preferring the canvas' where that is one of the command's
+/// keys: `R` for Refresh rather than its primary `F5`.
+pub type Offer = (&'static str, CommandId, &'static str);
+
+/// The offers as hints, from the keymap in force. A command the keymap has
+/// left without a key drops out rather than printing a blank.
+pub fn resolve(offers: &[Offer], keymap: &Keymap) -> Vec<Hint> {
+    offers
+        .iter()
+        .filter_map(|(label, command, preferred)| {
+            hints::hint_as(keymap, *command, preferred, label)
+        })
+        .collect()
+}
+
+/// What a state says: the words, the icon, and the keys it offers.
+///
+/// Decided here rather than in a frontend for the reason the states
+/// themselves are (`derive`): the macOS list pane names the same six states
+/// in the same words and offers the same keys, rather than wording either
+/// for itself.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Content {
+    /// A freedesktop icon name; a frontend without that theme maps from
+    /// [`icon_class`](Self::icon_class).
+    pub icon: &'static str,
+    /// The state's kind, as a style class: `inbox-zero`, `offline`,
+    /// `failing`, `no-matches`, `opening`.
+    pub icon_class: &'static str,
+    /// What happened, in a few words.
+    pub title: String,
+    /// What it means for the mail, in a sentence.
+    pub detail: String,
+    /// The keys it offers, before a keymap turns them into hints.
+    pub hints: Vec<Offer>,
+}
+
+fn plural(count: u64, noun: &str) -> String {
+    if count == 1 {
+        format!("1 {noun}")
+    } else {
+        format!("{count} {noun}s")
+    }
+}
+
+/// What `state` says, as of `now`: canvas 3d's "names the local store and
+/// gives a key, not a shrug".
+pub fn describe(state: &State, now: Instant) -> Content {
+    match state {
+        State::InboxZero {
+            last_sync,
+            stored,
+            mailbox,
+        } => {
+            let synced = match last_sync {
+                Some(at) => format!(
+                    "Last synced {} ago.",
+                    age(now.saturating_duration_since(*at))
+                ),
+                None => "Never synced yet.".to_string(),
+            };
+            // The inbox's emptiness is an achievement; any other folder's is
+            // a fact about that folder, named so it cannot be mistaken for
+            // the inbox (#1535).
+            let (title, lead) = match mailbox {
+                None => ("Inbox is empty".to_string(), "Nothing left to triage. "),
+                Some(name) => (format!("{name} is empty"), ""),
+            };
+            Content {
+                icon: "emblem-ok-symbolic",
+                icon_class: "inbox-zero",
+                title,
+                detail: format!(
+                    "{lead}{} still in the local store and searchable. {synced}",
+                    plural(*stored, "message")
+                ),
+                hints: vec![
+                    ("Search all mail", CommandId::Search, "/"),
+                    ("Compose", CommandId::Compose, "c"),
+                ],
+            }
+        }
+        State::Offline { queued } => Content {
+            icon: "network-offline-symbolic",
+            icon_class: "offline",
+            title: "Offline — reading local mail".to_string(),
+            detail: if *queued == 0 {
+                "Everything already synced still opens.".to_string()
+            } else {
+                format!(
+                    "Everything already synced still opens. {} waiting to send when the link is back.",
+                    plural(*queued, "change")
+                )
+            },
+            hints: vec![("Retry now", CommandId::Refresh, "R")],
+        },
+        State::Failing { reason } => Content {
+            icon: "dialog-error-symbolic",
+            icon_class: "failing",
+            title: "Sync failed".to_string(),
+            detail: format!("{reason} Local mail is untouched."),
+            hints: vec![("Retry now", CommandId::Refresh, "R")],
+        },
+        // The query is echoed back rather than described, because what to
+        // change is the thing the user cannot see from here: the box holds
+        // chips, and the operators they stand for are what actually ran.
+        //
+        // Quoted, and that is not decoration. Unquoted it renders as
+        // "Nothing in the local store matches from:ada invoice." -- prose
+        // and query in one face with nothing between them, which wraps
+        // mid-query and reads as a sentence. Quotes rather than a mono span,
+        // because a query is user-typed and a Pango markup span would mean
+        // escaping it; a label that renders `&` wrong is a worse bug than a
+        // face that is not quite the token.
+        State::NoMatches { query, incomplete } => Content {
+            icon: "system-search-symbolic",
+            icon_class: "no-matches",
+            title: "No matches".to_string(),
+            // The caveat goes *after* the query, not instead of it: what was
+            // searched for is still the thing to change. But "nothing
+            // matches" reads as proof the mail does not exist, so an
+            // unreachable account has to be named here or the sentence is a
+            // lie by omission (ADR 0005 Q10).
+            detail: match incomplete.as_slice() {
+                [] => format!("Nothing in the local store matches \u{201c}{query}\u{201d}."),
+                absent => format!(
+                    "Nothing in the local store matches \u{201c}{query}\u{201d}. {} \
+                     not reachable, so {} mail was searched only as far as it \
+                     had already synced.",
+                    naming(absent),
+                    if absent.len() == 1 { "its" } else { "their" },
+                ),
+            },
+            hints: vec![("Back to the folder", CommandId::Back, "Escape")],
+        },
+        // The one plate in the family that offers no verb, and that is
+        // correct rather than an omission: the work is in flight, so `R`
+        // would either do nothing or restart a read that is already running.
+        State::Opening { waiting } => {
+            let (title, detail) = describe_wait(*waiting);
+            Content {
+                icon: "content-loading-symbolic",
+                icon_class: "opening",
+                title: title.to_string(),
+                detail: detail.to_string(),
+                hints: Vec::new(),
+            }
+        }
+        State::Partial { accounts } => Content {
+            icon: "network-offline-symbolic",
+            icon_class: "offline",
+            // Named in the title, because the account is the fact. A title
+            // that said "Some accounts are offline" would make the reader
+            // open something else to find out which.
+            title: "Showing local mail".to_string(),
+            detail: format!(
+                "{} not reachable, so {} mail is what was already synced. \
+                 Everything here still opens.",
+                naming(accounts),
+                if accounts.len() == 1 { "its" } else { "their" },
+            ),
+            hints: vec![("Retry now", CommandId::Refresh, "R")],
+        },
+    }
+}
+
+/// "Personal is", "Personal and Work are", "Personal, Work and Archive are".
+///
+/// Every name, never "and 2 others": naming one of three absent accounts is
+/// its own omission, and the list is bounded by how many accounts a person
+/// configures.
+fn naming(accounts: &[String]) -> String {
+    let verb = if accounts.len() == 1 { "is" } else { "are" };
+    // The joining itself is `postio_ui::format::names`, shared with the
+    // selection summary: the banner and the summary name the same absent
+    // accounts and must spell the list the same way (#811).
+    format!("{} {verb}", crate::format::names(accounts))
 }
 
 #[cfg(test)]
@@ -846,5 +1033,179 @@ mod aggregate_tests {
         // caller passing only enabled accounts -- an empty list is a view
         // with nothing to disclose rather than one that is degraded.
         assert_eq!(derive_aggregate(&[], 0, 0, None, None), None);
+    }
+}
+
+#[cfg(test)]
+mod describe_tests {
+    use std::time::Duration;
+
+    use postio_core::Keymap;
+
+    use super::*;
+    use crate::hints;
+
+    #[test]
+    fn the_opening_plate_offers_no_verb() {
+        // The one plate in the family with no key hint and no retry, and
+        // that is correct rather than an omission: the work is in flight, so
+        // `R` would either do nothing or restart a read that is already
+        // running.
+        let content = describe(
+            &State::Opening {
+                waiting: Waiting::Keyring,
+            },
+            Instant::now(),
+        );
+        assert!(
+            content.hints.is_empty(),
+            "offering a verb here promises something to press, and there is \
+             nothing: {:?}",
+            content.hints
+        );
+    }
+
+    #[test]
+    fn the_no_matches_plate_says_the_query_and_the_way_out() {
+        let content = describe(
+            &State::NoMatches {
+                query: "from:ada invoice".to_string(),
+                incomplete: Vec::new(),
+            },
+            Instant::now(),
+        );
+        assert!(
+            content.detail.contains("from:ada invoice"),
+            "the plate does not say what was searched for: {}",
+            content.detail
+        );
+        // Never a dead end: every named state names a key.
+        assert_eq!(
+            hints::line(&resolve(&content.hints, Keymap::defaults())),
+            "Escape Back to the folder"
+        );
+    }
+
+    #[test]
+    fn every_state_offers_a_working_key() {
+        let now = Instant::now();
+        for state in [
+            State::InboxZero {
+                last_sync: Some(now - Duration::from_secs(12)),
+                stored: 4291,
+                mailbox: None,
+            },
+            State::Offline { queued: 2 },
+            State::Failing {
+                reason: "IMAP rejected the credentials.".to_string(),
+            },
+            State::NoMatches {
+                query: "from:ada invoice".to_string(),
+                incomplete: Vec::new(),
+            },
+        ] {
+            let content = describe(&state, now);
+            assert!(!content.hints.is_empty(), "{} offers no key", content.title);
+            let hints = resolve(&content.hints, Keymap::defaults());
+            assert_eq!(
+                hints.len(),
+                content.hints.len(),
+                "{} names an unbound key",
+                content.title
+            );
+            for hint in &hints {
+                assert!(!hint.label.is_empty());
+                assert!(!hint.key.is_empty());
+            }
+        }
+    }
+
+    #[test]
+    fn no_state_ever_shrugs() {
+        let now = Instant::now();
+        for state in [
+            State::InboxZero {
+                last_sync: None,
+                stored: 0,
+                mailbox: None,
+            },
+            State::Offline { queued: 0 },
+            State::Failing {
+                reason: "IMAP rejected the credentials.".to_string(),
+            },
+            State::NoMatches {
+                query: "from:ada invoice".to_string(),
+                incomplete: Vec::new(),
+            },
+        ] {
+            let content = describe(&state, now);
+            assert_ne!(content.detail.to_lowercase(), "something went wrong");
+            assert!(!content.detail.is_empty());
+            assert!(content.detail.len() > 10, "too terse to name anything");
+        }
+    }
+
+    #[test]
+    fn inbox_zero_names_when_it_last_synced() {
+        let now = Instant::now();
+        let never = describe(
+            &State::InboxZero {
+                last_sync: None,
+                stored: 4291,
+                mailbox: None,
+            },
+            now,
+        );
+        assert!(never.detail.contains("Never synced"));
+
+        let recently = describe(
+            &State::InboxZero {
+                last_sync: Some(now - Duration::from_secs(12)),
+                stored: 4291,
+                mailbox: None,
+            },
+            now,
+        );
+        assert!(recently.detail.contains("Last synced"));
+        assert!(recently.detail.contains("12s"));
+    }
+
+    #[test]
+    fn an_empty_folder_is_named_and_not_called_the_inbox() {
+        let now = Instant::now();
+        let archive = describe(
+            &State::InboxZero {
+                last_sync: None,
+                stored: 4291,
+                mailbox: Some("Archive".to_string()),
+            },
+            now,
+        );
+        assert_eq!(archive.title, "Archive is empty");
+        assert!(
+            !archive.detail.contains("triage"),
+            "an empty archive is not an inbox cleared: {}",
+            archive.detail
+        );
+        let inbox = describe(
+            &State::InboxZero {
+                last_sync: None,
+                stored: 4291,
+                mailbox: None,
+            },
+            now,
+        );
+        assert_eq!(inbox.title, "Inbox is empty");
+        assert!(inbox.detail.contains("Nothing left to triage"));
+    }
+
+    #[test]
+    fn offline_names_the_local_store_and_what_is_queued() {
+        let now = Instant::now();
+        let nothing_queued = describe(&State::Offline { queued: 0 }, now);
+        assert!(nothing_queued.detail.contains("still opens"));
+
+        let queued = describe(&State::Offline { queued: 3 }, now);
+        assert!(queued.detail.contains("3 changes"));
     }
 }
