@@ -2425,7 +2425,15 @@ impl App {
                 self.part_cursor = (self.part_cursor + 1).min(last);
             }
             "prev_part" => self.part_cursor = self.part_cursor.saturating_sub(1),
-            "open_part" => return self.write_parts(false, false),
+            // The desktop's two ways to open a part -- its own previewer, or
+            // "open with" another app -- are one here: the system's opener.
+            "open_part" | "open_part_externally" => return self.write_parts(false, false),
+            // Loading what a held-back part references is for drawing its
+            // images, and a terminal draws none.
+            "render_part_once" => {
+                return self.say("A terminal draws no images; the part's words are shown already");
+            }
+            "toggle_rail" => return self.say("The terminal has no conversation rail"),
             "save_part" => return self.write_parts(true, false),
             "save_all_parts" => return self.write_parts(true, true),
             "expand_all" => self.toggle_folds(),
@@ -2450,6 +2458,16 @@ impl App {
             }
             "back" => self.selection.clear(),
             "toggle_sidebar" => return self.toggle_sidebar(),
+            "view_original" => return self.view_original(),
+            "toggle_fold" => {
+                let folded = self
+                    .reading
+                    .as_mut()
+                    .is_some_and(|reading| reading.toggle_current());
+                if !folded {
+                    return self.say("Only a message in a conversation folds to its header");
+                }
+            }
             "go_to_inbox" => return self.go_to(postio_model::mailbox::MailboxRole::Inbox),
             "go_to_sent" => return self.go_to(postio_model::mailbox::MailboxRole::Sent),
             "go_to_drafts" => return self.go_to(postio_model::mailbox::MailboxRole::Drafts),
@@ -2467,6 +2485,33 @@ impl App {
             other => return self.send(other),
         }
         vec![Effect::Redraw]
+    }
+
+    /// The message on screen in the sender's own markup, or back in reader
+    /// view: redrawn from the body it arrived with, nothing asked again.
+    fn view_original(&mut self) -> Vec<Effect> {
+        let Some(member) = self
+            .reading
+            .as_mut()
+            .and_then(|reading| reading.members.get_mut(reading.current))
+        else {
+            return Vec::new();
+        };
+        let Some(body) = member.source.clone() else {
+            return self.say("This message has no markup of its own to show");
+        };
+        if !member.reader_view && !member.original {
+            return self.say("This message is already shown as its sender wrote it");
+        }
+        member.original = member.reader_view;
+        let message = member.id;
+        self.show(
+            message,
+            Ok(postio_client::protocol::Body::Ready {
+                body,
+                encoding_problems: false,
+            }),
+        )
     }
 
     /// Open `scope`, with the sidebar's cursor on the line that opens it.
@@ -2770,6 +2815,10 @@ impl App {
                         when: row.when,
                         body: None,
                         held_back: Default::default(),
+                        source: None,
+                        original: false,
+                        reader_view: false,
+                        collapsed: false,
                         images_allowed: false,
                         has_attachments: row.attachment,
                         parts: Vec::new(),
@@ -2828,15 +2877,26 @@ impl App {
         };
         let absent = |state| crate::reader::from_html(&absent_html(state));
         let mut held_back = postio_ui::reader::document::HeldBack::default();
+        // Asked for by `view_original`: this message's own markup, whatever
+        // the rule would have chosen.
+        let asked_original = self
+            .reading
+            .as_ref()
+            .and_then(|reading| reading.members.iter().find(|member| member.id == message))
+            .is_some_and(|member| member.original);
+        let mut source = None;
+        let mut reader_view = false;
         let rendered = match answer {
             Ok(Body::Ready { body, .. }) if body.html.is_some() => {
                 // The rule every reader applies: reader view for bulk mail,
                 // the sender's own markup (sanitised, folded) otherwise.
-                let rendering = if suits_reader_view(&body) {
+                let rendering = if !asked_original && suits_reader_view(&body) {
                     Rendering::Reader
                 } else {
                     Rendering::Original
                 };
+                reader_view = rendering == Rendering::Reader;
+                source = Some(body.clone());
                 // Blocked always: a terminal draws no image, so allowing them
                 // changes what the notice says and never what is fetched.
                 let drawn = body_html(&body, postio_body::RemoteImages::Blocked, rendering);
@@ -2862,6 +2922,8 @@ impl App {
             return Vec::new();
         };
         member.body = Some(rendered);
+        member.source = source;
+        member.reader_view = reader_view;
         let ask_for_parts = member.has_attachments && member.parts.is_empty();
         member.held_back = held_back;
         member.images_allowed = member
@@ -3898,13 +3960,8 @@ pub(crate) mod tests {
         "delete_saved_search",
         "move_saved_search_down",
         "move_saved_search_up",
-        "open_part_externally",
         "rename_saved_search",
-        "render_part_once",
-        "toggle_fold",
         "toggle_folder",
-        "toggle_rail",
-        "view_original",
     ];
 
     fn opens(effects: &[Effect]) -> Vec<ListScope> {
@@ -4026,6 +4083,41 @@ pub(crate) mod tests {
                 .any(|effect| matches!(effect, Effect::Autosave { .. })),
             "{effects:?}"
         );
+    }
+
+    #[test]
+    fn view_original_leaves_reader_view_for_the_senders_markup_and_back() {
+        let mut campaign = String::from("<table><tr><td><table><tr><td>");
+        for index in 0..14 {
+            campaign.push_str(&format!(
+                r##"<a href="https://example.com/{index}" style="color:#06c">shop</a>"##
+            ));
+        }
+        campaign.push_str("</td></tr></table></td></tr></table>");
+        let mut app = app((160, 40));
+        let opening = opened(&mut app, 3);
+        serve(&mut app, opening);
+        update(&mut app, key(KeyCode::Enter, KeyModifiers::NONE));
+        let message = MessageId::new(1);
+        update(
+            &mut app,
+            Input::Body {
+                message,
+                answer: Ok(postio_client::protocol::Body::Ready {
+                    body: postio_model::MessageBody {
+                        text: None,
+                        html: Some(campaign),
+                    },
+                    encoding_problems: false,
+                }),
+            },
+        );
+        let drawn = |app: &App| app.reading().unwrap().members[0].reader_view;
+        assert!(drawn(&app), "bulk mail opens in reader view");
+        app.command("view_original");
+        assert!(!drawn(&app), "the sender's own markup");
+        app.command("view_original");
+        assert!(drawn(&app), "and back");
     }
 
     /// Run `id` where its surface is, in an app with mail in the list, the
@@ -6122,6 +6214,45 @@ pub(crate) mod tests {
                 ]),
             },
         )
+    }
+
+    #[test]
+    fn toggle_fold_collapses_the_focused_message_to_its_header() {
+        let mut app = app((160, 40));
+        reading_a_conversation(&mut app);
+        for id in 1..=3 {
+            update(
+                &mut app,
+                Input::Body {
+                    message: MessageId::new(id),
+                    answer: Ok(postio_client::protocol::Body::Ready {
+                        body: postio_model::MessageBody {
+                            text: Some(format!("words of message {id}")),
+                            html: None,
+                        },
+                        encoding_problems: false,
+                    }),
+                },
+            );
+        }
+        let current = app.reading().unwrap().current;
+        let words = format!("words of message {}", current + 1);
+        assert!(reader_text(&app).contains(&words));
+        app.command("toggle_fold");
+        let folded = reader_text(&app);
+        assert!(
+            !folded.contains(&words),
+            "collapsed to its header:\n{folded}"
+        );
+        let reading = app.reading().unwrap();
+        let now = chrono::Local::now();
+        assert_eq!(
+            reading.layout(now).0.len(),
+            reading.targets().len(),
+            "clicks still land on the lines drawn"
+        );
+        app.command("toggle_fold");
+        assert!(reader_text(&app).contains(&words), "and open again");
     }
 
     #[test]

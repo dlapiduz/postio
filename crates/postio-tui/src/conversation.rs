@@ -30,6 +30,14 @@ pub struct Member {
     pub body: Option<Rendered>,
     /// What the sanitiser held back from it.
     pub held_back: postio_ui::reader::document::HeldBack,
+    /// Its body as it arrived, kept to draw it again the other way.
+    pub source: Option<postio_model::MessageBody>,
+    /// Whether the person asked for the sender's own markup (`view_original`).
+    pub original: bool,
+    /// Whether it is drawn in reader view.
+    pub reader_view: bool,
+    /// Folded to its header line in a conversation (`toggle_fold`).
+    pub collapsed: bool,
     /// Whether its remote images are allowed: this once, or by sender. The
     /// terminal draws no image either way; this is what the notice says.
     pub images_allowed: bool,
@@ -64,6 +72,10 @@ impl Member {
             when: summary.received_at,
             body: None,
             held_back: Default::default(),
+            source: None,
+            original: false,
+            reader_view: false,
+            collapsed: false,
             images_allowed: false,
             has_attachments: summary.has_attachments,
             parts: Vec::new(),
@@ -130,7 +142,14 @@ impl Reading {
                         Style::default().add_modifier(Modifier::BOLD),
                     ),
                     Span::raw(format!("  {}", postio_ui::row::timestamp(member.when, now))),
+                    Span::styled(
+                        if member.collapsed { "  ▸ folded" } else { "" },
+                        Style::default().add_modifier(Modifier::DIM),
+                    ),
                 ]));
+                if member.collapsed {
+                    continue;
+                }
             } else {
                 headers.push(0);
             }
@@ -171,6 +190,9 @@ impl Reading {
                     out.push(At::Nothing);
                 }
                 out.push(At::Header(index));
+                if member.collapsed {
+                    continue;
+                }
             }
             if member.images_allowed
                 || member.held_back.remote_images + member.held_back.trackers > 0
@@ -207,6 +229,21 @@ impl Reading {
             .and_then(|member| member.body.as_mut())
         {
             body.toggle_fold(block);
+        }
+    }
+
+    /// Fold the focused message to its header, or open it again. Only a
+    /// conversation of several has anything to fold a message into.
+    pub fn toggle_current(&mut self) -> bool {
+        if self.members.len() < 2 {
+            return false;
+        }
+        match self.members.get_mut(self.current) {
+            Some(member) => {
+                member.collapsed = !member.collapsed;
+                true
+            }
+            None => false,
         }
     }
 
@@ -249,6 +286,10 @@ pub(crate) mod tests {
             when: Utc.with_ymd_and_hms(2026, 9, 20, 9, 0, 0).unwrap(),
             body: body.map(crate::reader::from_text),
             held_back: Default::default(),
+            source: None,
+            original: false,
+            reader_view: false,
+            collapsed: false,
             images_allowed: false,
             has_attachments: false,
             parts: Vec::new(),

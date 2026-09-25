@@ -35,7 +35,8 @@ names it. That list and this table change together.
 | Saved searches in the sidebar | ✓ | ◐ | Shown and run; rename, delete and reorder are missing |
 | Go-to keys (inbox, sent, drafts, flagged) | ✓ | ✓ | |
 | Back to the previous view | ✓ | ✓ | |
-| Collapse a folder in the sidebar; toggle the account rail | ✓ | ✗ | |
+| Collapse a folder in the sidebar | ✓ | ✗ | |
+| The conversation rail | ✓ | — | The terminal has none |
 | Cursor and selection kept apart; multiple selection | ✓ | ✓ | |
 | Archive, delete, move, flag, mark unread, label, snooze, undo | ✓ | ✓ | |
 | Conversations, and walking one with `J`/`K` | ✓ | ✓ | |
@@ -48,12 +49,15 @@ names it. That list and this table change together.
 |---|---|---|---|
 | HTML mail, sanitised | ✓ | ◐ | The terminal draws it as styled Markdown |
 | Fold and unfold every quote | ✓ | ✓ | |
-| Fold and unfold one quote | ✓ | ◐ | By the mouse only; the key is missing |
+| Fold and unfold one quote | ✓ | ◐ | By the mouse |
+| Fold a message in a conversation to its header | ✓ | ✓ | |
 | Images in a message | ✓ | ◐ | Labelled placeholders; drawing them is the next iteration |
 | Remote images allowed per sender | ✓ | ✓ | The same allow list |
 | Open a link | ✓ | ◐ | A click shows where it goes and a second opens it; no key yet |
 | Attachments: open, save, save all | ✓ | ✓ | |
-| Open a part with another app; show a part once; view the original source | ✓ | ✗ | |
+| Reader view, or the sender's own markup (`View original`) | ✓ | ✓ | |
+| Open a part with another app | ✓ | ◐ | The terminal opens every part with the system's default app |
+| Show a held-back part once, with what it references | ✓ | — | For drawing its images, which a terminal cannot |
 | Unsubscribe | ✓ | ✓ | |
 | Drag a message or a part out to another app | ✓ | — | A terminal has nothing to drag to |
 
