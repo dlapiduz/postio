@@ -1096,7 +1096,7 @@ async fn adopt_engine(window: &Window, wiring: &Wiring, sync: postio_runtime::En
 /// `first_account` on the sync path — any code that treats one account
 /// differently fails exactly once, in the field.
 async fn enabled_accounts(database: &Store) -> Vec<postio_model::Account> {
-    let Ok(connection) = database.connect().await else {
+    let Ok(connection) = database.read().await else {
         tracing::error!("cannot read the accounts");
         return Vec::new();
     };

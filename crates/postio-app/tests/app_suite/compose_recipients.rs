@@ -96,7 +96,11 @@ pub fn typing_a_recipient_opens_no_connections_and_still_completes() {
         // ask may land before the read does.
         let flip = std::cell::Cell::new(false);
         let offered = settle_until(async || {
-            composer.test_set_to(if flip.replace(!flip.get()) { "wil" } else { "wilh" });
+            composer.test_set_to(if flip.replace(!flip.get()) {
+                "wil"
+            } else {
+                "wilh"
+            });
             composer.test_recipient_suggestion_count() > 0
         })
         .await;

@@ -20,7 +20,9 @@ const EGRESS_ROWS: u32 = 50;
 
 /// Wire the settings panel's connection list to the store.
 pub async fn install(window: &Window, wiring: &Wiring) {
-    refresh(window, &wiring.database).await;
+    // Not read now: the panel is hidden at startup, and `map` below reads it
+    // the moment it is shown -- a read here was the first frame waiting on
+    // fifty rows nobody could see.
     // `map` fires every time the panel comes on screen — `Ctrl+comma`, the
     // menu, wherever — which is exactly "the moment the person looks".
     // `CommandId::Settings` never reaches `connect_command`: the window
@@ -41,7 +43,7 @@ pub async fn install(window: &Window, wiring: &Wiring) {
 }
 
 async fn refresh(window: &Window, database: &Store) {
-    let Ok(connection) = database.connect().await else {
+    let Ok(connection) = database.read().await else {
         return;
     };
     match EgressLogRepository::new(&connection)

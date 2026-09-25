@@ -87,7 +87,7 @@ pub type Showing = Rc<Cell<Option<MessageId>>>;
 async fn accounts_to_name(
     database: &postio_storage::Store,
 ) -> Vec<(postio_model::AccountId, String)> {
-    let Ok(connection) = database.connect().await else {
+    let Ok(connection) = database.read().await else {
         return Vec::new();
     };
     let accounts = postio_storage::repository::AccountRepository::new(&connection)

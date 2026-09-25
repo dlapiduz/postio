@@ -199,7 +199,7 @@ async fn install_identities(
     database: &Store,
     account: AccountId,
 ) {
-    let Ok(connection) = database.connect().await else {
+    let Ok(connection) = database.read().await else {
         return;
     };
     match AccountRepository::new(&connection).get(account).await {
