@@ -48,6 +48,9 @@ pub mod view;
 // `actions` still owns which four verbs it carries.
 pub use message_header::MessageHeader;
 pub use postio_body::{RemoteImages, quote, sanitize};
+// The allow list moved to postio-ui (spec 005); the module keeps its old
+// path here too, so a caller that names it by that path is unchanged.
+pub use postio_ui::allowlist;
 pub use postio_ui::allowlist::RemoteImageAllowList;
 pub use scheme::BlobSource;
 pub use view::{Absent, HeldBack, Reader};
