@@ -175,3 +175,32 @@ pub fn a_waiting_plate_carries_no_notice_from_the_message_before() {
 
     window.close();
 }
+
+pub fn the_body_starts_at_the_same_place_whoever_the_message_went_to() {
+    let Some((window, reader, _dir)) = reader_in_a_window() else {
+        return;
+    };
+    let date = Utc.with_ymd_and_hms(2026, 9, 1, 9, 0, 0).unwrap();
+    let ada = EmailAddress::new(Some("Ada Lovelace"), "ada@example.com");
+    let grace = EmailAddress::new(Some("Grace Hopper"), "grace@example.com");
+    let bob = EmailAddress::new(None::<&str>, "bob@example.com");
+    let mut tops = Vec::new();
+    for (case, to, cc) in [
+        ("to one", vec![grace.clone()], vec![]),
+        ("to nobody", vec![], vec![]),
+        ("to one, cc one", vec![grace.clone()], vec![bob.clone()]),
+        ("cc only", vec![], vec![bob.clone()]),
+    ] {
+        reader.set_message_header(std::slice::from_ref(&ada), &to, &cc, Some("Figures"), date);
+        reader.render(&plain(case), Some("ada@example.com"));
+        lay_out();
+        tops.push((case, body_top(&reader)));
+    }
+    let first = tops[0].1;
+    assert!(
+        tops.iter().all(|(_, top)| (*top - first).abs() < 0.5),
+        "the header grew or shrank with the recipients, and the body with it: {tops:?}"
+    );
+
+    window.close();
+}

@@ -796,6 +796,15 @@ button.postio-compose {
   color: var(--postio-ink-secondary);
 }
 
+/* The `Cc` disclosure shares the `To` line and is no taller than it, so
+   the header is one height whoever a message went to; a button's own
+   padding made the line 16px taller for every message with a Cc. */
+.postio-message-header-cc {
+  min-height: 0;
+  padding-top: 0;
+  padding-bottom: 0;
+}
+
 /* ── The reading pane's action bar (#498) ────────────────────────────
    Reply, Reply all, Forward and Archive, under the body and the
    attachment chips — the pointer's way to the same four verbs the
