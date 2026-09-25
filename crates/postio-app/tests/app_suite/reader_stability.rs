@@ -114,7 +114,7 @@ fn drawing(document: &str, names: &[&str]) -> Option<String> {
 
 /// Turn the loop for `duration`, calling `each` on every turn.
 async fn watch_for(duration: std::time::Duration, mut each: impl FnMut()) {
-    let until = std::time::Instant::now() + duration;
+    let until = std::time::Instant::now() + postio_test_support::scaled(duration);
     while std::time::Instant::now() < until {
         settle();
         each();
