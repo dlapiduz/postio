@@ -1,4 +1,4 @@
-//! The reading pane's two notices: `postio-xxz` and `#901`.
+//! The reading pane's notices: `postio-xxz`, `#901` and `#971`.
 //!
 //! Both are native GTK chrome, not something drawn inside the `WebView` — the
 //! pane they sit above is exactly the thing they are reporting on, and they
@@ -14,11 +14,6 @@
 //! canvas draws (turn 7).
 
 use std::rc::Rc;
-
-// `UnsubscribeBanner` below is still hand-built GTK (#971), so the prelude
-// stays. #1002 rewrote the two notices in this file onto `NoticeBar` and
-// took the prelude with them; the third one arrived on `main` in between.
-use adw::prelude::*;
 
 use crate::widgets::{NoticeBar, NoticeMenuItem};
 
@@ -273,78 +268,53 @@ impl Default for DecodeNotice {
 /// decides what "asked" means. Whether the activation also sends the real
 /// RFC 8058 request is #972, deliberately not this one.
 pub struct UnsubscribeBanner {
-    root: gtk::Box,
-    label: gtk::Label,
-    unsubscribe: gtk::Button,
+    /// A [`NoticeBar`] like its two siblings. It was a hand-built box with
+    /// no styling of its own, so the one notice most messages carry was the
+    /// one that looked like none of the others -- and was a different height
+    /// from them, which the reader's single notice slot cannot allow.
+    notice: Rc<NoticeBar>,
 }
 
 impl UnsubscribeBanner {
-    /// Build the banner, hidden — [`super::view::Reader`] shows it once it
-    /// knows which list, if any, the message on screen belongs to.
+    /// A banner naming no list, hidden.
     pub fn new() -> Self {
-        let root = gtk::Box::new(gtk::Orientation::Horizontal, 8);
-        root.add_css_class("postio-unsubscribe-banner");
-        root.set_visible(false);
-        root.set_accessible_role(gtk::AccessibleRole::Group);
-
-        let icon = gtk::Image::from_icon_name("mail-unread-symbolic");
-        root.append(&icon);
-
-        let label = gtk::Label::new(None);
-        label.set_hexpand(true);
-        label.set_xalign(0.0);
-        label.add_css_class("postio-unsubscribe-banner-label");
-        root.append(&label);
-
-        let unsubscribe = gtk::Button::with_label("Unsubscribe");
-        unsubscribe.add_css_class("flat");
-        root.append(&unsubscribe);
-
-        UnsubscribeBanner {
-            root,
-            label,
-            unsubscribe,
-        }
+        let notice = NoticeBar::new("mail-unread-symbolic", "postio-unsubscribe-banner");
+        notice.set_action(Some("Unsubscribe"));
+        UnsubscribeBanner { notice }
     }
 
-    /// The widget to place above the reading pane's `WebView`.
+    /// The widget to stack in the reader.
     pub fn widget(&self) -> gtk::Widget {
-        self.root.clone().upcast()
+        self.notice.widget()
     }
 
-    /// Name the list this message belongs to and show the banner, or hide
-    /// it with no list to leave.
+    /// Name the list, or say there is none.
+    ///
+    /// Whether the banner is on screen is the reader's notice slot's to
+    /// decide, since #971 shows it for nearly every message and the slot
+    /// shows one notice at a time; this only says what it would read.
     pub fn set_list(&self, list: Option<&str>) {
         match list {
-            Some(list) => {
-                self.label
-                    .set_label(&format!("This message is from {list}"));
-                self.root.set_visible(true);
-            }
-            None => self.root.set_visible(false),
+            Some(list) => self
+                .notice
+                .set_text(&format!("This message is from {list}")),
+            None => self.notice.set_text(""),
         }
     }
 
-    /// Whether the banner is currently on screen.
-    pub fn is_visible(&self) -> bool {
-        self.root.is_visible()
-    }
-
-    /// The banner's label text — what names the list a click would leave.
-    /// Test-facing.
+    /// The banner's text, for tests.
     pub fn label(&self) -> String {
-        self.label.label().to_string()
+        self.notice.text()
     }
 
-    /// Called when the user asks to leave the list currently named.
+    /// Called when the button is pressed.
     pub fn connect_unsubscribe<F: Fn() + 'static>(&self, handler: F) {
-        self.unsubscribe.connect_clicked(move |_| handler());
+        self.notice.connect_action(handler);
     }
 
-    /// Simulate a click on "unsubscribe" — what a test uses in place of a
-    /// synthesized pointer click.
+    /// Press the button without a pointer, for a test.
     pub fn emit_unsubscribe(&self) {
-        self.unsubscribe.emit_clicked();
+        self.notice.press_action();
     }
 }
 

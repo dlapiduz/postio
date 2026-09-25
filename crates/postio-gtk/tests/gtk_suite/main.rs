@@ -120,6 +120,7 @@ mod gtk_reader_account;
 mod gtk_reader_actions;
 mod gtk_reader_anchor;
 mod gtk_reader_fonts;
+mod gtk_reader_notices;
 mod gtk_reader_outgoing;
 mod gtk_reader_pane_owner;
 mod gtk_reader_scroll;
@@ -1290,6 +1291,15 @@ const CASES: &[(&str, fn())] = &[
     (
         "gtk_conversation::a_pane_shown_again_does_not_show_the_thread_it_held_before",
         gtk_conversation::a_pane_shown_again_does_not_show_the_thread_it_held_before as fn(),
+    ),
+    (
+        "gtk_reader_notices::the_body_starts_at_the_same_place_whatever_the_notices",
+        gtk_reader_notices::the_body_starts_at_the_same_place_whatever_the_notices as fn(),
+    ),
+    (
+        "gtk_reader_notices::a_waiting_plate_carries_no_notice_from_the_message_before",
+        gtk_reader_notices::a_waiting_plate_carries_no_notice_from_the_message_before
+            as fn(),
     ),
     (
         "gtk_reader_anchor::a_late_body_does_not_throw_the_reader_back_to_the_top",
