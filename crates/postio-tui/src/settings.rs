@@ -8,7 +8,7 @@
 //! commands act on the account under the cursor, and privacy, which reads
 //! back what left this machine and lets an allowed sender be asked again.
 
-use postio_model::AccountId;
+use postio_model::{AccountId, SignatureId};
 use postio_ui::settings::Section;
 
 /// The settings screen, while it is open.
@@ -20,6 +20,12 @@ pub struct Settings {
     row: usize,
     /// The account just removed, for `undo`.
     removed: Option<AccountId>,
+    /// The account whose signatures are listed, while they are.
+    signatures: Option<AccountId>,
+    /// The signature the cursor is on.
+    signature: usize,
+    /// The signature a first delete asked about.
+    deleting: Option<SignatureId>,
 }
 
 impl Settings {
@@ -68,6 +74,47 @@ impl Settings {
     /// Remember a removal, for `undo`.
     pub fn removed(&mut self, account: AccountId) {
         self.removed = Some(account);
+    }
+
+    /// The account whose signatures are listed, while they are.
+    pub fn signatures_of(&self) -> Option<AccountId> {
+        self.signatures
+    }
+
+    /// List `account`'s signatures, or go back to the accounts with `None`.
+    pub fn show_signatures(&mut self, account: Option<AccountId>) {
+        self.signatures = account;
+        self.signature = 0;
+        self.deleting = None;
+    }
+
+    /// The signature the cursor is on, of `count`.
+    pub fn signature(&self, count: usize) -> usize {
+        self.signature.min(count.saturating_sub(1))
+    }
+
+    /// Move the signature cursor by `step`, of `count`.
+    pub fn step_signature(&mut self, step: isize, count: usize) {
+        self.signature = self
+            .signature
+            .saturating_add_signed(step)
+            .min(count.saturating_sub(1));
+    }
+
+    /// Whether deleting `signature` was already asked about: the first ask
+    /// only remembers it, the second is the answer.
+    pub fn confirm_delete(&mut self, signature: SignatureId) -> bool {
+        if self.deleting == Some(signature) {
+            self.deleting = None;
+            return true;
+        }
+        self.deleting = Some(signature);
+        false
+    }
+
+    /// Forget a delete asked about: anything else was the answer.
+    pub fn keep(&mut self) {
+        self.deleting = None;
     }
 
     /// The removal `undo` takes back, once.

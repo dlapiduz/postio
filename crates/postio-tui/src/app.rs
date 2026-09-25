@@ -140,6 +140,9 @@ pub enum Input {
         /// How many edits it had when it asked.
         edit: u64,
     },
+    /// A signature was saved or removed, or why it could not be: the
+    /// store's sentence, which is for the person who typed.
+    SignatureSaved(Result<(), String>),
     /// The privacy pane's log, as the store has it now.
     Privacy {
         /// Unsubscribes and read-receipt requests.
@@ -377,6 +380,31 @@ pub enum Effect {
     EditSearch(crate::config_file::SearchEdit),
     /// Read the privacy pane's log: what left this machine.
     ReadPrivacy,
+    /// Hand a signature's text to the person's editor, then save what it
+    /// wrote under `name`: a new signature when `signature` is `None`.
+    EditSignature {
+        /// Whose.
+        account: postio_model::AccountId,
+        /// Which, or a new one.
+        signature: Option<postio_model::SignatureId>,
+        /// What it is called.
+        name: String,
+        /// Its text before the edit.
+        text: String,
+    },
+    /// Save a signature as it is given, as a rename does.
+    SaveSignature {
+        /// Whose.
+        account: postio_model::AccountId,
+        /// Which, or a new one.
+        signature: Option<postio_model::SignatureId>,
+        /// What it is called.
+        name: String,
+        /// Its text.
+        text: String,
+    },
+    /// Remove a signature.
+    DeleteSignature(postio_model::SignatureId),
     /// Open a link with the system's opener, the person having clicked it
     /// twice.
     OpenLink(String),
@@ -457,8 +485,8 @@ pub struct App {
     sidebar_contents: crate::sidebar::Contents,
     /// The privacy pane's log, once read.
     privacy: Option<Privacy>,
-    /// The saved search the palette is naming, while it is.
-    renaming: Option<String>,
+    /// What the palette is naming, while it is.
+    renaming: Option<Renaming>,
     /// The saved search a first `delete_saved_search` asked about.
     deleting: Option<String>,
     /// The account's labels, as the finder's `+` offers them.
@@ -546,6 +574,20 @@ pub enum Tone {
 /// One section of the cheat sheet as it is drawn: its heading, and each
 /// command with the key this terminal can send for it.
 pub type SheetSection = (&'static str, Vec<(&'static str, String)>);
+
+/// What a name typed in the palette is for.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum Renaming {
+    /// The saved search with this `[filters]` key.
+    SavedSearch(String),
+    /// A signature of `account`: `signature`, or a new one, whose text is
+    /// `text`.
+    Signature {
+        account: postio_model::AccountId,
+        signature: Option<postio_model::SignatureId>,
+        text: String,
+    },
+}
 
 /// What the privacy pane shows that is not in `config.toml`.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -1133,6 +1175,9 @@ impl App {
         let Some(settings) = self.settings.as_mut() else {
             return Vec::new();
         };
+        if let Some(account) = settings.signatures_of() {
+            return self.signatures_key(account, key);
+        }
         let count = match settings.current() {
             Section::Privacy => self.allowlist.senders().count(),
             _ => self.accounts.len(),
@@ -1164,6 +1209,15 @@ impl App {
             KeyCode::Up | KeyCode::Char('k') => settings.step_row(-1, count),
             KeyCode::Down | KeyCode::Char('j') => settings.step_row(1, count),
             KeyCode::Tab | KeyCode::BackTab => settings.set_in_list(false),
+            // The account's signatures, as the desktop's account form
+            // drills into them.
+            KeyCode::Char('s') if settings.current() == Section::Accounts => {
+                let account = self
+                    .accounts
+                    .get(settings.row(count))
+                    .map(|account| account.id);
+                settings.show_signatures(account);
+            }
             _ => {
                 return match self.keys.press(key, KeyContext::Accounts, false) {
                     Outcome::Command(id) => self.settings_command(&id),
@@ -1723,10 +1777,21 @@ impl App {
             }
             Finding::Rename => {
                 let name = query.trim();
-                let title = if name.is_empty() {
-                    "Go back to its first name".to_owned()
-                } else {
-                    format!("Rename to “{}”", postio_ui::terminal::SafeText::new(name))
+                let shown = postio_ui::terminal::SafeText::new(name);
+                let title = match (&self.renaming, name.is_empty()) {
+                    (Some(Renaming::Signature { .. }), true) => {
+                        "A signature needs a name".to_owned()
+                    }
+                    (
+                        Some(Renaming::Signature {
+                            signature: None, ..
+                        }),
+                        false,
+                    ) => {
+                        format!("Call it “{shown}”, and write it")
+                    }
+                    (_, true) => "Go back to its first name".to_owned(),
+                    (_, false) => format!("Rename to “{shown}”"),
                 };
                 vec![(
                     PaletteRow {
@@ -1805,16 +1870,7 @@ impl App {
                         self.say(&format!("{other} is not something this terminal can run"))
                     }
                     Some(PaletteAction::Open(scope)) => vec![Effect::Open(scope), Effect::Redraw],
-                    Some(PaletteAction::Rename(name)) => match self.renaming.take() {
-                        Some(key) => vec![
-                            Effect::EditSearch(crate::config_file::SearchEdit::Rename {
-                                key,
-                                name,
-                            }),
-                            Effect::Redraw,
-                        ],
-                        None => vec![Effect::Redraw],
-                    },
+                    Some(PaletteAction::Rename(name)) => self.named(name),
                     Some(PaletteAction::PickRole(account, role)) => {
                         self.open_palette(Finding::RoleFolder(account, role))
                     }
@@ -3145,6 +3201,117 @@ impl App {
         effects
     }
 
+    /// A name typed in the palette, for what asked for it.
+    fn named(&mut self, name: String) -> Vec<Effect> {
+        let effect = match self.renaming.take() {
+            Some(Renaming::SavedSearch(key)) => {
+                Effect::EditSearch(crate::config_file::SearchEdit::Rename { key, name })
+            }
+            // The picker shows the name, so a signature without one is
+            // refused here, as the desktop's form refuses it.
+            Some(Renaming::Signature { .. }) if name.is_empty() => {
+                return self.say("A signature needs a name");
+            }
+            Some(Renaming::Signature {
+                account,
+                signature: None,
+                text,
+            }) => Effect::EditSignature {
+                account,
+                signature: None,
+                name,
+                text,
+            },
+            Some(Renaming::Signature {
+                account,
+                signature,
+                text,
+            }) => Effect::SaveSignature {
+                account,
+                signature,
+                name,
+                text,
+            },
+            None => return vec![Effect::Redraw],
+        };
+        vec![effect, Effect::Redraw]
+    }
+
+    /// A key in an account's signatures: Enter writes the one under the
+    /// cursor in the person's editor, `n` starts one, `r` renames, `d`
+    /// deletes once asked twice, and Escape goes back to the accounts.
+    fn signatures_key(&mut self, account: postio_model::AccountId, key: &KeyEvent) -> Vec<Effect> {
+        use crossterm::event::KeyCode;
+        let signatures = self
+            .accounts
+            .iter()
+            .find(|candidate| candidate.id == account)
+            .map(|candidate| candidate.signatures.clone())
+            .unwrap_or_default();
+        let Some(settings) = self.settings.as_mut() else {
+            return Vec::new();
+        };
+        let here = signatures
+            .get(settings.signature(signatures.len()))
+            .cloned();
+        if key.code != KeyCode::Char('d') {
+            settings.keep();
+        }
+        match key.code {
+            KeyCode::Up | KeyCode::Char('k') => settings.step_signature(-1, signatures.len()),
+            KeyCode::Down | KeyCode::Char('j') => {
+                settings.step_signature(1, signatures.len());
+            }
+            KeyCode::Esc | KeyCode::Tab | KeyCode::BackTab => settings.show_signatures(None),
+            KeyCode::Enter => {
+                if let Some(signature) = here {
+                    return vec![Effect::EditSignature {
+                        account,
+                        signature: Some(signature.id),
+                        name: signature.name,
+                        text: signature.text,
+                    }];
+                }
+            }
+            KeyCode::Char('n') => {
+                self.renaming = Some(Renaming::Signature {
+                    account,
+                    signature: None,
+                    text: String::new(),
+                });
+                return self.open_palette(Finding::Rename);
+            }
+            KeyCode::Char('r') => {
+                if let Some(signature) = here {
+                    self.renaming = Some(Renaming::Signature {
+                        account,
+                        signature: Some(signature.id),
+                        text: signature.text,
+                    });
+                    let effects = self.open_palette(Finding::Rename);
+                    if let Some(palette) = self.palette.as_mut() {
+                        palette.input = tui_input::Input::default().with_value(signature.name);
+                    }
+                    return effects;
+                }
+            }
+            KeyCode::Char('d') => {
+                if let Some(signature) = here {
+                    if settings.confirm_delete(signature.id) {
+                        return vec![Effect::DeleteSignature(signature.id), Effect::Redraw];
+                    }
+                    let name = postio_ui::terminal::SafeText::new(&signature.name);
+                    return self.say(&format!(
+                        "Delete the signature “{name}”? Press d again to delete it; \
+                         anything else keeps it"
+                    ));
+                }
+            }
+            _ => {}
+        }
+        vec![Effect::Redraw]
+    }
+
     /// Rename, move or delete the saved search under the sidebar cursor, as
     /// the desktop's sidebar does. Deleting has no undo, so it asks first:
     /// the same command again deletes, anything else keeps it.
@@ -3159,7 +3326,7 @@ impl App {
         let name = line.label.to_string();
         let edit = match id {
             "rename_saved_search" => {
-                self.renaming = Some(key);
+                self.renaming = Some(Renaming::SavedSearch(key));
                 let effects = self.open_palette(Finding::Rename);
                 if let Some(palette) = self.palette.as_mut() {
                     palette.input = tui_input::Input::default().with_value(name);
@@ -3438,6 +3605,11 @@ pub fn update(app: &mut App, input: Input) -> Vec<Effect> {
             Err(reason) => app.say(&reason),
         },
         Input::AutosaveDue { generation, edit } => app.autosave_due(generation, edit),
+        Input::SignatureSaved(saved) => match saved {
+            // The account list carries the signatures; read it again.
+            Ok(()) => vec![Effect::RefreshSidebar, Effect::Redraw],
+            Err(reason) => app.say(&reason),
+        },
         Input::Privacy { log, connections } => {
             app.privacy = Some(Privacy { log, connections });
             vec![Effect::Redraw]
@@ -6076,6 +6248,95 @@ pub(crate) mod tests {
             "{effects:?}"
         );
         assert!(!app.allowlist.is_allowed("news@example.com"));
+    }
+
+    #[test]
+    fn an_accounts_signatures_are_edited_added_renamed_and_deleted() {
+        use postio_model::{Signature, SignatureId};
+        let mut app = app((160, 40));
+        let mut contents = sidebar_contents();
+        let account = contents.accounts[0].id;
+        let mut work = Signature::new("Work", "Ada\nThe Engine Room");
+        work.id = SignatureId::new(5);
+        contents.accounts[0].signatures = vec![work];
+        update(&mut app, Input::Sidebar(contents));
+        let opening = opened(&mut app, 3);
+        serve(&mut app, opening);
+        update(&mut app, key(KeyCode::Char(','), KeyModifiers::ALT));
+        update(&mut app, key(KeyCode::Tab, KeyModifiers::NONE));
+
+        update(&mut app, press('s'));
+        assert_eq!(app.settings().unwrap().signatures_of(), Some(account));
+
+        // Enter: the text, in the person's editor.
+        let effects = update(&mut app, key(KeyCode::Enter, KeyModifiers::NONE));
+        assert!(
+            effects.contains(&Effect::EditSignature {
+                account,
+                signature: Some(SignatureId::new(5)),
+                name: "Work".into(),
+                text: "Ada\nThe Engine Room".into(),
+            }),
+            "{effects:?}"
+        );
+
+        // n: a name, then the editor on nothing yet.
+        update(&mut app, press('n'));
+        assert_eq!(app.focus(), Focus::Palette);
+        typing(&mut app, "Home");
+        let effects = update(&mut app, key(KeyCode::Enter, KeyModifiers::NONE));
+        assert!(
+            effects.contains(&Effect::EditSignature {
+                account,
+                signature: None,
+                name: "Home".into(),
+                text: String::new(),
+            }),
+            "{effects:?}"
+        );
+        assert_eq!(app.focus(), Focus::Settings);
+
+        // r: the name it has, changed; the text stays.
+        update(&mut app, press('r'));
+        assert_eq!(app.palette().expect("asking").query, "Work");
+        for _ in 0.."Work".len() {
+            update(&mut app, key(KeyCode::Backspace, KeyModifiers::NONE));
+        }
+        typing(&mut app, "Office");
+        let effects = update(&mut app, key(KeyCode::Enter, KeyModifiers::NONE));
+        assert!(
+            effects.contains(&Effect::SaveSignature {
+                account,
+                signature: Some(SignatureId::new(5)),
+                name: "Office".into(),
+                text: "Ada\nThe Engine Room".into(),
+            }),
+            "{effects:?}"
+        );
+
+        // A refusal is said, in the store's own sentence for a person.
+        update(
+            &mut app,
+            Input::SignatureSaved(Err("There is already a signature called Office".into())),
+        );
+        assert_eq!(
+            app.notice(),
+            Some("There is already a signature called Office")
+        );
+
+        // d asks first; d again deletes.
+        let effects = update(&mut app, press('d'));
+        assert!(!effects.contains(&Effect::DeleteSignature(SignatureId::new(5))));
+        let effects = update(&mut app, press('d'));
+        assert!(
+            effects.contains(&Effect::DeleteSignature(SignatureId::new(5))),
+            "{effects:?}"
+        );
+
+        // Escape goes back to the accounts, still in the settings.
+        update(&mut app, key(KeyCode::Esc, KeyModifiers::NONE));
+        assert_eq!(app.settings().unwrap().signatures_of(), None);
+        assert!(app.settings().unwrap().in_list());
     }
 
     #[test]

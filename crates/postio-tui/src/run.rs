@@ -394,6 +394,18 @@ enum Flow {
     /// Hand the terminal to the person's editor on `config.toml`, at a
     /// section, then read the file again.
     EditConfig(Option<postio_ui::settings::Section>),
+    /// Hand the terminal to the editor on a signature's text, then save
+    /// what it wrote.
+    EditSignature {
+        /// Whose.
+        account: postio_model::AccountId,
+        /// Which, or a new one.
+        signature: Option<postio_model::SignatureId>,
+        /// What it is called.
+        name: String,
+        /// Its text before the edit.
+        text: String,
+    },
     /// Hand the terminal to the external editor, then carry on.
     Edit {
         /// Which composition.
@@ -517,6 +529,40 @@ async fn drive(
                     .inputs
                     .try_send(Input::Edited { generation, edited });
             }
+            Flow::EditSignature {
+                account,
+                signature,
+                name,
+                text,
+            } => {
+                // As for a draft: the terminal's reader stops while the
+                // editor has the screen.
+                drop(terminal_events);
+                let edited = session
+                    .suspended(&mut Stdout, || {
+                        crate::external::edit(
+                            &text,
+                            &crate::external::directory(),
+                            &crate::external::editor(),
+                        )
+                    })?
+                    .map_err(|error| error.to_string());
+                session.publish();
+                terminal_events = EventStream::new();
+                terminal.clear()?;
+                let inputs = senders.inputs.clone();
+                let client = client.clone();
+                tokio::spawn(async move {
+                    let saved = match edited {
+                        Ok(text) => client
+                            .save_signature(account, signature, name, text)
+                            .await
+                            .map_err(|error| error.message().to_owned()),
+                        Err(error) => Err(error),
+                    };
+                    let _ = inputs.send(Input::SignatureSaved(saved)).await;
+                });
+            }
         }
     }
 }
@@ -603,6 +649,46 @@ fn perform(
                 };
             }
             Effect::EditConfig(section) => flow = Flow::EditConfig(section),
+            Effect::EditSignature {
+                account,
+                signature,
+                name,
+                text,
+            } => {
+                flow = Flow::EditSignature {
+                    account,
+                    signature,
+                    name,
+                    text,
+                };
+            }
+            Effect::SaveSignature {
+                account,
+                signature,
+                name,
+                text,
+            } => {
+                let client = client.clone();
+                let inputs = inputs.clone();
+                tokio::spawn(async move {
+                    let saved = client
+                        .save_signature(account, signature, name, text)
+                        .await
+                        .map_err(|error| error.message().to_owned());
+                    let _ = inputs.send(Input::SignatureSaved(saved)).await;
+                });
+            }
+            Effect::DeleteSignature(signature) => {
+                let client = client.clone();
+                let inputs = inputs.clone();
+                tokio::spawn(async move {
+                    let deleted = client
+                        .delete_signature(signature)
+                        .await
+                        .map_err(|error| error.message().to_owned());
+                    let _ = inputs.send(Input::SignatureSaved(deleted)).await;
+                });
+            }
             Effect::Account(op) => {
                 let client = client.clone();
                 let inputs = inputs.clone();

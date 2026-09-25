@@ -1068,6 +1068,40 @@ mod tests {
     }
 
     #[test]
+    fn an_accounts_signatures_are_listed_with_what_each_key_does() {
+        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+        let mut app = with_sidebar((160, 30));
+        let mut account = app.accounts()[0].clone();
+        let mut work = postio_model::Signature::new("Work", "Ada\nThe Engine Room");
+        work.id = postio_model::SignatureId::new(5);
+        account.signatures = vec![work];
+        update(
+            &mut app,
+            Input::Sidebar(crate::sidebar::Contents {
+                accounts: vec![account],
+                ..Default::default()
+            }),
+        );
+        for key in [
+            KeyEvent::new(KeyCode::Char(','), KeyModifiers::ALT),
+            KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE),
+        ] {
+            update(&mut app, Input::Key(key));
+        }
+        let accounts = screen(160, 30, &app);
+        assert!(accounts.contains("s signatures"), "offered:\n{accounts}");
+
+        update(
+            &mut app,
+            Input::Key(KeyEvent::new(KeyCode::Char('s'), KeyModifiers::NONE)),
+        );
+        let listed = screen(160, 30, &app);
+        for wanted in ["SIGNATURES", "Work", "Ada", "n new", "r rename", "d delete"] {
+            assert!(listed.contains(wanted), "{wanted} missing:\n{listed}");
+        }
+    }
+
+    #[test]
     fn the_privacy_section_shows_what_left_this_machine() {
         use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
         let mut app = with_sidebar((160, 30));

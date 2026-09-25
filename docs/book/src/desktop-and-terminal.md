@@ -90,7 +90,7 @@ single command.
 | Feature | Desktop | Terminal | Notes |
 |---|---|---|---|
 | Every section of `config.toml` | panes | `$EDITOR` | The terminal opens the file at the section |
-| The signature editor | ✓ | ✗ | |
+| Signatures: write, add, rename, delete | ✓ | ✓ | `s` on an account in Settings; the text is written in `$EDITOR` |
 | The privacy pane: senders allowed remote images, lists left, read receipts, recent connections | ✓ | ✓ | The same words from the same place; `d` on a sender asks for its images again |
 
 ## Everything else

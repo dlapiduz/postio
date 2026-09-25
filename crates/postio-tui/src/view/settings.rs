@@ -101,14 +101,20 @@ pub fn draw(frame: &mut Frame, area: Rect, app: &App, theme: &Theme) {
             ]));
         }
         pane.push(Line::default());
-        pane.push(Line::styled(
-            fit(
-                "Tab to the accounts · Enter on or off · d remove · c sign in again · \
-                 r rebuild index · m default · M map a folder",
-                columns,
-            ),
-            theme.style(Role::Dim),
-        ));
+        match settings
+            .signatures_of()
+            .and_then(|id| accounts.iter().find(|account| account.id == id))
+        {
+            Some(account) => signatures(&mut pane, account, settings, columns, theme),
+            None => pane.push(Line::styled(
+                fit(
+                    "Tab to the accounts · Enter on or off · d remove · c sign in again · \
+                     r rebuild index · m default · M map a folder · s signatures",
+                    columns,
+                ),
+                theme.style(Role::Dim),
+            )),
+        }
     } else if section == Section::Privacy {
         privacy(&mut pane, app, settings.in_list(), columns, theme);
     } else {
@@ -128,6 +134,50 @@ pub fn draw(frame: &mut Frame, area: Rect, app: &App, theme: &Theme) {
         }
         frame.render_widget(line, Rect::new(x, row, width, 1));
     }
+}
+
+/// An account's signatures, under the accounts: each name with the first
+/// line of its text, and the keys that work on them.
+fn signatures(
+    pane: &mut Vec<Line>,
+    account: &postio_model::Account,
+    settings: &crate::settings::Settings,
+    columns: usize,
+    theme: &Theme,
+) {
+    let address = SafeText::new(&account.address.address);
+    pane.push(Line::styled(
+        fit(&format!("SIGNATURES · {address}"), columns),
+        theme.style(Role::Dim).add_modifier(Modifier::BOLD),
+    ));
+    if account.signatures.is_empty() {
+        pane.push(Line::styled("  None yet.", theme.style(Role::Dim)));
+    }
+    let cursor = settings.signature(account.signatures.len());
+    for (index, signature) in account.signatures.iter().enumerate() {
+        let here = index == cursor;
+        let name = SafeText::new(&signature.name);
+        let first = SafeText::new(signature.text.lines().next().unwrap_or_default());
+        pane.push(Line::from(vec![
+            Span::styled(if here { "› " } else { "  " }, theme.style(Role::Accent)),
+            Span::styled(
+                format!("{:<20}", fit(name.as_str(), 20)),
+                theme.style(if here { Role::Surface } else { Role::Text }),
+            ),
+            Span::styled(
+                fit(first.as_str(), columns.saturating_sub(24)),
+                theme.style(Role::Dim),
+            ),
+        ]));
+    }
+    pane.push(Line::default());
+    pane.push(Line::styled(
+        fit(
+            "Enter writes it in $EDITOR · n new · r rename · d delete · Esc back",
+            columns,
+        ),
+        theme.style(Role::Dim),
+    ));
 }
 
 /// The privacy pane, as the desktop's: who may load remote images, the
