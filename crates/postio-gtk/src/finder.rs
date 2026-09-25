@@ -54,7 +54,7 @@
 use adw::prelude::*;
 use adw::subclass::prelude::*;
 use gtk::{glib, pango};
-use postio_core::{ActionId, Availability, Context, Keymap, Scope};
+use postio_core::{ActionId, Availability, CommandId, Context, Keymap, Scope};
 use postio_model::ids::{LabelId, MailboxId};
 use postio_model::mailbox::Mailbox;
 use postio_model::{Contact, Label};
@@ -1354,8 +1354,13 @@ impl Finder {
             // get out, so the same slot carries the way back while one is on.
             // In search there is nothing to back out of, so it goes.
             let way_back = (open && !searching).then_some(WAY_BACK);
-            field.hint.set_text(way_back.unwrap_or("/"));
-            field.hint.set_visible(!open || way_back.is_some());
+            let invite = postio_ui::hints::key(&imp.keymap.borrow(), CommandId::Search);
+            field
+                .hint
+                .set_text(way_back.or(invite.as_deref()).unwrap_or_default());
+            field
+                .hint
+                .set_visible(way_back.is_some() || (!open && invite.is_some()));
 
             // The chip stays decoration -- a screen reader announcing a bare
             // "⌫" would be reading furniture. The fact it carries belongs to

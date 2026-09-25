@@ -1945,6 +1945,25 @@ impl Window {
         let _ = self.imp().settings.set(settings);
         let _ = self.imp().overlay.set(overlay);
         let _ = self.imp().compose_button.set(header.compose.clone());
+        // The header's caps follow a rebind like every other surface's.
+        // After the composer's own `set_keymap` in `apply_keymap`, and asking
+        // it the same question, so the two never disagree about whether the
+        // button says `Compose` or `Composing`.
+        let (keys, compose) = (header.keys.clone(), header.compose.clone());
+        self.connect_keymap(glib::clone!(
+            #[weak(rename_to = window)]
+            self,
+            move |keymap| {
+                header::sync_keys(&keys, keymap);
+                let composing = window
+                    .imp()
+                    .composer
+                    .borrow()
+                    .as_ref()
+                    .is_some_and(|composer| composer.is_open());
+                header::sync_compose(&compose, composing, keymap);
+            }
+        ));
         let _ = self.imp().toast.set(toast);
         self.imp().context.set(Some(Context::List));
 
@@ -1953,7 +1972,7 @@ impl Window {
 
     /// Builds the resolver from the registry defaults and starts listening.
     fn install_keyboard(&self) {
-        let keymap = postio_core::Keymap::resolve(&Default::default());
+        let keymap = postio_core::Keymap::defaults().clone();
         let (resolver, problems) = Resolver::from_commands(&keymap);
         report(&problems);
         self.settings().set_keymap_problems(&problems);
@@ -2869,6 +2888,16 @@ impl Window {
         self.imp().commands.borrow_mut().push(Box::new(handler));
     }
 
+    /// The keymap in force: the last one applied, or the registry's own
+    /// bindings before `config.toml` has been read.
+    pub fn keymap_in_force(&self) -> postio_core::Keymap {
+        self.imp()
+            .keymap
+            .borrow()
+            .clone()
+            .unwrap_or_else(|| postio_core::Keymap::defaults().clone())
+    }
+
     /// Called with the keymap whenever one is applied, and once immediately
     /// with the keymap already in force.
     ///
@@ -3379,6 +3408,7 @@ impl Window {
         self.finder().set_keymap(keymap.clone());
         self.cheatsheet().set_keymap(keymap.clone());
         self.orientation().set_keymap(&keymap);
+        self.list_state().set_keymap(&keymap);
         self.parts().set_keymap(&keymap);
         self.reader().set_keymap(&keymap);
         // Every message in the stack carries its own Reply/Reply all/Forward

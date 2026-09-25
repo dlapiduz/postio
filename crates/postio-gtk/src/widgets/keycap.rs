@@ -64,13 +64,11 @@ impl KeycapButton {
         class: &str,
         primary: bool,
     ) -> Self {
-        let hint = gtk::Label::new(None);
-        hint.add_css_class("postio-keyhint");
+        let hint = super::keyhint::cap("");
         // A class of its own, distinct from the button's: a test finding
         // widgets by class needs to tell "the button" and "the label showing
         // its key" apart.
         hint.add_css_class(&format!("{class}-hint"));
-        hint.set_accessible_role(gtk::AccessibleRole::Presentation);
         hint.set_visible(false);
 
         let content = gtk::Box::new(gtk::Orientation::Horizontal, 8);

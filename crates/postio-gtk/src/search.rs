@@ -52,6 +52,9 @@ use postio_model::ids::MessageId;
 use postio_search::ParsedQuery;
 use postio_search::SearchHit;
 use postio_search::facets::{Facets, Refinement, Scope};
+use postio_ui::hints::{self, Hint};
+
+use crate::widgets::{KeyLine, keyhint};
 
 // Moved to `postio-ui` in #1157 so the macOS search bar reads the same query
 // as chips, says the same thing about a result set, and debounces at the same
@@ -434,22 +437,16 @@ fn offer_text(term: &str, documents: u64) -> String {
 /// literal it used to be. A command whose binding the user cleared drops out
 /// rather than printing a blank key, the same rule
 /// [`crate::reader::actions`] follows.
-fn panel_keys(keymap: &Keymap) -> String {
-    let mut parts = Vec::new();
-    if let Some(key) = keymap.binding(CommandId::OpenMessage) {
-        parts.push(format!("{key} open"));
-    }
-    parts.push("Tab refine".to_owned());
-    if let Some(key) = keymap.binding(CommandId::SaveSearch) {
-        parts.push(format!("{key} save as folder"));
-    }
-    parts.join(" · ")
-}
-
-/// The registry's defaults, for a panel built before any `config.toml` has
-/// been read — the same fallback `crate::parts::default_hints` provides.
-fn default_panel_keys() -> String {
-    panel_keys(&Keymap::resolve(&Default::default()))
+fn panel_keys(keymap: &Keymap) -> Vec<Hint> {
+    hints::hint(keymap, CommandId::OpenMessage, "open")
+        .into_iter()
+        .chain([hints::fixed(
+            "Tab",
+            "refine",
+            "moving into the refine column is the toolkit's focus order, not a command",
+        )])
+        .chain(hints::hint(keymap, CommandId::SaveSearch, "save as folder"))
+        .collect()
 }
 
 type ScopeHandler = Box<dyn Fn(Scope)>;
@@ -550,7 +547,7 @@ impl Panel {
     /// promise [`crate::parts::PartsPanel::set_keymap`] already keeps for the
     /// parts panel's own footer.
     pub fn set_keymap(&self, keymap: &Keymap) {
-        self.imp().keys.set_text(&panel_keys(keymap));
+        KeyLine::adopt(&self.imp().keys, "postio-panel-keys").set(&panel_keys(keymap));
     }
 
     /// Which scope is active.
@@ -811,11 +808,9 @@ impl Panel {
         // The keys this column offers, where the canvas puts them. Mono, and
         // the same shape the focused message row uses for its own hints.
         let keys = self.imp().keys.clone();
-        keys.set_text(&default_panel_keys());
-        keys.add_css_class("postio-panel-keys");
-        keys.set_xalign(0.0);
-        keys.set_wrap(true);
-        keys.set_accessible_role(gtk::AccessibleRole::Presentation);
+        // The registry's defaults, for a panel built before any
+        // `config.toml` has been read.
+        KeyLine::adopt(&keys, "postio-panel-keys").set(&panel_keys(Keymap::defaults()));
         column.append(&keys);
 
         self.set_child(Some(&column));
@@ -1176,8 +1171,12 @@ impl Preview {
         imp.body.set_vexpand(true);
         imp.body.set_visible(false);
 
-        imp.open
-            .set_child(Some(&crate::header::labelled("Open", "Ret")));
+        // `Return` opens the previewed message because it is `OpenMessage`'s
+        // key; the button says whichever key that is.
+        imp.open.set_child(Some(&keyhint::labelled(
+            "Open",
+            hints::key(Keymap::defaults(), CommandId::OpenMessage).as_deref(),
+        )));
         imp.open.add_css_class("suggested-action");
         imp.open.set_halign(gtk::Align::Start);
         imp.open
@@ -2355,7 +2354,7 @@ mod tests {
         // folder" -- a notation nothing else writes, and one that went on
         // saying `C-s` after the user rebound `save_search`.
         assert_eq!(
-            panel_keys(&Keymap::resolve(&Default::default())),
+            hints::line(&panel_keys(Keymap::defaults())),
             "Return open · Tab refine · ctrl+s save as folder"
         );
     }
@@ -2368,7 +2367,7 @@ mod tests {
             .insert("save_search".to_string(), "mod+shift+s".to_string());
 
         assert_eq!(
-            panel_keys(&Keymap::resolve(&overrides)),
+            hints::line(&panel_keys(&Keymap::resolve(&overrides))),
             "Return open · Tab refine · ctrl+shift+s save as folder"
         );
     }
