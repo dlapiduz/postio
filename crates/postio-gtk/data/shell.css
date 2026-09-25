@@ -892,6 +892,14 @@ button.postio-icon-button:hover {
   padding-bottom: 0;
 }
 
+/* Whatever bar a surface mounts at the end of the subject line (#1435), the
+   same line: the reader's bar carried a footer's hairline from when it sat
+   under the chips (#498), which made its header a pixel taller than the
+   conversation's -- and the two are one header now (#1671). */
+.postio-message-header-verbs .postio-action-bar {
+  border-top: none;
+}
+
 /* ── The reading pane's action bar (#498) ────────────────────────────
    Reply, Reply all, Forward and Archive, under the body and the
    attachment chips — the pointer's way to the same four verbs the
@@ -2099,6 +2107,17 @@ button.postio-compose-more {
   background-color: var(--postio-surface);
 }
 
+/* The overflow is a whole button, 34px on its own -- taller than the notice
+   it sits in, and only there when the notice has a menu. So the slot, sized
+   to its tallest page, was 2px taller for a message whose sender could be
+   always-allowed than for one that could not, and the body moved with it
+   (#1671). */
+.postio-notice > menubutton > button {
+  min-height: 0;
+  padding-top: 0;
+  padding-bottom: 0;
+}
+
 .postio-notice-icon {
   color: var(--postio-ink-secondary);
 }
@@ -2112,30 +2131,10 @@ button.postio-compose-more {
    The header names the conversation and the footer carries its verbs; both
    sit outside the scroller, so a long thread never loses either. Between
    them the stack, and the dividers that stand in for folded runs. */
-.conversation-header {
-  padding: var(--postio-space-3) var(--postio-space-4);
-  border-bottom: 1px solid var(--postio-hairline);
-  background-color: var(--postio-ground);
-}
+/* The header itself is the reader's (`.postio-message-header`, #1671): one
+   header on both surfaces, so the body starts at the same height on both. */
 
-/* The largest type in the pane. This is the one place the conversation is
-   named -- before #1003 there were two and they could disagree. */
-.conversation-subject {
-  font-family: var(--postio-font-heading);
-  font-weight: var(--postio-font-heading-weight);
-  font-size: 1.4318rem;
-  color: var(--postio-ink);
-}
-
-/* `8 messages · Ada, Bo, Site Office · 10-25 Aug`. One line, ellipsised --
-   the participants are the unbounded part and must not grow the header. */
-.conversation-meta {
-  font-family: var(--postio-font-mono);
-  font-size: 0.7955rem;
-  color: var(--postio-dim);
-}
-
-/* The participant chips on row two (canvas screens 28 and 30): two letters
+/* The participant chips after `From` (canvas screens 28 and 30): two letters
    each, overlapping slightly so three of them read as a group rather than as
    three separate controls.
 
@@ -2160,9 +2159,9 @@ button.postio-compose-more {
   margin-left: -3px;
 }
 
-/* `latest · all 6`, at row two's trailing edge (canvas screen 30).
+/* `latest · all 6`, on the `From` row before the count (canvas screen 30).
 
-   Mono like the meta line beside it, because it is metadata about what the
+   Mono like the count beside it, because it is metadata about what the
    verbs above will act on rather than prose. Dimmer than that line: it
    qualifies the bar, and a note competing with the count it sits beside would
    read as a second fact rather than a footnote to one. The brief calls it
@@ -2314,7 +2313,8 @@ button.postio-compose-more {
   color: var(--postio-ink-secondary);
 }
 
-/* `3/6 ⌄` at row two's trailing edge, below the ladder's floor (screen 29).
+/* `3/6 ⌄` at the `To` row's trailing edge, below the ladder's floor
+   (screen 29).
    Mono, because it is a position you count with, and outlined rather than
    filled: it opens something, which is a quieter act than the header's verbs
    and must not compete with them. */
@@ -2328,6 +2328,15 @@ button.postio-compose-more {
   padding: 0 var(--postio-space-2);
   min-height: 0;
   margin-left: var(--postio-space-2);
+}
+
+/* The toggle inside is a whole button, 34px tall on its own; the `To` row
+   it sits on is the `Cc` disclosure's height, and the counter must not be
+   what makes the conversation's header taller than the reader's (#1671). */
+.conversation-counter > button {
+  min-height: 0;
+  padding-top: 0;
+  padding-bottom: 0;
 }
 
 .conversation-counter:hover {
