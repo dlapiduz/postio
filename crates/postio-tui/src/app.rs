@@ -1681,10 +1681,14 @@ impl App {
 
     /// What can run here, given what is on screen.
     fn availability(&self) -> postio_core::Availability {
-        postio_core::Availability::open(
-            self.account
-                .map_or(postio_core::Scope::Unified, postio_core::Scope::Account),
-        )
+        postio_core::Availability {
+            // The composer's `$EDITOR` and preview are this frontend's own.
+            terminal: true,
+            ..postio_core::Availability::open(
+                self.account
+                    .map_or(postio_core::Scope::Unified, postio_core::Scope::Account),
+            )
+        }
     }
 
     /// The cheat sheet, while it is open: `postio_ui::cheatsheet::sections`

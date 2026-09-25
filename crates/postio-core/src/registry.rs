@@ -104,12 +104,21 @@ pub enum Requirement {
     /// them, which is how they already treat anything unavailable, and a key
     /// bound to one refuses out loud rather than being swallowed.
     StoreOpen,
+    /// The frontend has to be the terminal, because the command works on
+    /// what only its composer has: Markdown text an editor can open, and a
+    /// preview of what it becomes. The desktop's composer edits rich text in
+    /// place, so it does not offer these (spec 005, open question 4).
+    Terminal,
 }
 
 impl Requirement {
     /// Every requirement, in declaration order. What [`RequirementSet`] is
     /// built over.
-    pub const ALL: [Requirement; 2] = [Requirement::SingleAccount, Requirement::StoreOpen];
+    pub const ALL: [Requirement; 3] = [
+        Requirement::SingleAccount,
+        Requirement::StoreOpen,
+        Requirement::Terminal,
+    ];
 
     const fn bit(self) -> u8 {
         1 << (self as u8)
@@ -185,6 +194,8 @@ pub struct Availability {
     /// read or a long migration is a window that says what it is waiting for
     /// rather than no window at all (#1114).
     pub store_open: bool,
+    /// Whether the frontend asking is the terminal.
+    pub terminal: bool,
 }
 
 impl Availability {
@@ -196,6 +207,7 @@ impl Availability {
         Availability {
             scope,
             store_open: true,
+            terminal: false,
         }
     }
 }
@@ -206,6 +218,7 @@ impl Requirement {
         match self {
             Requirement::SingleAccount => state.scope.is_single_account(),
             Requirement::StoreOpen => state.store_open,
+            Requirement::Terminal => state.terminal,
         }
     }
 }
@@ -266,6 +279,9 @@ const fn needs(requirements: &'static [Requirement]) -> RequirementSet {
 
 /// Reads or writes mail, which is very nearly everything.
 const MAIL: RequirementSet = needs(&[Requirement::StoreOpen]);
+
+/// Works on the terminal composer's Markdown, which only it has.
+const TERMINAL_MAIL: RequirementSet = needs(&[Requirement::StoreOpen, Requirement::Terminal]);
 
 /// Chrome: it means the same thing with an empty window as with a full one.
 const CHROME: RequirementSet = RequirementSet::NONE;
@@ -948,7 +964,7 @@ static SPECS: &[CommandSpec] = &[
         // The body comes back as the editor saved it; the composer's own
         // undo takes the change back.
         recovery: Recovery::None,
-        requires: MAIL,
+        requires: TERMINAL_MAIL,
     },
     CommandSpec {
         id: CommandId::TogglePreview,
@@ -958,7 +974,7 @@ static SPECS: &[CommandSpec] = &[
         contexts: Context::Composer.as_set(),
         destructive: false,
         recovery: Recovery::None,
-        requires: MAIL,
+        requires: TERMINAL_MAIL,
     },
     CommandSpec {
         id: CommandId::Bold,

@@ -210,8 +210,9 @@ pub fn section_for(command: CommandId) -> Option<MenuSection> {
         // the attachment it is deliberately not.
         C::InsertImage => Some(M::Format),
         C::InsertLink | C::QuoteBlock => Some(M::Format),
-        // Beside the formatting it replaces: the body, edited elsewhere.
-        C::EditExternally | C::TogglePreview => Some(M::Format),
+        // The terminal composer's own (`Requirement::Terminal`), and the
+        // terminal has no menu bar: no menu anywhere offers them.
+        C::EditExternally | C::TogglePreview => None,
     }
 }
 

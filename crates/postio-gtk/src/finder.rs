@@ -360,6 +360,7 @@ mod imp {
                 availability: RefCell::new(Availability {
                     scope: Scope::default(),
                     store_open: false,
+                    terminal: false,
                 }),
                 mailboxes: RefCell::new(Vec::new()),
                 contacts: RefCell::new(Vec::new()),

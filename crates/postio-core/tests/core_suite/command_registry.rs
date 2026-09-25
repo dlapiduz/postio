@@ -574,6 +574,35 @@ fn every_command_but_the_chrome_needs_the_store_open() {
     }
 }
 
+/// `Alt+E` and `Alt+P` hand the terminal composer's Markdown to `$EDITOR`
+/// and preview it. The desktop's composer edits rich text in place, so it
+/// does not offer them: the maintainer scoped them to the terminal
+/// (spec 005, open question 4).
+#[test]
+fn the_terminal_composers_own_commands_are_offered_only_in_the_terminal() {
+    let window = Availability::open(Scope::Account(AccountId::new(1)));
+    let terminal = Availability {
+        terminal: true,
+        ..window
+    };
+    let offered = |state| {
+        registry::reachable_in(Context::Composer, state)
+            .filter_map(|action| action.id.builtin())
+            .collect::<Vec<CommandId>>()
+    };
+    for id in [CommandId::EditExternally, CommandId::TogglePreview] {
+        assert!(!offered(window).contains(&id), "{id} offered in a window");
+        assert!(
+            offered(terminal).contains(&id),
+            "{id} missing in the terminal"
+        );
+    }
+    assert!(
+        offered(window).contains(&CommandId::Bold),
+        "the rest of the composer is offered in both"
+    );
+}
+
 /// What the palette and the cheat sheet list before the store is open.
 ///
 /// They both go through [`registry::reachable_in`], so asserting here is
@@ -585,10 +614,12 @@ fn the_vocabulary_before_the_store_is_the_chrome_and_nothing_else() {
     let closed = Availability {
         scope: account,
         store_open: false,
+        terminal: false,
     };
     let open = Availability {
         scope: account,
         store_open: true,
+        terminal: false,
     };
 
     let before: Vec<CommandId> = registry::reachable_in(Context::List, closed)
@@ -649,10 +680,12 @@ fn a_command_can_need_more_than_one_thing_at_once() {
     let unified_and_open = Availability {
         scope: Scope::Unified,
         store_open: true,
+        terminal: false,
     };
     let account_and_closed = Availability {
         scope: Scope::Account(AccountId::new(1)),
         store_open: false,
+        terminal: false,
     };
     for unmet in [unified_and_open, account_and_closed] {
         assert!(

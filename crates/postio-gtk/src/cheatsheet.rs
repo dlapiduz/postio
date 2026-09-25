@@ -74,6 +74,7 @@ mod imp {
                 availability: RefCell::new(Availability {
                     scope: Scope::default(),
                     store_open: false,
+                    terminal: false,
                 }),
                 dismissed: RefCell::new(Vec::new()),
             }

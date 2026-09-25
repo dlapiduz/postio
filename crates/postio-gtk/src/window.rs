@@ -2455,8 +2455,9 @@ impl Window {
             CommandId::Quit => self.close(),
             // The terminal's composer hands its Markdown to `$EDITOR`. This
             // one edits a rich document in place and has no text an editor
-            // could open and give back, so it says so rather than doing
-            // nothing where the key was pressed.
+            // could open and give back. The palette and the cheat sheet do
+            // not offer it here (`Requirement::Terminal`); the key still
+            // reaches this arm, so it says why rather than doing nothing.
             CommandId::EditExternally => self.composer().set_status(
                 "this composer edits in place — the terminal one hands its text to $EDITOR",
             ),
@@ -2927,6 +2928,7 @@ impl Window {
         postio_core::Availability {
             scope: self.imp().scope.get(),
             store_open: self.imp().store_open.get(),
+            terminal: false,
         }
     }
 

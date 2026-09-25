@@ -90,7 +90,12 @@ fn runs(keymap: &Keymap, binding: &str, context: Context, command: &str) -> bool
 #[test]
 fn every_command_is_reachable_by_a_key_this_terminal_sends_and_by_the_palette() {
     let keymap = Keymap::resolve(&Default::default());
-    let open = Availability::open(Scope::Account(postio_model::AccountId::new(1)));
+    // As this terminal asks: its composer's `$EDITOR` and preview are
+    // offered here and nowhere else (`Requirement::Terminal`).
+    let open = Availability {
+        terminal: true,
+        ..Availability::open(Scope::Account(postio_model::AccountId::new(1)))
+    };
     let mut unreachable = Vec::new();
     for spec in registry::all() {
         let id = spec.id.as_str();

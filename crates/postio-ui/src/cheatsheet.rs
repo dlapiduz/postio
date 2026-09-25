@@ -363,6 +363,7 @@ mod tests {
         let waiting = ids(Availability {
             scope: account,
             store_open: false,
+            terminal: false,
         });
         let open = ids(Availability::open(account));
 
