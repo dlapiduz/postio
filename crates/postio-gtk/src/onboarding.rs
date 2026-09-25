@@ -1154,23 +1154,17 @@ impl Onboarding {
 
     fn build(&self) {
         let imp = self.imp();
-        self.add_css_class("postio-onboarding");
-        self.set_halign(gtk::Align::Center);
-        self.set_valign(gtk::Align::Center);
-        self.set_accessible_role(gtk::AccessibleRole::Group);
-
-        let kicker = crate::widgets::kicker("Add account");
-        kicker.set_hexpand(true);
-        kicker.set_accessible_role(gtk::AccessibleRole::Presentation);
+        crate::widgets::plate::dress(self, "postio-onboarding", "Add account");
 
         imp.step.set_text(step_of(&Status::Idle));
         imp.step.add_css_class("postio-onboarding-step");
         imp.step
             .set_accessible_role(gtk::AccessibleRole::Presentation);
 
-        let header = gtk::Box::new(gtk::Orientation::Horizontal, 12);
-        header.add_css_class("postio-onboarding-header");
-        header.append(&kicker);
+        let header = crate::widgets::plate::header("postio-onboarding", "Add account");
+        header
+            .first_child()
+            .inspect(|title| title.set_hexpand(true));
         header.append(&imp.step);
 
         imp.name.set_placeholder_text(Some("Ada Lovelace"));
@@ -1251,26 +1245,21 @@ impl Onboarding {
         ));
 
         // `Esc` while the browser wait is up means what the button means.
-        // A widget-local controller rather than a registry command: this
-        // screen exists before any account does, outside the keymap's
-        // contexts, and the binding is not rebindable on purpose.
-        let escape = gtk::EventControllerKey::new();
-        escape.connect_key_pressed(glib::clone!(
-            #[weak(rename_to = screen)]
-            self,
-            #[upgrade_or]
-            glib::Propagation::Proceed,
-            move |_, key, _, _| {
-                if key == gtk::gdk::Key::Escape
-                    && matches!(screen.status(), Status::WaitingForBrowser)
-                {
-                    screen.cancel_sign_in();
-                    return glib::Propagation::Stop;
-                }
-                glib::Propagation::Proceed
+        // The plate's own Escape rather than a registry command: this screen
+        // exists before any account does, outside the keymap's contexts, and
+        // the binding is not rebindable on purpose. Any other time the key
+        // goes on to the window.
+        let screen = self.downgrade();
+        crate::widgets::plate::connect_escape(self, move || {
+            let Some(screen) = screen.upgrade() else {
+                return false;
+            };
+            let waiting = matches!(screen.status(), Status::WaitingForBrowser);
+            if waiting {
+                screen.cancel_sign_in();
             }
-        ));
-        self.add_controller(escape);
+            waiting
+        });
 
         // -- the found-settings card ---------------------------------------
 

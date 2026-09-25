@@ -324,6 +324,10 @@ const CASES: &[(&str, fn())] = &[
         gtk_components::a_rebind_reaches_the_headers_key_caps as fn(),
     ),
     (
+        "gtk_components::every_overlay_is_one_plate",
+        gtk_components::every_overlay_is_one_plate as fn(),
+    ),
+    (
         "gtk_checkrow::showing_the_files_value_is_not_changing_it",
         gtk_checkrow::showing_the_files_value_is_not_changing_it as fn(),
     ),

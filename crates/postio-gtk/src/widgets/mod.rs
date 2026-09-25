@@ -23,6 +23,7 @@ pub mod chrome;
 pub mod keycap;
 pub mod keyhint;
 pub mod notice;
+pub mod plate;
 pub mod screen;
 pub mod segmented;
 
