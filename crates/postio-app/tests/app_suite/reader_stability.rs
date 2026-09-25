@@ -328,9 +328,13 @@ pub fn a_thread_missing_a_body_is_drawn_without_waiting_for_it() {
         let waited = postio_ui::test_support::redraws_waited_out();
         window.handle_key(gdk::Key::j, gdk::ModifierType::empty());
         assert!(
-            settle_until(async || pane
-                .thread_document()
-                .is_some_and(|document| drawing(&document, &["charlie"]).is_some()))
+            settle_until(
+                async || pane.thread_document().is_some_and(|document| drawing(
+                    &document,
+                    &["charlie"]
+                )
+                .is_some())
+            )
             .await,
             "`j` never drew the thread with the missing body"
         );

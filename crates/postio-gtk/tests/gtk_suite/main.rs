@@ -321,6 +321,10 @@ const CASES: &[(&str, fn())] = &[
         gtk_components::a_kicker_is_capitals_whatever_its_source_case as fn(),
     ),
     (
+        "gtk_components::the_compose_button_holds_its_width_while_composing",
+        gtk_components::the_compose_button_holds_its_width_while_composing as fn(),
+    ),
+    (
         "gtk_components::a_rebind_reaches_the_headers_key_caps",
         gtk_components::a_rebind_reaches_the_headers_key_caps as fn(),
     ),
