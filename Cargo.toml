@@ -237,3 +237,20 @@ debug = 0
 # in any gate's pass or fail.
 [profile.dev.package."*"]
 opt-level = 2
+
+# Turso from Postio's fork: v0.8.0-pre.11 plus fuzzy and prefix word
+# expansion in the full-text index (turso#8359, closed upstream unmerged,
+# ported) and a per-word `~N` opt-in. Search uses it only for the words it
+# offers when a query finds nothing; every query it runs is quoted, and a
+# quoted query is parsed exactly as upstream parses it. Every turso crate
+# comes from the one commit, so no two copies of a type meet.
+[patch.crates-io]
+turso = { git = "https://github.com/dlapiduz/turso", rev = "c2ac9f25db74613eed163b99105de69e206f688b" }
+turso_core = { git = "https://github.com/dlapiduz/turso", rev = "c2ac9f25db74613eed163b99105de69e206f688b" }
+turso_ext = { git = "https://github.com/dlapiduz/turso", rev = "c2ac9f25db74613eed163b99105de69e206f688b" }
+turso_macros = { git = "https://github.com/dlapiduz/turso", rev = "c2ac9f25db74613eed163b99105de69e206f688b" }
+turso_parser = { git = "https://github.com/dlapiduz/turso", rev = "c2ac9f25db74613eed163b99105de69e206f688b" }
+turso_sdk_kit = { git = "https://github.com/dlapiduz/turso", rev = "c2ac9f25db74613eed163b99105de69e206f688b" }
+turso_sdk_kit_macros = { git = "https://github.com/dlapiduz/turso", rev = "c2ac9f25db74613eed163b99105de69e206f688b" }
+turso_sync_engine = { git = "https://github.com/dlapiduz/turso", rev = "c2ac9f25db74613eed163b99105de69e206f688b" }
+turso_sync_sdk_kit = { git = "https://github.com/dlapiduz/turso", rev = "c2ac9f25db74613eed163b99105de69e206f688b" }

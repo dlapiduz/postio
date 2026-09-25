@@ -126,11 +126,69 @@ async fn a_query_with_a_filter_is_left_alone() {
 }
 
 #[tokio::test]
-async fn the_vocabulary_is_built_once_until_the_index_moves() {
-    // #1613: terms match whole words, so a name typed letter by letter is a
-    // zero-hit search at every pause until it is complete, and each one
-    // rebuilt the vocabulary from the newest 5,000 documents -- read,
-    // tokenised, counted and sorted -- before the readout could answer.
+async fn an_unfinished_address_is_answered_with_the_one_in_the_mailbox() {
+    // Terms match whole words, so the first twenty letters of a list's
+    // address are a different word from the address -- and the search found
+    // nothing for what was, to the person typing it, obviously the list.
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    postio_index::index::ensure_schema(&connection)
+        .await
+        .expect("schema");
+    let (account, mailbox) = test_support::account_with_inbox(&connection).await;
+    for _ in 0..3 {
+        from(&connection, &account, mailbox, "riversidechoirparents").await;
+    }
+
+    let results = results_for(&connection, &account, "riversidechoirparent").await;
+
+    assert_eq!(results.total_hits, 0, "the match itself stays exact");
+    assert_eq!(
+        results.suggestion.map(|offer| (offer.term, offer.documents)),
+        Some(("riversidechoirparents".to_owned(), 3))
+    );
+}
+
+#[tokio::test]
+async fn a_word_only_a_body_holds_is_offered_too() {
+    // The old vocabulary was the newest few thousand senders and subjects,
+    // so a word that only ever appeared in a message's text was never
+    // offered, however common it was.
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    postio_index::index::ensure_schema(&connection)
+        .await
+        .expect("schema");
+    let (account, mailbox) = test_support::account_with_inbox(&connection).await;
+    let mut message = Message::new(account.id, mailbox, at(9));
+    message.subject = Some("Weekly note".to_owned());
+    MessageRepository::new(&connection)
+        .create(&mut message)
+        .await
+        .expect("create message");
+    postio_index::index::index_body(
+        &connection,
+        message.id.get(),
+        Some("the reimbursement form is attached"),
+    )
+    .await
+    .expect("index body");
+
+    let results = results_for(&connection, &account, "reimburse").await;
+
+    assert_eq!(results.total_hits, 0);
+    assert_eq!(
+        results.suggestion.map(|offer| offer.term).as_deref(),
+        Some("reimbursement")
+    );
+}
+
+#[tokio::test]
+async fn a_zero_hit_search_reads_what_resembles_the_word_not_the_mailbox() {
+    // Terms match whole words, so a name typed letter by letter is a
+    // zero-hit search at every pause until it is complete (#1613). The
+    // offer is looked up through the index, so its cost follows how much
+    // mail resembles the word, not how much mail there is.
     use postio_storage::test_support::counting::counted_async;
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
@@ -138,11 +196,14 @@ async fn the_vocabulary_is_built_once_until_the_index_moves() {
         .await
         .expect("schema");
     let (account, mailbox) = test_support::account_with_inbox(&connection).await;
-    for _ in 0..40 {
+    for _ in 0..3 {
         from(&connection, &account, mailbox, "hannah").await;
     }
+    for n in 0..120 {
+        from(&connection, &account, mailbox, &format!("stranger{n}")).await;
+    }
 
-    let first = counted_async(async || {
+    let cost = counted_async(async || {
         let results = results_for(&connection, &account, "hanah").await;
         assert_eq!(
             results.suggestion.map(|offer| offer.term).as_deref(),
@@ -150,32 +211,9 @@ async fn the_vocabulary_is_built_once_until_the_index_moves() {
         );
     })
     .await;
-    let again = counted_async(async || {
-        let results = results_for(&connection, &account, "hannha").await;
-        assert_eq!(
-            results.suggestion.map(|offer| offer.term).as_deref(),
-            Some("hannah")
-        );
-    })
-    .await;
     assert!(
-        first.rows >= 40,
-        "the first zero-hit search reads the documents: {first:?}"
-    );
-    assert!(
-        again.rows < 10,
-        "the second zero-hit search read {} rows; nothing had moved",
-        again.rows
-    );
-
-    // And a sender who arrives after it is offered like any other.
-    for _ in 0..3 {
-        from(&connection, &account, mailbox, "joaquin").await;
-    }
-    let results = results_for(&connection, &account, "joaqin").await;
-    assert_eq!(
-        results.suggestion.map(|offer| offer.term).as_deref(),
-        Some("joaquin"),
-        "a vocabulary kept past the mail that arrived after it"
+        cost.rows < 60,
+        "a zero-hit search read {} rows of a 123-message mailbox",
+        cost.rows
     );
 }

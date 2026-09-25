@@ -97,16 +97,54 @@ fn distance_within(a: &str, b: &str, limit: usize) -> Option<usize> {
     (distance <= limit).then_some(distance)
 }
 
+/// The fewest letters that are a beginning worth completing.
+///
+/// Three, the same floor below which [`tolerance`] corrects nothing: two
+/// letters begin a quarter of the vocabulary, and the offer would be noise.
+const SHORTEST_BEGINNING: usize = 3;
+
+/// The query that asks the index for every term [`suggest`] could offer for
+/// `typed`, or `None` when nothing could be offered.
+///
+/// The index expands it against its own term dictionary, so the offer is
+/// drawn from every word the mailbox holds rather than a sample of them.
+/// `typed~N` reaches terms that *begin* within `N` edits of the word -- the
+/// word mistyped, left unfinished, or both -- and `typed*` only the ones
+/// that begin with it, for a word too short to correct. `N` is
+/// [`tolerance`], so the index widens exactly as far as the ranking will
+/// accept and no further.
+///
+/// Unquoted, which is the point: the index reads a quoted term exactly and
+/// an unquoted one as this. Only ever a single word of letters and digits,
+/// so nothing typed reaches the index as syntax.
+pub fn widened(typed: &str) -> Option<String> {
+    let typed = typed.to_lowercase();
+    if typed.chars().count() < SHORTEST_BEGINNING || !typed.chars().all(char::is_alphanumeric) {
+        return None;
+    }
+    Some(match tolerance(&typed) {
+        0 => format!("{typed}*"),
+        edits => format!("{typed}~{edits}"),
+    })
+}
+
 /// The term to offer instead of `typed`, or `None` when nothing is close
 /// enough to be worth offering.
 ///
-/// Closest first; between two equally close terms, the one more of the
-/// mailbox holds — a term in four hundred messages is likelier to be the word
-/// than one in a single message that misspelled it the other way.
+/// Two ways to be close. A term that **begins** with what was typed is the
+/// word left unfinished -- whole-word matching finds nothing for half a word
+/// -- and it outranks every correction, because nothing was mistyped. Past
+/// that, a term within [`tolerance`] edits is the word mistyped, closest
+/// first.
+///
+/// Between two equally close terms, the one more of the mailbox holds — a
+/// term in four hundred messages is likelier to be the word than one in a
+/// single message that misspelled it the other way.
 pub fn suggest<'a>(typed: &str, vocabulary: impl Iterator<Item = Term<'a>>) -> Option<Suggestion> {
     let typed = typed.to_lowercase();
     let limit = tolerance(&typed);
-    if limit == 0 {
+    let completes = typed.chars().count() >= SHORTEST_BEGINNING;
+    if limit == 0 && !completes {
         return None;
     }
 
@@ -118,8 +156,17 @@ pub fn suggest<'a>(typed: &str, vocabulary: impl Iterator<Item = Term<'a>>) -> O
         if term.text.eq_ignore_ascii_case(&typed) {
             return None;
         }
-        let Some(distance) = distance_within(&typed, &term.text.to_lowercase(), limit) else {
+        let text = term.text.to_lowercase();
+        // A completion ranks as distance zero: ahead of any correction.
+        let distance = if completes && text.starts_with(&typed) {
+            0
+        } else if limit == 0 {
             continue;
+        } else {
+            match distance_within(&typed, &text, limit) {
+                Some(distance) => distance,
+                None => continue,
+            }
         };
         let better = match &best {
             None => true,
@@ -225,6 +272,55 @@ mod tests {
     #[test]
     fn a_word_nothing_resembles_is_left_alone() {
         assert_eq!(suggest("xylophone", vocabulary().into_iter()), None);
+    }
+
+    #[test]
+    fn an_unfinished_word_is_offered_the_word_it_begins() {
+        // Nobody misspelled anything: the word was simply not finished, and
+        // whole-word matching finds nothing for half a word.
+        let offered = suggest("quart", vocabulary().into_iter()).expect("a completion");
+        assert_eq!(offered.term, "quarterly");
+    }
+
+    #[test]
+    fn a_short_start_is_still_completed_though_never_corrected() {
+        // Three letters are too few to correct -- every such word is one edit
+        // from another -- but they are a real beginning.
+        let offered = suggest("ban", vocabulary().into_iter()).expect("a completion");
+        assert_eq!(offered.term, "banana");
+    }
+
+    #[test]
+    fn two_letters_are_not_a_beginning_worth_completing() {
+        assert_eq!(suggest("ha", vocabulary().into_iter()), None);
+    }
+
+    #[test]
+    fn among_completions_the_commoner_word_wins() {
+        let offered = suggest("han", vocabulary().into_iter()).expect("a completion");
+        assert_eq!(offered.term, "hannah", "66 messages over 2");
+    }
+
+    #[test]
+    fn a_long_word_is_widened_as_far_as_it_may_be_mistyped() {
+        assert_eq!(widened("reimbursment").as_deref(), Some("reimbursment~2"));
+        assert_eq!(widened("hanah").as_deref(), Some("hanah~1"));
+    }
+
+    #[test]
+    fn a_short_word_is_widened_only_to_what_begins_with_it() {
+        // Three letters are too few to correct, but a real beginning.
+        assert_eq!(widened("Ban").as_deref(), Some("ban*"));
+    }
+
+    #[test]
+    fn nothing_widens_two_letters_or_anything_that_is_not_one_word() {
+        assert_eq!(widened("ha"), None);
+        // Punctuation would be read as query syntax, or split into two
+        // words the offer could not name as one.
+        assert_eq!(widened("ada@example"), None);
+        assert_eq!(widened("hanah~"), None);
+        assert_eq!(widened("\"hanah\""), None);
     }
 
     #[test]
