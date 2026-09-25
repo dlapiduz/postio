@@ -178,6 +178,9 @@ pub struct Reader {
     loads: Rc<std::cell::Cell<u32>>,
     /// The last document handed to WebKit — see [`Reader::test_document`].
     document: Rc<RefCell<String>>,
+    /// Where the reader is in the document, so a redraw of the same
+    /// content can put them back there. See [`Place`].
+    place: Rc<Place>,
     /// Set by [`Reader::set_actions_visible`]`(false)` — overrides what
     /// [`render`](Self::render) and [`show_absent`](Self::show_absent) would
     /// otherwise show the action bar for.
@@ -334,6 +337,165 @@ pub struct ThreadMessage {
     pub body: MessageBody,
 }
 
+/// The script message handler the scroll reporter posts through. Named for
+/// the same reason [`RAIL_HANDLER`] is.
+const SCROLL_HANDLER: &str = "postioScroll";
+
+/// Where the page was scrolled to, as the page last reported it.
+///
+/// Anchored to the message the top of the pane is inside, when the document
+/// has messages, rather than to a pixel: a late body arriving *above* the
+/// reader grows the page over their head, and "the same pixel" would then be
+/// somewhere else in the conversation.
+#[derive(Clone, Debug, Default, PartialEq)]
+struct Anchor {
+    /// The id of the `.postio-message` the pane's top edge is in, or empty
+    /// for a single message.
+    element: String,
+    /// How far down that element the pane's top edge is, in CSS pixels.
+    offset: f64,
+    /// `window.scrollY`, for a document with no messages to anchor to.
+    y: f64,
+}
+
+/// Keeping the reader's place across a reload of the same content.
+///
+/// Every document change here is a full load, and `load_html` starts a
+/// document at the top. A conversation redrawn because a late body arrived,
+/// or a message redrawn to show its images, is the same content in front of
+/// the same person -- and threw them back to the top every time. The page
+/// reports where it is as it scrolls ([`SCROLL_REPORTER`]); a load that
+/// keeps the place installs a one-shot script that puts it back before the
+/// new document is first painted.
+///
+/// Postio's own script, like the rail's observer: a sender's script is
+/// still refused by `enable_javascript_markup(false)` and by the document's
+/// own `script-src 'none'`, which user scripts are exempt from.
+struct Place {
+    content: webkit6::UserContentManager,
+    anchor: RefCell<Option<Anchor>>,
+    /// The restore script installed for the load in flight, removed by the
+    /// next load whatever it decides.
+    restore: RefCell<Option<webkit6::UserScript>>,
+    /// Whether the next load is the same content and keeps the place.
+    keep: std::cell::Cell<bool>,
+}
+
+/// Reports where the page is scrolled to, once per frame at most.
+const SCROLL_REPORTER: &str = "(() => {\
+  let pending = false;\
+  const post = () => {\
+    pending = false;\
+    let element = '', offset = 0;\
+    for (const el of document.querySelectorAll('.postio-message')) {\
+      const box = el.getBoundingClientRect();\
+      if (box.bottom > 0) { element = el.id; offset = -box.top; break; }\
+    }\
+    window.webkit.messageHandlers.postioScroll.postMessage(\
+      element + '\\n' + offset + '\\n' + window.scrollY);\
+  };\
+  addEventListener('scroll', () => {\
+    if (!pending) { pending = true; requestAnimationFrame(post); }\
+  }, { passive: true });\
+})()";
+
+impl Place {
+    fn new(content: webkit6::UserContentManager) -> Self {
+        content.register_script_message_handler(SCROLL_HANDLER, None);
+        content.add_script(&webkit6::UserScript::new(
+            SCROLL_REPORTER,
+            webkit6::UserContentInjectedFrames::TopFrame,
+            webkit6::UserScriptInjectionTime::End,
+            &[],
+            &[],
+        ));
+        Place {
+            content,
+            anchor: RefCell::new(None),
+            restore: RefCell::new(None),
+            keep: std::cell::Cell::new(false),
+        }
+    }
+
+    /// What the page reported, as `element\noffset\ny`. Untrusted input --
+    /// it comes from a page that also holds senders' markup -- so anything
+    /// that does not parse is dropped.
+    fn reported(&self, payload: &str) {
+        let mut parts = payload.split('\n');
+        let element = parts.next().unwrap_or_default();
+        let offset = parts.next().and_then(|part| part.parse::<f64>().ok());
+        let y = parts.next().and_then(|part| part.parse::<f64>().ok());
+        let (Some(offset), Some(y)) = (offset, y) else {
+            return;
+        };
+        if !offset.is_finite() || !y.is_finite() {
+            return;
+        }
+        self.anchor.replace(Some(Anchor {
+            element: element.to_owned(),
+            offset,
+            y,
+        }));
+    }
+
+    /// Get ready for a load: keep the place if the caller said the content
+    /// is the same, forget it otherwise.
+    fn before_load(&self) {
+        if let Some(script) = self.restore.borrow_mut().take() {
+            self.content.remove_script(&script);
+        }
+        let keep = self.keep.replace(false);
+        if !keep {
+            self.anchor.replace(None);
+            return;
+        }
+        let Some(anchor) = self.anchor.borrow().clone() else {
+            return;
+        };
+        if anchor.y <= 0.0 {
+            return;
+        }
+        let script = webkit6::UserScript::new(
+            &restore_script(&anchor),
+            webkit6::UserContentInjectedFrames::TopFrame,
+            webkit6::UserScriptInjectionTime::End,
+            &[],
+            &[],
+        );
+        self.content.add_script(&script);
+        self.restore.replace(Some(script));
+    }
+}
+
+/// The script that puts the page back at `anchor`.
+///
+/// To the anchored message when the document has one, and to the pixel only
+/// for a document with none: a thread whose anchored message is gone is a
+/// different thread, and scrolling it to a stranger's pixel is no better
+/// than the top.
+fn restore_script(anchor: &Anchor) -> String {
+    // The element id is Postio's own (`message_anchor`), but it arrives back
+    // from the page, so it is quoted as data rather than trusted.
+    let quoted: String = anchor
+        .element
+        .chars()
+        .filter(|character| character.is_ascii_alphanumeric() || matches!(character, '-' | '_'))
+        .collect();
+    format!(
+        "(() => {{\
+           const id = \"{quoted}\";\
+           if (id) {{\
+             const el = document.getElementById(id);\
+             if (el) {{ window.scrollTo(0, el.getBoundingClientRect().top + window.scrollY + {offset}); }}\
+           }} else {{\
+             window.scrollTo(0, {y});\
+           }}\
+         }})()",
+        offset = anchor.offset,
+        y = anchor.y,
+    )
+}
+
 thread_local! {
     /// The reader view every later reader is related to, while it lives
     /// (#1603). See [`shared_reader_view`].
@@ -414,8 +576,28 @@ impl Reader {
         // scrolling here.
         let content = webkit6::UserContentManager::new();
         content.register_script_message_handler(RAIL_HANDLER, None);
+        let place = Rc::new(Place::new(content.clone()));
 
         let view = shared_reader_view(&hardened_settings(), &content);
+        {
+            // A report that arrives while a load is in flight is the old
+            // document's last word, or the restore settling the new one --
+            // neither is the reader moving, and taking the first would aim
+            // the next restore at a document that is gone.
+            let place = Rc::downgrade(&place);
+            let loading = view.downgrade();
+            content.connect_script_message_received(Some(SCROLL_HANDLER), move |_, value| {
+                let Some(view) = loading.upgrade() else {
+                    return;
+                };
+                if view.is_loading() {
+                    return;
+                }
+                if let Some(place) = place.upgrade() {
+                    place.reported(&value.to_str());
+                }
+            });
+        }
         scheme::attach(&view, source);
         view.add_css_class("postio-reader-view");
         view.set_accessible_role(gtk::AccessibleRole::Article);
@@ -510,6 +692,7 @@ impl Reader {
             paints: Rc::new(std::cell::Cell::new(0)),
             loads: Rc::new(std::cell::Cell::new(0)),
             document: Rc::new(RefCell::new(String::new())),
+            place,
             _dark_notify: Rc::new(DarkNotify {
                 handler: Some(dark_notify),
             }),
@@ -543,6 +726,7 @@ impl Reader {
                 let document = Rc::clone(&reader.document);
                 let page = Rc::clone(&reader.page);
                 let loads = Rc::clone(&reader.loads);
+                let place = Rc::clone(&reader.place);
                 let allowlist_path = allowlist_path.clone();
                 let on_message_action = Rc::clone(&reader.on_message_action);
                 view.connect_decide_policy(move |view, decision, kind| {
@@ -579,12 +763,14 @@ impl Reader {
                             }
                         }
                         let messages = thread.borrow().clone();
+                        place.keep.set(true);
                         load_document(
                             &Canvas {
                                 view,
                                 document: &document,
                                 page: &page,
                                 loads: &loads,
+                                place: &place,
                             },
                             &compose_thread_document(
                                 &messages,
@@ -639,6 +825,7 @@ impl Reader {
             let rendered = Rc::clone(&reader.rendered);
             let page = Rc::clone(&reader.page);
             let loads = Rc::clone(&reader.loads);
+            let place = Rc::clone(&reader.place);
             let document = Rc::clone(&reader.document);
             reader.reader_notice.connect_action(move || {
                 let Some(notice) = weak.upgrade() else { return };
@@ -660,12 +847,14 @@ impl Reader {
                     .as_ref()
                     .and_then(|current| current.sender.clone())
                     .is_some_and(|sender| allowlist.borrow().is_allowed(&sender));
+                place.keep.set(true);
                 render_open(
                     &Canvas {
                         view: &view,
                         document: &document,
                         page: &page,
                         loads: &loads,
+                        place: &place,
                     },
                     &banner,
                     &notice,
@@ -690,6 +879,7 @@ impl Reader {
             let notice_weak = Rc::downgrade(&reader.reader_notice);
             let page = Rc::clone(&reader.page);
             let loads = Rc::clone(&reader.loads);
+            let place = Rc::clone(&reader.place);
             let document = Rc::clone(&reader.document);
             let banner_weak = banner_weak.clone();
             reader.banner.connect_show_once(move || {
@@ -697,12 +887,14 @@ impl Reader {
                     return;
                 };
                 if let Some(banner) = banner_weak.upgrade() {
+                    place.keep.set(true);
                     render_open(
                         &Canvas {
                             view: &view,
                             document: &document,
                             page: &page,
                             loads: &loads,
+                            place: &place,
                         },
                         &banner,
                         &reader_notice,
@@ -733,6 +925,7 @@ impl Reader {
             let notice_weak = Rc::downgrade(&reader.reader_notice);
             let page = Rc::clone(&reader.page);
             let loads = Rc::clone(&reader.loads);
+            let place = Rc::clone(&reader.place);
             let document = Rc::clone(&reader.document);
             reader.banner.connect_always_allow(move || {
                 let Some(reader_notice) = notice_weak.upgrade() else {
@@ -750,12 +943,14 @@ impl Reader {
                     }
                 }
                 if let Some(banner) = banner_weak.upgrade() {
+                    place.keep.set(true);
                     render_open(
                         &Canvas {
                             view: &view,
                             document: &document,
                             page: &page,
                             loads: &loads,
+                            place: &place,
                         },
                         &banner,
                         &reader_notice,
@@ -1047,6 +1242,14 @@ impl Reader {
         // opens reduced; correspondence never does. See
         // `document::suits_reader_view` for why the question is "was this
         // laid out by a template" rather than "could this be reduced".
+        // The message on screen drawn again keeps its place; another
+        // message starts at the top.
+        let same = self
+            .open
+            .borrow()
+            .as_ref()
+            .is_some_and(|open| open.body == *body);
+        self.place.keep.set(same);
         let bulk = postio_ui::reader::document::suits_reader_view(body);
         let rendering = if bulk {
             Rendering::Reader
@@ -1200,6 +1403,16 @@ impl Reader {
 
     /// Load a composed thread document, and reset what a new document resets.
     fn load_thread(&self, messages: &[ThreadMessage], document: &str) {
+        // The same conversation again -- a late body, a message shown whole,
+        // a flag changing -- keeps the reader's place in it. Any message in
+        // common is enough: a thread that grew is still the one they were
+        // reading.
+        let same = self
+            .thread
+            .borrow()
+            .iter()
+            .any(|drawn| messages.iter().any(|message| message.scope == drawn.scope));
+        self.place.keep.set(same);
         self.thread.replace(messages.to_vec());
         self.paints.set(self.paints.get() + 1);
         self.absent.set(None);
@@ -1336,6 +1549,7 @@ impl Reader {
             document: &self.document,
             page: &self.page,
             loads: &self.loads,
+            place: &self.place,
         }
     }
 
@@ -1773,6 +1987,8 @@ struct Canvas<'a> {
     page: &'a Rc<std::cell::Cell<u32>>,
     /// Documents actually handed to WebKit — [`Reader::loads`].
     loads: &'a Rc<std::cell::Cell<u32>>,
+    /// Where the reader is, and whether this load keeps it.
+    place: &'a Place,
 }
 
 /// Hand `document` to WebKit, and count it.
@@ -1797,6 +2013,7 @@ fn load_document(canvas: &Canvas<'_>, document: &str) {
     // it is per-canvas and cannot be read from another crate's suite.
     postio_ui::reader::cost::note_render();
     canvas.document.replace(document.to_owned());
+    canvas.place.before_load();
     canvas.view.load_html(document, Some(DOCUMENT_BASE_URI));
     // `load_html` always starts a document at the top, whatever `page` said
     // before this call -- see `Reader::page_down`.
