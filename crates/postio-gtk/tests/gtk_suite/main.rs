@@ -328,6 +328,10 @@ const CASES: &[(&str, fn())] = &[
         gtk_components::every_overlay_is_one_plate as fn(),
     ),
     (
+        "gtk_components::every_primary_button_is_the_same_kind",
+        gtk_components::every_primary_button_is_the_same_kind as fn(),
+    ),
+    (
         "gtk_checkrow::showing_the_files_value_is_not_changing_it",
         gtk_checkrow::showing_the_files_value_is_not_changing_it as fn(),
     ),

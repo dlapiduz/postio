@@ -2572,12 +2572,10 @@ impl Composer {
         meta.add_css_class("postio-compose-label");
         meta.add_css_class("dim-label");
 
-        let remove = gtk::Button::from_icon_name("edit-delete-symbolic");
-        remove.add_css_class("flat");
-        remove.update_property(&[gtk::accessible::Property::Label(&format!(
-            "Remove {}",
-            attachment.display_name()
-        ))]);
+        let remove = crate::widgets::icon_button(
+            "edit-delete-symbolic",
+            &format!("Remove {}", attachment.display_name()),
+        );
         remove.connect_clicked(glib::clone!(
             #[weak(rename_to = composer)]
             self,
@@ -2897,8 +2895,11 @@ impl Composer {
         // feedback only sighted users get is feedback half the users do not.
         imp.status.set_accessible_role(gtk::AccessibleRole::Status);
 
-        imp.detach.add_css_class("flat");
-        imp.detach.add_css_class("postio-ghost");
+        crate::widgets::button::style(
+            &imp.detach,
+            crate::widgets::button::Kind::Ghost,
+            crate::widgets::button::Size::Small,
+        );
         sync_detach_button(&imp.detach, false);
         imp.detach.connect_clicked(glib::clone!(
             #[weak(rename_to = composer)]
@@ -3312,7 +3313,11 @@ impl Composer {
         let row = gtk::Box::new(gtk::Orientation::Horizontal, 12);
         row.add_css_class("postio-compose-actions");
 
-        imp.send.add_css_class("suggested-action");
+        crate::widgets::button::style(
+            &imp.send,
+            crate::widgets::button::Kind::Primary,
+            crate::widgets::button::Size::Regular,
+        );
         imp.send
             .update_property(&[gtk::accessible::Property::Label("Send")]);
         imp.send.connect_clicked(glib::clone!(
@@ -3321,8 +3326,11 @@ impl Composer {
             move |_| composer.send()
         ));
 
-        imp.schedule_send.add_css_class("flat");
-        imp.schedule_send.add_css_class("postio-ghost");
+        crate::widgets::button::style(
+            &imp.schedule_send,
+            crate::widgets::button::Kind::Ghost,
+            crate::widgets::button::Size::Regular,
+        );
         imp.schedule_send
             .update_property(&[gtk::accessible::Property::Label("Schedule send")]);
         // Rebuilt every time the picker opens rather than once here: the
@@ -3359,8 +3367,11 @@ impl Composer {
         imp.schedule_send
             .insert_action_group("compose-schedule", Some(&schedule_actions));
 
-        imp.save.add_css_class("flat");
-        imp.save.add_css_class("postio-ghost");
+        crate::widgets::button::style(
+            &imp.save,
+            crate::widgets::button::Kind::Ghost,
+            crate::widgets::button::Size::Regular,
+        );
         imp.save
             .update_property(&[gtk::accessible::Property::Label("Save draft")]);
         imp.save.connect_clicked(glib::clone!(

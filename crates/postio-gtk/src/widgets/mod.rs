@@ -17,6 +17,7 @@
 //! catch. It lands with the collapsed conversation row it belongs to.
 
 pub mod action_bar;
+pub mod button;
 pub mod checkrow;
 pub mod chip;
 pub mod chrome;
@@ -28,6 +29,7 @@ pub mod screen;
 pub mod segmented;
 
 pub use action_bar::{Action, ActionBar};
+pub use button::{Kind, Size, icon_button};
 pub use checkrow::CheckRow;
 pub use chip::{chip_button, filter_chip};
 pub use chrome::{kicker, stat_line};

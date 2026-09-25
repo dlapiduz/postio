@@ -1350,7 +1350,11 @@ impl Onboarding {
         connect_child.append(&imp.connect_label);
         connect_child.append(&connect_hint);
         imp.connect.set_child(Some(&connect_child));
-        imp.connect.add_css_class("suggested-action");
+        crate::widgets::button::style(
+            &imp.connect,
+            crate::widgets::button::Kind::Primary,
+            crate::widgets::button::Size::Regular,
+        );
         imp.connect.set_sensitive(false);
         imp.connect
             .update_property(&[gtk::accessible::Property::Label(
@@ -1363,8 +1367,11 @@ impl Onboarding {
         ));
 
         imp.edit.set_label("Edit manually");
-        imp.edit.add_css_class("flat");
-        imp.edit.add_css_class("postio-ghost");
+        crate::widgets::button::style(
+            &imp.edit,
+            crate::widgets::button::Kind::Ghost,
+            crate::widgets::button::Size::Regular,
+        );
         imp.edit.connect_clicked(glib::clone!(
             #[weak(rename_to = screen)]
             self,
@@ -1420,16 +1427,22 @@ impl Onboarding {
         keyring.add_css_class("postio-onboarding-browser-flow");
 
         imp.browser_reopen.set_label("Open link again");
-        imp.browser_reopen
-            .add_css_class("postio-settings-small-button");
+        crate::widgets::button::style(
+            &imp.browser_reopen,
+            crate::widgets::button::Kind::Secondary,
+            crate::widgets::button::Size::Small,
+        );
         imp.browser_reopen.connect_clicked(glib::clone!(
             #[weak(rename_to = screen)]
             self,
             move |_| screen.reopen_sign_in_link()
         ));
         imp.browser_copy.set_label("Copy URL");
-        imp.browser_copy
-            .add_css_class("postio-settings-small-button");
+        crate::widgets::button::style(
+            &imp.browser_copy,
+            crate::widgets::button::Kind::Secondary,
+            crate::widgets::button::Size::Small,
+        );
         imp.browser_copy.connect_clicked(glib::clone!(
             #[weak(rename_to = screen)]
             self,
@@ -1482,7 +1495,11 @@ impl Onboarding {
         imp.sync_estimate.set_wrap(true);
 
         imp.start_sync.set_label("Start sync");
-        imp.start_sync.add_css_class("suggested-action");
+        crate::widgets::button::style(
+            &imp.start_sync,
+            crate::widgets::button::Kind::Primary,
+            crate::widgets::button::Size::Regular,
+        );
         imp.start_sync.connect_clicked(glib::clone!(
             #[weak(rename_to = screen)]
             self,

@@ -1179,8 +1179,11 @@ impl MessageListView {
             let button = gtk::Button::builder()
                 .tooltip_text(format!("{title} the selection"))
                 .build();
-            button.add_css_class("flat");
-            button.add_css_class("postio-ghost");
+            crate::widgets::button::style(
+                &button,
+                crate::widgets::button::Kind::Ghost,
+                crate::widgets::button::Size::Small,
+            );
             button.update_property(&[gtk::accessible::Property::Label(&format!(
                 "{title} the selection"
             ))]);

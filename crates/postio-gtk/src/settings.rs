@@ -1271,13 +1271,13 @@ impl SettingsPanel {
         label.set_hexpand(true);
         label.set_ellipsize(gtk::pango::EllipsizeMode::End);
 
-        let revoke = gtk::Button::from_icon_name("user-trash-symbolic");
+        let revoke = crate::widgets::icon_button(
+            "user-trash-symbolic",
+            &format!("Stop always allowing remote images from {sender}"),
+        );
         revoke.add_css_class("postio-settings-privacy-revoke");
-        revoke.add_css_class("flat");
+        // Shorter than the name: the row beside it already says whose.
         revoke.set_tooltip_text(Some("Always ask again"));
-        revoke.update_property(&[gtk::accessible::Property::Label(&format!(
-            "Stop always allowing remote images from {sender}"
-        ))]);
         revoke.connect_clicked(glib::clone!(
             #[weak(rename_to = panel)]
             self,
@@ -1609,7 +1609,11 @@ impl SettingsPanel {
         // stated rather than three keystrokes away.
         if expired {
             let reconnect = gtk::Button::with_label("Reconnect");
-            reconnect.add_css_class("postio-settings-small-button");
+            crate::widgets::button::style(
+                &reconnect,
+                crate::widgets::button::Kind::Secondary,
+                crate::widgets::button::Size::Small,
+            );
             reconnect.set_valign(gtk::Align::Center);
             let account_id = account.id;
             reconnect.connect_clicked(glib::clone!(
@@ -2248,12 +2252,9 @@ impl SettingsPanel {
             return;
         }
 
-        let back = gtk::Button::from_icon_name("go-previous-symbolic");
+        let back = crate::widgets::icon_button("go-previous-symbolic", "Back to the account");
         back.add_css_class("postio-settings-signature-back");
-        back.add_css_class("flat");
         back.set_halign(gtk::Align::Start);
-        back.set_tooltip_text(Some("Back to the account"));
-        back.update_property(&[gtk::accessible::Property::Label("Back to the account")]);
         back.connect_clicked(glib::clone!(
             #[weak(rename_to = panel)]
             self,
@@ -2293,7 +2294,11 @@ impl SettingsPanel {
         verbs.set_halign(gtk::Align::Start);
         let save = gtk::Button::with_label("Save");
         save.add_css_class("postio-settings-signature-save");
-        save.add_css_class("suggested-action");
+        crate::widgets::button::style(
+            &save,
+            crate::widgets::button::Kind::Primary,
+            crate::widgets::button::Size::Regular,
+        );
         save.connect_clicked(glib::clone!(
             #[weak(rename_to = panel)]
             self,
@@ -2995,7 +3000,11 @@ impl SettingsPanel {
         stats.append(&stats_accounts);
 
         let sync_now = gtk::Button::with_label("Sync now");
-        sync_now.add_css_class("postio-settings-small-button");
+        crate::widgets::button::style(
+            &sync_now,
+            crate::widgets::button::Kind::Secondary,
+            crate::widgets::button::Size::Small,
+        );
         sync_now.set_halign(gtk::Align::Start);
         sync_now.set_margin_top(6);
         sync_now.connect_clicked(glib::clone!(
@@ -3668,9 +3677,8 @@ impl SettingsPanel {
         ));
 
         let position = pinned_keys.iter().position(|candidate| *candidate == key);
-        let up = gtk::Button::from_icon_name("go-up-symbolic");
+        let up = crate::widgets::icon_button("go-up-symbolic", &format!("Move {title} up"));
         up.add_css_class("postio-settings-filter-up");
-        up.add_css_class("flat");
         up.set_tooltip_text(Some("Move up"));
         up.set_sensitive(position.is_some_and(|index| index > 0));
         up.connect_clicked(glib::clone!(
@@ -3686,9 +3694,8 @@ impl SettingsPanel {
             }
         ));
 
-        let down = gtk::Button::from_icon_name("go-down-symbolic");
+        let down = crate::widgets::icon_button("go-down-symbolic", &format!("Move {title} down"));
         down.add_css_class("postio-settings-filter-down");
-        down.add_css_class("flat");
         down.set_tooltip_text(Some("Move down"));
         down.set_sensitive(position.is_some_and(|index| index + 1 < pinned_keys.len()));
         down.connect_clicked(glib::clone!(
@@ -3704,13 +3711,12 @@ impl SettingsPanel {
             }
         ));
 
-        let delete = gtk::Button::from_icon_name("user-trash-symbolic");
+        let delete = crate::widgets::icon_button(
+            "user-trash-symbolic",
+            &format!("Delete the saved search {title}"),
+        );
         delete.add_css_class("postio-settings-filter-delete");
-        delete.add_css_class("flat");
         delete.set_tooltip_text(Some("Delete"));
-        delete.update_property(&[gtk::accessible::Property::Label(&format!(
-            "Delete the saved search {title}"
-        ))]);
         delete.connect_clicked(glib::clone!(
             #[weak(rename_to = panel)]
             self,
@@ -4097,7 +4103,11 @@ impl SettingsPanel {
         // header where the drawing puts it — not in the sidebar, which
         // names places rather than verbs.
         let add_account = gtk::Button::with_label("Add account");
-        add_account.add_css_class("postio-settings-primary");
+        crate::widgets::button::style(
+            &add_account,
+            crate::widgets::button::Kind::Primary,
+            crate::widgets::button::Size::Regular,
+        );
         add_account.connect_clicked(glib::clone!(
             #[weak(rename_to = panel)]
             self,
@@ -4271,7 +4281,11 @@ impl SettingsPanel {
         // build has one set of defaults and no importer, and a control
         // wired to nothing is worse than a control that is missing.
         let reset_keys = gtk::Button::with_label("Reset to defaults");
-        reset_keys.add_css_class("postio-settings-small-button");
+        crate::widgets::button::style(
+            &reset_keys,
+            crate::widgets::button::Kind::Secondary,
+            crate::widgets::button::Size::Small,
+        );
         reset_keys.set_halign(gtk::Align::Start);
         reset_keys.connect_clicked(glib::clone!(
             #[weak(rename_to = panel)]
@@ -4305,6 +4319,11 @@ impl SettingsPanel {
         view_scroller.update_property(&[gtk::accessible::Property::Label(FILE_NAME)]);
 
         imp.revert.add_css_class("postio-settings-revert");
+        crate::widgets::button::style(
+            &imp.revert,
+            crate::widgets::button::Kind::Secondary,
+            crate::widgets::button::Size::Small,
+        );
         imp.revert.set_halign(gtk::Align::Start);
         imp.revert.connect_clicked(glib::clone!(
             #[weak(rename_to = panel)]

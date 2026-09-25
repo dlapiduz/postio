@@ -115,13 +115,7 @@ pub fn a_rebind_reaches_the_headers_key_caps() {
     );
     let keys = descendants(&root)
         .into_iter()
-        .filter(|widget| widget.has_css_class("postio-ghost"))
-        .find(|widget| {
-            widget
-                .downcast_ref::<gtk::Button>()
-                .and_then(|button| button.tooltip_text())
-                .is_some_and(|tip| tip == "Keyboard shortcuts")
-        })
+        .find(|widget| widget.has_css_class("postio-header-keys"))
         .expect("the header's Keys button");
     let caps: Vec<String> = descendants(&keys)
         .into_iter()
@@ -201,5 +195,46 @@ pub fn every_overlay_is_one_plate() {
         finder.has_css_class("postio-plate"),
         "the box's results hang on the same surface"
     );
+    window.destroy();
+}
+
+/// One primary look: every surface's "this is the one" verb wears the same
+/// kind, and none still wears libadwaita's pill. It had been the pill in the
+/// header, a pale tint in the action bars and a solid square in settings.
+pub fn every_primary_button_is_the_same_kind() {
+    let Some(window) = window() else {
+        return;
+    };
+    let app_window = postio_gtk::window::Window::default();
+    let roots: Vec<(&str, gtk::Widget)> = vec![
+        ("window", app_window.clone().upcast()),
+        ("parts", postio_gtk::parts::PartsPanel::new().upcast()),
+        (
+            "unavailable",
+            postio_gtk::unavailable::Unavailable::new().upcast(),
+        ),
+        (
+            "onboarding",
+            postio_gtk::onboarding::Onboarding::new().upcast(),
+        ),
+    ];
+    let mut primaries = 0;
+    for (name, root) in &roots {
+        for widget in descendants(root) {
+            assert!(
+                !widget.has_css_class("suggested-action"),
+                "{name} still draws libadwaita's primary: {widget:?}"
+            );
+            if widget.has_css_class("postio-button-primary") {
+                primaries += 1;
+                assert!(
+                    widget.has_css_class("postio-button"),
+                    "{name}'s primary skipped the shared base"
+                );
+            }
+        }
+    }
+    assert!(primaries >= 4, "found only {primaries} primaries");
+    app_window.destroy();
     window.destroy();
 }
