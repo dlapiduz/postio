@@ -954,10 +954,27 @@ fn row_items(window: &Window) -> usize {
     row_widgets(window).len()
 }
 
+/// Dispatch whatever the loop has ready, but not for ever.
+///
+/// `while context.iteration(false) {}` ends only when nothing is ready, and
+/// on a loaded runner a source that repeats faster than a turn takes is
+/// always ready: the release gate's full suite ran this binary for 720s
+/// until nextest killed it, while the same binary passed in 4s on the pull
+/// request that shipped it. Bounded, every wait here ends -- and a surface
+/// that never reached the state a check needs fails that check, saying
+/// which, instead of timing out saying nothing.
+fn drain(context: &gtk::glib::MainContext) {
+    for _ in 0..1_000 {
+        if !context.iteration(false) {
+            return;
+        }
+    }
+}
+
 fn pump() {
     let context = gtk::glib::MainContext::default();
     for _ in 0..80 {
-        while context.iteration(false) {}
+        drain(&context);
     }
 }
 
@@ -981,7 +998,7 @@ fn pump() {
 fn pump_until(ready: impl Fn() -> bool) {
     let context = gtk::glib::MainContext::default();
     for _ in 0..2000 {
-        while context.iteration(false) {}
+        drain(&context);
         if ready() {
             return;
         }
