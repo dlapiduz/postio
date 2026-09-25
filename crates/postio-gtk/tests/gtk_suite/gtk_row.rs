@@ -1,6 +1,6 @@
 //! The message row on a real display: its anatomy, its three densities, the
-//! key hints only the focused row reveals, and the proof that it still reads
-//! its colours off the cascade rather than out of the source.
+//! one height it keeps whatever state it is in, and the proof that it still
+//! reads its colours off the cascade rather than out of the source.
 //!
 //! One test function, for the reason `gtk_style.rs` gives. Skips without a
 //! display. Nothing here touches the network.
@@ -47,8 +47,8 @@ pub fn the_row_draws_the_canvas_anatomy_at_every_density() {
     fonts::install().expect("the embedded fonts should install");
     style::install(&display);
 
-    // Two rows, because "on the focused row only" is a claim about the row
-    // next to it as much as about this one.
+    // Two rows, because "the focused row is no taller" is a claim about the
+    // row next to it as much as about this one.
     let row = MessageRowView::new();
     row.set_row(Some(canvas_row()));
     let neighbour = MessageRowView::new();
@@ -120,89 +120,80 @@ pub fn the_row_draws_the_canvas_anatomy_at_every_density() {
         "a {compact}px row is too tight to hold the anatomy"
     );
 
-    // ── key hints belong to the focused row and to no other ──────────────
+    // ── a row is one height at a density, whatever state it is in ────────
+    // The maintainer's rule (2026-09-25): focus, hover, selection and the
+    // cursor change what a row *draws*, never how tall it is. The focused
+    // row used to grow a line of key hints -- 74px to 103px at airy -- and
+    // every row below it jumped down by the difference each time the
+    // keyboard moved.
     row.set_density(Density::Airy);
     neighbour.set_density(Density::Airy);
-    neighbour.grab_focus();
     pump();
-    assert!(
-        neighbour.shows_hints(),
-        "the focused row reveals its key hints"
-    );
-    assert!(!row.shows_hints(), "the row beside it reveals nothing");
-    let quiet = row.measured_height(404);
-
-    row.grab_focus();
-    pump();
-    assert!(
-        row.shows_hints(),
-        "focus moved, and the hints moved with it"
-    );
-    assert!(!neighbour.shows_hints(), "the row it left went quiet again");
-    assert!(
-        row.measured_height(404) > quiet,
-        "revealing the hints makes room for them"
-    );
-    assert_eq!(
-        row.hints(),
-        vec![("e".to_string(), "reply"), ("a".to_string(), "archive")],
-        "canvas 1b's hints, before any keymap is applied -- two since \
-         #1003 took `t` away with the column it opened"
-    );
-
-    // A rebind reaches the hint text, not just the resolver.
-    let mut overrides = postio_config::KeyBindings::default();
-    overrides
-        .overrides_mut()
-        .insert("archive".to_string(), "x".to_string());
-    row.set_keymap(&postio_core::Keymap::resolve(&overrides));
-    assert_eq!(
-        row.hints(),
-        vec![("e".to_string(), "reply"), ("x".to_string(), "archive")],
-        "postio-cpk: the hint follows the live binding"
-    );
-    row.set_keymap(&postio_core::Keymap::resolve(&Default::default()));
-
-    // Both hints apply to every row now. The one that did not was `t`, which
-    // a row with a single message had nothing to point at; the conversation
-    // opens on landing, so there is no key to withhold (#1003).
-    row.set_row(Some(Row {
-        thread_count: 1,
-        participants: Vec::new(),
-        ..canvas_row()
-    }));
-    pump();
-    assert_eq!(
-        row.hints(),
-        vec![("e".to_string(), "reply"), ("a".to_string(), "archive")],
-        "a one-message row hints at the same two verbs"
-    );
+    let resting = row.measured_height(404);
+    let states: [(&str, &dyn Fn()); 4] = [
+        ("focused", &|| {
+            row.grab_focus();
+        }),
+        ("the cursor", &|| row.set_cursor(true)),
+        ("selected", &|| row.set_selected(true)),
+        ("hovered", &|| row.set_hovered(true)),
+    ];
+    for (state, enter) in states {
+        enter();
+        pump();
+        assert_eq!(
+            row.measured_height(404),
+            resting,
+            "a row that is {state} is a different height from one at rest"
+        );
+    }
+    // Nor does what is in it. A thread badge sets in the mono face, and a
+    // subject can reach for a fallback font with a taller line; neither may
+    // make one row a different height from the row beside it.
+    for (what, content) in [
+        (
+            "a single message, no badge",
+            Row {
+                thread_count: 1,
+                ..canvas_row()
+            },
+        ),
+        (
+            "a subject in fallback scripts",
+            Row {
+                subject: Some(
+                    "Re: \u{6f22}\u{5b57} \u{0e20}\u{0e32}\u{0e29}\u{0e32} \u{1f600}".into(),
+                ),
+                preview: Some("\u{0645}\u{0631}\u{062d}\u{0628}\u{0627} \u{1f4e6}".into()),
+                ..canvas_row()
+            },
+        ),
+        ("a skeleton waiting for its page", canvas_row()),
+    ] {
+        let skeleton = what.starts_with("a skeleton");
+        row.set_row((!skeleton).then_some(content));
+        pump();
+        assert_eq!(
+            row.measured_height(404),
+            resting,
+            "{what} is a different height from the canvas row"
+        );
+    }
     row.set_row(Some(canvas_row()));
+    neighbour.grab_focus();
+    row.set_cursor(false);
+    row.set_selected(false);
+    row.set_hovered(false);
     pump();
     assert_eq!(
-        row.hints(),
-        vec![("e".to_string(), "reply"), ("a".to_string(), "archive")],
-        "and so does a conversation row"
+        row.measured_height(404),
+        resting,
+        "a row the keyboard left is a different height from before it came"
     );
-
-    // ── `[ui].show_key_hints = false` mutes every row, focused or not ────
-    // Every binding keeps working; this only stops the row from naming one.
-    row.grab_focus();
-    pump();
-    assert!(row.shows_hints(), "focused, and hints are on by default");
-    row.set_show_key_hints(false);
-    pump();
-    assert!(
-        !row.shows_hints(),
-        "the setting overrides focus, not just the default"
-    );
-    let muted = row.measured_height(404);
-    row.set_show_key_hints(true);
-    pump();
-    assert!(row.shows_hints(), "turning it back on restores the hints");
-    assert!(
-        row.measured_height(404) > muted,
-        "the hints take their space back once shown again"
+    assert_eq!(
+        neighbour.measured_height(404),
+        resting,
+        "the focused row is taller than the one beside it"
     );
 
     // ── selected and focused are different states ────────────────────────
@@ -298,29 +289,24 @@ pub fn the_row_draws_the_canvas_anatomy_at_every_density() {
     row.set_selected(false);
     pump();
 
-    // ── the cursor's edge is not a key-hints feature ─────────────────────
-    // #753 again: the 3px accent edge was drawn only when `shows_hints()`,
-    // which is the hints flag *and* keyboard focus. Turning hints off, or
-    // clicking into the reading pane, silently deleted the only marker of
-    // where the keyboard was. The canvas draws that edge on the current row
-    // unconditionally (`Design/Mail Client.dc.html:76`); only the key caps
-    // are the flag's business.
+    // ── the cursor's edge does not depend on keyboard focus ──────────────
+    // #753: the 3px accent edge was once drawn only while the row held the
+    // keyboard, so clicking into the reading pane silently deleted the only
+    // marker of where the keyboard was. The canvas draws that edge on the
+    // current row unconditionally (`Design/Mail Client.dc.html:76`).
+    neighbour.grab_focus();
     row.set_cursor(true);
-    row.set_show_key_hints(false);
     pump();
-    let without_hints = render(&window);
+    let cursor_unfocused = render(&window);
     row.set_cursor(false);
     pump();
     let no_cursor = render(&window);
-    row.set_show_key_hints(true);
-    pump();
 
-    match (without_hints, no_cursor) {
-        (Some(without_hints), Some(no_cursor)) => assert_ne!(
-            without_hints, no_cursor,
-            "with key hints off, the row under the cursor draws exactly like \
-             a row that is not — the setting deleted the focus indicator \
-             along with the hints it was supposed to govern"
+    match (cursor_unfocused, no_cursor) {
+        (Some(cursor_unfocused), Some(no_cursor)) => assert_ne!(
+            cursor_unfocused, no_cursor,
+            "without the keyboard, the row under the cursor draws exactly \
+             like a row that is not"
         ),
         _ => eprintln!("skipping the pixel checks: the compositor is not painting this window"),
     }
@@ -339,10 +325,6 @@ pub fn the_row_draws_the_canvas_anatomy_at_every_density() {
     assert!(
         waiting.measured_height(404) > 0.0,
         "a placeholder still occupies its row"
-    );
-    assert!(
-        !waiting.shows_hints(),
-        "a row with nothing in it hints at nothing"
     );
     assert_eq!(waiting.spoken(), "", "a placeholder announces nothing");
 
@@ -442,22 +424,18 @@ pub fn the_row_draws_the_canvas_anatomy_at_every_density() {
         );
     }
 
-    // Focusing the list puts the keyboard on a row, and exactly one row
-    // reveals its hints.
+    // Focusing the list puts the keyboard on a row, and no row grows for it:
+    // every row on screen is the same height.
     pane.grab_focus();
-    let hints_on = || {
-        let hinting = std::cell::Cell::new(0);
-        pane.each_row(|row| {
-            if row.shows_hints() {
-                hinting.set(hinting.get() + 1);
-            }
-        });
-        hinting.get()
+    let uneven = || {
+        let all = heights(&pane);
+        all.iter().any(|height| *height != all[0])
     };
+    let _ = frames(&list_window, 3);
     assert!(
-        frames_until(&list_window, || hints_on() == 1),
-        "the key hints belong to exactly one row, and {} rows show them",
-        hints_on()
+        !uneven(),
+        "the rows on screen are not all one height: {:?}",
+        heights(&pane)
     );
 
     // A source that answers inside `request` used to take the process down
@@ -731,8 +709,8 @@ fn render(window: &gtk::Window) -> Option<Vec<u8>> {
 
 /// Building rows must not resolve a keymap.
 ///
-/// GTK builds a `MessageRowView` per row it realises, and every row wants a
-/// correct key hint before anything hands it the live keymap. Resolving the
+/// GTK builds a `MessageRowView` per row it realises, and rows once carried
+/// the keymap their key hints were drawn from. Resolving the
 /// registry's defaults to get one is quadratic in the number of commands, and
 /// paying it per row is what made switching folders spend about a second
 /// rebuilding the list (#1216). Counted rather than timed: the count is the
@@ -757,14 +735,6 @@ pub fn building_rows_does_not_resolve_a_keymap() {
         before,
         "building 200 rows resolved {} keymaps",
         postio_core::test_support::keymap_resolutions() - before
-    );
-
-    // The hints still have to be right, or the cheap answer is the wrong one.
-    let view = MessageRowView::new();
-    view.set_row(Some(canvas_row()));
-    assert_eq!(
-        view.hints(),
-        postio_gtk::row::hints(postio_core::Keymap::defaults())
     );
 }
 

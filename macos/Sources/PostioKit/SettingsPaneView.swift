@@ -223,7 +223,7 @@ public struct SettingsPaneView: View {
                         // what the list draws -- GTK says the same sentence
                         // from the same kind of measurement.
                         Text(
-                            "\(Int(MessageRowCell.preferredHeight(for: current.density, reservingHints: current.showKeyHints)))px rows"
+                            "\(Int(MessageRowCell.preferredHeight(for: current.density)))px rows"
                         )
                             .font(.system(.footnote, design: .monospaced))
                             .foregroundStyle(.secondary)
@@ -233,7 +233,6 @@ public struct SettingsPaneView: View {
                 field("MESSAGE LIST") {
                     VStack(alignment: .leading, spacing: 8) {
                         Toggle("Hover action icons", isOn: binding(current, \.showHoverActions))
-                        Toggle("Key hints on the focused row", isOn: binding(current, \.showKeyHints))
                         Toggle("Sender avatars", isOn: binding(current, \.senderAvatars))
                     }
                     .toggleStyle(.checkbox)

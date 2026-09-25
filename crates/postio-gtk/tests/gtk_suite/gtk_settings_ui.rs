@@ -25,7 +25,6 @@ pinned = true
 theme = \"dark\"
 density = \"compact\"
 show_hover_actions = false
-show_key_hints = true
 sender_avatars = false
 ";
 
@@ -45,7 +44,6 @@ pub fn the_pane_shows_the_files_values_on_segments_and_checkboxes() {
     );
 
     assert!(!checkbox(&panel, "Hover action icons").is_active());
-    assert!(checkbox(&panel, "Key hints on the focused row").is_active());
     assert!(!checkbox(&panel, "Sender avatars").is_active());
 
     window.destroy();

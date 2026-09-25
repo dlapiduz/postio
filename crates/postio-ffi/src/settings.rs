@@ -122,10 +122,6 @@ pub struct AppearanceFfi {
     pub theme: ThemeFfi,
     /// Show per-row actions when the pointer is over a row.
     pub show_hover_actions: bool,
-    /// Show the focused row's key hints (`e reply`, `a archive`). Off leaves
-    /// every binding in force — it only stops the row from naming them, for
-    /// someone who already knows the keyboard (#422).
-    pub show_key_hints: bool,
     /// Show each row's sender-initials chip, per canvas 1b's row anatomy.
     pub sender_avatars: bool,
 }
@@ -182,7 +178,6 @@ pub fn settings_appearance(text: String) -> Option<AppearanceFfi> {
         density: ui.density.into(),
         theme: ui.theme.into(),
         show_hover_actions: ui.show_hover_actions,
-        show_key_hints: ui.show_key_hints,
         sender_avatars: ui.sender_avatars,
     })
 }
@@ -204,7 +199,6 @@ pub fn settings_patch_appearance(
     ui.density = appearance.density.into();
     ui.theme = appearance.theme.into();
     ui.show_hover_actions = appearance.show_hover_actions;
-    ui.show_key_hints = appearance.show_key_hints;
     ui.sender_avatars = appearance.sender_avatars;
     patch_ui(&text, &ui).map_err(|err| SettingsError::Invalid {
         message: err.to_string(),
@@ -317,8 +311,6 @@ pub struct RowMetricsFfi {
     pub gap: f32,
     /// Between the sender line and the subject.
     pub subject_gap: f32,
-    /// Between the snippet and the key hints the focused row reveals.
-    pub hints_gap: f32,
     /// Whether the snippet line is drawn at all — `false` at the tightest
     /// density, which is the whole of what makes it the tightest.
     pub snippet: bool,
@@ -334,7 +326,6 @@ pub fn row_metrics(density: DensityFfi) -> RowMetricsFfi {
         avatar: metrics.avatar,
         gap: metrics.gap,
         subject_gap: metrics.subject_gap,
-        hints_gap: metrics.hints_gap,
         snippet: metrics.snippet,
     }
 }
@@ -349,15 +340,6 @@ pub fn row_metrics(density: DensityFfi) -> RowMetricsFfi {
 pub fn row_timestamp(received_at: i64) -> String {
     let received = chrono::DateTime::from_timestamp(received_at, 0).unwrap_or_default();
     postio_ui::row::timestamp(received, chrono::Local::now())
-}
-
-/// One key hint on the focused row: the key, and what it does.
-#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
-pub struct RowHintFfi {
-    /// The key as the user would press it, from their own bindings.
-    pub key: String,
-    /// The verb, in the canvas' words — "reply", "archive".
-    pub label: String,
 }
 
 /// One verb a row offers the mouse.

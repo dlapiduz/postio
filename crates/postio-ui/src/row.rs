@@ -10,7 +10,7 @@
 
 use chrono::{DateTime, Datelike, Local, Utc};
 use postio_config::Density;
-use postio_core::{CommandId, Keymap};
+use postio_core::CommandId;
 use postio_model::EmailAddress;
 
 /// Canvas 1b's row geometry for one density, in logical pixels.
@@ -34,8 +34,6 @@ pub struct Metrics {
     pub gap: f32,
     /// Between the sender line and the subject.
     pub subject_gap: f32,
-    /// Between the snippet and the key hints the focused row reveals.
-    pub hints_gap: f32,
     /// Whether the snippet line is drawn at all.
     pub snippet: bool,
 }
@@ -50,7 +48,6 @@ impl Metrics {
                 avatar: 30.0,
                 gap: 12.0,
                 subject_gap: 3.0,
-                hints_gap: 7.0,
                 snippet: true,
             },
             Density::Comfortable => Metrics {
@@ -59,7 +56,6 @@ impl Metrics {
                 avatar: 26.0,
                 gap: 10.0,
                 subject_gap: 2.0,
-                hints_gap: 5.0,
                 snippet: true,
             },
             // The tightest setting is for triage, where the question is how
@@ -71,7 +67,6 @@ impl Metrics {
                 avatar: 22.0,
                 gap: 9.0,
                 subject_gap: 1.0,
-                hints_gap: 4.0,
                 snippet: false,
             },
         }
@@ -122,31 +117,6 @@ pub fn timestamp(received: DateTime<Utc>, now: DateTime<Local>) -> String {
         _ if local.year() == now.year() => local.format("%-d %b").to_string(),
         _ => local.format("%-d %b %y").to_string(),
     }
-}
-
-/// The commands the focused row hints at, and the labels the canvas gives
-/// them — canvas order, not registry order.
-/// Two, not three. `t` used to be here, hinting at the drill-in column that
-/// a thread row could open; the conversation is what the reading pane shows
-/// the moment the cursor lands on the row, so there is no third verb to
-/// announce (#1003).
-const HINT_COMMANDS: [(CommandId, &str); 2] =
-    [(CommandId::Reply, "reply"), (CommandId::Archive, "archive")];
-
-/// The key hints the focused row announces, as `(key, label)` pairs.
-///
-/// Read from the keymap rather than from the registry's defaults, so a
-/// rebinding reaches the hint — a row that taught the wrong key would be
-/// worse than one that taught none.
-pub fn hints(keymap: &Keymap) -> Vec<(String, &'static str)> {
-    HINT_COMMANDS
-        .iter()
-        .filter_map(|(command, label)| {
-            keymap
-                .binding(*command)
-                .map(|key| (key.to_string(), *label))
-        })
-        .collect()
 }
 
 /// What the row offers under the pointer, in the order they are drawn.

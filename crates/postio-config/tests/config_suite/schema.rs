@@ -34,10 +34,6 @@ fn ui_defaults_match_the_design_canvas() {
     assert_eq!(ui.density, Density::Airy, "PLATE is the airy direction");
     assert_eq!(ui.theme, Theme::System);
     assert!(ui.show_hover_actions, "mouse parity is a requirement");
-    assert!(
-        ui.show_key_hints,
-        "the app teaches its own keyboard by default (#422)"
-    );
 }
 
 #[test]
@@ -59,20 +55,18 @@ fn parses_every_ui_value() {
         density = "compact"
         theme = "dark"
         show_hover_actions = false
-        show_key_hints = false
         "#,
     )
     .unwrap();
     assert_eq!(cfg.ui.density, Density::Compact);
     assert_eq!(cfg.ui.theme, Theme::Dark);
     assert!(!cfg.ui.show_hover_actions);
-    assert!(!cfg.ui.show_key_hints);
 }
 
 #[test]
-fn a_partial_ui_section_still_defaults_key_hints_on() {
-    let cfg = Config::from_toml_str("[ui]\nshow_key_hints = false\n").unwrap();
-    assert!(!cfg.ui.show_key_hints);
+fn a_partial_ui_section_still_defaults_the_rest() {
+    let cfg = Config::from_toml_str("[ui]\ntheme = \"dark\"\n").unwrap();
+    assert_eq!(cfg.ui.theme, Theme::Dark);
     assert!(
         cfg.ui.show_hover_actions,
         "an unrelated field keeps its own default"

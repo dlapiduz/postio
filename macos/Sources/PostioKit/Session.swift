@@ -73,9 +73,6 @@ public final class PostioSession {
     /// window cannot end up with two opinions of the same table.
     public func appearance() -> AppearanceFfi { inner.appearance() }
 
-    /// The verbs the focused row announces, from this session's bindings.
-    public func rowHints() -> [RowHintFfi] { inner.rowHints() }
-
     /// Every configured account, as the settings pane lists them.
     public func accounts() -> [AccountFfi] { inner.accounts() }
 

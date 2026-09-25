@@ -38,7 +38,6 @@ pub enum Theme {
 /// density = "airy"          # airy | comfortable | compact
 /// theme = "system"          # system | light | dark
 /// show_hover_actions = true # mouse parity: reveal row actions on hover
-/// show_key_hints = true     # the focused row's own keyboard hints
 /// sender_avatars = true     # initials chip per row, from canvas 1b
 /// ```
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -52,11 +51,6 @@ pub struct UiConfig {
     /// Show per-row actions when the pointer is over a row.
     #[serde(default = "crate::yes")]
     pub show_hover_actions: bool,
-    /// Show the focused row's key hints (`e reply`, `a archive`).
-    /// Off leaves every binding in force -- this only stops the row from
-    /// naming them, for someone who already knows the keyboard (#422).
-    #[serde(default = "crate::yes")]
-    pub show_key_hints: bool,
     /// Show each row's sender-initials chip, per canvas 1b's row anatomy.
     #[serde(default = "crate::yes")]
     pub sender_avatars: bool,
@@ -71,7 +65,6 @@ impl Default for UiConfig {
             density: Density::default(),
             theme: Theme::default(),
             show_hover_actions: true,
-            show_key_hints: true,
             sender_avatars: true,
             extra: Extras::new(),
         }

@@ -187,10 +187,8 @@ mod imp {
         pub(super) commands: RefCell<Vec<CommandHandler>>,
         /// `[ui].show_hover_actions`, handed to every row as it binds.
         pub(super) show_actions: Rc<Cell<bool>>,
-        /// `[ui].show_key_hints`, handed to every row as it binds.
-        pub(super) show_hints: Rc<Cell<bool>>,
-        /// The live keymap, handed to every row as it binds so the focused
-        /// row's key hints read the bindings actually in force.
+        /// The live keymap, so the row context menu's accelerators name the
+        /// bindings actually in force.
         pub(super) keymap: Rc<RefCell<Keymap>>,
         /// The mailbox in view, so opening another one drops a selection that
         /// was about the last.
@@ -239,7 +237,6 @@ mod imp {
                 dwell_delay: Cell::new(DWELL_TO_READ),
                 commands: RefCell::new(Vec::new()),
                 show_actions: Rc::new(Cell::new(true)),
-                show_hints: Rc::new(Cell::new(true)),
                 keymap: Rc::new(RefCell::new(Keymap::defaults().clone())),
                 mailbox: RefCell::new(String::new()),
                 unread: std::cell::Cell::new(0),
@@ -266,8 +263,8 @@ mod imp {
         /// Focusing the pane means focusing a row.
         ///
         /// Without this the keyboard would stop at the scroller, which
-        /// looks like focus and acts like nothing: no selected row, no key
-        /// hints, and `j`/`k` with nowhere to go.
+        /// looks like focus and acts like nothing: no selected row, and
+        /// `j`/`k` with nowhere to go.
         fn grab_focus(&self) -> bool {
             self.view.grab_focus()
         }
@@ -364,27 +361,14 @@ impl MessageListView {
         self.each_row(|row| row.set_show_actions(show));
     }
 
-    /// Whether the focused row may reveal its key hints at all.
+    /// The bindings the row context menu's accelerators read.
     ///
-    /// `[ui].show_key_hints`. Applied to the rows on screen now and to
-    /// every row that binds after.
-    pub fn set_show_hints(&self, show: bool) {
-        if self.imp().show_hints.replace(show) == show {
-            return;
-        }
-        self.each_row(|row| row.set_show_key_hints(show));
-    }
-
-    /// The bindings the focused row's key hints read.
-    ///
-    /// Applied to the rows on screen now and to every row that binds after,
-    /// so a rebind in `config.toml` reaches the hints with no restart —
-    /// the same promise already kept for the resolver, the palette and the
-    /// cheat sheet.
+    /// A rebind in `config.toml` reaches the menu and the bulk bar with no restart — the same
+    /// promise already kept for the resolver, the palette and the cheat
+    /// sheet. Rows themselves carry no keymap: they draw no key hints.
     pub fn set_keymap(&self, keymap: Keymap) {
         self.relabel_bulk(&keymap);
-        self.imp().keymap.replace(keymap.clone());
-        self.each_row(|row| row.set_keymap(&keymap));
+        self.imp().keymap.replace(keymap);
     }
 
     /// Redraw the bulk bar's key caps from `keymap`, in [`BULK_ACTIONS`]'
@@ -403,7 +387,7 @@ impl MessageListView {
         }
     }
 
-    /// The keymap in force, for the rows that bind after this and for a test
+    /// The keymap in force, for the context menu and for a test
     /// to check against with nothing materialised on screen yet.
     pub fn keymap(&self) -> Keymap {
         self.imp().keymap.borrow().clone()
@@ -1241,8 +1225,6 @@ impl MessageListView {
         // outlives any borrow of it, and a bind should cost a `Cell` read
         // rather than an upgrade through a weak reference.
         let offers = imp.show_actions.clone();
-        let hints = imp.show_hints.clone();
-        let keymap = imp.keymap.clone();
         // The `changed` connection each binding holds, keyed by the
         // `GtkListItem` that holds it. Shared between bind and unbind because
         // that is the pair that owns it; a `GtkListItem` outlives any one row.
@@ -1258,8 +1240,6 @@ impl MessageListView {
             };
             view.set_density(bound.get());
             view.set_show_actions(offers.get());
-            view.set_show_key_hints(hints.get());
-            view.set_keymap(&keymap.borrow());
             view.set_first(item.position() == 0);
             view.set_index(item.position());
             view.set_cursor(item.is_selected());

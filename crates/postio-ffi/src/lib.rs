@@ -69,7 +69,7 @@ pub use registry::{CommandSpecFfi, MenuFfi, MenuSectionFfi, UiContext, UiRecover
 pub use search::{ChipFfi, MatchRangeFfi, OutcomeFfi, SnippetFfi, query_chips};
 pub use session::{Session, SessionError, SessionOptions};
 pub use settings::{
-    AppearanceFfi, DensityFfi, GroupFfi, RowActionFfi, RowHintFfi, RowMetricsFfi, SettingsError,
+    AppearanceFfi, DensityFfi, GroupFfi, RowActionFfi, RowMetricsFfi, SettingsError,
     SettingsSectionFfi, SettingsStatusFfi, ThemeFfi, row_actions, row_metrics, row_timestamp,
     settings_appearance, settings_group_label, settings_humanize_interval, settings_load,
     settings_patch_appearance, settings_path, settings_save, settings_sections, settings_status,

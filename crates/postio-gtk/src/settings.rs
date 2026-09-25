@@ -483,7 +483,6 @@ pub struct AppearanceControls {
     /// costs, in the units a person is choosing between.
     pub density_stat: gtk::Label,
     pub hover_actions: CheckRow,
-    pub key_hints: CheckRow,
     pub sender_avatars: CheckRow,
 }
 
@@ -3323,7 +3322,6 @@ impl SettingsPanel {
         controls
             .hover_actions
             .set_active(config.ui.show_hover_actions);
-        controls.key_hints.set_active(config.ui.show_key_hints);
         controls.sender_avatars.set_active(config.ui.sender_avatars);
     }
 
@@ -3436,12 +3434,6 @@ impl SettingsPanel {
             self,
             move |active| panel.apply_ui_mutation(move |ui| ui.show_hover_actions = active)
         ));
-        let key_hints = CheckRow::new("Key hints on the focused row");
-        key_hints.connect_toggled(glib::clone!(
-            #[weak(rename_to = panel)]
-            self,
-            move |active| panel.apply_ui_mutation(move |ui| ui.show_key_hints = active)
-        ));
         let sender_avatars = CheckRow::new("Sender avatars");
         sender_avatars.connect_toggled(glib::clone!(
             #[weak(rename_to = panel)]
@@ -3466,7 +3458,6 @@ impl SettingsPanel {
         let checks = gtk::Box::new(gtk::Orientation::Vertical, 6);
         checks.set_margin_top(4);
         checks.append(hover_actions.widget());
-        checks.append(key_hints.widget());
         checks.append(sender_avatars.widget());
         right.append(&checks);
 
@@ -3477,7 +3468,6 @@ impl SettingsPanel {
             density,
             density_stat,
             hover_actions,
-            key_hints,
             sender_avatars,
         });
         imp.appearance.get().expect("just set")

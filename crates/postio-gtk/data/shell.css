@@ -641,7 +641,7 @@ button.postio-icon-button:hover {
 
 /* #829: content, not affordance — a person reads the preview line to
    triage mail, so it wears `--postio-dim` (the 4.5:1 floor) rather than
-   `--postio-faint` (3:1, the key hint's floor below) in every state, read
+   `--postio-faint` (3:1, the hover glyphs' floor below) in every state, read
    or unread. */
 .postio-row-snippet {
   font-size: 0.8182rem;
@@ -678,6 +678,7 @@ button.postio-icon-button:hover {
   color: var(--postio-selected-accent-text);
 }
 
+/* The hover actions' glyph ink. */
 .postio-row-hint {
   font-size: 0.7159rem;
   color: var(--postio-faint);
@@ -698,10 +699,6 @@ button.postio-icon-button:hover {
 
 .postio-row-edge.selected {
   color: var(--postio-selected-border);
-}
-
-.postio-row-edge.key {
-  color: var(--postio-key-border);
 }
 
 .postio-row-ground.selected {
@@ -1054,7 +1051,7 @@ button.postio-icon-button:hover {
 }
 
 /* The key that runs it, or the folder's unread count — mono either way,
-   the same face the focused row's key hints use. */
+   the same face the row's timestamp uses. */
 .postio-finder-cap {
   font-family: var(--postio-font-mono);
   font-size: 0.7159rem;

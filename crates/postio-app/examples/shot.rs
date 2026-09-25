@@ -413,7 +413,6 @@ fn show_settings(window: &Window, pane: Option<postio_gtk::settings::Section>) {
          density = \"compact\"\n\
          theme = \"system\"\n\
          show_hover_actions = true\n\
-         show_key_hints = true\n\
          sender_avatars = false\n\
          [sync]\n\
          check_for_mail = \"idle\"\n\

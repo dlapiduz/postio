@@ -333,7 +333,11 @@ Conflating them is the classic bug, because it only surfaces once a selection
 is more than one row (`ARCHITECTURE.md` §4).
 
 The chosen visual direction is **PLATE (canvas option 1b)**: airy desktop,
-40px rows, key hints revealed on the focused row only. §19.
+40px rows, one height per density whatever state a row is in — focus,
+hover and selection change what a row draws, never how tall it is, so the
+list never moves under the cursor. The focused row carries no key hints
+(maintainer, 2026-09-25): the action bars, the palette and the `?` cheat
+sheet teach the keyboard instead. §19.
 
 ---
 
