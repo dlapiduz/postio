@@ -402,13 +402,18 @@ const SCROLL_REPORTER: &str = "(() => {\
   let pending = false;\
   const BLOCKS = 'P,LI,TD,TH,H1,H2,H3,H4,H5,H6,BLOCKQUOTE,PRE,DIV';\
   const block = () => {\
-    let el = document.elementFromPoint(8, 1);\
-    while (el && el !== document.body && !BLOCKS.split(',').includes(el.tagName)) {\
-      el = el.parentElement;\
+    for (const y of [2, 12, 24, 48, 96]) {\
+      let el = document.elementFromPoint(innerWidth / 2, y);\
+      while (el && el !== document.body && !BLOCKS.split(',').includes(el.tagName)) {\
+        el = el.parentElement;\
+      }\
+      if (!el || el === document.body) { continue; }\
+      const box = el.getBoundingClientRect();\
+      if (box.height > innerHeight * 2) { continue; }\
+      const index = Array.prototype.indexOf.call(document.getElementsByTagName(el.tagName), el);\
+      return el.tagName + '\\n' + index + '\\n' + (-box.top);\
     }\
-    if (!el || el === document.body) { return ''; }\
-    const index = Array.prototype.indexOf.call(document.getElementsByTagName(el.tagName), el);\
-    return el.tagName + '\\n' + index + '\\n' + (-el.getBoundingClientRect().top);\
+    return '';\
   };\
   const post = () => {\
     pending = false;\
