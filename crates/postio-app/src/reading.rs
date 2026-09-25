@@ -1203,8 +1203,11 @@ impl Fill {
                         .map(|hue| (named_accounts[hue].1.as_str(), hue));
                     pane.set_thread_envelope(row.id, &envelope.to, &envelope.cc, named);
                 }
-                if let crate::compose::Body::Ready { body, .. } = loaded.body {
-                    pane.set_thread_body(row.id, body);
+                match loaded.body {
+                    crate::compose::Body::Ready { body, .. } => pane.set_thread_body(row.id, body),
+                    // Not on this machine: drawn without it rather than
+                    // waited for, and redrawn by `body_arrived` if it lands.
+                    _ => pane.set_thread_body_absent(row.id),
                 }
             }
         });

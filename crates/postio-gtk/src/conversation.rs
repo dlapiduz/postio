@@ -1137,6 +1137,12 @@ mod imp {
         /// The bodies that have arrived so far, by message.
         pub(super) thread_bodies:
             RefCell<std::collections::HashMap<MessageId, postio_model::MessageBody>>,
+        /// Messages of the open thread whose body this machine does not have
+        /// yet. The thread counts as whole without them: they draw collapsed
+        /// with their preview, and waiting on a body the backfill has not
+        /// reached held the previous document on screen for the whole
+        /// deadline.
+        pub(super) thread_absent: RefCell<std::collections::HashSet<MessageId>>,
         /// Who each message went to, already drawn, beside its body.
         ///
         /// Separate from `thread_bodies` because it arrives from the
@@ -1227,6 +1233,7 @@ mod imp {
                 document_reader: RefCell::new(None),
                 thread_rows: RefCell::new(Vec::new()),
                 thread_bodies: RefCell::new(std::collections::HashMap::new()),
+                thread_absent: RefCell::new(std::collections::HashSet::new()),
                 thread_recipients: RefCell::new(std::collections::HashMap::new()),
                 thread_cc: RefCell::new(std::collections::HashMap::new()),
                 thread_envelopes: RefCell::new(std::collections::HashMap::new()),
@@ -1464,7 +1471,22 @@ impl ConversationView {
     /// WebKit one document per message on the way to the one it wants.
     pub fn set_thread_body(&self, message: MessageId, body: postio_model::MessageBody) {
         let imp = self.imp();
+        imp.thread_absent.borrow_mut().remove(&message);
         imp.thread_bodies.borrow_mut().insert(message, body);
+        self.queue_document_redraw();
+    }
+
+    /// `message`, of the open thread, has no body on this machine yet.
+    ///
+    /// The thread is drawn without waiting for it -- the message shows
+    /// collapsed with its preview -- and redrawn if the body arrives through
+    /// [`set_thread_body`](Self::set_thread_body).
+    pub fn set_thread_body_absent(&self, message: MessageId) {
+        let imp = self.imp();
+        if imp.thread_bodies.borrow().contains_key(&message) {
+            return;
+        }
+        imp.thread_absent.borrow_mut().insert(message);
         self.queue_document_redraw();
     }
 
@@ -1534,6 +1556,7 @@ impl ConversationView {
         let imp = self.imp();
         let rows = imp.thread_rows.borrow();
         let bodies = imp.thread_bodies.borrow();
+        let absent = imp.thread_absent.borrow();
         let expected = rows
             .iter()
             .map(|row| row.thread_count as usize)
@@ -1541,7 +1564,9 @@ impl ConversationView {
             .unwrap_or(0);
         !rows.is_empty()
             && rows.len() >= expected
-            && rows.iter().all(|row| bodies.contains_key(&row.id))
+            && rows
+                .iter()
+                .all(|row| bodies.contains_key(&row.id) || absent.contains(&row.id))
     }
 
     fn queue_document_redraw(&self) {
@@ -1588,6 +1613,9 @@ impl ConversationView {
                     .get()
                     .is_none_or(|deadline| std::time::Instant::now() >= deadline);
                 if pane.thread_is_whole() || overdue {
+                    if !pane.thread_is_whole() {
+                        postio_ui::reader::cost::note_waited_out();
+                    }
                     imp.redraw_deadline.set(None);
                     pane.redraw_document();
                 } else {
@@ -1830,6 +1858,7 @@ impl ConversationView {
         if imp.thread_id.get() != opening {
             imp.thread_id.set(opening);
             imp.thread_bodies.borrow_mut().clear();
+            imp.thread_absent.borrow_mut().clear();
             imp.thread_recipients.borrow_mut().clear();
             imp.thread_cc.borrow_mut().clear();
             imp.thread_envelopes.borrow_mut().clear();
