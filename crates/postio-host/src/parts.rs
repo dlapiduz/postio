@@ -272,10 +272,7 @@ pub async fn read_message(
     database: &Store,
     message: MessageId,
 ) -> Result<postio_model::Message, String> {
-    let connection = database
-        .connect()
-        .await
-        .map_err(|error| error.to_string())?;
+    let connection = database.read().await.map_err(|error| error.to_string())?;
     MessageRepository::new(&connection)
         .get(message)
         .await

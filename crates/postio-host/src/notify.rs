@@ -47,7 +47,7 @@ pub async fn decide_arrival(
 /// fail the sync pass that called this.
 async fn mailbox_info(database: &Store, mailbox: MailboxId) -> Option<(MailboxRole, AccountId)> {
     let connection = database
-        .connect()
+        .read()
         .await
         .map_err(|error| tracing::warn!(%error, "could not read the mailbox to notify about"))
         .ok()?;
@@ -64,7 +64,7 @@ async fn mailbox_info(database: &Store, mailbox: MailboxId) -> Option<(MailboxRo
 /// information (ADR 0005 Q13).
 pub async fn account_label(database: &Store, account: AccountId) -> Option<String> {
     let connection = database
-        .connect()
+        .read()
         .await
         .map_err(|error| tracing::warn!(%error, "could not read the accounts to notify about"))
         .ok()?;

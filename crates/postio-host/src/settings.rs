@@ -45,7 +45,7 @@ const ROLES: [postio_model::MailboxRole; 5] = [
 /// has -- 1.48s on a real store -- so a frontend asks for them only while
 /// the panel is on screen (#871).
 pub async fn accounts(database: &Store, weights: bool) -> Result<Vec<AccountSettings>, StoreError> {
-    let connection = database.connect().await?;
+    let connection = database.read().await?;
     let accounts = AccountRepository::new(&connection).list().await?;
     let messages = MessageRepository::new(&connection);
     let mailboxes = MailboxRepository::new(&connection);
@@ -199,7 +199,7 @@ pub async fn egress(
     database: &Store,
     limit: u32,
 ) -> Result<Vec<postio_model::egress::EgressEvent>, StoreError> {
-    let connection = database.connect().await?;
+    let connection = database.read().await?;
     Ok(EgressLogRepository::new(&connection).recent(limit).await?)
 }
 
@@ -209,7 +209,7 @@ pub async fn egress(
 /// Not account-scoped on screen: the remote-image allow list the same pane
 /// shows is one file for every account, and these follow its shape.
 pub async fn privacy(database: &Store) -> Result<PrivacyLog, StoreError> {
-    let connection = database.connect().await?;
+    let connection = database.read().await?;
     let accounts = AccountRepository::new(&connection)
         .list()
         .await

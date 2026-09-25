@@ -287,7 +287,7 @@ impl DraftWriter {
 /// `None` before the first sync has found one, in which case the draft has no
 /// row to have moved and there is nothing to announce.
 pub async fn drafts_mailbox(database: &Store, account: AccountId) -> Option<MailboxId> {
-    let connection = database.connect().await.ok()?;
+    let connection = database.read().await.ok()?;
     MailboxRepository::new(&connection)
         .by_role(account, postio_model::MailboxRole::Drafts)
         .await
@@ -326,7 +326,7 @@ pub async fn cancel_queued_send(database: &Store, id: DraftId) -> Option<Draft> 
 /// with the first (#1487).
 pub async fn why_the_send_failed(database: &Store, id: DraftId) -> Option<String> {
     let connection = database
-        .connect()
+        .read()
         .await
         .map_err(|error| tracing::warn!(%error, "could not open the store to read a send failure"))
         .ok()?;
@@ -341,7 +341,7 @@ pub async fn why_the_send_failed(database: &Store, id: DraftId) -> Option<String
 /// The draft a message row is listing, if it is listing one.
 pub async fn draft_behind(database: &Store, message: MessageId) -> Option<Draft> {
     let connection = database
-        .connect()
+        .read()
         .await
         .map_err(|error| tracing::warn!(%error, "could not open the store to resume a draft"))
         .ok()?;
@@ -354,7 +354,7 @@ pub async fn draft_behind(database: &Store, message: MessageId) -> Option<Draft>
 
 /// Every draft `account` has, for crash recovery.
 pub async fn drafts_of(database: &Store, account: AccountId) -> postio_storage::Result<Vec<Draft>> {
-    let connection = database.connect().await?;
+    let connection = database.read().await?;
     DraftRepository::new(&connection)
         .list_for_account(account)
         .await
@@ -410,7 +410,7 @@ pub fn blob_bytes(blobs: &BlobStore, blob: &postio_model::ids::BlobId) -> Option
 /// The account a composer sends from: its identities, signatures and size
 /// limit.
 pub async fn account(database: &Store, account: AccountId) -> Option<Account> {
-    let connection = database.connect().await.ok()?;
+    let connection = database.read().await.ok()?;
     match AccountRepository::new(&connection).get(account).await {
         Ok(found) => {
             if found.is_none() {
@@ -530,7 +530,7 @@ pub async fn recipients(
     account: AccountId,
     prefix: &str,
 ) -> Vec<RecipientCandidate> {
-    let connection = match database.connect().await {
+    let connection = match database.read().await {
         Ok(connection) => connection,
         Err(error) => {
             tracing::warn!(%error, "could not search contacts");

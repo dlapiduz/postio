@@ -110,7 +110,7 @@ struct Entry {
 /// way an account never gets a second engine.
 async fn start_sync(wiring: Wiring, engines: Engines) {
     let _starting = engines.starting.lock().await;
-    let accounts = match wiring.database.connect().await {
+    let accounts = match wiring.database.read().await {
         Ok(connection) => postio_storage::repository::AccountRepository::new(&connection)
             .list_enabled()
             .await
@@ -179,7 +179,7 @@ fn adopt(
 
 /// Start the sync of the account saved for `address`, and no other.
 async fn start_engine_for(wiring: &Wiring, engines: &Engines, address: &str) {
-    let Ok(connection) = wiring.database.connect().await else {
+    let Ok(connection) = wiring.database.read().await else {
         return;
     };
     let account = postio_storage::repository::AccountRepository::new(&connection)
@@ -934,7 +934,7 @@ impl Inner {
                 .map_or_else(Resp::Failed, Resp::Mailboxes),
             // A removed account is gone for every frontend until the removal
             // is undone or carried out, as the desktop's settings show it.
-            Req::Accounts => match self.wiring.database.connect().await {
+            Req::Accounts => match self.wiring.database.read().await {
                 Ok(connection) => postio_storage::repository::AccountRepository::new(&connection)
                     .list()
                     .await
@@ -1335,7 +1335,7 @@ impl Inner {
     /// no reachability signal of its own yet, and saying "downloading" about
     /// a body that is not is the milder of the two mistakes.
     async fn body(&self, message: postio_model::MessageId) -> Resp {
-        let connection = match self.wiring.database.connect().await {
+        let connection = match self.wiring.database.read().await {
             Ok(connection) => connection,
             Err(error) => return Resp::Failed(postio_model::listing::StoreError::from(error)),
         };
@@ -1349,7 +1349,7 @@ impl Inner {
     async fn conversation(&self, thread: postio_model::ThreadId) -> Resp {
         use postio_model::listing::StoreError;
         use postio_storage::repository::{ThreadOrder, ThreadRepository};
-        let ids = match self.wiring.database.connect().await {
+        let ids = match self.wiring.database.read().await {
             Ok(connection) => match ThreadRepository::new(&connection)
                 .messages(thread, ThreadOrder::Oldest)
                 .await
