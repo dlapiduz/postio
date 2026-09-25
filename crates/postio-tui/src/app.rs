@@ -427,6 +427,10 @@ pub struct App {
     selection: postio_ui::selection::SelectionState,
     /// The list being shown.
     scope: Option<ListScope>,
+    /// The lists opened before this one, newest last, for `prev_view`.
+    history: Vec<ListScope>,
+    /// The next open is `prev_view` going back, not a new step forward.
+    going_back: bool,
     /// What the status line says about the last thing done: the undo offer,
     /// a refusal, an error.
     notice: Option<String>,
@@ -541,6 +545,24 @@ enum Finding {
     Roles(postio_model::AccountId),
     /// Then which folder that role is, or automatic.
     RoleFolder(postio_model::AccountId, postio_model::mailbox::MailboxRole),
+}
+
+/// How many lists `prev_view` can go back through.
+const HISTORY: usize = 32;
+
+/// A role's name in a sentence.
+fn role_name(role: postio_model::mailbox::MailboxRole) -> &'static str {
+    use postio_model::mailbox::MailboxRole;
+    match role {
+        MailboxRole::Inbox => "Inbox",
+        MailboxRole::Sent => "Sent",
+        MailboxRole::Drafts => "Drafts",
+        MailboxRole::Archive => "Archive",
+        MailboxRole::Trash => "Trash",
+        MailboxRole::Junk => "Junk",
+        MailboxRole::Flagged => "Flagged",
+        _ => "such",
+    }
 }
 
 /// The palette: what is typed, which row is chosen, and where it was opened
@@ -691,6 +713,8 @@ impl App {
             trackers: postio_ui::status::Trackers::default(),
             account: None,
             folders: Vec::new(),
+            history: Vec::new(),
+            going_back: false,
             reading: None,
             resting: None,
             reader_top: 0,
@@ -2392,11 +2416,106 @@ impl App {
             }
             "back" => self.selection.clear(),
             "toggle_sidebar" => return self.toggle_sidebar(),
+            "go_to_inbox" => return self.go_to(postio_model::mailbox::MailboxRole::Inbox),
+            "go_to_sent" => return self.go_to(postio_model::mailbox::MailboxRole::Sent),
+            "go_to_drafts" => return self.go_to(postio_model::mailbox::MailboxRole::Drafts),
+            "go_to_flagged" => return self.go_to(postio_model::mailbox::MailboxRole::Flagged),
+            "prev_view" => {
+                let Some(scope) = self.history.pop() else {
+                    return self.say("There is no earlier view");
+                };
+                self.going_back = true;
+                return self.open_there(scope);
+            }
+            "next_scope" => return self.next_scope(),
             "next_folder" => return self.walk_sidebar(1),
             "prev_folder" => return self.walk_sidebar(-1),
             other => return self.send(other),
         }
         vec![Effect::Redraw]
+    }
+
+    /// Open `scope`, with the sidebar's cursor on the line that opens it.
+    fn open_there(&mut self, scope: ListScope) -> Vec<Effect> {
+        if let Some(line) = self
+            .sidebar
+            .iter()
+            .position(|line| line.opens == Some(scope))
+        {
+            self.sidebar_cursor = line;
+        }
+        vec![Effect::Open(scope), Effect::Redraw]
+    }
+
+    /// The account the go-to keys and the scope cycle start from: the one
+    /// on screen, or the first.
+    fn account_here(&self) -> Option<postio_model::AccountId> {
+        self.account.or_else(|| {
+            self.accounts
+                .iter()
+                .find(|account| account.enabled)
+                .map(|account| account.id)
+        })
+    }
+
+    /// The account's folder with `role`, or its Flagged view, as the
+    /// desktop's `g` keys open them.
+    fn go_to(&mut self, role: postio_model::mailbox::MailboxRole) -> Vec<Effect> {
+        use postio_model::mailbox::MailboxRole;
+        let Some(account) = self.account_here() else {
+            return Vec::new();
+        };
+        let scope = match role {
+            MailboxRole::Flagged => Some(ListScope::Flagged(account)),
+            role => self
+                .folders
+                .iter()
+                .find(|folder| folder.account_id == account && folder.role == role)
+                .map(|folder| ListScope::Mailbox(folder.id)),
+        };
+        match scope {
+            Some(scope) => self.open_there(scope),
+            None => self.say(&format!("This account has no {} folder", role_name(role))),
+        }
+    }
+
+    /// Each account's inbox in turn, then every account at once when there
+    /// is more than one -- the desktop's `next_scope`.
+    fn next_scope(&mut self) -> Vec<Effect> {
+        use postio_model::mailbox::MailboxRole;
+        let mut scopes: Vec<ListScope> = self
+            .accounts
+            .iter()
+            .filter(|account| account.enabled)
+            .filter_map(|account| {
+                self.folders
+                    .iter()
+                    .find(|folder| {
+                        folder.account_id == account.id && folder.role == MailboxRole::Inbox
+                    })
+                    .map(|folder| ListScope::Mailbox(folder.id))
+            })
+            .collect();
+        if scopes.len() > 1 {
+            scopes.push(ListScope::Unified);
+        }
+        if scopes.is_empty() {
+            return Vec::new();
+        }
+        let here = match self.scope {
+            Some(ListScope::Unified) => {
+                scopes.iter().position(|scope| *scope == ListScope::Unified)
+            }
+            Some(scope) => {
+                let account = self.account_of(scope);
+                scopes.iter().position(|candidate| {
+                    *candidate != ListScope::Unified && self.account_of(*candidate) == account
+                })
+            }
+            None => None,
+        };
+        let next = here.map_or(0, |at| (at + 1) % scopes.len());
+        self.open_there(scopes[next])
     }
 
     /// Open or close the sidebar where it fits beside the list and reader;
@@ -2898,6 +3017,16 @@ impl App {
         self.search = None;
         self.paging.close_results();
         self.paging.open(scope);
+        if let Some(previous) = self.scope.filter(|previous| *previous != scope) {
+            if std::mem::take(&mut self.going_back) {
+                // Back is a step back, not another one forward.
+            } else {
+                self.history.push(previous);
+                if self.history.len() > HISTORY {
+                    self.history.remove(0);
+                }
+            }
+        }
         self.scope = Some(scope);
         self.account = self.account_of(scope);
         // A selection is relative to the list it was made in.
@@ -3735,18 +3864,12 @@ pub(crate) mod tests {
         "bold",
         "bullet_list",
         "delete_saved_search",
-        "go_to_drafts",
-        "go_to_flagged",
-        "go_to_inbox",
-        "go_to_sent",
         "insert_link",
         "italic",
         "move_saved_search_down",
         "move_saved_search_up",
-        "next_scope",
         "numbered_list",
         "open_part_externally",
-        "prev_view",
         "quote_block",
         "rename_saved_search",
         "render_part_once",
@@ -3756,6 +3879,108 @@ pub(crate) mod tests {
         "toggle_rail",
         "view_original",
     ];
+
+    fn opens(effects: &[Effect]) -> Vec<ListScope> {
+        effects
+            .iter()
+            .filter_map(|effect| match effect {
+                Effect::Open(scope) => Some(*scope),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn the_go_to_keys_open_the_accounts_folder_with_that_role() {
+        let mut app = app((160, 40));
+        update(&mut app, Input::Sidebar(sidebar_contents()));
+        let opening = opened(&mut app, 3);
+        serve(&mut app, opening);
+        let account = postio_model::AccountId::new(1);
+        assert_eq!(
+            opens(&app.command("go_to_flagged")),
+            vec![ListScope::Flagged(account)]
+        );
+        update(
+            &mut app,
+            Input::Opened {
+                scope: ListScope::Flagged(account),
+                total: 0,
+            },
+        );
+        assert_eq!(
+            opens(&app.command("go_to_inbox")),
+            vec![ListScope::Mailbox(MailboxId::new(1))]
+        );
+        // No Sent folder in this account: said, not sent to nothing.
+        let effects = app.command("go_to_sent");
+        assert!(opens(&effects).is_empty());
+        assert!(
+            app.notice().is_some_and(|notice| notice.contains("Sent")),
+            "{:?}",
+            app.notice()
+        );
+    }
+
+    #[test]
+    fn previous_view_goes_back_where_the_list_was() {
+        let mut app = app((160, 40));
+        update(&mut app, Input::Sidebar(sidebar_contents()));
+        let opening = opened(&mut app, 3);
+        serve(&mut app, opening);
+        let account = postio_model::AccountId::new(1);
+        update(
+            &mut app,
+            Input::Opened {
+                scope: ListScope::Flagged(account),
+                total: 0,
+            },
+        );
+        assert_eq!(
+            opens(&app.command("prev_view")),
+            vec![ListScope::Mailbox(MailboxId::new(1))]
+        );
+    }
+
+    #[test]
+    fn next_scope_walks_each_account_then_all_of_them() {
+        use postio_model::mailbox::{Mailbox, MailboxRole};
+        let mut contents = sidebar_contents();
+        let mut second = contents.accounts[0].clone();
+        second.id = postio_model::AccountId::new(2);
+        second.address = postio_model::EmailAddress::new(None::<String>, "bea@example.com");
+        let mut inbox = Mailbox::new(second.id, "INBOX", None);
+        inbox.id = MailboxId::new(9);
+        inbox.role = MailboxRole::Inbox;
+        inbox.selectable = true;
+        contents.accounts.push(second);
+        contents.folders.push(inbox);
+        let mut app = app((160, 40));
+        update(&mut app, Input::Sidebar(contents));
+        let opening = opened(&mut app, 3);
+        serve(&mut app, opening);
+        let mut walked = Vec::new();
+        for _ in 0..3 {
+            let next = opens(&app.command("next_scope"));
+            assert_eq!(next.len(), 1, "{next:?}");
+            update(
+                &mut app,
+                Input::Opened {
+                    scope: next[0],
+                    total: 0,
+                },
+            );
+            walked.push(next[0]);
+        }
+        assert_eq!(
+            walked,
+            vec![
+                ListScope::Mailbox(MailboxId::new(9)),
+                ListScope::Unified,
+                ListScope::Mailbox(MailboxId::new(1)),
+            ]
+        );
+    }
 
     /// Run `id` where its surface is, in an app with mail in the list, the
     /// first message open and, for the composer's commands, a draft.

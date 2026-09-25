@@ -24,7 +24,7 @@ test and this table change together.
 | Add a second account | ✓ | ✗ | |
 | Enable, disable, remove (with undo), make default, rebuild index, update credential | ✓ | ✓ | From Settings |
 | Map a folder's role (Sent, Archive, …) | ✓ | ✓ | `M` asks for the role, then the folder |
-| Cycle the account scope, including all accounts at once | ✓ | ✗ | |
+| Cycle the account scope, including all accounts at once | ✓ | ✓ | |
 
 ## The list
 
@@ -32,8 +32,8 @@ test and this table change together.
 |---|---|---|---|
 | Folders and the Flagged, Snoozed, Drafts and Outbox views | ✓ | ✓ | |
 | Saved searches in the sidebar | ✓ | ◐ | Shown and run; rename, delete and reorder are missing |
-| Go-to keys (inbox, sent, drafts, flagged) | ✓ | ✗ | |
-| Back to the previous view | ✓ | ✗ | |
+| Go-to keys (inbox, sent, drafts, flagged) | ✓ | ✓ | |
+| Back to the previous view | ✓ | ✓ | |
 | Collapse a folder in the sidebar; toggle the account rail | ✓ | ✗ | |
 | Cursor and selection kept apart; multiple selection | ✓ | ✓ | |
 | Archive, delete, move, flag, mark unread, label, snooze, undo | ✓ | ✓ | |
