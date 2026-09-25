@@ -738,8 +738,7 @@ impl PartsPanel {
     /// Regenerate the footer's key hints from the live keymap.
     ///
     /// A rebind changes what the footer says without a restart, the same
-    /// promise [`crate::row::MessageRowView::set_keymap`] already keeps for the
-    /// message list's own hints.
+    /// promise the action bars and the cheat sheet already keep.
     pub fn set_keymap(&self, keymap: &Keymap) {
         let imp = self.imp();
         KeyLine::adopt(&imp.keys, "postio-parts-keys").set(&hints_for(keymap));
