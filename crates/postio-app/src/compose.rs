@@ -549,7 +549,8 @@ fn install_recipient_suggestions(composer: &Composer, client: Client, account: A
                 // host answers on its own runtime.
                 match client.recipient_directory(account).await {
                     Ok(read) => {
-                        *directory.borrow_mut() = Rc::new(Directory::new(read.groups, read.contacts));
+                        *directory.borrow_mut() =
+                            Rc::new(Directory::new(read.groups, read.contacts));
                     }
                     Err(error) => tracing::warn!(%error, "could not read the contacts"),
                 }

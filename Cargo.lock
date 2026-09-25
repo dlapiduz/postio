@@ -4359,7 +4359,6 @@ version = "0.3.0"
 dependencies = [
  "chrono",
  "postio-model",
- "serde",
 ]
 
 [[package]]

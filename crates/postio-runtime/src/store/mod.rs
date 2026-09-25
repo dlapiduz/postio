@@ -29,7 +29,6 @@
 //! yields rather than tying up a worker. This was a `spawn_blocking` onto a
 //! pool of connections while the store was SQLite; the swap deleted both.
 
-
 /// Which messages the list is showing.
 ///
 /// `postio-model`'s: every reader of the list, from `postio-storage`'s own
