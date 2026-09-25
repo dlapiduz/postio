@@ -164,6 +164,10 @@ mod imp {
         /// Since #601 made the autoselect report at all, this is what keeps
         /// that from being visible.
         pub(super) pending_select: Cell<bool>,
+        /// The message the cursor was on when a refresh began telling the
+        /// view what moved, and what `pending_select` was then. See
+        /// `MessageList::connect_splicing`.
+        pub(super) splice_hold: Cell<Option<(Option<MessageId>, bool)>>,
         /// The `items_changed` handler that seek is waiting on, so it can be
         /// given up.
         ///
@@ -231,6 +235,7 @@ mod imp {
                 reported_at: Cell::new(0),
                 landed: Cell::new(false),
                 pending_select: Cell::new(false),
+                splice_hold: Cell::new(None),
                 pending_seek: RefCell::new(Vec::new()),
                 dwelled: RefCell::new(Vec::new()),
                 dwell: RefCell::new(None),
@@ -1461,6 +1466,37 @@ impl MessageListView {
             move |_| {
                 pane.adopt_cursor_focus();
                 pane.report_cursor()
+            }
+        ));
+        // A refresh tells the view what moved one step at a time, and a
+        // conversation that moved to the top is taken out and put back: the
+        // `SingleSelection` follows the *position*, onto whatever took the
+        // row's place. The cursor is on a message (#1177), so it is held
+        // still across the steps -- the reading pane told nothing -- and put
+        // back on its message when they are done. Not a choice anybody made,
+        // so it lands as `Kept`: no scroll, no dwell.
+        imp.model.connect_splicing(glib::clone!(
+            #[weak(rename_to = pane)]
+            self,
+            move |model, begun| {
+                let imp = pane.imp();
+                if begun {
+                    let held = pane.cursor_id();
+                    let was = imp.pending_select.replace(true);
+                    imp.splice_hold.set(Some((held, was)));
+                    return;
+                }
+                let Some((held, was)) = imp.splice_hold.take() else {
+                    return;
+                };
+                imp.pending_select.set(was);
+                if let Some(message) = held
+                    && let Some(position) = model.position_of(message)
+                    && position != imp.cursor.selected()
+                {
+                    imp.cursor.set_selected(position);
+                }
+                pane.report_cursor();
             }
         ));
 

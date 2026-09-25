@@ -97,6 +97,7 @@ mod gtk_layout_intent;
 mod gtk_list_focus_return;
 mod gtk_list_mark_read;
 mod gtk_list_recycling;
+mod gtk_list_refresh;
 mod gtk_list_reload;
 mod gtk_list_select_message;
 mod gtk_list_state;
@@ -545,6 +546,34 @@ const CASES: &[(&str, fn())] = &[
     (
         "gtk_list_recycling::a_list_view_builds_a_bounded_window_however_big_the_model_is",
         gtk_list_recycling::a_list_view_builds_a_bounded_window_however_big_the_model_is as fn(),
+    ),
+    (
+        "gtk_list_refresh::a_resync_that_moved_nothing_tells_the_view_nothing",
+        gtk_list_refresh::a_resync_that_moved_nothing_tells_the_view_nothing as fn(),
+    ),
+    (
+        "gtk_list_refresh::mail_landing_on_top_arrives_with_its_contents",
+        gtk_list_refresh::mail_landing_on_top_arrives_with_its_contents as fn(),
+    ),
+    (
+        "gtk_list_refresh::a_message_leaving_is_one_row_taken_out_where_it_stood",
+        gtk_list_refresh::a_message_leaving_is_one_row_taken_out_where_it_stood as fn(),
+    ),
+    (
+        "gtk_list_refresh::a_conversation_moving_to_the_top_keeps_the_cursor_on_it",
+        gtk_list_refresh::a_conversation_moving_to_the_top_keeps_the_cursor_on_it as fn(),
+    ),
+    (
+        "gtk_list_refresh::switching_folders_keeps_the_rows_until_the_new_ones_land",
+        gtk_list_refresh::switching_folders_keeps_the_rows_until_the_new_ones_land as fn(),
+    ),
+    (
+        "gtk_list_refresh::leaving_a_search_puts_the_folder_back_without_reading_it",
+        gtk_list_refresh::leaving_a_search_puts_the_folder_back_without_reading_it as fn(),
+    ),
+    (
+        "gtk_list_refresh::an_empty_folder_does_not_speak_for_the_next_one_while_it_loads",
+        gtk_list_refresh::an_empty_folder_does_not_speak_for_the_next_one_while_it_loads as fn(),
     ),
     (
         "gtk_list_reload::a_batch_arriving_mid_sync_leaves_the_cursor_and_the_selection_alone",
