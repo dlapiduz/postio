@@ -37,6 +37,24 @@ pub enum Field {
     Body,
 }
 
+/// The desktop composer's formatting commands, as the Markdown they stand
+/// for in this one.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Format {
+    /// `**…**`.
+    Bold,
+    /// `*…*`.
+    Italic,
+    /// `- ` at the start of the line.
+    BulletList,
+    /// `1. ` at the start of the line.
+    NumberedList,
+    /// `> ` at the start of the line.
+    Quote,
+    /// `[…](…)`.
+    Link,
+}
+
 /// One draft being written.
 pub struct Composer {
     /// Which composition this is, for the host's draft writer: a save made
@@ -222,6 +240,90 @@ impl Composer {
         self.extra_recipients = false;
         if matches!(self.field, Field::Cc | Field::Bcc) {
             self.field = Field::To;
+        }
+    }
+
+    /// Apply `format` in the body: around the selection, or as a pair to
+    /// type into, or to the line the caret is on. Answers whether anything
+    /// changed; outside the body nothing does.
+    pub fn format(&mut self, format: Format) -> bool {
+        if self.field != Field::Body {
+            return false;
+        }
+        match format {
+            Format::Bold => self.wrap("**", "**"),
+            Format::Italic => self.wrap("*", "*"),
+            Format::Link => {
+                let words = self.take_selection();
+                if words.is_empty() {
+                    self.body.insert_str("[]()");
+                    self.back(3);
+                } else {
+                    self.body.insert_str(format!("[{words}]()"));
+                    self.back(1);
+                }
+            }
+            Format::BulletList => self.toggle_prefix("- "),
+            Format::NumberedList => self.toggle_prefix("1. "),
+            Format::Quote => self.toggle_prefix("> "),
+        }
+        self.edits += 1;
+        true
+    }
+
+    /// The selected words, taken out of the body; nothing when there is no
+    /// selection. The yank buffer is left as it was.
+    fn take_selection(&mut self) -> String {
+        match self.body.selection_range() {
+            Some((start, end)) if start != end => {
+                let yanked = self.body.yank_text();
+                self.body.cut();
+                let words = self.body.yank_text();
+                self.body.set_yank_text(yanked);
+                words
+            }
+            _ => {
+                self.body.cancel_selection();
+                String::new()
+            }
+        }
+    }
+
+    fn wrap(&mut self, open: &str, close: &str) {
+        let words = self.take_selection();
+        self.body.insert_str(format!("{open}{words}{close}"));
+        if words.is_empty() {
+            self.back(close.chars().count());
+        }
+    }
+
+    fn back(&mut self, columns: usize) {
+        for _ in 0..columns {
+            self.body.move_cursor(ratatui_textarea::CursorMove::Back);
+        }
+    }
+
+    /// `prefix` at the start of the caret's line, or taken off it again.
+    fn toggle_prefix(&mut self, prefix: &str) {
+        let ratatui_textarea::DataCursor(row, column) = self.body.cursor();
+        let line = self.body.lines().get(row).cloned().unwrap_or_default();
+        let jump = |row: usize, column: usize| {
+            ratatui_textarea::CursorMove::Jump(
+                u16::try_from(row).unwrap_or(u16::MAX),
+                u16::try_from(column).unwrap_or(u16::MAX),
+            )
+        };
+        let width = prefix.chars().count();
+        self.body.move_cursor(jump(row, 0));
+        if line.starts_with(prefix) {
+            for _ in 0..width {
+                self.body.delete_next_char();
+            }
+            self.body
+                .move_cursor(jump(row, column.saturating_sub(width)));
+        } else {
+            self.body.insert_str(prefix);
+            self.body.move_cursor(jump(row, column + width));
         }
     }
 
@@ -637,6 +739,71 @@ pub(crate) mod tests {
 
     fn fresh() -> Composer {
         Composer::new(1, Draft::new(AccountId::new(1)))
+    }
+
+    fn in_body(text: &str) -> Composer {
+        let mut draft = Draft::new(AccountId::new(1));
+        draft.body_markdown = Some(text.into());
+        let mut composer = Composer::new(1, draft);
+        composer.focus_field(Field::Body);
+        composer
+    }
+
+    #[test]
+    fn bold_and_italic_wrap_the_selection_or_open_a_pair_to_type_into() {
+        let mut composer = in_body("tide gate");
+        composer.body.select_all();
+        assert!(composer.format(Format::Bold));
+        assert_eq!(composer.markdown(), "**tide gate**");
+
+        let mut composer = in_body("");
+        assert!(composer.format(Format::Italic));
+        typed(&mut composer, "now");
+        assert_eq!(
+            composer.markdown(),
+            "*now*",
+            "the caret sits between the pair"
+        );
+    }
+
+    #[test]
+    fn a_link_wraps_its_words_and_waits_for_the_address() {
+        let mut composer = in_body("the docs");
+        composer.body.select_all();
+        assert!(composer.format(Format::Link));
+        typed(&mut composer, "https://example.com");
+        assert_eq!(composer.markdown(), "[the docs](https://example.com)");
+
+        let mut composer = in_body("");
+        composer.format(Format::Link);
+        typed(&mut composer, "words");
+        assert_eq!(composer.markdown(), "[words]()");
+    }
+
+    #[test]
+    fn lists_and_quotes_prefix_the_line_and_a_second_press_takes_it_off() {
+        for (format, prefix) in [
+            (Format::BulletList, "- "),
+            (Format::NumberedList, "1. "),
+            (Format::Quote, "> "),
+        ] {
+            let mut composer = in_body("one");
+            assert!(composer.format(format));
+            assert_eq!(composer.markdown(), format!("{prefix}one"));
+            assert!(composer.format(format));
+            assert_eq!(composer.markdown(), "one", "{format:?} again takes it off");
+        }
+    }
+
+    #[test]
+    fn formatting_is_the_bodys_and_counts_as_an_edit() {
+        let mut composer = fresh();
+        assert_eq!(composer.field(), Field::To);
+        assert!(!composer.format(Format::Bold), "not in a header field");
+        let mut composer = in_body("x");
+        let before = composer.edits();
+        composer.format(Format::Quote);
+        assert!(composer.edits() > before, "so it is autosaved");
     }
 
     #[test]

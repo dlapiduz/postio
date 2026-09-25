@@ -10,10 +10,11 @@ things, each in its own medium. This table says where they differ today.
 - ✗ missing
 - — not applicable
 
-The terminal's gaps are tracked in
-`crates/postio-tui/tests/registry_parity.rs`, which fails for any command the
-terminal neither handles itself nor passes on to something that does. That
-test and this table change together.
+The terminal's gaps are tracked by a test,
+`every_command_is_answered_here_or_by_the_dispatcher` in
+`crates/postio-tui/src/app.rs`. It fails for any command the terminal neither
+handles itself nor passes on to something that does, unless its `GAPS` list
+names it. That list and this table change together.
 
 ## Accounts
 
@@ -62,12 +63,12 @@ test and this table change together.
 |---|---|---|---|
 | New, reply, reply all, forward; drafts; resume a draft | ✓ | ✓ | |
 | The editor | rich text | Markdown | Markdown is sent as HTML with the Markdown as the plain-text part |
-| Formatting: bold, italic, lists, link, quote | ✓ | ✗ | |
+| Formatting: bold, italic, lists, link, quote | ✓ | ◐ | As Markdown: around the selection, or a pair to type into; lists and quotes toggle on the line |
 | Preview what will be sent; edit in `$EDITOR` | — | ✓ | `Alt+P`, `Alt+E` |
 | Recipients from contacts; Cc and Bcc; identities | ✓ | ✓ | |
 | Attach a file; paste an image; drop a file | ✓ | ✓ | In the terminal a drop arrives as its path |
 | Schedule send; undo send; why a send failed | ✓ | ✓ | |
-| Save the draft now | ✓ | ◐ | The terminal saves as you type; the command itself is missing |
+| Save the draft now | ✓ | ✓ | It also saves as you type |
 | A composer of its own | window | tab | |
 
 ## Search

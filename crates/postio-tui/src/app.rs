@@ -2046,6 +2046,40 @@ impl App {
                 self.detached = !self.detached;
                 vec![Effect::Redraw]
             }
+            "save_draft" => self
+                .composer
+                .as_ref()
+                .map(|composer| {
+                    vec![Effect::SaveDraft {
+                        generation: composer.generation(),
+                        draft: Box::new(composer.draft()),
+                    }]
+                })
+                .unwrap_or_default(),
+            "bold" | "italic" | "bullet_list" | "numbered_list" | "quote_block" | "insert_link" => {
+                use crate::composer::Format;
+                let format = match id {
+                    "bold" => Format::Bold,
+                    "italic" => Format::Italic,
+                    "bullet_list" => Format::BulletList,
+                    "numbered_list" => Format::NumberedList,
+                    "quote_block" => Format::Quote,
+                    _ => Format::Link,
+                };
+                let Some(composer) = self.composer.as_mut() else {
+                    return Vec::new();
+                };
+                if !composer.format(format) {
+                    return self.say("Formatting is for the message's body");
+                }
+                vec![
+                    Effect::Redraw,
+                    Effect::Autosave {
+                        generation: composer.generation(),
+                        edit: composer.edits(),
+                    },
+                ]
+            }
             "copy_fields" => {
                 if let Some(composer) = self.composer.as_mut() {
                     composer.toggle_copy_fields();
@@ -3861,19 +3895,12 @@ pub(crate) mod tests {
     /// grow.
     const GAPS: &[&str] = &[
         "add_account",
-        "bold",
-        "bullet_list",
         "delete_saved_search",
-        "insert_link",
-        "italic",
         "move_saved_search_down",
         "move_saved_search_up",
-        "numbered_list",
         "open_part_externally",
-        "quote_block",
         "rename_saved_search",
         "render_part_once",
-        "save_draft",
         "toggle_fold",
         "toggle_folder",
         "toggle_rail",
@@ -3979,6 +4006,25 @@ pub(crate) mod tests {
                 ListScope::Unified,
                 ListScope::Mailbox(MailboxId::new(1)),
             ]
+        );
+    }
+
+    #[test]
+    fn save_draft_saves_now_and_formatting_reaches_the_body() {
+        let mut app = app((160, 40));
+        addressed(&mut app, "Tide gate");
+        assert_eq!(saves(&app.composer_command("save_draft")).len(), 1);
+        app.composer
+            .as_mut()
+            .unwrap()
+            .focus_field(crate::composer::Field::Body);
+        let effects = app.composer_command("quote_block");
+        assert_eq!(app.composer().unwrap().markdown(), "> Looking now.");
+        assert!(
+            effects
+                .iter()
+                .any(|effect| matches!(effect, Effect::Autosave { .. })),
+            "{effects:?}"
         );
     }
 
