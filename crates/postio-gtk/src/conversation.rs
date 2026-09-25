@@ -26,6 +26,9 @@ use postio_model::ids::MessageId;
 use postio_ui::reader::rail::{
     Effect, NARROW_BELOW, Presentation, Rail, column, presentation, rows,
 };
+use std::cell::RefCell;
+use std::rc::Rc;
+use webkit6::prelude::WebViewExt;
 
 use crate::list::Row;
 
@@ -1154,6 +1157,17 @@ mod imp {
         /// Which thread the pane is holding, so reopening the same one keeps
         /// what it has instead of refetching and re-deciding it.
         pub(super) thread_id: Cell<Option<postio_model::ids::ThreadId>>,
+        /// Which thread the header, the rail and the document on screen are
+        /// about -- set when a document is drawn, not when a thread opens.
+        ///
+        /// Apart from `thread_id` because the two differ exactly while a new
+        /// thread is waiting for its document: the header used to change the
+        /// moment the cursor did and sit over the previous thread's document
+        /// until the new one was drawn.
+        pub(super) shown_thread: Cell<Option<postio_model::ids::ThreadId>>,
+        /// A new thread's header and rail, held until its document is drawn
+        /// so the three change together. See `ConversationView::open`.
+        pub(super) pending_chrome: RefCell<Option<Vec<Row>>>,
         /// Whether each message is drawn open.
         ///
         /// Decided once per message and then kept, because expansion is the
@@ -1204,6 +1218,8 @@ mod imp {
                 redraw_generation: Cell::new(0),
                 thread_renders: Cell::new(0),
                 thread_id: Cell::new(None),
+                shown_thread: Cell::new(None),
+                pending_chrome: RefCell::new(None),
                 expanded_in_document: RefCell::new(std::collections::HashMap::new()),
                 on_thread_opened: RefCell::new(Vec::new()),
             }
@@ -1464,12 +1480,29 @@ impl ConversationView {
         // does.
     }
 
-    /// Whether every message the pane is showing now has a body.
+    /// Whether every message the pane is showing now has a body, and the
+    /// pane is showing every message the thread has.
+    ///
+    /// The second half is what stops the list's one row being drawn as a
+    /// document of its own. A thread opens first from the row the list held
+    /// and again once the whole conversation is read, a few milliseconds
+    /// later; drawing both was two full loads for one keystroke, and the
+    /// second always differed -- the newest message only carries its
+    /// `latest` badge in a thread of more than one. So a thread the row says
+    /// is longer than what the pane holds waits, like a thread whose bodies
+    /// have not all arrived, until it is whole or [`REDRAW_DEADLINE`] passes.
     fn thread_is_whole(&self) -> bool {
         let imp = self.imp();
         let rows = imp.thread_rows.borrow();
         let bodies = imp.thread_bodies.borrow();
-        !rows.is_empty() && rows.iter().all(|row| bodies.contains_key(&row.id))
+        let expected = rows
+            .iter()
+            .map(|row| row.thread_count as usize)
+            .max()
+            .unwrap_or(0);
+        !rows.is_empty()
+            && rows.len() >= expected
+            && rows.iter().all(|row| bodies.contains_key(&row.id))
     }
 
     fn queue_document_redraw(&self) {
@@ -1630,7 +1663,71 @@ impl ConversationView {
         // cache re-sanitises only a body that changed (#1605).
         if reader.render_thread_if_changed(&messages) {
             imp.thread_renders.set(imp.thread_renders.get() + 1);
+            // Lifted once WebKit has the new document, not now: until its
+            // load finishes the view still paints the previous one.
+            if reader.widget().opacity() < 1.0 {
+                let handler: Rc<RefCell<Option<glib::SignalHandlerId>>> = Rc::default();
+                let id = reader.view().connect_load_changed({
+                    let handler = Rc::clone(&handler);
+                    let pane = self.downgrade();
+                    move |view, event| {
+                        if event != webkit6::LoadEvent::Finished {
+                            return;
+                        }
+                        if let Some(pane) = pane.upgrade() {
+                            pane.veil_document(false);
+                        }
+                        if let Some(id) = handler.borrow_mut().take() {
+                            view.disconnect(id);
+                        }
+                    }
+                });
+                handler.replace(Some(id));
+            }
+        } else {
+            self.veil_document(false);
         }
+        // The document on screen is this thread's now, so its header and
+        // rail go up with it, in the same turn.
+        imp.shown_thread.set(imp.thread_id.get());
+        self.apply_pending_chrome();
+    }
+
+    /// Hide the document without taking it out of the layout, or show it.
+    ///
+    /// Opacity rather than visibility, so the pane's geometry does not move:
+    /// what is veiled is only *which* thread's messages are showing. Lifted
+    /// when a document is drawn; the view keeps painting its ground colour
+    /// under it (`paint_ground`), so the gap is the pane's own background.
+    fn veil_document(&self, veiled: bool) {
+        if let Some(reader) = self.imp().document_reader.borrow().as_ref() {
+            reader.widget().set_opacity(if veiled { 0.0 } else { 1.0 });
+        }
+    }
+
+    /// Put up the header and rail held back for the thread just drawn.
+    fn apply_pending_chrome(&self) {
+        let pending = self.imp().pending_chrome.borrow_mut().take();
+        if let Some(rows) = pending {
+            self.apply_chrome(&rows);
+        }
+    }
+
+    /// The conversation's header and rail, for `messages`.
+    fn apply_chrome(&self, messages: &[Row]) {
+        let imp = self.imp();
+        self.fill_rail(messages);
+        imp.header.set_conversation(messages, chrono::Local::now());
+        // Which bar, decided from the message the bar is scoped to: its
+        // verbs aim at the conversation's latest message, and a thread you
+        // are part-way through answering ends in your own draft (#1212).
+        let ends_in_a_draft = messages.last().is_some_and(|row| row.send_state.is_some());
+        imp.header.set_verbs_visible(true, ends_in_a_draft);
+        // The rail was just refilled, so it marks the focus afresh -- the
+        // focus may have been decided while the previous thread's rows
+        // were still in it.
+        imp.rail.set_marked(self.focused_index());
+        self.apply_rail_ladder(self.window_width(), messages.len());
     }
 
     /// How many conversation documents this pane has handed to WebKit.
@@ -1788,18 +1885,40 @@ impl ConversationView {
 
     pub fn open(&self, messages: Vec<Row>) {
         let imp = self.imp();
-        self.fill_rail(&messages);
         // FR-015: the most recent, through the same rule the stacked
         // pane uses. This said `messages.first()` -- the *oldest* -- so
         // the two panes gave opposite answers to one requirement.
         let opening = opening_focus(&messages).map(|index| messages[index].id);
         imp.thread_rows.replace(messages.clone());
-        imp.header.set_conversation(&messages, chrono::Local::now());
-        // Which bar, decided from the message the bar is scoped to: its
-        // verbs aim at the conversation's latest message, and a thread you
-        // are part-way through answering ends in your own draft (#1212).
-        let ends_in_a_draft = messages.last().is_some_and(|row| row.send_state.is_some());
-        imp.header.set_verbs_visible(true, ends_in_a_draft);
+        // The header and rail change with the document, not before it.
+        //
+        // A different thread's document is drawn a little later -- its
+        // bodies are read, and the list's one row waits for the rest of the
+        // thread (`thread_is_whole`) -- and the previous thread's document
+        // stays on screen until then. Changing the header here put the new
+        // thread's name over the old thread's messages for that long. So
+        // while a document is on screen and this is another thread, the new
+        // header waits for `redraw_document`; with nothing drawn yet, or the
+        // same thread again, it goes up at once.
+        let thread = messages.first().and_then(|row| row.thread);
+        let replacing = imp.one_document.get()
+            && imp.document_reader.borrow().is_some()
+            && imp.shown_thread.get().is_some()
+            && imp.shown_thread.get() != thread;
+        if replacing && !self.is_visible() {
+            // Hidden -- the single reader or the composer has the pane -- so
+            // the previous thread is not on screen now, and showing the pane
+            // again must not put it back. The new header goes up at once and
+            // the document is veiled until this thread's is drawn.
+            imp.pending_chrome.replace(None);
+            self.apply_chrome(&messages);
+            self.veil_document(true);
+        } else if replacing {
+            imp.pending_chrome.replace(Some(messages.clone()));
+        } else {
+            imp.pending_chrome.replace(None);
+            self.apply_chrome(&messages);
+        }
         // Always, whatever the length -- unlike the stacked pane below.
         //
         // There, a single message stands its footer down because the

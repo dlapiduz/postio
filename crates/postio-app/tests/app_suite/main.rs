@@ -55,6 +55,7 @@ mod orientation;
 mod parts_open_wiring;
 mod read_receipt_wiring;
 mod reader_loads;
+mod reader_stability;
 mod reading;
 mod reading_offline;
 mod reclaim_pages;
@@ -112,6 +113,11 @@ mod wiring;
 const IGNORED: &[&str] = &["parts_open_wiring::opening_and_open_with_ing_a_part_reach_the_desktop"];
 
 const CASES: &[(&str, fn())] = &[
+    (
+        "reader_stability::moving_onto_a_thread_draws_it_once_whole_and_under_its_own_header",
+        reader_stability::moving_onto_a_thread_draws_it_once_whole_and_under_its_own_header
+            as fn(),
+    ),
     (
         "escape_after_finder_closed::escape_leaves_search_even_after_the_box_has_closed",
         escape_after_finder_closed::escape_leaves_search_even_after_the_box_has_closed as fn(),
