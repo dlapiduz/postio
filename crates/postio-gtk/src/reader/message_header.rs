@@ -55,6 +55,13 @@ pub struct MessageHeader {
     to_label: gtk::Label,
     /// Where the reader mounts its action bar (#1435).
     verbs: gtk::Box,
+    /// The `From` row, and its field name -- what a surface lays its own
+    /// leading marks after (the conversation's participant chips, #1671).
+    from_row: gtk::Box,
+    from_label: gtk::Label,
+    /// The `To`/`Cc` row, whose trailing edge a surface may add to without
+    /// adding height (the conversation's scoping note and counter, #1671).
+    recipients_row: gtk::Box,
     account_row: gtk::Box,
     account_swatch: gtk::Box,
     account_name: gtk::Label,
@@ -110,6 +117,7 @@ impl MessageHeader {
         subject.set_hexpand(true);
         subject_row.append(&subject);
         let verbs = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+        verbs.add_css_class("postio-message-header-verbs");
         verbs.set_valign(gtk::Align::Start);
         subject_row.append(&verbs);
         identity.append(&subject_row);
@@ -192,6 +200,9 @@ impl MessageHeader {
             identity,
             to_label,
             verbs,
+            from_row: top_row,
+            from_label,
+            recipients_row,
             account_row,
             account_swatch,
             account_name,
@@ -229,6 +240,37 @@ impl MessageHeader {
         self.root.clone().upcast()
     }
 
+    /// Place `widget` on the `From` row, between the field name and the
+    /// sender.
+    ///
+    /// For the conversation pane's participant chips (#1671): the pane
+    /// draws this same header, filled with the thread, so that the body
+    /// below it starts where the single reader's does -- and the chips are
+    /// the one thing the thread has on that line that a message does not.
+    /// A slot on an existing row rather than a row of its own, because a
+    /// row of its own is the height difference this exists to remove.
+    pub fn add_before_sender(&self, widget: &impl IsA<gtk::Widget>) {
+        self.from_row
+            .insert_child_after(widget, Some(&self.from_label));
+    }
+
+    /// Place `widget` on the `From` row, between the sender and the date.
+    ///
+    /// For the conversation pane's scoping note (#1671), which qualifies the
+    /// count the date column carries there.
+    pub fn add_before_date(&self, widget: &impl IsA<gtk::Widget>) {
+        self.from_row.insert_child_after(widget, Some(&self.sender));
+    }
+
+    /// Place `widget` at the trailing end of the `To`/`Cc` row.
+    ///
+    /// For the conversation pane's position counter (#1671), on the row
+    /// that already holds a button -- the `Cc` disclosure -- styled the same
+    /// way so it carries it without growing.
+    pub fn add_after_recipients(&self, widget: &impl IsA<gtk::Widget>) {
+        self.recipients_row.append(widget);
+    }
+
     /// Shows or hides subject, sender and date, leaving recipients alone.
     ///
     /// The conversation pane (#487) draws all three of those on the entry
@@ -263,9 +305,37 @@ impl MessageHeader {
         let lines = HeaderLines::of(from, to, cc, subject, date, Local::now());
 
         self.subject.set_label(&lines.subject);
-        self.sender.set_label(&lines.from);
-        self.date.set_label(&lines.date);
+        self.set_sender_line(&lines.from, &lines.date);
+        self.draw_recipients(&lines);
+    }
 
+    /// Put `subject` on the subject line, as it is -- the caller has already
+    /// decided what an absent one reads as.
+    pub fn set_subject(&self, subject: &str) {
+        self.subject.set_label(subject);
+    }
+
+    /// Fill the `From` row: who, and when.
+    ///
+    /// The conversation pane's thread says who took part and over what span
+    /// (#1671); a message says who sent it and when. Same row, same two
+    /// labels, so the same height.
+    pub fn set_sender_line(&self, from: &str, date: &str) {
+        self.sender.set_label(from);
+        self.date.set_label(date);
+    }
+
+    /// Fill the `To`/`Cc` row from these addresses, leaving the rest of the
+    /// header as it is.
+    ///
+    /// The conversation pane's is its newest message's (#1671): the one its
+    /// verbs answer.
+    pub fn set_recipients(&self, to: &[EmailAddress], cc: &[EmailAddress]) {
+        let lines = HeaderLines::of(&[], to, cc, None, DateTime::<Utc>::UNIX_EPOCH, Local::now());
+        self.draw_recipients(&lines);
+    }
+
+    fn draw_recipients(&self, lines: &HeaderLines) {
         match lines.to_line() {
             Some(line) => {
                 self.to_label.set_child_visible(true);

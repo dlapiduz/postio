@@ -514,23 +514,19 @@ pub fn below_the_floor_the_header_carries_the_index() {
         counter.is_visible(),
         "below the floor the header takes over saying where you are"
     );
-    // Screen 29's narrow header is `6 messages · 22-25 Aug` and nothing else.
-    // With the names still in it the line ellipsised to a single letter once
-    // the counter took the trailing edge, which says less than leaving them
-    // out -- and the avatar chips still say who is here.
+    // The names used to go here: the counter took the one meta line's
+    // trailing edge and the names ellipsised to a single letter. Since #1671
+    // the header is the reader's, the counter sits on the `To` row, and the
+    // `From` row keeps the names -- the count and the dates beside them do
+    // not ellipsise, so the names are what gives way to a narrow pane.
     let narrow_meta = pane.header().meta();
     assert!(
-        !narrow_meta.contains("Ada Norwood"),
-        "the names are the first thing to go when the header is short of \
-         room: {narrow_meta}"
-    );
-    assert!(
         narrow_meta.contains("6 messages"),
-        "but the count stays, because nothing else says it: {narrow_meta}"
+        "the count stays, because nothing else says it: {narrow_meta}"
     );
-    // The names going was not enough on its own: with the chips and the
-    // scoping note still there, the *dates* then ellipsised to one character.
-    // Screen 29's narrow row is the count, the dates and the counter.
+    // With the chips and the scoping note still there, the *dates*
+    // ellipsised to one character. Screen 29's narrow row is the count, the
+    // dates and the counter.
     assert!(
         !pane.header().scoping_visible(),
         "the scoping note stands down with the names"
@@ -629,10 +625,9 @@ pub fn opening_a_conversation_narrow_keeps_the_header_short() {
     pane.set_window_width(1000);
     pane.open((1..=6).map(message).collect());
 
-    let meta = pane.header().meta();
     assert!(
-        !meta.contains("Ada Norwood"),
-        "opening a conversation must not undo the ladder's step: {meta}"
+        !pane.header().scoping_visible() && !pane.header().participants_visible(),
+        "opening a conversation must not undo the ladder's step"
     );
     assert!(
         pane.header().counter().is_visible(),
@@ -915,7 +910,7 @@ pub fn marking_a_message_read_does_not_redraw_the_conversation() {
     window.close();
 }
 
-pub fn the_conversation_header_is_pinned_and_stays_two_rows() {
+pub fn the_conversation_header_is_pinned_and_is_the_readers() {
     let Some((window, pane)) = pane() else {
         return;
     };
@@ -946,28 +941,24 @@ pub fn the_conversation_header_is_pinned_and_stays_two_rows() {
          conversation it names"
     );
 
-    // ── two rows, whatever the subject ───────────────────────────────────
-    let rows = {
-        let mut count = 0;
-        let mut child = header.first_child();
-        while let Some(row) = child {
-            count += 1;
-            child = row.next_sibling();
-        }
-        count
-    };
-    assert_eq!(
-        rows, 2,
-        "screen 30's header is two rows: the subject and its verbs, then the \
-         conversation's own line"
+    // ── the reader's header, not one of its own ──────────────────────────
+    // Two rows until #1671, 68px against the single reader's 95px, so the
+    // body jumped on every change of surface. It is the reader's header now
+    // (maintainer, 2026-09-25): the same widget, which is what keeps the two
+    // from drifting apart again by a row or a padding.
+    assert!(
+        header.has_css_class("postio-message-header"),
+        "the conversation's header is the single reader's header, filled with \
+         the thread"
     );
 
     // ── and the subject truncates rather than wrapping ───────────────────
     // The label, not the height: this display lays nothing out, so a measured
     // height would be zero and prove nothing (#1307). Ellipsizing is the
-    // property that keeps the header two rows, and it is a DOM-style fact
+    // property that keeps the header its height, and it is a DOM-style fact
     // about the widget rather than about the layout.
-    let subject = find_label(&header, "conversation-subject").expect("the header draws a subject");
+    let subject =
+        find_label(&header, "postio-message-header-subject").expect("the header draws a subject");
     assert_eq!(
         subject.ellipsize(),
         gtk::pango::EllipsizeMode::End,

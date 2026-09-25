@@ -1164,6 +1164,7 @@ impl Fill {
         }
         let pane = pane.clone();
         let fetch = self.fetcher();
+        let named_accounts = Rc::clone(&self.named_accounts);
         glib::spawn_future_local(async move {
             // POSTIO-GLIB-SAFE: a channel receive; the reads run on the
             // runtime in `read_each`, or ran ahead in `prepare_next`.
@@ -1191,12 +1192,16 @@ impl Fill {
                 // everything but the body, which is why the one-document
                 // pane said nothing about recipients (#1427) -- not because
                 // the data was not there.
+                //
+                // The account too, under the single reader's rule: named
+                // only when there is more than one to tell apart (#185), so
+                // the pane's header is the reader's header (#1671).
                 if let Some(envelope) = &loaded.envelope {
-                    pane.set_thread_recipients(
-                        row.id,
-                        postio_ui::reader::header::recipient_line(&envelope.to),
-                        postio_ui::reader::header::recipient_line(&envelope.cc),
-                    );
+                    let named = named_accounts
+                        .iter()
+                        .position(|(id, _)| *id == envelope.account)
+                        .map(|hue| (named_accounts[hue].1.as_str(), hue));
+                    pane.set_thread_envelope(row.id, &envelope.to, &envelope.cc, named);
                 }
                 if let crate::compose::Body::Ready { body, .. } = loaded.body {
                     pane.set_thread_body(row.id, body);

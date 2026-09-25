@@ -1347,6 +1347,11 @@ const CASES: &[(&str, fn())] = &[
             as fn(),
     ),
     (
+        "gtk_reader_notices::the_body_starts_at_the_same_place_in_the_reader_and_the_conversation",
+        gtk_reader_notices::the_body_starts_at_the_same_place_in_the_reader_and_the_conversation
+            as fn(),
+    ),
+    (
         "gtk_reader_notices::a_waiting_plate_carries_no_notice_from_the_message_before",
         gtk_reader_notices::a_waiting_plate_carries_no_notice_from_the_message_before
             as fn(),
@@ -1416,8 +1421,8 @@ const CASES: &[(&str, fn())] = &[
         gtk_rail::marking_a_message_read_does_not_redraw_the_conversation as fn(),
     ),
     (
-        "gtk_rail::the_conversation_header_is_pinned_and_stays_two_rows",
-        gtk_rail::the_conversation_header_is_pinned_and_stays_two_rows as fn(),
+        "gtk_rail::the_conversation_header_is_pinned_and_is_the_readers",
+        gtk_rail::the_conversation_header_is_pinned_and_is_the_readers as fn(),
     ),
     (
         "gtk_reader_account::the_header_names_the_account_only_when_there_is_more_than_one",
