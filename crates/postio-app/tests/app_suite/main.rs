@@ -19,6 +19,7 @@ mod click_preview;
 mod command_wiring;
 mod compose_default_account;
 mod compose_detach;
+mod compose_recipients;
 mod compose_typing;
 mod composer_warm;
 mod conversation_body_arrives;
@@ -236,6 +237,10 @@ const CASES: &[(&str, fn())] = &[
     (
         "compose_detach::the_detach_key_reaches_the_composer_in_a_wired_application",
         compose_detach::the_detach_key_reaches_the_composer_in_a_wired_application as fn(),
+    ),
+    (
+        "compose_recipients::typing_a_recipient_opens_no_connections_and_still_completes",
+        compose_recipients::typing_a_recipient_opens_no_connections_and_still_completes as fn(),
     ),
     (
         "compose_typing::every_letter_can_be_typed_into_the_composer_body",
