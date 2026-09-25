@@ -3726,6 +3726,83 @@ pub(crate) mod tests {
         assert_eq!(app.focus(), Focus::Reader);
     }
 
+    /// Commands the terminal does not answer yet, each named in the table
+    /// at `docs/book/src/desktop-and-terminal.md`. Taking one off is how
+    /// the fix proves itself; the list is allowed to shrink and never to
+    /// grow.
+    const GAPS: &[&str] = &[
+        "add_account",
+        "bold",
+        "bullet_list",
+        "delete_saved_search",
+        "go_to_drafts",
+        "go_to_flagged",
+        "go_to_inbox",
+        "go_to_sent",
+        "insert_link",
+        "italic",
+        "move_saved_search_down",
+        "move_saved_search_up",
+        "next_scope",
+        "numbered_list",
+        "open_part_externally",
+        "prev_view",
+        "quote_block",
+        "rename_saved_search",
+        "render_part_once",
+        "save_draft",
+        "toggle_fold",
+        "toggle_folder",
+        "toggle_rail",
+        "view_original",
+    ];
+
+    /// Run `id` where its surface is, in an app with mail in the list, the
+    /// first message open and, for the composer's commands, a draft.
+    fn run_anywhere(id: &str, spec: &postio_core::registry::CommandSpec) -> Vec<Effect> {
+        use postio_core::Context;
+        let mut app = app((160, 40));
+        update(&mut app, Input::Sidebar(sidebar_contents()));
+        let opening = opened(&mut app, 3);
+        serve(&mut app, opening);
+        update(&mut app, key(KeyCode::Enter, KeyModifiers::NONE));
+        if spec.contexts == Context::Composer.as_set() {
+            addressed(&mut app, "Parity");
+            return app.composer_command(id);
+        }
+        if spec.contexts == Context::Accounts.as_set() {
+            update(&mut app, key(KeyCode::Char(','), KeyModifiers::ALT));
+            update(&mut app, key(KeyCode::Tab, KeyModifiers::NONE));
+            return app.settings_command(id);
+        }
+        app.command(id)
+    }
+
+    #[test]
+    fn every_command_is_answered_here_or_by_the_dispatcher() {
+        // The registry-parity suite proves every command has a key this
+        // terminal can send and a palette row. This proves pressing it does
+        // something: a command the terminal neither handles nor passes to a
+        // handler reaches the dispatcher, which answers "not wired up".
+        let mut wired: Vec<postio_core::CommandId> = postio_session::actions::WIRED.to_vec();
+        wired.push(postio_core::CommandId::Refresh);
+        let mut unanswered = Vec::new();
+        for spec in postio_core::registry::all() {
+            let id = spec.id.as_str();
+            let effects = run_anywhere(id, spec);
+            let dropped = effects
+                .iter()
+                .any(|effect| matches!(effect, Effect::Send(sent) if !wired.contains(&sent.id())));
+            if dropped != GAPS.contains(&id) {
+                unanswered.push((id, dropped));
+            }
+        }
+        assert!(
+            unanswered.is_empty(),
+            "(command, sent to nothing) that disagree with GAPS: {unanswered:?}"
+        );
+    }
+
     fn composing(app: &mut App) {
         app.compose(postio_model::Draft::new(postio_model::AccountId::new(1)));
     }

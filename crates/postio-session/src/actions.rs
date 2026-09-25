@@ -58,7 +58,10 @@ use postio_storage::{Checkout, Store, WritePermit, WritePriority};
 /// Named once so that the registration and the match in [`Actions::act`]
 /// cannot drift apart — a wired command with no arm reports "not wired up
 /// yet" from inside the thing that is supposed to be wiring it up.
-const WIRED: &[CommandId] = &[
+///
+/// Public so a frontend can prove every command it passes on is one of these
+/// (`postio-tui`'s parity test).
+pub const WIRED: &[CommandId] = &[
     CommandId::Archive,
     CommandId::ArchiveThread,
     CommandId::Delete,
