@@ -546,11 +546,13 @@ fn restore_script(anchor: &Anchor) -> String {
              return {y};\
            }};\
            let placed = null;\
+           const how = id ? 'message' : (tag ? 'block ' + tag + ' ' + {index} : 'pixel');\
            const place = () => {{\
              const y = target();\
              if (y === null) {{ return; }}\
              window.scrollTo(0, y);\
              placed = window.scrollY;\
+             document.documentElement.dataset.postioPlaced = how + ' at ' + placed;\
            }};\
            place();\
            const again = () => {{\
