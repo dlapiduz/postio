@@ -220,6 +220,12 @@ impl Inner {
     fn request(self: Rc<Self>, page: u32) {
         FETCHES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let Some(fetch) = self.paging.borrow().fetch_for(page) else {
+            // Nothing to read -- a result set with no hits has no page 0.
+            // A list keeping the last rows on screen until this page lands
+            // would otherwise wait for good; the answer is that there is none.
+            if let Some(list) = self.list.upgrade() {
+                list.give_up(list.generation(), page);
+            }
             return;
         };
         let Some(list) = self.list.upgrade() else {
@@ -326,10 +332,14 @@ impl Inner {
             return;
         }
 
-        // Out of attempts: now it is worth saying, and it is said once.
+        // Out of attempts: now it is worth saying, and it is said once --
+        // and the list stops waiting for a page that is not coming, or a
+        // refresh holding its other pages for this one would hold them for
+        // good.
         for handler in self.errors.borrow().iter() {
             handler(message.clone());
         }
+        list.give_up(generation, page);
     }
 }
 
@@ -373,9 +383,11 @@ impl Feed {
     /// Show `scope`, discarding whatever the list was showing.
     ///
     /// Returns immediately: the first page is on its way, and until it lands
-    /// the list is empty rather than wrong. There is no spinner, because a
-    /// local read is not something to wait for — if this ever feels like a
-    /// wait, the query is the bug.
+    /// the list goes on showing what it was showing
+    /// ([`MessageList::replace_source`]) rather than a screenful of
+    /// skeletons. There is no spinner, because a local read is not
+    /// something to wait for — if this ever feels like a wait, the query is
+    /// the bug.
     pub fn open(&self, scope: ListScope) {
         let inner = &self.0;
         // Opening a folder is leaving the results, if there were any: the
@@ -384,7 +396,7 @@ impl Feed {
         inner.total.set(0);
         inner.mailbox_total.set(0);
         if let Some(list) = inner.list.upgrade() {
-            list.set_source(Rc::new(Source(inner.clone())));
+            list.replace_source(Rc::new(Source(inner.clone())), false);
         }
         // Asked for here rather than left to the view: the list is empty
         // until something says how long it is, and an empty list never asks
@@ -459,7 +471,9 @@ impl Feed {
         let total = inner.paging.borrow_mut().show_results(messages);
         inner.total.set(total);
         if let Some(list) = inner.list.upgrade() {
-            list.set_source(Rc::new(Source(inner.clone())));
+            // The mailbox is kept whole underneath, so `Esc` puts it back
+            // without a read.
+            list.replace_source(Rc::new(Source(inner.clone())), true);
         }
         inner.clone().request(0);
         // After the list is the result set, not before: a handler that reads
@@ -483,10 +497,20 @@ impl Feed {
             return false;
         }
         inner.total.set(inner.mailbox_total.get());
-        if let Some(list) = inner.list.upgrade() {
-            list.set_source(Rc::new(Source(inner.clone())));
+        let Some(list) = inner.list.upgrade() else {
+            return true;
+        };
+        // The mailbox the results covered, rows and all, in one step: no
+        // read before it is back, and the scroll offset the window restores
+        // next has the mailbox's length to land in. Then a refresh, which
+        // re-reads only what is on screen and moves only what changed while
+        // the search was up.
+        if list.restore(Rc::new(Source(inner.clone()))) {
+            list.refresh();
+        } else {
+            list.replace_source(Rc::new(Source(inner.clone())), false);
+            inner.clone().request(0);
         }
-        inner.clone().request(0);
         true
     }
 
@@ -531,7 +555,10 @@ impl Feed {
         let plan = inner.paging.borrow().plan(event);
         match plan {
             Plan::Ignore => {}
-            Plan::InsertAtTop(count) => list.inserted_at_top(count),
+            // Not `inserted_at_top`, which dropped every page and drew the
+            // new rows as skeletons: a refresh reads the new rows first and
+            // then inserts them, with their contents, where they belong.
+            Plan::InsertAtTop(_) => self.reload(),
             Plan::Refetch(messages) => self.refetch(messages),
             Plan::Reload => match event {
                 Event::MessagesRemoved {
@@ -658,19 +685,18 @@ impl Feed {
         }
     }
 
-    /// Drop everything cached and ask again, keeping the scroll position.
+    /// Re-read what is on screen and move only what changed, keeping the
+    /// scroll position and every other row. See [`MessageList::refresh`].
     ///
-    /// The count corrects itself: every page carries the total, so the first
-    /// reply back tells the list how long it now is.
+    /// The count corrects itself: every page carries the total, so the
+    /// refresh's reply tells the list how long it now is -- and a list with
+    /// nothing on screen reads the top, so an emptied mailbox does not keep
+    /// the rows it used to have.
     pub fn reload(&self) {
         let Some(list) = self.0.list.upgrade() else {
             return;
         };
-        list.invalidate();
-        // A list that shrank to nothing stops asking for pages, so the
-        // reload has to ask once itself or an emptied mailbox would keep
-        // showing the rows it used to have.
-        self.0.clone().request(0);
+        list.refresh();
     }
 }
 

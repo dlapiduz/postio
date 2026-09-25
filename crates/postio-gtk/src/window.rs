@@ -1658,8 +1658,14 @@ impl Window {
             let refresh = refresh.clone();
             move || refresh()
         });
-        list.model()
-            .connect_items_changed(move |_, _, _, _| refresh());
+        list.model().connect_items_changed({
+            let refresh = refresh.clone();
+            move |_, _, _, _| refresh()
+        });
+        // The first answer for a folder ends its wait even when it brings no
+        // rows, and so changes nothing about the model's length: an empty
+        // folder is only empty once it has said so.
+        list.model().connect_filled(move |_| refresh());
 
         folders.open(account, address);
         *self.imp().messages.borrow_mut() = Some(messages);
@@ -1675,6 +1681,8 @@ impl Window {
     /// `postio-qhz` will widen them when the counts exist.
     fn refresh_list_state(&self, folders: &Folders, feed: &Feed) {
         let rows = self.list().model().n_items() as u64;
+        self.list_state()
+            .set_loading(self.list().model().is_loading());
 
         // An aggregate view answers by ADR 0005 Q10's rule instead of by the
         // single-account states: a whole-pane "Offline" would be a claim

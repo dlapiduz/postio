@@ -41,7 +41,7 @@
 //!   speed does not stutter on a page boundary.
 
 use std::cell::{Cell, RefCell};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 
 use chrono::{DateTime, Utc};
@@ -50,7 +50,7 @@ use gtk::prelude::*;
 use gtk::subclass::prelude::*;
 use postio_model::address::EmailAddress;
 use postio_model::ids::{MessageId, ThreadId};
-use postio_ui::list::{ListRow, ListWindow, Lookup};
+use postio_ui::list::{ListRow, ListWindow, Lookup, Splice};
 
 /// Rows per page.
 pub use postio_ui::list::PAGE_SIZE;
@@ -309,6 +309,24 @@ mod imp {
         /// insertion at the top, an eviction — because an object kept across
         /// that would answer for the wrong message.
         pub handed: RefCell<HashMap<u32, super::MessageRow>>,
+        /// A refresh whose pages are still on their way. See
+        /// [`super::MessageList::refresh`].
+        pub refresh: RefCell<Option<super::Refresh>>,
+        /// Whether a refresh is part-way through telling the view what
+        /// moved. A position asked for in between answers without asking
+        /// the source: the step after this one may well fill it.
+        pub splicing: Cell<bool>,
+        /// The source the list is about to show, and the generation its
+        /// first page will be answered under. See
+        /// [`super::MessageList::replace_source`].
+        pub next: RefCell<Option<super::Next>>,
+        /// The mailbox a result set took the list from, kept whole so `Esc`
+        /// can put it back without reading it again.
+        pub stashed: RefCell<Option<ListWindow<super::MessageRow>>>,
+        /// Whether the list has not yet heard from the source it was
+        /// pointed at. Not the same as empty: see
+        /// [`super::MessageList::is_loading`].
+        pub loading: Cell<bool>,
     }
 
     #[glib::object_subclass]
@@ -330,7 +348,18 @@ mod imp {
                 // the reading pane following the cursor onto a row that has
                 // just become real, and a seek waiting for the page carrying
                 // the message it is looking for.
-                vec![glib::subclass::Signal::builder("filled").build()]
+                vec![
+                    glib::subclass::Signal::builder("filled").build(),
+                    // A refresh is about to tell the view what moved (`true`),
+                    // or has finished (`false`). Between the two a row can be
+                    // taken out and put back somewhere else, and a cursor
+                    // that followed the position would be on another
+                    // message -- so whoever keeps the cursor holds it still
+                    // across the pair.
+                    glib::subclass::Signal::builder("splicing")
+                        .param_types([bool::static_type()])
+                        .build(),
+                ]
             })
         }
     }
@@ -370,6 +399,32 @@ pub fn emissions() -> u64 {
 }
 
 static EMISSIONS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// The source a list is about to show. See [`MessageList::replace_source`].
+pub struct Next {
+    source: Rc<dyn PageSource>,
+    generation: u64,
+    /// Keep the rows being replaced, for [`MessageList::restore`].
+    stash: bool,
+    /// A refresh was asked for while this was on its way.
+    refresh: bool,
+}
+
+/// A refresh in flight: the pages it re-read, and what has come back.
+///
+/// See [`MessageList::refresh`].
+#[derive(Debug)]
+pub struct Refresh {
+    generation: u64,
+    /// Runs of pages, first and last inclusive, each re-read whole.
+    runs: Vec<(u32, u32)>,
+    awaiting: HashSet<u32>,
+    arrived: HashMap<u32, Vec<Row>>,
+    total: Option<u32>,
+    /// Another refresh was asked for while this one was out; run it once
+    /// this one lands rather than piling a second read on top.
+    again: bool,
+}
 
 glib::wrapper! {
     /// A `GListModel` over a mailbox, windowed rather than loaded.
@@ -482,7 +537,35 @@ impl MessageList {
     /// nobody is asking any more would fill the new scope with the old
     /// one's mail.
     pub fn generation(&self) -> u64 {
+        if let Some(next) = self.imp().next.borrow().as_ref() {
+            return next.generation;
+        }
         self.imp().window.borrow().generation()
+    }
+
+    /// Whether the list has not yet heard from the source it was pointed at.
+    ///
+    /// Not the same as empty, and the difference is what a person sees: an
+    /// empty folder says so, and a folder whose first page is still on its
+    /// way must not say it for the frame or two before the page lands.
+    pub fn is_loading(&self) -> bool {
+        self.imp().loading.get()
+    }
+
+    /// Call `on_splicing` with `true` before a refresh tells the view what
+    /// moved, and with `false` once it has.
+    pub fn connect_splicing(
+        &self,
+        on_splicing: impl Fn(&Self, bool) + 'static,
+    ) -> glib::SignalHandlerId {
+        self.connect_local("splicing", false, move |values| {
+            let list = values.first().and_then(|value| value.get::<Self>().ok());
+            let begun = values.get(1).and_then(|value| value.get::<bool>().ok());
+            if let (Some(list), Some(begun)) = (list, begun) {
+                on_splicing(&list, begun);
+            }
+            None
+        })
     }
 
     /// Point the list at a new query: a different folder, or a search.
@@ -497,14 +580,165 @@ impl MessageList {
         }
         let removed = self.imp().window.borrow().total();
         let total = source.total();
+        let generation = self.generation() + 1;
 
+        self.imp().next.replace(None);
+        self.imp().refresh.replace(None);
+        self.imp().loading.set(true);
         *self.imp().source.borrow_mut() = Some(source);
-        self.imp().window.borrow_mut().reset(total);
+        self.imp().window.borrow_mut().adopt(total, generation);
         // Every position now stands for a different mailbox's mail.
         self.imp().handed.borrow_mut().clear();
 
         EMISSIONS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         self.items_changed(0, removed, total);
+    }
+
+    /// Point the list at a new query, but keep showing the rows it has until
+    /// the new one's first page lands, then change over in one step.
+    ///
+    /// [`set_source`](Self::set_source) empties the list at once, and the
+    /// frame or two before the first page arrives drew every visible row as
+    /// a skeleton -- and, in a folder switch, told the list-state pane there
+    /// was no mail, so it said "Inbox is empty" on its way to showing the
+    /// inbox. Keeping the old rows for those milliseconds is what a person
+    /// reads as instant. The change-over is one `items_changed` with the
+    /// first page already resident, so every row the view asks for then is
+    /// real.
+    ///
+    /// [`generation`](Self::generation) moves on now, so the first page is
+    /// requested and answered under the new question; a page of the old one
+    /// still in flight is dropped. The old rows ask for nothing while they
+    /// wait. A list showing nothing has nothing to keep, and changes over at
+    /// once.
+    ///
+    /// `stash` keeps the rows being replaced, for [`restore`](Self::restore)
+    /// -- a mailbox a search is about to cover. Only the first stash
+    /// counts: refining the query replaces one result set with another, and
+    /// the mailbox underneath is still the one to go back to.
+    pub fn replace_source(&self, source: Rc<dyn PageSource>, stash: bool) {
+        if self.reading() {
+            self.hold(move |list| list.replace_source(source, stash));
+            return;
+        }
+        let imp = self.imp();
+        imp.refresh.replace(None);
+        if !stash {
+            imp.stashed.replace(None);
+        }
+        let showing = {
+            let window = imp.window.borrow();
+            window.total() > 0 && !window.resident_pages().is_empty()
+        };
+        if !showing {
+            self.set_source(source);
+            return;
+        }
+        let generation = self.generation() + 1;
+        imp.next.replace(Some(Next {
+            source,
+            generation,
+            stash,
+            refresh: false,
+        }));
+        imp.loading.set(true);
+    }
+
+    /// Put back the mailbox a result set covered, rows and all, and return
+    /// whether there was one.
+    ///
+    /// No read is needed to show it: its pages are the ones it had, under a
+    /// new generation so whatever the result set still has in flight is
+    /// dropped. The caller refreshes it afterwards, which re-reads only what
+    /// is on screen and moves only what changed while the search was up.
+    /// A result set still waiting for its first page never took the list,
+    /// so the mailbox is simply still there.
+    pub fn restore(&self, source: Rc<dyn PageSource>) -> bool {
+        if self.reading() {
+            return false;
+        }
+        let imp = self.imp();
+        if imp.next.borrow().is_some() && imp.stashed.borrow().is_none() {
+            // Nothing was swapped out; drop the swap that was coming.
+            let generation = self.generation() + 1;
+            imp.next.replace(None);
+            imp.loading.set(false);
+            *imp.source.borrow_mut() = Some(source);
+            // A new generation for the rows already here, so the result
+            // set's first page, still out, cannot land on them.
+            imp.window.borrow_mut().renumber(generation);
+            return true;
+        }
+        let Some(mut kept) = imp.stashed.take() else {
+            return false;
+        };
+        let generation = self.generation() + 1;
+        let total = kept.total();
+        kept.renumber(generation);
+        let removed = imp.window.borrow().total();
+        imp.next.replace(None);
+        imp.refresh.replace(None);
+        imp.loading.set(false);
+        *imp.source.borrow_mut() = Some(source);
+        *imp.window.borrow_mut() = kept;
+        imp.handed.borrow_mut().clear();
+        self.swap_in(removed, total);
+        true
+    }
+
+    /// Change over to the source [`replace_source`](Self::replace_source)
+    /// was waiting on, now that a page of it has landed.
+    fn change_over(&self, total: u32, page: u32, rows: Vec<Row>) {
+        let imp = self.imp();
+        let Some(next) = imp.next.take() else {
+            return;
+        };
+        let total = total.max(rows.len() as u32 + page * PAGE_SIZE);
+        let removed = imp.window.borrow().total();
+        *imp.source.borrow_mut() = Some(next.source);
+        imp.loading.set(false);
+        {
+            let mut fresh = ListWindow::new();
+            fresh.adopt(total, next.generation);
+            fresh.deliver(
+                next.generation,
+                page,
+                rows.into_iter().map(MessageRow::new).collect(),
+            );
+            let old = std::mem::replace(&mut *imp.window.borrow_mut(), fresh);
+            if next.stash && imp.stashed.borrow().is_none() {
+                imp.stashed.replace(Some(old));
+            }
+        }
+        imp.handed.borrow_mut().clear();
+        self.swap_in(removed, total);
+        if next.refresh {
+            self.refresh();
+        }
+    }
+
+    /// Tell the view that every one of its `removed` rows is now one of a
+    /// different list's `total`, which the window already holds.
+    ///
+    /// In two steps rather than one, and the split is what keeps a folder
+    /// switch cheap. `GtkSingleSelection`, told its selected row was
+    /// replaced, looks for the item it had among *every* row added -- one
+    /// `item()` each -- and every one of those asks for its page: opening a
+    /// 3,618-conversation folder asked for 73. So the replace covers only the
+    /// rows the window already holds from the top, and the rest arrive as an
+    /// insertion at the end, which the selection has no reason to search.
+    fn swap_in(&self, removed: u32, total: u32) {
+        let head = {
+            let mut window = self.imp().window.borrow_mut();
+            let head = (0..total)
+                .take_while(|position| window.peek(*position).is_some())
+                .count() as u32;
+            window.set_total(head);
+            head
+        };
+        EMISSIONS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        self.items_changed(0, removed, head);
+        self.set_total(total);
     }
 
     /// Hand the model a page it asked for, assuming it answers the scope
@@ -531,6 +765,21 @@ impl MessageList {
             self.hold(move |list| list.deliver_for(generation, page, rows));
             return;
         }
+        let waiting = self
+            .imp()
+            .next
+            .borrow()
+            .as_ref()
+            .map(|next| (next.generation, next.source.total()));
+        if let Some((next, total)) = waiting {
+            if generation == next {
+                self.change_over(total, page, rows);
+            }
+            return;
+        }
+        let Some(rows) = self.take_for_refresh(generation, page, rows, None) else {
+            return;
+        };
         // Fill the objects the view is already holding for these positions.
         // Collected before any of them is told, because a handler is free to
         // ask the model for a row and `row_at` takes this borrow mutably.
@@ -557,7 +806,11 @@ impl MessageList {
         if delivered.stale {
             return;
         }
-        let filled = !filling.is_empty();
+        // The first answer ends the wait even when it brought no rows: an
+        // empty folder is only known to be empty once it has said so, and
+        // whoever draws that has to hear about it.
+        let answered = self.imp().loading.replace(false);
+        let filled = !filling.is_empty() || answered;
         for (held, row) in filling {
             held.set_row(row);
         }
@@ -602,9 +855,24 @@ impl MessageList {
             self.hold(move |list| list.deliver_page(generation, total, page, rows));
             return;
         }
+        let waiting = self
+            .imp()
+            .next
+            .borrow()
+            .as_ref()
+            .map(|next| next.generation);
+        if let Some(next) = waiting {
+            if generation == next {
+                self.change_over(total, page, rows);
+            }
+            return;
+        }
         if generation != self.generation() {
             return;
         }
+        let Some(rows) = self.take_for_refresh(generation, page, rows, Some(total)) else {
+            return;
+        };
         self.set_total(total);
         self.deliver_for(generation, page, rows);
     }
@@ -626,6 +894,46 @@ impl MessageList {
             return;
         }
         self.imp().window.borrow_mut().abandon(generation, page);
+    }
+
+    /// Stop waiting for `page`: its read failed and will not be tried again.
+    ///
+    /// A refresh that was holding its other pages for this one applies what
+    /// it has, and a change-over waiting on a first page that is never
+    /// coming changes over to the count the source knows, rows to follow
+    /// when they are asked for -- rather than showing the folder it left
+    /// for the rest of the session.
+    pub fn give_up(&self, generation: u64, page: u32) {
+        if self.reading() {
+            self.hold(move |list| list.give_up(generation, page));
+            return;
+        }
+        let waiting = self
+            .imp()
+            .next
+            .borrow()
+            .as_ref()
+            .map(|next| (next.generation, next.source.total()));
+        if let Some((next, total)) = waiting {
+            if generation == next {
+                self.change_over(total, page, Vec::new());
+                self.imp().window.borrow_mut().abandon(generation, page);
+            }
+            return;
+        }
+        self.imp().window.borrow_mut().abandon(generation, page);
+        let complete = {
+            let mut slot = self.imp().refresh.borrow_mut();
+            match slot.as_mut() {
+                Some(refresh) if refresh.generation == generation => {
+                    refresh.awaiting.remove(&page) && refresh.awaiting.is_empty()
+                }
+                _ => false,
+            }
+        };
+        if complete {
+            self.apply_refresh();
+        }
     }
 
     /// Correct the row count without touching what is cached.
@@ -674,6 +982,7 @@ impl MessageList {
         }
         // See the note in `set_total`: bind before branching, so the borrow
         // is gone before `items_changed` can re-enter `item()`.
+        self.imp().refresh.replace(None);
         let inserted = self.imp().window.borrow_mut().inserted_at_top(count);
         if inserted {
             // Every row shifted down by `count`, so every position stands for
@@ -731,11 +1040,291 @@ impl MessageList {
             self.hold(|list| list.invalidate());
             return;
         }
+        self.imp().refresh.replace(None);
         let total = self.imp().window.borrow_mut().invalidate();
         // The order is what changed, so a position no longer means what it did.
         self.imp().handed.borrow_mut().clear();
         EMISSIONS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         self.items_changed(0, total, total);
+    }
+
+    /// Re-read what is on screen and tell the view only what moved.
+    ///
+    /// What a resync, a backfill batch, an archive in an aggregate view or
+    /// new mail in a unified one all come to: the membership or the order
+    /// may have moved, and the list does not know how. It used to answer
+    /// with [`invalidate`](Self::invalidate) -- every page dropped, every
+    /// position announced as replaced -- and every row on screen flashed to
+    /// a skeleton and was built again, 85-121ms before anything painted, on
+    /// every batch of a sync (maintainer, 2026-09-25: "full reloads make the
+    /// app feel slow").
+    ///
+    /// Now the rows stay. The pages somebody is looking at -- any page
+    /// holding a row the view or the selection still holds -- are read
+    /// again, and until every one of them has landed the list goes on
+    /// answering with what it had. Then each run of them is compared with
+    /// what came back, by message id ([`postio_ui::list::splices`]): a row
+    /// still there in the same order stays where it is and is told what it
+    /// says now, and everything else is a removal or an insertion *at its
+    /// position*, so the view keeps its scroll anchor and every other row's
+    /// widget. Nothing moved is nothing emitted. Pages nobody is looking at
+    /// are dropped, to be read at their new offsets when they are wanted.
+    ///
+    /// One refresh at a time: asked for again while one is out, it runs once
+    /// more after it lands, however many times it was asked. The count comes
+    /// back with the pages and moves the end of the list.
+    pub fn refresh(&self) {
+        if self.reading() {
+            self.hold(|list| list.refresh());
+            return;
+        }
+        let imp = self.imp();
+        // A change-over's first page may have been read before whatever
+        // this refresh is for; refresh the new rows once they are here.
+        if let Some(next) = imp.next.borrow_mut().as_mut() {
+            next.refresh = true;
+            return;
+        }
+        if let Some(refresh) = imp.refresh.borrow_mut().as_mut() {
+            refresh.again = true;
+            return;
+        }
+        let (generation, resident) = {
+            let window = imp.window.borrow();
+            (window.generation(), window.resident_pages())
+        };
+        let mut watched: Vec<u32> = imp
+            .handed
+            .borrow()
+            .iter()
+            // One reference is the map's own. Anything more is the view's
+            // row for that position, or the selection's.
+            .filter(|(_, row)| row.ref_count() > 1)
+            .map(|(position, _)| position / PAGE_SIZE)
+            .collect();
+        if watched.is_empty() {
+            watched.push(0);
+        }
+        watched.sort_unstable();
+        watched.dedup();
+        watched.retain(|page| resident.contains(page));
+        if watched.is_empty() {
+            // Nothing on screen is held, so there is nothing to keep and
+            // nothing to move. Drop what is cached and read the top, which
+            // carries the count, the way a first read does.
+            let pending = {
+                let mut window = imp.window.borrow_mut();
+                window.retain_pages(|_| false);
+                window.is_pending(0)
+            };
+            imp.handed.borrow_mut().retain(|_, row| row.ref_count() > 1);
+            if !pending {
+                self.request(0);
+            }
+            return;
+        }
+        let mut runs: Vec<(u32, u32)> = Vec::new();
+        for page in &watched {
+            match runs.last_mut() {
+                Some((_, last)) if *last + 1 == *page => *last = *page,
+                _ => runs.push((*page, *page)),
+            }
+        }
+        imp.refresh.replace(Some(Refresh {
+            generation,
+            runs,
+            awaiting: watched.iter().copied().collect(),
+            arrived: HashMap::new(),
+            total: None,
+            again: false,
+        }));
+        for page in watched {
+            imp.window.borrow_mut().note_pending(page);
+            self.request(page);
+        }
+    }
+
+    /// Hold a page a refresh is waiting for, applying the refresh once the
+    /// last of them is in. Hands `rows` back when they are not a refresh's.
+    fn take_for_refresh(
+        &self,
+        generation: u64,
+        page: u32,
+        rows: Vec<Row>,
+        total: Option<u32>,
+    ) -> Option<Vec<Row>> {
+        let complete = {
+            let mut slot = self.imp().refresh.borrow_mut();
+            let Some(refresh) = slot.as_mut() else {
+                return Some(rows);
+            };
+            if refresh.generation != generation || !refresh.awaiting.remove(&page) {
+                return Some(rows);
+            }
+            if self.imp().window.borrow_mut().answered(generation, page) {
+                refresh.arrived.insert(page, rows);
+            }
+            if total.is_some() {
+                refresh.total = total;
+            }
+            refresh.awaiting.is_empty()
+        };
+        if complete {
+            self.apply_refresh();
+        }
+        None
+    }
+
+    /// Tell the view what a refresh found. See [`refresh`](Self::refresh).
+    fn apply_refresh(&self) {
+        let imp = self.imp();
+        let Some(mut refresh) = imp.refresh.take() else {
+            return;
+        };
+        if refresh.generation != self.generation() {
+            return;
+        }
+        let asked = refresh.runs.clone();
+        let in_run = move |page: u32| {
+            asked
+                .iter()
+                .any(|(first, last)| (*first..=*last).contains(&page))
+        };
+        // Pages nobody was looking at are one row out for every row this
+        // moves above them, so they go. What the view still holds for them
+        // stays: it is the same message either way.
+        {
+            let in_run = in_run.clone();
+            imp.window.borrow_mut().retain_pages(in_run);
+        }
+        imp.handed
+            .borrow_mut()
+            .retain(|position, row| in_run(position / PAGE_SIZE) || row.ref_count() > 1);
+
+        imp.splicing.set(true);
+        self.emit_by_name::<()>("splicing", &[&true]);
+        let mut broken = false;
+        // Bottom up, so a run's steps never move a position a later run is
+        // still to use.
+        for (first, last) in refresh.runs.iter().rev() {
+            if !(*first..=*last).all(|page| refresh.arrived.contains_key(&page)) {
+                continue;
+            }
+            let start = first * PAGE_SIZE;
+            let incoming: Vec<Row> = (*first..=*last)
+                .flat_map(|page| refresh.arrived.remove(&page).unwrap_or_default())
+                .collect();
+            let held: Vec<Option<MessageId>> = {
+                let window = imp.window.borrow();
+                (start..(last + 1) * PAGE_SIZE)
+                    .map_while(|position| window.peek(position).map(Some))
+                    .collect()
+            };
+            let ids: Vec<MessageId> = incoming.iter().map(|row| row.id).collect();
+            for step in postio_ui::list::splices(&held, &ids) {
+                let (position, removed, rows) = match step {
+                    Splice::Remove { at, count } => (start + at, count, Vec::new()),
+                    Splice::Insert { at, count, from } => (
+                        start + at,
+                        0,
+                        incoming[from..from + count as usize]
+                            .iter()
+                            .cloned()
+                            .map(MessageRow::new)
+                            .collect(),
+                    ),
+                };
+                let added = rows.len() as u32;
+                if !imp.window.borrow_mut().splice(position, removed, rows) {
+                    broken = true;
+                    break;
+                }
+                self.shift_handed(position, removed, added);
+                EMISSIONS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                self.items_changed(position, removed, added);
+            }
+            if broken {
+                break;
+            }
+            // What stayed: the same messages in the same places, told what
+            // they say now. Quiet for a row that says what it said.
+            for (offset, row) in incoming.into_iter().enumerate() {
+                let position = start + offset as u32;
+                imp.window.borrow_mut().update(MessageRow::new(row.clone()));
+                let held = imp.handed.borrow().get(&position).cloned();
+                if let Some(held) = held {
+                    held.set_row(row);
+                }
+            }
+        }
+        imp.splicing.set(false);
+
+        if broken {
+            // A step the window could not take: it and the view no longer
+            // agree about a position, and only starting over is honest.
+            self.emit_by_name::<()>("splicing", &[&false]);
+            self.invalidate();
+            self.request(0);
+            return;
+        }
+
+        // A position the view asked for between two steps was answered with
+        // a placeholder; fill the ones a later step made real, and ask for
+        // the rest.
+        let waiting: Vec<(u32, MessageRow)> = imp
+            .handed
+            .borrow()
+            .iter()
+            .filter(|(_, row)| !row.is_loaded())
+            .map(|(position, row)| (*position, row.clone()))
+            .collect();
+        let mut filled = false;
+        let mut wanted: Vec<u32> = Vec::new();
+        for (position, placeholder) in waiting {
+            let lookup = {
+                let mut window = imp.window.borrow_mut();
+                match window.row_at(position) {
+                    Some(Lookup::Resident(row)) => Ok(row.row()),
+                    Some(Lookup::Missing { request }) => Err(request),
+                    None => Ok(None),
+                }
+            };
+            match lookup {
+                Ok(Some(row)) => {
+                    placeholder.set_row(row);
+                    filled = true;
+                }
+                Ok(None) => {}
+                Err(request) => wanted.extend(request),
+            }
+        }
+        for page in wanted {
+            self.request(page);
+        }
+        if let Some(total) = refresh.total {
+            self.set_total(total);
+        }
+        self.emit_by_name::<()>("splicing", &[&false]);
+        if filled {
+            self.emit_by_name::<()>("filled", &[]);
+        }
+        if refresh.again {
+            self.refresh();
+        }
+    }
+
+    /// Re-key the objects handed to the view for a splice at `position`:
+    /// the `removed` there go, and every one after moves by the difference.
+    fn shift_handed(&self, position: u32, removed: u32, added: u32) {
+        let mut handed = self.imp().handed.borrow_mut();
+        let before = std::mem::take(&mut *handed);
+        for (held, row) in before {
+            if held < position {
+                handed.insert(held, row);
+            } else if held >= position + removed {
+                handed.insert(held - removed + added, row);
+            }
+        }
     }
 
     /// Whether every one of `messages` is a row the list is holding.
@@ -875,6 +1464,30 @@ impl MessageList {
             return Some(row.clone());
         }
 
+        // Part-way through a refresh's steps, or showing the rows of a
+        // question already being replaced: answer with what is here and ask
+        // for nothing. The refresh fills what it makes real once it is done,
+        // and the change-over replaces all of it.
+        if self.imp().splicing.get() || self.imp().next.borrow().is_some() {
+            let window = self.imp().window.borrow();
+            if position >= window.total() {
+                return None;
+            }
+            let row = window
+                .peek(position)
+                .and_then(|id| window.row_of(id))
+                .and_then(MessageRow::row);
+            drop(window);
+            let handed = MessageRow::placeholder();
+            if let Some(row) = row {
+                handed.set_row(row);
+            }
+            self.imp()
+                .handed
+                .borrow_mut()
+                .insert(position, handed.clone());
+            return Some(handed);
+        }
         let mut window = self.imp().window.borrow_mut();
         let (row, wanted) = match window.row_at(position)? {
             Lookup::Resident(row) => (row.row(), Vec::new()),

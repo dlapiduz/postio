@@ -200,11 +200,18 @@ pub fn search_hits_reach_the_message_list() {
         Some(MailboxId::new(INBOX)),
         "the mailbox is remembered, not left -- Esc goes back to it"
     );
-    // The count is known the moment the ids arrive: they *are* the answer, so
-    // unlike a mailbox there is nothing to wait for before saying how many.
-    assert_eq!(list.n_items(), HITS as u32);
+    // The folder stays on screen until the first page of hits has been read,
+    // and the list changes over in one step with rows in hand -- not to a
+    // screenful of skeletons the moment the ids arrive (maintainer,
+    // 2026-09-25).
+    assert_eq!(
+        list.n_items(),
+        4_000,
+        "the folder was taken down before a row of the results was read"
+    );
 
     settle();
+    assert_eq!(list.n_items(), HITS as u32);
     assert_eq!(
         subject_at(&list, 0),
         Some(format!("hit {}", found[0].get())),

@@ -99,6 +99,9 @@ mod imp {
         /// this one has to fire exactly once, a fixed interval after the
         /// wait began.
         pub opening_tick: RefCell<Option<glib::SourceId>>,
+        /// Whether the list's first page for what it now shows is still on
+        /// its way. See [`super::ListStateView::set_loading`].
+        pub loading: std::cell::Cell<bool>,
     }
 
     impl Default for ListStateView {
@@ -115,6 +118,7 @@ mod imp {
                 opening: RefCell::new(None),
                 tick: RefCell::new(None),
                 opening_tick: RefCell::new(None),
+                loading: std::cell::Cell::new(false),
             }
         }
     }
@@ -249,6 +253,20 @@ impl ListStateView {
         self.render();
     }
 
+    /// Say whether the list is still waiting for its first page.
+    ///
+    /// Waiting is not empty. With nothing to show yet the row count is zero,
+    /// and the plate used to read that as an empty folder -- "Inbox is
+    /// empty" for the frame or two before the inbox's first page landed.
+    /// While loading, the verdicts that are about emptiness -- an empty
+    /// folder, a search that matched nothing -- are withheld; what the
+    /// connection is doing is still said, because it is true either way.
+    pub fn set_loading(&self, loading: bool) {
+        if self.imp().loading.replace(loading) != loading {
+            self.render();
+        }
+    }
+
     /// Which folder the empty plate is about: `None` for the inbox, the
     /// sidebar's name for any other folder. Call it when the folder in view
     /// changes; the plate re-titles itself.
@@ -359,6 +377,16 @@ impl ListStateView {
     /// picture and whose description of itself come from different code is a
     /// widget that can be wrong in exactly the way nothing catches.
     fn derived(&self) -> Option<State> {
+        let state = self.derived_ignoring_load();
+        if self.imp().loading.get() {
+            return state.filter(|state| {
+                !matches!(state, State::InboxZero { .. } | State::NoMatches { .. })
+            });
+        }
+        state
+    }
+
+    fn derived_ignoring_load(&self) -> Option<State> {
         let imp = self.imp();
         // Before everything, and answering `None` below the threshold rather
         // than falling through: with no store there is no connection worth
