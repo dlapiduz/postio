@@ -51,7 +51,7 @@ single command.
 |---|---|---|---|
 | HTML mail, sanitised | ✓ | ◐ | The terminal draws it as styled Markdown |
 | Fold and unfold every quote | ✓ | ✓ | |
-| Fold and unfold one quote | ✓ | ◐ | By the mouse |
+| Fold and unfold one quote | ✓ | ✓ | By a click on it, in both |
 | Fold a message in a conversation to its header | ✓ | ✓ | |
 | Images in a message | ✓ | ◐ | Labelled placeholders; drawing them is the next iteration |
 | Remote images allowed per sender | ✓ | ✓ | The same allow list |
