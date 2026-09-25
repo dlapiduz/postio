@@ -188,6 +188,27 @@ pub fn presentation(width: i32, messages: usize, hidden: bool) -> Option<Present
     Some(Presentation::Full)
 }
 
+/// Which column the conversation pane keeps for the rail, whatever the thread
+/// holds.
+///
+/// [`presentation`] says what is *drawn*; this says what space is *kept*. The
+/// two differ for one message: FR-045 still draws no rail for it, but the
+/// pane keeps the column the window has room for, empty. Most mail is one
+/// message, and a body that widened by the rail's width on every one of them
+/// and narrowed again on the next thread was the reading pane changing width
+/// on most cursor moves -- 13 of 20 `j` presses in the 2026-09-25 audit. A
+/// thread first shown from the one row the list held flipped it too, before
+/// the rest of the thread was read.
+///
+/// `None` is no column: the popover step, and a rail put away with `⇧I`,
+/// which are the window's choices and so the same for every conversation.
+pub fn column(width: i32, hidden: bool) -> Option<Presentation> {
+    match presentation(width, 2, hidden) {
+        Some(Presentation::Popover) | None => None,
+        step => step,
+    }
+}
+
 /// What the caller must do after asking the rail to move its mark.
 ///
 /// Returned by every entry point, so a caller that does nothing on
@@ -604,6 +625,29 @@ mod tests {
         // person actually reads.
         for width in [900, 1200, 1600] {
             assert_eq!(presentation(width, 1, false), None, "at {width}px");
+        }
+    }
+
+    #[test]
+    fn the_column_kept_does_not_depend_on_the_thread() {
+        // The body's width is the pane's minus this, so anything here that
+        // read the thread's length would move the body between messages.
+        assert_eq!(column(1400, false), Some(Presentation::Full));
+        assert_eq!(column(NARROW_BELOW - 1, false), Some(Presentation::Narrow));
+        assert_eq!(
+            column(UNMOUNT_BELOW - 1, false),
+            None,
+            "the popover step keeps no column: the index is in the header"
+        );
+        for width in [900, 1150, 1400, 1900] {
+            assert_eq!(column(width, true), None, "hidden at {width}px");
+            // One message draws nothing, but keeps what a thread would.
+            assert_eq!(presentation(width, 1, false), None);
+            assert_eq!(
+                column(width, false),
+                presentation(width, 6, false).filter(|step| *step != Presentation::Popover),
+                "at {width}px"
+            );
         }
     }
 

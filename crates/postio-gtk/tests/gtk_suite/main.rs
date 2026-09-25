@@ -1283,6 +1283,10 @@ const CASES: &[(&str, fn())] = &[
         gtk_rail::the_rail_lists_a_thread_and_marks_what_is_on_screen as fn(),
     ),
     (
+        "gtk_rail::the_same_thread_again_keeps_the_rails_rows_and_scroll",
+        gtk_rail::the_same_thread_again_keeps_the_rails_rows_and_scroll as fn(),
+    ),
+    (
         "gtk_rail::activating_a_row_reports_the_message_it_names",
         gtk_rail::activating_a_row_reports_the_message_it_names as fn(),
     ),
@@ -1299,8 +1303,12 @@ const CASES: &[(&str, fn())] = &[
         gtk_rail::hiding_the_rail_outlasts_the_conversation_and_the_width as fn(),
     ),
     (
-        "gtk_rail::a_single_message_conversation_has_no_rail",
-        gtk_rail::a_single_message_conversation_has_no_rail as fn(),
+        "gtk_rail::a_single_message_conversation_draws_no_rail_but_keeps_its_column",
+        gtk_rail::a_single_message_conversation_draws_no_rail_but_keeps_its_column as fn(),
+    ),
+    (
+        "gtk_rail::the_body_keeps_its_width_between_conversations_of_any_length",
+        gtk_rail::the_body_keeps_its_width_between_conversations_of_any_length as fn(),
     ),
     (
         "gtk_rail::below_the_floor_the_header_carries_the_index",

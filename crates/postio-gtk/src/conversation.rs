@@ -23,7 +23,9 @@ use gtk::glib;
 use gtk::prelude::*;
 use gtk::subclass::prelude::*;
 use postio_model::ids::MessageId;
-use postio_ui::reader::rail::{Effect, NARROW_BELOW, Presentation, Rail, presentation, rows};
+use postio_ui::reader::rail::{
+    Effect, NARROW_BELOW, Presentation, Rail, column, presentation, rows,
+};
 
 use crate::list::Row;
 
@@ -2043,28 +2045,30 @@ impl ConversationView {
 
     fn apply_rail_ladder(&self, width: i32, messages: usize) {
         let imp = self.imp();
-        let step = presentation(width, messages, imp.rail_hidden.get());
+        let hidden = imp.rail_hidden.get();
+        let step = presentation(width, messages, hidden);
         // Where the one rail lives. Moved rather than duplicated: a second
         // `RailColumn` for the popover would be a second marked row, and it
         // would be wrong exactly when someone scrolled with the index open.
         self.house_the_rail(matches!(step, Some(Presentation::Popover)));
-        match step {
-            Some(Presentation::Full) => {
-                imp.rail.widget().set_visible(true);
-                imp.rail.set_narrow(false);
-            }
-            Some(Presentation::Narrow) => {
-                imp.rail.widget().set_visible(true);
-                imp.rail.set_narrow(true);
-            }
-            Some(Presentation::Popover) => {
+        // What is drawn follows the thread; the column it is drawn in follows
+        // the window alone, so the body keeps its width whatever the thread
+        // holds -- one message keeps an empty column rather than widening
+        // the body for itself (`rail::column`).
+        imp.rail.set_drawn(step.is_some());
+        match (step, column(width, hidden)) {
+            (Some(Presentation::Popover), _) => {
                 // Visible *within the popover*, which shows nothing until the
                 // counter is pressed. The column beside the body is gone
                 // because the rail is no longer in it.
                 imp.rail.widget().set_visible(true);
                 imp.rail.set_narrow(false);
             }
-            None => imp.rail.widget().set_visible(false),
+            (_, Some(kept)) => {
+                imp.rail.widget().set_visible(true);
+                imp.rail.set_narrow(kept == Presentation::Narrow);
+            }
+            (_, None) => imp.rail.widget().set_visible(false),
         }
         let position = match step {
             Some(Presentation::Popover) => {

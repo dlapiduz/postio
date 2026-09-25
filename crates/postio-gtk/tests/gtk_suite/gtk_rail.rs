@@ -143,6 +143,53 @@ pub fn the_rail_lists_a_thread_and_marks_what_is_on_screen() {
     window.close();
 }
 
+pub fn the_same_thread_again_keeps_the_rails_rows_and_scroll() {
+    let Some((window, rail)) = rail() else {
+        return;
+    };
+    window.set_default_size(200, 160);
+
+    // Forty messages, so the rail's own list has somewhere to scroll.
+    let count = 40;
+    let senders: Vec<String> = (0..count).map(|at| format!("Sender {at}")).collect();
+    let initials: Vec<String> = (0..count).map(|_| "SE".to_owned()).collect();
+    let whens: Vec<String> = (0..count).map(|_| "1 Sep".to_owned()).collect();
+    let lengths: Vec<Option<u32>> = vec![None; count];
+    let thread = rows(&senders, &initials, &whens, &lengths);
+    rail.show_thread(&thread);
+    lay_out();
+
+    let scroller = rail
+        .widget()
+        .observe_children()
+        .into_iter()
+        .filter_map(|child| child.ok()?.downcast::<gtk::ScrolledWindow>().ok())
+        .next()
+        .expect("the rail scrolls its rows");
+    let adjustment = scroller.vadjustment();
+    let first = rail.row_widget(0).expect("a first row");
+    adjustment.set_value(adjustment.upper() / 2.0);
+    let scrolled = adjustment.value();
+    assert!(scrolled > 0.0, "forty rows did not overflow the rail");
+
+    // The conversation re-reads its thread -- the list's row, then the whole
+    // conversation, then a flag changing -- and hands the rail the same rows.
+    rail.show_thread(&thread);
+    lay_out();
+    assert_eq!(
+        rail.row_widget(0),
+        Some(first),
+        "the same thread must keep the rows it has, not rebuild them"
+    );
+    assert_eq!(
+        adjustment.value(),
+        scrolled,
+        "and a rail somebody scrolled stays where they left it"
+    );
+
+    window.close();
+}
+
 pub fn activating_a_row_reports_the_message_it_names() {
     let Some((window, rail)) = rail() else {
         return;
@@ -322,21 +369,121 @@ pub fn hiding_the_rail_outlasts_the_conversation_and_the_width() {
     window.close();
 }
 
-pub fn a_single_message_conversation_has_no_rail() {
+pub fn a_single_message_conversation_draws_no_rail_but_keeps_its_column() {
     let Some((window, pane)) = pane() else {
         return;
     };
 
-    // FR-045. Not at any width: there is nothing for an index to index, and
-    // most of the mail a person reads is one message.
+    // FR-045: one message has nothing to index, so no rail is *drawn* -- no
+    // heading, no rows, no footer. But the column it would stand in is kept
+    // where the window has room for one: most mail is one message, and a
+    // body that widened by 150px on every one of them and narrowed again on
+    // every thread was the reading pane changing width on most `j` presses
+    // (13 of 20 in the 2026-09-25 audit).
     pane.open(vec![message(1)]);
-    for width in [1000, 1150, 1400, 1900] {
+    for (width, reserved) in [
+        (1000, None),
+        (1150, Some(NARROW_WIDTH)),
+        (1400, Some(FULL_WIDTH)),
+    ] {
         pane.set_window_width(width);
+        let rail = pane.rail().widget();
+        match reserved {
+            Some(column) => {
+                assert!(
+                    rail.is_visible(),
+                    "the column is kept at {width}px, empty, so the body does not \
+                     widen for one message and narrow again for the next thread"
+                );
+                assert_eq!(rail.width_request(), column, "at {width}px");
+            }
+            None => assert!(
+                !rail.is_visible(),
+                "below the floor there is no column for anyone, at {width}px"
+            ),
+        }
         assert!(
-            !pane.rail().widget().is_visible(),
-            "one message needs no rail, and none is drawn at {width}px"
+            shown_labels(rail).is_empty(),
+            "one message needs no rail, and none is drawn at {width}px: {:?}",
+            shown_labels(rail)
         );
     }
+
+    window.close();
+}
+
+/// Every label a person could see under `root`: visible itself and in every
+/// ancestor up to `root`.
+fn shown_labels(root: &gtk::Widget) -> Vec<String> {
+    let mut found = Vec::new();
+    let mut next = root.first_child();
+    while let Some(child) = next {
+        if child.is_visible() {
+            if let Some(label) = child.downcast_ref::<gtk::Label>()
+                && !label.label().is_empty()
+            {
+                found.push(label.label().to_string());
+            }
+            found.extend(shown_labels(&child));
+        }
+        next = child.next_sibling();
+    }
+    found
+}
+
+/// Let the window lay itself out: a size is only allocated on a frame, and
+/// `settle` does not wait for one.
+fn lay_out() {
+    let until = std::time::Instant::now() + std::time::Duration::from_millis(200);
+    while std::time::Instant::now() < until {
+        crate::settle();
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+}
+
+pub fn the_body_keeps_its_width_between_conversations_of_any_length() {
+    let Some((window, pane)) = pane() else {
+        return;
+    };
+    window.set_default_size(1400, 800);
+    pane.set_window_width(1400);
+    pane.set_one_document(true);
+
+    // What a person moving down a folder meets: threads of every length, one
+    // message most often, and a thread first shown from the one row the
+    // list held before the rest of it is read.
+    let thread = |id: i64, count: i64| -> Vec<ListRow> {
+        (0..count)
+            .map(|at| {
+                let mut row = message(id * 100 + at);
+                row.thread = Some(ThreadId::new(id));
+                row.thread_count = count as u32;
+                row
+            })
+            .collect()
+    };
+    let mut widths = Vec::new();
+    for rows in [
+        thread(1, 6),
+        thread(2, 1),
+        thread(3, 3),
+        thread(4, 1),
+        thread(5, 4)[3..].to_vec(),
+        thread(5, 4),
+    ] {
+        pane.open(rows);
+        lay_out();
+        let body = pane
+            .document_reader()
+            .expect("the one-document pane draws through a reader")
+            .widget();
+        widths.push(body.width());
+    }
+    assert!(widths[0] > 0, "the body was never laid out: {widths:?}");
+    assert!(
+        widths.iter().all(|width| *width == widths[0]),
+        "the body changed width moving between conversations: {widths:?}"
+    );
 
     window.close();
 }
