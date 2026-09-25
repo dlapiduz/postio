@@ -627,12 +627,13 @@ async fn preview(view: &View, hit: &postio_search::SearchHit, client: &Client) {
             let Ok(body) = answer.await else {
                 return;
             };
-            let Ok((body, prepared)) = gtk::gio::spawn_blocking(move || {
+            let preparing = gtk::gio::spawn_blocking(move || {
                 let prepared = postio_ui::reader::document::prepare_message(&body, remote);
                 (body, prepared)
-            })
-            .await
-            else {
+            });
+            // POSTIO-GLIB-SAFE: gio's own thread pool, whose handle the
+            // main context polls; no tokio reactor is involved.
+            let Ok((body, prepared)) = preparing.await else {
                 return;
             };
             let preview = view.preview();
