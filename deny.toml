@@ -105,3 +105,8 @@ allow-wildcard-paths = true
 unknown-registry = "deny"
 unknown-git = "deny"
 allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+# The one decision of that kind so far (2026-09-24, the maintainer's): Turso
+# comes from Postio's own fork, pinned by commit in the root Cargo.toml's
+# `[patch]` -- v0.8.0-pre.11 plus fuzzy and prefix expansion in the full-text
+# index, which upstream has not merged (turso#8359). ADR 0037 says why.
+allow-git = ["https://github.com/dlapiduz/turso"]
