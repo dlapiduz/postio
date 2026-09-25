@@ -466,6 +466,32 @@ fn embedded_font_faces() -> &'static str {
     RULES.get_or_init(build_font_faces)
 }
 
+/// A document that draws nothing a person can see and fetches every face.
+///
+/// What a reader loads to start its web process ahead of the first message.
+/// The faces are `font-display: block`, so text in a face the engine has
+/// not fetched yet is not painted until it arrives -- and the engine keeps a
+/// face once it has it, so that wait was paid only by the first message to
+/// use each face: the first one after startup, answered by a main thread at
+/// its busiest. Loading this first means no message waits on a face at all.
+///
+/// Every face is laid out, hidden rather than undisplayed: `display: none`
+/// text is never shaped, so it would fetch nothing.
+pub fn warming_document() -> String {
+    let mut content = String::from(
+        "<div aria-hidden=\"true\" style=\"position:absolute;visibility:hidden;\
+         pointer-events:none\">",
+    );
+    for face in FACES {
+        content.push_str(&format!(
+            "<span style=\"font-family:'{}';font-weight:{};font-style:{}\">Aa</span>",
+            face.family, face.weight, face.style
+        ));
+    }
+    content.push_str("</div>");
+    wrap_document(&content, RemoteImages::Blocked, Sheet::Theme)
+}
+
 fn build_font_faces() -> String {
     let mut out = String::new();
     for face in FACES {
@@ -2319,6 +2345,31 @@ mod reader_view_prefers_markup_over_its_own_flattening {
             !rendered.html.contains("Only the markup says this."),
             "and does not also draw the markup: {}",
             rendered.html
+        );
+    }
+}
+
+#[cfg(test)]
+mod warming_tests {
+    use super::*;
+
+    #[test]
+    fn the_warming_document_draws_with_every_face() {
+        let document = warming_document();
+        for face in FACES {
+            let drawn = format!(
+                "font-family:'{}';font-weight:{};font-style:{}",
+                face.family, face.weight, face.style
+            );
+            assert!(
+                document.contains(&drawn),
+                "{} is never laid out, so warming would not fetch it",
+                face.name
+            );
+        }
+        assert!(
+            !document.contains("display:none"),
+            "undisplayed text is never shaped, and fetches no face"
         );
     }
 }
