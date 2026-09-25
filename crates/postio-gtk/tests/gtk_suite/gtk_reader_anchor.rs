@@ -165,6 +165,13 @@ pub fn a_late_body_does_not_throw_the_reader_back_to_the_top() {
     window.close();
 }
 
+/// The index of the first paragraph whose bottom is below the top of the
+/// viewport: the one a person is reading.
+const READING_INDEX: &str = "[...document.querySelectorAll('p')].findIndex(p => p.getBoundingClientRect().bottom > 0)";
+
+/// A function of a paragraph index: where that paragraph's top sits on screen.
+const READING_TOP: &str = "(i => document.querySelectorAll('p')[i].getBoundingClientRect().top)";
+
 pub fn showing_a_messages_images_keeps_its_place() {
     if !display() {
         return;
@@ -199,7 +206,13 @@ pub fn showing_a_messages_images_keeps_its_place() {
 
     number(&view, "(window.scrollTo(0, 1500), window.scrollY)");
     settle_for(std::time::Duration::from_millis(300));
-    let reading_at = number(&view, "window.scrollY");
+    // What the person is reading: the first paragraph still on screen, by
+    // its place in the message, and where on screen it sits. Showing the
+    // images changes what is *above* it -- a held-back image takes no room,
+    // a shown one does -- so the scroll offset has to move for the words
+    // to hold still, and it is the words a person watches.
+    let reading = number(&view, READING_INDEX);
+    let reading_at = number(&view, &format!("{READING_TOP}({reading})"));
 
     let loads = reader.loads();
     reader.click_show_once();
@@ -210,10 +223,11 @@ pub fn showing_a_messages_images_keeps_its_place() {
     wait_laid_out(&view);
     settle_for(std::time::Duration::from_millis(100));
 
-    let after = number(&view, "window.scrollY");
+    let after = number(&view, &format!("{READING_TOP}({reading})"));
     assert!(
         (after - reading_at).abs() < 2.0,
-        "showing the images moved the reader from {reading_at}px to {after}px"
+        "showing the images moved the paragraph being read from {reading_at}px \
+         to {after}px on screen"
     );
 
     window.close();
