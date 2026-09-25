@@ -229,6 +229,32 @@ impl Tokens {
     }
 }
 
+/// The sizes Postio sets type at, as roles: `--postio-text-<role>`.
+///
+/// In `rem` against GTK's 11pt default, so text scaling moves them all. The
+/// canvas uses these eight; anything else in `shell.css` is either a
+/// one-off with a reason beside it or drift. Named here, beside the other
+/// tokens, so a stylesheet says `var(--postio-text-body)` rather than
+/// retyping 0.8864rem -- which it had done as 0.8863rem five times.
+pub const TYPE_ROLES: &[(&str, &str)] = &[
+    // 10px: the section kicker's capitals.
+    ("micro", "0.6818rem"),
+    // 10.5px: mono metadata, key hints, footers.
+    ("meta", "0.7159rem"),
+    // 11.5px: a small button, a secondary line.
+    ("small", "0.7841rem"),
+    // 12px: a chip's label, a plate's title.
+    ("label", "0.8182rem"),
+    // 12.5px: controls and interface text.
+    ("ui", "0.8523rem"),
+    // 13px: body text, a row's primary line.
+    ("body", "0.8864rem"),
+    // 13.5px: the composer's fields, text meant to be read at length.
+    ("reading", "0.9204rem"),
+    // 20px: a pane's title.
+    ("title", "1.3636rem"),
+];
+
 /// Generate `data/tokens.css` from the parsed design system.
 pub fn generate(tokens: &Tokens, source: &str) -> Result<String, TokenError> {
     let mut out = String::with_capacity(8 * 1024);
@@ -276,7 +302,12 @@ pub fn generate(tokens: &Tokens, source: &str) -> Result<String, TokenError> {
     writeln!(out, ":root {{").unwrap();
     for name in tokens.names() {
         let value = tokens.get(name).unwrap_or_default();
-        writeln!(out, "  --postio-{name}: {value};").unwrap();
+        // The spacing ramp in whole pixels: GTK lays out in them, and the
+        // Rust constants in `space.rs` (generated beside this) are `i32`.
+        match whole_pixels(name, value) {
+            Some(px) => writeln!(out, "  --postio-{name}: {px}px;").unwrap(),
+            None => writeln!(out, "  --postio-{name}: {value};").unwrap(),
+        }
     }
     writeln!(
         out,
@@ -341,6 +372,9 @@ pub fn generate(tokens: &Tokens, source: &str) -> Result<String, TokenError> {
     .unwrap();
     writeln!(out, ":root {{").unwrap();
     writeln!(out, "  font-family: var(--postio-font-body);").unwrap();
+    for (role, size) in TYPE_ROLES {
+        writeln!(out, "  --postio-text-{role}: {size};").unwrap();
+    }
     writeln!(out, "}}\n").unwrap();
     writeln!(
         out,
@@ -518,6 +552,67 @@ fn colour(value: &str) -> Option<(f32, f32, f32, f32)> {
 /// file that compiles and is missing half the design system.
 fn length(value: &str) -> Option<f32> {
     value.trim().strip_suffix("px")?.trim().parse().ok()
+}
+
+/// A spacing token's length rounded to the nearest whole pixel, or `None`
+/// for anything that is not a `space-*` pixel length.
+///
+/// The design system's ramp is `3.4px` steps, which the web renders
+/// sub-pixel and GTK cannot: a margin is an `i32`, and a CSS padding of
+/// 10.2px lands wherever the renderer rounds it. Rounding once, here, is
+/// what lets a margin in Rust and a padding in the stylesheet be the same
+/// number (the reader's WebKit tokens keep the fractional ramp).
+fn whole_pixels(name: &str, value: &str) -> Option<i32> {
+    if !name.starts_with("space-") {
+        return None;
+    }
+    Some(length(value)?.round() as i32)
+}
+
+/// The spacing ramp, as `(step, whole pixels)`: `(3, 10)` for `space-3`.
+pub fn space_scale(tokens: &Tokens) -> Vec<(u32, i32)> {
+    tokens
+        .names()
+        .filter_map(|name| {
+            let step = name.strip_prefix("space-")?.parse().ok()?;
+            Some((step, whole_pixels(name, tokens.get(name)?)?))
+        })
+        .collect()
+}
+
+/// Generate `postio-gtk/data/space.rs`: the spacing ramp as Rust constants,
+/// `S1` .. `S8`, so a widget's margin and the stylesheet's padding are one
+/// number by construction.
+pub fn generate_space_rs(tokens: &Tokens, source: &str) -> Result<String, TokenError> {
+    let scale = space_scale(tokens);
+    if scale.is_empty() {
+        return Err(TokenError(
+            "the design system has no `space-*` tokens to generate".to_owned(),
+        ));
+    }
+    let mut out = String::new();
+    writeln!(out, "// GENERATED FILE — do not edit by hand.").unwrap();
+    writeln!(out, "//").unwrap();
+    writeln!(out, "// Source     : {source}").unwrap();
+    writeln!(
+        out,
+        "// Emitted by : crates/postio-gtk/build.rs via postio_ui::tokens"
+    )
+    .unwrap();
+    writeln!(out, "// Regenerate : cargo build -p postio-gtk").unwrap();
+    writeln!(out, "//").unwrap();
+    writeln!(
+        out,
+        "// The design system's spacing ramp in whole pixels, the same numbers"
+    )
+    .unwrap();
+    writeln!(out, "// `--postio-space-N` carries in tokens.css.").unwrap();
+    writeln!(out).unwrap();
+    for (step, px) in scale {
+        writeln!(out, "/// `--postio-space-{step}`: {px}px.").unwrap();
+        writeln!(out, "pub const S{step}: i32 = {px};").unwrap();
+    }
+    Ok(out)
 }
 
 /// Generate `data/reader-tokens.css` from the parsed design system: the

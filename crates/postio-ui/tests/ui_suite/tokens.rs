@@ -330,3 +330,55 @@ fn every_required_token_reaches_swift() {
         );
     }
 }
+
+/// GTK lays widgets out in whole pixels, and Rust spacing is an `i32`, so
+/// the design system's 3.4px step reaches both as the nearest whole pixel --
+/// once, here, rather than as 14 hand-rounded spacings across the frontend.
+#[test]
+fn the_spacing_scale_is_whole_pixels() {
+    let (path, parsed) = source_tokens();
+    let css = tokens::generate(&parsed, &label(&path)).unwrap();
+    let spaces: Vec<&str> = css
+        .lines()
+        .filter(|line| line.trim_start().starts_with("--postio-space-"))
+        .collect();
+    assert!(!spaces.is_empty(), "no spacing tokens were generated");
+    for line in spaces {
+        let value = line.split(':').nth(1).unwrap().trim().trim_end_matches(';');
+        let px = value.strip_suffix("px").expect("a pixel length");
+        assert!(
+            px.parse::<i32>().is_ok(),
+            "`{line}` is not a whole pixel; GTK cannot lay it out and Rust cannot name it"
+        );
+    }
+}
+
+/// The same scale as Rust constants, so a margin in code and a padding in
+/// the stylesheet are the same number by construction.
+#[test]
+fn the_rust_spacing_scale_is_the_css_one_and_checked_in() {
+    let (path, parsed) = source_tokens();
+    let rust = tokens::generate_space_rs(&parsed, &label(&path)).unwrap();
+    assert!(rust.contains("pub const S3: i32 = 10;"), "{rust}");
+    let checked_in = std::fs::read_to_string(gtk_dir().join("data").join("space.rs"))
+        .expect("data/space.rs is missing; run `cargo build -p postio-gtk`");
+    assert_eq!(
+        rust, checked_in,
+        "data/space.rs is stale. Run `cargo build -p postio-gtk` and commit the result."
+    );
+}
+
+/// The sizes Postio sets type at are named roles, so a stylesheet says
+/// `var(--postio-text-body)` rather than retyping 0.8864rem -- which it had
+/// done as 0.8863rem five times.
+#[test]
+fn the_type_roles_are_named_sizes() {
+    let (path, parsed) = source_tokens();
+    let css = tokens::generate(&parsed, &label(&path)).unwrap();
+    for (role, size) in tokens::TYPE_ROLES {
+        assert!(
+            css.contains(&format!("--postio-text-{role}: {size};")),
+            "`--postio-text-{role}` is not generated"
+        );
+    }
+}

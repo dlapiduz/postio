@@ -30,6 +30,14 @@ pub mod notice;
 pub mod plate;
 pub mod screen;
 pub mod segmented;
+pub mod settings_group;
+
+/// The design system's spacing ramp in whole pixels -- `S1` 3px to `S8`
+/// 27px -- generated from the same tokens as `--postio-space-N`, so a
+/// margin set in code and a padding in `shell.css` are one number.
+pub mod space {
+    include!("../../data/space.rs");
+}
 
 pub use action_bar::{Action, ActionBar};
 pub use button::{Kind, Size, icon_button};
@@ -44,3 +52,4 @@ pub use notes::{ListOrEmpty, callout, empty_note};
 pub use notice::{NoticeBar, NoticeMenuItem};
 pub use screen::under_window_chrome;
 pub use segmented::SegmentedControl;
+pub use settings_group::SettingsGroup;

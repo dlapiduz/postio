@@ -82,7 +82,9 @@ use postio_model::ids::SignatureId;
 use postio_model::{Account, AccountId, MailboxRole, UnsubscribeActivation};
 
 use crate::keymap::{Chord, ChordFromGdk};
-use crate::widgets::{CheckRow, ListOrEmpty, SegmentedControl, kicker, stat_line};
+use crate::widgets::{
+    CheckRow, ListOrEmpty, SegmentedControl, SettingsGroup, kicker, space, stat_line,
+};
 
 /// How long to let typing settle before writing the buffer back to disk.
 ///
@@ -2112,8 +2114,8 @@ impl SettingsPanel {
         // The same 18px `ui_row` puts either side of a settings row: this
         // group follows five fields, and flush against the last of them it
         // reads as a sixth rather than as a heading over what comes next.
-        heading.set_margin_top(18);
-        heading.set_margin_bottom(4);
+        heading.set_margin_top(space::S6);
+        heading.set_margin_bottom(space::S1);
         group.append(&heading);
 
         let data = imp
@@ -2944,37 +2946,26 @@ impl SettingsPanel {
         ));
 
         let interval = stat_line("");
-        let left = gtk::Box::new(gtk::Orientation::Vertical, 0);
-        left.append(&kicker("Check for mail"));
-        check_for_mail.widget().set_margin_top(8);
-        left.append(check_for_mail.widget());
-        interval.set_margin_top(10);
-        left.append(&interval);
-        let attachments_kicker = kicker("Download attachments");
-        attachments_kicker.set_margin_top(20);
-        left.append(&attachments_kicker);
-        attachments.widget().set_margin_top(8);
-        left.append(attachments.widget());
+        let left = SettingsGroup::new();
+        left.section("Check for mail");
+        left.control(check_for_mail.widget()).note(&interval);
+        left.section("Download attachments");
+        left.control(attachments.widget());
 
-        let checks = gtk::Box::new(gtk::Orientation::Vertical, 6);
-        checks.set_margin_top(20);
+        let checks = gtk::Box::new(gtk::Orientation::Vertical, space::S2);
         checks.append(sync_on_startup.widget());
         checks.append(notify.widget());
-        left.append(&checks);
-        let roles_kicker = kicker("Notify for");
-        roles_kicker.set_margin_top(18);
-        left.append(&roles_kicker);
-        notify_roles.set_margin_top(8);
+        left.block(&checks);
+        left.section("Notify for");
         notify_roles.set_halign(gtk::Align::Start);
         notify_roles.set_width_chars(24);
-        left.append(&notify_roles);
+        left.control(&notify_roles);
         let elsewhere = stat_line("remote images are allowed per sender, under Privacy");
         // Wraps rather than ellipsising: it is a sentence, not a column of
         // numbers, and half of it is worse than two lines of it.
         elsewhere.set_ellipsize(pango::EllipsizeMode::None);
         elsewhere.set_wrap(true);
-        elsewhere.set_margin_top(18);
-        left.append(&elsewhere);
+        left.block(&elsewhere);
 
         // The stat block: bordered, mono, with the one action that has a
         // command behind it. `Compact index` is in the drawing and is *not*
@@ -3004,12 +2995,12 @@ impl SettingsPanel {
         ));
         stats.append(&sync_now);
 
-        let right = gtk::Box::new(gtk::Orientation::Vertical, 0);
-        right.append(&kicker("Local store"));
-        stats.set_margin_top(8);
-        right.append(&stats);
+        let right = SettingsGroup::new();
+        right.section("Local store");
+        right.control(&stats);
 
-        imp.sync_pane.append(&two_columns(&left, &right));
+        imp.sync_pane
+            .append(&two_columns(left.widget(), right.widget()));
 
         let _ = imp.sync_controls.set(SyncControls {
             check_for_mail,
@@ -3441,27 +3432,21 @@ impl SettingsPanel {
             move |active| panel.apply_ui_mutation(move |ui| ui.sender_avatars = active)
         ));
 
-        let left = gtk::Box::new(gtk::Orientation::Vertical, 0);
-        left.append(&kicker("Theme"));
-        theme.widget().set_margin_top(8);
-        left.append(theme.widget());
-        let density_kicker = kicker("Row density");
-        density_kicker.set_margin_top(22);
-        left.append(&density_kicker);
-        density.widget().set_margin_top(8);
-        left.append(density.widget());
-        density_stat.set_margin_top(10);
-        left.append(&density_stat);
+        let left = SettingsGroup::new();
+        left.section("Theme");
+        left.control(theme.widget());
+        left.section("Row density");
+        left.control(density.widget()).note(&density_stat);
 
-        let right = gtk::Box::new(gtk::Orientation::Vertical, 10);
-        right.append(&kicker("Message list"));
-        let checks = gtk::Box::new(gtk::Orientation::Vertical, 6);
-        checks.set_margin_top(4);
+        let right = SettingsGroup::new();
+        right.section("Message list");
+        let checks = gtk::Box::new(gtk::Orientation::Vertical, space::S2);
         checks.append(hover_actions.widget());
         checks.append(sender_avatars.widget());
-        right.append(&checks);
+        right.control(&checks);
 
-        imp.appearance_pane.append(&two_columns(&left, &right));
+        imp.appearance_pane
+            .append(&two_columns(left.widget(), right.widget()));
 
         let _ = imp.appearance.set(AppearanceControls {
             theme,
@@ -3543,22 +3528,19 @@ impl SettingsPanel {
             }
         ));
 
-        let column = gtk::Box::new(gtk::Orientation::Vertical, 0);
-        column.append(&kicker("Signature on a reply"));
-        on_reply.widget().set_margin_top(8);
-        column.append(on_reply.widget());
-        let forward_kicker = kicker("Signature on a forward");
-        forward_kicker.set_margin_top(22);
-        column.append(&forward_kicker);
-        on_forward.widget().set_margin_top(8);
-        column.append(on_forward.widget());
-        let note = stat_line("a reply answers a fragment · a forward hands the whole message on");
-        note.set_margin_top(14);
-        column.append(&note);
+        let group = SettingsGroup::new();
+        group.section("Signature on a reply");
+        group.control(on_reply.widget());
+        group.section("Signature on a forward");
+        group.control(on_forward.widget());
+        group.block(&stat_line(
+            "a reply answers a fragment · a forward hands the whole message on",
+        ));
+        let column = group.widget();
         column.set_margin_start(PANE_INSET);
         column.set_margin_end(PANE_INSET);
         column.set_margin_top(PANE_INSET);
-        imp.composing_pane.append(&column);
+        imp.composing_pane.append(column);
 
         let _ = imp.composing_controls.set(ComposingControls {
             on_reply,
@@ -4178,23 +4160,21 @@ impl SettingsPanel {
         );
         imp.egress_scroller.set_visible(false);
 
-        imp.privacy_pane.append(&kicker("Remote images allowed"));
-        imp.privacy_pane.append(&imp.privacy_scroller);
-        imp.privacy_pane.append(&imp.privacy_empty);
-        let unsubscribe_title = kicker("Mailing lists left");
-        unsubscribe_title.set_margin_top(18);
-        imp.privacy_pane.append(&unsubscribe_title);
-        imp.privacy_pane.append(&imp.unsubscribe_scroller);
-        imp.privacy_pane.append(&imp.unsubscribe_empty);
-        let receipts_title = kicker("Read receipts");
-        receipts_title.set_margin_top(18);
-        imp.privacy_pane.append(&receipts_title);
-        imp.privacy_pane.append(&imp.read_receipt_count);
-        let egress_title = kicker("Recent connections");
-        egress_title.set_margin_top(18);
-        imp.privacy_pane.append(&egress_title);
-        imp.privacy_pane.append(&imp.egress_scroller);
-        imp.privacy_pane.append(&imp.egress_empty);
+        let privacy = SettingsGroup::on(&imp.privacy_pane);
+        privacy.section("Remote images allowed");
+        privacy
+            .append(&imp.privacy_scroller)
+            .append(&imp.privacy_empty);
+        privacy.section("Mailing lists left");
+        privacy
+            .append(&imp.unsubscribe_scroller)
+            .append(&imp.unsubscribe_empty);
+        privacy.section("Read receipts");
+        privacy.append(&imp.read_receipt_count);
+        privacy.section("Recent connections");
+        privacy
+            .append(&imp.egress_scroller)
+            .append(&imp.egress_empty);
 
         // ── keys: one row per command, a rebind capture button (#881) ────
         imp.keys_list.add_css_class("postio-settings-keys-list");

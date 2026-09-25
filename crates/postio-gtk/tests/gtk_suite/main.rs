@@ -333,6 +333,14 @@ const CASES: &[(&str, fn())] = &[
         gtk_components::every_primary_button_is_the_same_kind as fn(),
     ),
     (
+        "gtk_components::every_settings_heading_keeps_one_rhythm",
+        gtk_components::every_settings_heading_keeps_one_rhythm as fn(),
+    ),
+    (
+        "gtk_components::a_type_role_resolves_to_its_size",
+        gtk_components::a_type_role_resolves_to_its_size as fn(),
+    ),
+    (
         "gtk_checkrow::showing_the_files_value_is_not_changing_it",
         gtk_checkrow::showing_the_files_value_is_not_changing_it as fn(),
     ),

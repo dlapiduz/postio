@@ -238,3 +238,82 @@ pub fn every_primary_button_is_the_same_kind() {
     app_window.destroy();
     window.destroy();
 }
+
+/// Every settings pane keeps one rhythm: a section heading sits one `S6`
+/// below what came before it, or flush at the top. The panes had been
+/// written with 18, 20 and 22, so three panes of one window had three.
+pub fn every_settings_heading_keeps_one_rhythm() {
+    let Some(window) = window() else {
+        return;
+    };
+    let panel = postio_gtk::settings::SettingsPanel::new();
+    window.set_child(Some(&panel));
+    window.present();
+    pump();
+    // Panes are built the first time they are shown.
+    for section in postio_gtk::settings::Section::ALL {
+        panel.show_section(section);
+        pump();
+    }
+
+    let allowed = [0, widgets::space::S6];
+    let mut seen = 0;
+    for widget in descendants(panel.upcast_ref()) {
+        // The sidebar's group headings belong to the list's header func,
+        // not to a pane's column.
+        if !widget.has_css_class("postio-kicker")
+            || widget.has_css_class("postio-settings-nav-heading")
+        {
+            continue;
+        }
+        seen += 1;
+        let label = widget.downcast_ref::<gtk::Label>().unwrap().label();
+        assert!(
+            allowed.contains(&widget.margin_top()),
+            "`{label}` sits {}px below its neighbour; the rhythm is {allowed:?}",
+            widget.margin_top()
+        );
+    }
+    assert!(seen >= 8, "found only {seen} section headings");
+    window.destroy();
+}
+
+/// A type role resolves to its size in GTK: text set in
+/// `var(--postio-text-title)` is the same width as text set in the literal
+/// it names. A role that did not resolve would fall back to the inherited
+/// size and be narrower, silently.
+pub fn a_type_role_resolves_to_its_size() {
+    let Some(window) = window() else {
+        return;
+    };
+    let provider = gtk::CssProvider::new();
+    provider.load_from_string(
+        ".probe-role { font-size: var(--postio-text-title); }\n\
+         .probe-literal { font-size: 1.3636rem; }",
+    );
+    gtk::style_context_add_provider_for_display(
+        &gdk::Display::default().unwrap(),
+        &provider,
+        gtk::STYLE_PROVIDER_PRIORITY_APPLICATION + 1,
+    );
+    let column = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    let role = gtk::Label::new(Some("Inbox is empty"));
+    role.add_css_class("probe-role");
+    let literal = gtk::Label::new(Some("Inbox is empty"));
+    literal.add_css_class("probe-literal");
+    let inherited = gtk::Label::new(Some("Inbox is empty"));
+    column.append(&role);
+    column.append(&literal);
+    column.append(&inherited);
+    window.set_child(Some(&column));
+    window.present();
+    pump();
+
+    assert_eq!(width(&role), width(&literal), "the role did not resolve");
+    assert!(
+        width(&role) > width(&inherited),
+        "a title is larger than body text"
+    );
+    gtk::style_context_remove_provider_for_display(&gdk::Display::default().unwrap(), &provider);
+    window.destroy();
+}
