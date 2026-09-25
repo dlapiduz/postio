@@ -12,7 +12,9 @@
 //! had already fixed on the other platform. Nothing here touches a toolkit:
 //! `Vec<Mailbox>` in, `Vec<Mailbox>` out.
 
-use postio_model::{AccountId, Mailbox, MailboxCounts, MailboxRole};
+use std::collections::{HashMap, HashSet};
+
+use postio_model::{AccountId, Mailbox, MailboxCounts, MailboxId, MailboxRole};
 
 /// Where a role sits in the sidebar, or `None` for an ordinary folder.
 ///
@@ -212,6 +214,126 @@ pub fn sections(mailboxes: &[Mailbox]) -> (Vec<Mailbox>, Vec<Mailbox>) {
     special.sort_by_key(|m| (role_order(m.role).unwrap_or(u8::MAX), m.name.clone()));
     ordinary.sort_by_key(|m| m.path.to_lowercase());
     (special, ordinary)
+}
+
+// ── The ordinary folders as a tree ─────────────────────────────────────────
+//
+// Moved out of `postio-gtk::sidebar` by spec 005: the terminal sidebar draws
+// the same hierarchy and folds it with the same command.
+
+/// One row of the ordinary folder tree (#324), positioned in the hierarchy
+/// the server reported: the mailbox itself, how deep it nests, and whether
+/// it has children to disclose.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FolderRow {
+    /// The folder.
+    pub mailbox: Mailbox,
+    /// Ancestors between this row and a root, capped at [`MAX_DEPTH`].
+    pub depth: u8,
+    /// Whether this row has at least one child in the tree, whatever its
+    /// current expansion state.
+    pub has_children: bool,
+}
+
+/// Nesting deeper than this renders at the same indent as this depth: the
+/// sidebar column has finite width, and pushing a name out of it to indent
+/// correctly is worse than an indent that stops being literal.
+pub const MAX_DEPTH: u8 = 4;
+
+/// Flatten the ordinary folders into the order the sidebar draws them:
+/// depth-first, each level sorted the way the flat list has always been
+/// sorted, a folder's children immediately beneath it and hidden while it is
+/// collapsed.
+///
+/// `collapsed` names the folders currently closed; everything else with
+/// children is open, which is why a fresh account — nothing collapsed yet —
+/// renders exactly as flat-but-correctly-indented as it would before this
+/// existed, rather than defaulting to a wall of closed rows.
+///
+/// A `\Noselect` container (`Mailbox::selectable == false`) still gets a row
+/// when it has children, so the hierarchy it organizes can be opened even
+/// though it cannot be opened as a mailbox — see #324's acceptance. A
+/// `\Noselect` folder with nothing under it gets no row at all: nothing to
+/// open and nothing to toggle is a row that wastes a keystroke, same as
+/// today's flat list already decided in [`sections`].
+///
+/// A child whose parent was never listed by the server (`parent_id` points
+/// at nothing in `mailboxes`, or is `None`) renders as its own root — exactly
+/// what `postio-sync::discover::link_parents` already promises: "the folder
+/// is still perfectly usable; it just sits at the top."
+pub fn folder_rows(mailboxes: &[Mailbox], collapsed: &HashSet<MailboxId>) -> Vec<FolderRow> {
+    let ordinary: Vec<&Mailbox> = mailboxes
+        .iter()
+        .filter(|m| role_order(m.role).is_none() || !primary_within(m, mailboxes))
+        .collect();
+    let present: HashSet<MailboxId> = ordinary.iter().map(|m| m.id).collect();
+
+    let mut children: HashMap<MailboxId, Vec<&Mailbox>> = HashMap::new();
+    for m in &ordinary {
+        if let Some(parent) = m.parent_id
+            && present.contains(&parent)
+        {
+            children.entry(parent).or_default().push(m);
+        }
+    }
+    for list in children.values_mut() {
+        list.sort_by_key(|m| m.path.to_lowercase());
+    }
+
+    let mut roots: Vec<&Mailbox> = ordinary
+        .iter()
+        .copied()
+        .filter(|m| !m.parent_id.is_some_and(|p| present.contains(&p)))
+        .collect();
+    roots.sort_by_key(|m| m.path.to_lowercase());
+
+    let mut out = Vec::new();
+    for root in roots {
+        walk_folder_tree(root, 0, &children, collapsed, &mut out);
+    }
+    out
+}
+
+fn walk_folder_tree<'a>(
+    mailbox: &'a Mailbox,
+    depth: u8,
+    children: &HashMap<MailboxId, Vec<&'a Mailbox>>,
+    collapsed: &HashSet<MailboxId>,
+    out: &mut Vec<FolderRow>,
+) {
+    let kids = children.get(&mailbox.id);
+    let has_children = kids.is_some_and(|k| !k.is_empty());
+    if !mailbox.selectable && !has_children {
+        return;
+    }
+    out.push(FolderRow {
+        mailbox: mailbox.clone(),
+        depth: depth.min(MAX_DEPTH),
+        has_children,
+    });
+    if has_children && !collapsed.contains(&mailbox.id) {
+        for child in kids.into_iter().flatten() {
+            walk_folder_tree(child, depth + 1, children, collapsed, out);
+        }
+    }
+}
+
+/// Every ancestor of `id`, nearest first, so the caller can open all of them.
+///
+/// A folder selected while an ancestor is collapsed must still be reachable —
+/// see [`Sidebar::select`] — and this is what tells it which parents to open.
+pub fn ancestors_of(mailboxes: &[Mailbox], id: MailboxId) -> Vec<MailboxId> {
+    let by_id: HashMap<MailboxId, &Mailbox> = mailboxes.iter().map(|m| (m.id, m)).collect();
+    let mut out = Vec::new();
+    let mut current = by_id.get(&id).and_then(|m| m.parent_id);
+    while let Some(parent) = current {
+        if !by_id.contains_key(&parent) {
+            break;
+        }
+        out.push(parent);
+        current = by_id.get(&parent).and_then(|m| m.parent_id);
+    }
+    out
 }
 
 // ── What a row is called, and the number beside it ──────────────────────────
