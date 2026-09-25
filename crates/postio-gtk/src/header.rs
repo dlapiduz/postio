@@ -9,7 +9,7 @@
 //! keyboard, so a button that hides its shortcut is a button that teaches
 //! nothing. The keys shown are the keymap's (`postio_ui::hints`): `c`
 //! compose, `?` keys and `/` search by default, and whatever `[keys]` says
-//! after a rebind — [`set_keymap`] redraws them.
+//! after a rebind — [`sync_keys`] and [`sync_compose`] redraw them.
 //!
 //! Compose is wired to the `win.compose` action the composer installs; the
 //! rest of the actions arrive with their own issues.
