@@ -17,9 +17,8 @@
 //! and the assertions are made after all of them have.
 //!
 //! A folder deep enough to scroll, with the cursor in the middle of it, and
-//! the Unified view as well: a folder takes a row out where it stands, and
-//! an aggregate view re-reads what is on screen and splices, and those are
-//! two different roads to the same promise.
+//! the Unified view as well, which is the inboxes (#1692): an archive takes
+//! the row out of both, and both keep the same promise.
 
 use crate::settle_until;
 use std::time::Duration;
@@ -322,39 +321,49 @@ pub fn a_row_taken_from_under_the_keyboard_leaves_the_list_where_it_was() {
     });
 }
 
-/// Unified is every account's mail, archived included, so an archive there
-/// changes a row's folder and not its place in the view. The refresh that
-/// follows re-reads what is on screen and splices -- the aggregate views'
-/// road -- and it must leave the cursor and the list exactly where they
-/// were. Whether Unified should be every account's inboxes instead, as
-/// `docs/PRODUCT.md` words it, is #1692; if it becomes that, this case
-/// becomes a walk-down like the folder's.
-pub fn archiving_in_the_unified_view_moves_nothing() {
+/// Unified is the inboxes (#1692), so an archive there takes the row out of
+/// the view exactly as it does out of a folder, and `a a a` walks down it:
+/// the cursor on the message that was below, the row gone, the reading pane
+/// following -- the folder's promise, kept by an aggregate view.
+pub fn archiving_walks_down_the_unified_view() {
     crate::gtk_case(async {
         let Some(triage) = triage(Some(|_| ListScope::Unified)).await else {
             return;
         };
+        for press in 1..=3 {
+            remove_and_walk(&triage, Gesture::Key(gdk::Key::a), press).await;
+        }
+
+        // And faster than the round trip, which is how triage is typed: the
+        // second press has to be about the row below, so the cursor has to
+        // be there before the first archive's write, events and re-read are.
         let window = &triage.window;
         let list = window.list();
-        let kept = list.cursor_id().expect("the cursor is on a message");
-        let offset = list.scroll_offset();
-        let refreshes = postio_ui::test_support::pages_requested();
+        let model = list.model();
+        let first = list.cursor_id().expect("the cursor is on a message");
+        let second = below(window, first);
+        let third = below(window, second);
+        window.handle_key(gdk::Key::a, gdk::ModifierType::empty());
+        while glib::MainContext::default().iteration(false) {}
         window.handle_key(gdk::Key::a, gdk::ModifierType::empty());
         assert!(
-            settle_until(async || postio_ui::test_support::pages_requested() > refreshes).await,
-            "the archive never reached the Unified view"
+            settle_until(
+                async || model.position_of(first).is_none() && model.position_of(second).is_none()
+            )
+            .await,
+            "two quick presses in Unified did not take two messages out: {:?}",
+            complaints(&triage.probe)
         );
         quiesce().await;
-        assert_eq!(complaints(&triage.probe), Vec::<String>::new());
         assert_eq!(
-            list.cursor_id(),
-            Some(kept),
-            "an archive that left the row in the view moved the cursor off it"
+            complaints(&triage.probe),
+            Vec::<String>::new(),
+            "a quick second press in Unified complained"
         );
         assert_eq!(
-            list.scroll_offset(),
-            offset,
-            "an archive that left the row in the view moved the list"
+            list.cursor_id(),
+            Some(third),
+            "the cursor is not on the message below the two archived"
         );
     });
 }
