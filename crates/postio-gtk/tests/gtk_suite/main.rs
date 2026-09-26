@@ -1389,12 +1389,12 @@ const CASES: &[(&str, fn())] = &[
         gtk_rail::hiding_the_rail_outlasts_the_conversation_and_the_width as fn(),
     ),
     (
-        "gtk_rail::a_single_message_conversation_draws_no_rail_but_keeps_its_column",
-        gtk_rail::a_single_message_conversation_draws_no_rail_but_keeps_its_column as fn(),
+        "gtk_rail::a_single_message_conversation_has_no_rail_and_no_column",
+        gtk_rail::a_single_message_conversation_has_no_rail_and_no_column as fn(),
     ),
     (
-        "gtk_rail::the_body_keeps_its_width_between_conversations_of_any_length",
-        gtk_rail::the_body_keeps_its_width_between_conversations_of_any_length as fn(),
+        "gtk_rail::the_body_keeps_its_width_between_threads_and_a_single_message_takes_the_pane",
+        gtk_rail::the_body_keeps_its_width_between_threads_and_a_single_message_takes_the_pane as fn(),
     ),
     (
         "gtk_rail::below_the_floor_the_header_carries_the_index",

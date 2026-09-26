@@ -369,39 +369,27 @@ pub fn hiding_the_rail_outlasts_the_conversation_and_the_width() {
     window.close();
 }
 
-pub fn a_single_message_conversation_draws_no_rail_but_keeps_its_column() {
+pub fn a_single_message_conversation_has_no_rail_and_no_column() {
     let Some((window, pane)) = pane() else {
         return;
     };
 
-    // FR-045: one message has nothing to index, so no rail is *drawn* -- no
-    // heading, no rows, no footer. But the column it would stand in is kept
-    // where the window has room for one: most mail is one message, and a
-    // body that widened by 150px on every one of them and narrowed again on
-    // every thread was the reading pane changing width on most `j` presses
-    // (13 of 20 in the 2026-09-25 audit).
-    pane.open(vec![message(1)]);
-    for (width, reserved) in [
-        (1000, None),
-        (1150, Some(NARROW_WIDTH)),
-        (1400, Some(FULL_WIDTH)),
-    ] {
+    // FR-045: one message has nothing to index, so there is no rail. For a
+    // day the column it would stand in was kept, empty, so the body held its
+    // width between single messages and threads -- and a person reading mail
+    // saw a bordered empty column beside every message that was not a
+    // thread, which reads as a rail with nothing in it. The maintainer called
+    // it a bug (2026-09-25): a single message takes the pane.
+    let mut single = message(1);
+    single.thread_count = 1;
+    pane.open(vec![single]);
+    for width in [1000, 1150, 1400] {
         pane.set_window_width(width);
         let rail = pane.rail().widget();
-        match reserved {
-            Some(column) => {
-                assert!(
-                    rail.is_visible(),
-                    "the column is kept at {width}px, empty, so the body does not \
-                     widen for one message and narrow again for the next thread"
-                );
-                assert_eq!(rail.width_request(), column, "at {width}px");
-            }
-            None => assert!(
-                !rail.is_visible(),
-                "below the floor there is no column for anyone, at {width}px"
-            ),
-        }
+        assert!(
+            !rail.is_visible(),
+            "a single message kept a rail column at {width}px"
+        );
         assert!(
             shown_labels(rail).is_empty(),
             "one message needs no rail, and none is drawn at {width}px: {:?}",
@@ -442,7 +430,7 @@ fn lay_out() {
     }
 }
 
-pub fn the_body_keeps_its_width_between_conversations_of_any_length() {
+pub fn the_body_keeps_its_width_between_threads_and_a_single_message_takes_the_pane() {
     let Some((window, pane)) = pane() else {
         return;
     };
@@ -463,27 +451,43 @@ pub fn the_body_keeps_its_width_between_conversations_of_any_length() {
             })
             .collect()
     };
+    let body_width = |rows: Vec<ListRow>| {
+        pane.open(rows);
+        // Past the pane's 400ms redraw deadline: these rows carry no bodies,
+        // so a thread is never whole and the header and rail change over
+        // with the document when the deadline draws it.
+        for _ in 0..3 {
+            lay_out();
+        }
+        pane.document_reader()
+            .expect("the one-document pane draws through a reader")
+            .widget()
+            .width()
+    };
+    // Threads of any length keep one width, a thread first shown from the one
+    // row the list held included: its row says it holds four.
     let mut widths = Vec::new();
     for rows in [
         thread(1, 6),
-        thread(2, 1),
         thread(3, 3),
-        thread(4, 1),
         thread(5, 4)[3..].to_vec(),
         thread(5, 4),
     ] {
-        pane.open(rows);
-        lay_out();
-        let body = pane
-            .document_reader()
-            .expect("the one-document pane draws through a reader")
-            .widget();
-        widths.push(body.width());
+        widths.push(body_width(rows));
     }
     assert!(widths[0] > 0, "the body was never laid out: {widths:?}");
     assert!(
         widths.iter().all(|width| *width == widths[0]),
-        "the body changed width moving between conversations: {widths:?}"
+        "the body changed width moving between threads: {widths:?}"
+    );
+    // A single message has no rail and keeps no column, so it takes the
+    // pane (maintainer, 2026-09-25).
+    let single = body_width(thread(2, 1));
+    assert!(
+        single > widths[0],
+        "a single message is drawn as narrow as a thread, beside an empty \
+         rail column: {single}px against {}px",
+        widths[0]
     );
 
     window.close();
@@ -596,7 +600,9 @@ pub fn a_conversation_with_no_rail_has_no_counter_either() {
     };
 
     // FR-045: one message has no position worth stating, at any width.
-    pane.open(vec![message(1)]);
+    let mut single = message(1);
+    single.thread_count = 1;
+    pane.open(vec![single]);
     pane.set_window_width(1000);
     assert!(!pane.header().counter().is_visible());
 

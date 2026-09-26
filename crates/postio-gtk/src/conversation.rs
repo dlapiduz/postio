@@ -1795,7 +1795,14 @@ impl ConversationView {
         // focus may have been decided while the previous thread's rows
         // were still in it.
         imp.rail.set_marked(self.focused_index());
-        self.apply_rail_ladder(self.window_width(), messages.len());
+        // What the rows say the thread holds, not only what arrived: a thread
+        // first shown from the list's one row is still a thread.
+        let said = messages
+            .iter()
+            .map(|row| row.thread_count as usize)
+            .max()
+            .unwrap_or(0);
+        self.apply_rail_ladder(self.window_width(), messages.len().max(said));
     }
 
     /// Put the newest message's recipients and account in the header, if
@@ -1984,7 +1991,14 @@ impl ConversationView {
         let lengths: Vec<Option<u32>> = vec![None; messages.len()];
         imp.rail
             .show_thread(&rows(&senders, &initials, &whens, &lengths));
-        self.apply_rail_ladder(self.window_width(), messages.len());
+        // What the rows say the thread holds, not only what arrived: a thread
+        // first shown from the list's one row is still a thread.
+        let said = messages
+            .iter()
+            .map(|row| row.thread_count as usize)
+            .max()
+            .unwrap_or(0);
+        self.apply_rail_ladder(self.window_width(), messages.len().max(said));
     }
 
     pub fn open(&self, messages: Vec<Row>) {
@@ -2262,7 +2276,7 @@ impl ConversationView {
     pub fn set_window_width(&self, width: i32) {
         let imp = self.imp();
         imp.rail_width.set(Some(width));
-        let messages = self.message_count();
+        let messages = self.expected_messages(self.message_count());
         self.apply_rail_ladder(width, messages);
     }
 
@@ -2274,12 +2288,18 @@ impl ConversationView {
         // `RailColumn` for the popover would be a second marked row, and it
         // would be wrong exactly when someone scrolled with the index open.
         self.house_the_rail(matches!(step, Some(Presentation::Popover)));
-        // What is drawn follows the thread; the column it is drawn in follows
-        // the window alone, so the body keeps its width whatever the thread
-        // holds -- one message keeps an empty column rather than widening
-        // the body for itself (`rail::column`).
+        // What is drawn follows the thread. The column follows the window,
+        // so the body keeps its width between threads -- but only for a
+        // thread: a single message has no rail and keeps no column, because
+        // an empty bordered column beside every message that is not a
+        // thread reads as a rail with nothing in it (maintainer, 2026-09-25).
+        // A thread is known by what its row says it holds, not by how much of
+        // it has been read, so one first shown from the list's single row
+        // keeps its column from the start.
         imp.rail.set_drawn(step.is_some());
-        match (step, column(width, hidden)) {
+        let thread = messages > 1;
+        let kept = if thread { column(width, hidden) } else { None };
+        match (step, kept) {
             (Some(Presentation::Popover), _) => {
                 // Visible *within the popover*, which shows nothing until the
                 // counter is pressed. The column beside the body is gone
@@ -2302,6 +2322,20 @@ impl ConversationView {
         imp.header.set_counter(position);
         imp.header
             .set_compact(matches!(step, Some(Presentation::Popover)));
+    }
+
+    /// How many messages the open thread holds: what has been read, or what
+    /// its rows say the thread holds, whichever is more.
+    fn expected_messages(&self, loaded: usize) -> usize {
+        let said = self
+            .imp()
+            .thread_rows
+            .borrow()
+            .iter()
+            .map(|row| row.thread_count as usize)
+            .max()
+            .unwrap_or(0);
+        loaded.max(said)
     }
 
     /// Put the rail in the popover, or back beside the body.
@@ -2373,7 +2407,7 @@ impl ConversationView {
         let imp = self.imp();
         imp.rail_hidden.set(!imp.rail_hidden.get());
         let width = self.window_width();
-        let messages = self.message_count();
+        let messages = self.expected_messages(self.message_count());
         self.apply_rail_ladder(width, messages);
     }
 
