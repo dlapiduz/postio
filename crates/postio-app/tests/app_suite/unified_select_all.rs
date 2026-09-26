@@ -15,8 +15,8 @@
 //! nothing would pass every one of those layers and reject the keystroke,
 //! which is precisely the bug (`postio-bl2`, #596).
 //!
-//! So the assertions are two `SELECT`s: the reachable account's mail moved,
-//! and the unreachable account's mail did not.
+//! So the assertions are two `SELECT`s: the reachable account's inbox
+//! emptied, and the unreachable account's inbox did not.
 //!
 //! Nothing here touches the network: `start_syncing` is never called, the
 //! connection states are delivered by hand the way the runtime delivers them,
@@ -37,32 +37,24 @@ use postio_core::state::SharedState;
 use postio_core::{CommandId, ConnectionState, Event};
 use postio_gtk::window::Window;
 use postio_gtk::{app, fonts, style};
-use postio_model::ids::{AccountId, MailboxId};
+use postio_model::ids::MailboxId;
 use postio_model::{ListScope, MailboxRole};
 use postio_session::{Wiring, actions};
 use postio_storage::repository::{MessageRepository, MessageSet};
 use postio_storage::seed::{seed_extra_account, seed_small};
 use postio_storage::{BlobStore, Store, test_support};
 
-/// How many of `account`'s messages are still outside `archive`.
+/// How many messages are still in `inbox`.
 ///
-/// Counted rather than listed: the assertion is about a whole account's mail,
-/// which is what the predicate under test is about too.
-async fn still_outside(database: &Store, account: AccountId, archive: MailboxId) -> u32 {
+/// Counted rather than listed: the assertion is about a whole inbox, which is
+/// what the predicate under test is about too -- Unified is the inboxes
+/// (#1692), so `Ctrl+A` there selects an inbox's mail and nothing filed away.
+async fn still_in(database: &Store, inbox: MailboxId) -> u32 {
     let connection = database.connect().await.expect("a connection");
-    let repository = MessageRepository::new(&connection);
-    let all = repository
-        .count_set(&MessageSet::InAccounts {
-            accounts: vec![account],
-            except: Vec::new(),
-        })
+    MessageRepository::new(&connection)
+        .count_set(&MessageSet::in_mailbox(inbox))
         .await
-        .expect("a count");
-    let filed = repository
-        .count_set(&MessageSet::in_mailbox(archive))
-        .await
-        .expect("a count");
-    all - filed
+        .expect("a count")
 }
 
 pub fn select_all_in_a_degraded_unified_view_archives_only_what_it_could_see() {
@@ -83,13 +75,13 @@ pub fn select_all_in_a_degraded_unified_view_archives_only_what_it_could_see() {
         let database = test_support::memory().await;
         let here = seed_small(&database, 11).await;
         let away = seed_extra_account(&database, "Second", "grace@example.org", 12).await;
-        let here_archive = here
-            .mailbox(MailboxRole::Archive)
-            .expect("the fixture has an archive folder")
+        let here_inbox = here
+            .mailbox(MailboxRole::Inbox)
+            .expect("the fixture has an inbox")
             .id;
-        let away_archive = away
-            .mailbox(MailboxRole::Archive)
-            .expect("the second account has an archive folder")
+        let away_inbox = away
+            .mailbox(MailboxRole::Inbox)
+            .expect("the second account has an inbox")
             .id;
 
         let directory = tempfile::tempdir().expect("a blob directory");
@@ -201,10 +193,10 @@ pub fn select_all_in_a_degraded_unified_view_archives_only_what_it_could_see() {
              banner at all, in a smaller place"
         );
 
-        let before_away = still_outside(&database, away.account.id, away_archive).await;
+        let before_away = still_in(&database, away_inbox).await;
         assert!(
             before_away > 0,
-            "the second account's mail is already all filed, so leaving it alone \
+            "the second account's inbox is already empty, so leaving it alone \
              would prove nothing"
         );
 
@@ -215,20 +207,17 @@ pub fn select_all_in_a_degraded_unified_view_archives_only_what_it_could_see() {
 
         // The bus runs on the runtime's threads, so the write lands a moment
         // after the key press.
-        let archived = settle_until(async || {
-            still_outside(&database, here.account.id, here_archive).await == 0
-        })
-        .await;
+        let archived = settle_until(async || still_in(&database, here_inbox).await == 0).await;
         assert!(
             archived,
             "`Ctrl+A` then `a` in the unified view archived nothing. Every layer \
              under this has passing tests; what has no test without this one is \
              whether the frontend fills the scope at all. {} of the reachable \
-             account's messages are still outside its archive.",
-            still_outside(&database, here.account.id, here_archive).await
+             account's messages are still in its inbox.",
+            still_in(&database, here_inbox).await
         );
         assert_eq!(
-            still_outside(&database, away.account.id, away_archive).await,
+            still_in(&database, away_inbox).await,
             before_away,
             "an account the view could not vouch for was archived anyway. The \
              selection was scoped to what was visible when `Ctrl+A` was pressed, \
