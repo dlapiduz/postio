@@ -531,13 +531,13 @@ fn part_node(
 
     if let Some((kind, params)) = disposition_of(extension) {
         node = node.with_disposition(disposition_from(&kind));
-        if let Some(filename) = parameter(params, "filename") {
+        if let Some(filename) = decoded_parameter(params, "filename") {
             node = node.with_filename(filename);
         }
     }
 
     if node.filename().is_none()
-        && let Some(name) = parameter(&body.basic.parameter_list, "name")
+        && let Some(name) = decoded_parameter(&body.basic.parameter_list, "name")
     {
         node = node.with_filename(name);
     }
@@ -573,6 +573,17 @@ fn parameter(list: &[(IString<'static>, IString<'static>)], key: &str) -> Option
     list.iter()
         .find(|(name, _)| istring_to_string(name).eq_ignore_ascii_case(key))
         .map(|(_, value)| istring_to_string(value))
+}
+
+/// A parameter that can carry prose — a filename — decoded from whichever
+/// spelling the sender used: plain, RFC 2231 (`filename*`, continuations),
+/// or an RFC 2047 encoded word. See [`postio_model::mime::parameter_value`].
+fn decoded_parameter(list: &[(IString<'static>, IString<'static>)], key: &str) -> Option<String> {
+    let pairs: Vec<(String, String)> = list
+        .iter()
+        .map(|(name, value)| (istring_to_string(name), istring_to_string(value)))
+        .collect();
+    postio_model::mime::parameter_value(&pairs, key)
 }
 
 fn disposition_from(kind: &str) -> Disposition {
@@ -843,6 +854,83 @@ mod tests {
         let structure = body_structure_from_wire(&part);
 
         assert_eq!(structure.parts()[0].filename(), Some("ignored.pdf"));
+    }
+
+    /// `attachment_part`, with its disposition parameters and `name`
+    /// replaced by `disposition` and `name` verbatim, as a server hands
+    /// them over: undecoded.
+    fn part_named(disposition: &[(&str, &str)], name: Option<&str>) -> WireBodyStructure<'static> {
+        let mut part = attachment_part("placeholder.pdf", 10);
+        if let WireBodyStructure::Single {
+            body,
+            extension_data,
+        } = &mut part
+        {
+            body.basic.parameter_list = name
+                .map(|name| {
+                    vec![(
+                        IString::try_from("name").unwrap(),
+                        IString::try_from(name.to_owned()).unwrap(),
+                    )]
+                })
+                .unwrap_or_default();
+            let params = disposition
+                .iter()
+                .map(|(key, value)| {
+                    (
+                        IString::try_from((*key).to_owned()).unwrap(),
+                        IString::try_from((*value).to_owned()).unwrap(),
+                    )
+                })
+                .collect();
+            *extension_data = Some(io_imap::types::body::SinglePartExtensionData {
+                md5: NString::NIL,
+                tail: Some(WireDisposition {
+                    disposition: Some((IString::try_from("attachment").unwrap(), params)),
+                    tail: None,
+                }),
+            });
+        }
+        part
+    }
+
+    #[test]
+    fn an_rfc_2231_filename_is_decoded_rather_than_lost() {
+        // #1686: `filename*` is how a non-ASCII name travels, BODYSTRUCTURE
+        // hands it over undecoded, and looking only for `filename` left the
+        // part nameless -- so a refusal about it could only say "attachment".
+        let structure = body_structure_from_wire(&part_named(
+            &[("filename*", "UTF-8''Rechnung%20M%C3%A4rz.pdf")],
+            None,
+        ));
+        assert_eq!(structure.parts()[0].filename(), Some("Rechnung März.pdf"));
+    }
+
+    #[test]
+    fn an_rfc_2231_filename_in_continuations_is_joined() {
+        let structure = body_structure_from_wire(&part_named(
+            &[
+                ("filename*0*", "UTF-8''Quartals"),
+                ("filename*1*", "bericht%20%C3%9Cbersicht"),
+                ("filename*2", ".pdf"),
+            ],
+            None,
+        ));
+        assert_eq!(
+            structure.parts()[0].filename(),
+            Some("Quartalsbericht Übersicht.pdf")
+        );
+    }
+
+    #[test]
+    fn an_encoded_word_name_is_decoded() {
+        // Not what RFC 2047 allows in a parameter, and what a great many
+        // clients send anyway.
+        let structure = body_structure_from_wire(&part_named(
+            &[],
+            Some("=?UTF-8?B?UHLDpHNlbnRhdGlvbi5wZGY=?="),
+        ));
+        assert_eq!(structure.parts()[0].filename(), Some("Präsentation.pdf"));
     }
 
     #[test]
