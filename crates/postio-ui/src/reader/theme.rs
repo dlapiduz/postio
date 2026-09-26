@@ -209,7 +209,19 @@ pub fn repair(text: Rgb, ground: Rgb, floor: f64) -> Rgb {
             short = middle;
         }
     }
-    at_lightness(colour, enough)
+    // Pixels are 8-bit: rounding can take a colour that meets the floor
+    // exactly back under it. Step on toward the far end until the colour as
+    // painted meets it, and answer with that colour.
+    let step = if end > colour.l { 0.001 } else { -0.001 };
+    let mut lightness = enough;
+    loop {
+        let [r, g, b] = at_lightness(colour, lightness).to_u8();
+        let painted = Rgb::from_u8(r, g, b);
+        if contrast(painted, ground) >= floor || (lightness - end).abs() < 0.001 {
+            return painted;
+        }
+        lightness = (lightness + step).clamp(0.0, 1.0);
+    }
 }
 
 /// A CSS colour as an engine's computed style reports it, and its alpha.
@@ -468,6 +480,36 @@ mod tests {
         let after = repair(hex("#bbbbbb"), hex("#ffffff"), 4.5);
         assert!(contrast(after, hex("#ffffff")) >= 4.5 - 1e-6);
         assert!(to_oklch(after).l < to_oklch(hex("#bbbbbb")).l);
+    }
+
+    /// Pixels are 8-bit. A repair that meets the floor only before rounding
+    /// paints a colour that misses it: the evaluation harness found text at
+    /// 4.48:1 that the arithmetic had put at exactly 4.5.
+    #[test]
+    fn a_repair_still_meets_the_floor_once_painted_in_8_bits() {
+        let grounds = ["#2b2b2d", "#1e1e1e", "#ffffff", "#f5f5f8", "#fff4e0"];
+        let texts = [
+            "#000000", "#222222", "#333333", "#777777", "#1d5c1d", "#8a1c1c", "#bbbbbb",
+        ];
+        for ground in grounds {
+            for text in texts {
+                for floor in [4.5, 7.0] {
+                    let [r, g, b] = repair(hex(text), hex(ground), floor).to_u8();
+                    let painted = Rgb::from_u8(r, g, b);
+                    let reachable = contrast(Rgb::from_u8(255, 255, 255), hex(ground))
+                        .max(contrast(Rgb::from_u8(0, 0, 0), hex(ground)))
+                        >= floor;
+                    if reachable {
+                        assert!(
+                            contrast(painted, hex(ground)) >= floor,
+                            "{text} on {ground} at {floor}: painted {:?} is {}",
+                            [r, g, b],
+                            contrast(painted, hex(ground))
+                        );
+                    }
+                }
+            }
+        }
     }
 
     #[test]
