@@ -32,8 +32,8 @@
 
 use std::borrow::Cow;
 use std::collections::HashSet;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::{Arc, Mutex};
 
 use ammonia::Builder;
 use html5ever::driver::ParseOpts;
@@ -161,6 +161,9 @@ pub struct Sanitized {
     pub canvas: Canvas,
     /// The `color-scheme` the sender declared, if any (spec 006 FR-013(a)).
     pub color_scheme: Option<ColorScheme>,
+    /// What this message asked for that was refused, each once, in
+    /// [`REFUSALS`] order: counted, not silently lost (spec 006 FR-003).
+    pub refusals: Vec<Refused>,
 }
 
 /// The page a sender styled: what `<html>` and `<body>` said, lifted onto the
@@ -230,6 +233,142 @@ pub enum Refusal {
     Containment,
     /// It would let the message reach the network or report on the reader.
     Privacy,
+    /// It would run, or is only there to run: script, handlers, active
+    /// content (spec 006 FR-002).
+    NoScript,
+}
+
+/// One kind of thing the sanitizer refuses (spec 006 FR-005).
+///
+/// Each names what a sender wrote, not what Postio did about it; the reason
+/// is beside it in [`REFUSALS`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum Refused {
+    /// An element, removed with or without its text.
+    Element(&'static str),
+    /// A kind of attribute or attribute value.
+    Attribute(&'static str),
+    /// A CSS property ([`REFUSED`]).
+    Property(&'static str),
+    /// A CSS at-rule ([`REFUSED_AT_RULES`]).
+    AtRule(&'static str),
+    /// A CSS length unit ([`REFUSED_UNITS`]).
+    Unit(&'static str),
+    /// A kind of resource reference.
+    Resource(&'static str),
+}
+
+/// Every `on…` event handler attribute.
+pub const ON_HANDLERS: &str = "on*";
+/// A class or id in Postio's own `postio-` namespace.
+pub const POSTIO_NAMES: &str = "postio- names";
+/// A link whose URL runs script: `javascript:`.
+pub const SCRIPT_URLS: &str = "javascript: URLs";
+/// A remote image, by `src`, `background` or CSS `url()`, while blocked.
+pub const REMOTE_IMAGE: &str = "remote image";
+
+/// Everything the sanitizer refuses, with the reason it may (spec 006 FR-005,
+/// 001 FR-019b).
+///
+/// One list, so the set of removals is enumerable and a test can walk it:
+/// every entry is provoked and must be both refused and reported in
+/// [`Sanitized::refusals`]. [`REFUSED`], [`REFUSED_AT_RULES`] and
+/// [`REFUSED_UNITS`] stay where the code that applies them reads them; a test
+/// holds them to this list.
+pub const REFUSALS: &[(Refused, Refusal)] = &[
+    // Elements.
+    (Refused::Element("script"), Refusal::NoScript),
+    (Refused::Element("noscript"), Refusal::Privacy),
+    (Refused::Element("iframe"), Refusal::Privacy),
+    (Refused::Element("object"), Refusal::NoScript),
+    (Refused::Element("embed"), Refusal::NoScript),
+    (Refused::Element("svg"), Refusal::NoScript),
+    (Refused::Element("math"), Refusal::Containment),
+    (Refused::Element("title"), Refusal::Containment),
+    (Refused::Element("link"), Refusal::Privacy),
+    (Refused::Element("base"), Refusal::Containment),
+    (Refused::Element("meta"), Refusal::Containment),
+    (Refused::Element("form"), Refusal::Privacy),
+    (Refused::Element("input"), Refusal::Privacy),
+    (Refused::Element("button"), Refusal::Privacy),
+    (Refused::Element("textarea"), Refusal::Privacy),
+    (Refused::Element("select"), Refusal::Privacy),
+    // Attributes.
+    (Refused::Attribute(ON_HANDLERS), Refusal::NoScript),
+    (Refused::Attribute(SCRIPT_URLS), Refusal::NoScript),
+    (Refused::Attribute(POSTIO_NAMES), Refusal::Containment),
+    // CSS.
+    (Refused::Property("position"), Refusal::Containment),
+    (Refused::Property("z-index"), Refusal::Containment),
+    (Refused::AtRule("import"), Refusal::Privacy),
+    (Refused::AtRule("font-face"), Refusal::Privacy),
+    (Refused::AtRule("namespace"), Refusal::Containment),
+    (Refused::AtRule("charset"), Refusal::Containment),
+    (Refused::AtRule("page"), Refusal::Containment),
+    (Refused::Unit("vw"), Refusal::Containment),
+    (Refused::Unit("vh"), Refusal::Containment),
+    (Refused::Unit("vmin"), Refusal::Containment),
+    (Refused::Unit("vmax"), Refusal::Containment),
+    (Refused::Unit("svw"), Refusal::Containment),
+    (Refused::Unit("svh"), Refusal::Containment),
+    (Refused::Unit("lvw"), Refusal::Containment),
+    (Refused::Unit("lvh"), Refusal::Containment),
+    (Refused::Unit("dvw"), Refusal::Containment),
+    (Refused::Unit("dvh"), Refusal::Containment),
+    // Resources.
+    (Refused::Resource(REMOTE_IMAGE), Refusal::Privacy),
+];
+
+/// What one sanitize pass counted and refused, shared by the attribute
+/// filter, the canvas and the stylesheet scoper.
+#[derive(Debug, Default)]
+pub(crate) struct Tally {
+    /// Remote references held back, for the banner and the parts panel.
+    pub(crate) blocked: AtomicU32,
+    refused: Mutex<Vec<Refused>>,
+}
+
+impl Tally {
+    /// A remote image held back: counted, and reported as refused.
+    pub(crate) fn block(&self) {
+        self.blocked.fetch_add(1, Ordering::Relaxed);
+        self.refuse(Refused::Resource(REMOTE_IMAGE));
+    }
+
+    /// Note that `what` was refused. Each kind is reported once.
+    pub(crate) fn refuse(&self, what: Refused) {
+        let mut refused = self
+            .refused
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if !refused.contains(&what) {
+            refused.push(what);
+        }
+    }
+
+    /// Everything refused, in [`REFUSALS`] order.
+    fn refusals(&self) -> Vec<Refused> {
+        let refused = self
+            .refused
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        REFUSALS
+            .iter()
+            .map(|(what, _)| *what)
+            .filter(|what| refused.contains(what))
+            .collect()
+    }
+}
+
+impl Refused {
+    /// Why this is refused, from [`REFUSALS`].
+    pub fn reason(self) -> Refusal {
+        REFUSALS
+            .iter()
+            .find(|(what, _)| *what == self)
+            .map(|(_, reason)| *reason)
+            .expect("every Refused a sanitizer reports is listed in REFUSALS")
+    }
 }
 
 /// The attributes a table-based layout is built from (spec FR-019a).
@@ -355,8 +494,8 @@ pub fn sanitize_body_in(html: &str, remote: RemoteImages, scope: Option<&str>) -
     // Owned: the filter is a `'static` closure and cannot borrow the caller's.
     let scope_for_styles = scope.map(str::to_owned);
     let scope = scope.map(str::to_owned);
-    let blocked_count = Arc::new(AtomicU32::new(0));
-    let counter = Arc::clone(&blocked_count);
+    let tally = Arc::new(Tally::default());
+    let counter = Arc::clone(&tally);
     let tracker_count = Arc::new(AtomicU32::new(0));
     let trackers = Arc::clone(&tracker_count);
 
@@ -451,9 +590,9 @@ pub fn sanitize_body_in(html: &str, remote: RemoteImages, scope: Option<&str>) -
     // `<body>` left to read, and removes `<meta>`. One walk collects all
     // three. The scoped result is returned beside the markup rather than
     // spliced back into it -- see `Sanitized::styles`.
-    let facts = document_facts(html);
+    let facts = document_facts(html, &tally);
     let selector = message_selector(scope_for_styles.as_deref());
-    let canvas = facts.page.canvas(remote, &blocked_count);
+    let canvas = facts.page.canvas(remote, &tally);
     let mut styles = match &canvas.link {
         Some(link) => format!("{selector} a {{ color: {link} }}\n"),
         None => String::new(),
@@ -463,16 +602,17 @@ pub fn sanitize_body_in(html: &str, remote: RemoteImages, scope: Option<&str>) -
         &selector,
         &sender_id_prefix(scope_for_styles.as_deref()),
         remote,
-        &blocked_count,
+        &tally,
     ));
 
     Sanitized {
         html: builder.clean(html).to_string(),
         styles,
-        remote_blocked: blocked_count.load(Ordering::Relaxed),
+        remote_blocked: tally.blocked.load(Ordering::Relaxed),
         trackers: tracker_count.load(Ordering::Relaxed),
         canvas,
         color_scheme: facts.color_scheme,
+        refusals: tally.refusals(),
     }
 }
 
@@ -511,7 +651,7 @@ impl Page {
     /// The canvas: colours validated as colours, styles contained like any
     /// declaration a sender writes. The body's own style outranks its
     /// attributes, and both outrank `<html>`'s, as they would in a browser.
-    fn canvas(&self, remote: RemoteImages, blocked: &AtomicU32) -> Canvas {
+    fn canvas(&self, remote: RemoteImages, tally: &Tally) -> Canvas {
         let from_style = |style: &Option<String>, properties: &[&str]| {
             style
                 .as_deref()
@@ -533,7 +673,7 @@ impl Page {
             declarations.push(format!("color: {text}"));
         }
         for style in [&self.html_style, &self.body_style].into_iter().flatten() {
-            let kept = contain_declarations(style, remote, blocked);
+            let kept = contain_declarations(style, remote, tally);
             if !kept.is_empty() {
                 declarations.push(kept);
             }
@@ -547,14 +687,22 @@ impl Page {
     }
 }
 
-fn document_facts(html: &str) -> DocumentFacts {
+fn document_facts(html: &str, tally: &Tally) -> DocumentFacts {
     let dom = parse_document(RcDom::default(), ParseOpts::default()).one(html);
     let mut facts = DocumentFacts::default();
-    collect_facts(&dom.document, &mut facts);
+    collect_facts(&dom.document, &mut facts, tally);
     facts
 }
 
-fn collect_facts(node: &Handle, facts: &mut DocumentFacts) {
+/// The refused elements, as [`REFUSALS`] names them.
+fn refused_element(name: &str) -> Option<&'static str> {
+    REFUSALS.iter().find_map(|(what, _)| match what {
+        Refused::Element(element) if element.eq_ignore_ascii_case(name) => Some(*element),
+        _ => None,
+    })
+}
+
+fn collect_facts(node: &Handle, facts: &mut DocumentFacts, tally: &Tally) {
     if let NodeData::Element { name, attrs, .. } = &node.data {
         let element = name.local.as_ref();
         let attrs = attrs.borrow();
@@ -564,6 +712,24 @@ fn collect_facts(node: &Handle, facts: &mut DocumentFacts) {
                 .find(|attr| attr.name.local.as_ref().eq_ignore_ascii_case(wanted))
                 .map(|attr| attr.value.to_string())
         };
+        // What ammonia will remove without a filter ever seeing it, noted
+        // here so the report says so (spec 006 FR-003).
+        if let Some(refused) = refused_element(element) {
+            tally.refuse(Refused::Element(refused));
+        }
+        for attr in attrs.iter() {
+            let name = attr.name.local.as_ref();
+            if name.len() > 2
+                && name
+                    .get(..2)
+                    .is_some_and(|on| on.eq_ignore_ascii_case("on"))
+            {
+                tally.refuse(Refused::Attribute(ON_HANDLERS));
+            }
+            if name.eq_ignore_ascii_case("href") && runs_script(&attr.value) {
+                tally.refuse(Refused::Attribute(SCRIPT_URLS));
+            }
+        }
         if element.eq_ignore_ascii_case("style") {
             for child in node.children.borrow().iter() {
                 if let NodeData::Text { contents } = &child.data {
@@ -591,8 +757,19 @@ fn collect_facts(node: &Handle, facts: &mut DocumentFacts) {
         }
     }
     for child in node.children.borrow().iter() {
-        collect_facts(child, facts);
+        collect_facts(child, facts, tally);
     }
+}
+
+/// Whether a URL runs script when followed, however its scheme is spelled:
+/// browsers ignore ASCII whitespace and control characters inside it.
+fn runs_script(url: &str) -> bool {
+    let compact: String = url
+        .chars()
+        .filter(|c| !c.is_ascii_whitespace() && !c.is_ascii_control())
+        .take(11)
+        .collect();
+    compact.to_ascii_lowercase().starts_with("javascript:")
 }
 
 /// A `color-scheme` value, read the way CSS reads it: the keywords present,
@@ -668,25 +845,35 @@ fn rewrite_attribute<'u>(
     attribute: &str,
     value: &'u str,
     remote: RemoteImages,
-    blocked_count: &AtomicU32,
+    tally: &Tally,
     tracker_count: &AtomicU32,
     beacons: &HashSet<String>,
     scope: Option<&str>,
 ) -> Option<Cow<'u, str>> {
     if attribute == "style" {
-        let kept = contain_declarations(value, remote, blocked_count);
+        let kept = contain_declarations(value, remote, tally);
         return (!kept.is_empty()).then_some(Cow::Owned(kept));
     }
     if attribute == "class" {
         let kept: Vec<&str> = value
             .split_ascii_whitespace()
-            .filter(|class| !is_postio_name(class))
+            .filter(|class| {
+                let postio = is_postio_name(class);
+                if postio {
+                    tally.refuse(Refused::Attribute(POSTIO_NAMES));
+                }
+                !postio
+            })
             .collect();
         return (!kept.is_empty()).then(|| Cow::Owned(kept.join(" ")));
     }
     if attribute == "id" {
         let id = value.trim();
-        if id.is_empty() || is_postio_name(id) {
+        if is_postio_name(id) {
+            tally.refuse(Refused::Attribute(POSTIO_NAMES));
+            return None;
+        }
+        if id.is_empty() {
             return None;
         }
         return Some(Cow::Owned(format!("{}{id}", sender_id_prefix(scope))));
@@ -732,8 +919,9 @@ fn rewrite_attribute<'u>(
         // One or the other, never both: the panel adds them up.
         if beacons.contains(value.trim()) {
             tracker_count.fetch_add(1, Ordering::Relaxed);
+            tally.refuse(Refused::Resource(REMOTE_IMAGE));
         } else {
-            blocked_count.fetch_add(1, Ordering::Relaxed);
+            tally.block();
         }
         return None;
     }
@@ -746,11 +934,7 @@ fn rewrite_attribute<'u>(
 /// discard the `color` written beside it — a message that loses its palette
 /// because it also tried to pin itself is a message rendered wrongly, and the
 /// user cannot tell that from a sender who never set a colour.
-pub(crate) fn contain_declarations(
-    value: &str,
-    remote: RemoteImages,
-    blocked_count: &AtomicU32,
-) -> String {
+pub(crate) fn contain_declarations(value: &str, remote: RemoteImages, tally: &Tally) -> String {
     let mut kept: Vec<&str> = Vec::new();
     for declaration in split_declarations(value) {
         let Some((property, declared)) = declaration.split_once(':') else {
@@ -760,10 +944,12 @@ pub(crate) fn contain_declarations(
         let property = property.trim().to_ascii_lowercase();
         let declared = declared.trim();
 
-        if REFUSED.iter().any(|(refused, _)| *refused == property) {
+        if let Some((refused, _)) = REFUSED.iter().find(|(refused, _)| *refused == property) {
+            tally.refuse(Refused::Property(refused));
             continue;
         }
-        if uses_viewport_units(declared) {
+        if let Some(unit) = viewport_unit(declared) {
+            tally.refuse(Refused::Unit(unit));
             continue;
         }
         if let Some(url) = css_url(declared)
@@ -772,7 +958,7 @@ pub(crate) fn contain_declarations(
         {
             // Counted with the images, because that is what it is: the panel
             // says "6 remote images blocked" and a background is one of them.
-            blocked_count.fetch_add(1, Ordering::Relaxed);
+            tally.block();
             continue;
         }
         kept.push(declaration.trim());
@@ -813,10 +999,10 @@ fn split_declarations(value: &str) -> Vec<&str> {
 ///
 /// Matched as a unit suffix on a number, so a `font-family: "Vivaldi"` is not
 /// mistaken for one on the strength of containing `vi`.
-fn uses_viewport_units(value: &str) -> bool {
+fn viewport_unit(value: &str) -> Option<&'static str> {
     let lowered = value.to_ascii_lowercase();
     let bytes = lowered.as_bytes();
-    REFUSED_UNITS.iter().any(|unit| {
+    REFUSED_UNITS.iter().copied().find(|unit| {
         lowered.match_indices(unit).any(|(at, _)| {
             let before = at > 0 && bytes[at - 1].is_ascii_digit();
             let after = bytes
@@ -1974,5 +2160,125 @@ mod conversation_scope_tests {
             sanitize_body("<p>x</p>", RemoteImages::Blocked).color_scheme,
             None
         );
+    }
+
+    /// A snippet that asks for `what`, and the text that must not survive it.
+    fn provoke(what: Refused) -> (String, String) {
+        match what {
+            Refused::Element(name) => {
+                let void = ["meta", "link", "base", "input"].contains(&name);
+                let html = if void {
+                    format!("<{name} data-probe=\"1\"><p>kept</p>")
+                } else {
+                    format!("<{name} data-probe=\"1\">inside</{name}><p>kept</p>")
+                };
+                (html, format!("<{name}"))
+            }
+            Refused::Attribute(ON_HANDLERS) => (
+                r#"<p onclick="go()">t</p>"#.to_owned(),
+                "onclick".to_owned(),
+            ),
+            Refused::Attribute(POSTIO_NAMES) => (
+                r#"<p class="postio-latest">t</p>"#.to_owned(),
+                "postio-latest".to_owned(),
+            ),
+            Refused::Attribute(SCRIPT_URLS) => (
+                r#"<a href="javascript:go()">t</a>"#.to_owned(),
+                "javascript".to_owned(),
+            ),
+            Refused::Attribute(other) => panic!("no probe for attribute {other}"),
+            Refused::Property(name) => (
+                format!(r#"<p style="{name}: 1; color: red">t</p>"#),
+                format!("{name}:"),
+            ),
+            Refused::Unit(unit) => (
+                format!(r#"<p style="width: 5{unit}">t</p>"#),
+                format!("5{unit}"),
+            ),
+            Refused::AtRule(name) => (
+                format!("<style>@{name} x;</style><p>t</p>"),
+                format!("@{name}"),
+            ),
+            Refused::Resource(REMOTE_IMAGE) => (
+                r#"<img src="https://beacon.example.com/x.png" alt="">"#.to_owned(),
+                "beacon.example.com".to_owned(),
+            ),
+            Refused::Resource(other) => panic!("no probe for resource {other}"),
+        }
+    }
+
+    /// Spec 006 FR-005 / 001 FR-019b: every removal is listed with its reason,
+    /// and every listed removal is one the sanitizer actually makes -- and
+    /// says it made. "Dropped because it was easier" is not in the list
+    /// because it is not a reason.
+    #[test]
+    fn every_listed_refusal_is_made_and_reported() {
+        for (what, reason) in REFUSALS {
+            let (html, gone) = provoke(*what);
+            let clean = sanitize_body(&html, RemoteImages::Blocked);
+            let output = format!("{}\n{}\n{}", clean.html, clean.styles, clean.canvas.style);
+            assert!(
+                !output
+                    .to_ascii_lowercase()
+                    .contains(&gone.to_ascii_lowercase()),
+                "{what:?} ({reason:?}) is listed as refused but survived: {output}"
+            );
+            assert!(
+                clean.refusals.contains(what),
+                "{what:?} was refused but not reported: {:?}",
+                clean.refusals
+            );
+        }
+    }
+
+    #[test]
+    fn every_reason_is_one_the_spec_permits_and_each_is_used() {
+        for reason in [Refusal::Containment, Refusal::Privacy, Refusal::NoScript] {
+            assert!(
+                REFUSALS.iter().any(|(_, r)| *r == reason),
+                "{reason:?} is never used"
+            );
+        }
+    }
+
+    /// The per-kind tables stay where the code that applies them reads them;
+    /// this is the one list that says what they add up to.
+    #[test]
+    fn the_css_tables_are_reachable_through_the_list() {
+        for (property, reason) in REFUSED {
+            assert!(
+                REFUSALS.contains(&(Refused::Property(property), *reason)),
+                "{property}"
+            );
+        }
+        for (rule, reason) in REFUSED_AT_RULES {
+            assert!(
+                REFUSALS.contains(&(Refused::AtRule(rule), *reason)),
+                "@{rule}"
+            );
+        }
+        for unit in REFUSED_UNITS {
+            assert!(
+                REFUSALS
+                    .iter()
+                    .any(|(what, _)| *what == Refused::Unit(unit)),
+                "{unit}"
+            );
+        }
+    }
+
+    #[test]
+    fn inline_svg_is_listed_with_its_reason() {
+        assert!(REFUSALS.contains(&(Refused::Element("svg"), Refusal::NoScript)));
+    }
+
+    /// A message with nothing to refuse reports nothing.
+    #[test]
+    fn an_innocent_message_reports_no_refusals() {
+        let clean = sanitize_body(
+            r#"<p style="color:#123" class="lede">Hello</p>"#,
+            RemoteImages::Blocked,
+        );
+        assert!(clean.refusals.is_empty(), "{:?}", clean.refusals);
     }
 }

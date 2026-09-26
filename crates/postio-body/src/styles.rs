@@ -19,11 +19,9 @@
 //! WebKitGTK and WKWebView, and could not be tested without a display on
 //! either.
 
-use std::sync::atomic::AtomicU32;
-
 use cssparser::{Delimiter, ParseError, Parser, ParserInput, Token, serialize_identifier};
 
-use crate::sanitize::{RemoteImages, contain_declarations};
+use crate::sanitize::{REFUSED_AT_RULES, Refused, RemoteImages, Tally, contain_declarations};
 
 /// A sender's stylesheet after scoping.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -37,11 +35,11 @@ pub struct Scoped {
 /// Rewrite `css` so nothing in it can match outside `prefix`, with every
 /// `#id` renamed under `id_prefix` ([`crate::sanitize::sender_id_prefix`]).
 pub fn scope(css: &str, prefix: &str, id_prefix: &str, remote: RemoteImages) -> Scoped {
-    let counter = AtomicU32::new(0);
-    let css = scope_into(css, prefix, id_prefix, remote, &counter);
+    let tally = Tally::default();
+    let css = scope_into(css, prefix, id_prefix, remote, &tally);
     Scoped {
         css,
-        remote_blocked: counter.load(std::sync::atomic::Ordering::Relaxed),
+        remote_blocked: tally.blocked.load(std::sync::atomic::Ordering::Relaxed),
     }
 }
 
@@ -50,13 +48,13 @@ pub(crate) fn scope_into(
     prefix: &str,
     id_prefix: &str,
     remote: RemoteImages,
-    blocked: &AtomicU32,
+    tally: &Tally,
 ) -> String {
     let mut out = String::new();
     let mut input = ParserInput::new(css);
     let mut parser = Parser::new(&mut input);
     let scope = Scope { prefix, id_prefix };
-    write_rules(&mut parser, &scope, remote, blocked, &mut out);
+    write_rules(&mut parser, &scope, remote, tally, &mut out);
     out
 }
 
@@ -73,7 +71,7 @@ fn write_rules(
     parser: &mut Parser<'_, '_>,
     prefix: &Scope<'_>,
     remote: RemoteImages,
-    blocked: &AtomicU32,
+    tally: &Tally,
     out: &mut String,
 ) {
     loop {
@@ -90,10 +88,10 @@ fn write_rules(
             Err(_) => return,
         };
         match at {
-            Some(name) => write_at_rule(parser, &name, prefix, remote, blocked, out),
+            Some(name) => write_at_rule(parser, &name, prefix, remote, tally, out),
             None => {
                 parser.reset(&state);
-                if !write_qualified_rule(parser, Some(prefix), remote, blocked, out) {
+                if !write_qualified_rule(parser, Some(prefix), remote, tally, out) {
                     return;
                 }
             }
@@ -112,7 +110,7 @@ fn write_qualified_rule(
     parser: &mut Parser<'_, '_>,
     prefix: Option<&Scope<'_>>,
     remote: RemoteImages,
-    blocked: &AtomicU32,
+    tally: &Tally,
     out: &mut String,
 ) -> bool {
     let start = parser.position();
@@ -127,7 +125,7 @@ fn write_qualified_rule(
         .parse_nested_block(slice_of_block)
         .unwrap_or_default();
 
-    let declarations = contain_declarations(&body, remote, blocked);
+    let declarations = contain_declarations(&body, remote, tally);
     if declarations.is_empty() {
         return true;
     }
@@ -150,7 +148,7 @@ fn write_at_rule(
     name: &str,
     prefix: &Scope<'_>,
     remote: RemoteImages,
-    blocked: &AtomicU32,
+    tally: &Tally,
     out: &mut String,
 ) {
     let start = parser.position();
@@ -172,6 +170,9 @@ fn write_at_rule(
         _ => Nested::Refused,
     };
     if kept == Nested::Refused {
+        if let Some((rule, _)) = REFUSED_AT_RULES.iter().find(|(rule, _)| *rule == name) {
+            tally.refuse(Refused::AtRule(rule));
+        }
         if has_block {
             let _ = parser.parse_nested_block(slice_of_block);
         }
@@ -185,9 +186,9 @@ fn write_at_rule(
     let mut inner = String::new();
     let _ = parser.parse_nested_block(|nested| {
         match kept {
-            Nested::Rules => write_rules(nested, prefix, remote, blocked, &mut inner),
+            Nested::Rules => write_rules(nested, prefix, remote, tally, &mut inner),
             Nested::Keyframes => {
-                while write_qualified_rule(nested, None, remote, blocked, &mut inner) {
+                while write_qualified_rule(nested, None, remote, tally, &mut inner) {
                     nested.skip_whitespace();
                     if nested.is_exhausted() {
                         break;
