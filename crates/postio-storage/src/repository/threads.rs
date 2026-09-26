@@ -87,7 +87,8 @@ pub struct ThreadListQuery {
     pub after: Option<ThreadCursor>,
 }
 
-/// One window of the unified list: every account, newest first.
+/// One window of the unified list: every enabled account's inbox, newest
+/// first.
 #[derive(Debug, Clone, Copy)]
 pub struct UnifiedThreadListQuery {
     /// How many groups at most.
@@ -123,7 +124,7 @@ impl ThreadGroup {
 
 /// `alias`'s thread belongs to an account the user has switched on.
 ///
-/// The unified view is every *enabled* account's mail, and ADR 0005 Q10 is
+/// The unified view is every *enabled* account's inbox, and ADR 0005 Q10 is
 /// explicit that this is the one omission that needs no disclosure: a
 /// disabled account drops out silently and correctly, because the user asked
 /// for that. It is a failing account that has to be named, and that is a
@@ -138,6 +139,25 @@ fn enabled_account(alias: &str) -> String {
         "{alias}account_id IN \
          (SELECT id FROM accounts WHERE enabled = 1 AND pending_deletion = 0)"
     )
+}
+
+/// A row's `(recency, id)`, the order every list here sorts by, newest
+/// last -- compared the way the cursor's `<=`/`<` pair compares it.
+fn sort_key(cursor: ThreadCursor) -> (DateTime<Utc>, i64) {
+    (cursor.last_at, cursor.id)
+}
+
+/// How many inbox conversations [`ThreadRepository::unified_count`] asks
+/// about partners for at once: three statements per batch, with an `IN`
+/// list well under the engine's parameter limit.
+const COUNT_BATCH: usize = 400;
+
+/// A thread in another account that is the same conversation as a unified
+/// row, and is itself in view: `at` is where its own inbox draws it.
+#[derive(Debug, Clone)]
+struct Partner {
+    thread: Thread,
+    at: ThreadCursor,
 }
 
 /// `THREAD_COLUMNS`, each qualified with `alias.` for a joined statement.
@@ -491,8 +511,29 @@ impl<'a> ThreadRepository<'a> {
         )
     }
 
-    /// One window of the unified thread list: every account, grouped at
-    /// read time (#184, ADR 0005 Q2).
+    /// One window of the unified list: every enabled account's inbox, newest
+    /// first, conversations grouped across accounts at read time (#184,
+    /// ADR 0005 Q2).
+    ///
+    /// # What is in it
+    ///
+    /// The **inboxes** (#1692, the maintainer's call of 2026-09-26: "it
+    /// should only be inboxes"). A conversation filed away -- archived,
+    /// moved, snoozed, deleted -- is not a row here, so a verb that files the
+    /// cursor's row takes it out of this view exactly as it does out of a
+    /// folder, and `a a a` walks down the list. It used to be every message
+    /// of every account, which made triage in Unified change nothing visible.
+    ///
+    /// Each inbox contributes the rows its own folder list has
+    /// ([`ThreadRepository::page`] on [`ThreadListQuery::in_mailbox`]): one
+    /// per conversation holding a message there, drawn from its newest
+    /// message there, ordered by that message's `(received_at, id)`. That
+    /// order is global -- message ids are unique across accounts -- so the
+    /// inboxes' windows merge by it, and one cursor resumes all of them. Each
+    /// window is the folder list's own seek over `idx_messages_list`, so a
+    /// page reads `limit` rows per inbox whatever the rest of the mail holds.
+    ///
+    /// # Grouping
     ///
     /// A thread never spans accounts — that is sync state, and it stays
     /// per-account. What the unified list shows is a [`ThreadGroup`]:
@@ -509,60 +550,53 @@ impl<'a> ThreadRepository<'a> {
     ///   A bare subject match with no window would fold every "Weekly
     ///   digest" the user receives at two addresses into one eternal row.
     ///
-    /// The page walks threads newest-first over `idx_threads_last_at` and
-    /// emits a group only at its **newest** member — an older partner is
-    /// absorbed, on this page or any later one, so no conversation is ever
-    /// two rows. Dedupe is display-only (Q13): `message_count` counts
+    /// Only a partner that is itself in view -- in its account's inbox --
+    /// counts. A row is emitted at the group's **newest** member by the
+    /// list's own order; one with a newer partner in view is that partner's
+    /// row, drawn already on this page or an earlier one, so no conversation
+    /// is ever two rows. Dedupe is display-only (Q13): `message_count` counts
     /// distinct `RfcMessageId`s across the members, both copies stay, and
     /// [`ThreadGroup::members`] is exactly what an action must expand to.
     pub async fn unified_page(&self, query: &UnifiedThreadListQuery) -> Result<Vec<ThreadGroup>> {
+        let inboxes = self.unified_inboxes().await?;
         let mut groups: Vec<ThreadGroup> = Vec::new();
-        let mut absorbed: std::collections::HashSet<ThreadId> = std::collections::HashSet::new();
         let mut cursor = query.after;
+        let batch = query.limit.max(2) * 2;
 
         // The raw page over-fetches: absorption folds rows together, so a
-        // page of threads can under-fill the page of groups. Loop until the
-        // groups fill or the list ends; each pass is one indexed window.
+        // page of rows can under-fill the page of groups. Loop until the
+        // groups fill or the list ends; each pass is one seek per inbox.
         'fill: loop {
-            let raw = self
-                .unified_raw_page(query.limit.max(2) * 2, cursor)
-                .await?;
-            let Some(last) = raw.last() else {
+            let raw = self.unified_raw_page(&inboxes, batch, cursor).await?;
+            let Some((_, last)) = raw.last() else {
                 break;
             };
-            cursor = Some(ThreadCursor {
-                last_at: last.last_at,
-                id: last.id.get(),
-            });
-            let exhausted = raw.len() < (query.limit.max(2) * 2) as usize;
+            cursor = Some(last.cursor());
+            let exhausted = raw.len() < batch as usize;
 
-            let mut partner_map = self.group_partners_for(&raw).await?;
-            for thread in raw {
-                if absorbed.contains(&thread.id) {
+            let mut partners = self.partners_in_view(&inboxes, &raw).await?;
+            for (account, row) in raw {
+                let partners = row
+                    .id
+                    .and_then(|id| partners.remove(&id))
+                    .unwrap_or_default();
+                if partners
+                    .iter()
+                    .any(|partner| sort_key(partner.at) > sort_key(row.cursor()))
+                {
                     continue;
                 }
-                let partners = partner_map.remove(&thread.id).unwrap_or_default();
-                // A partner newer than this thread means this is not the
-                // group's head: the head already drew the row (this page or
-                // an earlier one), or will when the walk reaches it — it
-                // cannot, because the walk is newest-first; it already did.
-                if partners.iter().any(|partner| {
-                    (partner.last_at, partner.id.get()) > (thread.last_at, thread.id.get())
-                }) {
-                    continue;
-                }
-                for partner in &partners {
-                    absorbed.insert(partner.id);
-                }
-
-                let row = self.group_row(&thread, &partners).await?;
-                let members = std::iter::once((thread.account_id, thread.id))
+                let members = row
+                    .id
+                    .map(|thread| (account, thread))
+                    .into_iter()
                     .chain(
                         partners
                             .iter()
-                            .map(|partner| (partner.account_id, partner.id)),
+                            .map(|partner| (partner.thread.account_id, partner.thread.id)),
                     )
                     .collect();
+                let row = self.group_row(row, &partners, &inboxes).await?;
                 groups.push(ThreadGroup { row, members });
                 if groups.len() as u32 >= query.limit {
                     break 'fill;
@@ -572,19 +606,47 @@ impl<'a> ThreadRepository<'a> {
                 break;
             }
         }
+        Ok(groups)
+    }
 
-        // Two reads for the whole page rather than two per group — the same
-        // batching `page` does, for the same reason.
-        let heads: Vec<ThreadId> = groups.iter().filter_map(|group| group.row.id).collect();
-        let mut participants = self.participants_for(&heads).await?;
-        let mut latest = self.latest_messages_for(&heads, None).await?;
-        for group in &mut groups {
-            if let Some(id) = group.row.id {
-                group.row.participants = participants.remove(&id).unwrap_or_default();
-                group.row.latest = latest.remove(&id);
+    /// The inboxes the unified list is made of: each enabled account's own,
+    /// as `(account, inbox)`.
+    ///
+    /// By role, never by name, and one per account -- the first by path when
+    /// a server has somehow reported two, the rule
+    /// [`MailboxRepository::by_role`](super::MailboxRepository::by_role)
+    /// keeps, so the folder a verb routes to and the folder this lists are
+    /// the same one. A retired folder (not selectable) is no inbox, and an
+    /// account with no inbox yet -- its first sync still to come --
+    /// contributes nothing rather than failing the view.
+    pub async fn unified_inboxes(&self) -> Result<Vec<(AccountId, MailboxId)>> {
+        let rows: Vec<(i64, i64)> = sql::all(
+            self.connection,
+            &self.explain_unified_inboxes(),
+            (),
+            |row| Ok((row.col(0)?, row.col(1)?)),
+        )
+        .await?;
+        let mut inboxes: Vec<(AccountId, MailboxId)> = Vec::new();
+        for (account, inbox) in rows {
+            let account = AccountId::new(account);
+            if inboxes.last().map(|(held, _)| *held) != Some(account) {
+                inboxes.push((account, MailboxId::new(inbox)));
             }
         }
-        Ok(groups)
+        Ok(inboxes)
+    }
+
+    /// The SQL [`Self::unified_inboxes`] runs, so a test can ask the planner
+    /// about it. Driven from `accounts` -- a handful of rows -- into
+    /// `idx_mailboxes_account_role`, so no statement here reads mail.
+    pub fn explain_unified_inboxes(&self) -> String {
+        "SELECT m.account_id, m.id
+           FROM accounts a JOIN mailboxes m
+             ON m.account_id = a.id AND m.role = 'inbox'
+          WHERE a.enabled = 1 AND a.pending_deletion = 0 AND m.selectable = 1
+          ORDER BY m.account_id, m.path"
+            .to_owned()
     }
 
     /// One window of the unified list at a row offset, for a list model that
@@ -598,7 +660,7 @@ impl<'a> ThreadRepository<'a> {
     /// handful of rows rather than the whole list.
     ///
     /// It over-fetches by `offset` and drops the head, because absorption
-    /// means a group is not a fixed number of threads — the only thing that
+    /// means a group is not a fixed number of rows — the only thing that
     /// knows where the *n*th row starts is the walk that produced the first
     /// *n*.
     pub async fn unified_page_at(
@@ -623,95 +685,204 @@ impl<'a> ThreadRepository<'a> {
 
     /// How many rows the unified list would show.
     ///
-    /// Not the number of threads: a conversation the user received at two
-    /// addresses is two threads and one row, so the count has to apply the
-    /// same absorption [`ThreadRepository::unified_page`] does. It is the
-    /// same shape the folder-scoped [`count_of`](Self::count_of) uses — a
-    /// `NOT EXISTS` for "something newer already stands for this" — with the
-    /// page's two partner rules in place of that one's thread identity:
+    /// The inboxes' own counts -- the same number each folder's list has --
+    /// less the rows absorption folds away: a conversation the user received
+    /// at two addresses is a row in each inbox and one row here. With one
+    /// inbox in view nothing can fold, and the answer is that folder's count.
     ///
-    /// - the partner carries this thread's root `RfcMessageId`, or
-    /// - their normalised subjects match within the coalescing window,
-    ///
-    /// in a *different* account, and newer by the list's own `(last_at, id)`
-    /// order. A thread with a newer partner is one the walk absorbs, so this
-    /// counts exactly the threads the page emits a row for.
-    ///
-    /// Counting heads rather than building the groups is what keeps it
-    /// affordable: absorption is rare — almost every conversation arrives at
-    /// one address — so the inner query matches nothing for almost every
-    /// thread, and the work is one probe per row rather than a pass that has
-    /// to group the whole list to learn how long it is.
+    /// With more, the fold is decided by the same rule the page applies --
+    /// a row with a newer partner in view is not a row -- over every inbox
+    /// conversation, so the count and the walk cannot disagree about what a
+    /// row is. That is a pass over the inboxes' keys plus the partner lookup
+    /// in batches: bounded by what the inboxes hold, never by the archive,
+    /// and `postio_runtime::store` holds the answer until an inbox moves.
     pub async fn unified_count(&self) -> Result<u32> {
-        let window_millis = postio_model::subject::COALESCING_WINDOW_DAYS * 24 * 60 * 60 * 1_000;
-        // `MEMBER` on the head's messages and not on the partner's, because
-        // `group_partners_for` filters exactly that way. A count that
-        // disagreed with the page about which messages can carry a root
-        // would be a count that disagrees about how many rows there are.
-        let count: i64 = sql::one(
-            self.connection,
-            &format!(
-                "SELECT count(*) FROM threads t
-                  WHERE t.message_count > 0 AND {head_enabled}
-                    AND NOT EXISTS (
-                          SELECT 1 FROM threads p
-                           WHERE p.message_count > 0 AND {partner_enabled}
-                             AND p.account_id <> t.account_id
-                             AND (p.last_at, p.id) > (t.last_at, t.id)
-                             AND (
-                                   (t.subject IS NOT NULL AND t.subject <> ''
-                                    AND p.subject = t.subject
-                                    AND abs(p.last_at - t.last_at) <= ?1)
-                                OR EXISTS (
-                                     SELECT 1 FROM messages pm
-                                      WHERE pm.thread_id = p.id
-                                        AND pm.rfc_message_id IS NOT NULL
-                                        AND pm.rfc_message_id <> ''
-                                        AND pm.rfc_message_id = (
-                                              SELECT tm.rfc_message_id FROM messages tm
-                                               WHERE tm.thread_id = t.id AND tm.{MEMBER}
-                                               ORDER BY tm.received_at, tm.id
-                                               LIMIT 1))))",
-                head_enabled = enabled_account("t."),
-                partner_enabled = enabled_account("p."),
-            ),
-            [window_millis],
-            |row| row.col(0),
-        )
-        .await?;
-        Ok(count.max(0) as u32)
+        let inboxes = self.unified_inboxes().await?;
+        let mut total: i64 = 0;
+        for (_, inbox) in &inboxes {
+            let count: i64 = sql::one(self.connection, &folder_count_sql(), [inbox.get()], |row| {
+                row.col(0)
+            })
+            .await?;
+            total += count;
+        }
+        if inboxes.len() < 2 {
+            return Ok(total.max(0) as u32);
+        }
+
+        // Every inbox conversation's key: its newest message there, the row
+        // the folder list draws it from.
+        let mut keys: HashMap<ThreadId, ThreadCursor> = HashMap::new();
+        for (_, inbox) in &inboxes {
+            let rows: Vec<(i64, i64, i64)> = sql::all(
+                self.connection,
+                &format!(
+                    "SELECT received_at, id, thread_id FROM messages
+                      WHERE mailbox_id = ?1 AND {MEMBER} AND thread_id IS NOT NULL
+                      ORDER BY received_at DESC, id DESC"
+                ),
+                [inbox.get()],
+                |row| Ok((row.col(0)?, row.col(1)?, row.col(2)?)),
+            )
+            .await?;
+            for (received_at, id, thread) in rows {
+                keys.entry(ThreadId::new(thread))
+                    .or_insert_with(|| ThreadCursor {
+                        last_at: from_millis(received_at),
+                        id,
+                    });
+            }
+        }
+
+        let ids: Vec<ThreadId> = keys.keys().copied().collect();
+        let mut absorbed: i64 = 0;
+        for chunk in ids.chunks(COUNT_BATCH) {
+            let threads = self.threads_by_id(chunk).await?;
+            let partners = self.group_partners_for(&threads).await?;
+            for thread in &threads {
+                let own = sort_key(keys[&thread.id]);
+                let folded = partners.get(&thread.id).is_some_and(|partners| {
+                    partners.iter().any(|partner| {
+                        keys.get(&partner.id)
+                            .is_some_and(|key| sort_key(*key) > own)
+                    })
+                });
+                if folded {
+                    absorbed += 1;
+                }
+            }
+        }
+        Ok((total - absorbed).max(0) as u32)
     }
 
-    /// One raw window of threads across every account, newest first.
+    /// One raw window of the inboxes, merged newest first: at most `limit`
+    /// rows after `after`, each with the account whose inbox it is in.
+    ///
+    /// Each inbox is asked for its own `limit` rows after the same cursor --
+    /// the folder list's seek -- and the union's first `limit` are exactly the
+    /// merged list's, because no inbox can contribute more than it was asked
+    /// for to the top `limit` of all of them.
     async fn unified_raw_page(
         &self,
+        inboxes: &[(AccountId, MailboxId)],
         limit: u32,
         after: Option<ThreadCursor>,
-    ) -> Result<Vec<Thread>> {
-        let cursor = if after.is_some() {
-            // See `where_clause` in `messages.rs`: a row value reads better and
-            // this engine will not seek on one.
-            " AND last_at <= ?1 AND (last_at < ?1 OR id < ?2)"
-        } else {
-            ""
-        };
+    ) -> Result<Vec<(AccountId, ThreadListRow)>> {
+        let mut merged: Vec<(AccountId, ThreadListRow)> = Vec::new();
+        for (account, inbox) in inboxes {
+            let query = ThreadListQuery {
+                after,
+                ..ThreadListQuery::in_mailbox(*account, *inbox).limit(limit)
+            };
+            merged.extend(
+                self.page(&query)
+                    .await?
+                    .into_iter()
+                    .map(|row| (*account, row)),
+            );
+        }
+        merged.sort_by_key(|(_, row)| std::cmp::Reverse(sort_key(row.cursor())));
+        merged.truncate(limit as usize);
+        Ok(merged)
+    }
+
+    /// Threads by id, aggregates only.
+    async fn threads_by_id(&self, ids: &[ThreadId]) -> Result<Vec<Thread>> {
+        if ids.is_empty() {
+            return Ok(Vec::new());
+        }
         let mut statement = sql::statement(
             self.connection,
             &format!(
-                "SELECT {THREAD_COLUMNS} FROM threads
-              WHERE message_count > 0 AND {enabled}{cursor}
-              ORDER BY last_at DESC, id DESC LIMIT {limit}",
-                enabled = enabled_account("")
+                "SELECT {THREAD_COLUMNS} FROM threads WHERE id IN ({})",
+                placeholders(ids.len(), 1)
             ),
         )
         .await?;
-        let mut arguments: Vec<i64> = Vec::new();
-        if let Some(after) = after {
-            arguments.push(to_millis(after.last_at));
-            arguments.push(after.id);
+        sql::mapped(
+            &mut statement,
+            ids.iter().map(|id| id.get()).collect::<Vec<_>>(),
+            read_thread,
+        )
+        .await
+    }
+
+    /// Each raw row's partners that are in view -- in their own account's
+    /// inbox -- with the key each is drawn at there.
+    ///
+    /// A partner filed away is not part of what the user is looking at: it
+    /// neither takes the row nor folds into it, and an action on the row does
+    /// not reach it through the group.
+    async fn partners_in_view(
+        &self,
+        inboxes: &[(AccountId, MailboxId)],
+        raw: &[(AccountId, ThreadListRow)],
+    ) -> Result<HashMap<ThreadId, Vec<Partner>>> {
+        let ids: Vec<ThreadId> = raw.iter().filter_map(|(_, row)| row.id).collect();
+        let threads = self.threads_by_id(&ids).await?;
+        let candidates = self.group_partners_for(&threads).await?;
+        let mut wanted: Vec<ThreadId> = candidates
+            .values()
+            .flatten()
+            .map(|partner| partner.id)
+            .collect();
+        wanted.sort_unstable();
+        wanted.dedup();
+        if wanted.is_empty() {
+            return Ok(HashMap::new());
         }
-        let rows = sql::mapped(&mut statement, arguments, read_thread).await?;
-        Ok(rows)
+
+        let rows: Vec<(i64, i64, i64)> = {
+            let mut statement = sql::statement(
+                self.connection,
+                &format!(
+                    "SELECT thread_id, received_at, id FROM messages
+                      WHERE thread_id IN ({}) AND mailbox_id IN ({}) AND {MEMBER}",
+                    placeholders(wanted.len(), 1),
+                    placeholders(inboxes.len(), wanted.len() + 1)
+                ),
+            )
+            .await?;
+            let arguments: Vec<i64> = wanted
+                .iter()
+                .map(|id| id.get())
+                .chain(inboxes.iter().map(|(_, inbox)| inbox.get()))
+                .collect();
+            sql::mapped(&mut statement, arguments, |row| {
+                Ok((row.col(0)?, row.col(1)?, row.col(2)?))
+            })
+            .await?
+        };
+        let mut keys: HashMap<ThreadId, ThreadCursor> = HashMap::new();
+        for (thread, received_at, id) in rows {
+            let key = ThreadCursor {
+                last_at: from_millis(received_at),
+                id,
+            };
+            keys.entry(ThreadId::new(thread))
+                .and_modify(|held| {
+                    if sort_key(key) > sort_key(*held) {
+                        *held = key;
+                    }
+                })
+                .or_insert(key);
+        }
+
+        Ok(candidates
+            .into_iter()
+            .map(|(thread, partners)| {
+                let partners = partners
+                    .into_iter()
+                    .filter_map(|partner| {
+                        keys.get(&partner.id).map(|at| Partner {
+                            thread: partner,
+                            at: *at,
+                        })
+                    })
+                    .collect();
+                (thread, partners)
+            })
+            .collect())
     }
 
     /// The threads in *other* accounts that are each page thread's
@@ -848,66 +1019,62 @@ impl<'a> ThreadRepository<'a> {
         Ok(partners)
     }
 
-    /// The group's display row: the head thread's row, counts deduped
-    /// across every member.
+    /// The group's display row: the head's inbox row, counts deduped across
+    /// every member.
     ///
-    /// Participants and the latest message are filled by the caller in one
-    /// batched read per page, the same way [`ThreadRepository::page`] does —
-    /// per-group reads were most of a page's cost.
-    async fn group_row(&self, head: &Thread, partners: &[Thread]) -> Result<ThreadListRow> {
-        let mut row = ThreadListRow {
-            id: Some(head.id),
-            subject: head.subject.clone(),
-            participants: Vec::new(),
-            message_count: head.message_count,
-            unread_count: head.unread_count,
-            has_attachments: head.has_attachments,
-            is_flagged: head.is_flagged,
-            first_at: head.first_at,
-            last_at: head.last_at,
-            latest: None,
-            sort_id: head.id.get(),
+    /// Participants and the representative come with the head's row, read
+    /// in one batch per inbox page the way [`ThreadRepository::page`] does.
+    async fn group_row(
+        &self,
+        head: ThreadListRow,
+        partners: &[Partner],
+        inboxes: &[(AccountId, MailboxId)],
+    ) -> Result<ThreadListRow> {
+        let mut row = head;
+        let Some(head) = row.id else {
+            return Ok(row);
         };
         if partners.is_empty() {
             // The overwhelmingly common group: one thread, one account. Its
-            // own maintained counts are already the answer, and asking SQL
-            // to dedupe a set of one was most of the unified page's cost.
+            // inbox row is already the answer, and asking SQL to dedupe a set
+            // of one was most of the unified page's cost.
             return Ok(row);
         }
 
         // Distinct messages, not distinct rows: a copy received at two
         // addresses is one message to the user. A message with no
-        // RfcMessageId can never be anyone's copy, so it counts by row.
-        let mut members: Vec<i64> = vec![head.id.get()];
-        members.extend(
-            partners
-                .iter()
-                .map(|partner| partner.id.get())
-                .collect::<Vec<_>>(),
-        );
-        let placeholders = std::iter::repeat_n("?", members.len())
-            .collect::<Vec<_>>()
-            .join(", ");
+        // RfcMessageId can never be anyone's copy, so it counts by row. The
+        // badge is the conversation's size wherever it is filed, and the
+        // unread count is the inboxes' slice -- a folder row's two rules.
+        let mut members: Vec<i64> = vec![head.get()];
+        members.extend(partners.iter().map(|partner| partner.thread.id.get()));
+        let first_inbox = members.len() + 1;
         let (message_count, unread_count): (u32, u32) = sql::one(
             self.connection,
             &format!(
                 "SELECT
                      count(DISTINCT coalesce(nullif(m.rfc_message_id, ''), 'row:' || m.id)),
-                     count(DISTINCT CASE WHEN m.seen = 0
+                     count(DISTINCT CASE WHEN m.seen = 0 AND m.mailbox_id IN ({inboxes})
                          THEN coalesce(nullif(m.rfc_message_id, ''), 'row:' || m.id) END)
                    FROM messages m
-                  WHERE m.thread_id IN ({placeholders}) AND m.{MEMBER}"
+                  WHERE m.thread_id IN ({members}) AND m.{MEMBER}",
+                members = placeholders(members.len(), 1),
+                inboxes = placeholders(inboxes.len(), first_inbox),
             ),
-            members.clone(),
+            members
+                .iter()
+                .copied()
+                .chain(inboxes.iter().map(|(_, inbox)| inbox.get()))
+                .collect::<Vec<_>>(),
             |row| Ok((row.col(0)?, row.col(1)?)),
         )
         .await?;
         row.message_count = message_count;
         row.unread_count = unread_count;
         for partner in partners {
-            row.has_attachments |= partner.has_attachments;
-            row.is_flagged |= partner.is_flagged;
-            row.first_at = row.first_at.min(partner.first_at);
+            row.has_attachments |= partner.thread.has_attachments;
+            row.is_flagged |= partner.thread.is_flagged;
+            row.first_at = row.first_at.min(partner.thread.first_at);
         }
         Ok(row)
     }

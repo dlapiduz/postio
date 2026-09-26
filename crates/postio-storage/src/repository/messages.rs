@@ -2104,11 +2104,19 @@ fn where_clause(query: &ListQuery, with_cursor: bool) -> String {
             NOT_YET_DUE,
         ),
         ListScope::Account(_) => ("messages.account_id = ?1", NOT_YET_DUE),
-        // Every account, so there is no account to name and no argument to
-        // bind. `idx_messages_recency` is the index this leans on -- added
-        // for exactly this shape in ADR 0005 Q5a, because a composite index
-        // led by `account_id` cannot supply the order once nothing pins it.
-        ListScope::Unified => ("1 = 1", NOT_YET_DUE),
+        // Every enabled account's inbox (#1692), so there is no one account
+        // to name and no argument to bind. The list itself never pages this
+        // way -- Unified lists conversations, and
+        // `ThreadRepository::unified_page` merges each inbox's own seek -- so
+        // this is the predicate's meaning kept in step with that, for a count
+        // or a flat read of the same view.
+        ListScope::Unified => (
+            "messages.mailbox_id IN (
+                 SELECT m.id FROM accounts a JOIN mailboxes m
+                     ON m.account_id = a.id AND m.role = 'inbox'
+                  WHERE a.enabled = 1 AND a.pending_deletion = 0 AND m.selectable = 1)",
+            NOT_YET_DUE,
+        ),
         ListScope::Flagged(_) => (
             "messages.account_id = ?1 AND messages.flagged = 1",
             NOT_YET_DUE,
@@ -2158,7 +2166,7 @@ fn where_clause(query: &ListQuery, with_cursor: bool) -> String {
 
 fn scope_arguments(scope: &ListScope) -> Vec<i64> {
     match scope {
-        // Nothing to bind: the scope is every account.
+        // Nothing to bind: the scope is every enabled account's inbox.
         ListScope::Unified => Vec::new(),
         ListScope::Mailbox(id) => vec![id.get()],
         ListScope::Account(id)
