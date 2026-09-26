@@ -341,6 +341,54 @@ pub fn decode_header_text(raw: &[u8]) -> String {
     }
 }
 
+/// One MIME parameter's value out of a list of undecoded `(name, value)`
+/// pairs — an IMAP `BODYSTRUCTURE`'s parameter or disposition list, which a
+/// server hands over exactly as the sender wrote them.
+///
+/// A non-ASCII filename rarely travels as a plain `filename=`: RFC 2231 puts
+/// it in `filename*=UTF-8''…`, split across `filename*0*`, `filename*1*`…
+/// when long, and many clients put an RFC 2047 encoded word inside a plain
+/// `name=` instead. Looking only for the literal `key` found none of those,
+/// and the part went nameless (#1686). `mail_parser` already decodes every
+/// one of these spellings inside a `Content-Type` header, so the pairs are
+/// put back into one and parsed — the same decoder [`parse`] uses, on the
+/// same hostile-input terms, contained the same way.
+///
+/// `None` when no spelling of `key` is present.
+pub fn parameter_value(pairs: &[(String, String)], key: &str) -> Option<String> {
+    let is_token = |name: &str| {
+        !name.is_empty()
+            && name
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || b"*-_.".contains(&byte))
+    };
+    let mut header = String::from("application/octet-stream");
+    for (name, value) in pairs {
+        if !is_token(name) {
+            continue;
+        }
+        let mut quoted = String::with_capacity(value.len() + 2);
+        for c in value.chars().filter(|c| *c != '\r' && *c != '\n') {
+            if c == '"' || c == '\\' {
+                quoted.push('\\');
+            }
+            quoted.push(c);
+        }
+        header.push_str(&format!("; {name}=\"{quoted}\""));
+    }
+    header.push('\n');
+
+    let parsed = std::panic::catch_unwind(|| {
+        match mail_parser::parsers::MessageStream::new(header.as_bytes()).parse_content_type() {
+            HeaderValue::ContentType(content_type) => content_type
+                .attribute(key)
+                .map(|value| value.trim().to_owned()),
+            _ => None,
+        }
+    });
+    parsed.ok().flatten().filter(|value| !value.is_empty())
+}
+
 /// The bracketed identifier out of a `List-Id` header value — RFC 2919's
 /// `"Display Name" <list-id>` — so a mailing list is recognized by its
 /// stable id and not by the display name a moderator can rename at will.
