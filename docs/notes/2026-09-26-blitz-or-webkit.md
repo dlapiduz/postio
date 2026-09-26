@@ -245,6 +245,128 @@ Setup:
 - **Arm A's SVG local-file behaviour was not measured.** WebKit, like
   every browser, loads no external resources for SVG used as an image.
 
+### S2 and S3, cost and blank frames (T026)
+
+| | arm A (WebKit), `pane_comparison document N` | arm B (Blitz), `eval_blitz` cost |
+|---|---|---|
+| processes | the UI plus **1 web process** at 2, 10 and 50 messages (WebKit's network process is not counted by this instrument) | **1**: the app's own |
+| memory | web Pss 83 / 96 / 97 MiB at 2 / 10 / 50 messages; UI RSS 150 MiB either way | render growth +12 / +9 / +47 MiB at 2 / 10 / 50. The prototype rasterises the whole document into one buffer; the plan's tiles cap that at 64 MiB. **Font discovery costs 198 MiB of Pss before anything renders**, because the prototype reads every installed font file into memory. A shipped renderer would have to memory-map or load lazily |
+| time | handover 41–43 ms at every length (asynchronous: the UI waits for none of it) | first render 7.6 / 17.9 / 77.0 ms, warm 7.1 / 17.9 / 73.5 ms; the plan runs it off the UI thread |
+| S3, blank frames | **not re-measured.** Reports stand open: a black frame between messages (#749, #947, still open) and on the reader↔composer swap (ADR 0034) | **not measurable at prototype depth**: there is no widget. By construction, one in-process surface with no second GL surface is what removes the black composite |
+
+### S4 and S5, affordances and accessibility (T027)
+
+- **S4, what exists today and what is still to build.** Counted from
+  `tasks.md`:
+  - **Arm A** already has selection and copy, find (`FindController`),
+    zoom (`zoom-level`), printing, link handling and a screen-reader tree.
+    What it owes is wiring: find and zoom to registry commands, the
+    `[reader]` zoom setting, the document-level dark flag, and applying
+    the rule through its isolated-world script. That is roughly **15–20
+    tasks**.
+  - **Arm B** has to build all of it: the Foundational phase (T030–T067,
+    38 tasks), US4's selection, find, links, accessibility and script-free
+    rail (T106–T119, 14), US6's zoom (T120–T131, 12), and the switch
+    (T138–T153, 16). That is roughly **75 tasks**. At least 8 of them (the
+    registry, config and zoom plumbing) are the same for both.
+- **S5, accessibility.** Not walked: no AT-SPI client is installed on the
+  machine. Instead, by construction:
+  - **arm A:** WebKitGTK exposes the document's text, links, headings and
+    tables to AT-SPI through GTK;
+  - **arm B:** exposes nothing today. `AccessibleTextImpl` over the text
+    index is T117–T118. `blitz-dom`'s own AccessKit tree would register a
+    second AT-SPI root beside GTK's (the platform research), which is why
+    the plan does not use it.
+
+### S6–S8, security, maintenance and reach (T028)
+
+- **S6, security posture.**
+  - **Arm A:**
+    - hostile HTML, CSS and images are parsed by WebKitGTK, a large C++
+      engine, but in its **sandboxed** web process (bubblewrap and
+      seccomp);
+    - "no network" is a set of settings plus a CSP, **observed** at zero
+      egress (G2) but not structural;
+    - security fixes arrive with the distribution's WebKitGTK point
+      releases, which ship CVE fixes regularly.
+  - **Arm B:**
+    - parsing is **memory-safe Rust** (html5ever, stylo, image, usvg,
+      skrifa and harfrust), with fontconfig kept out;
+    - "no network" is **structural**: there is no network crate in the
+      graph;
+    - but rendering runs in-process with no sandbox, so a panic or a hang
+      is Postio's to contain. The evaluation found one panic class
+      reachable from mail (a relative image URL); a configuration removes
+      it.
+- **S7, maintenance risk.**
+  - **Arm A:** mature and stable API, distro-delivered.
+  - **Arm B:** blitz-* 0.3.0-beta.2, with `main` pinning parley by git
+    revision. The gaps that touched this corpus, all Postio's to carry
+    until upstream lands them:
+    - collapsed-border phantom grids (#504, an open PR);
+    - `valign`, `cellpadding`/`cellspacing` and `<font>`, translated by
+      Postio's hints;
+    - SVG images not painting, cause unknown;
+    - a style mutation that did not restyle;
+    - a panic on a relative URL.
+- **S8, platform reach.**
+  - **Arm A** keeps one engine family on both platforms: the macOS
+    frontend already renders with WKWebView (ADR 0019), and the
+    isolated-world approach ports to WKWebView's user scripts.
+  - **Arm B** could one day replace WKWebView too, which would give one
+    renderer everywhere, but the macOS text, selection and accessibility
+    integration would be built a second time.
+
+## Scorecard
+
+| | arm A — WebKit | arm B — Blitz |
+|---|---|---|
+| **G1** legible | **pass**, with the rule and a dark flag it owes: 28 → 0 at 4.5:1 | **pass**, with the rule: 26 → 0 at 4.5:1 |
+| **G2** no egress | **pass**: 0 unconsented; images only when consented | **pass**: 0, structurally |
+| **G3** survives | **pass**: ≤ 374 ms, no crash | **pass**, with a `base_url` configured; 1–101 ms |
+| S1 fidelity | 6 of 6 (the references are WebKit's own) | 5 of 6; 6 of 6 with blitz#504 |
+| S2 cost | ~85–100 MiB web process + UI; 42 ms asynchronous handover | no process; per-render growth bounded by tiles; font loading needs redesign |
+| S3 blank frames | open reports (#749, #947) | not measurable yet; removed by construction |
+| S4 affordance work | ~15–20 tasks | ~75 tasks |
+| S5 accessibility | full, today | none, today |
+| S6 security | sandboxed C++; network by setting | memory-safe in-process; network structurally absent |
+| S7 maintenance | mature, distro-updated | beta; five gaps this corpus hit |
+| S8 reach | same family as macOS today | one renderer everywhere, later |
+
+## Recommendation
+
+**WebKit, now; and keep Blitz measured.**
+
+- **The engine was not the bug.** Every dark-on-dark run the user saw is
+  fixed on both engines by the same engine-neutral work:
+  - the canvas lifted, and classes kept;
+  - Postio's type kept out of sender markup;
+  - the R10 rule, which takes 26–28 failing runs to 0 on either arm.
+
+  WebKit additionally owes one fix: tell the document it is dark.
+- **Arm A wins on what a user feels and on cost to finish.** WebKit
+  already has selection, find, accessibility, zoom and printing, matches
+  every reference, and needs roughly a quarter of the remaining work.
+- **Arm B's advantages are real, and not yet available.** Its structural
+  "no network", its memory-safe parsing and its single surface arrive with
+  a beta engine that failed to paint SVG, panicked on a relative URL,
+  drew phantom table borders, and needs every reading affordance built from
+  scratch.
+- **Blitz stays cheap to reconsider.** `eval_blitz` re-runs in seconds.
+  Re-evaluate when blitz 0.3 is final with #504 merged and SVG images
+  painting.
+
+**If the maintainer chooses WebKit**, T029 amends FR-001, FR-002, FR-023a
+and SC-006 as research R0 lays out, and re-plans the engine-specific
+phases. **If Blitz**, the plan stands, and the five arm B findings above
+become its first tasks.
+
+**A question for the maintainer either way.** At 7:1 (high contrast), two
+runs on each arm cannot be repaired by changing the text colour alone:
+white on a sender's mid-blue button. FR-012 lets the rule change only the
+text. Should high contrast also be allowed to change a background, or does
+it accept the residual?
+
 ### Engine-neutral defects the evaluation found
 
 Found while measuring arm A, and fixed on the branch before either arm is
@@ -279,3 +401,9 @@ judged, because they cost both engines the same:
    arms do it the same way.
 4. **The fidelity metric was amended before first use**, as its contract
    records: row alignment, and a no-lost-block rule.
+5. **S5 was established by construction, not by an AT-SPI walk.** The
+   machine has no AT-SPI client installed, and writing one was out of
+   proportion to a criterion whose answer is not in doubt: one arm has a
+   full tree and the other has none yet.
+6. **S3 was not re-measured.** Arm B has no widget at prototype depth, and
+   arm A's blank frames are already on record in open issues.
