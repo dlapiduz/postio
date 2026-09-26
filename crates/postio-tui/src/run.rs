@@ -48,11 +48,22 @@ pub fn open(
     config_path: Option<&std::path::Path>,
     secrets: Arc<dyn postio_account::secret::SecretStore>,
 ) -> Result<Host, String> {
-    let say_so = |waiting: postio_ui::list_state::Waiting| {
-        let (title, _) = postio_ui::list_state::describe_wait(waiting);
-        eprintln!("{title}…");
-    };
+    let say_so = saying(|line: &str| eprintln!("{line}"));
     Host::open(config_path, secrets, &say_so).map_err(|sentence| format!("postio-tui: {sentence}"))
+}
+
+/// Say each wait to `write` as a line, unless it reads the same as the one
+/// before: the keyring and the store are two waits with one sentence.
+fn saying(write: impl Fn(&str)) -> impl Fn(postio_ui::list_state::Waiting) {
+    let last = std::cell::RefCell::new(String::new());
+    move |waiting| {
+        let (title, _) = postio_ui::list_state::describe_wait(waiting);
+        let line = format!("{title}…");
+        if *last.borrow() != line {
+            write(&line);
+            *last.borrow_mut() = line;
+        }
+    }
 }
 
 /// The whole program.
@@ -1193,5 +1204,21 @@ mod tests {
             base64(b"https://example.com/a?b"),
             "aHR0cHM6Ly9leGFtcGxlLmNvbS9hP2I="
         );
+    }
+}
+
+#[cfg(test)]
+mod waits {
+    use postio_ui::list_state::Waiting;
+
+    #[test]
+    fn a_wait_that_reads_the_same_as_the_last_is_not_said_again() {
+        // The keyring and the store are two waits with one sentence; the
+        // person sees one line for them, not the same line twice.
+        let said = std::cell::RefCell::new(Vec::new());
+        let say = super::saying(|line: &str| said.borrow_mut().push(line.to_owned()));
+        say(Waiting::Keyring);
+        say(Waiting::Store);
+        assert_eq!(*said.borrow(), ["Opening your mailbox…"]);
     }
 }
