@@ -276,3 +276,17 @@ default-filter = 'not binary(cache_pressure)'
 # report nobody is watching live, and for a release gate it is worse: it would
 # name one failure when the next line might be the reason.
 fail-fast = false
+
+# The accessibility audit stalls on a shared runner: twice in four release
+# gates (2026-09-25/26) it froze while opening the composer's editor WebView
+# (#1677's shape -- an editor load that never finishes under load) and sat out
+# the full twelve minutes, while every pull request's run of the same binary
+# finishes in about four seconds. Its own watchdog could not fire, so the
+# process was stopped as a whole, not spinning. A stall is not an answer: it
+# is killed at two minutes and tried again, which a timeout otherwise never
+# is -- `test-with-flake-retry.sh` can only retry a failure nextest reported
+# per test. Coverage is unchanged; #1677 is the fix.
+[[profile.ci-full.overrides]]
+filter = 'binary(gtk_accessibility)'
+slow-timeout = { period = "60s", terminate-after = 2 }
+retries = 2
