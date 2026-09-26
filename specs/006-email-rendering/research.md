@@ -733,6 +733,12 @@ engine's box tree, which a PNG does not carry. Cell-mean comparison measures
 what the spec asks: "columns in the same places, images in place at intended
 size, colours as specified".
 
+**Amended before first use.** The metric's own tests (T009) showed that
+cell-mean agreement alone passes a lost card and fails a one-line drift. It
+now aligns pixel rows first, like a text diff, and also fails any wholly
+wrong 3 × 3 block of cells. `contracts/fidelity-metric.md` records the
+evidence. The constants are unchanged.
+
 **Alternatives.**
 - Pixel diff: rejected, since fonts make it fail.
 - Perceptual hashing: rejected as too coarse to see a column collapse.

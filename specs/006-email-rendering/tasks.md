@@ -76,13 +76,13 @@ R13).
   - `html-cjk-emoji.eml`: Chinese, Japanese and Korean text, plus emoji
 - [X] T007 Write the one-shot capture tool `crates/postio-gtk/examples/capture_reference.rs`, following `contracts/fidelity-metric.md` § Reference renders. It renders each designed fixture's **unsanitized** HTML in a WebKitGTK view with network, JavaScript and remote loads off, and serves `cid:` parts from the fixture itself. It uses 800 CSS px, scale 1, the light scheme, and the bundled faces as default families. The output is one PNG per fixture in `crates/postio-test-support/data/reference/`
 - [X] T008 Run T007 by hand on the desktop (`cargo run -p postio-gtk --example capture_reference`). Check in the PNGs and `crates/postio-test-support/data/reference/README.md`, with one line per fixture giving the WebKitGTK version (`pkg-config --modversion webkitgtk-6.0`) and the date
-- [ ] T009 [TEST] Write the metric's own tests in `crates/postio-test-support/src/fidelity.rs`, each checked against `contracts/fidelity-metric.md`:
+- [X] T009 [TEST] Write the metric's own tests in `crates/postio-test-support/src/fidelity.rs`, each checked against `contracts/fidelity-metric.md`:
   - an image compared with itself matches;
   - a copy with one 70 px column filled with the background does **not** match;
   - a copy with ±1 px glyph jitter, simulated by a 1 px blur, matches;
   - a copy 10% taller does not match;
   - the diff image outlines exactly the changed cells
-- [ ] T010 Implement the metric in `crates/postio-test-support/src/fidelity.rs`: 16 px cells, OKLab means, ΔE_OK ≤ 0.08 on ≥ 92% of cells, heights within ±8%, and the diff-image writer. The constants are the contract's, with no others
+- [X] T010 Implement the metric in `crates/postio-test-support/src/fidelity.rs`: 16 px cells, OKLab means, ΔE_OK ≤ 0.08 on ≥ 92% of cells, heights within ±8%, and the diff-image writer. The constants are the contract's, with no others
 
 **Checkpoint**: The corpus and references are checked in, and the metric is
 proven on synthetic images. Nothing renders yet.
