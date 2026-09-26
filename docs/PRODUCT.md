@@ -99,8 +99,8 @@ the authorization flow itself — the consent screen in the system browser, a
 loopback redirect, PKCE — is `crates/postio-account/src/oauth/`, and
 [ADR 0006](decisions/0006-oauth-and-provider-presets.md) is the design.
 **Multiple accounts are built**: one engine per enabled account, one
-database, and a unified inbox that is a scope rather than a mailbox
-(`g a` walks the scopes, `account:` names one in a query) —
+database, and a unified inbox — every enabled account's inbox, not all its
+mail — that is a scope rather than a mailbox (`g a` walks the scopes, `account:` names one in a query) —
 [ADR 0005](decisions/0005-multiple-accounts.md). JMAP and Gmail are the two
 further `MailBackend` implementations of
 [ADR 0018](decisions/0018-jmap-and-gmail-backends.md), `crates/postio-jmap`
