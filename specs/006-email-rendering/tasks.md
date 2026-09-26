@@ -130,7 +130,7 @@ proven on synthetic images. Nothing renders yet.
   - `repair` meets the floor, changes only OKLCH L (hue within 2°), leaves a passing colour unchanged, and reduces chroma only when out of gamut;
   - `parse_css_color` reads `#rgb`, `#rrggbb`, `rgb()`, `rgba()` and the named colours an engine's computed style reports
 - [X] T020b Implement the colour arithmetic in `crates/postio-ui/src/reader/theme.rs`: luminance, contrast, OKLab/OKLCH, `repair`, `floor(theme)` (4.5, or 7 in high contrast, with no large-text allowance), and `parse_css_color`
-- [ ] T020c [TEST] Write the classification's table test in `crates/postio-ui/src/reader/theme.rs` (FR-013), over `MessageFacts { canvas, inner_background, declares_dark }` and `Theme { dark, high_contrast }`:
+- [X] T020c [TEST] Write the classification's table test in `crates/postio-ui/src/reader/theme.rs` (FR-013), over `MessageFacts { canvas, inner_background, declares_dark }` and `Theme { dark, high_contrast }`:
   - light → `Styled`;
   - dark with declared dark support → `SenderDark`;
   - dark with an inner background → `Paper`;
@@ -139,7 +139,7 @@ proven on synthetic images. Nothing renders yet.
   - dark with nothing → `Adapted`.
 
   Also, `darken` maps a background's OKLab L into [0.12, 0.30] with hue kept
-- [ ] T020d Implement `classify` and `darken` in `crates/postio-ui/src/reader/theme.rs`
+- [X] T020d Implement `classify` and `darken` in `crates/postio-ui/src/reader/theme.rs`
 
 > **T020a–T020d were added during implementation**, and are lettered so
 > that commits already citing task numbers stay true. The rule of research

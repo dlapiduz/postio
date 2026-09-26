@@ -128,7 +128,9 @@ pub fn from_oklch(colour: Oklch) -> (Rgb, bool) {
         -1.268_438_004_6 * l + 2.609_757_401_1 * m - 0.341_319_396_5 * s,
         -0.004_196_086_3 * l - 0.703_418_614_7 * m + 1.707_614_701 * s,
     ];
-    const EPSILON: f64 = 1e-4;
+    // Tight: near black a channel is a few thousandths, and a tolerance
+    // that admits a slightly negative one lets clamping bend the hue.
+    const EPSILON: f64 = 1e-7;
     let in_gamut = linear
         .iter()
         .all(|c| (-EPSILON..=1.0 + EPSILON).contains(c));
@@ -303,6 +305,72 @@ fn named(name: &str) -> Option<Rgb> {
     Some(Rgb::from_u8(r, g, b))
 }
 
+/// How a message is presented in the current theme (spec FR-013).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Presentation {
+    /// Light theme: as authored, on its own canvas.
+    Styled,
+    /// Dark theme, and the sender declared a dark design: theirs.
+    SenderDark,
+    /// Dark theme, designed mail: on the sender's own light canvas, a sheet
+    /// of paper inside the dark app.
+    Paper,
+    /// Paper the user asked to darken (FR-013a).
+    Darkened,
+    /// Dark theme, not designed: on the reader's ground, text repaired.
+    Adapted,
+}
+
+/// What a message says about its own colours, as an engine reads them.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct MessageFacts {
+    /// The page's background colour, lifted from `<body>`/`<html>` or a
+    /// `body` rule, if the sender set one.
+    pub canvas: Option<Rgb>,
+    /// Whether any element inside the message, other than the page itself,
+    /// declares a background colour or image.
+    pub inner_background: bool,
+    /// Whether the sender declared dark support: `color-scheme` naming
+    /// `dark`, or a rule under `prefers-color-scheme: dark`.
+    pub declares_dark: bool,
+}
+
+/// The relative luminance at and above which a page background is a
+/// client's default white rather than a design (FR-013(c)).
+pub const NEAR_WHITE: f64 = 0.9;
+
+/// How a message with `facts` is presented in `theme` (FR-013).
+///
+/// In priority order: a light theme draws everything as authored; a
+/// sender's own dark design wins; designed mail -- an inner background, or a
+/// page that is not plain white -- is paper, or darkened paper if the user
+/// asked; everything else adapts to the reader's ground. A desktop client
+/// stamping a white page on every reply is not a design.
+pub fn classify(facts: MessageFacts, theme: Theme, darkened: bool) -> Presentation {
+    if !theme.dark {
+        return Presentation::Styled;
+    }
+    if facts.declares_dark {
+        return Presentation::SenderDark;
+    }
+    let designed = facts.inner_background
+        || facts
+            .canvas
+            .is_some_and(|canvas| relative_luminance(canvas) < NEAR_WHITE);
+    match (designed, darkened) {
+        (true, true) => Presentation::Darkened,
+        (true, false) => Presentation::Paper,
+        (false, _) => Presentation::Adapted,
+    }
+}
+
+/// A background colour remapped for a darkened message (FR-013a): OKLab
+/// lightness into `[0.12, 0.30]`, inverted, with its hue kept.
+pub fn darken(background: Rgb) -> Rgb {
+    let colour = to_oklch(background);
+    at_lightness(colour, 0.12 + (1.0 - colour.l.clamp(0.0, 1.0)) * 0.18)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -432,6 +500,124 @@ mod tests {
             (to_oklch(after).c - to_oklch(within).c).abs() < 0.01,
             "chroma kept when it fits"
         );
+    }
+
+    /// A canvas whose relative luminance is exactly `target`.
+    fn grey_at(target: f64) -> Rgb {
+        let (mut low, mut high) = (0.0, 1.0);
+        for _ in 0..60 {
+            let middle = (low + high) / 2.0;
+            if relative_luminance(Rgb {
+                r: middle,
+                g: middle,
+                b: middle,
+            }) < target
+            {
+                low = middle;
+            } else {
+                high = middle;
+            }
+        }
+        Rgb {
+            r: high,
+            g: high,
+            b: high,
+        }
+    }
+
+    #[test]
+    fn every_message_is_presented_by_one_stated_rule() {
+        let light = Theme::default();
+        let dark = Theme {
+            dark: true,
+            high_contrast: false,
+        };
+        let white = Some(hex("#ffffff"));
+        let facts = |canvas: Option<Rgb>, inner: bool, declares: bool| MessageFacts {
+            canvas,
+            inner_background: inner,
+            declares_dark: declares,
+        };
+        for (what, message, theme, expected) in [
+            (
+                "light theme, anything",
+                facts(white, true, false),
+                light,
+                Presentation::Styled,
+            ),
+            (
+                "a declared dark design",
+                facts(white, true, true),
+                dark,
+                Presentation::SenderDark,
+            ),
+            (
+                "designed: an inner background",
+                facts(None, true, false),
+                dark,
+                Presentation::Paper,
+            ),
+            (
+                "designed: a coloured page",
+                facts(Some(grey_at(0.89)), false, false),
+                dark,
+                Presentation::Paper,
+            ),
+            (
+                "a near-white page is a default",
+                facts(Some(grey_at(0.91)), false, false),
+                dark,
+                Presentation::Adapted,
+            ),
+            (
+                "a white page is a default",
+                facts(white, false, false),
+                dark,
+                Presentation::Adapted,
+            ),
+            (
+                "nothing at all",
+                facts(None, false, false),
+                dark,
+                Presentation::Adapted,
+            ),
+        ] {
+            assert_eq!(classify(message, theme, false), expected, "{what}");
+        }
+        // Darken applies to paper, and to nothing else.
+        assert_eq!(
+            classify(facts(None, true, false), dark, true),
+            Presentation::Darkened
+        );
+        assert_eq!(
+            classify(facts(white, false, false), dark, true),
+            Presentation::Adapted
+        );
+        assert_eq!(
+            classify(facts(None, true, false), light, true),
+            Presentation::Styled
+        );
+    }
+
+    #[test]
+    fn darken_lands_backgrounds_in_the_dark_band_with_hue_kept() {
+        for value in [
+            "#ffffff", "#f7e8d0", "#dcebe3", "#dde4f3", "#1f6fa8", "#000000",
+        ] {
+            let before = hex(value);
+            let after = to_oklch(darken(before));
+            assert!(
+                (0.12 - 1e-6..=0.30 + 1e-6).contains(&after.l),
+                "{value}: L = {}",
+                after.l
+            );
+            let was = to_oklch(before);
+            if was.c > 0.02 && after.c > 0.02 {
+                assert!(hue_distance(was.h, after.h) <= 2.0, "{value}");
+            }
+        }
+        // Inverted: the lightest page becomes the darkest ground.
+        assert!(to_oklch(darken(hex("#ffffff"))).l < to_oklch(darken(hex("#1f6fa8"))).l);
     }
 
     #[test]
