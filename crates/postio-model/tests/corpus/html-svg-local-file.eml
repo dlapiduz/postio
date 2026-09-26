@@ -1,0 +1,29 @@
+Message-ID: <20260925T050000.svgfile@abuse.example.com>
+Date: Fri, 25 Sep 2026 05:00:00 +0000
+From: Vector Art <art@abuse.example.com>
+To: Ren Ishida <ren.ishida@example.net>
+Subject: A drawing that looks at your disk
+MIME-Version: 1.0
+Content-Type: multipart/related; type="text/html"; boundary="=_rel_svg_0c44"
+
+--=_rel_svg_0c44
+Content-Type: text/html; charset=utf-8
+Content-Transfer-Encoding: 8bit
+
+<html><body><p>A vector image whose inner images name local files.</p>
+<p><img src="cid:drawing.svg@abuse.example.com" width="120" height="60" alt="Drawing"></p></body></html>
+--=_rel_svg_0c44
+Content-Type: image/svg+xml; name="drawing.svg"
+Content-Transfer-Encoding: base64
+Content-ID: <drawing.svg@abuse.example.com>
+Content-Disposition: inline; filename="drawing.svg"
+
+PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHhtbG5zOnhsaW5rPSJodHRw
+Oi8vd3d3LnczLm9yZy8xOTk5L3hsaW5rIiB3aWR0aD0iMTIwIiBoZWlnaHQ9IjYwIiB2aWV3Qm94
+PSIwIDAgMTIwIDYwIj4KPHJlY3QgeD0iMCIgeT0iMCIgd2lkdGg9IjEyMCIgaGVpZ2h0PSI2MCIg
+ZmlsbD0iIzJlN2QzMiIvPgo8aW1hZ2UgeD0iMTAiIHk9IjEwIiB3aWR0aD0iNDAiIGhlaWdodD0i
+NDAiIGhyZWY9ImZpbGU6Ly8vdG1wL3Bvc3Rpby1zdmctbG9jYWwtZmlsZS1wcm9iZS5wbmciIHhs
+aW5rOmhyZWY9ImZpbGU6Ly8vdG1wL3Bvc3Rpby1zdmctbG9jYWwtZmlsZS1wcm9iZS5wbmciLz4K
+PGltYWdlIHg9IjYwIiB5PSIxMCIgd2lkdGg9IjQwIiBoZWlnaHQ9IjQwIiBocmVmPSIvZXRjL3Bv
+c3Rpby1zdmctcHJvYmUucG5nIi8+Cjwvc3ZnPg==
+--=_rel_svg_0c44--

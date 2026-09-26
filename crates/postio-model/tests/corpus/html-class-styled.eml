@@ -1,0 +1,26 @@
+Message-ID: <20260922T101000.classes@club.example.org>
+Date: Tue, 22 Sep 2026 10:10:00 +0000
+From: Oakmere Rowing Club <secretary@oakmere.example.org>
+To: Priya Vance <priya.vance@example.net>
+Subject: Regatta entries close Friday
+MIME-Version: 1.0
+Content-Type: text/html; charset=utf-8
+Content-Transfer-Encoding: 8bit
+
+<!DOCTYPE html>
+<html><head><meta charset="utf-8">
+<style>
+  #masthead { background: #0e3b5c; color: #ffffff; padding: 16px 20px; font-size: 20px; font-weight: bold; }
+  .notice { border-left: 6px solid #d9822b; background: #fff3e6; color: #5a3100; padding: 12px 16px; margin: 16px 0; }
+  .cta { display: inline-block; background: #d9822b; color: #1a0e00; padding: 10px 18px; font-weight: bold; text-decoration: none; }
+  p.small { font-size: 12px; color: #555555; }
+</style></head>
+<body style="margin:0;font-family:Tahoma,sans-serif;background:#ffffff;color:#222222;">
+<div id="masthead">Oakmere Rowing Club</div>
+<div style="padding:0 20px;">
+<p>Entries for the October regatta close on Friday at noon.</p>
+<div class="notice">Crews without a named cox will be withdrawn from the draw.</div>
+<p><a class="cta" href="https://oakmere.example.org/enter">Enter a crew</a></p>
+<p class="small">You are receiving this as a club member.</p>
+</div>
+</body></html>

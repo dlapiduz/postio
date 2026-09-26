@@ -114,6 +114,14 @@ pub enum Category {
     Calendar,
     /// A bounce: `multipart/report` with a `message/delivery-status` part.
     DeliveryStatus,
+    /// A layout its sender designed: columns, blocks, colours, buttons. The
+    /// fixtures rendering fidelity is judged on (spec 006 SC-002).
+    Designed,
+    /// Tries to escape its box, execute, phone home, or exhaust the renderer.
+    Hostile,
+    /// Colour choices that stress legibility across light, dark and high
+    /// contrast: a white page, dark text on nothing, sender dark styling.
+    ThemeContrast,
 }
 
 impl Category {
@@ -142,6 +150,9 @@ impl Category {
         Category::RemoteContent,
         Category::Calendar,
         Category::DeliveryStatus,
+        Category::Designed,
+        Category::Hostile,
+        Category::ThemeContrast,
     ];
 
     /// The category's stable, lower-kebab-case name.
@@ -170,6 +181,9 @@ impl Category {
             Category::RemoteContent => "remote-content",
             Category::Calendar => "calendar",
             Category::DeliveryStatus => "delivery-status",
+            Category::Designed => "designed",
+            Category::Hostile => "hostile",
+            Category::ThemeContrast => "theme-contrast",
         }
     }
 
@@ -340,12 +354,52 @@ corpus! {
         "Deeply folded headers: a three-hop Received chain, DKIM-Signature, multi-line Authentication-Results and Subject.",
     "headers-only-no-body": [MissingHeaders, PlainText] =>
         "A message that ends after its headers, with no blank line and no body at all.",
-    "html-escaping-styles": [Html] =>
+    "html-cjk-emoji": [Html] =>
+        "Chinese, Japanese and Korean paragraphs and ZWJ emoji in HTML: shaping and font fallback with no tofu (spec 006 T006).",
+    "html-class-styled": [Html, Designed] =>
+        "A <style> block that targets its own classes and an id: what the sanitizer used to strip before any rule could match (#1545).",
+    "html-dark-aware": [Html, ThemeContrast] =>
+        "Declares color-scheme light dark and restyles itself under prefers-color-scheme: dark through class selectors.",
+    "html-dark-text-no-background": [Html, ThemeContrast] =>
+        "Sets dark text colours and no background anywhere: black text on a dark ground unless something adapts it.",
+    "html-deep-nesting": [Html, Hostile] =>
+        "Four hundred nested divs: the input that overflows a recursive layout's stack.",
+    "html-designed-three-column": [Html, MultipartRelated, InlineImage, Base64, Designed, MailingList] =>
+        "A three-column campaign in nested layout tables with a cid: hero image, coloured cards and a button.",
+    "html-escaping-styles": [Html, Hostile] =>
         "A message whose inline styling tries to leave its own block: position fixed and absolute, a viewport-sized overlay, z-index, a transform, and viewport units \u{2014} beside ordinary colour and a layout table that must survive.",
-    "html-newsletter": [Html, MultipartAlternative, QuotedPrintable, MailingList] =>
+    "html-every-url-vector": [Html, RemoteContent, Hostile] =>
+        "Every way HTML and CSS name a remote resource: @import, @font-face, backgrounds, list markers, cursors, border images, content, a conditional rule, a background attribute, a pixel.",
+    "html-illegible-sender-dark": [Html, ThemeContrast] =>
+        "The sender's own dark-mode styling sets #333 text on #222: honoured, but not trusted.",
+    "html-legacy-font-center": [Html] =>
+        "Early-2000s markup: <font color face size>, <center>, and body bgcolor, text, link and vlink attributes.",
+    "html-legacy-table-attrs": [Html, MultipartRelated, InlineImage, Base64] =>
+        "Table presentational attributes browsers still honour: valign, cellpadding, cellspacing, border, align=center, img align, a cid: cell background.",
+    "html-malformed-image": [Html, MultipartRelated, InlineImage, Base64, Hostile] =>
+        "A cid: PNG cut off halfway: the decoder must fail into a sized placeholder.",
+    "html-newsletter": [Html, MultipartAlternative, QuotedPrintable, MailingList, Designed] =>
         "A real-shaped newsletter: nested layout tables, inline CSS, a media query, List-Unsubscribe and One-Click.",
-    "html-tracking-pixel-remote-images": [Html, RemoteContent, QuotedPrintable] =>
+    "html-oversized-image": [Html, MultipartRelated, InlineImage, Base64, Hostile] =>
+        "A PNG whose header declares 20,000 x 20,000 pixels in under a kilobyte: decode limits, not trust.",
+    "html-responsive-media": [Html, Designed] =>
+        "Two columns that stack under @media (max-width: 600px): responsive rules judged against the pane's width.",
+    "html-rtl-mixed": [Html] =>
+        "Arabic and Hebrew paragraphs with Latin runs inside, plus an English line: bidirectional layout.",
+    "html-script-forms": [Html, Hostile] =>
+        "A script block, onload and onerror handlers, javascript: links in two spellings, and a credentials form.",
+    "html-svg-local-file": [Html, MultipartRelated, InlineImage, Base64, Hostile] =>
+        "A cid: SVG whose inner <image> elements name local files: an image must never read the disk.",
+    "html-tracking-pixel-remote-images": [Html, RemoteContent, QuotedPrintable, Hostile] =>
         "A 1x1 open-rate beacon, remote <img> tags, CSS background-image URLs and a click-tracking redirect.",
+    "html-transactional-receipt": [Html, Designed] =>
+        "A receipt: a hidden preheader, a data: logo, and a totals table whose cells must copy in reading order.",
+    "html-transparent-logo": [Html, MultipartRelated, InlineImage, Base64, ThemeContrast] =>
+        "A dark logo PNG with a transparent ground, drawn for a white page: invisible if a dark ground shows through.",
+    "html-very-tall": [Html, Hostile] =>
+        "About 40,000 pixels of lines with a unique last one: no height at which content may be cut off.",
+    "html-white-page-reply": [Html, ThemeContrast, Threading] =>
+        "A desktop-client reply that stamps a white page and black text on everything: correspondence, not design.",
     "inline-disposed-body": [MultipartAlternative, PlainText, Html, QuotedPrintable] =>
         "Both alternatives carry Content-Disposition: inline \u{2014} the part that *is* the message, marked the way an attachment is.",
     "inline-image-cid": [MultipartRelated, InlineImage, Html, Base64, Attachment] =>
@@ -386,7 +440,7 @@ corpus! {
         "text/plain with format=flowed and delsp=yes, quoting its parent — reflowing and quote detection.",
     "plain-text-simple": [PlainText, Threading] =>
         "The smallest realistic message: 7bit us-ascii, a signature delimiter, nothing unusual.",
-    "transactional-shipping-notice": [MultipartAlternative, PlainText, Html, MailingList] =>
+    "transactional-shipping-notice": [MultipartAlternative, PlainText, Html, MailingList, Designed] =>
         "A shipping notice whose plain part carries a repeated label: value block \u{2014} the facts reader view lifts above the body copy.",
     "transfer-encoding-base64": [Base64, PlainText] =>
         "A plain-text body encoded base64, as export tools emit even when there is nothing to escape.",

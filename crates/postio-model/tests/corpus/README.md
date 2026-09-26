@@ -91,6 +91,9 @@ Fixtures are tagged, not filed — most carry several tags.
 | `remote-content` | remote images, tracking pixels — the reader must block these |
 | `calendar` | `text/calendar` parts and `.ics` attachments |
 | `delivery-status` | bounces: `multipart/report` |
+| `designed` | a layout its sender built — the fixtures rendering fidelity is judged on (spec 006 SC-002) |
+| `hostile` | tries to escape its box, execute, phone home, or exhaust the renderer |
+| `theme-contrast` | colour choices that stress legibility across light, dark and high contrast |
 
 ## The fixtures
 
@@ -134,6 +137,36 @@ Fixtures are tagged, not filed — most carry several tags.
 | `html-escaping-styles.eml` | Inline styling that tries to act on what is *around* the message: `position: fixed` with a viewport-sized overlay and a maximal `z-index`, `position: absolute` lifted out of its block, a `transform` big enough to paint over a neighbour, and lengths in `vw`/`vh`. Beside them, a layout table and ordinary colour that must **survive** — the point is that containment refuses a stated list (`sanitize::REFUSED`, spec FR-019b) rather than flattening a sender's styling. Matters since ADR 0032 put several senders in one document, where escaping a block means reaching someone else's mail. |
 | `html-newsletter.eml` | A newsletter shaped like the real thing: nested layout tables, inline CSS, a `@media` query, an XHTML doctype, `List-Unsubscribe` with One-Click, quoted-printable. The stress case for HTML sanitizing and for text extraction into the search index. |
 | `html-tracking-pixel-remote-images.eml` | A 1×1 open-rate beacon, remote `<img>` over both https and http, CSS `background-image` URLs, a `url()` inside a stylesheet, and a click-tracking redirect. The reader's remote-content blocking must catch **all** of these, not just `<img src>`. |
+
+### Rendering: fidelity, legibility and hostility (spec 006)
+
+Added for `specs/006-email-rendering`. The `designed` ones have reference
+renders the chosen engine is compared against; the `theme-contrast` ones are
+where the dark-on-dark bug lived; the `hostile` ones are what the reader must
+survive without a connection, a crash or a hang.
+
+| File | Exercises |
+|---|---|
+| `html-designed-three-column.eml` | A three-column campaign in nested layout tables: a `cid:` hero image, three coloured cards, a button, a dark footer. Columns must stay columns. |
+| `html-transactional-receipt.eml` | A receipt with a hidden preheader (must not render or copy), a `data:` logo, and a totals table whose cells must copy tab- and newline-separated. |
+| `html-responsive-media.eml` | Two blocks that stack under `@media (max-width: 600px)`: responsive rules must be judged against the width the pane actually gives, and against zoom. |
+| `html-class-styled.eml` | A `<style>` block that selects its own classes and an `id`. Stripping `class` made every such rule dead (#1545). |
+| `html-legacy-font-center.eml` | Early-2000s markup: `<font color face size>`, `<center>`, and `<body bgcolor text link vlink>`. The body's attributes are the page canvas the sender assumed. |
+| `html-legacy-table-attrs.eml` | Table attributes browsers still honour and some engines do not: `valign`, `cellpadding`, `cellspacing`, `border`, `align=center`, `img align`, and a `cid:` `background` on a cell. |
+| `html-white-page-reply.eml` | A desktop-client reply that stamps a white page and black text on every message. Correspondence, not design — in dark mode it should adapt, not glare. |
+| `html-dark-aware.eml` | Declares `color-scheme: light dark` and restyles itself under `prefers-color-scheme: dark` through class selectors: the sender's own dark design should win. |
+| `html-dark-text-no-background.eml` | Dark text colours with no background anywhere — exactly black-on-dark unless something adapts it. |
+| `html-illegible-sender-dark.eml` | The sender's dark styling is itself unreadable (`#333` on `#222`): honoured, but not trusted — the contrast floor still applies. |
+| `html-transparent-logo.eml` | A dark logo PNG on a transparent ground, drawn for a white page. It disappears if a dark ground shows through it. |
+| `html-deep-nesting.eml` | Four hundred nested `<div>`s: what overflows a recursive layout's stack. |
+| `html-very-tall.eml` | Eight hundred 50 px lines, about 40,000 px, ending in a unique line (`Quartz lantern…`) that must be reachable: no height may be cut off. |
+| `html-malformed-image.eml` | A `cid:` PNG cut off halfway: the decoder must fail into a sized placeholder, not a crash. |
+| `html-oversized-image.eml` | A PNG header declaring 20,000 × 20,000 in under a kilobyte: decode limits are enforced, not trusted. |
+| `html-svg-local-file.eml` | A `cid:` SVG whose inner `<image>` elements name local paths. A test places a probe file at `/tmp/postio-svg-local-file-probe.png`; its pixels must never appear. |
+| `html-every-url-vector.eml` | Every way HTML and CSS name a remote resource — `@import`, `@font-face`, backgrounds, list markers, cursors, border images, generated content, a conditional `@media`, a `background` attribute, a pixel. Zero connections unless consented, and only images even then. |
+| `html-script-forms.eml` | A `<script>`, `onload`/`onerror`/`onclick` handlers, `javascript:` links in two spellings, and a credentials form. Nothing runs; no such link launches. |
+| `html-rtl-mixed.eml` | Arabic and Hebrew paragraphs with Latin runs inside: bidirectional layout and shaping in HTML. |
+| `html-cjk-emoji.eml` | Chinese, Japanese and Korean paragraphs plus ZWJ emoji and flags: font fallback with no missing glyphs. |
 
 ### Character sets
 

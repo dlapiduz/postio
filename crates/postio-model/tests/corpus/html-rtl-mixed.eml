@@ -1,0 +1,14 @@
+Message-ID: <20260926T090000.rtl@example.org>
+Date: Sat, 26 Sep 2026 09:00:00 +0000
+From: Layla Haddad <layla.haddad@example.org>
+To: Noa Peretz <noa.peretz@example.net>
+Subject: Meeting notes, both languages
+MIME-Version: 1.0
+Content-Type: text/html; charset=utf-8
+Content-Transfer-Encoding: 8bit
+
+<html><body style="font-family:Arial,sans-serif;font-size:15px;">
+<p dir="rtl" lang="ar">مرحبا نوا، هذه ملاحظات الاجتماع. سنلتقي يوم الثلاثاء في <b>Room 4B</b> الساعة العاشرة.</p>
+<p dir="rtl" lang="he">שלום ליילה, קיבלתי. אני אביא את הדוח של <b>Q3</b> לפגישה.</p>
+<p dir="ltr">English summary: Tuesday, 10:00, Room 4B, bring the Q3 report.</p>
+</body></html>

@@ -1,0 +1,17 @@
+Message-ID: <20260923T163000.darktext@example.net>
+Date: Wed, 23 Sep 2026 16:30:00 +0000
+From: Wren Adeyemi <wren.adeyemi@example.net>
+To: Book Group <books@group.example.com>
+Subject: Next month's pick
+MIME-Version: 1.0
+Content-Type: text/html; charset=utf-8
+Content-Transfer-Encoding: 8bit
+
+<html><body>
+<div style="color:#222222;font-family:Georgia,serif;font-size:15px;line-height:22px;">
+<p>Hello all,</p>
+<p>For October we settled on <span style="color:#333333;font-style:italic;">The Lighthouse Keeper's Almanac</span>. It is short, so there is no excuse.</p>
+<p style="color:#444444;">We meet at the usual place on the 14th.</p>
+<p>Wren</p>
+</div>
+</body></html>

@@ -1,0 +1,23 @@
+Message-ID: <20260925T040000.oversized@abuse.example.com>
+Date: Fri, 25 Sep 2026 04:00:00 +0000
+From: Big Pictures <pics@abuse.example.com>
+To: Ren Ishida <ren.ishida@example.net>
+Subject: Twenty thousand pixels square
+MIME-Version: 1.0
+Content-Type: multipart/related; type="text/html"; boundary="=_rel_huge_7a90"
+
+--=_rel_huge_7a90
+Content-Type: text/html; charset=utf-8
+Content-Transfer-Encoding: 8bit
+
+<html><body><p>This image claims to be 20,000 pixels on each side.</p>
+<p><img src="cid:huge.png@abuse.example.com" width="200" height="200" alt="Oversized picture"></p></body></html>
+--=_rel_huge_7a90
+Content-Type: image/png; name="huge.png"
+Content-Transfer-Encoding: base64
+Content-ID: <huge.png@abuse.example.com>
+Content-Disposition: inline; filename="huge.png"
+
+iVBORw0KGgoAAAANSUhEUgAATiAAAE4gCAIAAABsEtFuAAAADElEQVR4nGNgoAwAAABAAAG3NHzv
+AAAAAElFTkSuQmCC
+--=_rel_huge_7a90--
