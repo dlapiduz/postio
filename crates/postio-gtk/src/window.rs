@@ -1667,6 +1667,17 @@ impl Window {
         // folder is only empty once it has said so.
         list.model().connect_filled(move |_| refresh());
 
+        // Which folders are inboxes, for the list's own reactions: Unified is
+        // the inboxes (#1692), and an arrival in any other folder leaves it
+        // alone only if the list knows that folder is not one.
+        folders.connect_loaded({
+            let feed = feed.downgrade();
+            move |mailboxes| {
+                if let Some(feed) = feed.upgrade() {
+                    feed.set_folders(mailboxes);
+                }
+            }
+        });
         folders.open(account, address);
         *self.imp().messages.borrow_mut() = Some(messages);
         Feeds::new(feed, folders)

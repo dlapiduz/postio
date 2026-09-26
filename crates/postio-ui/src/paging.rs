@@ -139,9 +139,23 @@ pub struct Paging {
     /// Cleared whenever the scope changes: page 2 of the folder just left is
     /// not page 2 of this one.
     failed: HashMap<u32, u8>,
+    /// Which folders the frontend has placed, and whether each is an inbox.
+    ///
+    /// What [`ListScope::Unified`] needs to answer an arrival: it is the
+    /// inboxes (#1692), so mail moving in any other folder cannot move a
+    /// row. Kept across scope changes -- it describes the folders, not the
+    /// view -- and a folder missing from it is answered as if it might be
+    /// an inbox.
+    inboxes: HashMap<MailboxId, bool>,
 }
 
 impl Paging {
+    /// Say which folders are inboxes: `(folder, is_inbox)` for every folder
+    /// the frontend knows, replacing what it said before.
+    pub fn set_folders(&mut self, folders: impl IntoIterator<Item = (MailboxId, bool)>) {
+        self.inboxes = folders.into_iter().collect();
+    }
+
     /// Show `scope`, leaving any result set: the sidebar is a way out of a
     /// search as much as `Esc` is.
     pub fn open(&mut self, scope: ListScope) {
@@ -279,8 +293,9 @@ impl Paging {
                 }
             };
         }
+        let inbox = mailbox.and_then(|mailbox| self.inboxes.get(&mailbox).copied());
         self.scope
-            .map(|scope| scope.reaction(arrival, account, mailbox))
+            .map(|scope| scope.reaction(arrival, account, mailbox, inbox))
             .unwrap_or(Reaction::Ignore)
     }
 }
@@ -412,6 +427,33 @@ mod tests {
     }
 
     // The table: what each scope does with each event.
+
+    #[test]
+    fn unified_ignores_a_folder_it_has_been_told_is_not_an_inbox() {
+        // #1692: Unified is the inboxes. Mail landing in the Archive -- a
+        // sync of it, an archive landing there -- cannot move a row, and a
+        // folder the list was never told about still reloads, because a
+        // reload cannot leave a row behind and an ignore can.
+        let mut paging = Paging::default();
+        paging.open(ListScope::Unified);
+        assert_eq!(
+            paging.plan(&new_mail(ARCHIVE, 2)),
+            Plan::Reload,
+            "not told yet"
+        );
+
+        paging.set_folders([(INBOX, true), (ARCHIVE, false)]);
+        assert_eq!(paging.plan(&new_mail(ARCHIVE, 2)), Plan::Ignore);
+        assert_eq!(paging.plan(&list_changed(ARCHIVE)), Plan::Ignore);
+        assert_eq!(paging.plan(&removed(ARCHIVE)), Plan::Ignore);
+        assert_eq!(paging.plan(&new_mail(INBOX, 2)), Plan::Reload);
+        assert_eq!(paging.plan(&removed(INBOX)), Plan::Reload);
+        assert_eq!(
+            paging.plan(&new_mail(MailboxId::new(12), 1)),
+            Plan::Reload,
+            "a folder it cannot place"
+        );
+    }
 
     #[test]
     fn mail_landing_in_the_open_mailbox_is_inserted_at_the_top() {

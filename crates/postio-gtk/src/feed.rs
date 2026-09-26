@@ -380,6 +380,22 @@ impl Feed {
         }))
     }
 
+    /// Tell the list which folders are inboxes: the tree the sidebar just
+    /// read, every account it draws.
+    ///
+    /// Unified is the inboxes (#1692), so mail moving in any other folder
+    /// cannot move one of its rows, and knowing which is which is what lets
+    /// a sync of the Archive leave the view alone rather than re-read it.
+    /// The sidebar's synthetic rows are not folders and are left out.
+    pub fn set_folders(&self, mailboxes: &[Mailbox]) {
+        self.0.paging.borrow_mut().set_folders(
+            mailboxes
+                .iter()
+                .filter(|mailbox| mailbox.id.get() > 0)
+                .map(|mailbox| (mailbox.id, mailbox.role == MailboxRole::Inbox)),
+        );
+    }
+
     /// Show `scope`, discarding whatever the list was showing.
     ///
     /// Returns immediately: the first page is on its way, and until it lands
