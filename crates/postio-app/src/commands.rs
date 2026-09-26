@@ -72,12 +72,19 @@ pub fn install(
                 cursor: list.cursor_id(),
                 rows: &rows,
             };
+            let leaving = aim::takes_the_cursor_row_out(&command, &aim);
             let command = aim::refine(command, &aim);
             aim::mirror(&state, &quiet, &aim);
             if commands.send(command).is_err() {
                 // Only ever during teardown: the bridge has stopped and there
                 // is nothing left to run the verb on.
                 tracing::debug!("the runtime has stopped and did not run that");
+                return;
+            }
+            // After the command has its target, so the step cannot re-aim
+            // it: the next key is about the next message (#1687).
+            if leaving {
+                list.step_off_cursor();
             }
         }
     ));
