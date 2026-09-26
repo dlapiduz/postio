@@ -41,6 +41,7 @@
 pub mod cpu;
 #[cfg(feature = "fidelity")]
 pub mod fidelity;
+pub mod listener;
 #[cfg(feature = "logs")]
 pub mod logs;
 
