@@ -14,4 +14,4 @@ a comparison pass: a new capture is a new baseline, and says why in its commit.
 | `html-newsletter` | 800x516 | 2.54.0 | 2026-09-26 |
 | `html-responsive-media` | 800x178 | 2.54.0 | 2026-09-26 |
 | `html-transactional-receipt` | 800x319 | 2.54.0 | 2026-09-26 |
-| `transactional-shipping-notice` | 800x201 | 2.54.0 | 2026-09-26 |
+| `transactional-shipping-notice` | 800x230 | 2.54.0 | 2026-09-26 |
