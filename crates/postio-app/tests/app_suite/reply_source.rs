@@ -352,6 +352,13 @@ pub fn reply_forward_and_reply_all_act_on_the_message_under_the_cursor() {
                 .contains(&marker(forwarded)),
             "the forward carries none of the message it forwards"
         );
+        assert_eq!(
+            draft.forwarded_from,
+            Some(forwarded),
+            "the forward does not say which message it came from, so a carried \
+             attachment whose bytes were never downloaded has nowhere to be \
+             fetched from when it is sent (#1686)"
+        );
         composer.discard();
         settle();
 
