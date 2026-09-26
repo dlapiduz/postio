@@ -132,7 +132,7 @@ proven on synthetic images. Nothing renders yet.
 
 **Purpose**: choose the engine on evidence (research R0). **No engine-specific task in any later phase starts until T029 records the maintainer's decision.** Evaluation harnesses live under `examples/`. They are measurement tools, not product code, so they are not test-first. The losing arm's harness is deleted in T029.
 
-- [ ] T021 Write the evaluation protocol before either arm runs: `docs/notes/2026-09-26-blitz-or-webkit.md`, listed in `docs/engineering-notes.md`. It states:
+- [X] T021 Write the evaluation protocol before either arm runs: `docs/notes/2026-09-26-blitz-or-webkit.md`, listed in `docs/engineering-notes.md`. It states:
   - gates G1–G3 and scores S1–S8, copied from research R0;
   - the fixtures each criterion uses;
   - the machine;
