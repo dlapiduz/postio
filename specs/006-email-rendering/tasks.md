@@ -124,6 +124,30 @@ proven on synthetic images. Nothing renders yet.
 - [X] T019 [TEST] In `crates/postio-ui/src/reader/document.rs` unit tests, `body_html_in` for `html-newsletter.eml` (which `reads_as_bulk`) returns the **original** layout, with no reader-view reduction (FR-031)
 - [X] T020 Make every message open `Original` in `crates/postio-ui/src/reader/document.rs` (`sheet_for`, `suits_reader_view`). `reads_as_bulk` stays for the unsubscribe banner
 
+- [X] T020a [TEST] Write the colour arithmetic's tests in `crates/postio-ui/src/reader/theme.rs` (research R10, spec FR-012):
+  - WCAG relative luminance and contrast ratio at known values (black on white is 21:1; `#777777` on white is just under 4.5:1);
+  - an OKLab/OKLCH round trip within 1/255;
+  - `repair` meets the floor, changes only OKLCH L (hue within 2°), leaves a passing colour unchanged, and reduces chroma only when out of gamut;
+  - `parse_css_color` reads `#rgb`, `#rrggbb`, `rgb()`, `rgba()` and the named colours an engine's computed style reports
+- [X] T020b Implement the colour arithmetic in `crates/postio-ui/src/reader/theme.rs`: luminance, contrast, OKLab/OKLCH, `repair`, `floor(theme)` (4.5, or 7 in high contrast, with no large-text allowance), and `parse_css_color`
+- [ ] T020c [TEST] Write the classification's table test in `crates/postio-ui/src/reader/theme.rs` (FR-013), over `MessageFacts { canvas, inner_background, declares_dark }` and `Theme { dark, high_contrast }`:
+  - light → `Styled`;
+  - dark with declared dark support → `SenderDark`;
+  - dark with an inner background → `Paper`;
+  - dark with a canvas at relative luminance 0.89 → `Paper`, and at 0.91 → `Adapted`;
+  - dark with only a white page → `Adapted`;
+  - dark with nothing → `Adapted`.
+
+  Also, `darken` maps a background's OKLab L into [0.12, 0.30] with hue kept
+- [ ] T020d Implement `classify` and `darken` in `crates/postio-ui/src/reader/theme.rs`
+
+> **T020a–T020d were added during implementation**, and are lettered so
+> that commits already citing task numbers stay true. The rule of research
+> R10 is pure arithmetic over computed styles and is needed whichever engine
+> wins. So it lives in `postio-ui`, shared, and each engine only supplies the
+> facts and applies the overrides. Both arms of the evaluation (T022, T023)
+> use it for gate G1.
+
 **Checkpoint**: The sanitizer preserves and translates instead of deleting, and every message opens in its original layout. The spec's fidelity input is fixed before either engine is judged.
 
 ---

@@ -585,6 +585,19 @@ command:
 - remaps borders the same way;
 - then runs contrast repair on the text.
 
+**Where the rule lives (amended 2026-09-26, during implementation).** The
+colour arithmetic, the classification and the darken remap are pure
+functions in `postio-ui/src/reader/theme.rs`, not in the engine crate.
+Every engine needs them, and so does the evaluation (R0), whose gate G1
+runs the same rule on both arms. An engine's part is:
+- supplying the facts: each text run's colour and rectangle, its painted
+  ground, and whether the message declares dark support or inner
+  backgrounds;
+- applying the overrides the rule returns.
+
+Blitz does this from its layout. WebKit does it through Postio's
+isolated-world script.
+
 **Images are never touched (FR-015).** An image inside a darkened or
 adaptable message keeps a backing of its intended canvas colour, painted
 behind it and inset to its box.
