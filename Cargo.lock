@@ -4448,6 +4448,7 @@ dependencies = [
 name = "postio-test-support"
 version = "0.3.0"
 dependencies = [
+ "png",
  "tokio",
  "tracing-subscriber",
 ]

@@ -39,6 +39,8 @@
 //! the GTK crates and another for everyone else.
 
 pub mod cpu;
+#[cfg(feature = "fidelity")]
+pub mod fidelity;
 #[cfg(feature = "logs")]
 pub mod logs;
 
