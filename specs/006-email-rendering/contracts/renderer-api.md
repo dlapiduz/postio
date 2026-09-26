@@ -15,8 +15,9 @@ impl Renderer {
     pub fn new(fonts: &FontSet) -> Renderer;
 
     /// Non-blocking. The result arrives on the returned receiver, or never,
-    /// if superseded. The caller runs the 400 ms deadline (R6); on expiry it
-    /// calls `abandon(generation)` and shows `fallback()`.
+    /// if superseded. The caller runs the deadline (R6), with a length it is
+    /// given: `DEFAULT_RENDER_DEADLINE` in production, and an injected one in
+    /// tests. On expiry it calls `abandon(generation)` and shows `fallback()`.
     pub fn request(&self, req: RenderRequest) -> Receiver<RenderedDocument>;
 
     /// Marks the thread tainted if that generation is still running; the next
@@ -28,6 +29,10 @@ impl Renderer {
     pub fn fallback(&self, text: &str, theme: &Theme, viewport: Viewport,
                     reason: FallbackReason) -> RenderedDocument;
 }
+
+/// The production render bound (spec FR-023). Callers take their deadline
+/// as a parameter and default to this; tests inject a scaled or a tiny one.
+pub const DEFAULT_RENDER_DEADLINE: Duration = Duration::from_millis(400);
 
 /// Process-wide, built once off the UI thread: bundled faces + fontdb
 /// discovery, generic families and per-script fallbacks set explicitly.
@@ -91,7 +96,8 @@ impl RenderedDocument {
 5. **Bounded input.** Any `over_cap` from `postio-body` yields
    `FellBack { OverCap }` without the markup reaching Blitz.
 6. **Contrast floor.** For every cluster,
-   `contrast(color, painted_ground) ≥ floor`.
+   `contrast(color, painted_ground) ≥ 4.5`, or `≥ 7` in high contrast,
+   whatever the text size.
 7. **No script.** No request executes script. Blitz has no script engine, and
    the snapshot carries no handler. `javascript:` never appears as a
    `LinkTarget`.

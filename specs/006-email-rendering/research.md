@@ -253,8 +253,21 @@ thread never touches Blitz.
   document is **dropped, never reused**, and the message falls back to plain
   text (FR-023). The panic hook logs the code location and the message id,
   **never the payload**, because logs carry no content.
-- **Deadline.** The UI starts a **400 ms** timer when it sends a request
-  (spec FR-023). If the timer fires first:
+- **Deadline.** The UI starts a timer when it sends a request (spec
+  FR-023). Its length is **injected**: `postio-render` exports
+  `DEFAULT_RENDER_DEADLINE = 400 ms`, and that is what production uses.
+  `BodyView` takes the deadline as a construction parameter, so a test can
+  choose its own:
+  - a test **about** the deadline injects a tiny one and holds the render with
+    a delay hook that the test releases. That is deterministic, with no wall
+    clock in the assertion;
+  - every **other** widget or app test injects
+    `postio_test_support::scaled(DEFAULT_RENDER_DEADLINE)`, so a debug build
+    on a busy CI runner does not fall back by accident.
+    `check-test-deadlines-scale.py` already enforces this for the tests'
+    own deadlines.
+
+  If the timer fires first:
   - the UI shows the plain-text fallback with its notice;
   - it bumps the generation, so the late result is ignored;
   - it marks the thread **tainted**. A tainted thread is abandoned when it
@@ -473,9 +486,10 @@ background**:
 - if an ancestor has a `background-image` (**unknown ground**), use the mean
   colour of the decoded image as the ground.
 
-If the contrast is below **4.5:1** (**7:1** in high contrast; large text,
-≥ 24 px or ≥ 18.67 px bold, uses 3:1 and 4.5:1), binary-search **OKLCH L
-only** toward the far end until the floor is met. Keep C and h, and reduce C
+If the contrast is below **4.5:1** (**7:1** in high contrast), binary-search
+**OKLCH L only** toward the far end until the floor is met. The floor has no
+large-text allowance: spec FR-012 applies it to every run of text, and
+WCAG's lower 3:1 for large text is deliberately not taken. Keep C and h, and reduce C
 only if the colour leaves gamut.
 
 The repaired colours are applied as **overrides on the render thread's

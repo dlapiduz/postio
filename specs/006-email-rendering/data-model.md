@@ -131,15 +131,16 @@ This is the one serializer shared by copy, find and accessibility (R7).
 | Field | Meaning |
 |---|---|
 | `text` | The whole document's text in reading order: tabs between cells, newlines at rows and blocks, image `alt` included, hidden content excluded |
-| `clusters` | `Vec<Cluster { range: Range<usize> (chars into text), rect, scope, color, painted_ground, large: bool }>` |
+| `clusters` | `Vec<Cluster { range: Range<usize> (chars into text), rect, scope, color, painted_ground }>` |
 
 **Invariants.**
 - Clusters are sorted by `range.start` and are non-overlapping.
 - Every visible glyph belongs to exactly one cluster.
 - `painted_ground` is the colour R10's ancestor walk computed. For every
-  cluster, `contrast(color, painted_ground) ≥ floor(theme, large)`, where the
-  floor is 4.5 or 3 normally and 7 or 4.5 in high contrast. SC-001's pixel
-  test checks this claim against the raster.
+  cluster, `contrast(color, painted_ground) ≥ floor(theme)`, where the floor
+  is 4.5, or 7 in high contrast, for text of every size (spec FR-012; there
+  is no large-text allowance). SC-001's pixel test checks this claim against
+  the raster.
 
 ### Presentation (per message, spec Key Entity "theme adaptation rule")
 
