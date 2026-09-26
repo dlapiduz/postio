@@ -68,7 +68,7 @@ pub struct DraftRepository<'a> {
 const DRAFT_COLUMNS: &str = "\
 id, account_id, identity_id, kind, in_reply_to_message_id, thread_id, subject, body_text,
 body_html, state, uid, uid_validity, mod_seq, remote_id, created_at, updated_at,
-rfc_message_id";
+rfc_message_id, forwarded_message_id";
 
 impl<'a> DraftRepository<'a> {
     /// Borrows a connection.
@@ -106,7 +106,8 @@ impl<'a> DraftRepository<'a> {
                             mod_seq = coalesce(?13, mod_seq),
                             remote_id = coalesce(?14, remote_id),
                             updated_at = ?15,
-                            rfc_message_id = ?16
+                            rfc_message_id = ?16,
+                            forwarded_message_id = ?17
                       WHERE id = ?1",
                     bind![
                         draft.id.get(),
@@ -132,6 +133,7 @@ impl<'a> DraftRepository<'a> {
                             .map(|id| id.as_str().to_owned()),
                         to_millis(draft.updated_at),
                         reservation_for(draft),
+                        optional_message(draft.forwarded_from),
                     ],
                 )
                 .await?;
@@ -148,9 +150,9 @@ impl<'a> DraftRepository<'a> {
                     "INSERT INTO drafts (account_id, identity_id, kind, in_reply_to_message_id,
                                          thread_id, subject, body_text, body_html, state, uid,
                                          uid_validity, mod_seq, remote_id, created_at, updated_at,
-                                         rfc_message_id)
+                                         rfc_message_id, forwarded_message_id)
                      VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15,
-                             ?16)",
+                             ?16, ?17)",
                     bind![
                         account_id,
                         optional_identity(draft.identity_id),
@@ -175,6 +177,7 @@ impl<'a> DraftRepository<'a> {
                         to_millis(draft.created_at),
                         to_millis(draft.updated_at),
                         reservation_for(draft),
+                        optional_message(draft.forwarded_from),
                     ],
                 )
                 .await?;
@@ -188,6 +191,33 @@ impl<'a> DraftRepository<'a> {
             Ok(draft.id)
         })
         .await
+    }
+
+    /// Records that one of `draft`'s attachments now has its bytes in the
+    /// blob store, and nothing else about the draft.
+    ///
+    /// For a forward's carried attachment whose bytes were fetched from the
+    /// original after the forward was made (#1686). A narrow write rather
+    /// than [`save`](Self::save), because the drainer that fetches them is
+    /// not holding the draft the composer is: rewriting the whole row from a
+    /// copy read before the network round trip would put back whatever the
+    /// composer had saved over it in the meantime.
+    ///
+    /// `false` when `attachment` is not one of `draft`'s — it was removed from
+    /// the draft, or the draft is gone.
+    pub async fn set_attachment_blob(
+        &self,
+        draft: DraftId,
+        attachment: AttachmentId,
+        blob: &BlobId,
+    ) -> Result<bool> {
+        let changed = sql::execute(
+            self.connection,
+            "UPDATE attachments SET blob_id = ?3 WHERE draft_id = ?1 AND id = ?2",
+            bind![draft.get(), attachment.get(), blob.as_str()],
+        )
+        .await?;
+        Ok(changed > 0)
     }
 
     /// Saves a draft and queues its server copy to be brought up to date.
@@ -1134,6 +1164,7 @@ fn read_draft(row: &Row) -> Result<Draft> {
         identity_id: row.col::<Option<i64>>(2)?.map(IdentityId::new),
         kind: DraftKind::from_name(&kind).ok_or_else(|| unknown_enum("drafts.kind", kind))?,
         in_reply_to: row.col::<Option<i64>>(4)?.map(MessageId::new),
+        forwarded_from: row.col::<Option<i64>>(17)?.map(MessageId::new),
         thread_id: row.col::<Option<i64>>(5)?.map(ThreadId::new),
         to: Vec::new(),
         cc: Vec::new(),

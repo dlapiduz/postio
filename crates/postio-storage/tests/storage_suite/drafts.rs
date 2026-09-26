@@ -335,6 +335,75 @@ async fn a_draft_survives_the_message_it_replies_to_being_expunged() {
 }
 
 #[tokio::test]
+async fn a_forward_keeps_the_message_it_was_made_from_until_that_is_expunged() {
+    // #1686: a forward's carried attachment may have no bytes yet, and the
+    // original is where they are fetched from at send time.
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    let (account, inbox) = test_support::account_with_inbox(&connection).await;
+    let drafts = DraftRepository::new(&connection);
+
+    let mut source = Message::new(account.id, inbox, at(0));
+    MessageRepository::new(&connection)
+        .create(&mut source)
+        .await
+        .expect("create");
+    let mut draft = a_draft(account.id);
+    draft.kind = DraftKind::Forward;
+    draft.forwarded_from = Some(source.id);
+    let id = drafts.save(&mut draft).await.expect("save");
+
+    let stored = drafts.get(id).await.expect("get").expect("the draft");
+    assert_eq!(stored.forwarded_from, Some(source.id));
+    assert_eq!(stored.in_reply_to, None, "a forward threads nowhere");
+
+    MessageRepository::new(&connection)
+        .delete(&[source.id])
+        .await
+        .expect("expunge");
+    let stored = drafts.get(id).await.expect("get").expect("still there");
+    assert_eq!(stored.forwarded_from, None);
+}
+
+#[tokio::test]
+async fn a_carried_attachment_takes_its_bytes_once_they_are_fetched() {
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    let (account, _inbox) = test_support::account_with_inbox(&connection).await;
+    let drafts = DraftRepository::new(&connection);
+
+    let mut draft = a_draft(account.id);
+    let mut carried = Attachment::new(MessageId::UNASSIGNED, "application/pdf", 12);
+    carried.filename = Some("statement.pdf".to_owned());
+    carried.part_id = Some("2".to_owned());
+    draft.attachments = vec![carried];
+    let id = drafts.save(&mut draft).await.expect("save");
+    let attachment = draft.attachments[0].id;
+    let blob = postio_model::BlobId::new("d".repeat(64));
+
+    assert!(
+        drafts
+            .set_attachment_blob(id, attachment, &blob)
+            .await
+            .expect("set")
+    );
+
+    let stored = drafts.get(id).await.expect("get").expect("the draft");
+    assert_eq!(stored.attachments[0].blob_id.as_ref(), Some(&blob));
+    assert_eq!(
+        stored.attachments[0].id, attachment,
+        "the composer's id for the row still names it"
+    );
+    assert!(
+        !drafts
+            .set_attachment_blob(DraftId::new(id.get() + 1), attachment, &blob)
+            .await
+            .expect("set"),
+        "another draft's attachment is not this one's to fill"
+    );
+}
+
+#[tokio::test]
 async fn deleting_a_draft_takes_its_recipients_and_attachments() {
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
