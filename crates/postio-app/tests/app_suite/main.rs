@@ -548,6 +548,10 @@ const CASES: &[(&str, fn())] = &[
         remove_walks_down::archiving_in_the_unified_view_moves_nothing as fn(),
     ),
     (
+        "remove_walks_down::two_presses_back_to_back_take_two_messages",
+        remove_walks_down::two_presses_back_to_back_take_two_messages as fn(),
+    ),
+    (
         "thread_bodies_in_one_crossing::a_conversation_is_read_in_one_crossing",
         thread_bodies_in_one_crossing::a_conversation_is_read_in_one_crossing as fn(),
     ),

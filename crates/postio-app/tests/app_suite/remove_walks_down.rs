@@ -358,3 +358,78 @@ pub fn archiving_in_the_unified_view_moves_nothing() {
         );
     });
 }
+
+/// Two presses faster than the store, the events and the refresh: the
+/// second acts on the message the first left the cursor on, and neither
+/// complains.
+pub fn two_presses_back_to_back_take_two_messages() {
+    crate::gtk_case(async {
+        let Some(triage) = triage(None).await else {
+            return;
+        };
+        let window = &triage.window;
+        let list = window.list();
+        let model = list.model();
+
+        // In one turn of the main loop.
+        let first = list.cursor_id().expect("the cursor is on a message");
+        let second = below(window, first);
+        let third = below(window, second);
+        window.handle_key(gdk::Key::d, gdk::ModifierType::empty());
+        window.handle_key(gdk::Key::d, gdk::ModifierType::empty());
+        assert!(
+            settle_until(
+                async || model.position_of(first).is_none() && model.position_of(second).is_none()
+            )
+            .await,
+            "two presses in one turn did not take two messages out: {:?}",
+            complaints(&triage.probe)
+        );
+        quiesce().await;
+        assert_eq!(
+            complaints(&triage.probe),
+            Vec::<String>::new(),
+            "a press in the same turn as the last complained"
+        );
+        assert_eq!(
+            list.cursor_id(),
+            Some(third),
+            "the cursor is not on the message below the two deleted"
+        );
+
+        // And with a moment between them, shorter than the round trip.
+        let first = third;
+        let second = below(window, first);
+        let third = below(window, second);
+        window.handle_key(gdk::Key::a, gdk::ModifierType::empty());
+        while glib::MainContext::default().iteration(false) {}
+        window.handle_key(gdk::Key::a, gdk::ModifierType::empty());
+        assert!(
+            settle_until(
+                async || model.position_of(first).is_none() && model.position_of(second).is_none()
+            )
+            .await,
+            "two quick presses did not take two messages out: {:?}",
+            complaints(&triage.probe)
+        );
+        quiesce().await;
+        assert_eq!(
+            complaints(&triage.probe),
+            Vec::<String>::new(),
+            "a quick second press complained"
+        );
+        assert_eq!(
+            list.cursor_id(),
+            Some(third),
+            "the cursor is not on the message below the two archived"
+        );
+        let thread = list
+            .cursor_row()
+            .and_then(|row| row.thread)
+            .expect("the cursor's row names its conversation");
+        assert!(
+            settle_until(async || window.conversation_on(thread)).await,
+            "the reading pane is not showing the cursor's message"
+        );
+    });
+}

@@ -887,6 +887,30 @@ impl MessageListView {
             .and_then(|item| item.row())
     }
 
+    /// Move the cursor off its row, which a verb is taking out of the view:
+    /// onto the row below it, or the one above when it was the last.
+    ///
+    /// What the row's leaving would do anyway, done when the verb is sent
+    /// rather than when the store answers, so the next key is about the next
+    /// message (#1687) -- see `postio_core::aim::takes_the_cursor_row_out`.
+    /// A person's landing: the reading pane follows it, and the row it lands
+    /// on is one they are working through.
+    pub fn step_off_cursor(&self) {
+        let imp = self.imp();
+        let at = imp.cursor.selected();
+        if at == gtk::INVALID_LIST_POSITION {
+            return;
+        }
+        let to = if at + 1 < imp.model.n_items() {
+            at + 1
+        } else if let Some(above) = at.checked_sub(1) {
+            above
+        } else {
+            return;
+        };
+        self.place_cursor(to, Landing::Chosen);
+    }
+
     pub fn cursor_id(&self) -> Option<MessageId> {
         let imp = self.imp();
         imp.model.peek(imp.cursor.selected())
