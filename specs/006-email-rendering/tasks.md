@@ -93,12 +93,12 @@ proven on synthetic images. Nothing renders yet.
 
 **Purpose**: the sanitizer and document changes that improve rendering **whichever engine is chosen**. Both arms of the evaluation render this same input (research R0), and the change also improves today's WebKit reader. None of it touches an engine.
 
-- [ ] T011 [TEST] In `crates/postio-body/src/sanitize.rs` unit tests, assert:
+- [X] T011 [TEST] In `crates/postio-body/src/sanitize.rs` unit tests, assert:
   - `class` and `id` survive;
   - a sender `class="postio-latest"` or `id="postio-x"` is refused with reason `Containment`;
-  - `id`s are rewritten `m<scope>-<id>` per message, and `href="#id"` and `<label for>` follow;
+  - `id`s are rewritten `postio-s<scope>-<id>` per message, inside Postio's reserved `postio-` namespace so they can collide with neither a sender's name nor Postio's own `m-<scope>` and `pos-<n>` ids. In-message `href="#id"` links and the sender's `#id` selectors follow. `<label for>` is moot, because form controls are removed;
   - two messages both using `id="header"` get distinct ids (FR-005, #1545)
-- [ ] T012 Implement T011 in `crates/postio-body/src/sanitize.rs`: allow `class` and `id` in the ammonia builder, and add the attribute filter that refuses the `postio-` prefix and rewrites ids
+- [X] T012 Implement T011 in `crates/postio-body/src/sanitize.rs`: allow `class` and `id` in the ammonia builder, and add the attribute filter that refuses the `postio-` prefix and rewrites ids
 - [ ] T013 [TEST] In `crates/postio-body/src/sanitize.rs` unit tests, assert:
   - `<body bgcolor="#fff" text="#222" link="#06c" style="background:#fafafa">` and `<html style=…>` produce a `Canvas { background, text, link }`;
   - `link` becomes a scoped `a { color }` rule;

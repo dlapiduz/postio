@@ -21,7 +21,7 @@
 
 use std::sync::atomic::AtomicU32;
 
-use cssparser::{Delimiter, ParseError, Parser, ParserInput, Token};
+use cssparser::{Delimiter, ParseError, Parser, ParserInput, Token, serialize_identifier};
 
 use crate::sanitize::{RemoteImages, contain_declarations};
 
@@ -34,10 +34,11 @@ pub struct Scoped {
     pub remote_blocked: u32,
 }
 
-/// Rewrite `css` so nothing in it can match outside `prefix`.
-pub fn scope(css: &str, prefix: &str, remote: RemoteImages) -> Scoped {
+/// Rewrite `css` so nothing in it can match outside `prefix`, with every
+/// `#id` renamed under `id_prefix` ([`crate::sanitize::sender_id_prefix`]).
+pub fn scope(css: &str, prefix: &str, id_prefix: &str, remote: RemoteImages) -> Scoped {
     let counter = AtomicU32::new(0);
-    let css = scope_into(css, prefix, remote, &counter);
+    let css = scope_into(css, prefix, id_prefix, remote, &counter);
     Scoped {
         css,
         remote_blocked: counter.load(std::sync::atomic::Ordering::Relaxed),
@@ -47,21 +48,30 @@ pub fn scope(css: &str, prefix: &str, remote: RemoteImages) -> Scoped {
 pub(crate) fn scope_into(
     css: &str,
     prefix: &str,
+    id_prefix: &str,
     remote: RemoteImages,
     blocked: &AtomicU32,
 ) -> String {
     let mut out = String::new();
     let mut input = ParserInput::new(css);
     let mut parser = Parser::new(&mut input);
-    write_rules(&mut parser, prefix, remote, blocked, &mut out);
+    let scope = Scope { prefix, id_prefix };
+    write_rules(&mut parser, &scope, remote, blocked, &mut out);
     out
+}
+
+/// Where a sender's rules are confined: the message's container, and the
+/// prefix its ids were rewritten under.
+struct Scope<'a> {
+    prefix: &'a str,
+    id_prefix: &'a str,
 }
 
 /// Every rule at one nesting level: the top of the sheet, or the inside of a
 /// `@media`.
 fn write_rules(
     parser: &mut Parser<'_, '_>,
-    prefix: &str,
+    prefix: &Scope<'_>,
     remote: RemoteImages,
     blocked: &AtomicU32,
     out: &mut String,
@@ -100,7 +110,7 @@ fn write_rules(
 /// end of the input, and looping on it would not terminate.
 fn write_qualified_rule(
     parser: &mut Parser<'_, '_>,
-    prefix: Option<&str>,
+    prefix: Option<&Scope<'_>>,
     remote: RemoteImages,
     blocked: &AtomicU32,
     out: &mut String,
@@ -122,7 +132,7 @@ fn write_qualified_rule(
         return true;
     }
     let selectors = match prefix {
-        Some(prefix) => scope_selectors(&prelude, prefix),
+        Some(scope) => rename_ids(&scope_selectors(&prelude, scope.prefix), scope.id_prefix),
         None => prelude,
     };
     if selectors.is_empty() {
@@ -138,7 +148,7 @@ fn write_qualified_rule(
 fn write_at_rule(
     parser: &mut Parser<'_, '_>,
     name: &str,
-    prefix: &str,
+    prefix: &Scope<'_>,
     remote: RemoteImages,
     blocked: &AtomicU32,
     out: &mut String,
@@ -284,6 +294,51 @@ fn strip_document_head(selector: &str) -> Option<&str> {
     None
 }
 
+/// Every `#id` in a selector list renamed under `id_prefix`, the same way
+/// `crate::sanitize` renames the ids in the markup, so a sender's `#header`
+/// rule still finds their own `id="header"` -- and only theirs.
+///
+/// Token by token, so an id inside `:is(#a, #b)` is found and a `#` inside an
+/// attribute string (`[title="#1"]`) is not. Every other token is copied from
+/// the source unchanged.
+fn rename_ids(selectors: &str, id_prefix: &str) -> String {
+    let mut input = ParserInput::new(selectors);
+    let mut parser = Parser::new(&mut input);
+    let mut out = String::new();
+    rename_ids_in(&mut parser, id_prefix, &mut out);
+    out
+}
+
+fn rename_ids_in(parser: &mut Parser<'_, '_>, id_prefix: &str, out: &mut String) {
+    loop {
+        let start = parser.position();
+        let token = match parser.next_including_whitespace() {
+            Ok(token) => token.clone(),
+            Err(_) => return,
+        };
+        match token {
+            Token::IDHash(name) => {
+                out.push('#');
+                let _ = serialize_identifier(&format!("{id_prefix}{name}"), out);
+            }
+            Token::Function(_) | Token::ParenthesisBlock | Token::SquareBracketBlock => {
+                out.push_str(parser.slice_from(start));
+                let close = if matches!(token, Token::SquareBracketBlock) {
+                    ']'
+                } else {
+                    ')'
+                };
+                let _ = parser.parse_nested_block(|nested| {
+                    rename_ids_in(nested, id_prefix, out);
+                    Ok::<(), ParseError<'_, ()>>(())
+                });
+                out.push(close);
+            }
+            _ => out.push_str(parser.slice_from(start)),
+        }
+    }
+}
+
 /// Read a delimited parser to its end and answer with the source text of it.
 fn slice_of_block<'i>(parser: &mut Parser<'i, '_>) -> Result<String, ParseError<'i, ()>> {
     let start = parser.position();
@@ -304,8 +359,10 @@ mod tests {
 
     const PREFIX: &str = r#".postio-body[data-postio-message="2"]"#;
 
+    const ID_PREFIX: &str = "postio-s7-";
+
     fn scoped(css: &str) -> String {
-        scope(css, PREFIX, RemoteImages::Blocked).css
+        scope(css, PREFIX, ID_PREFIX, RemoteImages::Blocked).css
     }
 
     #[test]
@@ -415,6 +472,7 @@ mod tests {
         let scoped = scope(
             "p { background-image: url(https://tracker.example/p.gif) }",
             PREFIX,
+            ID_PREFIX,
             RemoteImages::Blocked,
         );
         assert!(!scoped.css.contains("tracker.example"), "{:?}", scoped.css);
@@ -429,6 +487,7 @@ mod tests {
         let scoped = scope(
             "p { background-image: url(https://known.example/p.gif) }",
             PREFIX,
+            ID_PREFIX,
             RemoteImages::Allowed,
         );
         assert!(scoped.css.contains("known.example"), "{:?}", scoped.css);

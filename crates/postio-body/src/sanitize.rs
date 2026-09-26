@@ -74,6 +74,30 @@ pub fn message_selector(scope: Option<&str>) -> String {
     }
 }
 
+/// The prefix every sender `id` is rewritten under (spec 006 FR-005).
+///
+/// Per message, so two messages in one conversation document cannot share
+/// an id and one sender's `#header` cannot aim at another's element. Inside
+/// Postio's own `postio-` namespace on purpose: a sender may not write a
+/// `postio-` name ([`is_postio_name`]), so nothing a sender writes can
+/// produce one of these, and none of Postio's own ids (`m-<scope>` for a
+/// message, `pos-<n>` for a scroll marker) starts this way.
+pub fn sender_id_prefix(scope: Option<&str>) -> String {
+    match scope {
+        Some(scope) => format!("postio-s{scope}-"),
+        None => "postio-s-".to_owned(),
+    }
+}
+
+/// Whether a class or id belongs to Postio's own namespace.
+///
+/// ASCII case-insensitive, because an HTML class match is case-sensitive but
+/// a sender needs only one spelling that Postio's own CSS happens to match.
+fn is_postio_name(name: &str) -> bool {
+    name.get(..7)
+        .is_some_and(|start| start.eq_ignore_ascii_case("postio-"))
+}
+
 /// A string safe to sit inside a double-quoted CSS string.
 fn escape_css_string(value: &str) -> String {
     value.replace('\\', "\\\\").replace('"', "\\\"")
@@ -330,6 +354,11 @@ pub fn sanitize_body_in(html: &str, remote: RemoteImages, scope: Option<&str>) -
         // `contain_body` draws around this message. What it still needs is
         // the refusals below, which is what `contain_declarations` is for.
         .add_generic_attributes(["style"])
+        // Spec 006 FR-005, #1545: a sender's stylesheet selects on the classes
+        // and ids its own markup carries, so stripping them made every such
+        // rule dead. Kept, except that a sender may not wear Postio's names
+        // and every id is rewritten per message -- see `rewrite_attribute`.
+        .add_generic_attributes(["class", "id"])
         // The layout attributes a table-based message arranges itself with
         // (spec FR-019a). HTML email is table-based because that is what
         // renders in Outlook, so dropping these did not cost an exotic
@@ -376,6 +405,7 @@ pub fn sanitize_body_in(html: &str, remote: RemoteImages, scope: Option<&str>) -
     let styles = crate::styles::scope_into(
         &stylesheets(html),
         &message_selector(scope_for_styles.as_deref()),
+        &sender_id_prefix(scope_for_styles.as_deref()),
         remote,
         &blocked_count,
     );
@@ -433,6 +463,31 @@ fn rewrite_attribute<'u>(
     if attribute == "style" {
         let kept = contain_declarations(value, remote, blocked_count);
         return (!kept.is_empty()).then_some(Cow::Owned(kept));
+    }
+    if attribute == "class" {
+        let kept: Vec<&str> = value
+            .split_ascii_whitespace()
+            .filter(|class| !is_postio_name(class))
+            .collect();
+        return (!kept.is_empty()).then(|| Cow::Owned(kept.join(" ")));
+    }
+    if attribute == "id" {
+        let id = value.trim();
+        if id.is_empty() || is_postio_name(id) {
+            return None;
+        }
+        return Some(Cow::Owned(format!("{}{id}", sender_id_prefix(scope))));
+    }
+    if attribute == "href"
+        && let Some(fragment) = value.trim().strip_prefix('#')
+        && !fragment.is_empty()
+    {
+        // An in-message link follows its target's rewritten id. A link out
+        // of the message is not a fragment and is never touched.
+        return Some(Cow::Owned(format!(
+            "#{}{fragment}",
+            sender_id_prefix(scope)
+        )));
     }
     if attribute != "src" {
         return Some(Cow::Borrowed(value));
@@ -1465,6 +1520,107 @@ mod conversation_scope_tests {
             scoped.html.contains("postio-cid:42/9%2Fsecret"),
             "the rewritten reference should be scoped to this message: {}",
             scoped.html
+        );
+    }
+
+    /// #1545: a sender's stylesheet selects on the classes and ids its own
+    /// markup carries, and stripping them made every such rule dead. Spec
+    /// 006 FR-005: kept, unless keeping one is a containment problem.
+    #[test]
+    fn a_senders_classes_and_ids_survive() {
+        let clean = sanitize_body_in(
+            r#"<div class="notice wide" id="masthead">Hi</div>"#,
+            RemoteImages::Blocked,
+            Some("7"),
+        );
+        assert!(
+            clean.html.contains(r#"class="notice wide""#),
+            "{}",
+            clean.html
+        );
+        assert!(
+            clean.html.contains(r#"id="postio-s7-masthead""#),
+            "{}",
+            clean.html
+        );
+    }
+
+    /// A sender element may not wear Postio's own names. `postio-latest` is
+    /// the marker on the newest message and `postio-blocked` the notice that
+    /// images were held back: a message dressing itself in either could
+    /// impersonate the chrome (spec 006 FR-025, 001 FR-025).
+    #[test]
+    fn a_sender_cannot_wear_postios_names() {
+        let clean = sanitize_body_in(
+            r#"<p class="lede POSTIO-latest postio-blocked" id="postio-x">Hi</p><span id="Postio-y">!</span>"#,
+            RemoteImages::Blocked,
+            Some("7"),
+        );
+        let lowered = clean.html.to_ascii_lowercase();
+        assert!(clean.html.contains(r#"class="lede""#), "{}", clean.html);
+        assert!(!lowered.contains("postio-latest"), "{}", clean.html);
+        assert!(!lowered.contains("postio-blocked"), "{}", clean.html);
+        assert!(!lowered.contains("postio-x"), "{}", clean.html);
+        assert!(!lowered.contains("postio-y"), "{}", clean.html);
+    }
+
+    /// Two messages in one conversation document both saying `id="header"`
+    /// would be two elements with one id, and one sender's `#header` rule
+    /// would be aimed at the other's element. Rewritten per message, and the
+    /// sender's in-message links and selectors follow.
+    #[test]
+    fn ids_are_per_message_and_their_links_and_selectors_follow() {
+        let html = r##"<style>#header { color: #123456 }</style><a href="#header">top</a><h1 id="header">News</h1>"##;
+        let seven = sanitize_body_in(html, RemoteImages::Blocked, Some("7"));
+        let eight = sanitize_body_in(html, RemoteImages::Blocked, Some("8"));
+        assert!(
+            seven.html.contains(r#"id="postio-s7-header""#),
+            "{}",
+            seven.html
+        );
+        assert!(
+            eight.html.contains(r#"id="postio-s8-header""#),
+            "{}",
+            eight.html
+        );
+        assert!(
+            seven.html.contains(r##"href="#postio-s7-header""##),
+            "{}",
+            seven.html
+        );
+        assert!(
+            seven.styles.contains("#postio-s7-header"),
+            "{}",
+            seven.styles
+        );
+        assert!(!seven.styles.contains("#header "), "{}", seven.styles);
+        // A link out of the message is not a fragment and is left alone.
+        let out = sanitize_body_in(
+            r##"<a href="https://example.com/#header">out</a>"##,
+            RemoteImages::Blocked,
+            Some("7"),
+        );
+        assert!(
+            out.html.contains(r##"href="https://example.com/#header""##),
+            "{}",
+            out.html
+        );
+    }
+
+    /// The single-message reader has no scope, and still must not produce an
+    /// id Postio uses itself: `m-<scope>` for a message, `pos-<n>` for scroll
+    /// markers. A sender `id="7"` must not become `m-7`.
+    #[test]
+    fn an_unscoped_id_cannot_collide_with_postios_own() {
+        let clean = sanitize_body(
+            r#"<p id="7">x</p><p id="pos-1">y</p>"#,
+            RemoteImages::Blocked,
+        );
+        assert!(clean.html.contains(r#"id="postio-s-7""#), "{}", clean.html);
+        assert!(
+            clean.html.contains(r#"id="postio-s-pos-1""#),
+            "{}",
+            clean.html
         );
     }
 }
