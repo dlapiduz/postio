@@ -1737,7 +1737,7 @@ async fn fetch_header_block(
     postio_model::headers::block_of(&sink.into_inner())
 }
 
-async fn fetch_section(
+pub(crate) async fn fetch_section(
     blobs: &BlobStore,
     backend: &dyn MailBackend,
     request: &BodyRequest,
@@ -1919,7 +1919,7 @@ fn inline_with_the_text(message: &postio_model::Message, cap: Option<u64>) -> Ve
 /// hanging off them is not. That distinction is what #352 needs in order to
 /// tell the user when search is answering for an incomplete corpus, and what
 /// the attachment chip needs in order to say "download" rather than "open".
-fn state_for(attachments: &[postio_model::Attachment]) -> BodyState {
+pub(crate) fn state_for(attachments: &[postio_model::Attachment]) -> BodyState {
     if attachments.iter().all(|part| part.blob_id.is_some()) {
         BodyState::Full
     } else {

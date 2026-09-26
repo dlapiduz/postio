@@ -337,6 +337,9 @@ impl<'a> Drainer<'a> {
         _capabilities: &Capabilities,
         resync: &mut BTreeSet<i64>,
     ) -> Result<Pending> {
+        if let Some(outcome) = self.carry(connection, step).await? {
+            return Ok(Pending::Settled(outcome));
+        }
         Ok(match self.resolve(connection, step).await? {
             Resolved::Ready(context) => Pending::Send(context),
             Resolved::Obsolete { reason, mailbox } => {
@@ -478,6 +481,46 @@ impl<'a> Drainer<'a> {
             .store_flags(&context.path, &context.ids, &change)
             .await?;
         Ok(updates.is_empty())
+    }
+
+    /// Fetches the attachments a forward carries whose bytes were never
+    /// downloaded, ahead of the steps that build a draft into a message
+    /// (#1686) — or says why the step has to wait or cannot happen.
+    ///
+    /// Its own stage rather than part of [`Drainer::resolve`], because it is
+    /// the one piece of looking-up that talks to the server: every other
+    /// input `resolve` gathers is a database row or a blob store read.
+    /// `None` means carry on as usual, which is every step that does not
+    /// build a draft, and every draft with nothing missing.
+    async fn carry(&self, connection: &Connection, step: &Step) -> Result<Option<Outcome>> {
+        let draft = match (&step.operation, step.target) {
+            (Operation::Send { draft }, _) => *draft,
+            (Operation::SaveDraft { .. }, OperationTarget::Draft(draft)) => draft,
+            _ => return Ok(None),
+        };
+        let Some(blobs) = self.blobs else {
+            return Ok(None);
+        };
+        Ok(
+            match crate::carry::fetch_missing(connection, self.backend, blobs, draft).await? {
+                crate::carry::Carried::Ready => None,
+                crate::carry::Carried::Later(reason) => Some(Outcome::Retry {
+                    reason,
+                    after: None,
+                }),
+                crate::carry::Carried::Impossible(reason) => match step.operation {
+                    // The server copy in Drafts is a convenience, and a
+                    // failure here would be a draft that says it failed while
+                    // the person is still writing it. The send, when it comes,
+                    // meets the same refusal and is the one that says so.
+                    Operation::SaveDraft { .. } => Some(Outcome::Retry {
+                        reason,
+                        after: None,
+                    }),
+                    _ => Some(Outcome::Failed { reason }),
+                },
+            },
+        )
     }
 
     /// Looks up everything the backend call needs, or says why it cannot run.

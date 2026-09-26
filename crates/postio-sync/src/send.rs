@@ -241,9 +241,12 @@ pub(crate) async fn resolve(
     let mut buffers = Vec::with_capacity(draft.attachments.len());
     for attachment in &draft.attachments {
         let Some(blob_id) = &attachment.blob_id else {
+            // A forward's carried part was fetched before this ran
+            // (`crate::carry`), so what is still missing here is a file the
+            // composer never finished writing.
             return Ok(ResolvedSend::Impossible(format!(
-                "the attachment {:?} has not finished uploading to the local store",
-                attachment.display_name()
+                "the attachment {} was never finished being written to this machine",
+                crate::carry::describe(attachment)
             )));
         };
         let content = smtp.blobs.get(blob_id)?;
