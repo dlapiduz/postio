@@ -149,30 +149,37 @@ pub fn unified_counted() -> u64 {
 
 static UNIFIED_COUNTED: AtomicU64 = AtomicU64::new(0);
 
-/// The cheap facts the unified count is allowed to outlive: every folder's
-/// message total, how far any folder has synced, and how many accounts are
-/// in view. The unified list's `Witness`, for the same trade and the same
-/// reasons (#1610) -- plus the accounts, because the list leaves disabled
-/// ones out and turning one off moves no folder.
-type UnifiedWitness = (i64, i64, i64);
+/// The cheap facts the unified count is allowed to outlive: each inbox in
+/// view, its message total and how far it has synced. The unified list's
+/// `Witness`, for the same trade and the same reasons (#1610).
+///
+/// Per inbox, because the list is the inboxes (#1692): an archive moves a
+/// message from an inbox to the Archive, which leaves every folder's totals
+/// *summed* where they were -- a witness over the sum held a count that
+/// still included the row it had just lost. The inboxes themselves are part
+/// of it too: turning an account off takes its inbox out of the list and
+/// moves no folder at all.
+type UnifiedWitness = Vec<(i64, i64, i64)>;
 
 /// The unified list's length, from the cache while nothing it is made of has
 /// moved.
 ///
-/// The count groups every conversation of every account against every other
-/// account's -- the folder count's correlated shape, over all of them -- and
-/// the unified view paid it in front of every page.
+/// The count reads every inbox's conversations and, with more than one
+/// account, looks for the ones folded across accounts, and the unified view
+/// paid it in front of every page.
 async fn unified_total(
     connection: &Checkout,
     cache: &Mutex<Option<(UnifiedWitness, u32)>>,
     threads: &ThreadRepository<'_>,
 ) -> Result<u32, postio_storage::Error> {
-    let witness: UnifiedWitness = postio_storage::sql::one(
+    let witness: UnifiedWitness = postio_storage::sql::all(
         connection,
-        "SELECT coalesce(sum(total_count), 0),
-                (SELECT coalesce(max(highest_mod_seq), 0) FROM sync_state),
-                (SELECT count(*) FROM accounts WHERE enabled = 1 AND pending_deletion = 0)
-           FROM mailboxes",
+        "SELECT m.id, m.total_count, coalesce(s.highest_mod_seq, 0)
+           FROM accounts a JOIN mailboxes m
+             ON m.account_id = a.id AND m.role = 'inbox'
+           LEFT JOIN sync_state s ON s.mailbox_id = m.id
+          WHERE a.enabled = 1 AND a.pending_deletion = 0 AND m.selectable = 1
+          ORDER BY m.id",
         (),
         |row| {
             use postio_storage::sql::RowExt as _;
@@ -180,10 +187,10 @@ async fn unified_total(
         },
     )
     .await?;
-    if let Some((held, total)) = *cache.lock().expect("not poisoned")
-        && held == witness
+    if let Some((held, total)) = &*cache.lock().expect("not poisoned")
+        && *held == witness
     {
-        return Ok(total);
+        return Ok(*total);
     }
     UNIFIED_COUNTED.fetch_add(1, Ordering::Relaxed);
     let total = threads.unified_count().await?;
@@ -548,8 +555,8 @@ impl LocalStore {
         .await
     }
 
-    /// One page of the unified list: every account at once, conversations
-    /// grouped across them.
+    /// One page of the unified list: every enabled account's inbox at once,
+    /// conversations grouped across them (#1692).
     ///
     /// The same seek-mark bargain the account-scoped page makes, and for the
     /// same reason -- the frontend asks for a row offset and the walk can
@@ -574,7 +581,7 @@ impl LocalStore {
                 Some((at, cursor)) => (Some(cursor), request.offset - at),
                 None => (None, request.offset),
             };
-            let groups = threads
+            let mut groups = threads
                 .unified_page_at(
                     &UnifiedThreadListQuery {
                         limit: request.limit,
@@ -583,6 +590,21 @@ impl LocalStore {
                     skip,
                 )
                 .await?;
+            // A mark the rows moved under -- the folder page's #1534, which
+            // an inbox that is triaged from here is the likeliest list to
+            // meet: stop trusting the marks and read from the top once.
+            if groups.is_empty() && seek.is_some() && request.offset < total {
+                marks.lock().expect("not poisoned").forget();
+                groups = threads
+                    .unified_page_at(
+                        &UnifiedThreadListQuery {
+                            limit: request.limit,
+                            after: None,
+                        },
+                        request.offset,
+                    )
+                    .await?;
+            }
             if let Some(last) = groups.last() {
                 marks
                     .lock()
