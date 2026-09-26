@@ -19,7 +19,11 @@ pub enum ListScope {
     Mailbox(MailboxId),
     /// Every folder in an account: that account's whole mail.
     Account(AccountId),
-    /// Every folder in every enabled account at once (ADR 0005 Q4).
+    /// Every enabled account's inbox at once (ADR 0005 Q4, #1692).
+    ///
+    /// The inboxes, not all mail: a message archived, moved, snoozed or
+    /// deleted from here leaves the view as it leaves a folder, which is what
+    /// lets triage walk down it.
     ///
     /// A view, never a destination: mail cannot be moved *into* it, and the
     /// commands that need somewhere to put a message are unavailable here.
@@ -122,11 +126,18 @@ impl ListScope {
     /// cannot express a row leaving. [`ListScope::Thread`] never reaches a
     /// [`Feed`](../../postio_gtk/feed/struct.Feed.html) at all, so every
     /// arrival is [`Reaction::Ignore`].
+    ///
+    /// `inbox` is whether `mailbox` is an inbox, when the caller knows --
+    /// `None` when it cannot place the folder, which is always safe. Only
+    /// [`ListScope::Unified`] asks: it is the inboxes (#1692), so an arrival
+    /// in a folder known not to be one cannot move a row, and every other
+    /// scope already names the folder or account it is gated on.
     pub fn reaction(
         self,
         arrival: Arrival,
         account: AccountId,
         mailbox: Option<MailboxId>,
+        inbox: Option<bool>,
     ) -> Reaction {
         use Arrival::{MessageListChanged, MessagesChanged, MessagesRemoved, NewMail};
         use Reaction::{Ignore, InsertAtTop, Refetch, Reload};
@@ -144,8 +155,9 @@ impl ListScope {
                 MessagesChanged => Refetch,
                 _ => Ignore,
             },
-            // Every account, so no arrival is somebody else's -- but a
-            // delivery still never inserts. A unified row is a conversation
+            // Every account's inbox (#1692), so no account's arrival is
+            // somebody else's, and a folder known not to be an inbox holds
+            // nothing drawn here -- but a delivery still never inserts. A unified row is a conversation
             // grouped across accounts, and mail arriving at the second
             // address for a conversation already on screen *folds into that
             // row* rather than adding one. An insert cannot express that: it
@@ -153,6 +165,7 @@ impl ListScope {
             // the grouping exists to prevent. Reloading re-runs the walk,
             // which is the only thing that knows which it was.
             ListScope::Unified => match arrival {
+                NewMail | MessagesRemoved | MessageListChanged if inbox == Some(false) => Ignore,
                 NewMail | MessagesRemoved | MessageListChanged => Reload,
                 MessagesChanged => Refetch,
             },
@@ -254,18 +267,18 @@ mod reaction_tests {
             Arrival::MessagesChanged,
         ] {
             assert_eq!(
-                outbox.reaction(arrival, mine, None),
+                outbox.reaction(arrival, mine, None, None),
                 Reaction::Reload,
                 "{arrival:?} in this account has to re-ask what is on its way"
             );
             assert_eq!(
-                outbox.reaction(arrival, theirs, None),
+                outbox.reaction(arrival, theirs, None, None),
                 Reaction::Ignore,
                 "{arrival:?} in another account is not this Outbox's business"
             );
         }
         assert_eq!(
-            outbox.reaction(Arrival::NewMail, mine, None),
+            outbox.reaction(Arrival::NewMail, mine, None, None),
             Reaction::Ignore,
             "mail arriving is not a message being sent"
         );
@@ -282,11 +295,11 @@ mod reaction_tests {
     fn a_mailbox_scope_inserts_new_mail_at_the_top_of_its_own_mailbox_only() {
         let scope = ListScope::Mailbox(INBOX);
         assert_eq!(
-            scope.reaction(Arrival::NewMail, HOME, Some(INBOX)),
+            scope.reaction(Arrival::NewMail, HOME, Some(INBOX), None),
             Reaction::InsertAtTop
         );
         assert_eq!(
-            scope.reaction(Arrival::NewMail, HOME, Some(ARCHIVE)),
+            scope.reaction(Arrival::NewMail, HOME, Some(ARCHIVE), None),
             Reaction::Ignore,
             "mail landing in a different mailbox does not belong at this one's top"
         );
@@ -296,9 +309,12 @@ mod reaction_tests {
     fn a_mailbox_scope_reloads_on_removal_and_reorder_of_its_own_mailbox_only() {
         let scope = ListScope::Mailbox(INBOX);
         for arrival in [Arrival::MessagesRemoved, Arrival::MessageListChanged] {
-            assert_eq!(scope.reaction(arrival, HOME, Some(INBOX)), Reaction::Reload);
             assert_eq!(
-                scope.reaction(arrival, HOME, Some(ARCHIVE)),
+                scope.reaction(arrival, HOME, Some(INBOX), None),
+                Reaction::Reload
+            );
+            assert_eq!(
+                scope.reaction(arrival, HOME, Some(ARCHIVE), None),
                 Reaction::Ignore,
                 "{arrival:?} for a different mailbox must not reload this one"
             );
@@ -311,11 +327,11 @@ mod reaction_tests {
         // No mailbox to compare against -- MessagesChanged is account-wide
         // by shape, and `pages_holding` is what actually filters it.
         assert_eq!(
-            scope.reaction(Arrival::MessagesChanged, HOME, None),
+            scope.reaction(Arrival::MessagesChanged, HOME, None, None),
             Reaction::Refetch
         );
         assert_eq!(
-            scope.reaction(Arrival::MessagesChanged, AWAY, None),
+            scope.reaction(Arrival::MessagesChanged, AWAY, None, None),
             Reaction::Refetch
         );
     }
@@ -324,20 +340,26 @@ mod reaction_tests {
     fn an_account_scope_behaves_like_mailbox_but_gated_on_the_account() {
         let scope = ListScope::Account(HOME);
         assert_eq!(
-            scope.reaction(Arrival::NewMail, HOME, Some(INBOX)),
+            scope.reaction(Arrival::NewMail, HOME, Some(INBOX), None),
             Reaction::InsertAtTop,
             "the unified view's own order puts a delivery at the top too"
         );
         assert_eq!(
-            scope.reaction(Arrival::NewMail, AWAY, Some(INBOX)),
+            scope.reaction(Arrival::NewMail, AWAY, Some(INBOX), None),
             Reaction::Ignore
         );
         for arrival in [Arrival::MessagesRemoved, Arrival::MessageListChanged] {
-            assert_eq!(scope.reaction(arrival, HOME, Some(INBOX)), Reaction::Reload);
-            assert_eq!(scope.reaction(arrival, AWAY, Some(INBOX)), Reaction::Ignore);
+            assert_eq!(
+                scope.reaction(arrival, HOME, Some(INBOX), None),
+                Reaction::Reload
+            );
+            assert_eq!(
+                scope.reaction(arrival, AWAY, Some(INBOX), None),
+                Reaction::Ignore
+            );
         }
         assert_eq!(
-            scope.reaction(Arrival::MessagesChanged, AWAY, None),
+            scope.reaction(Arrival::MessagesChanged, AWAY, None, None),
             Reaction::Refetch
         );
     }
@@ -347,21 +369,21 @@ mod reaction_tests {
         let scope = ListScope::Unified;
         for account in [HOME, AWAY] {
             assert_eq!(
-                scope.reaction(Arrival::NewMail, account, Some(INBOX)),
+                scope.reaction(Arrival::NewMail, account, Some(INBOX), None),
                 Reaction::Reload,
                 "a delivery can fold into a row already on screen, and an \
                  insert would draw that conversation a second time"
             );
             for arrival in [Arrival::MessagesRemoved, Arrival::MessageListChanged] {
                 assert_eq!(
-                    scope.reaction(arrival, account, Some(INBOX)),
+                    scope.reaction(arrival, account, Some(INBOX), None),
                     Reaction::Reload,
                     "{arrival:?} in {account:?}: no account's mail is somebody \
                      else's here"
                 );
             }
             assert_eq!(
-                scope.reaction(Arrival::MessagesChanged, account, None),
+                scope.reaction(Arrival::MessagesChanged, account, None, None),
                 Reaction::Refetch,
                 "a flag change moves neither the membership nor the grouping"
             );
@@ -369,10 +391,45 @@ mod reaction_tests {
     }
 
     #[test]
+    fn unified_ignores_a_folder_it_knows_is_not_an_inbox() {
+        // #1692: Unified is the inboxes, so mail landing in, leaving, or
+        // changing wholesale in any other folder cannot move a row -- a sync
+        // of the Archive used to re-read the whole view.
+        let scope = ListScope::Unified;
+        for arrival in [
+            Arrival::NewMail,
+            Arrival::MessagesRemoved,
+            Arrival::MessageListChanged,
+        ] {
+            assert_eq!(
+                scope.reaction(arrival, HOME, Some(ARCHIVE), Some(false)),
+                Reaction::Ignore,
+                "{arrival:?} in a folder that is not an inbox"
+            );
+            assert_eq!(
+                scope.reaction(arrival, HOME, Some(INBOX), Some(true)),
+                Reaction::Reload,
+                "{arrival:?} in an inbox"
+            );
+            assert_eq!(
+                scope.reaction(arrival, HOME, Some(ARCHIVE), None),
+                Reaction::Reload,
+                "{arrival:?} in a folder the caller cannot place: a reload is \
+                 the answer that cannot leave a row behind"
+            );
+        }
+        assert_eq!(
+            scope.reaction(Arrival::MessagesChanged, HOME, None, None),
+            Reaction::Refetch,
+            "a flag change names messages, not a folder, and patches rows in place"
+        );
+    }
+
+    #[test]
     fn flagged_never_inserts_new_mail_a_delivery_is_never_flagged_yet() {
         let scope = ListScope::Flagged(HOME);
         assert_eq!(
-            scope.reaction(Arrival::NewMail, HOME, Some(INBOX)),
+            scope.reaction(Arrival::NewMail, HOME, Some(INBOX), None),
             Reaction::Ignore,
             "a delivery does not carry \\Flagged; inserting it would put a \
              non-matching row above matching ones"
@@ -383,7 +440,7 @@ mod reaction_tests {
     fn snoozed_never_inserts_new_mail_either() {
         let scope = ListScope::Snoozed(HOME);
         assert_eq!(
-            scope.reaction(Arrival::NewMail, HOME, Some(INBOX)),
+            scope.reaction(Arrival::NewMail, HOME, Some(INBOX), None),
             Reaction::Ignore
         );
     }
@@ -392,7 +449,7 @@ mod reaction_tests {
     fn flagged_and_snoozed_reload_on_a_flag_change_because_membership_moved() {
         for scope in [ListScope::Flagged(HOME), ListScope::Snoozed(HOME)] {
             assert_eq!(
-                scope.reaction(Arrival::MessagesChanged, HOME, None),
+                scope.reaction(Arrival::MessagesChanged, HOME, None, None),
                 Reaction::Reload,
                 "{scope:?}: unflagging removes the row, which a page \
                  refetch cannot express -- only a reload moves the total"
@@ -409,12 +466,12 @@ mod reaction_tests {
                 Arrival::MessagesChanged,
             ] {
                 assert_eq!(
-                    scope.reaction(arrival, HOME, Some(INBOX)),
+                    scope.reaction(arrival, HOME, Some(INBOX), None),
                     Reaction::Reload,
                     "{scope:?} / {arrival:?} in this scope's own account"
                 );
                 assert_eq!(
-                    scope.reaction(arrival, AWAY, Some(INBOX)),
+                    scope.reaction(arrival, AWAY, Some(INBOX), None),
                     Reaction::Ignore,
                     "{scope:?} / {arrival:?}: a different account must not \
                      reload a list it cannot affect"
@@ -430,8 +487,8 @@ mod reaction_tests {
         // does.
         let scope = ListScope::Flagged(HOME);
         assert_eq!(
-            scope.reaction(Arrival::MessagesRemoved, HOME, Some(INBOX)),
-            scope.reaction(Arrival::MessagesRemoved, HOME, Some(ARCHIVE)),
+            scope.reaction(Arrival::MessagesRemoved, HOME, Some(INBOX), None),
+            scope.reaction(Arrival::MessagesRemoved, HOME, Some(ARCHIVE), None),
         );
     }
 
@@ -445,7 +502,7 @@ mod reaction_tests {
             Arrival::MessagesChanged,
         ] {
             assert_eq!(
-                scope.reaction(arrival, HOME, Some(INBOX)),
+                scope.reaction(arrival, HOME, Some(INBOX), None),
                 Reaction::Ignore,
                 "{arrival:?}: a drill-in reads its own thread directly and \
                  never routes through here"

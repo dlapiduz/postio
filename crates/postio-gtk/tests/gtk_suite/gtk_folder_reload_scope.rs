@@ -56,6 +56,7 @@ const OTHER_INBOX: i64 = OTHER_ACCOUNT;
 const INBOX_TOTAL: u32 = 940;
 const FLAGGED_TOTAL: u32 = 7;
 const SNOOZED_TOTAL: u32 = 3;
+const UNIFIED_TOTAL: u32 = 12;
 
 #[derive(Default)]
 struct Store {
@@ -68,6 +69,8 @@ struct Store {
     /// sees a populated first read is not being tested against the case
     /// that matters.
     empty_until_synced: Cell<bool>,
+    /// Every page read, so a test can tell whether an event re-read the list.
+    pages: Cell<u32>,
 }
 
 impl MailboxSource for Store {
@@ -99,13 +102,14 @@ impl MailboxSource for Store {
 
 impl MessageSource for Store {
     fn fetch(&self, request: PageRequest) -> PageFuture {
+        self.pages.set(self.pages.get() + 1);
         let total = match request.scope {
             ListScope::Flagged(_) => FLAGGED_TOTAL,
             ListScope::Snoozed(_) => SNOOZED_TOTAL,
             ListScope::Mailbox(id) if id.get() == INBOX || id.get() == OTHER_INBOX => INBOX_TOTAL,
+            ListScope::Unified => UNIFIED_TOTAL,
             ListScope::Mailbox(_)
             | ListScope::Account(_)
-            | ListScope::Unified
             | ListScope::Outbox(_)
             | ListScope::Thread(_) => 0,
         };
@@ -356,6 +360,47 @@ pub fn a_folder_reload_leaves_the_list_in_the_unified_view() {
     window.destroy();
 }
 
+/// Unified is the inboxes (#1692): mail landing in the Archive cannot move a
+/// row there, so it must not re-read the list, and mail landing in the inbox
+/// still does. What tells the list which folder is which is the folder tree
+/// the sidebar reads -- the join this proves, since the rule itself is
+/// `postio_ui::paging`'s and tested there.
+pub fn unified_rereads_for_its_inboxes_and_not_for_the_archive() {
+    if adw::init().is_err() || gdk::Display::default().is_none() {
+        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
+        return;
+    }
+    let (window, store, feeds) = opened();
+    feeds.messages.open(ListScope::Unified);
+    settle_until(|| window.list().model().n_items() == UNIFIED_TOTAL);
+    settle();
+
+    let before = store.pages.get();
+    feeds.apply(&Event::NewMail {
+        account: AccountId::new(ACCOUNT),
+        mailbox: MailboxId::new(100 + ACCOUNT),
+        messages: vec![MessageId::new(500)],
+    });
+    settle();
+    assert_eq!(
+        store.pages.get(),
+        before,
+        "mail landing in the Archive re-read the unified view"
+    );
+
+    feeds.apply(&Event::NewMail {
+        account: AccountId::new(ACCOUNT),
+        mailbox: MailboxId::new(INBOX),
+        messages: vec![MessageId::new(501)],
+    });
+    settle_until(|| store.pages.get() > before);
+    assert!(
+        store.pages.get() > before,
+        "mail landing in the inbox did not re-read the unified view"
+    );
+    window.destroy();
+}
+
 pub fn switching_accounts_still_opens_the_new_accounts_inbox() {
     if adw::init().is_err() || gdk::Display::default().is_none() {
         eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
@@ -394,6 +439,7 @@ pub fn an_account_whose_folders_arrive_after_the_first_sync_still_opens_its_inbo
     let store = Rc::new(Store {
         reads: RefCell::new(0),
         empty_until_synced: Cell::new(true),
+        ..Store::default()
     });
     let feeds = window.install_feeds(
         AccountId::new(ACCOUNT),

@@ -1285,6 +1285,10 @@ const CASES: &[(&str, fn())] = &[
         gtk_folder_reload_scope::a_folder_reload_leaves_the_list_in_the_unified_view as fn(),
     ),
     (
+        "gtk_folder_reload_scope::unified_rereads_for_its_inboxes_and_not_for_the_archive",
+        gtk_folder_reload_scope::unified_rereads_for_its_inboxes_and_not_for_the_archive as fn(),
+    ),
+    (
         "gtk_folder_reload_scope::switching_accounts_still_opens_the_new_accounts_inbox",
         gtk_folder_reload_scope::switching_accounts_still_opens_the_new_accounts_inbox as fn(),
     ),
