@@ -1,4 +1,6 @@
-//! The unified inbox groups threads across accounts at read time (#184).
+//! The unified inbox groups threads across accounts at read time (#184),
+//! and it is the inboxes: every enabled account's own, nothing filed away
+//! (#1692).
 //!
 //! ADR 0005 Q2: a thread never spans accounts — `threads.account_id` stays
 //! `NOT NULL`, threads remain per-account sync state. What the unified list
@@ -235,9 +237,9 @@ async fn a_partner_already_shown_is_never_a_second_row_across_pages() {
         .collect();
     assert_eq!(
         subjects,
-        // Normalised, because `threads.subject` is the normalised root
-        // subject — the same casing the account-scoped list rows carry.
-        vec![Some("alone in a"), Some("alone in b")],
+        // The representative message's own subject, as a folder row
+        // carries it: each row is its inbox's row (#1692).
+        vec![Some("Alone in A"), Some("Alone in B")],
         "the absorbed partner never resurfaces as a row of its own"
     );
 }
@@ -520,7 +522,7 @@ async fn a_disabled_account_is_not_in_the_unified_view_at_all() {
         .collect();
     assert_eq!(
         rows,
-        vec![Some("shared".to_owned()), Some("only in a".to_owned())],
+        vec![Some("Shared".to_owned()), Some("Only in A".to_owned())],
         "the disabled account's own conversation is gone, and the shared one \
          is still drawn from the account that is still enabled"
     );
@@ -529,4 +531,157 @@ async fn a_disabled_account_is_not_in_the_unified_view_at_all() {
         2,
         "the count agrees with the rows, or the list grows placeholders"
     );
+}
+
+/// Unified is every enabled account's *inbox*, not every account's mail
+/// (#1692; the maintainer's call, 2026-09-26: "it should only be inboxes").
+///
+/// So a conversation filed away -- archived, moved, sent -- is not a row
+/// here, which is what makes `a a a` in Unified walk down the list as it does
+/// in a folder: the row the verb filed leaves the view.
+#[tokio::test]
+async fn unified_lists_the_inboxes_of_every_account_and_nothing_filed_away() {
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    let ((a, a_inbox), (b, b_inbox)) = two_accounts(&connection).await;
+    let a_archive = test_support::mailbox(
+        &connection,
+        &postio_storage::repository::AccountRepository::new(&connection)
+            .get(a)
+            .await
+            .expect("read the account")
+            .expect("the account"),
+        "Archive",
+    )
+    .await
+    .id;
+
+    file(
+        &connection,
+        a,
+        a_inbox,
+        1,
+        Some("<a1@example.com>"),
+        &[],
+        "In A's inbox",
+    )
+    .await;
+    file(
+        &connection,
+        b,
+        b_inbox,
+        2,
+        Some("<b1@example.com>"),
+        &[],
+        "In B's inbox",
+    )
+    .await;
+    // Filed away from the start, and newer than both, so a view that still
+    // listed every folder would draw it at the top.
+    file(
+        &connection,
+        a,
+        a_archive,
+        5,
+        Some("<old@example.com>"),
+        &[],
+        "Long filed",
+    )
+    .await;
+    // In the inbox, then archived -- the gesture this issue is about.
+    let (archived, _) = file(
+        &connection,
+        b,
+        b_inbox,
+        4,
+        Some("<b2@example.com>"),
+        &[],
+        "Archived from B",
+    )
+    .await;
+    MessageRepository::new(&connection)
+        .move_to(&[archived], a_archive)
+        .await
+        .expect("archive it");
+
+    let repository = ThreadRepository::new(&connection);
+    let subjects: Vec<String> = repository
+        .unified_page(&UnifiedThreadListQuery {
+            limit: 10,
+            after: None,
+        })
+        .await
+        .expect("unified page")
+        .into_iter()
+        .filter_map(|group| group.row.latest.and_then(|latest| latest.subject))
+        .collect();
+    assert_eq!(
+        subjects,
+        vec!["In B's inbox".to_owned(), "In A's inbox".to_owned()],
+        "both inboxes, newest first, and nothing that has been filed away"
+    );
+
+    let inboxes = repository
+        .count_of(&postio_storage::repository::ThreadListQuery::in_mailbox(
+            a, a_inbox,
+        ))
+        .await
+        .expect("A's inbox count")
+        + repository
+            .count_of(&postio_storage::repository::ThreadListQuery::in_mailbox(
+                b, b_inbox,
+            ))
+            .await
+            .expect("B's inbox count");
+    assert_eq!(inboxes, 2);
+    assert_eq!(
+        repository.unified_count().await.expect("unified count"),
+        inboxes,
+        "the unified count is the inboxes' counts"
+    );
+}
+
+/// The unified page reads no mail it does not draw.
+///
+/// Finding the inboxes is a walk over the accounts, a handful of rows, and
+/// each inbox's window is its folder list's own seek -- so a unified page
+/// costs what a page of each inbox costs, whatever the archive holds. A scan
+/// of `messages` or `threads` anywhere in it is how "only the inboxes" would
+/// quietly come to read every message to find them.
+#[tokio::test]
+async fn the_unified_page_seeks_each_inbox_and_scans_no_mail() {
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    let ((a, a_inbox), _) = two_accounts(&connection).await;
+    let repository = ThreadRepository::new(&connection);
+
+    let finding = postio_storage::test_support::counting::scans(
+        &connection,
+        &repository.explain_unified_inboxes(),
+    )
+    .await;
+    assert!(
+        finding
+            .iter()
+            .all(|step| !step.contains("messages") && !step.contains("threads")),
+        "finding the inboxes must not read mail: {finding:?}"
+    );
+
+    for query in [
+        postio_storage::repository::ThreadListQuery::in_mailbox(a, a_inbox),
+        postio_storage::repository::ThreadListQuery::in_mailbox(a, a_inbox).after(
+            postio_storage::repository::ThreadCursor {
+                last_at: at(5),
+                id: 9,
+            },
+        ),
+    ] {
+        let scanned =
+            postio_storage::test_support::counting::scans(&connection, &repository.explain(&query))
+                .await;
+        assert!(
+            scanned.is_empty(),
+            "each inbox's window is a seek, not a scan: {scanned:?}"
+        );
+    }
 }
