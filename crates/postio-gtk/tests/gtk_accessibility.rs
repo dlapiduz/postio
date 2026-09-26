@@ -224,6 +224,10 @@ fn every_widget_a_screen_reader_meets_has_a_role_and_a_name() {
     // SAFETY: the first statement of the only test in this binary, so no
     // other thread exists yet to observe the environment changing.
     unsafe { std::env::set_var("GTK_A11Y", "test") };
+    watchdog(postio_test_support::scaled(std::time::Duration::from_secs(
+        60,
+    )));
+    stage("starting");
 
     if adw::init().is_err() || gdk::Display::default().is_none() {
         eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
@@ -249,11 +253,14 @@ fn every_widget_a_screen_reader_meets_has_a_role_and_a_name() {
     // Wait for the page to land and the list to build rows from it. Pumping
     // once only drains what is already pending, which is a race the live
     // display used to win by being slow — see the note on `pump_until`.
+    stage("waiting for the first page");
     pump_until(|| page_landed(&window) && row_items(&window) > 0);
 
+    stage("the accessibility backend");
     require_an_accessibility_backend();
 
     // ── a field's caption is its control's name ─────────────────────────
+    stage("a field's caption is its control's name");
     // Onboarding said so and the settings account detail did not, so every
     // host and port there was announced as "text field". `widgets::field`
     // is the one way a form labels a control now; this holds it to it.
@@ -265,6 +272,7 @@ fn every_widget_a_screen_reader_meets_has_a_role_and_a_name() {
     );
 
     // ── a mode says which one it is, and how to leave it ─────────────────
+    stage("a mode says which one it is, and how to leave it");
     // The ⌫ chip on the field is decoration -- announcing a bare glyph reads
     // as furniture -- so the fact it carries belongs to the field the user is
     // typing in. Drawn and not spoken is the same mode with no door for
@@ -293,6 +301,7 @@ fn every_widget_a_screen_reader_meets_has_a_role_and_a_name() {
     pump();
 
     // ── the panes are landmarks a screen reader can navigate by ──────────
+    stage("the panes are landmarks a screen reader can navigate by");
     assert!(gtk::test_accessible_has_role(
         &window.shell().sidebar(),
         AccessibleRole::Navigation
@@ -307,6 +316,7 @@ fn every_widget_a_screen_reader_meets_has_a_role_and_a_name() {
     ));
 
     // ── every row announces what it draws ────────────────────────────────
+    stage("every row announces what it draws");
     // The row widget paints its own text, so GTK has nothing to compute a
     // name from: without the sentence being handed over, a screen reader
     // walks a list of anonymous items.
@@ -320,6 +330,7 @@ fn every_widget_a_screen_reader_meets_has_a_role_and_a_name() {
     }
 
     // ── the conversation rail announces more than it draws ───────────────
+    stage("the conversation rail announces more than it draws");
     // The rail's rows are a number, a name and sometimes a count, because
     // screen 28 wants a column you can scan rather than read. That only works
     // if the label carries what the eye gets from position and from the
@@ -380,6 +391,7 @@ fn every_widget_a_screen_reader_meets_has_a_role_and_a_name() {
     expect_usable(&window, "a conversation and its rail");
 
     // ── 200% text stays usable ───────────────────────────────────────────
+    stage("200% text stays usable");
     // Not a look-and-see: if the row's type came from constants rather than
     // from the cascade, its height would not move at all and the text would
     // simply overflow it.
@@ -420,6 +432,7 @@ fn every_widget_a_screen_reader_meets_has_a_role_and_a_name() {
     );
 
     // ── and nothing in the tree is nameless or roleless ──────────────────
+    stage("and nothing in the tree is nameless or roleless");
     expect_usable(&window, "the three panes");
 
     // ── including the surfaces that only exist once opened ───────────────
@@ -429,6 +442,7 @@ fn every_widget_a_screen_reader_meets_has_a_role_and_a_name() {
     // never looked at by anything. A pane that announces nothing is no
     // better for being one keystroke away.
     for surface in surfaces() {
+        stage(format!("surface {}", surface.name));
         (surface.open)(&window);
         pump();
         // An audit of a surface that never opened is an audit of the three
@@ -454,6 +468,7 @@ fn every_widget_a_screen_reader_meets_has_a_role_and_a_name() {
     }
 
     // ── the named list states, over a mailbox with nothing in it ─────────
+    stage("the named list states, over a mailbox with nothing in it");
     // `list_state.rs`'s four named states -- inbox zero, offline, sync
     // failure, a search with no results -- only ever appear over an empty
     // list, so `Sample`'s 300 rows above can never reach them. A window of
@@ -466,6 +481,7 @@ fn every_widget_a_screen_reader_meets_has_a_role_and_a_name() {
     pump_until(|| empty_window.list_state().state().is_some());
 
     for list_state in named_list_states() {
+        stage(format!("list state {}", list_state.name));
         (list_state.enter)(&empty_window, &empty_feeds);
         pump();
         assert!(
@@ -496,6 +512,7 @@ fn every_widget_a_screen_reader_meets_has_a_role_and_a_name() {
     empty_window.destroy();
 
     // ── the one exception is still an exception ──────────────────────────
+    stage("the one exception is still an exception");
     // If libadwaita starts naming its dismiss button, `upstream_gap` stops
     // matching and this fails — which is the point. An allowance nobody
     // re-checks outlives the problem it was written for.
@@ -507,6 +524,7 @@ fn every_widget_a_screen_reader_meets_has_a_role_and_a_name() {
     );
 
     window.destroy();
+    FINISHED.store(true, std::sync::atomic::Ordering::SeqCst);
 }
 
 /// A surface that is not on screen until something opens it.
@@ -978,6 +996,44 @@ fn pump() {
     }
 }
 
+/// Where the audit is, for the watchdog to name if it never finishes.
+static STAGE: std::sync::Mutex<String> = std::sync::Mutex::new(String::new());
+static FINISHED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Say where the audit is. Printed as it goes, so a run that stops leaves
+/// the last step it reached in the output nextest shows for a failure.
+fn stage(name: impl Into<String>) {
+    let name = name.into();
+    eprintln!("audit: {name}");
+    *STAGE
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner()) = name;
+}
+
+/// Fail the run, naming the step it was on, if it has not finished in
+/// `patience`.
+///
+/// The release gate's full suite has twice run this binary for 720s until
+/// nextest killed it, with nothing in the output to say where -- while every
+/// pull request's run finishes it in about four seconds. A watchdog that
+/// names the step turns the next occurrence into a place to look.
+fn watchdog(patience: std::time::Duration) {
+    std::thread::spawn(move || {
+        std::thread::sleep(patience);
+        if !FINISHED.load(std::sync::atomic::Ordering::SeqCst) {
+            let stage = STAGE
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .clone();
+            eprintln!(
+                "audit: still running after {patience:?}, stuck at: {stage} -- \
+                 failing rather than waiting for the harness to kill it"
+            );
+            std::process::exit(101);
+        }
+    });
+}
+
 /// Pump until `ready` holds, rather than for a fixed number of turns.
 ///
 /// `pump` spins a fixed budget and hopes it was enough. Measured, that budget
@@ -997,7 +1053,9 @@ fn pump() {
 /// expensive version of this same bug, and one this file has already had.
 fn pump_until(ready: impl Fn() -> bool) {
     let context = gtk::glib::MainContext::default();
-    for _ in 0..2000 {
+    let deadline =
+        std::time::Instant::now() + postio_test_support::scaled(std::time::Duration::from_secs(20));
+    while std::time::Instant::now() < deadline {
         drain(&context);
         if ready() {
             return;
