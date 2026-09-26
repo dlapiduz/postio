@@ -234,26 +234,6 @@ pub enum MessageSet {
         /// Rows the user deselected. Built by clicking, so it is short.
         except: Vec<MessageId>,
     },
-    /// Every message in each of these accounts, less the rows taken back out
-    /// of the selection.
-    ///
-    /// The unified view's half of the predicate story (#811). The accounts
-    /// are named rather than implied by "all of them" because the aggregate
-    /// list can be showing fewer than it has: an account Postio cannot
-    /// currently reach is drawn — its synced mail is real mail — and is
-    /// deliberately *not* part of a whole-view selection made while it was
-    /// away (ADR 0005 Q10).
-    ///
-    /// The list is the one the view was scoped to **when the gesture was
-    /// made**, carried here rather than looked up on the way past. Resolving
-    /// it late would let an account that reconnected between the `Ctrl+A` and
-    /// the `a` join a selection the user was never shown.
-    InAccounts {
-        /// The accounts the predicate is about, in the sidebar's order.
-        accounts: Vec<AccountId>,
-        /// Rows the user deselected. Built by clicking, so it is short.
-        except: Vec<MessageId>,
-    },
     /// Every message a run of queue rows named.
     ///
     /// This is how undo takes back a bulk action without naming its rows: the
@@ -307,9 +287,7 @@ impl MessageSet {
             MessageSet::InMailbox { mailbox, .. } => Some(*mailbox),
             // A smart folder is not a folder, here as everywhere else --
             // and an aggregate over accounts is further from one still.
-            MessageSet::Flagged { .. } | MessageSet::Queued(_) | MessageSet::InAccounts { .. } => {
-                None
-            }
+            MessageSet::Flagged { .. } | MessageSet::Queued(_) => None,
             MessageSet::InSourceMailbox { mailbox, .. } => Some(*mailbox),
             MessageSet::WithFlag { set, .. } => set.mailbox(),
         }
@@ -358,18 +336,6 @@ impl MessageSet {
                     format!("messages.mailbox_id = ?{first} AND messages.deleted_locally = 0");
                 sql.push_str(&without_conversations(except, first + 1));
                 let mut arguments = vec![mailbox.get()];
-                arguments.extend(except.iter().map(|id| id.get()).collect::<Vec<_>>());
-                (sql, arguments)
-            }
-            // The unified view's rows are conversations too, so the
-            // exceptions are excepted the same way -- by conversation, not by
-            // the one message a row is drawn from.
-            MessageSet::InAccounts { accounts, except } => {
-                let ids = placeholders(accounts.len(), first);
-                let mut sql =
-                    format!("messages.account_id IN ({ids}) AND messages.deleted_locally = 0");
-                sql.push_str(&without_conversations(except, first + accounts.len()));
-                let mut arguments: Vec<i64> = accounts.iter().map(|id| id.get()).collect();
                 arguments.extend(except.iter().map(|id| id.get()).collect::<Vec<_>>());
                 (sql, arguments)
             }

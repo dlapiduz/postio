@@ -1620,17 +1620,33 @@ impl Actions {
                 // looked up again: they are what the view could show when the
                 // gesture was made, and an account that has reconnected since
                 // was not part of the selection the user was shown (#811).
-                ViewScope::Unified { accounts } => accounts
-                    .into_iter()
-                    .map(|account| BulkUnit {
-                        set: MessageSet::InAccounts {
-                            accounts: vec![account],
-                            except: except.clone(),
-                        },
-                        account,
-                        from: None,
-                    })
-                    .collect(),
+                //
+                // Each account's predicate is its inbox, because that is what
+                // Unified shows (#1692): a set over the account's whole mail
+                // would reach the Archive the view never drew. An account
+                // with no inbox yet has nothing in the view to select.
+                ViewScope::Unified { accounts } => {
+                    let folders = MailboxRepository::new(connection);
+                    let mut units = Vec::with_capacity(accounts.len());
+                    for account in accounts {
+                        let Some(inbox) = folders
+                            .by_role(account, MailboxRole::Inbox)
+                            .await
+                            .map_err(store_failure)?
+                        else {
+                            continue;
+                        };
+                        units.push(BulkUnit {
+                            set: MessageSet::InMailbox {
+                                mailbox: inbox.id,
+                                except: except.clone(),
+                            },
+                            account,
+                            from: Some(inbox.id),
+                        });
+                    }
+                    units
+                }
             },
             Resolved::Batch {
                 range,
@@ -3720,6 +3736,40 @@ mod tests {
             !world.flags_of(theirs).await.contains(&Flag::Flagged),
             "an account the selection was never scoped to must not be flagged"
         );
+    }
+
+    #[tokio::test]
+    async fn a_unified_select_all_is_the_inboxes_and_nothing_filed_away() {
+        // #1692: Unified is the inboxes, so `Ctrl+A` there is every inbox
+        // message and nothing else. A predicate over each account's whole
+        // mail would reach what the view never showed -- `Ctrl+A`, `#` would
+        // have deleted the Archive along with the inbox.
+        let world = world().await;
+        let away = world.second_account().await;
+        let mine = world.message(world.inbox, &[]).await;
+        let theirs = world.message_for(&away.account, away.inbox, &[]).await;
+        let filed = world.message(world.archive, &[]).await;
+        let filed_away = world.message_for(&away.account, away.archive, &[]).await;
+        world
+            .everything_unified(&[world.account.id, away.account.id])
+            .await;
+
+        world
+            .run(Command::Flag {
+                target: MessageTarget::Selection,
+                flagged: Some(true),
+            })
+            .await
+            .expect("a bulk flag over both inboxes");
+
+        assert!(world.flags_of(mine).await.contains(&Flag::Flagged));
+        assert!(world.flags_of(theirs).await.contains(&Flag::Flagged));
+        for message in [filed, filed_away] {
+            assert!(
+                !world.flags_of(message).await.contains(&Flag::Flagged),
+                "a message filed away is not in Unified, so not in its select-all"
+            );
+        }
     }
 
     #[tokio::test]
