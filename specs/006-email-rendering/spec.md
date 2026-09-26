@@ -210,8 +210,8 @@ executed script, bounded time and memory, and an intact app.
 ### User Story 4 - Read the way you read everywhere else (Priority: P2)
 
 A user selects a sentence and copies it, searches the open message for a word,
-clicks a link and sees where it goes before it opens, zooms in on small print,
-scrolls a very long message with keyboard or trackpad, and uses a screen reader
+clicks a link and sees where it goes before it opens, scrolls a very long
+message with keyboard or trackpad, and uses a screen reader
 to hear the body.
 
 **Why this priority**: These are behaviours today's web-engine reader provides
@@ -222,7 +222,7 @@ is complete** (FR-030).
 
 **Independent Test**: With a long, styled fixture open, select across
 paragraphs and table cells, copy, find a word, activate a link by mouse and
-keyboard, zoom, and read the body with the platform screen reader.
+keyboard, and read the body with the platform screen reader.
 
 **Acceptance Scenarios**:
 
@@ -240,8 +240,6 @@ keyboard, zoom, and read the body with the platform screen reader.
 5. **Given** the platform screen reader, **When** the body has focus, **Then**
    its text, headings, links, lists and images' alternative text are exposed
    in reading order.
-6. **Given** the user zooms the body, **When** it re-renders, **Then** text
-   and layout scale together and the chrome is unaffected.
 
 ---
 
@@ -271,6 +269,53 @@ placeholder with zero connections.
 3. **Given** an allowed sender and no network, **When** their message renders,
    **Then** it renders at once with placeholders and does not wait (001
    FR-032).
+
+---
+
+### User Story 6 - Zoom in and out of a message (Priority: P2)
+
+A user squinting at a newsletter's 11px footer zooms in. A user facing a
+message designed for a much wider screen zooms out to see it whole. Either
+way the zoom is one keystroke or gesture away, affects only the mail and not
+the app around it, keeps their place, and is still set the next time they
+open a message.
+
+**Why this priority**: Postio has no zoom today, in either reader, and
+restoring senders' layouts makes that gap worse. Designed mail often sets
+small fixed type and wide fixed layouts. Zoom is the reader's answer to a
+sender's design choices that fidelity (US2) obliges us to keep. P2 because
+reading works without it. It is a merge condition all the same (FR-030).
+
+**Independent Test**: Open a fixture with small fixed-size type and a wide
+fixed layout. Zoom in and out by keyboard, by Ctrl+scroll and by pinch, then
+reset. Confirm the text and layout scale together, the chrome does not
+change, the reading position holds, and the level survives opening another
+message and restarting the app.
+
+**Acceptance Scenarios**:
+
+1. **Given** an open message, **When** the user zooms in or out by the zoom
+   commands' keys, Ctrl+scroll or a touchpad pinch, **Then** text, images and
+   layout scale together, one step at a time, and the app's chrome (header,
+   list, sidebar, rail) is unchanged.
+2. **Given** a zoomed message, **When** the user resets zoom, **Then** it
+   returns to 100% in one step.
+3. **Given** the user is reading partway down a long message, **When** they
+   zoom, **Then** the content they were reading stays in view. Keyboard zoom
+   keeps the top of the viewport fixed, and pointer or pinch zoom keeps the
+   point under the pointer fixed.
+4. **Given** a message whose design responds to width, **When** the user
+   zooms in, **Then** it re-flows as it would on a narrower screen and does
+   not simply grow off the side. A fixed-width design scrolls inside its own
+   box (001 FR-026).
+5. **Given** zoom is not at 100%, **When** the user looks at the pane,
+   **Then** the current level is visible, and the reset is one click away
+   from it. At 100% nothing is shown.
+6. **Given** a zoom level set on one message, **When** the user opens another
+   message, a conversation, or restarts the app, **Then** the same level
+   applies.
+7. **Given** the zoom is at its limit, **When** the user zooms further,
+   **Then** nothing changes and nothing errors.
 
 ### Edge Cases
 
@@ -411,8 +456,32 @@ one, they say so.
 - **FR-020**: The body MUST expose an accessibility tree to the platform
   screen reader, covering text, headings, links, lists, tables and image
   alternative text in reading order.
-- **FR-021**: Users MUST be able to zoom the body independently of the app
-  chrome, through registry commands, and the zoom persists as a preference.
+- **FR-021**: Users MUST be able to zoom message bodies in, out and back to
+  100%, through three registry commands (Constitution II). Their default keys
+  are the platform's conventional ones (Ctrl+Plus/Ctrl+Equal, Ctrl+Minus,
+  Ctrl+0), rebindable in `[keys]`. The same zoom MUST also be reachable by
+  Ctrl+scroll and by touchpad pinch.
+- **FR-021a**: Zoom MUST scale the body as a browser's page zoom does. Text,
+  images, spacing and sender-specified sizes scale together, and responsive
+  rules are evaluated against the effective width (FR-008), so zooming in
+  re-flows the layout rather than cropping it. It MUST NOT change the app's
+  chrome, and it composes with the system text-scaling setting rather than
+  replacing it.
+- **FR-021b**: Zoom MUST move in fixed steps, from 50% to 300% (50, 67, 75,
+  80, 90, 100, 110, 125, 150, 175, 200, 250, 300). Continuous gestures
+  (pinch) may pass between steps and come to rest on the nearest step.
+- **FR-021c**: Zoom MUST keep the reader's place. Keyboard and command zoom
+  keep the top of the viewport fixed, and pointer and pinch zoom keep the
+  content under the pointer fixed.
+- **FR-021d**: The zoom level is one reader-wide preference. It applies to
+  every message and conversation, HTML and plain text alike, persists across
+  restarts, and is stored with the other reader settings in `config.toml`. A
+  per-sender or per-message zoom is out of scope.
+- **FR-021e**: When the level is not 100%, the pane MUST show it and offer a
+  reset in one click. At 100% it shows nothing.
+- **FR-021f**: A zoom step MUST respond within the interaction budget. It
+  MUST NOT show a blank frame, and it MUST NOT lose the selection or find
+  highlights on screen.
 - **FR-022**: A message of any length MUST be fully present and scrollable. No
   content may be cut off at any height. Memory held MUST NOT grow with the
   message's pixel height: only what is near the viewport is kept painted.
@@ -447,7 +516,7 @@ one, they say so.
   itself (001 FR-020).
 - **FR-029**: Moving between messages, and switching theme, MUST NOT show a
   blank, black or unpainted frame (001 FR-029, now also on theme change).
-- **FR-030**: User Stories 1–5 MUST be complete before the new renderer
+- **FR-030**: User Stories 1–6 MUST be complete before the new renderer
   replaces today's reader for users. Parity in reading affordances and in
   allowed remote images is a condition of the switch, not a follow-up.
 
@@ -512,6 +581,10 @@ one, they say so.
   after the switch, reports no message they could not read. The first
   dark-on-dark report is treated as a defect against SC-001's corpus: it is
   added as a fixture, not answered with a workaround.
+- **SC-009**: At every zoom step from 50% to 300%, every text-bearing message
+  in the rendering corpus is fully readable. No text is clipped, no
+  content is lost off the side of the pane, and the chrome's size is
+  unchanged. A zoom step or reset appears within one frame.
 
 ## Assumptions
 
