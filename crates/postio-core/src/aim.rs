@@ -272,13 +272,25 @@ fn threads_of(rows: &dyn RowFacts, marked: &[MessageId]) -> Option<Vec<ThreadId>
 ///   that names its own rows (a hover action, a drop) is about those;
 /// * a verb that **files the row somewhere else**: archive, delete, snooze,
 ///   and a move that has its destination. A move with none only asks where;
-/// * in a **folder**. Every other view outlives those verbs -- Unified and
-///   an account's view hold archived mail too, and Flagged holds a flagged
-///   message wherever it is filed.
+/// * in a **folder**, or in **Unified**, which is the inboxes (#1692) and
+///   loses the row the way a folder does. Every other view outlives those
+///   verbs -- an account's view holds archived mail too, and Flagged holds a
+///   flagged message wherever it is filed.
+///
+/// `shown` is the list's own scope rather than `aim.scope`: the
+/// [`ViewScope`] is what a whole-view selection is relative to, and it is
+/// `None` for a Unified view with no account reachable (#811). Whether the
+/// row leaves does not depend on that -- offline, the archive is still made
+/// locally and the row still goes -- so asking the narrower value would
+/// leave `a a` in an offline Unified view on the row already in flight.
 ///
 /// Called with the command as invoked, before [`refine`] names the
 /// conversation.
-pub fn takes_the_cursor_row_out(command: &Command, aim: &Aim<'_>) -> bool {
+pub fn takes_the_cursor_row_out(
+    command: &Command,
+    aim: &Aim<'_>,
+    shown: Option<ListScope>,
+) -> bool {
     let files_it_away = match command {
         Command::Archive { .. } | Command::Delete { .. } | Command::Snooze { .. } => true,
         Command::Move { to, .. } => to.is_some(),
@@ -293,7 +305,7 @@ pub fn takes_the_cursor_row_out(command: &Command, aim: &Aim<'_>) -> bool {
         && at_the_cursor
         && aim.cursor.is_some()
         && matches!(aim.selection, Selection::These(marked) if marked.is_empty())
-        && matches!(aim.scope, Some(ViewScope::Mailbox(_)))
+        && matches!(shown, Some(ListScope::Mailbox(_) | ListScope::Unified))
 }
 
 /// Point app state at what the user is looking at.
@@ -598,15 +610,16 @@ mod tests {
 
         let rows = FakeRows::threads(&[(7, 3), (8, 4)]);
         let nothing = Selection::These(Vec::new());
-        let folder = Some(ViewScope::Mailbox(MailboxId::new(1)));
-        let at = |scope: Option<ViewScope>, selection: &Selection, command: Command| {
+        let folder = ListScope::Mailbox(MailboxId::new(1));
+        let reachable = [AccountId::new(1)];
+        let at = |shown: ListScope, selection: &Selection, command: Command| {
             let aim = Aim {
-                scope,
+                scope: view_scope(shown, &reachable),
                 selection,
                 cursor: Some(message(7)),
                 rows: &rows,
             };
-            takes_the_cursor_row_out(&command, &aim)
+            takes_the_cursor_row_out(&command, &aim, Some(shown))
         };
 
         for command in [
@@ -620,22 +633,18 @@ mod tests {
             },
         ] {
             assert!(
-                at(folder.clone(), &nothing, command.clone()),
+                at(folder, &nothing, command.clone()),
                 "{command:?} on the cursor's row in a folder takes it out",
             );
         }
 
         assert!(
-            !at(
-                folder.clone(),
-                &nothing,
-                Command::default_for(CommandId::Flag)
-            ),
+            !at(folder, &nothing, Command::default_for(CommandId::Flag)),
             "a flag changes the row and leaves it where it is",
         );
         assert!(
             !at(
-                folder.clone(),
+                folder,
                 &nothing,
                 Command::Move {
                     target: MessageTarget::Selection,
@@ -646,7 +655,7 @@ mod tests {
         );
         assert!(
             !at(
-                folder.clone(),
+                folder,
                 &Selection::These(vec![message(8)]),
                 Command::default_for(CommandId::Archive),
             ),
@@ -654,7 +663,7 @@ mod tests {
         );
         assert!(
             !at(
-                folder.clone(),
+                folder,
                 &nothing,
                 Command::Archive {
                     target: MessageTarget::Messages(vec![message(8)]),
@@ -663,31 +672,57 @@ mod tests {
             "a verb that names its own rows is not aimed at the cursor",
         );
         assert!(
-            !at(
-                Some(ViewScope::Unified {
-                    accounts: vec![AccountId::new(1)],
-                }),
+            at(
+                ListScope::Unified,
                 &nothing,
                 Command::default_for(CommandId::Archive),
             ),
-            "Unified holds archived mail too, so the row stays",
+            "Unified is the inboxes (#1692), so an archive takes the row out",
+        );
+        let unreachable = Aim {
+            scope: view_scope(ListScope::Unified, &[]),
+            selection: &nothing,
+            cursor: Some(message(7)),
+            rows: &rows,
+        };
+        assert!(
+            takes_the_cursor_row_out(
+                &Command::default_for(CommandId::Archive),
+                &unreachable,
+                Some(ListScope::Unified),
+            ),
+            "whether an account is reachable decides what Ctrl+A may select, \
+             not whether an archived row leaves the inboxes -- offline, the \
+             archive still happens locally and the row still goes",
         );
         assert!(
             !at(
-                Some(ViewScope::Flagged(AccountId::new(1))),
+                ListScope::Account(AccountId::new(1)),
+                &nothing,
+                Command::default_for(CommandId::Archive),
+            ),
+            "an account's view holds archived mail too",
+        );
+        assert!(
+            !at(
+                ListScope::Flagged(AccountId::new(1)),
                 &nothing,
                 Command::default_for(CommandId::Archive),
             ),
             "an archived message is still flagged",
         );
         let nowhere = Aim {
-            scope: folder,
+            scope: view_scope(folder, &reachable),
             selection: &nothing,
             cursor: None,
             rows: &rows,
         };
         assert!(
-            !takes_the_cursor_row_out(&Command::default_for(CommandId::Archive), &nowhere),
+            !takes_the_cursor_row_out(
+                &Command::default_for(CommandId::Archive),
+                &nowhere,
+                Some(folder)
+            ),
             "no cursor, no row to step off",
         );
     }

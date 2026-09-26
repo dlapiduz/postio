@@ -544,8 +544,8 @@ const CASES: &[(&str, fn())] = &[
             as fn(),
     ),
     (
-        "remove_walks_down::archiving_in_the_unified_view_moves_nothing",
-        remove_walks_down::archiving_in_the_unified_view_moves_nothing as fn(),
+        "remove_walks_down::archiving_walks_down_the_unified_view",
+        remove_walks_down::archiving_walks_down_the_unified_view as fn(),
     ),
     (
         "remove_walks_down::two_presses_back_to_back_take_two_messages",
