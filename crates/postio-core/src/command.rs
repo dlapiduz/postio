@@ -145,6 +145,10 @@ command_ids! {
     CopyFields => "copy_fields",
     /// Put a picture in the body, where it is written rather than beside it.
     InsertImage => "insert_image",
+    /// Hand the body to the person's own editor, and take it back.
+    EditExternally => "edit_externally",
+    /// Show the message as it will be received, or go back to writing it.
+    TogglePreview => "toggle_preview",
     /// Make the selection bold, or un-bold it.
     Bold => "bold",
     /// Make the selection italic, or straighten it.
@@ -169,6 +173,14 @@ command_ids! {
     AddAccount => "add_account",
     /// Open `config.toml` in the user's editor.
     EditConfig => "edit_config",
+    /// Quit Postio.
+    Quit => "quit",
+    /// Load this message's remote images, this once.
+    ShowImages => "show_images",
+    /// Always load remote images from this message's sender.
+    AlwaysShowImages => "always_show_images",
+    /// Leave the mailing list this message came from.
+    Unsubscribe => "unsubscribe",
     /// Show or hide the sidebar.
     ToggleSidebar => "toggle_sidebar",
     /// Put the keyboard in the folder list.
@@ -632,6 +644,15 @@ pub enum Command {
     /// reached it, which meant it was absent from the palette and the `?`
     /// sheet and unreachable by anyone who does neither.
     InsertImage,
+    /// Hand the body to the person's own editor (`$EDITOR`) and take back
+    /// what it saved (specs/005-tui-frontend FR-022). Where the body is not
+    /// text an editor can open -- the desktop's rich editor -- the frontend
+    /// says so.
+    EditExternally,
+    /// Show the draft as it will arrive, beside or instead of the text being
+    /// written (specs/005-tui-frontend FR-021). The desktop's composer shows
+    /// formatting as it is written, so it has nothing to preview.
+    TogglePreview,
     /// Make the selection bold, or un-bold it.
     Bold,
     /// Make the selection italic, or straighten it.
@@ -662,6 +683,24 @@ pub enum Command {
     AddAccount,
     /// Open `config.toml` in the user's editor.
     EditConfig,
+    /// Quit Postio.
+    ///
+    /// The desktop app always had its window's close button for this and
+    /// never needed a command; a terminal has no close button, and a command
+    /// that is not in the registry does not exist (Principle II), so it is
+    /// one here and the desktop gains a key for it too.
+    Quit,
+    /// Load this message's remote images, this once.
+    ///
+    /// The reading pane's banner had this as a button and nothing else; a
+    /// command that is not in the registry does not exist (Principle II), and
+    /// a terminal has no banner to click.
+    ShowImages,
+    /// Always load remote images from this message's sender.
+    AlwaysShowImages,
+    /// Leave the mailing list this message came from, by its one-click
+    /// `List-Unsubscribe` -- only ever on this deliberate act.
+    Unsubscribe,
     /// Show or hide the sidebar.
     ToggleSidebar,
     /// Put the keyboard in the folder list.
@@ -876,6 +915,8 @@ impl Command {
             Command::DetachComposer => CommandId::DetachComposer,
             Command::CopyFields => CommandId::CopyFields,
             Command::InsertImage => CommandId::InsertImage,
+            Command::EditExternally => CommandId::EditExternally,
+            Command::TogglePreview => CommandId::TogglePreview,
             Command::Bold => CommandId::Bold,
             Command::Italic => CommandId::Italic,
             Command::BulletList => CommandId::BulletList,
@@ -888,6 +929,10 @@ impl Command {
             Command::Settings => CommandId::Settings,
             Command::AddAccount => CommandId::AddAccount,
             Command::EditConfig => CommandId::EditConfig,
+            Command::Quit => CommandId::Quit,
+            Command::ShowImages => CommandId::ShowImages,
+            Command::AlwaysShowImages => CommandId::AlwaysShowImages,
+            Command::Unsubscribe => CommandId::Unsubscribe,
             Command::ToggleSidebar => CommandId::ToggleSidebar,
             Command::FocusSidebar => CommandId::FocusSidebar,
             Command::GoToInbox => CommandId::GoToInbox,
@@ -996,6 +1041,8 @@ impl Command {
             CommandId::DetachComposer => Command::DetachComposer,
             CommandId::CopyFields => Command::CopyFields,
             CommandId::InsertImage => Command::InsertImage,
+            CommandId::EditExternally => Command::EditExternally,
+            CommandId::TogglePreview => Command::TogglePreview,
             CommandId::Bold => Command::Bold,
             CommandId::Italic => Command::Italic,
             CommandId::BulletList => Command::BulletList,
@@ -1008,6 +1055,10 @@ impl Command {
             CommandId::Settings => Command::Settings,
             CommandId::AddAccount => Command::AddAccount,
             CommandId::EditConfig => Command::EditConfig,
+            CommandId::Quit => Command::Quit,
+            CommandId::ShowImages => Command::ShowImages,
+            CommandId::AlwaysShowImages => Command::AlwaysShowImages,
+            CommandId::Unsubscribe => Command::Unsubscribe,
             CommandId::ToggleSidebar => Command::ToggleSidebar,
             CommandId::FocusSidebar => Command::FocusSidebar,
             CommandId::GoToInbox => Command::GoToInbox,

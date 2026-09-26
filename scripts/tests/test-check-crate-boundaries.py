@@ -58,6 +58,9 @@ def build_fixture(
     model_deps: str = "",
     config_deps: str = "",
     helper_deps: str = "",
+    tui_deps: str = "",
+    client_deps: str = "",
+    ui_deps: str = "",
     include_gtk: bool = True,
 ) -> Path:
     root.mkdir(parents=True, exist_ok=True)
@@ -72,6 +75,10 @@ def build_fixture(
     write_crate(root, "crates", "postio-model", model_deps)
     write_crate(root, "crates", "postio-config", config_deps)
     write_crate(root, "crates", "helper", helper_deps)
+    # The terminal frontend and what it stands on (specs/005-tui-frontend).
+    write_crate(root, "crates", "postio-tui", tui_deps)
+    write_crate(root, "crates", "postio-client", client_deps)
+    write_crate(root, "crates", "postio-ui", ui_deps)
     # Bystanders: every crate `RULES` names has to exist as a workspace
     # member, or `find_violations` raises before any rule gets checked
     # (#560) -- so a rule added for a real crate the fixture never grew a
@@ -315,7 +322,49 @@ def main() -> int:
             must_mention=("postio-config", "rusqlite"),
         )
 
-        # 15. And the real workspace is clean today.
+        # 15-17. The terminal frontend links no toolkit: its size is a
+        # requirement (specs/005-tui-frontend FR-051). It does open the store
+        # itself -- one app at a time has it (ADR 0041) -- so the engine is
+        # allowed in its graph.
+        check_case(
+            "postio-tui gains a direct gtk4 dependency",
+            build_fixture(
+                tmp_path / "tui-gtk4",
+                tui_deps='gtk4 = { path = "../../vendor/gtk4" }\n',
+            ),
+            expected_status=1,
+            must_mention=("postio-tui", "gtk4"),
+        )
+        check_case(
+            "postio-tui may link the store engine",
+            build_fixture(
+                tmp_path / "tui-turso",
+                tui_deps='turso = { path = "../../vendor/turso" }\n',
+            ),
+            expected_status=0,
+            must_mention=("postio-tui",),
+        )
+        check_case(
+            "postio-client reaches gtk4 through another crate",
+            build_fixture(
+                tmp_path / "client-gtk4",
+                client_deps='helper = { path = "../helper" }\n',
+                helper_deps='gtk4 = { path = "../../vendor/gtk4" }\n',
+            ),
+            expected_status=1,
+            must_mention=("postio-client", "gtk4", "helper"),
+        )
+        check_case(
+            "postio-ui gains a direct libadwaita dependency",
+            build_fixture(
+                tmp_path / "ui-adw",
+                ui_deps='libadwaita = { path = "../../vendor/libadwaita" }\n',
+            ),
+            expected_status=1,
+            must_mention=("postio-ui", "libadwaita"),
+        )
+
+        # 18. And the real workspace is clean today.
         check_case(
             "the real workspace passes",
             REPO_ROOT / "Cargo.toml",

@@ -41,12 +41,10 @@ use gtk::prelude::*;
 
 use postio_config::SyncConfig;
 use postio_gtk::window::Window;
-use postio_model::ids::AccountId;
-use postio_model::{MailboxId, MailboxRole, MessageId};
-use postio_runtime::store::{MailStore, MessageSummary};
+use postio_model::{MailboxId, MessageId};
+use postio_runtime::store::MailStore;
 use postio_storage::Store;
-use postio_storage::repository::{AccountRepository, MailboxRepository};
-use postio_ui::notify::{self, Attention, Decision, Notification, Wording};
+use postio_ui::notify::{Attention, Notification};
 
 /// The action a click on a notification runs. Application-scoped because a
 /// notification's default action activates whether or not any window
@@ -92,7 +90,10 @@ pub fn config_at(path: &std::path::Path) -> SyncConfig {
 
 /// Everything `notify` needs that does not change per call.
 #[derive(Clone)]
-pub struct Notifier {
+pub struct Notifier(Reads);
+
+#[derive(Clone)]
+struct Reads {
     database: Store,
     store: Arc<dyn MailStore>,
     runtime: tokio::runtime::Handle,
@@ -108,23 +109,20 @@ impl Notifier {
         runtime: tokio::runtime::Handle,
         config: SyncConfig,
     ) -> Self {
-        Self {
+        Self(Reads {
             database,
             store,
             runtime,
             config,
-        }
+        })
     }
 
     /// Notifies about `messages` having arrived in `mailbox`, if `[sync]`
     /// says this mailbox's arrivals are worth one and `attention` says the
     /// user is not already looking at them.
     ///
-    /// The mailbox lookup is one indexed row, done synchronously like
-    /// `compose.rs`'s small bounded reads — not the message read, which
-    /// goes through `store.message_rows` on `self.runtime` the way every
-    /// other read from this crate does, because building a notification body
-    /// is not on any interaction's budget and must never hold the main loop.
+    /// Every read is on `self.runtime`, never the main loop: building a
+    /// notification is not on any interaction's budget.
     pub async fn notify(
         &self,
         window: &Window,
@@ -132,6 +130,7 @@ impl Notifier {
         messages: &[MessageId],
         attention: Attention,
     ) {
+        let reads = &self.0;
         if messages.is_empty() {
             return;
         }
@@ -139,120 +138,43 @@ impl Notifier {
         // and the account's label used to be awaited here, and `notify` runs
         // inside the single event drain, so every event queued behind a
         // `NewMail` waited on the GTK thread for two fresh store connections.
-        // The store is cloned in -- it is an `Arc` inside -- which is what
-        // lets a `'static` task carry it.
+        // The decision is the host's (`postio_host::notify`), the same one
+        // the terminal asks for.
         let ids: Vec<MessageId> = messages.to_vec();
-        let store = self.store.clone();
-        let database = self.database.clone();
-        let config = self.config.clone();
+        let store = reads.store.clone();
+        let database = reads.database.clone();
+        let config = reads.config.clone();
         let (sender, receiver) = async_channel::bounded(1);
-        self.runtime.spawn(async move {
-            let Some((role, account)) = mailbox_info(&database, mailbox).await else {
-                return;
-            };
-            if !notify::watched(&config, role) {
-                return;
+        reads.runtime.spawn(async move {
+            let decided = postio_host::notify::decide_arrival(
+                &database,
+                store.as_ref(),
+                &config,
+                mailbox,
+                &ids,
+                attention,
+            )
+            .await;
+            if let Some(notification) = decided {
+                let _ = sender.send(notification).await;
             }
-            let account_name = account_label(&database, account).await;
-            let rows = store.message_rows(ids).await;
-            let _ = sender.send((rows, account_name)).await;
         });
 
         let Some(application) = window.application() else {
             return;
         };
         glib::spawn_future_local(async move {
-            let Ok((Ok(rows), account_name)) = receiver.recv().await else {
-                return;
-            };
-            let Decision::Deliver(notification) =
-                decision(mailbox, &rows, attention, account_name.as_deref())
-            else {
-                return;
-            };
-            application.send_notification(Some(&notification.identifier), &build(&notification));
+            if let Ok(notification) = receiver.recv().await {
+                deliver(&application, &notification);
+            }
         });
     }
 }
 
-/// What a store this read cannot reach yields: `None`, never a reason to
-/// fail the sync pass that called this.
-async fn mailbox_info(database: &Store, mailbox: MailboxId) -> Option<(MailboxRole, AccountId)> {
-    let connection = database
-        .connect()
-        .await
-        .map_err(|error| tracing::warn!(%error, "could not read the mailbox to notify about"))
-        .ok()?;
-    MailboxRepository::new(&connection)
-        .get(mailbox)
-        .await
-        .map_err(|error| tracing::warn!(%error, "could not read the mailbox to notify about"))
-        .ok()?
-        .map(|mailbox| (mailbox.role, mailbox.account_id))
-}
-
-/// The name to put on a notification for `account`, or `None` when only one
-/// account is enabled — naming the only account there is would be noise, not
-/// information (ADR 0005 Q13).
-async fn account_label(database: &Store, account: AccountId) -> Option<String> {
-    let connection = database
-        .connect()
-        .await
-        .map_err(|error| tracing::warn!(%error, "could not read the accounts to notify about"))
-        .ok()?;
-    let repository = AccountRepository::new(&connection);
-    let enabled = repository
-        .list_enabled()
-        .await
-        .map_err(|error| tracing::warn!(%error, "could not read the accounts to notify about"))
-        .ok()?;
-    if enabled.len() < 2 {
-        return None;
-    }
-    repository
-        .get(account)
-        .await
-        .map_err(|error| tracing::warn!(%error, "could not read the account to notify about"))
-        .ok()?
-        .map(|account| account.display_name)
-}
-
-/// What [`postio_ui::notify`] says about `rows` having landed in `mailbox`,
-/// worded the way this frontend words it: the newest arrival's sender and
-/// subject ([`Wording::Newest`] — the module docs there say why the macOS
-/// app chooses differently).
-///
-/// The newest is whichever `received_at` is latest. A position in `rows`
-/// says nothing about arrival order — `notify` hands this whatever
-/// `store.message_rows` returned for the ids `Event::NewMail` carried, and
-/// nothing along that path promises newest-last (or first).
-fn decision(
-    mailbox: MailboxId,
-    rows: &[MessageSummary],
-    attention: Attention,
-    account: Option<&str>,
-) -> Decision {
-    let arrival = notify::Arrival {
-        mailbox,
-        messages: rows.iter().map(|row| row.id).collect(),
-    };
-    let Some(newest) = rows.iter().max_by_key(|row| row.received_at) else {
-        return notify::decide(&arrival, attention, Wording::Counts { mailbox_name: None });
-    };
-    let from = newest
-        .from
-        .as_ref()
-        .map(|address| address.display().to_owned());
-    notify::decide(
-        &arrival,
-        attention,
-        Wording::Newest {
-            message: newest.id,
-            from: from.as_deref(),
-            subject: newest.subject.as_deref(),
-            account,
-        },
-    )
+/// Post a decided notification, replacing the one already showing for its
+/// folder. The whole of this half: [`Notifier::notify`] decided it.
+pub fn deliver(application: &impl IsA<gio::Application>, notification: &Notification) {
+    application.send_notification(Some(&notification.identifier), &build(notification));
 }
 
 /// The `gio::Notification` for a decided [`Notification`], with its click
@@ -297,42 +219,6 @@ fn parse_target(value: &str) -> Option<(MailboxId, Option<MessageId>)> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use postio_model::EmailAddress;
-
-    fn summary(id: i64, from: &str, subject: &str) -> MessageSummary {
-        MessageSummary {
-            id: MessageId::new(id),
-            thread: None,
-            from: Some(EmailAddress::new(Some(from), format!("{from}@example.com"))),
-            subject: Some(subject.to_owned()),
-            preview: None,
-            received_at: chrono::Utc::now(),
-            seen: false,
-            flagged: false,
-            answered: false,
-            send_state: None,
-            send_at: None,
-            has_attachments: false,
-            thread_count: 1,
-        }
-    }
-
-    /// `row`, arrived at `when` — a burst's "newest" is a fact about
-    /// `received_at`, not about a row's position in the slice, so a test
-    /// that wants to prove that has to control it.
-    fn at(row: MessageSummary, when: chrono::DateTime<chrono::Utc>) -> MessageSummary {
-        MessageSummary {
-            received_at: when,
-            ..row
-        }
-    }
-
-    fn delivered(decision: Decision) -> Notification {
-        match decision {
-            Decision::Deliver(notification) => notification,
-            Decision::Suppress(reason) => panic!("expected a notification, got {reason:?}"),
-        }
-    }
 
     #[test]
     fn a_target_round_trips_through_encode_and_parse() {
@@ -354,109 +240,5 @@ mod tests {
         assert_eq!(parse_target(""), None);
         assert_eq!(parse_target("not-a-number"), None);
         assert_eq!(parse_target("7:not-a-number"), None);
-    }
-
-    #[test]
-    fn a_burst_is_named_after_its_newest_arrival_by_received_at() {
-        // Deliberately out of arrival order: the newest is the middle one,
-        // so a fix that just reads rows[0] or rows.last() cannot pass this.
-        let base = chrono::Utc::now();
-        let notification = delivered(decision(
-            MailboxId::new(7),
-            &[
-                at(summary(1, "Ada Lovelace", "One"), base),
-                at(
-                    summary(99, "Carol", "Three"),
-                    base + chrono::Duration::minutes(2),
-                ),
-                at(
-                    summary(2, "Bob", "Two"),
-                    base + chrono::Duration::minutes(1),
-                ),
-            ],
-            Attention::default(),
-            None,
-        ));
-        assert_eq!(
-            notification.title, "Carol",
-            "the newest arrival's sender, not the first one that arrived"
-        );
-        assert_eq!(notification.body, "\"Three\" and 2 more");
-        assert_eq!(
-            notification.message,
-            Some(MessageId::new(99)),
-            "the click should land on the message the notification actually named"
-        );
-    }
-
-    #[test]
-    fn this_frontend_draws_the_sender_and_names_the_account() {
-        let notification = delivered(decision(
-            MailboxId::new(7),
-            &[summary(42, "Ada Lovelace", "Quarterly report")],
-            Attention::default(),
-            Some("Work"),
-        ));
-        assert_eq!(notification.title, "Ada Lovelace — Work");
-        assert_eq!(notification.body, "Quarterly report");
-        assert_eq!(notification.identifier, "new-mail-7");
-    }
-
-    #[test]
-    fn mail_landing_in_the_open_mailbox_of_the_active_window_is_not_posted() {
-        let attention = Attention {
-            showing: Some(MailboxId::new(7)),
-            active: true,
-        };
-        assert_eq!(
-            decision(
-                MailboxId::new(7),
-                &[summary(42, "Ada Lovelace", "Quarterly report")],
-                attention,
-                None
-            ),
-            Decision::Suppress(notify::Suppressed::AlreadyOnScreen)
-        );
-    }
-
-    #[tokio::test(flavor = "multi_thread")]
-    async fn account_label_is_none_with_exactly_one_enabled_account() {
-        let database = postio_storage::test_support::memory().await;
-        let account = {
-            let connection = database.connect().await.expect("a connection");
-            postio_storage::test_support::account(&connection).await
-        };
-        assert_eq!(
-            account_label(&database, account.id).await,
-            None,
-            "a single-account install must read exactly as it did before #189"
-        );
-    }
-
-    #[tokio::test(flavor = "multi_thread")]
-    async fn account_label_names_the_account_once_a_second_is_enabled() {
-        let database = postio_storage::test_support::memory().await;
-        let (first, second) = {
-            let connection = database.connect().await.expect("a connection");
-            let first = postio_storage::test_support::account(&connection).await;
-            let mut second = postio_model::Account::new(
-                "Work",
-                EmailAddress::new(None::<String>, "grace@example.com"),
-            );
-            AccountRepository::new(&connection)
-                .create(&mut second)
-                .await
-                .expect("create the second account");
-            (first, second)
-        };
-        assert_eq!(
-            account_label(&database, second.id).await,
-            Some("Work".to_owned())
-        );
-        assert_eq!(
-            account_label(&database, first.id).await,
-            Some(first.display_name.clone()),
-            "both accounts get named once there is more than one"
-        );
     }
 }

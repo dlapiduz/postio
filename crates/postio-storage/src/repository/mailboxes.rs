@@ -57,23 +57,7 @@ fn refuse_a_view(role: MailboxRole) -> Result<()> {
     }
 }
 
-/// The three numbers the sidebar needs about an account's drafts.
-///
-/// Together rather than separately because they come from one row of one
-/// query: asking three times would be three reads on the path redrawn most
-/// often, for numbers that are only ever read together.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub struct DraftCounts {
-    /// Drafts whose send is under way — the Outbox's badge, and what decides
-    /// whether that row is drawn at all (spec 003 FR-012).
-    pub outbox: u32,
-    /// Drafts that have stopped and need a person: failed, or unconfirmed.
-    /// Drawn apart from the total so "one of these needs you" is visible
-    /// without opening the folder (FR-022).
-    pub attention: u32,
-    /// What Drafts shows: everything not in flight. Includes `attention`.
-    pub drafts: u32,
-}
+pub use postio_model::listing::DraftCounts;
 
 impl<'a> MailboxRepository<'a> {
     /// Borrows a connection.

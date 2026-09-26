@@ -42,6 +42,7 @@ mod webkit_probe;
 mod feed;
 mod feed_results;
 mod gtk_accelerators;
+mod gtk_banner_keys;
 mod gtk_capture;
 mod gtk_cheatsheet;
 mod gtk_checkrow;
@@ -57,6 +58,7 @@ mod gtk_composer_header;
 mod gtk_composer_inline_image;
 mod gtk_composer_keymap;
 mod gtk_composer_many;
+mod gtk_composer_markdown;
 mod gtk_composer_recipient_select;
 mod gtk_composer_recipients;
 mod gtk_composer_reply;
@@ -1056,6 +1058,10 @@ const CASES: &[(&str, fn())] = &[
         gtk_toggle_rail::shift_i_puts_the_rail_away_and_brings_it_back as fn(),
     ),
     (
+        "gtk_banner_keys::the_banner_commands_do_what_their_buttons_do",
+        gtk_banner_keys::the_banner_commands_do_what_their_buttons_do as fn(),
+    ),
+    (
         "gtk_toggle_sidebar::toggle_sidebar_moves_the_sidebar_from_the_palette_and_from_ctrl_b",
         gtk_toggle_sidebar::toggle_sidebar_moves_the_sidebar_from_the_palette_and_from_ctrl_b
             as fn(),
@@ -1187,6 +1193,10 @@ const CASES: &[(&str, fn())] = &[
     (
         "gtk_composer_confirms::the_composer_asks_before_the_two_things_it_cannot_take_back",
         gtk_composer_confirms::the_composer_asks_before_the_two_things_it_cannot_take_back as fn(),
+    ),
+    (
+        "gtk_composer_markdown::a_draft_the_desktop_saves_carries_no_markdown",
+        gtk_composer_markdown::a_draft_the_desktop_saves_carries_no_markdown as fn(),
     ),
     (
         "gtk_composer_many::a_second_draft_moves_the_first_into_a_window_of_its_own",

@@ -49,7 +49,12 @@ use postio_core::{ActionId, Availability, Context, Keymap, registry};
 /// cost (see `an_empty_query_lists_everything_reachable_in_registry_order`).
 /// Raised for headroom, not tuned to a new exact count -- the next command
 /// added to a full context should not trip this again.
-pub const MAX_ROWS: usize = 48;
+///
+/// It did anyway, at 48: the terminal frontend's registry additions (quit,
+/// the two image commands, unsubscribe) took `Context::List` to 51, and
+/// `refresh` and the reader's scrolling fell off the end of an empty query.
+/// 64, for the same reason as before.
+pub const MAX_ROWS: usize = 64;
 
 // ---------------------------------------------------------------------------
 // Matching
@@ -319,11 +324,19 @@ mod tests {
 
     #[test]
     fn every_registry_command_is_reachable_from_some_context() {
+        // In some context of some app: the terminal composer's own commands
+        // are in the terminal's palette only.
+        let terminal = Availability {
+            terminal: true,
+            ..an_account()
+        };
         for spec in registry::all() {
-            let reachable = Context::ALL.iter().any(|context| {
-                entries(&defaults(), *context, an_account(), spec.title)
-                    .iter()
-                    .any(|entry| entry.id == spec.id.into())
+            let reachable = [an_account(), terminal].into_iter().any(|state| {
+                Context::ALL.iter().any(|context| {
+                    entries(&defaults(), *context, state, spec.title)
+                        .iter()
+                        .any(|entry| entry.id == spec.id.into())
+                })
             });
             assert!(reachable, "`{}` cannot be found in the palette", spec.id);
         }
@@ -439,6 +452,7 @@ mod tests {
         let waiting = Availability {
             scope: Scope::Account(AccountId::new(1)),
             store_open: false,
+            terminal: false,
         };
         assert!(
             entries(&defaults(), Context::List, waiting, "archive").is_empty(),

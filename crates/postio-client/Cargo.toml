@@ -1,0 +1,24 @@
+[package]
+name = "postio-client"
+description = "What every Postio frontend holds: commands down, events up, queries answered by the store's host in the same process (ADR 0041)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+repository.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+chrono = { workspace = true }
+async-channel = { workspace = true }
+postio-core.workspace = true
+postio-model.workspace = true
+postio-search.workspace = true
+postio-ui.workspace = true
+thiserror = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt"] }

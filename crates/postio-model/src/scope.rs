@@ -13,7 +13,7 @@
 use crate::ids::{AccountId, MailboxId, ThreadId};
 
 /// Which messages a list shows.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum ListScope {
     /// One folder, as the server has it.
     Mailbox(MailboxId),

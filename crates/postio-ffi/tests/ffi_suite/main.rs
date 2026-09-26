@@ -19,6 +19,7 @@
 mod aiming;
 mod config;
 mod dwell;
+mod host;
 mod keys;
 mod list;
 mod palette;

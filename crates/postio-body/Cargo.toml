@@ -17,8 +17,14 @@ ammonia = "4"
 # sender-CSS work shares one parser rather than adding a second. See #1326.
 cssparser = "0.37"
 html5ever = "0.39.0"
+# Sanitised HTML to Markdown, for the terminal's reader (specs/005-tui-frontend
+# research R5; spike T005 found it keeps every safety promise over the corpus).
+htmd = "0.5.5"
 markup5ever_rcdom = "0.39.0"
 postio-model = { workspace = true }
+# Markdown to the composer's document, for the terminal composer
+# (specs/005-tui-frontend research R6).
+pulldown-cmark = { version = "0.13", default-features = false }
 
 [dev-dependencies]
 postio-model = { workspace = true, features = ["test-corpus"] }

@@ -456,9 +456,15 @@ impl Store {
         }
 
         let fresh = !path.exists();
-        let database = Self::build(path, key)
-            .await
-            .map_err(|error| if fresh { error } else { as_key_failure(error) })?;
+        let database = Self::build(path, key).await.map_err(|error| {
+            if held_elsewhere(&error) {
+                Error::InUse
+            } else if fresh {
+                error
+            } else {
+                as_key_failure(error)
+            }
+        })?;
         let store = Self {
             database,
             path: Some(path.to_path_buf()),
@@ -952,6 +958,22 @@ impl std::ops::DerefMut for Checkout {
 ///
 /// Anything else passes through untouched: an unreadable file, a full disk
 /// and a directory that is not writable are all still themselves.
+/// Whether `error` is the engine refusing a file another process has open.
+///
+/// The engine takes a POSIX lock on the file as it opens it, and when that
+/// lock is held it says, measured on this engine, `Locking error: Failed
+/// locking file '…'. File is locked by another process` -- as a plain string,
+/// which the SDK's error has no variant of its own for. Any other locking
+/// failure -- a filesystem that refuses locks at all -- is not somebody else
+/// having the store, and keeps its own words.
+fn held_elsewhere(error: &Error) -> bool {
+    let Error::Engine(engine) = error else {
+        return false;
+    };
+    let said = engine.to_string();
+    said.contains("locked by another process") || said.contains("already open")
+}
+
 fn as_key_failure(error: Error) -> Error {
     let said = error.to_string().to_lowercase();
     // Four spellings of the same thing, and the fourth is why this list grew.

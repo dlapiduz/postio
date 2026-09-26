@@ -104,12 +104,21 @@ pub enum Requirement {
     /// them, which is how they already treat anything unavailable, and a key
     /// bound to one refuses out loud rather than being swallowed.
     StoreOpen,
+    /// The frontend has to be the terminal, because the command works on
+    /// what only its composer has: Markdown text an editor can open, and a
+    /// preview of what it becomes. The desktop's composer edits rich text in
+    /// place, so it does not offer these (spec 005, open question 4).
+    Terminal,
 }
 
 impl Requirement {
     /// Every requirement, in declaration order. What [`RequirementSet`] is
     /// built over.
-    pub const ALL: [Requirement; 2] = [Requirement::SingleAccount, Requirement::StoreOpen];
+    pub const ALL: [Requirement; 3] = [
+        Requirement::SingleAccount,
+        Requirement::StoreOpen,
+        Requirement::Terminal,
+    ];
 
     const fn bit(self) -> u8 {
         1 << (self as u8)
@@ -185,6 +194,8 @@ pub struct Availability {
     /// read or a long migration is a window that says what it is waiting for
     /// rather than no window at all (#1114).
     pub store_open: bool,
+    /// Whether the frontend asking is the terminal.
+    pub terminal: bool,
 }
 
 impl Availability {
@@ -196,6 +207,7 @@ impl Availability {
         Availability {
             scope,
             store_open: true,
+            terminal: false,
         }
     }
 }
@@ -206,6 +218,7 @@ impl Requirement {
         match self {
             Requirement::SingleAccount => state.scope.is_single_account(),
             Requirement::StoreOpen => state.store_open,
+            Requirement::Terminal => state.terminal,
         }
     }
 }
@@ -266,6 +279,9 @@ const fn needs(requirements: &'static [Requirement]) -> RequirementSet {
 
 /// Reads or writes mail, which is very nearly everything.
 const MAIL: RequirementSet = needs(&[Requirement::StoreOpen]);
+
+/// Works on the terminal composer's Markdown, which only it has.
+const TERMINAL_MAIL: RequirementSet = needs(&[Requirement::StoreOpen, Requirement::Terminal]);
 
 /// Chrome: it means the same thing with an empty window as with a full one.
 const CHROME: RequirementSet = RequirementSet::NONE;
@@ -757,7 +773,9 @@ static SPECS: &[CommandSpec] = &[
         id: CommandId::Send,
         title: "Send",
         default_binding: "mod+Return",
-        alternate_bindings: &[],
+        // `alt+s` first: a terminal delivers it everywhere, where many take
+        // `ctrl+Return` or `alt+Return` for their own fullscreen.
+        alternate_bindings: &["alt+s", "alt+Return"],
         contexts: Context::Composer.as_set(),
         // Not destructive — but it is externally visible and irreversible once
         // the queue drains, so it earns an undo-send window rather than a modal.
@@ -775,7 +793,7 @@ static SPECS: &[CommandSpec] = &[
         // than sending, so it earns its own keystroke rather than a modifier
         // on Send's.
         default_binding: "mod+shift+Return",
-        alternate_bindings: &[],
+        alternate_bindings: &["alt+S"],
         contexts: Context::Composer.as_set(),
         destructive: false,
         // Opening the picker commits nothing; `Recovery::Undo` belongs to
@@ -818,7 +836,7 @@ static SPECS: &[CommandSpec] = &[
         // extension's binding vanishing from the palette rather than as an
         // error. #495's landing caught it.
         default_binding: "mod+shift+m",
-        alternate_bindings: &[],
+        alternate_bindings: &["alt+m"],
         contexts: ctx(&[Context::List, Context::Composer]),
         // It settles a question rather than destroying anything: the mail is
         // either already delivered or it is not, and this changes only what
@@ -841,7 +859,7 @@ static SPECS: &[CommandSpec] = &[
         // `r` alone is not bound, and the extension table takes none of the
         // `mod+shift` range beyond the `s` that #495 caught.
         default_binding: "mod+shift+r",
-        alternate_bindings: &[],
+        alternate_bindings: &["alt+r"],
         // List, because the Outbox and Drafts are lists and that is where a
         // stopped send is looked at. Composer, because the same draft can be
         // open there with its failure showing (#1487).
@@ -859,7 +877,7 @@ static SPECS: &[CommandSpec] = &[
         id: CommandId::CancelSend,
         title: "Cancel send",
         default_binding: "mod+shift+x",
-        alternate_bindings: &[],
+        alternate_bindings: &["alt+x"],
         contexts: ctx(&[Context::List, Context::Composer]),
         // It stops something from happening rather than losing anything: the
         // draft is left editable, which is the state it came from. Opening a
@@ -876,7 +894,7 @@ static SPECS: &[CommandSpec] = &[
         id: CommandId::AttachFile,
         title: "Attach file…",
         default_binding: "mod+shift+a",
-        alternate_bindings: &[],
+        alternate_bindings: &["alt+a"],
         contexts: Context::Composer.as_set(),
         destructive: false,
         recovery: Recovery::None,
@@ -893,7 +911,7 @@ static SPECS: &[CommandSpec] = &[
         // Not next to `ctrl+d`. Discard is the one composer verb that cannot
         // be undone, and a fat-fingered neighbour of it is a draft gone.
         default_binding: "mod+shift+o",
-        alternate_bindings: &[],
+        alternate_bindings: &["alt+o"],
         contexts: Context::Composer.as_set(),
         destructive: false,
         recovery: Recovery::None,
@@ -909,7 +927,7 @@ static SPECS: &[CommandSpec] = &[
         // on, and `c` for the field it names -- which is also what other mail
         // clients bind. `mod+c` is copy and stays copy.
         default_binding: "mod+shift+c",
-        alternate_bindings: &[],
+        alternate_bindings: &["alt+c"],
         contexts: Context::Composer.as_set(),
         destructive: false,
         // Nothing durable changes: this raises and lowers two rows, and it
@@ -927,12 +945,36 @@ static SPECS: &[CommandSpec] = &[
         // Beside `insert_link` on the `mod+shift+<letter>` shelf, because
         // they are the two verbs that put something *into* the text.
         default_binding: "mod+shift+g",
-        alternate_bindings: &[],
+        alternate_bindings: &["alt+g"],
         contexts: Context::Composer.as_set(),
         destructive: false,
         // The editor's own undo takes it back out, like any other edit.
         recovery: Recovery::None,
         requires: MAIL,
+    },
+    CommandSpec {
+        id: CommandId::EditExternally,
+        title: "Edit in external editor",
+        // `e` for editor, on the composer's `mod+shift+<letter>` shelf;
+        // plain `mod+e` is Edit config everywhere.
+        default_binding: "mod+shift+e",
+        alternate_bindings: &["alt+e"],
+        contexts: Context::Composer.as_set(),
+        destructive: false,
+        // The body comes back as the editor saved it; the composer's own
+        // undo takes the change back.
+        recovery: Recovery::None,
+        requires: TERMINAL_MAIL,
+    },
+    CommandSpec {
+        id: CommandId::TogglePreview,
+        title: "Toggle preview",
+        default_binding: "mod+shift+p",
+        alternate_bindings: &["alt+p"],
+        contexts: Context::Composer.as_set(),
+        destructive: false,
+        recovery: Recovery::None,
+        requires: TERMINAL_MAIL,
     },
     CommandSpec {
         id: CommandId::Bold,
@@ -950,7 +992,7 @@ static SPECS: &[CommandSpec] = &[
         id: CommandId::Italic,
         title: "Italic",
         default_binding: "mod+i",
-        alternate_bindings: &[],
+        alternate_bindings: &["alt+i"],
         contexts: Context::Composer.as_set(),
         destructive: false,
         recovery: Recovery::None,
@@ -962,7 +1004,7 @@ static SPECS: &[CommandSpec] = &[
         // The Docs/Gmail convention, and shift dodges nothing here — the
         // digits are free in the composer either way.
         default_binding: "mod+shift+8",
-        alternate_bindings: &[],
+        alternate_bindings: &["alt+8"],
         contexts: Context::Composer.as_set(),
         destructive: false,
         recovery: Recovery::None,
@@ -972,7 +1014,7 @@ static SPECS: &[CommandSpec] = &[
         id: CommandId::NumberedList,
         title: "Numbered list",
         default_binding: "mod+shift+7",
-        alternate_bindings: &[],
+        alternate_bindings: &["alt+7"],
         contexts: Context::Composer.as_set(),
         destructive: false,
         recovery: Recovery::None,
@@ -984,7 +1026,7 @@ static SPECS: &[CommandSpec] = &[
         // Everywhere else this is ctrl+k, and here ctrl+k is the palette —
         // which is universal or it is not a palette. Shift is the tax.
         default_binding: "mod+shift+k",
-        alternate_bindings: &[],
+        alternate_bindings: &["alt+k"],
         contexts: Context::Composer.as_set(),
         destructive: false,
         recovery: Recovery::None,
@@ -994,7 +1036,7 @@ static SPECS: &[CommandSpec] = &[
         id: CommandId::QuoteBlock,
         title: "Quote block",
         default_binding: "mod+shift+9",
-        alternate_bindings: &[],
+        alternate_bindings: &["alt+9"],
         contexts: Context::Composer.as_set(),
         destructive: false,
         recovery: Recovery::None,
@@ -1045,7 +1087,7 @@ static SPECS: &[CommandSpec] = &[
         id: CommandId::Settings,
         title: "Settings",
         default_binding: "mod+comma",
-        alternate_bindings: &[],
+        alternate_bindings: &["alt+comma"],
         // Universal, like the palette it is an alternative to reaching.
         contexts: ContextSet::ANY,
         destructive: false,
@@ -1061,7 +1103,7 @@ static SPECS: &[CommandSpec] = &[
         // is where the desktop already puts "a new one of the thing this
         // application is about".
         default_binding: "mod+shift+n",
-        alternate_bindings: &[],
+        alternate_bindings: &["alt+n"],
         // The same reach `Settings` has, for the reason ADR 0012 Q1 gives:
         // adding an account is a setting, and the folder list is where the
         // account will eventually appear.
@@ -1081,11 +1123,64 @@ static SPECS: &[CommandSpec] = &[
         requires: CHROME,
     },
     CommandSpec {
+        id: CommandId::Quit,
+        title: "Quit Postio",
+        default_binding: "mod+q",
+        alternate_bindings: &[],
+        // Universal, and chrome: quitting means the same with an empty window
+        // as with a full one.
+        contexts: ContextSet::ANY,
+        destructive: false,
+        recovery: Recovery::None,
+        requires: CHROME,
+    },
+    CommandSpec {
+        id: CommandId::ShowImages,
+        title: "Show remote images",
+        // A sequence under `i` for images: once, or always from this sender.
+        default_binding: "i i",
+        alternate_bindings: &[],
+        contexts: ctx(MESSAGE_SURFACES),
+        destructive: false,
+        recovery: Recovery::None,
+        requires: MAIL,
+    },
+    CommandSpec {
+        id: CommandId::AlwaysShowImages,
+        title: "Always show images from this sender",
+        default_binding: "i a",
+        alternate_bindings: &[],
+        contexts: ctx(MESSAGE_SURFACES),
+        destructive: false,
+        recovery: Recovery::None,
+        requires: MAIL,
+    },
+    CommandSpec {
+        id: CommandId::Unsubscribe,
+        title: "Unsubscribe from this list",
+        // Shifted and deliberate: an unsubscribe tells the sender the address
+        // is read, so it is never one stray keystroke away.
+        default_binding: "X",
+        alternate_bindings: &[],
+        contexts: ctx(MESSAGE_SURFACES),
+        destructive: false,
+        recovery: Recovery::None,
+        requires: MAIL,
+    },
+    CommandSpec {
         id: CommandId::ToggleSidebar,
         title: "Toggle sidebar",
         default_binding: "mod+b",
         alternate_bindings: &[],
-        contexts: ctx(MESSAGE_SURFACES),
+        // The sidebar too: a toggle that cannot be pressed from inside the
+        // thing it closes leaves the terminal's narrow layout, where it is
+        // brought forward with the keyboard in it, with no way back but Tab.
+        contexts: ctx(&[
+            Context::List,
+            Context::Conversation,
+            Context::Reader,
+            Context::Sidebar,
+        ]),
         destructive: false,
         recovery: Recovery::None,
         requires: CHROME,

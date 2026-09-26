@@ -1,8 +1,8 @@
 //! Feeds the privacy pane's unsubscribe-activation log (#971) and
-//! read-receipt count (#970) from storage.
+//! read-receipt count (#970) from the store's owner.
 //!
 //! `SettingsPanel::set_unsubscribe_activations`/`set_read_receipt_count` draw
-//! without knowing anything reads a database — the same split
+//! without knowing anything reads a store — the same split
 //! `settings_egress.rs` follows for the connection list in the same panel,
 //! refreshed the same way: whenever the panel comes on screen, not watched
 //! live, since `postio-gtk` has no SQL of its own to watch a table with.
@@ -14,36 +14,32 @@
 
 use gtk::glib;
 use gtk::prelude::*;
+use postio_client::Client;
 use postio_gtk::window::Window;
-use postio_storage::Store;
-use postio_storage::repository::{AccountRepository, MessageRepository, UnsubscribeRepository};
-
-use crate::Wiring;
 
 /// Wire the privacy pane's unsubscribe-activation list and read-receipt
-/// count to the store.
-pub async fn install(window: &Window, wiring: &Wiring) {
+/// count to the store's owner.
+pub async fn install(window: &Window, client: Client) {
     // A no-op at startup, where the panel is not on screen -- see
     // [`refresh`]. Kept anyway, because `install` is also how a window that
     // *is* showing the panel gets its first read, and a call that costs a
     // visibility check is not worth reasoning about a second time.
-    refresh(window, &wiring.database).await;
+    refresh(window, &client).await;
     // Weak: the window owns the settings panel that owns this handler, so a
     // strong clone is a cycle and the window never frees (#1072).
     let weak = glib::object::ObjectExt::downgrade(window);
     window.settings().connect_map({
-        let database = wiring.database.clone();
         move |_| {
             postio_session::blocking::now(async {
                 if let Some(window) = weak.upgrade() {
-                    refresh(&window, &database).await;
+                    refresh(&window, &client).await;
                 }
             })
         }
     });
 }
 
-async fn refresh(window: &Window, database: &Store) {
+async fn refresh(window: &Window, client: &Client) {
     // **Only when the pane is on screen.** Everything below this line is a
     // store read for a figure drawn in the privacy pane, and [`install`] runs
     // inside `feed_the_window` -- so every launch spent it before the first
@@ -67,45 +63,19 @@ async fn refresh(window: &Window, database: &Store) {
     if !gtk::prelude::WidgetExt::is_visible(&window.settings()) {
         return;
     }
-    let Ok(connection) = database.connect().await else {
-        return;
+    // One call for both figures: the host reads every account's log and
+    // count on one connection, where this read them account by account.
+    // POSTIO-GLIB-SAFE: a client call is a oneshot receive; the host answers
+    // on its own runtime.
+    let log = match client.privacy_log().await {
+        Ok(log) => log,
+        Err(error) => {
+            tracing::warn!(%error, "could not read the privacy pane's log");
+            return;
+        }
     };
-    let accounts = AccountRepository::new(&connection)
-        .list()
-        .await
-        .unwrap_or_default();
-
-    let log = UnsubscribeRepository::new(&connection);
-    let mut activations: Vec<_> = accounts
-        .iter()
-        .flat_map(|account| {
-            postio_session::blocking::now(async {
-                log.for_account(account.id).await.unwrap_or_else(|error| {
-                    tracing::warn!(%error, "could not read the unsubscribe-activation log");
-                    Vec::new()
-                })
-            })
-        })
-        .collect();
-    // Each account's own rows already come back newest-first; merging more
-    // than one account means re-sorting the combined list the same way.
-    activations.sort_by_key(|activation| std::cmp::Reverse(activation.activated_at));
-    window.settings().set_unsubscribe_activations(activations);
-
-    let messages = MessageRepository::new(&connection);
-    let read_receipt_count: u64 = accounts
-        .iter()
-        .map(|account| {
-            postio_session::blocking::now(async {
-                messages
-                    .read_receipt_requested_count(account.id)
-                    .await
-                    .unwrap_or_else(|error| {
-                        tracing::warn!(%error, "could not count read-receipt requests");
-                        0
-                    })
-            })
-        })
-        .sum();
-    window.settings().set_read_receipt_count(read_receipt_count);
+    window
+        .settings()
+        .set_unsubscribe_activations(log.activations);
+    window.settings().set_read_receipt_count(log.read_receipts);
 }

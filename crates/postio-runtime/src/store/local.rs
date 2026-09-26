@@ -23,12 +23,6 @@ use crate::store::{
     StoreError, ThreadPage, ThreadSummary,
 };
 
-impl From<postio_storage::Error> for StoreError {
-    fn from(error: postio_storage::Error) -> Self {
-        StoreError::new(error.to_string())
-    }
-}
-
 /// Removals told to the store and not yet settled by a read: which folder,
 /// which messages. See [`MailStore::note_removed`].
 type Removals = Mutex<Vec<(MailboxId, Vec<MessageId>)>>;

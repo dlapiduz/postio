@@ -58,7 +58,10 @@ use postio_storage::{Checkout, Store, WritePermit, WritePriority};
 /// Named once so that the registration and the match in [`Actions::act`]
 /// cannot drift apart — a wired command with no arm reports "not wired up
 /// yet" from inside the thing that is supposed to be wiring it up.
-const WIRED: &[CommandId] = &[
+///
+/// Public so a frontend can prove every command it passes on is one of these
+/// (`postio-tui`'s parity test).
+pub const WIRED: &[CommandId] = &[
     CommandId::Archive,
     CommandId::ArchiveThread,
     CommandId::Delete,
@@ -232,12 +235,46 @@ impl Actions {
             // and deserves the same silence. A `Failed` still gets through,
             // because a store that will not write is worth hearing about.
             dwell @ Command::MarkReadOnDwell { .. } => {
-                match self.act(dwell, events, Recording::Incidental).await {
+                match self
+                    .act_again_if_busy(dwell, events, Recording::Incidental)
+                    .await
+                {
                     Err(CommandError::Rejected(_)) => Ok(()),
                     other => other,
                 }
             }
-            other => self.act(other, events, Recording::Record).await,
+            other => {
+                self.act_again_if_busy(other, events, Recording::Record)
+                    .await
+            }
+        }
+    }
+
+    /// [`act`](Self::act), run again while the store says it was busy.
+    ///
+    /// A busy store is not a refusal: another writer committed between this
+    /// verb's read and its write, and the store asks for the transaction to
+    /// be tried again (#1594). With two frontends on one store that is an
+    /// ordinary moment, not a fault, and the verb that met it failed and
+    /// rolled back whole, so running it again from the top is safe. Bounded,
+    /// so a store that stays busy is still reported.
+    async fn act_again_if_busy(
+        &self,
+        command: &Command,
+        events: &EventSink,
+        recording: Recording,
+    ) -> Result<(), CommandError> {
+        let mut tries = 0u64;
+        loop {
+            match self.act(command, events, recording).await {
+                Err(CommandError::Failed(message))
+                    if message == STORE_BUSY && tries < BUSY_RETRIES =>
+                {
+                    tries += 1;
+                    tokio::time::sleep(std::time::Duration::from_millis(10 * tries)).await;
+                }
+                other => return other,
+            }
         }
     }
 
@@ -2095,10 +2132,23 @@ async fn kind_for(flag: &Flag, wanted: bool) -> UndoKind {
 ///
 /// The sentence on screen says what happened without saying what to; the
 /// detail goes to stderr, where it carries SQL rather than anyone's mail.
-fn store_failure(error: impl std::fmt::Display) -> CommandError {
+fn store_failure(error: impl Into<postio_storage::Error>) -> CommandError {
+    let error: postio_storage::Error = error.into();
+    if error.is_busy() {
+        // Not a refusal: another writer committed first, and the store asks
+        // for the transaction to be tried again (#1594). `Actions::run` does.
+        tracing::debug!(%error, "the local store was busy; the verb will run again");
+        return CommandError::failed(STORE_BUSY);
+    }
     tracing::error!(%error, "the local store refused a write: {error}");
     CommandError::failed("Could not save that change")
 }
+
+/// How many times a verb is run again when the store was busy.
+const BUSY_RETRIES: u64 = 5;
+
+/// What a verb says when the store was busy every time it was tried.
+const STORE_BUSY: &str = "Postio was busy saving something else — try that again";
 
 /// Which account a folder belongs to.
 ///

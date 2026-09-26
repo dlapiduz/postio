@@ -91,6 +91,7 @@ mod startup_behind_the_window;
 mod startup_reads;
 mod startup_repair;
 mod storage_ceiling_wiring;
+mod store_in_use_window;
 mod sync_window;
 mod thread_bodies_in_one_crossing;
 mod thread_bulk_keystroke;
@@ -129,6 +130,11 @@ const CASES: &[(&str, fn())] = &[
     (
         "reader_stability::moving_onto_a_thread_draws_it_once_whole_and_under_its_own_header",
         reader_stability::moving_onto_a_thread_draws_it_once_whole_and_under_its_own_header
+            as fn(),
+    ),
+    (
+        "store_in_use_window::a_store_another_postio_has_open_says_so_and_try_again_opens_it",
+        store_in_use_window::a_store_another_postio_has_open_says_so_and_try_again_opens_it
             as fn(),
     ),
     (

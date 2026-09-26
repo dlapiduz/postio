@@ -112,6 +112,12 @@ impl NoticeSlot {
         self.stack.set_visible_child_name(NOTHING);
     }
 
+    /// Whether `notice` applies to the message on screen, drawn or not: the
+    /// slot shows one notice at a time, and the others still apply.
+    pub(crate) fn wanted(&self, notice: Notice) -> bool {
+        self.wanted[notice as usize].get()
+    }
+
     /// Whether `notice` is the one on screen.
     pub(crate) fn shows(&self, notice: Notice) -> bool {
         self.stack.is_visible()

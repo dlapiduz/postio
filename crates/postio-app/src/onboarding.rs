@@ -40,30 +40,37 @@ use std::sync::Arc;
 use adw::prelude::*;
 use gtk::glib;
 use postio_account::cancel::CancelToken;
-use postio_account::discovery::{
-    AccountSettings, DiscoveryOutcome, DiscoveryReport, DiscoveryTransport, Encryption, Probe,
-    ProbeOptions, SettingsSource,
-};
-use postio_account::imap::{ConnectionSettings, ImapSession, RustlsConnector};
-use postio_account::secret::{AccountKey, Password, SecretStore};
+use postio_account::discovery::{DiscoveryTransport, Probe};
+use postio_client::Client;
 use postio_core::CommandId;
 use postio_core::bridge::EventStream;
 use postio_core::state::SharedState;
-use postio_gtk::onboarding::{BrowserSignIn, Onboarding, Server, Settings, Status, Submission};
+use postio_gtk::onboarding::{BrowserSignIn, Onboarding, Status, Submission};
 use postio_gtk::window::Window;
-use postio_model::account::{AuthMethod, TransportSecurity};
-use postio_model::ids::AccountId;
-use postio_model::{Account, EmailAddress, Identity};
+use postio_model::Account;
+#[cfg(test)]
 use postio_storage::Store;
+#[cfg(test)]
 use postio_storage::repository::AccountRepository;
 
 use crate::Wiring;
+pub(crate) use postio_session::onboarding::configured;
+#[cfg(test)]
+use postio_session::onboarding::persist;
+use postio_session::onboarding::{
+    SignInError, connection_settings, probe_options, prove, provider_name, run_sign_in, status_for,
+    write_sync_window,
+};
 
 /// Whether this installation has an account yet.
 ///
 /// A store that cannot be read counts as "no account": the screen is the only
 /// way forward from there anyway, and refusing to show it would leave a
 /// window with nothing in it and no way to fix that.
+///
+/// Only its test reads it: which screen a launch opens on is
+/// `startup_route`'s question, answered at the composition root.
+#[cfg(test)]
 pub async fn needed(database: &Store) -> bool {
     let Ok(connection) = database.connect().await else {
         return true;
@@ -114,6 +121,36 @@ pub async fn install(
     transport: Arc<dyn DiscoveryTransport>,
     opener: Arc<dyn postio_account::oauth::BrowserOpener>,
 ) {
+    // The writes are the store owner's (ADR 0041). This screen is reached
+    // before any window is fed, so it connects its own client, over the
+    // same wiring.
+    let frontend = crate::frontend::Frontend::in_process(wiring);
+    // Once the account is written, the same sequence `run()`'s `activate`
+    // handler runs when an account is there from the start.
+    let open = {
+        let window = window.clone();
+        let wiring = wiring.clone();
+        move || {
+            postio_session::blocking::now(crate::open_account(
+                &window, &wiring, &state, &wired, &events, &notifier,
+            ))
+        }
+    };
+    install_for(window, &frontend, repairing, transport, opener, open).await;
+}
+
+/// [`install`], for a window whose store's owner may be another process:
+/// the writes go through `frontend`'s client, and `open` is what brings the
+/// window up over the account once it is written.
+pub async fn install_for(
+    window: &Window,
+    frontend: &crate::frontend::Frontend,
+    repairing: Option<Account>,
+    transport: Arc<dyn DiscoveryTransport>,
+    opener: Arc<dyn postio_account::oauth::BrowserOpener>,
+    open: impl Fn() + Clone + 'static,
+) {
+    let client = frontend.client.clone();
     let screen = Onboarding::new();
     let previous = window.content();
     // Under the window's chrome, not instead of it.
@@ -192,7 +229,7 @@ pub async fn install(
 
     screen.connect_probe({
         let screen = screen.clone();
-        let runtime = wiring.runtime.clone();
+        let runtime = frontend.runtime.clone();
         let cancellation = cancellation.clone();
         let offer = offer.clone();
         let jmap = jmap.clone();
@@ -224,13 +261,10 @@ pub async fn install(
     // the user has chosen how far back to sync.
     let finish = {
         let window = window.clone();
-        let wiring = wiring.clone();
         let previous = previous.clone();
         move || {
-            postio_session::blocking::now(async {
-                window.set_content(previous.as_ref());
-                crate::open_account(&window, &wiring, &state, &wired, &events, &notifier).await;
-            })
+            window.set_content(previous.as_ref());
+            open();
         }
     };
     screen.connect_start_sync({
@@ -245,7 +279,7 @@ pub async fn install(
 
     screen.connect_submit({
         let screen = screen.clone();
-        let wiring = wiring.clone();
+        let runtime = frontend.runtime.clone();
         let cancellation = cancellation.clone();
         // `submit`/`submit_oauth` show the sync-window step and stop —
         // `finish` runs from `connect_start_sync` above once the user picks
@@ -277,7 +311,8 @@ pub async fn install(
                 *sign_in_cancel.borrow_mut() = Some(cancel.clone());
                 submit_oauth(
                     &screen,
-                    &wiring,
+                    &runtime,
+                    &client,
                     submission.clone(),
                     offer,
                     cancel,
@@ -287,7 +322,8 @@ pub async fn install(
             } else {
                 submit(
                     &screen,
-                    &wiring,
+                    &runtime,
+                    &client,
                     submission.clone(),
                     jmap.borrow().clone(),
                     on_saved.clone(),
@@ -295,25 +331,6 @@ pub async fn install(
             }
         }
     });
-}
-
-/// Writes the chosen sync window (#876) to `[sync].initial_sync_messages`,
-/// touching only that key — the same [`postio_config::patch_sync`] every
-/// other structured write to `[sync]` goes through (#874), so a hand-written
-/// comment elsewhere in the file survives.
-///
-/// A write that fails is logged and otherwise swallowed: the account and its
-/// credential are already saved by the time this runs, and the field's own
-/// default (5,000, [`SyncWindow::LastYear`](postio_gtk::onboarding::SyncWindow::LastYear)'s
-/// own count) is exactly what a fresh install already has, so a failed
-/// write here costs the size the user picked, not the account.
-fn write_sync_window(window: postio_gtk::onboarding::SyncWindow) -> postio_config::Result<()> {
-    let path = postio_config::paths::config_path()?;
-    let original = std::fs::read_to_string(&path).unwrap_or_default();
-    let mut config = postio_config::Config::from_toml_str(&original).unwrap_or_default();
-    config.sync.initial_sync_messages = window.message_count();
-    let patched = postio_config::patch_sync(&original, &config.sync)?;
-    postio_config::Config::write_text_to_path(&patched, &path)
 }
 
 /// The cancel token for the probe currently in flight, if there is one.
@@ -353,41 +370,6 @@ impl ProbeCancellation {
         if let Some(token) = self.0.borrow_mut().take() {
             token.cancel();
         }
-    }
-}
-
-/// How this application probes, as against how the crate probes by default.
-///
-/// The one difference is `guess_common_names`, which `postio-account` ships off
-/// because "an unverified guess presented as a *discovery* is worse than an
-/// empty form" — and it is right about that. The composition root turns it on
-/// because it controls what the guess is presented *as*: [`status_for`] can
-/// only ever put it in [`Status::Manual`], the state whose heading says no
-/// settings were published and whose form is open for editing. That is a
-/// starting point, not a claim.
-///
-/// `postio-69`: without it, a domain publishing no autoconfig — every custom
-/// domain, which is exactly the person least able to answer — got five empty
-/// boxes.
-fn probe_options() -> ProbeOptions {
-    ProbeOptions {
-        guess_common_names: true,
-        ..ProbeOptions::default()
-    }
-}
-
-/// What the screen should show for `report`.
-///
-/// Split out of [`probe`] so it can be driven without a network: the mapping
-/// is where a discovery becomes a sentence, and it is the half that had the
-/// bug.
-fn status_for(report: &DiscoveryReport) -> Status {
-    let found = report.settings().map(shown);
-    match (&report.outcome, found) {
-        (DiscoveryOutcome::Discovered(_), Some(settings)) => Status::Found(settings),
-        // Everything else is manual entry, prefilled when there was anything
-        // to prefill with. Never `Found`: see `probe_options`.
-        (_, suggestion) => Status::Manual { suggestion },
     }
 }
 
@@ -493,60 +475,29 @@ pub(crate) fn probe_with_offer(
 ///
 /// `on_saved` runs once, only after the credential and the account row are
 /// both written -- never on a failed probe or a failed connection test.
+///
+/// The proof runs here, where the person is; the two writes are the store
+/// owner's, asked through `client` (`Client::save_account`).
 pub(crate) fn submit(
     screen: &Onboarding,
-    wiring: &Wiring,
+    runtime: &tokio::runtime::Handle,
+    client: &Client,
     submission: Submission,
     jmap: Option<postio_account::discovery::JmapOffer>,
     on_saved: impl Fn() + 'static,
 ) {
     screen.set_status(Status::Connecting);
 
-    let settings = connection_settings(&submission);
-    // The password crosses to the runtime and back no further: it is moved
-    // into the task, used for one login, and dropped there.
-    let password = Password::new(submission.password.clone());
     let (sender, receiver) = async_channel::bounded(1);
-    wiring.runtime.spawn(async move {
-        // The proof tries backends in the row's preference order and the
-        // first that works is the one stored (#545): a credential that
-        // only speaks IMAP still lands on a provider advertising JMAP,
-        // and one that speaks JMAP gets the native protocol.
-        if let Some(offer) = &jmap
-            && let Ok(url) = offer.session_url.parse()
-        {
-            let proof = postio_jmap::JmapBackend::new(url, password.expose());
-            match postio_account::backend::MailBackend::connect(&proof).await {
-                Ok(_) => {
-                    let backend = postio_model::account::Backend::Jmap {
-                        session_url: offer.session_url.clone(),
-                    };
-                    let _ = sender.send(Ok(backend)).await;
-                    return;
-                }
-                Err(error) => {
-                    tracing::info!(
-                        %error,
-                        "the JMAP proof failed; trying the next backend"
-                    );
-                }
-            }
-        }
-        let answer = match RustlsConnector::new() {
-            Ok(connector) => ImapSession::open(&settings, &password, &connector)
-                .await
-                .map(|_| postio_model::account::Backend::Imap)
-                .map_err(|error| explain(&error)),
-            Err(error) => Err(format!(
-                "Postio could not start a TLS connection on this machine: {error}"
-            )),
-        };
-        let _ = sender.send(answer).await;
+    let proving = submission.clone();
+    runtime.spawn(async move {
+        let _ = sender.send(prove(&proving, jmap.as_ref()).await).await;
     });
 
     glib::spawn_future_local({
         let screen = screen.clone();
-        let wiring = wiring.clone();
+        let runtime = runtime.clone();
+        let client = client.clone();
         async move {
             let answer = match receiver.recv().await {
                 Ok(answer) => answer,
@@ -563,18 +514,17 @@ pub(crate) fn submit(
             // Only now, with the credentials known good. Writing either half
             // first would leave a broken account behind every failed attempt.
             //
-            // Both writes go over to the runtime together and answer over a
-            // channel — the same crossing the connection test above makes,
-            // and for the same reason: the keyring is a tokio future and this
-            // is the glib main context. See [`persist`] for the order they
-            // happen in and why it is that way round.
+            // Both writes are one request to the store's owner, asked on the
+            // runtime and answered over a channel — the same crossing the
+            // connection test above makes. See
+            // `postio_session::onboarding::persist` for the order they happen
+            // in and why it is that way round.
             let (sender, receiver) = async_channel::bounded(1);
-            let database = wiring.database.clone();
-            let secrets = wiring.secrets.clone();
             let written = submission.clone();
-            wiring.runtime.spawn(async move {
+            runtime.spawn(async move {
+                let saved = client.save_account(written, backend).await;
                 let _ = sender
-                    .send(persist(&database, secrets.as_ref(), &written, backend).await)
+                    .send(saved.map_err(|error| error.message().to_owned()))
                     .await;
             });
             let stored = receiver.recv().await.unwrap_or_else(|_| {
@@ -600,16 +550,18 @@ pub(crate) fn submit(
 /// the screen's Cancel button and `Esc`. A cancelled attempt returns the
 /// screen to the settings it was showing, because the user changed their
 /// mind — that is not a failure and must not read as one.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn submit_oauth(
     screen: &Onboarding,
-    wiring: &Wiring,
+    runtime: &tokio::runtime::Handle,
+    client: &Client,
     submission: Submission,
     offer: postio_account::discovery::OAuthOffer,
     cancel: CancelToken,
     opener: Arc<dyn postio_account::oauth::BrowserOpener>,
     on_saved: impl Fn() + 'static,
 ) {
-    let Some(client) = submission.oauth_client.clone() else {
+    let Some(oauth_client) = submission.oauth_client.clone() else {
         return;
     };
     // What the browser is about to be asked to approve, so the screen can
@@ -660,14 +612,22 @@ pub(crate) fn submit_oauth(
     let flow_cancel = cancel.clone();
     let scopes = offer.scopes.clone();
     let refresh_lifetime = offer.refresh_token_lifetime_days;
-    wiring.runtime.spawn(async move {
-        let answer = run_sign_in(&settings, &client, &offer, opener.as_ref(), &flow_cancel).await;
+    runtime.spawn(async move {
+        let answer = run_sign_in(
+            &settings,
+            &oauth_client,
+            &offer,
+            opener.as_ref(),
+            &flow_cancel,
+        )
+        .await;
         let _ = sender.send(answer).await;
     });
 
     glib::spawn_future_local({
         let screen = screen.clone();
-        let wiring = wiring.clone();
+        let runtime = runtime.clone();
+        let client = client.clone();
         async move {
             let answer = match receiver.recv().await {
                 Ok(answer) => answer,
@@ -688,25 +648,29 @@ pub(crate) fn submit_oauth(
                 }
             };
 
+            // The tokens go to the store's owner, which writes them to the
+            // keyring and the row to the store, in
+            // `postio_session::onboarding::persist_oauth`'s order.
+            let grant = postio_client::protocol::OAuthGrant {
+                submission: submission.clone(),
+                authorize_url: endpoints.authorize.to_string(),
+                token_url: endpoints.token.to_string(),
+                scopes: scopes.clone(),
+                refresh_token_lifetime_days: refresh_lifetime,
+                access_token: tokens.access_token.expose().to_owned(),
+                refresh_token: tokens
+                    .refresh_token
+                    .as_ref()
+                    .map(|token| token.expose().to_owned()),
+                expires_in: tokens.expires_in,
+                token_type: tokens.token_type,
+                scope: tokens.scope,
+            };
             let (sender, receiver) = async_channel::bounded(1);
-            let database = wiring.database.clone();
-            let secrets = wiring.secrets.clone();
-            let written = submission.clone();
-            let scopes = scopes.clone();
-            wiring.runtime.spawn(async move {
+            runtime.spawn(async move {
+                let saved = client.save_oauth_account(grant).await;
                 let _ = sender
-                    .send(
-                        persist_oauth(
-                            &database,
-                            secrets,
-                            &written,
-                            &endpoints,
-                            &scopes,
-                            refresh_lifetime,
-                            tokens,
-                        )
-                        .await,
-                    )
+                    .send(saved.map_err(|error| error.message().to_owned()))
                     .await;
             });
             let stored = receiver.recv().await.unwrap_or_else(|_| {
@@ -721,475 +685,6 @@ pub(crate) fn submit_oauth(
             on_saved();
         }
     });
-}
-
-/// How a sign-in attempt ended without tokens.
-enum SignInError {
-    /// The user cancelled — the screen goes back, not to a failure.
-    Cancelled,
-    /// Everything else, in words the user can act on.
-    Failed(String),
-}
-
-/// The runtime half of the sign-in: endpoints, the browser flow, and the
-/// proof against the IMAP server, in that order.
-async fn run_sign_in(
-    settings: &ConnectionSettings,
-    client: &postio_gtk::onboarding::OAuthClientSubmission,
-    offer: &postio_account::discovery::OAuthOffer,
-    opener: &dyn postio_account::oauth::BrowserOpener,
-    cancel: &CancelToken,
-) -> Result<
-    (
-        postio_account::oauth::Endpoints,
-        postio_account::oauth::TokenResponse,
-    ),
-    SignInError,
-> {
-    use postio_account::oauth;
-
-    let cancelled = |error: &oauth::OAuthError| matches!(error, oauth::OAuthError::Cancelled);
-
-    // Endpoints: the row's own, or resolved from its issuer (RFC 8414 —
-    // ADR 0006 Q4 as amended by #152). Both are validated at preset load,
-    // so a row reaching here without either is a bug worth the sentence.
-    let endpoints = match (&offer.authorize, &offer.token) {
-        (Some(authorize), Some(token)) => oauth::Endpoints {
-            authorize: authorize.parse().map_err(|error| {
-                SignInError::Failed(format!(
-                    "The provider's sign-in address is invalid: {error}"
-                ))
-            })?,
-            token: token.parse().map_err(|error| {
-                SignInError::Failed(format!("The provider's token address is invalid: {error}"))
-            })?,
-        },
-        _ => {
-            let issuer = offer.issuer.as_deref().ok_or_else(|| {
-                SignInError::Failed(
-                    "This provider's settings name no OAuth endpoints — check the \
-                     providers.toml row."
-                        .to_owned(),
-                )
-            })?;
-            let issuer = issuer.parse().map_err(|error| {
-                SignInError::Failed(format!("The provider's issuer is invalid: {error}"))
-            })?;
-            oauth::exchange::resolve_endpoints(&issuer, cancel)
-                .await
-                .map_err(|error| {
-                    if cancelled(&error) {
-                        SignInError::Cancelled
-                    } else {
-                        SignInError::Failed(format!(
-                            "Could not discover the provider's sign-in endpoints: {error}"
-                        ))
-                    }
-                })?
-        }
-    };
-
-    let tokens = oauth::authorize(
-        oauth::AuthorizeRequest {
-            client_id: client.client_id.clone(),
-            client_secret: client.client_secret.clone(),
-            authorize_endpoint: endpoints.authorize.clone(),
-            token_endpoint: endpoints.token.clone(),
-            scopes: offer.scopes.clone(),
-        },
-        opener,
-        cancel,
-    )
-    .await
-    .map_err(|error| {
-        if cancelled(&error) {
-            SignInError::Cancelled
-        } else {
-            SignInError::Failed(format!("The sign-in did not complete: {error}"))
-        }
-    })?;
-
-    // The proof, before anything persists: the token opens a real session
-    // against the account's own IMAP server, the same test the password
-    // path runs. A consent screen that granted the wrong scopes fails
-    // here, in front of the user, instead of at the first background sync.
-    let mut verified = settings.clone();
-    verified.auth = postio_model::account::AuthMethod::XOAuth2;
-    let connector = RustlsConnector::new().map_err(|error| {
-        SignInError::Failed(format!(
-            "Postio could not start a TLS connection on this machine: {error}"
-        ))
-    })?;
-    ImapSession::open(&verified, &tokens.access_token, &connector)
-        .await
-        .map(|_| ())
-        .map_err(|error| SignInError::Failed(explain(&error)))?;
-
-    Ok((endpoints, tokens))
-}
-
-/// The OAuth writes, in the same nothing-stranded order [`persist`] keeps:
-/// secrets first, then the row, rolling the secrets back if the row write
-/// fails.
-async fn persist_oauth(
-    database: &Store,
-    secrets: Arc<dyn SecretStore>,
-    submission: &Submission,
-    endpoints: &postio_account::oauth::Endpoints,
-    scopes: &[String],
-    refresh_token_lifetime_days: Option<u32>,
-    tokens: postio_account::oauth::TokenResponse,
-) -> Result<(), String> {
-    let Some(client) = submission.oauth_client.clone() else {
-        return Err("The sign-in lost its client on the way to the store.".to_owned());
-    };
-    let key = AccountKey::new(submission.address.clone());
-
-    let source = postio_account::oauth::OwnClientTokenSource::new(
-        secrets.clone(),
-        endpoints.token.clone(),
-        client.client_id.clone(),
-        client.client_secret.clone(),
-        // So the mint records the grant's deadline, not just its rotations.
-        refresh_token_lifetime_days
-            .map(|days| std::time::Duration::from_secs(u64::from(days) * 86_400)),
-    );
-    source.seed(&key, tokens).await.map_err(|error| {
-        format!(
-            "The sign-in worked but its token could not be stored in the \
-             keyring: {error}. Is the keyring unlocked?"
-        )
-    })?;
-    if let Some(secret) = &client.client_secret {
-        source
-            .store_client_secret(&key, &Password::new(secret.clone()))
-            .await
-            .map_err(|error| {
-                format!("The OAuth client secret could not be stored in the keyring: {error}")
-            })?;
-    }
-
-    if let Err(reason) = save_oauth(
-        database,
-        submission,
-        &client,
-        endpoints,
-        scopes,
-        refresh_token_lifetime_days,
-    )
-    .await
-    {
-        // Roll the secrets back the same way `persist` does: nothing reads
-        // a credential no account row names, but leaving one is untidy.
-        let _ = secrets
-            .delete(&AccountKey::new(format!("{}#oauth-refresh", key.account())))
-            .await;
-        return Err(reason);
-    }
-    Ok(())
-}
-
-/// The row write for an OAuth sign-in: auth method, client, endpoints.
-async fn save_oauth(
-    database: &Store,
-    submission: &Submission,
-    client: &postio_gtk::onboarding::OAuthClientSubmission,
-    endpoints: &postio_account::oauth::Endpoints,
-    scopes: &[String],
-    refresh_token_lifetime_days: Option<u32>,
-) -> Result<(), String> {
-    // A browser sign-in is an IMAP account today; the Gmail REST backend
-    // is #546, gated on its preset row flipping after #195.
-    save(database, submission, postio_model::account::Backend::Imap).await?;
-    let connection = database
-        .connect()
-        .await
-        .map_err(|error| format!("Postio could not open its local store: {error}"))?;
-    let repository = AccountRepository::new(&connection);
-    let Some(mut account) = repository
-        .list()
-        .await
-        .map_err(|error| format!("Postio could not read its local store: {error}"))?
-        .into_iter()
-        .find(|account| {
-            account
-                .address
-                .address
-                .eq_ignore_ascii_case(&submission.address)
-        })
-    else {
-        return Err("The account row vanished while it was being written.".to_owned());
-    };
-    account.auth = AuthMethod::XOAuth2;
-    account.oauth = Some(postio_model::account::OAuthConfig {
-        client_id: client.client_id.clone(),
-        token_url: endpoints.token.to_string(),
-        authorize_url: endpoints.authorize.to_string(),
-        scopes: scopes.join(" "),
-        refresh_token_lifetime_days,
-    });
-    repository
-        .update(&mut account)
-        .await
-        .map_err(|error| format!("Postio could not record the sign-in: {error}"))
-}
-
-/// Both writes, in the order that cannot strand an account.
-///
-/// **The credential first, then the row.** 0.1.0 did it the other way round
-/// and `postio-67` is what that cost: a keyring write that failed after the
-/// row was committed left an account with no reachable password, which could
-/// not sync, could not authenticate, and could not be repaired from inside
-/// the application — onboarding is the only thing that writes a credential,
-/// and `first_account().is_some()` meant onboarding never ran again.
-///
-/// The failure that order *does* leave behind — a secret with no account —
-/// is rolled back here, and would be harmless even if the rollback failed:
-/// nothing reads a credential no account row names.
-///
-/// **Must be polled on the engine runtime, not the GTK main context.** The
-/// keyring is reached over D-Bus by a future bounded with
-/// `tokio::time::timeout`, so awaiting it from `glib::spawn_future_local`
-/// panics with "there is no reactor running" — `postio-66`, which shipped.
-/// `feed.rs` states the rule: neither loop can drive the other, so runtime
-/// work is spawned and answered over a channel.
-async fn persist(
-    database: &Store,
-    secrets: &dyn SecretStore,
-    submission: &Submission,
-    backend: postio_model::account::Backend,
-) -> Result<(), String> {
-    let key = AccountKey::new(submission.address.clone());
-    let password = Password::new(submission.password.clone());
-    // Reported rather than swallowed: an account with no password in the
-    // keyring cannot sync, and a silent failure would read as a Postio bug
-    // rather than as a locked keyring.
-    secrets.store(&key, &password).await.map_err(|error| {
-        format!(
-            "The password could not be stored in the keyring: {error}. \
-             Is the keyring unlocked?"
-        )
-    })?;
-
-    if let Err(reason) = save(database, submission, backend).await {
-        if let Err(error) = secrets.delete(&key).await {
-            // Safe to log: no `SecretError` carries a password.
-            tracing::warn!(%error, "the rolled-back credential could not be removed");
-        }
-        return Err(reason);
-    }
-    Ok(())
-}
-
-/// Write the account row, creating it or repairing the one already there.
-///
-/// Synchronous, because rusqlite is; called from [`persist`] on the engine
-/// runtime, where one indexed insert is not worth a `spawn_blocking`.
-///
-/// # Why this can be a repair
-///
-/// Since `postio-67` the screen is reachable a second time: an account whose
-/// credential the keyring will not give up is sent back here rather than
-/// opened. That submit arrives over a row that already exists, and a second
-/// row would leave `first_account` choosing between two accounts for the
-/// same address. So an existing row is *updated* — and its identities are
-/// left exactly as they are, because [`AccountRepository::update`] makes the
-/// list it is handed authoritative and every saved draft points at one.
-async fn save(
-    database: &Store,
-    submission: &Submission,
-    backend: postio_model::account::Backend,
-) -> Result<(), String> {
-    let connection = database
-        .connect()
-        .await
-        .map_err(|error| format!("Postio could not open its local store: {error}"))?;
-    let repository = AccountRepository::new(&connection);
-    let existing = repository
-        .list()
-        .await
-        .map_err(|error| format!("Postio could not read its local store: {error}"))?
-        .into_iter()
-        .find(|account| {
-            account
-                .address
-                .address
-                .eq_ignore_ascii_case(&submission.address)
-        });
-
-    match existing {
-        Some(mut account) => {
-            configure(&mut account, submission);
-            account.backend = backend;
-            repository
-                .update(&mut account)
-                .await
-                .map_err(|error| format!("Postio could not update the account: {error}"))
-        }
-        None => {
-            let name =
-                (!submission.name.trim().is_empty()).then(|| submission.name.trim().to_owned());
-            let email = EmailAddress::new(name.clone(), submission.address.clone());
-            let display_name = name.unwrap_or_else(|| submission.address.clone());
-            let mut account = Account::new(display_name, email.clone());
-            configure(&mut account, submission);
-            account.backend = backend;
-            let mut identity = Identity::new(AccountId::UNASSIGNED, email);
-            identity.is_default = true;
-            account.identities = vec![identity];
-            repository
-                .create(&mut account)
-                .await
-                .map(|_| ())
-                .map_err(|error| format!("Postio could not write the account: {error}"))
-        }
-    }
-}
-
-/// Put the submitted servers on `account`, leaving its identities alone.
-fn configure(account: &mut Account, submission: &Submission) {
-    account.incoming.host = submission.settings.imap.host.clone();
-    account.incoming.port = submission.settings.imap.port;
-    account.incoming.security = submission.settings.imap.security;
-    account.incoming.username = submission.settings.login.clone();
-    account.outgoing.host = submission.settings.smtp.host.clone();
-    account.outgoing.port = submission.settings.smtp.port;
-    account.outgoing.security = submission.settings.smtp.security;
-    account.outgoing.username = submission.settings.login.clone();
-    // An OAuth submission's auth and client are written by `persist_oauth`,
-    // which is the only caller holding the resolved endpoints; a password
-    // submission resets both, so switching a repaired account from OAuth
-    // back to a password leaves no stale client behind.
-    if submission.oauth_client.is_none() {
-        account.auth = AuthMethod::Password;
-        account.oauth = None;
-    }
-    // A repair over an account somebody had disabled is still a repair: the
-    // user just proved they want to sign in to it.
-    account.enabled = true;
-}
-
-/// What the screen shows for an account the store already has.
-///
-/// The inverse of [`configure`]: a repair is asking for a password, not for
-/// server settings, so the ones the account was signed in with last time are
-/// what it offers. `source` names where they came from because the card
-/// shows it, and "entered by hand" — what an empty form falls back to —
-/// would be a lie the second time round.
-pub(crate) fn configured(account: &Account) -> Settings {
-    let server = |config: &postio_model::account::ServerConfig| Server {
-        host: config.host.clone(),
-        port: config.port,
-        security: config.security,
-    };
-    Settings {
-        imap: server(&account.incoming),
-        smtp: server(&account.outgoing),
-        login: account.incoming.username.clone(),
-        requires_app_password: false,
-        note: None,
-        help_url: None,
-        // A repair signs in the way the account did: an OAuth account's
-        // repair is a fresh browser sign-in, not a password prompt for a
-        // password that never existed (#534).
-        oauth_sign_in: account.oauth.is_some()
-            || matches!(
-                account.auth,
-                postio_model::account::AuthMethod::OAuth2
-                    | postio_model::account::AuthMethod::XOAuth2
-            ),
-        source: "saved with this account".to_owned(),
-    }
-}
-
-/// What the screen shows, from what the probe found.
-fn shown(settings: &AccountSettings) -> Settings {
-    let server = |server: &postio_account::discovery::ServerSettings| Server {
-        host: server.host.clone(),
-        port: server.port,
-        security: match server.encryption {
-            Encryption::Tls => TransportSecurity::Tls,
-            Encryption::StartTls => TransportSecurity::StartTls,
-            Encryption::None => TransportSecurity::None,
-        },
-    };
-    Settings {
-        imap: server(&settings.imap),
-        smtp: server(&settings.smtp),
-        login: settings.login.clone(),
-        requires_app_password: settings.requires_app_password,
-        note: settings.note.clone(),
-        help_url: settings.password_help_url.clone(),
-        // The provider's preferred door (#534): a preset row that leads
-        // with oauth2 opens the browser sign-in.
-        oauth_sign_in: settings.oauth.is_some(),
-        // #1115: a preset row names itself -- its own display name says
-        // more than the mechanism that found it ("known provider").
-        // Gated on `Builtin` specifically rather than on `display_name`
-        // being `Some`: an autoconfig or ISPDB document can carry its own
-        // `<displayName>` too (`discovery::mod.rs`'s shared XML-shaped
-        // builder), and #877 decided those keep naming the *source* --
-        // the wizard has verified far less about a scraped document than
-        // about a provider Postio ships settings for by hand.
-        source: match settings.source {
-            SettingsSource::Builtin => settings
-                .display_name
-                .clone()
-                .unwrap_or_else(|| settings.source.label().to_owned()),
-            _ => settings.source.label().to_owned(),
-        },
-    }
-}
-
-/// The IMAP connection to test.
-fn connection_settings(submission: &Submission) -> ConnectionSettings {
-    ConnectionSettings::new(
-        submission.settings.imap.host.clone(),
-        submission.settings.imap.port,
-        submission.settings.imap.security,
-        submission.settings.login.clone(),
-    )
-}
-
-/// Turn a backend error into something the user can act on.
-///
-/// The acceptance criterion is that a failure gives a *specific, actionable*
-/// reason, and `BackendError` already distinguishes the cases that need
-/// different actions. What it cannot know is the one that matters most here:
-/// a provider that refuses ordinary account passwords will simply say the
-/// credentials were rejected, and a user who has typed their Apple ID
-/// password has no way to tell that from a typo.
-///
-/// No variant of `BackendError` carries a password, so these are safe to show
-/// and safe to log.
-fn explain(error: &postio_account::backend::BackendError) -> String {
-    use postio_account::backend::BackendError as E;
-    match error {
-        E::Auth { .. } => "The server rejected that address and password.\n\n\
-             If this is iCloud, Google or another provider with two-factor \
-             authentication, your ordinary account password will not work \
-             here — you need an app-specific password."
-            .to_owned(),
-        E::Tls { host, reason } => format!(
-            "The secure connection to {host} could not be established: {reason}.\n\n\
-             Postio will not fall back to an unencrypted connection. Check the \
-             host name and port."
-        ),
-        E::TimedOut { after, .. } => format!(
-            "The server did not answer within {}s. Check the host name and \
-             port, and whether this machine can reach the internet.",
-            after.as_secs_f32().round()
-        ),
-        E::Disconnected { reason, .. } => format!(
-            "The connection was lost while signing in: {reason}. That usually \
-             means the wrong port, or a server that is not IMAP."
-        ),
-        E::EmptyCapabilities { host } => format!(
-            "{host} answered, but not like an IMAP server. Check the host name \
-             and port."
-        ),
-        other => format!("{other}"),
-    }
 }
 
 /// Forwards to the real opener and announces the URL on its way past.
@@ -1218,19 +713,15 @@ impl postio_account::oauth::BrowserOpener for AnnouncingOpener {
     }
 }
 
-/// Whose consent screen this is, for the step's own heading.
-///
-/// From the IMAP host, because that is what the preset row actually carries
-/// — there is no provider *name* in the table, and inventing a mapping from
-/// domain to brand is how a provider table stops being data and starts being
-/// code (CLAUDE.md: providers are data, not code).
-fn provider_name(settings: &Settings) -> String {
-    settings.source.clone()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use postio_account::discovery::{AccountSettings, DiscoveryOutcome};
+    use postio_account::secret::{AccountKey, SecretStore};
+    use postio_gtk::onboarding::Server;
+    use postio_gtk::onboarding::Settings;
+    use postio_model::account::TransportSecurity;
+    use postio_session::onboarding::explain;
     use std::time::Duration;
 
     use postio_account::discovery::{DiscoveryReport, ServerSettings, SettingsSource};

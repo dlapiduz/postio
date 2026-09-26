@@ -4,7 +4,8 @@
 //! [`postio_gtk::orientation`] owns the strip's shape and its text. This is
 //! the half that needs the store — *has this been seen before*, and *when
 //! did it first make sense to show at all* — which the view layer may not
-//! ask, because it may not link `rusqlite`.
+//! ask. The store's owner answers it (`postio_host::settings`), and keeps
+//! the `settings` row the answer lives in.
 //!
 //! # The decision is a state machine, not a pile of `if`s
 //!
@@ -18,47 +19,43 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use chrono::Utc;
 use gtk::glib;
+use postio_client::Client;
 use postio_gtk::feed::Feeds;
 use postio_gtk::window::Window;
-use postio_session::Wiring;
-use postio_storage::repository::SettingsRepository;
-
-/// The `settings` row this feature owns.
-///
-/// Global, never per account: ADR 0012 Q6 — a second account joining a
-/// running installation must not teach the keyboard again.
-const SEEN_KEY: &str = "orientation_seen";
 
 /// Wire the strip to the sync engine, to the store, and to every command
 /// the window runs.
-pub async fn install(window: &Window, wiring: &Wiring, feeds: &Feeds) {
+pub async fn install(
+    window: &Window,
+    runtime: &tokio::runtime::Handle,
+    client: Client,
+    feeds: &Feeds,
+) {
     let state = Rc::new(RefCell::new(Orientation::default()));
 
-    // Has some earlier run already shown it? The answer is in SQLite, so it
-    // arrives asynchronously — which is exactly why [`Orientation`] takes
-    // its four inputs in any order rather than assuming this one is first.
-    // `ask` spawns onto the runtime, so the closure must own everything it
-    // touches rather than borrowing `wiring`.
-    let answer = crate::search::ask(
-        &wiring.database,
-        &wiring.runtime,
-        move |connection| async move {
-            SettingsRepository::new(&connection)
-                .get(SEEN_KEY)
-                .await
-                .ok()
-        },
-    );
-    // Cloned, not borrowed: `act` awaits now, so the block holds this across
-    // an await point and a `'static` task cannot carry a borrow.
-    let wiring = wiring.clone();
+    // Has some earlier run already shown it? The answer is the store
+    // owner's, so it arrives asynchronously — which is exactly why
+    // [`Orientation`] takes its four inputs in any order rather than
+    // assuming this one is first. Asked on the runtime and answered over a
+    // channel, so the window is not held for it.
+    let (sender, answer) = async_channel::bounded(1);
+    runtime.spawn({
+        let client = client.clone();
+        async move {
+            let _ = sender.send(client.orientation_seen().await).await;
+        }
+    });
+    // Everything `act` needs to write the answer down later.
+    let remembering = Remember {
+        runtime: runtime.clone(),
+        client,
+    };
     glib::spawn_future_local(glib::clone!(
         #[weak]
         window,
         #[strong]
-        wiring,
+        remembering,
         #[strong]
         state,
         async move {
@@ -66,7 +63,7 @@ pub async fn install(window: &Window, wiring: &Wiring, feeds: &Feeds) {
             // write is on the same store, so a strip shown against a broken
             // read is one the user could dismiss and meet again tomorrow —
             // worse than one that quietly never appears.
-            let seen = !matches!(answer.recv().await, Ok(Some(None)));
+            let seen = !matches!(answer.recv().await, Ok(Ok(false)));
             let effect = state.borrow_mut().remembered(seen);
             // POSTIO-GLIB-SAFE: nothing under this await wants a reactor. The
             // network work it reaches is spawned onto the runtime and answers over a
@@ -75,7 +72,7 @@ pub async fn install(window: &Window, wiring: &Wiring, feeds: &Feeds) {
             // Measured rather than assumed: `app_suite::glib_main_context` opens a
             // store and reads it on this context with no runtime anywhere, and fails
             // loudly if that stops being true.
-            act(&window, &wiring, effect).await;
+            act(&window, &remembering, effect).await;
         }
     ));
 
@@ -86,14 +83,14 @@ pub async fn install(window: &Window, wiring: &Wiring, feeds: &Feeds) {
         #[weak]
         window,
         #[strong]
-        wiring,
+        remembering,
         #[strong]
         state,
         move |status| {
             postio_session::blocking::now(async {
                 if status.last_sync.is_some() {
                     let effect = state.borrow_mut().synced();
-                    act(&window, &wiring, effect).await;
+                    act(&window, &remembering, effect).await;
                 }
             })
         }
@@ -108,26 +105,34 @@ pub async fn install(window: &Window, wiring: &Wiring, feeds: &Feeds) {
         #[weak]
         window,
         #[strong]
-        wiring,
+        remembering,
         #[strong]
         state,
         move || {
             postio_session::blocking::now(async {
                 let effect = state.borrow_mut().retire();
-                act(&window, &wiring, effect).await;
+                act(&window, &remembering, effect).await;
             })
         }
     ));
 }
 
+/// Where the strip's one write goes: the store's owner, asked on the
+/// runtime.
+#[derive(Clone)]
+struct Remember {
+    runtime: tokio::runtime::Handle,
+    client: Client,
+}
+
 /// Carry out what the state machine decided.
-async fn act(window: &Window, wiring: &Wiring, effect: Effect) {
+async fn act(window: &Window, remembering: &Remember, effect: Effect) {
     match effect {
         Effect::Nothing => {}
         Effect::Show => window.orientation().set_visible(true),
         Effect::Retire => {
             window.orientation().set_visible(false);
-            remember(wiring).await;
+            remember(remembering).await;
         }
     }
 }
@@ -139,16 +144,10 @@ async fn act(window: &Window, wiring: &Wiring, effect: Effect) {
 /// string either way. Spawned rather than awaited — ADR 0012 Q4 asks for a
 /// strip that does not block the list, and that includes not blocking it on
 /// the way out.
-async fn remember(wiring: &Wiring) {
-    let database = wiring.database.clone();
-    wiring.runtime.spawn(async move {
-        let Ok(connection) = database.connect().await else {
-            return;
-        };
-        if let Err(error) = SettingsRepository::new(&connection)
-            .set(SEEN_KEY, &Utc::now().to_rfc3339())
-            .await
-        {
+async fn remember(remembering: &Remember) {
+    let client = remembering.client.clone();
+    remembering.runtime.spawn(async move {
+        if let Err(error) = client.retire_orientation().await {
             tracing::warn!(%error, "could not remember that the orientation was seen");
         }
     });
@@ -228,6 +227,52 @@ impl Orientation {
         Effect::Show
     }
 }
+
+/// Read the store on the runtime and answer over a channel.
+///
+/// `work` runs on the runtime with a turn on a warm reader, because every
+/// caller is waiting on the answer to draw something. `None` from `work` --
+/// or a reader that could not be had -- reaches the caller as `None`.
+///
+/// Search's reads, and this module's settings row, used to come through
+/// here; they are the host's now. What is left is the test that proves a
+/// read does not queue behind a backfill (#672), which still names it
+/// `crate::search::ask`.
+#[cfg(test)]
+pub(crate) fn ask<T, F, Fut>(
+    database: &postio_storage::Store,
+    runtime: &tokio::runtime::Handle,
+    work: F,
+) -> Answer<T>
+where
+    T: Send + 'static,
+    F: FnOnce(postio_storage::Checkout) -> Fut + Send + 'static,
+    Fut: std::future::Future<Output = Option<T>> + Send,
+{
+    let (sender, receiver) = async_channel::bounded(1);
+    let database = database.clone();
+    runtime.spawn(async move {
+        // A turn on a warm reader rather than a connection of its own: a
+        // search run took four cold caches per keystroke (#1602).
+        let answer = match database.read().await {
+            Ok(reader) => {
+                let answer = work(reader.checkout()).await;
+                drop(reader);
+                answer
+            }
+            Err(error) => {
+                tracing::warn!(%error, "no connection to read the store with");
+                None
+            }
+        };
+        let _ = sender.send_blocking(answer);
+    });
+    receiver
+}
+
+/// What [`ask`] hands back: one answer, or none.
+#[cfg(test)]
+type Answer<T> = async_channel::Receiver<Option<T>>;
 
 #[cfg(test)]
 mod tests {

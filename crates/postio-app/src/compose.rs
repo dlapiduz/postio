@@ -1,26 +1,22 @@
-//! Wires storage into the composer's seams.
+//! Wires the store's owner into the composer's seams.
 //!
-//! `postio-gtk::composer` builds a widget that edits a [`Draft`] and calls
+//! `postio-gtk::composer` builds a widget that edits a [`Draft`](postio_model::Draft) and calls
 //! back through a handful of seams — `connect_save`, `connect_recipient_
 //! suggestions`, `connect_reply_source` — without knowing anything persists
-//! it. This is the other half: the composition root reads and writes
-//! `postio-storage` directly, because it is the one crate allowed to.
+//! it. This is the other half: each seam is answered by a
+//! [`postio_client::Client`] of the host that owns the store (ADR 0041), the
+//! same requests the terminal's composer makes.
 //!
-//! # Why these reads and writes are synchronous
+//! # Which answers wait, and where
 //!
-//! `postio_runtime::store::MailStore` (see `feed.rs`) crosses onto a tokio
-//! worker for every read, because a message-list page can be a genuine scan
-//! across a mailbox and the GTK main thread must never wait on that. Nothing
-//! here is that: an autosave is one row, a recipient search is one indexed
-//! query, and a reply-source lookup is one message by id. `main.rs`'s own
-//! `first_account` already reads the database directly and synchronously for
-//! the same reason — a small, bounded, local read is not what the `MailStore`
-//! crossing exists to protect against. Attachments are the exception: a
-//! file's bytes can be large enough to actually cost wall-clock time, so
-//! [`install_attach`] hands the blob-store write to `runtime` and answers
-//! through the callback [`Composer::connect_attach`] gives it whenever the
-//! write finishes, rather than reading the file inline the way everything
-//! else here does.
+//! A seam that hands its answer to a callback — the default signature, the
+//! reply source, an attachment, a pasted image — asks the client on the main
+//! context and answers when the host does: a client call is a oneshot
+//! receive, and the host reads on its own runtime (#1608). Three seams have to
+//! answer synchronously — recipient completion, an inline image's bytes, and
+//! resuming a Drafts row — and ask through [`postio_session::blocking::now`],
+//! as they did when they read the store directly: one bounded, indexed read
+//! each, the same cost, a crossing instead of a connection.
 //!
 //! # Carrying the draft's id forward
 //!
@@ -31,39 +27,30 @@
 //! `Composer::save` writes that id back onto its own draft; this module keeps
 //! its own record of the same id only for the one thing the composer cannot
 //! tell it after the fact — which row to delete when the draft is dropped.
+//!
+//! The writes themselves are ordered by the host: each client has its own
+//! `DraftWriter`, and a save, send or discard is handed over when the client
+//! is asked, so they land in the order the composer made them (ADR 0021).
 
 use gtk::glib;
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
-use chrono::Utc;
 use gtk::gio;
 use gtk::prelude::*;
+use postio_client::Client;
 use postio_gtk::composer::{Closing, Composer};
 use postio_gtk::window::Window;
-use postio_model::ids::{AccountId, MailboxId, MessageId};
-use postio_model::signature_default;
-use postio_model::{Attachment, Draft, DraftId, DraftState, OperationTarget};
-use postio_storage::repository::{
-    AccountRepository, CancelSendOutcome, ContactGroupRepository, ContactRepository,
-    DraftRepository, MailboxRepository, MessageRepository, OperationQueueRepository,
-};
+use postio_model::ids::AccountId;
+use postio_model::{DraftId, DraftState};
 use postio_storage::{BlobStore, Store};
 
-use crate::recipients::{Directory, resolved_address};
+use crate::recipients::Directory;
 
 /// How many recipient suggestions to offer at once — a popover, not a list
 /// the user scrolls.
 const SUGGESTION_LIMIT: u32 = 8;
 
-/// Wires `window`'s composer to `database` for `account`: autosave with
-/// crash recovery, recipient completion from contacts, replying to whatever
-/// the reading pane is showing, and attaching files into `blobs`. `runtime`
-/// is only for [`install_attach`] — everything else here is synchronous.
-///
-/// `showing` is the reading pane's own record of which message is on screen
-/// ([`crate::reading::Showing`]), which is what `e`, `E` and `f` have to act
-/// on. It is passed in rather than derived here for the reason #325 records.
 /// How the composer tells the rest of the window something happened.
 ///
 /// A callback rather than the `Feeds` themselves: what this module needs is
@@ -71,6 +58,22 @@ const SUGGESTION_LIMIT: u32 = 8;
 /// what lets a composer test run without building a message list to ignore.
 pub type Announce = Rc<dyn Fn(&postio_core::Event)>;
 
+/// Wires `window`'s composer to `database` for `account`: autosave with
+/// crash recovery, recipient completion from contacts, replying to whatever
+/// the reading pane is showing, and attaching files into `blobs`.
+///
+/// `showing` is the reading pane's own record of which message is on screen
+/// ([`crate::reading::Showing`]), which is what `e`, `E` and `f` have to act
+/// on. It is passed in rather than derived here for the reason #325 records.
+///
+/// The store is reached through a host of its own over a wiring built here,
+/// on `runtime`: this is the signature the composer's suites call with a
+/// store they seeded. The window's own composition root calls
+/// [`install_with`] with the client it already holds, so a running app
+/// builds no second host for its composer.
+///
+/// That host's news goes nowhere -- nobody reads the wiring built here -- so
+/// `announce` is what tells the list a send moved a row.
 pub async fn install(
     window: &Window,
     account: AccountId,
@@ -80,22 +83,41 @@ pub async fn install(
     showing: crate::reading::Showing,
     announce: Announce,
 ) {
+    let (sink, _unheard) = postio_core::bridge::event_channel();
+    let (commands, _unsent) = postio_core::bridge::command_channel();
+    let wiring = postio_session::Wiring::new(database, blobs, runtime.clone(), sink, commands);
+    let client = postio_host::Host::over(wiring).connect(postio_client::protocol::ClientKind::Gtk);
+    install_with(window, account, client, runtime, showing, Some(announce)).await;
+}
+
+/// [`install`] over a client the window already holds.
+///
+/// `announce` is for a host whose news the window does not hear; `None` when
+/// it does, since the host tells every frontend a send moved a row and a
+/// second announcement would reload the list twice.
+pub(crate) async fn install_with(
+    window: &Window,
+    account: AccountId,
+    client: Client,
+    runtime: tokio::runtime::Handle,
+    showing: crate::reading::Showing,
+    announce: Option<Announce>,
+) {
     let composer = window.composer();
     composer.set_account(account);
     install_mailto(window, &composer, account);
-    install_identities(window, &composer, &database, account).await;
-    install_signature_default(&composer, window, database.clone(), account, &runtime);
+    install_identities(window, &composer, &client, account).await;
+    install_signature_default(&composer, window, client.clone(), account);
 
-    let writer = DraftWriter::spawn(database.clone(), account, &runtime);
-    let last_id = install_autosave(&composer, database.clone(), account, &writer);
-    install_send(&composer, &writer, Rc::clone(&last_id), account, announce);
-    install_send_later(&composer, &writer, Rc::clone(&last_id));
-    install_resume(window, &composer, database.clone(), last_id);
-    install_recipient_suggestions(&composer, database.clone(), account, &runtime);
-    install_reply_source(&composer, database, showing, &runtime);
-    install_attach(&composer, blobs.clone(), runtime.clone());
-    install_inline_image(&composer, blobs.clone(), runtime).await;
-    install_attachment_bytes(&composer, blobs);
+    let last_id = install_autosave(&composer, client.clone(), account);
+    install_send(&composer, &client, Rc::clone(&last_id), account, announce);
+    install_send_later(&composer, &client, Rc::clone(&last_id));
+    install_resume(window, &composer, client.clone(), last_id);
+    install_recipient_suggestions(&composer, client.clone(), account);
+    install_reply_source(&composer, client.clone(), showing);
+    install_attach(&composer, client.clone(), runtime);
+    install_inline_image(&composer, client.clone()).await;
+    install_attachment_bytes(&composer, client);
 }
 
 /// A `mailto:` link opens the composer on a draft for `account`.
@@ -121,63 +143,37 @@ fn install_mailto(window: &Window, composer: &Composer, account: AccountId) {
     });
 }
 
-/// Writes pasted image bytes into `blobs` and mints a `Content-ID` for the
-/// inline attachment, off the main thread like [`install_attach`].
+/// Stores pasted image bytes as an inline part, through the host, which
+/// mints its `Content-ID`.
 ///
 /// The id is the blob digest at `postio.invalid` — unique by construction
 /// (same bytes, same blob, same reference) and on a reserved domain, so it
 /// can never collide with, or be mistaken for, anything real.
-async fn install_inline_image(
-    composer: &Composer,
-    blobs: BlobStore,
-    runtime: tokio::runtime::Handle,
-) {
+async fn install_inline_image(composer: &Composer, client: Client) {
     composer.connect_inline_image(move |bytes, mime_type, then| {
-        let blobs = blobs.clone();
-        let (sender, receiver) = async_channel::bounded(1);
-        runtime.spawn(async move {
-            let attachment = inline_attachment(&blobs, bytes, &mime_type);
-            let _ = sender.send_blocking(attachment);
-        });
-        gtk::glib::spawn_future_local(async move {
-            then(receiver.recv().await.ok().flatten());
+        let client = client.clone();
+        glib::spawn_future_local(async move {
+            // POSTIO-GLIB-SAFE: a client call is a oneshot receive; the host
+            // writes the blob on its own runtime's blocking pool.
+            let stored = client.inline_image(bytes, mime_type).await;
+            then(stored.unwrap_or_else(|error| {
+                tracing::warn!(%error, "could not store the pasted image");
+                None
+            }));
         });
     });
-}
-
-/// Blocking half of [`install_inline_image`].
-fn inline_attachment(blobs: &BlobStore, bytes: Vec<u8>, mime_type: &str) -> Option<Attachment> {
-    let size = bytes.len() as u64;
-    let blob_id = blobs
-        .put(&bytes)
-        .map_err(|error| tracing::warn!(%error, "could not store the pasted image"))
-        .ok()?;
-
-    let extension = mime_type.strip_prefix("image/").unwrap_or("png");
-    let mut attachment = Attachment::new(MessageId::UNASSIGNED, mime_type, size);
-    attachment.filename = Some(format!("inline-image.{extension}"));
-    attachment.disposition = postio_model::attachment::Disposition::Inline;
-    attachment.content_id = Some(format!("{}@postio.invalid", blob_id.as_str()));
-    attachment.blob_id = Some(blob_id);
-    Some(attachment)
 }
 
 /// Resolves an attachment's bytes for the composer's inline-image display.
 ///
 /// Synchronous, as the scheme handler requires; a blob read is a local file
 /// open, the same cost the reader already pays per inline image.
-fn install_attachment_bytes(composer: &Composer, blobs: BlobStore) {
+fn install_attachment_bytes(composer: &Composer, client: Client) {
     composer.connect_attachment_bytes(move |attachment| {
-        let blob_id = attachment.blob_id.as_ref()?;
-        let mut file = blobs
-            .reader(blob_id)
+        let blob_id = attachment.blob_id.clone()?;
+        postio_session::blocking::now(client.attachment_bytes(blob_id))
             .map_err(|error| tracing::warn!(%error, "could not read an inline image blob"))
-            .ok()?;
-        let mut bytes = Vec::new();
-        std::io::Read::read_to_end(&mut file, &mut bytes)
-            .map_err(|error| tracing::warn!(%error, "could not read an inline image blob"))
-            .ok()?;
-        Some(bytes)
+            .ok()?
     });
 }
 
@@ -196,31 +192,34 @@ fn install_attachment_bytes(composer: &Composer, blobs: BlobStore) {
 async fn install_identities(
     window: &Window,
     composer: &Composer,
-    database: &Store,
+    client: &Client,
     account: AccountId,
 ) {
-    let Ok(connection) = database.read().await else {
+    // POSTIO-GLIB-SAFE: a client call is a oneshot receive; the host answers
+    // on its own runtime.
+    let accounts = match client.accounts().await {
+        Ok(accounts) => accounts,
+        Err(error) => {
+            tracing::warn!(%error, "could not read the account's identities");
+            return;
+        }
+    };
+    let Some(account) = accounts.into_iter().find(|found| found.id == account) else {
+        tracing::warn!("the composer's account is not in the database");
         return;
     };
-    match AccountRepository::new(&connection).get(account).await {
-        Ok(Some(account)) => {
-            // The conversation pane needs the same fact for a different
-            // reason: it marks the user's own messages with an outline
-            // rather than a fill (#1241). One read of the account row
-            // answers both.
-            let addresses: Vec<_> = account
-                .identities
-                .iter()
-                .map(|identity| identity.address.clone())
-                .collect();
-            window.conversation().set_own_addresses(&addresses);
-            composer.set_size_limit(account.max_message_size);
-            composer.set_identities(account.identities);
-            composer.set_signatures(account.signatures);
-        }
-        Ok(None) => tracing::warn!("the composer's account is not in the database"),
-        Err(error) => tracing::warn!(%error, "could not read the account's identities"),
-    }
+    // The conversation pane needs the same fact for a different reason: it
+    // marks the user's own messages with an outline rather than a fill
+    // (#1241). One read of the account row answers both.
+    let addresses: Vec<_> = account
+        .identities
+        .iter()
+        .map(|identity| identity.address.clone())
+        .collect();
+    window.conversation().set_own_addresses(&addresses);
+    composer.set_size_limit(account.max_message_size);
+    composer.set_identities(account.identities);
+    composer.set_signatures(account.signatures);
 }
 
 /// Puts a resolved default in front of a brand-new draft, before the
@@ -234,61 +233,23 @@ async fn install_identities(
 fn install_signature_default(
     composer: &Composer,
     window: &Window,
-    database: Store,
+    client: Client,
     account: AccountId,
-    runtime: &tokio::runtime::Handle,
 ) {
     let sidebar = window.sidebar();
-    let runtime = runtime.clone();
     composer.connect_signature_default(move |answer| {
-        // Which mailbox is selected is the sidebar's, read here; the two
-        // store reads run on the runtime and the answer lands back on the
-        // main context (#1608).
+        // Which mailbox is selected is the sidebar's, read here; the host
+        // resolves the rest and the answer lands back on the main context
+        // (#1608).
         let selected = sidebar.selected();
-        let database = database.clone();
-        let (sender, resolved) = async_channel::bounded(1);
-        runtime.spawn(async move {
-            let _ = sender
-                .send(default_signature(&database, account, selected).await)
-                .await;
-        });
+        let client = client.clone();
         glib::spawn_future_local(async move {
-            // POSTIO-GLIB-SAFE: a channel receive; the reads ran on the runtime.
-            answer(resolved.recv().await.ok().flatten());
+            // POSTIO-GLIB-SAFE: a client call is a oneshot receive; the host
+            // reads on its own runtime.
+            let resolved = client.default_signature(account, selected).await;
+            answer(resolved.ok().flatten());
         });
     });
-}
-
-/// The signature a new draft for `account` starts with: the selected
-/// mailbox's override, else the account's default, else none.
-async fn default_signature(
-    database: &Store,
-    account: AccountId,
-    selected: Option<MailboxId>,
-) -> Option<postio_model::SignatureId> {
-    let connection = database
-        .read()
-        .await
-        .map_err(|error| tracing::warn!(%error, "could not resolve a default signature"))
-        .ok()?;
-    let account_default = AccountRepository::new(&connection)
-        .get(account)
-        .await
-        .ok()
-        .flatten()?
-        .default_signature_id;
-    // Spelled out rather than chained: `and_then` takes a closure, and a
-    // closure cannot await.
-    let mailbox_signature = match selected {
-        Some(id) => MailboxRepository::new(&connection)
-            .get(id)
-            .await
-            .ok()
-            .flatten()
-            .and_then(|mailbox| mailbox.signature_id),
-        None => None,
-    };
-    signature_default::resolve(mailbox_signature, account_default)
 }
 
 /// Activating a draft's row in the Drafts folder opens it in the composer.
@@ -325,374 +286,153 @@ const SEND_CANCELLED: &str = "send cancelled — you're editing this draft again
 fn install_resume(
     window: &Window,
     composer: &Composer,
-    database: Store,
+    client: Client,
     last_id: Rc<Cell<Option<DraftId>>>,
 ) {
-    postio_session::blocking::now(async {
-        // Weak: the window owns the list that owns this handler (#1072).
-        let weak = glib::object::ObjectExt::downgrade(window);
-        window.list().connect_activated({
-            let composer = composer.clone();
-            move |row| {
-                postio_session::blocking::now(async {
-                    if row.send_state.is_none() {
+    // Weak: the window owns the list that owns this handler (#1072).
+    let weak = glib::object::ObjectExt::downgrade(window);
+    window.list().connect_activated({
+        let composer = composer.clone();
+        move |row| {
+            postio_session::blocking::now(async {
+                if row.send_state.is_none() {
+                    return;
+                }
+                let Some(window) = weak.upgrade() else {
+                    return;
+                };
+                let draft = match client.draft_behind(row.id).await {
+                    Ok(Some(draft)) => draft,
+                    Ok(None) => return,
+                    Err(error) => {
+                        tracing::warn!(%error, "could not read the draft behind a row");
                         return;
                     }
-                    let Some(window) = weak.upgrade() else {
+                };
+                let draft = if draft.state == DraftState::Queued {
+                    // #433: the row stays in the Drafts folder for as long as the
+                    // send sits in the queue, and opening it here used to reopen
+                    // it live for editing while the drainer could pick the same
+                    // row up at any moment — an edit landed or did not, purely on
+                    // timing. Cancelling the send is what makes editing it again
+                    // safe: see `DraftRepository::cancel_send`.
+                    let Ok(Some(reopened)) = client.cancel_send(draft.id).await else {
                         return;
                     };
-                    let Some(draft) = draft_behind(&database, row.id).await else {
-                        return;
-                    };
-                    let draft = if draft.state == DraftState::Queued {
-                        // #433: the row stays in the Drafts folder for as long as the
-                        // send sits in the queue, and opening it here used to reopen
-                        // it live for editing while the drainer could pick the same
-                        // row up at any moment — an edit landed or did not, purely on
-                        // timing. Cancelling the send is what makes editing it again
-                        // safe: see `DraftRepository::cancel_send`.
-                        let Some(reopened) = cancel_queued_send(&database, draft.id).await else {
-                            return;
-                        };
-                        window.show_action_completed(SEND_CANCELLED, false);
-                        reopened
-                    } else {
-                        draft
-                    };
-                    // FR-066's third clause, and #1487: a failed send has to name
-                    // what went wrong. The reason was computed, written to the queue
-                    // row and carried all the way up the engine's report -- whose own
-                    // doc says "the reason the user should see" -- and then read by
-                    // nobody. Said here because this is where the person has come
-                    // back to do something about it.
-                    // Spelled out rather than chained: `then` takes a
-                    // closure, and a closure cannot await.
-                    let failure = if draft.state == DraftState::Failed {
-                        why_the_send_failed(&database, draft.id).await
-                    } else {
-                        None
-                    };
+                    window.show_action_completed(SEND_CANCELLED, false);
+                    reopened
+                } else {
+                    draft
+                };
+                // FR-066's third clause, and #1487: a failed send has to name
+                // what went wrong. The reason was computed, written to the queue
+                // row and carried all the way up the engine's report -- whose own
+                // doc says "the reason the user should see" -- and then read by
+                // nobody. Said here because this is where the person has come
+                // back to do something about it.
+                // Spelled out rather than chained: `then` takes a
+                // closure, and a closure cannot await.
+                let failure = if draft.state == DraftState::Failed {
+                    client.send_failure(draft.id).await.ok().flatten()
+                } else {
+                    None
+                };
 
-                    // So that closing it empty clears the right row: `connect_closed`
-                    // carries what became of the draft and not which one it was.
-                    last_id.set(Some(draft.id));
-                    composer.resume(draft);
-                    if let Some(reason) = failure {
-                        composer.set_status(&format!("Not sent — {reason}"));
-                    }
-                })
-            }
-        });
-    })
-}
-
-/// Cancels a queued draft's pending send and returns it as it now stands, so
-/// the caller can resume the composer on live state rather than the stale
-/// `Queued` snapshot it read before cancelling.
-///
-/// `None` when there is nothing safe to resume: the send already drained,
-/// started draining, or the draft is gone — [`DraftRepository::cancel_send`]'s
-/// non-[`CancelSendOutcome::Cancelled`] outcomes. Opening the composer on a
-/// draft mid-send would risk a second, different message going out behind
-/// the one already on the wire, so this declines rather than guessing.
-async fn cancel_queued_send(database: &Store, id: DraftId) -> Option<Draft> {
-    let connection = database
-        .connect()
-        .await
-        .map_err(|error| tracing::warn!(%error, "could not open the store to cancel a send"))
-        .ok()?;
-    let drafts = DraftRepository::new(&connection);
-    match drafts.cancel_send(id, Utc::now()).await {
-        Ok(CancelSendOutcome::Cancelled) => drafts
-            .get(id)
-            .await
-            .map_err(|error| tracing::warn!(%error, "could not reread a draft after cancelling its send"))
-            .ok()
-            .flatten(),
-        Ok(CancelSendOutcome::NotQueued | CancelSendOutcome::AlreadyInFlight) => None,
-        Err(error) => {
-            tracing::warn!(%error, "could not cancel a queued draft's send");
-            None
+                // So that closing it empty clears the right row: `connect_closed`
+                // carries what became of the draft and not which one it was.
+                last_id.set(Some(draft.id));
+                composer.resume(draft);
+                if let Some(reason) = failure {
+                    composer.set_status(&format!("Not sent — {reason}"));
+                }
+            })
         }
-    }
+    });
 }
 
-/// Why this draft's last send attempt gave up, if it did.
-///
-/// Read from the queue row rather than from the draft, because that is where
-/// the drainer writes it and a second copy is one that can come to disagree
-/// with the first (#1487).
-async fn why_the_send_failed(database: &Store, id: DraftId) -> Option<String> {
-    let connection = database
-        .connect()
-        .await
-        .map_err(|error| tracing::warn!(%error, "could not open the store to read a send failure"))
-        .ok()?;
-    OperationQueueRepository::new(&connection)
-        .last_failure_for(OperationTarget::Draft(id))
-        .await
-        .map_err(|error| tracing::warn!(%error, "could not read why a send failed"))
-        .ok()
-        .flatten()
-}
-
-/// The draft a message row is listing, if it is listing one.
-async fn draft_behind(database: &Store, message: MessageId) -> Option<Draft> {
-    let connection = database
-        .connect()
-        .await
-        .map_err(|error| tracing::warn!(%error, "could not open the store to resume a draft"))
-        .ok()?;
-    DraftRepository::new(&connection)
-        .by_message(message)
-        .await
-        .map_err(|error| tracing::warn!(%error, "could not read the draft behind a row"))
-        .ok()?
-}
-
-/// What the composer asks of the store, in the order it asked (#1608).
-enum DraftOp {
-    /// Autosave this composition's draft.
-    Save { generation: u64, draft: Draft },
-    /// Queue it to send -- now, or at `at` -- and answer with the Drafts
-    /// folder, whose list just changed, when the queue write landed.
-    Send {
-        generation: u64,
-        draft: Draft,
-        at: Option<chrono::DateTime<Utc>>,
-        reply: async_channel::Sender<Option<MailboxId>>,
-    },
-    /// This composition was closed empty: its autosaved row goes.
-    Discard {
-        generation: u64,
-        known: Option<DraftId>,
-    },
-}
-
-/// Writes a composer's drafts on the runtime, one request at a time, in the
-/// order the composer made them (#1608).
-///
-/// Every save, send and discard used to run under `blocking::now` on the GTK
-/// thread, each waiting for the interactive write permit -- which lets the
-/// background unit already holding the writer finish first -- so an autosave
-/// tick could stall the thread that draws for as long as a sync's unit took.
-/// Here the composer hands the request over and returns.
-///
-/// What the synchronous version guaranteed by construction has to be kept by
-/// hand, and it is kept by order and by remembering one id. A draft's first
-/// save assigns its id; the writer remembers it for that composition, so a
-/// second save made before the first landed updates the same row rather than
-/// inserting another, and a send queues the row the saves made. A discard is
-/// behind every save its composition made, so it deletes the row they left.
-#[derive(Clone)]
-struct DraftWriter {
-    ops: async_channel::Sender<DraftOp>,
-    /// Each save that landed: which composition, and the id it has.
-    saved: async_channel::Receiver<(u64, DraftId)>,
-}
-
-impl DraftWriter {
-    fn spawn(database: Store, account: AccountId, runtime: &tokio::runtime::Handle) -> Self {
-        let (ops, requests) = async_channel::unbounded::<DraftOp>();
-        let (report, saved) = async_channel::unbounded();
-        runtime.spawn(async move {
-            // The composition whose draft was saved last, and its id.
-            let mut current: Option<(u64, DraftId)> = None;
-            let id_for = |current: &Option<(u64, DraftId)>, generation: u64, draft: &mut Draft| {
-                if !draft.id.is_assigned()
-                    && let Some((saved_for, id)) = *current
-                    && saved_for == generation
-                {
-                    draft.id = id;
-                }
-            };
-            while let Ok(op) = requests.recv().await {
-                match op {
-                    DraftOp::Save {
-                        generation,
-                        mut draft,
-                    } => {
-                        id_for(&current, generation, &mut draft);
-                        match save_draft(&database, &mut draft).await {
-                            Ok(()) => {
-                                current = Some((generation, draft.id));
-                                let _ = report.send((generation, draft.id)).await;
-                            }
-                            Err(error) => {
-                                tracing::error!(%error, "could not autosave the draft: {error}")
-                            }
-                        }
-                    }
-                    DraftOp::Send {
-                        generation,
-                        mut draft,
-                        at,
-                        reply,
-                    } => {
-                        id_for(&current, generation, &mut draft);
-                        // Taken on failure too, and deliberately: a queue write
-                        // that fails leaves the autosaved row where it is,
-                        // `Editing`, recoverable, and the close that follows a
-                        // send must not delete the user's words on the way out.
-                        // Losing the send is recoverable, losing the message is
-                        // not.
-                        if current.is_some_and(|(saved_for, _)| saved_for == generation) {
-                            current = None;
-                        }
-                        let queued = match at {
-                            Some(at) => queue_send_at(&database, &mut draft, at).await,
-                            None => queue_send(&database, &mut draft).await,
-                        };
-                        let moved = match queued {
-                            Ok(()) if at.is_none() => drafts_mailbox(&database, account).await,
-                            Ok(()) => None,
-                            Err(error) => {
-                                tracing::error!(%error, "could not queue the draft for sending: {error}");
-                                None
-                            }
-                        };
-                        let _ = reply.send(moved).await;
-                    }
-                    DraftOp::Discard { generation, known } => {
-                        let id = match current {
-                            Some((saved_for, id)) if saved_for == generation => {
-                                current = None;
-                                Some(id)
-                            }
-                            _ => known,
-                        };
-                        if let Some(id) = id
-                            && let Err(error) = delete_draft(&database, id).await
-                        {
-                            tracing::warn!(%error, "could not clear the finished draft");
-                        }
-                    }
-                }
-            }
-        });
-        DraftWriter { ops, saved }
-    }
-
-    fn send(&self, op: DraftOp) {
-        // Unbounded: the composer never waits on the writer, which is the
-        // point. A closed channel means the runtime is gone with the app.
-        let _ = self.ops.try_send(op);
-    }
-}
-
-/// Autosave to [`DraftRepository`], crash recovery, and clearing the row once
-/// there is nothing left to keep — sent, discarded, or closed empty.
+/// Autosave through the host's `DraftWriter`, crash recovery, and clearing
+/// the row once there is nothing left to keep — sent, discarded, or closed
+/// empty.
 fn install_autosave(
     composer: &Composer,
-    database: Store,
+    client: Client,
     account: AccountId,
-    writer: &DraftWriter,
 ) -> Rc<Cell<Option<DraftId>>> {
-    postio_session::blocking::now(async {
-        // The id of whatever `connect_save`'s handler last persisted. Not read
-        // from the composer's own draft afterward because `connect_closed` does
-        // not carry the draft — only what became of it — so this is the one
-        // piece of bookkeeping this module has to keep for itself.
-        let last_id: Rc<Cell<Option<DraftId>>> = Rc::new(Cell::new(None));
+    // The id of whatever `connect_save`'s handler last persisted. Not read
+    // from the composer's own draft afterward because `connect_closed` does
+    // not carry the draft — only what became of it — so this is the one
+    // piece of bookkeeping this module has to keep for itself.
+    let last_id: Rc<Cell<Option<DraftId>>> = Rc::new(Cell::new(None));
 
-        // Off the GTK thread (#1608): a save is handed to the writer and the
-        // handler returns. The id a first save assigns comes back over
-        // `saved` and is written onto the composer -- only while the same
-        // composition is in its fields -- and into `last_id`.
-        let weak = composer.downgrade();
-        composer.connect_save({
-            let writer = writer.clone();
+    // Off the GTK thread (#1608): a save is handed to the host and the
+    // handler returns. The id a first save assigns comes back over the
+    // save's answer and is written onto the composer -- only while the same
+    // composition is in its fields -- and into `last_id`.
+    let weak = composer.downgrade();
+    composer.connect_save({
+        let client = client.clone();
+        let weak = weak.clone();
+        let last_id = Rc::clone(&last_id);
+        move |draft| {
+            let Some(composer) = weak.upgrade() else {
+                return;
+            };
+            let generation = composer.generation();
+            // Handed over here, in the order the composer saved.
+            let saved = client.save_draft(generation, draft.clone());
+            let last_id = Rc::clone(&last_id);
             let weak = weak.clone();
-            move |draft| {
+            glib::spawn_future_local(async move {
+                // POSTIO-GLIB-SAFE: a client call is a oneshot receive; the
+                // write runs on the host's runtime in its `DraftWriter`.
+                let Ok(id) = saved.await else {
+                    return;
+                };
                 let Some(composer) = weak.upgrade() else {
                     return;
                 };
-                writer.send(DraftOp::Save {
-                    generation: composer.generation(),
-                    draft: draft.clone(),
-                });
-            }
-        });
-        glib::spawn_future_local({
-            let saved = writer.saved.clone();
-            let last_id = Rc::clone(&last_id);
-            let weak = weak.clone();
-            async move {
-                // POSTIO-GLIB-SAFE: a channel receive; the writes run on the
-                // runtime in `DraftWriter`.
-                while let Ok((generation, id)) = saved.recv().await {
-                    let Some(composer) = weak.upgrade() else {
-                        return;
-                    };
-                    if composer.generation() == generation {
-                        last_id.set(Some(id));
-                    }
-                    composer.adopt_id(generation, id);
+                if composer.generation() == generation {
+                    last_id.set(Some(id));
                 }
-            }
-        });
-
-        composer.connect_closed({
-            let writer = writer.clone();
-            let last_id = Rc::clone(&last_id);
-            move |outcome| {
-                // Kept: Esc with something still in it. The row stays exactly as
-                // autosaved, ready to recover it right back.
-                if outcome != Closing::Drop {
-                    return;
-                }
-                let Some(composer) = weak.upgrade() else {
-                    return;
-                };
-                // The composition just closed, not the empty one the close
-                // refilled the fields with -- and after every save it handed
-                // out, because the writer takes them in order.
-                writer.send(DraftOp::Discard {
-                    generation: composer.previous_generation(),
-                    known: last_id.take(),
-                });
-            }
-        });
-
-        // Only after a crash. `DraftState::Editing` alone is not evidence of
-        // one — Esc parks a draft in exactly that state on purpose — and the
-        // difference is the whole of #491: a client that opens into a stale
-        // compose buffer instead of the inbox reads as broken. `begin_session`
-        // is what knows how the last session ended, and this is its one caller,
-        // before anything else consults the marker it flips.
-        if postio_session::begin_session(&database).await {
-            recover(composer, &database, account, &last_id).await;
+                composer.adopt_id(generation, id);
+            });
         }
-        last_id
-    })
-}
+    });
 
-/// Autosave: the local row, and the queue row that carries it to the account's
-/// Drafts mailbox, in one write.
-///
-/// The enqueue is what makes a draft survive more than this machine — see
-/// `DraftRepository::save_and_sync`. It costs nothing extra here: the queue
-/// row is written inside the same transaction, and the engine sends it when
-/// there is a connection. A run of autosaves folds into one upload.
-///
-/// `interactive_write` rather than a bare connection: a draft autosave is a
-/// write the person typing is waiting on, so it goes ahead of a backfill's
-/// bulk writes rather than queueing behind them (#425).
-async fn save_draft(database: &Store, draft: &mut Draft) -> postio_storage::Result<()> {
-    let (connection, _permit) = database.interactive_write().await?;
-    DraftRepository::new(&connection)
-        .save_and_sync(draft, Utc::now())
-        .await?;
-    Ok(())
-}
+    composer.connect_closed({
+        let client = client.clone();
+        let last_id = Rc::clone(&last_id);
+        move |outcome| {
+            // Kept: Esc with something still in it. The row stays exactly as
+            // autosaved, ready to recover it right back.
+            if outcome != Closing::Drop {
+                return;
+            }
+            let Some(composer) = weak.upgrade() else {
+                return;
+            };
+            // The composition just closed, not the empty one the close
+            // refilled the fields with -- and after every save it handed
+            // out, because the host's writer takes them in order.
+            // Handed over now, in order; nothing waits for it to land.
+            drop(client.discard_draft(composer.previous_generation(), last_id.take()));
+        }
+    });
 
-/// Discard: the local row goes now, and the server copy is queued for removal.
-async fn delete_draft(database: &Store, id: DraftId) -> postio_storage::Result<()> {
-    let (connection, _permit) = database.interactive_write().await?;
-    DraftRepository::new(&connection)
-        .discard(id, Utc::now())
-        .await?;
-    Ok(())
+    // Only after a crash (#491): the host asks `begin_session`, which knows
+    // how the last session ended, and answers the draft worth reopening by
+    // Esc's own rule -- or nothing. This is its one caller, before anything
+    // else consults the marker it flips.
+    let recovered = postio_session::blocking::now(client.recover_draft(account));
+    match recovered {
+        Ok(Some(draft)) => {
+            last_id.set(Some(draft.id));
+            composer.open(draft);
+        }
+        Ok(None) => {}
+        Err(error) => tracing::error!(%error, "could not read drafts to recover: {error}"),
+    }
+    last_id
 }
 
 /// Sending: the draft becomes a queue row, and stops being the composer's.
@@ -726,33 +466,32 @@ async fn delete_draft(database: &Store, id: DraftId) -> postio_storage::Result<(
 /// the message is not.
 fn install_send(
     composer: &Composer,
-    writer: &DraftWriter,
+    client: &Client,
     last_id: Rc<Cell<Option<DraftId>>>,
     account: AccountId,
-    announce: Announce,
+    announce: Option<Announce>,
 ) {
     let weak = composer.downgrade();
-    let writer = writer.clone();
+    let client = client.clone();
     composer.connect_send(move |draft| {
         let Some(composer) = weak.upgrade() else {
             return;
         };
         last_id.set(None);
-        // Through the writer, after every save this composition handed it:
-        // a send racing a first save in flight would insert a second row.
-        // The writer queues the send and says which folder moved; the
-        // announcement is made here, where the list lives (#1608).
-        let (reply, answer) = async_channel::bounded(1);
-        writer.send(DraftOp::Send {
-            generation: composer.generation(),
-            draft: draft.clone(),
-            at: None,
-            reply,
-        });
-        let announce = announce.clone();
+        // Through the host's writer, after every save this composition
+        // handed it: a send racing a first save in flight would insert a
+        // second row. The host queues the send and says which folder moved,
+        // to every frontend; `announce` is for a window that does not hear
+        // it (#1608).
+        let queued = client.queue_send(composer.generation(), draft.clone(), None);
+        let Some(announce) = announce.clone() else {
+            drop(queued);
+            return;
+        };
         glib::spawn_future_local(async move {
-            // POSTIO-GLIB-SAFE: a channel receive; the write ran on the runtime.
-            let Ok(Some(drafts)) = answer.recv().await else {
+            // POSTIO-GLIB-SAFE: a client call is a oneshot receive; the write
+            // ran on the host's runtime.
+            let Ok(Some(drafts)) = queued.await else {
                 return;
             };
             // Say so, or the write is invisible until something else redraws.
@@ -770,32 +509,6 @@ fn install_send(
     });
 }
 
-/// The account's Drafts folder, which is where a draft's row lives whatever
-/// its send state — the Outbox is a predicate over that folder, not a second
-/// one (spec 003).
-///
-/// `None` before the first sync has found one, in which case the draft has no
-/// row to have moved and there is nothing to announce.
-async fn drafts_mailbox(database: &Store, account: AccountId) -> Option<MailboxId> {
-    let connection = database.connect().await.ok()?;
-    postio_storage::repository::MailboxRepository::new(&connection)
-        .by_role(account, postio_model::MailboxRole::Drafts)
-        .await
-        .ok()
-        .flatten()
-        .map(|mailbox| mailbox.id)
-}
-
-/// Send: the draft goes to `Queued` and its `Operation::Send` row is written,
-/// in one transaction — see `DraftRepository::queue_send`.
-async fn queue_send(database: &Store, draft: &mut Draft) -> postio_storage::Result<()> {
-    let (connection, _permit) = database.interactive_write().await?;
-    DraftRepository::new(&connection)
-        .queue_send(draft, Utc::now())
-        .await?;
-    Ok(())
-}
-
 /// [`install_send`]'s counterpart for [`Composer::connect_send_later`] — the
 /// picker behind [`CommandId::ScheduleSend`](postio_core::CommandId::ScheduleSend).
 ///
@@ -804,125 +517,42 @@ async fn queue_send(database: &Store, draft: &mut Draft) -> postio_storage::Resu
 /// closes the instant a time is chosen, the same way it does for an
 /// immediate send, so there is nothing on screen left to read a status line
 /// from by the time a queue error could be reported.
-fn install_send_later(
-    composer: &Composer,
-    writer: &DraftWriter,
-    last_id: Rc<Cell<Option<DraftId>>>,
-) {
+fn install_send_later(composer: &Composer, client: &Client, last_id: Rc<Cell<Option<DraftId>>>) {
     let weak = composer.downgrade();
-    let writer = writer.clone();
+    let client = client.clone();
     composer.connect_send_later(move |draft, send_at| {
         let Some(composer) = weak.upgrade() else {
             return;
         };
         last_id.set(None);
-        let (reply, _answer) = async_channel::bounded(1);
-        writer.send(DraftOp::Send {
-            generation: composer.generation(),
-            draft: draft.clone(),
-            at: Some(send_at),
-            reply,
-        });
+        // Handed over now, in order; nothing here waits for it to land.
+        drop(client.queue_send(composer.generation(), draft.clone(), Some(send_at)));
     });
-}
-
-/// Schedule send: the draft goes to `Queued` and its `Operation::Send` row is
-/// written with `send_at` as the time the drainer must not touch it before —
-/// see `DraftRepository::queue_send_at`.
-async fn queue_send_at(
-    database: &Store,
-    draft: &mut Draft,
-    send_at: chrono::DateTime<Utc>,
-) -> postio_storage::Result<()> {
-    let (connection, _permit) = database.interactive_write().await?;
-    DraftRepository::new(&connection)
-        .queue_send_at(draft, Utc::now(), send_at)
-        .await?;
-    Ok(())
-}
-
-/// Opens whatever draft `account` was still editing when Postio last
-/// stopped — the crash-recovery half of the bead, and the whole reason it
-/// matters: a draft is not durable until it comes back on its own.
-///
-/// Called only when [`postio_session::begin_session`] says the last session
-/// died uncleanly (#491). After a *clean* exit a mid-edit draft is parked,
-/// not lost: autosaved, a row in Drafts, resumable from there — and the
-/// next start belongs to the inbox.
-///
-/// The most recently edited one, since the composer holds exactly one draft
-/// at a time (`postio-cj7`'s "one composition" invariant); a v1 with several
-/// concurrent drafts would recover all of them into a real Drafts mailbox
-/// instead, which does not exist yet.
-async fn recover(
-    composer: &Composer,
-    database: &Store,
-    account: AccountId,
-    last_id: &Rc<Cell<Option<DraftId>>>,
-) {
-    let Ok(connection) = database.connect().await else {
-        return;
-    };
-    let drafts = match DraftRepository::new(&connection)
-        .list_for_account(account)
-        .await
-    {
-        Ok(drafts) => drafts,
-        Err(error) => {
-            tracing::error!(%error, "could not read drafts to recover: {error}");
-            return;
-        }
-    };
-    drop(connection);
-
-    // Worth recovering, by the same rule Esc uses. An untouched buffer is
-    // not work -- and recovering one is self-perpetuating, because the
-    // composer it reopens autosaves another `Editing` row for the empty
-    // draft it is now holding, so every unclean stop after the first opens
-    // the client into a stale compose buffer. That is the state #491's own
-    // doc calls reading broken, arrived at by #491's own fix.
-    //
-    // `closing` rather than a second definition of empty: it is what decides
-    // whether Esc parks a draft or drops it, and the two questions are the
-    // same question. Whitespace and the signature do not count, per its rule.
-    let Some(draft) = drafts.into_iter().find(|draft| {
-        draft.state == DraftState::Editing
-            && postio_gtk::composer::closing(draft) == postio_gtk::composer::Closing::Keep
-    }) else {
-        return;
-    };
-    last_id.set(Some(draft.id));
-    composer.open(draft);
 }
 
 /// Recipient completion, answered from memory (see [`crate::recipients`]).
 ///
-/// The directory is read off the GTK thread when this is installed and again
-/// each time the composer opens, so a contact first seen in mail that
+/// The directory is read from the store's owner when this is installed and
+/// again each time the composer opens, so a contact first seen in mail that
 /// arrived meanwhile is offered in the next composition. Every keystroke is
-/// then [`Directory::suggest`] over what was read: no connection, no query,
+/// then [`Directory::suggest`] over what was read: no call, no query,
 /// nothing on the thread that draws.
-fn install_recipient_suggestions(
-    composer: &Composer,
-    database: Store,
-    account: AccountId,
-    runtime: &tokio::runtime::Handle,
-) {
+fn install_recipient_suggestions(composer: &Composer, client: Client, account: AccountId) {
     let directory: Rc<RefCell<Rc<Directory>>> = Rc::default();
     let reload = {
         let directory = Rc::clone(&directory);
-        let runtime = runtime.clone();
         move || {
-            let answer = crate::search::ask(&database, &runtime, move |connection| async move {
-                read_directory(&connection, account)
-                    .await
-                    .map_err(|error| tracing::warn!(%error, "could not read the contacts"))
-                    .ok()
-            });
+            let client = client.clone();
             let directory = Rc::clone(&directory);
             glib::spawn_future_local(async move {
-                if let Ok(Some(read)) = answer.recv().await {
-                    *directory.borrow_mut() = Rc::new(read);
+                // POSTIO-GLIB-SAFE: a client call is a oneshot receive; the
+                // host answers on its own runtime.
+                match client.recipient_directory(account).await {
+                    Ok(read) => {
+                        *directory.borrow_mut() =
+                            Rc::new(Directory::new(read.groups, read.contacts));
+                    }
+                    Err(error) => tracing::warn!(%error, "could not read the contacts"),
                 }
             });
         }
@@ -934,28 +564,6 @@ fn install_recipient_suggestions(
         directory.suggest(prefix, SUGGESTION_LIMIT as usize)
     });
 }
-
-/// Every group (with its members) and contact `account` can complete, in
-/// the order they are offered.
-async fn read_directory(
-    connection: &postio_storage::Checkout,
-    account: AccountId,
-) -> postio_storage::Result<Directory> {
-    let groups = ContactGroupRepository::new(connection);
-    let mut named = Vec::new();
-    for group in groups.list(Some(account)).await? {
-        let members = groups.members(group.id).await?;
-        named.push((group.name, members.iter().map(resolved_address).collect()));
-    }
-    let contacts = ContactRepository::new(connection)
-        .search(Some(account), "", DIRECTORY_LIMIT)
-        .await?;
-    Ok(Directory::new(named, contacts))
-}
-
-/// The most contacts a directory holds: the same bound the search
-/// surface's `@` list reads with, for the same reason.
-const DIRECTORY_LIMIT: u32 = 50_000;
 
 /// `e`/`E`/`f` reply to whatever the reading pane is showing.
 ///
@@ -969,101 +577,50 @@ const DIRECTORY_LIMIT: u32 = 50_000;
 /// message", updated by different signals, can only ever be one signal away
 /// from disagreeing; reading `showing` is the version of this that has no
 /// second copy to drift.
-fn install_reply_source(
-    composer: &Composer,
-    database: Store,
-    showing: crate::reading::Showing,
-    runtime: &tokio::runtime::Handle,
-) {
-    let runtime = runtime.clone();
+fn install_reply_source(composer: &Composer, client: Client, showing: crate::reading::Showing) {
     composer.connect_reply_source(move |answer| {
         let Some(id) = showing.get() else {
             tracing::debug!("reply asked for with no message in the reading pane");
             answer(None);
             return;
         };
-        // The message, its body and its account are read on the runtime and
+        // The message, its body and its account are read by the host and
         // the reply opens when they land (#1608): they were read on the GTK
         // thread, two connections and a body decode in front of the composer.
-        let database = database.clone();
-        let (sender, found) = async_channel::bounded(1);
-        runtime.spawn(async move {
-            let _ = sender.send(reply_source(&database, id).await).await;
-        });
+        let client = client.clone();
         glib::spawn_future_local(async move {
-            // POSTIO-GLIB-SAFE: a channel receive; the reads ran on the runtime.
-            answer(found.recv().await.ok().flatten());
+            // POSTIO-GLIB-SAFE: a client call is a oneshot receive; the host
+            // reads on its own runtime.
+            answer(client.reply_source(id).await.ok().flatten());
         });
     });
 }
 
-/// The message `id` with its body, and the account it belongs to.
-async fn reply_source(
-    database: &Store,
-    id: MessageId,
-) -> Option<(postio_model::Message, postio_model::Account)> {
-    let connection = database
-        .read()
-        .await
-        .map_err(|error| tracing::warn!(%error, "could not open a reply source"))
-        .ok()?;
-    let mut message = MessageRepository::new(&connection)
-        .get(id)
-        .await
-        .ok()
-        .flatten()?;
-    message.body = load_body(&connection, id).await;
-    let account = AccountRepository::new(&connection)
-        .get(message.account_id)
-        .await
-        .ok()
-        .flatten()?;
-    Some((message, account))
-}
-
-/// Writes a chosen or dropped file into `blobs` without blocking the
-/// composer on it. The read, the MIME sniff and the write are all blocking
-/// calls, so they run on `runtime`'s blocking pool rather than an async
-/// task — a worker thread costs nothing borrowed from anywhere else, where a
-/// blocking call inside a tokio task would stall whatever else that task's
-/// worker was meant to poll.
-fn install_attach(composer: &Composer, blobs: BlobStore, runtime: tokio::runtime::Handle) {
+/// Stores a chosen or dropped file as an attachment without blocking the
+/// composer on it. The MIME sniff is a blocking `gio` call, so it runs on
+/// `runtime` rather than the main context; the host reads and stores the
+/// bytes on its own blocking pool.
+fn install_attach(composer: &Composer, client: Client, runtime: tokio::runtime::Handle) {
     composer.connect_attach(move |path, then| {
-        let blobs = blobs.clone();
+        let client = client.clone();
         let (sender, receiver) = async_channel::bounded(1);
         runtime.spawn(async move {
-            let attachment = attach_file(&blobs, &path);
-            let _ = sender.send_blocking(attachment);
+            let mime_type = mime_type_of(&path);
+            let attachment = client
+                .attach_as(path, Some(mime_type))
+                .await
+                .unwrap_or_else(|error| {
+                    tracing::warn!(%error, "could not store the attachment");
+                    None
+                });
+            let _ = sender.send(attachment).await;
         });
-        gtk::glib::spawn_future_local(async move {
+        glib::spawn_future_local(async move {
+            // POSTIO-GLIB-SAFE: a channel receive; the sniff and the write
+            // ran off the main context.
             then(receiver.recv().await.ok().flatten());
         });
     });
-}
-
-/// Reads `path`'s size and MIME type and writes its bytes into `blobs`.
-///
-/// Blocking throughout, deliberately — see [`install_attach`], the only
-/// place this is ever called from.
-fn attach_file(blobs: &BlobStore, path: &std::path::Path) -> Option<Attachment> {
-    let size = std::fs::metadata(path).ok()?.len();
-    let mime_type = mime_type_of(path);
-    let file = std::fs::File::open(path)
-        // The path is deliberately not logged: an attachment's name is the
-        // user's, and a log line is a thing people paste into bug reports.
-        .map_err(|error| tracing::warn!(%error, "could not read the file to attach"))
-        .ok()?;
-    let blob_id = blobs
-        .put_reader(file)
-        .map_err(|error| tracing::warn!(%error, "could not store the attachment"))
-        .ok()?;
-
-    let mut attachment = Attachment::new(MessageId::UNASSIGNED, mime_type, size);
-    attachment.filename = path
-        .file_name()
-        .map(|name| name.to_string_lossy().into_owned());
-    attachment.blob_id = Some(blob_id);
-    Some(attachment)
 }
 
 /// A best guess at `path`'s MIME type, from the same shared-mime-info
@@ -1086,8 +643,9 @@ fn mime_type_of(path: &std::path::Path) -> String {
 // `load_body`, `Body`, `load_body_or_reason` and `read_blob_text` moved to
 // `postio_session::reading` (#608): the macOS frontend needs the same six-way
 // answer about why a body is missing, and a second copy of it would reproduce
-// #70's blank column rather than the fix.
-pub(crate) use postio_session::reading::{Body, load_body};
+// #70's blank column rather than the fix. `load_body`'s last reader here was
+// the search preview, which asks the host for it now (`Req::StoredBody`).
+pub(crate) use postio_session::reading::Body;
 
 #[cfg(test)]
 mod tests {
@@ -1114,12 +672,14 @@ mod tests {
     //! has nothing for `tests/` to link against, so this one cannot move out
     //! the way `postio-gtk`'s toast tests did. See issue #41 and
     //! `scripts/checks/check-no-gtk-init-in-unit-tests.py`.
-    use postio_model::EmailAddress;
     use postio_session::reading::load_body_or_reason;
 
     use gtk::gdk;
 
     use super::*;
+    use chrono::Utc;
+    use postio_model::{Draft, EmailAddress};
+    use postio_storage::repository::{AccountRepository, DraftRepository, MessageRepository};
 
     fn settle() {
         while gtk::glib::MainContext::default().iteration(false) {}

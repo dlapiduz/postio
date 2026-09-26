@@ -39,6 +39,7 @@ use std::rc::Rc;
 use gtk::gio;
 use gtk::glib;
 use gtk::prelude::*;
+use postio_client::Client;
 use postio_core::ConnectionState;
 use postio_core::bridge::EventSink;
 use postio_gtk::feed::Feeds;
@@ -46,12 +47,7 @@ use postio_gtk::reader::Absent;
 use postio_gtk::sidebar::SyncStatus;
 use postio_gtk::window::Window;
 use postio_model::address::EmailAddress;
-use postio_model::ids::{AttachmentId, BlobId};
 use postio_model::{Attachment, Message, MessageId};
-use postio_runtime::Engine;
-use postio_storage::Store;
-use postio_storage::blob::BlobStore;
-use postio_storage::repository::MessageRepository;
 
 use crate::Wiring;
 
@@ -85,16 +81,10 @@ pub type Showing = Rc<Cell<Option<MessageId>>>;
 /// Empty when the store holds one account or none — which is what makes the
 /// account line invisible for everybody who has not configured a second one
 /// (#185). Not "hidden by a flag": there is nothing to say.
-async fn accounts_to_name(
-    database: &postio_storage::Store,
-) -> Vec<(postio_model::AccountId, String)> {
-    let Ok(connection) = database.read().await else {
-        return Vec::new();
-    };
-    let accounts = postio_storage::repository::AccountRepository::new(&connection)
-        .list()
-        .await
-        .unwrap_or_default();
+async fn accounts_to_name(client: &Client) -> Vec<(postio_model::AccountId, String)> {
+    // POSTIO-GLIB-SAFE: a client call is a oneshot receive; the host answers
+    // on its own runtime.
+    let accounts = client.accounts().await.unwrap_or_default();
     if accounts.len() < 2 {
         return Vec::new();
     }
@@ -104,11 +94,39 @@ async fn accounts_to_name(
         .collect()
 }
 
-pub async fn install(window: &Window, wiring: &Wiring, feeds: &Feeds, showing: Showing) {
+pub async fn install(
+    window: &Window,
+    wiring: &Wiring,
+    client: Client,
+    feeds: &Feeds,
+    showing: Showing,
+) {
+    install_for(
+        window,
+        wiring.runtime.clone(),
+        wiring.events.clone(),
+        client,
+        feeds,
+        showing,
+    )
+    .await;
+}
+
+/// [`install`], for a window whose store's owner may be another process:
+/// `runtime` is where this pane's own work is awaited, off the main loop,
+/// and `events` where it says what went wrong.
+pub async fn install_for(
+    window: &Window,
+    runtime: tokio::runtime::Handle,
+    events: postio_core::bridge::EventSink,
+    client: Client,
+    feeds: &Feeds,
+    showing: Showing,
+) {
     // See `accounts_to_name`: empty in the single-account case, which is the
     // common one, and then this costs a length check per message.
     let named_accounts: Rc<Vec<(postio_model::AccountId, String)>> =
-        Rc::new(accounts_to_name(&wiring.database).await);
+        Rc::new(accounts_to_name(&client).await);
     // `showing` is what the pane is showing, or is waiting to show. Set the
     // instant the cursor reaches a row rather than when the body lands, so a
     // body that arrives late can tell it is late. `compose.rs` reads the
@@ -145,38 +163,26 @@ pub async fn install(window: &Window, wiring: &Wiring, feeds: &Feeds, showing: S
         }
     ));
 
-    // #971: the banner only asks — logging the activation means SQLite,
-    // which `postio-gtk` may not touch. `showing` is read at click time
-    // rather than captured with the message, because the two can only ever
-    // agree: the banner names whichever message is currently on screen.
+    // #971: the banner only asks — logging the activation is the store's
+    // owner's, which `postio-gtk` may not reach. `showing` is read at click
+    // time rather than captured with the message, because the two can only
+    // ever agree: the banner names whichever message is currently on screen.
+    // The host names the list by the banner's own rule (`List-Id`, else the
+    // sender's domain), so the banner's words are not sent back.
     window.reader().connect_unsubscribe_activated({
-        let database = wiring.database.clone();
-        let runtime = wiring.runtime.clone();
+        let client = client.clone();
+        let runtime = runtime.clone();
         let showing = showing.clone();
-        move |list_identifier| {
-            postio_session::blocking::now(async {
-                let Some(message) = showing.get() else {
-                    return;
-                };
-                let list_identifier = list_identifier.to_owned();
-                let _ = crate::search::ask(&database, &runtime, move |connection| async move {
-                    let account_id = MessageRepository::new(&connection)
-                        .get(message)
-                        .await
-                        .ok()
-                        .flatten()?
-                        .account_id;
-                    let mut activation = postio_model::UnsubscribeActivation::new(
-                        account_id,
-                        list_identifier,
-                        chrono::Utc::now(),
-                    );
-                    postio_storage::repository::UnsubscribeRepository::new(&connection)
-                        .record(&mut activation)
-                        .await
-                        .ok()
-                });
-            })
+        move |_list_identifier| {
+            let Some(message) = showing.get() else {
+                return;
+            };
+            let client = client.clone();
+            runtime.spawn(async move {
+                if let Err(error) = client.unsubscribe(message).await {
+                    tracing::warn!(%error, "could not record an unsubscribe");
+                }
+            });
         }
     });
 
@@ -185,50 +191,49 @@ pub async fn install(window: &Window, wiring: &Wiring, feeds: &Feeds, showing: S
             let showing = showing.clone();
             move || showing.get()
         },
-        wiring.database.clone(),
-        wiring.blobs.clone(),
+        client.clone(),
     ));
 
     // `s` in the parts panel. The panel has already run the portal dialog and
     // chosen the file; everything left is bytes, which is this crate's half.
     window.parts().connect_save(glib::clone!(
-        #[weak]
-        window,
         #[strong]
         showing,
-        #[strong(rename_to = database)]
-        wiring.database,
-        #[strong(rename_to = blobs)]
-        wiring.blobs,
-        #[strong(rename_to = events)]
-        wiring.events,
-        #[strong(rename_to = engine)]
-        wiring.engine,
-        #[strong(rename_to = runtime)]
-        wiring.runtime,
+        #[strong]
+        client,
+        #[strong]
+        events,
+        #[strong]
+        runtime,
         move |node, file| {
             let (Some(attachment), Some(message)) = (node.attachment, showing.get()) else {
                 return;
             };
-            let (database, blobs, file) = (database.clone(), blobs.clone(), file.clone());
-            let (events, engine) = (events.clone(), engine.get().cloned());
-            let runtime = runtime.clone();
-            let _ = &window;
+            // The host writes the bytes, so the place has to be one it can
+            // name; the portal hands back a local path for every choice.
+            let Some(to) = file.path() else {
+                events.emit(postio_core::Event::Error {
+                    message: "Could not save that part: that place is not a file on this \
+                              computer."
+                        .to_owned(),
+                });
+                return;
+            };
+            let (client, events, runtime) = (client.clone(), events.clone(), runtime.clone());
             glib::spawn_future_local(async move {
-                // `part_bytes` is runtime work, not main-context work: it may
-                // ask the engine for a body that has not been downloaded and
-                // then wait for it on a `tokio::time::sleep`. Awaiting that
-                // here panicked with "there is no reactor running" -- the same
-                // fault as postio-66, on the path that saves an attachment
-                // whose message body is not local yet. So it goes over to the
-                // runtime and answers on a channel, like every other crossing.
+                // Runtime work, not main-context work: a part that has not
+                // been downloaded is fetched and waited for on a
+                // `tokio::time::sleep`, which panicked here with "there is no
+                // reactor running" -- the same fault as postio-66. So it goes
+                // over to the runtime and answers on a channel, like every
+                // other crossing.
                 let (sender, receiver) = async_channel::bounded(1);
                 runtime.spawn(async move {
-                    let bytes = part_bytes(&database, &blobs, engine, message, attachment).await;
-                    let _ = sender.send(bytes).await;
+                    let saved = client.save_part(message, attachment, to).await;
+                    let _ = sender.send(saved.map_err(|error| error.to_string())).await;
                 });
                 let outcome = match receiver.recv().await {
-                    Ok(Ok(bytes)) => write_part(&file, &bytes),
+                    Ok(Ok(_)) => Ok(()),
                     Ok(Err(reason)) => Err(reason),
                     Err(_) => Err("Postio's runtime stopped before that part arrived.".to_owned()),
                 };
@@ -242,10 +247,9 @@ pub async fn install(window: &Window, wiring: &Wiring, feeds: &Feeds, showing: S
     ));
 
     let opener = Rc::new(PartOpener {
-        database: wiring.database.clone(),
-        blobs: wiring.blobs.clone(),
-        events: wiring.events.clone(),
-        runtime: wiring.runtime.clone(),
+        client: client.clone(),
+        events: events.clone(),
+        runtime: runtime.clone(),
     });
 
     // `Ret` in the parts panel. `parts::previewable` says images and PDFs are
@@ -259,17 +263,9 @@ pub async fn install(window: &Window, wiring: &Wiring, feeds: &Feeds, showing: S
         showing,
         #[strong]
         opener,
-        #[strong(rename_to = engine)]
-        wiring.engine,
         move |node| {
             let always_ask = !postio_gtk::parts::previewable(&node.mime);
-            opener.open_externally(
-                &window,
-                showing.get(),
-                engine.get().cloned(),
-                node,
-                always_ask,
-            );
+            opener.open_externally(&window, showing.get(), node, always_ask);
         }
     ));
 
@@ -283,10 +279,8 @@ pub async fn install(window: &Window, wiring: &Wiring, feeds: &Feeds, showing: S
         showing,
         #[strong]
         opener,
-        #[strong(rename_to = engine)]
-        wiring.engine,
         move |node| {
-            opener.open_externally(&window, showing.get(), engine.get().cloned(), node, true);
+            opener.open_externally(&window, showing.get(), node, true);
         }
     ));
 
@@ -298,16 +292,12 @@ pub async fn install(window: &Window, wiring: &Wiring, feeds: &Feeds, showing: S
         window,
         #[strong]
         showing,
-        #[strong(rename_to = database)]
-        wiring.database,
-        #[strong(rename_to = blobs)]
-        wiring.blobs,
-        #[strong(rename_to = events)]
-        wiring.events,
-        #[strong(rename_to = engine)]
-        wiring.engine,
-        #[strong(rename_to = runtime)]
-        wiring.runtime,
+        #[strong]
+        client,
+        #[strong]
+        events,
+        #[strong]
+        runtime,
         move |folder| {
             let (Some(message), Some(into)) = (showing.get(), folder.path()) else {
                 return;
@@ -319,22 +309,18 @@ pub async fn install(window: &Window, wiring: &Wiring, feeds: &Feeds, showing: S
                 .filter(postio_gtk::parts::Node::is_leaf)
                 .collect();
             let leaves_len = leaves.len();
-            let (database, blobs) = (database.clone(), blobs.clone());
-            let (events, engine) = (events.clone(), engine.get().cloned());
-            let runtime = runtime.clone();
+            let (client, events, runtime) = (client.clone(), events.clone(), runtime.clone());
             glib::spawn_future_local(async move {
-                // `save_all_parts` is runtime work for the same reason
-                // `part_bytes` is: a part not yet downloaded waits on
+                // `save_all_parts` is runtime work for the same reason a
+                // single save is: a part not yet downloaded waits on
                 // `tokio::time::sleep`, which panics off the runtime.
                 let (sender, receiver) = async_channel::bounded(1);
-                let task_runtime = runtime.clone();
-                task_runtime.spawn(async move {
-                    let failed =
-                        save_all_parts(&database, &blobs, engine, &into, message, &leaves).await;
+                runtime.spawn(async move {
+                    let failed = save_all_parts(&client, &into, message, &leaves).await;
                     let _ = sender.send(failed).await;
                 });
                 // Every part failed is the safe fallback if the runtime
-                // vanished mid-batch -- see `write_part`'s analogous case.
+                // vanished mid-batch.
                 let failed = receiver.recv().await.unwrap_or(leaves_len);
                 if failed > 0 {
                     // One toast for the whole batch rather than one per part:
@@ -356,26 +342,20 @@ pub async fn install(window: &Window, wiring: &Wiring, feeds: &Feeds, showing: S
     // the only one that knows which message it belongs to.
     window.parts().connect_export({
         let showing = showing.clone();
-        let database = wiring.database.clone();
-        let blobs = wiring.blobs.clone();
-        let engine = wiring.engine.clone();
-        let runtime = wiring.runtime.clone();
+        let client = client.clone();
+        let runtime = runtime.clone();
         std::rc::Rc::new(move |node: postio_gtk::parts::Node| {
-            let (database, blobs) = (database.clone(), blobs.clone());
-            let (engine, runtime) = (engine.get().cloned(), runtime.clone());
+            let (client, runtime) = (client.clone(), runtime.clone());
             let message = showing.get();
             Box::pin(async move {
                 let message = message.ok_or("There is no message open to take a part from")?;
                 let into = crate::paths::export_dir();
-                // On the runtime: this reads SQLite, may wait on a fetch, and
-                // writes a file. None of that belongs on the UI thread, and
-                // the drop is already asynchronous to GTK.
+                // On the runtime: this may wait on a fetch and writes a file.
+                // None of that belongs on the UI thread, and the drop is
+                // already asynchronous to GTK.
                 let (send, receive) = async_channel::bounded(1);
                 runtime.spawn(async move {
-                    let outcome = crate::export::export_part(
-                        &database, &blobs, engine, &into, message, &node,
-                    )
-                    .await;
+                    let outcome = crate::export::export_part(&client, &into, message, &node).await;
                     let _ = send.send(outcome).await;
                 });
                 let path = receive
@@ -387,8 +367,7 @@ pub async fn install(window: &Window, wiring: &Wiring, feeds: &Feeds, showing: S
         })
     });
 
-    let database = wiring.database.clone();
-    let runtime = wiring.runtime.clone();
+    let runtime = runtime.clone();
     // One filler, two ways in.
     //
     // The cursor is the one that matters: `j` and `k` are how a mailbox is
@@ -405,7 +384,7 @@ pub async fn install(window: &Window, wiring: &Wiring, feeds: &Feeds, showing: S
     // nothing else.
     let showing_for_conversation = showing.clone();
     let parts = Rc::new(Fill {
-        database,
+        client,
         runtime,
         showing,
         opened,
@@ -413,7 +392,6 @@ pub async fn install(window: &Window, wiring: &Wiring, feeds: &Feeds, showing: S
         offline: Rc::new(Cell::new(is_offline(&feeds.folders.status()))),
         queued: Cell::new(false),
         aimed: Cell::new(None),
-        engine: wiring.engine.clone(),
         ahead: RefCell::new(None),
         paints: Rc::new(Cell::new(0)),
     });
@@ -628,25 +606,21 @@ fn is_offline(status: &SyncStatus) -> bool {
 /// the [`Fill`] it came from — see [`Fill::fetcher`].
 #[derive(Clone)]
 struct BodyFetcher {
-    engine: postio_session::refresh::EngineSlot,
-    runtime: tokio::runtime::Handle,
+    client: Client,
 }
 
 impl BodyFetcher {
-    /// Ask the engine for `message`'s body if `loaded` says it is not here.
+    /// Ask the store's owner to fetch `message`'s body if `loaded` says it
+    /// is not here.
     ///
     /// [`Absent::Partial`] is "headers synced, body not fetched"; the
     /// backfill reaches it eventually, and this is what makes opening it now
-    /// jump the queue. Nothing to do without an engine — a window over a
-    /// store nobody is syncing — or for any other absence, which no fetch
-    /// would change.
+    /// jump the queue. The engines are the host's, so the ask is a posted
+    /// request: nothing here waits on it, and a store nobody is syncing
+    /// simply fetches nothing. Any other absence no fetch would change.
     fn request_if_partial(&self, message: MessageId, loaded: &Loaded) {
-        if let crate::compose::Body::Absent(Absent::Partial) = &loaded.body
-            && let Some(engine) = self.engine.get().cloned()
-        {
-            self.runtime.spawn(async move {
-                let _ = engine.request_body(message).await;
-            });
+        if let crate::compose::Body::Absent(Absent::Partial) = &loaded.body {
+            self.client.fetch_body(message);
         }
     }
 }
@@ -761,7 +735,8 @@ pub fn thread_crossings() -> u64 {
 /// Everything filling the reading pane needs, so the cursor and activation
 /// can share one implementation rather than two that drift.
 struct Fill {
-    database: Store,
+    /// The store's owner, which every read here goes through (ADR 0041).
+    client: Client,
     runtime: tokio::runtime::Handle,
     /// What the pane is showing, or is waiting to show.
     showing: Showing,
@@ -789,18 +764,6 @@ struct Fill {
     /// change it still names a message this pane is no longer displaying.
     /// Either of those would make it the wrong thing to skip on.
     aimed: Cell<Option<MessageId>>,
-    /// The engine, so showing a message whose body is not here yet is what
-    /// fetches it.
-    ///
-    /// The backfill reaches every body eventually, but "eventually" is a
-    /// queue tens of thousands of messages long on a first sync — so opening
-    /// one has to jump it to the front rather than wait its turn.
-    /// [`Absent::Partial`] is precisely "headers synced, body not fetched",
-    /// and its own doc says a `request_body` is what leaves that state; this
-    /// is the caller that keeps that promise. A slot rather than an `Engine`,
-    /// because the pane is built before an account's engine is adopted
-    /// (`adopt_engine`), and reads empty until it is.
-    engine: postio_session::refresh::EngineSlot,
     /// The conversation after the one on screen, read and rendered before
     /// anybody opened it -- see [`Fill::prepare_next`].
     ahead: RefCell<Option<Ahead>>,
@@ -822,7 +785,7 @@ struct Ahead {
 /// The most messages of a neighbouring conversation prepared ahead: the
 /// conversation pane's own first read, so a long thread is not read whole
 /// for a keystroke that may never come.
-const AHEAD_MESSAGES: usize = 50;
+const AHEAD_MESSAGES: u32 = 50;
 
 impl Fill {
     /// Render one message into a reader of its own, for the conversation
@@ -887,11 +850,18 @@ impl Fill {
         allow: Option<(RemoteImageAllowList, Pane)>,
     ) -> async_channel::Receiver<Option<Loaded>> {
         let offline = self.offline.get();
-        let answer = crate::search::ask(
-            &self.database,
-            &self.runtime,
-            move |connection| async move { Some(load(&connection, message, offline).await) },
-        );
+        let client = self.client.clone();
+        let (sender, answer) = async_channel::bounded(1);
+        self.runtime.spawn(async move {
+            let loaded = match client.readings(vec![message], offline).await {
+                Ok(mut readings) => readings.pop().map(Loaded::from),
+                Err(error) => {
+                    tracing::warn!(%error, "could not read a message for the reading pane");
+                    None
+                }
+            };
+            let _ = sender.send(loaded).await;
+        });
         match allow {
             Some((allow, pane)) => {
                 crate::search::then_off_thread(&self.runtime, answer, move |loaded| {
@@ -906,13 +876,12 @@ impl Fill {
         }
     }
 
-    /// Read every one of `messages` on one reader turn, handing each back as
-    /// it is loaded (#1609).
+    /// Read every one of `messages` in one call, handing each back in turn
+    /// (#1609).
     ///
-    /// One crossing to the runtime for a whole conversation, where a crossing
-    /// per message was a runtime task, a store turn and a main-context
-    /// wake-up each. Streamed rather than collected, so the first message
-    /// paints without waiting for the thirtieth.
+    /// One crossing to the runtime, and one call to the store's owner, for a
+    /// whole conversation, where a crossing per message was a runtime task, a
+    /// store turn and a main-context wake-up each.
     ///
     /// With `allow`, each body is also judged and sanitised on the blocking
     /// pool as it comes off the reader, in order, and handed back prepared
@@ -951,19 +920,19 @@ impl Fill {
             }
             None => sender,
         };
-        let database = self.database.clone();
+        let client = self.client.clone();
         self.runtime.spawn(async move {
-            let reader = match database.read().await {
-                Ok(reader) => reader,
+            let readings = match client.readings(messages, offline).await {
+                Ok(readings) => readings,
                 Err(error) => {
-                    tracing::warn!(%error, "no connection to read a conversation with");
+                    tracing::warn!(%error, "could not read a conversation");
                     return;
                 }
             };
-            for message in messages {
-                let loaded = load(&reader, message, offline).await;
-                if sender.send((message, loaded)).await.is_err() {
-                    // Nobody is listening: the pane moved on. Stop reading.
+            for reading in readings {
+                let message = reading.message;
+                if sender.send((message, Loaded::from(reading))).await.is_err() {
+                    // Nobody is listening: the pane moved on.
                     return;
                 }
             }
@@ -998,8 +967,7 @@ impl Fill {
     /// See [`BodyFetcher`].
     fn fetcher(&self) -> BodyFetcher {
         BodyFetcher {
-            engine: self.engine.clone(),
-            runtime: self.runtime.clone(),
+            client: self.client.clone(),
         }
     }
 
@@ -1039,28 +1007,20 @@ impl Fill {
             return;
         }
         let offline = self.offline.get();
-        let database = self.database.clone();
+        let client = self.client.clone();
         let (sender, receiver) = async_channel::bounded(1);
         self.runtime.spawn(async move {
-            let loaded = {
-                let Ok(reader) = database.read().await else {
-                    return;
-                };
-                let Ok(members) = postio_storage::repository::ThreadRepository::new(&reader)
-                    .member_ids(thread)
-                    .await
-                else {
-                    return;
-                };
-                let mut loaded = Vec::new();
-                for id in members.into_iter().take(AHEAD_MESSAGES) {
-                    let answer = load(&reader, id, offline).await;
-                    if matches!(answer.body, crate::compose::Body::Ready { .. }) {
-                        loaded.push((id, answer));
-                    }
-                }
-                loaded
+            let Ok(readings) = client
+                .thread_readings(thread, AHEAD_MESSAGES, offline)
+                .await
+            else {
+                return;
             };
+            let loaded: Vec<(MessageId, Loaded)> = readings
+                .into_iter()
+                .map(|reading| (reading.message, Loaded::from(reading)))
+                .filter(|(_, answer)| matches!(answer.body, crate::compose::Body::Ready { .. }))
+                .collect();
             let ahead = tokio::task::spawn_blocking(move || {
                 let prepared = loaded
                     .iter()
@@ -1455,46 +1415,53 @@ impl Fill {
     }
 }
 
-/// Everything a pane needs to draw one message, read on one connection.
-///
-/// The parts are metadata the sync already stored -- `BODYSTRUCTURE`, not
-/// bytes -- so asking for them costs a row read and never a fetch.
-async fn load(connection: &postio_storage::Checkout, message: MessageId, offline: bool) -> Loaded {
-    // The row the body was decided from, rather than a second read of it.
-    // A draft this machine owns is answered from its buffer without reading
-    // the row, so for that one the row is still read here.
-    let (body, fetched) =
-        postio_session::reading::load_with_row(connection, message, offline).await;
-    let fetched = match fetched {
-        Some(row) => Some(row),
-        None => MessageRepository::new(connection)
-            .get(message)
-            .await
-            .ok()
-            .flatten(),
-    };
-    let (content_type, parts) = fetched
-        .as_ref()
-        .map(|message| (message.content_type.clone(), message.attachments.clone()))
-        .unwrap_or_default();
-    let sender = fetched
-        .as_ref()
-        .and_then(|message| message.from.first().map(|from| from.address.clone()));
-    let list_identifier = fetched.as_ref().and_then(list_identifier);
-    let send_state = MessageRepository::new(connection)
-        .send_state(message)
-        .await
-        .unwrap_or_default();
-    let envelope = fetched.map(Envelope::from);
-    Loaded {
-        body,
-        content_type,
-        parts,
-        envelope,
-        sender,
-        send_state,
-        list_identifier,
-        prepared: None,
+/// A body as the store's owner said it, in the reader's own words.
+fn body_from(body: postio_client::protocol::Body) -> crate::compose::Body {
+    use postio_client::protocol::Body as Wire;
+    match body {
+        Wire::Ready {
+            body,
+            encoding_problems,
+        } => crate::compose::Body::Ready {
+            body,
+            encoding_problems,
+        },
+        Wire::Partial => crate::compose::Body::Absent(Absent::Partial),
+        Wire::Offline => crate::compose::Body::Absent(Absent::Offline),
+        Wire::Missing => crate::compose::Body::Absent(Absent::Missing),
+        Wire::Empty => crate::compose::Body::Absent(Absent::Empty),
+        Wire::ForeignDraft => crate::compose::Body::Absent(Absent::ForeignDraft),
+    }
+}
+
+impl From<postio_client::protocol::Reading> for Loaded {
+    /// What the pane draws, from what the store's owner read. The parts are
+    /// metadata the sync already stored -- `BODYSTRUCTURE`, not bytes.
+    fn from(reading: postio_client::protocol::Reading) -> Self {
+        let mut row = reading.row.map(|row| *row);
+        let sender = row
+            .as_ref()
+            .and_then(|message| message.from.first().map(|from| from.address.clone()));
+        let list_identifier = row.as_ref().and_then(list_identifier);
+        let (content_type, parts) = row
+            .as_mut()
+            .map(|message| {
+                (
+                    message.content_type.take(),
+                    std::mem::take(&mut message.attachments),
+                )
+            })
+            .unwrap_or_default();
+        Loaded {
+            body: body_from(reading.body),
+            content_type,
+            parts,
+            envelope: row.map(Envelope::from),
+            sender,
+            send_state: reading.send_state,
+            list_identifier,
+            prepared: None,
+        }
     }
 }
 
@@ -1754,8 +1721,8 @@ fn document_signature(body: &crate::compose::Body, sender: Option<&str>, offline
 }
 
 /// The header fields the reading pane needs (#319), pulled out of a full
-/// [`Message`] row so `Fill::fill`'s database closure hands only what the
-/// GTK side needs across the channel, not the whole row.
+/// [`Message`] row so what [`Loaded`] keeps is only what the GTK side draws,
+/// not the whole row.
 struct Envelope {
     /// Which account it arrived in. Read here rather than looked up later
     /// because the message row is already in hand and the reading pane is
@@ -1818,143 +1785,11 @@ fn root_type(
     }
 }
 
-/// How long a save waits for a body it had to ask for.
-///
-/// Long enough for a slow server on a bad link, short enough that a save that
-/// is never going to work says so while the user is still looking at it.
-const BODY_WAIT: std::time::Duration = std::time::Duration::from_secs(30);
-
-/// Where one part's bytes are, when they are on this machine at all.
-enum PartSource {
-    /// The part's own blob — what ADR 0017's payload axis writes into
-    /// `attachments.blob_id` when somebody opens an attachment.
-    Payload(BlobId),
-    /// The whole raw message, from which the part is cut.
-    ///
-    /// Two rows still land here: one fetched before the payload axis existed,
-    /// and one whose `BODYSTRUCTURE` was never recorded, so no section could
-    /// be named and every byte was the only answer.
-    Raw(BlobId),
-}
-
-/// One part's bytes, fetched first if they are not on this machine yet.
-///
-/// # Why this is the seam rather than the save handler
-///
-/// `PartsPanel::save_part` runs the portal dialog itself and hands back the
-/// file the user chose, so the only part worth testing is what happens next —
-/// and that half is nothing to do with GTK. Keeping it here, taking store
-/// handles and returning bytes, makes "saves a part that was never
-/// downloaded, fetching it first" an ordinary async test over a mock server
-/// instead of something that needs a display and a file chooser.
-///
-/// # Where a received part's bytes are
-///
-/// In `Attachment::blob_id`, once somebody has opened it. That column was
-/// filled only on the way *out* for the whole life of this project — a
-/// composer attaching a file — and the receive path stored the whole raw
-/// message instead, so a part had to be cut back out of it with `mime::parse`
-/// on every open. ADR 0017 ended that: the text axis stores no raw source at
-/// all, and the payload axis fetches `BODY.PEEK[<part_id>]` on demand.
-///
-/// So the fetch to wait for is the *part's*, and asking twice costs nothing:
-/// the second open reads the blob and never reaches the network.
-///
-/// Returns `Err` rather than an empty file when the bytes cannot be had. A
-/// zero-byte attachment on disk looks like a saved file and is not one.
-pub(crate) async fn part_bytes(
-    database: &Store,
-    blobs: &BlobStore,
-    engine: Option<Engine>,
-    message: MessageId,
-    attachment: AttachmentId,
-) -> Result<Vec<u8>, String> {
-    // Resolved once, before anything is fetched, and deliberately.
-    //
-    // A whole-message fetch REPLACES the message's attachment rows -- the
-    // parser re-reads the structure and `MessageRepository::update` writes the
-    // new set -- so the `AttachmentId` the panel is holding does not survive
-    // it. The MIME path does: `2` is `2` in every parse of the same bytes. So
-    // the id is turned into a path here, while it still means something, and
-    // the path is what is used on the far side.
-    let part_id = part_path(database, message, attachment)
-        .await?
-        .ok_or("That part has no place in the message to read it from")?;
-
-    let source = match locate_part(database, message, &part_id).await? {
-        Some(source) => source,
-        // Never downloaded. This is the one place in the reading pane allowed
-        // to reach the network, and only because the user asked for these
-        // bytes by name.
-        None => {
-            let engine =
-                engine.ok_or("This account is not syncing, so that part cannot be fetched")?;
-            // `request_payloads` puts the section at the front of the backfill
-            // and returns as soon as it is queued -- `true` means "there was
-            // something to fetch", not "here it is". The bytes land when the
-            // engine's own loop claims the job, so the wait is ours.
-            if engine
-                .request_payloads(message, vec![part_id.clone()])
-                .await
-                .map_err(|error| error.message().to_string())?
-            {
-                wait_for_part(database, message, &part_id).await?
-            } else {
-                // "Nothing to fetch" has two readings, and the queue cannot
-                // tell them apart: there is truly nothing (the message is
-                // gone, or AttachmentPolicy::Never), or the background lane
-                // fetched this very message between the look above and the
-                // queue's answer -- ADR 0016 backfills every mailbox, so
-                // both lanes chase the same messages, and the open that
-                // races the backfill is an ordinary open, not a corner
-                // (#109, four observed failures; a5735a3 is the same race
-                // in the runtime's own test). One re-read settles it: a
-                // committed write that made the answer `false` is visible
-                // to this read, so no wait is needed -- absent here means
-                // absent, and the sentence below is then the truth.
-                locate_part(database, message, &part_id)
-                    .await?
-                    .ok_or("There is nothing to fetch for that part")?
-            }
-        }
-    };
-
-    match source {
-        PartSource::Payload(blob) => blobs.get(&blob).map_err(|error| error.to_string()),
-        PartSource::Raw(blob) => {
-            let bytes = blobs.get(&blob).map_err(|error| error.to_string())?;
-            postio_model::mime::parse(&bytes)
-                .parts
-                .into_iter()
-                .find(|part| part.attachment.part_id.as_deref() == Some(part_id.as_str()))
-                .map(|part| part.content)
-                .ok_or_else(|| "That part is not in the message the server sent".into())
-        }
-    }
-}
-
-/// Put one part's bytes where the user asked for them.
-///
-/// Replaces rather than appends: the dialog already asked about overwriting,
-/// and a save that appended to an existing file would corrupt it silently.
-fn write_part(file: &gio::File, bytes: &[u8]) -> Result<(), String> {
-    file.replace_contents(
-        bytes,
-        None,
-        false,
-        gio::FileCreateFlags::REPLACE_DESTINATION,
-        gio::Cancellable::NONE,
-    )
-    .map(|_| ())
-    .map_err(|error| format!("Could not save that part: {error}"))
-}
-
 /// What opening or "Open with…"-ing a part needs, bundled so the seam that
 /// actually varies between the two -- `always_ask` -- does not have to travel
 /// beside four things that never change per call.
 struct PartOpener {
-    database: Store,
-    blobs: BlobStore,
+    client: Client,
     events: EventSink,
     runtime: tokio::runtime::Handle,
 }
@@ -1977,25 +1812,21 @@ impl PartOpener {
         &self,
         window: &Window,
         message: Option<MessageId>,
-        engine: Option<Engine>,
         node: &postio_gtk::parts::Node,
         always_ask: bool,
     ) {
         let Some(message) = message else { return };
         let into = crate::paths::export_dir();
         let (window, node) = (window.clone(), node.clone());
-        let (database, blobs, events, runtime) = (
-            self.database.clone(),
-            self.blobs.clone(),
+        let (client, events, runtime) = (
+            self.client.clone(),
             self.events.clone(),
             self.runtime.clone(),
         );
         glib::spawn_future_local(async move {
             let (sender, receiver) = async_channel::bounded(1);
             runtime.spawn(async move {
-                let outcome =
-                    crate::export::export_part(&database, &blobs, engine, &into, message, &node)
-                        .await;
+                let outcome = crate::export::export_part(&client, &into, message, &node).await;
                 let _ = sender.send(outcome).await;
             });
             let outcome = match receiver.recv().await {
@@ -2016,28 +1847,49 @@ impl PartOpener {
 /// not local yet, and say how many could not be saved.
 ///
 /// A count rather than which ones: `S` can easily name a dozen parts, and one
-/// toast per failure would be worse than the save. Runtime work, not
-/// main-context work, for the reason [`part_bytes`]'s own doc comment gives:
-/// a part not yet downloaded waits on `tokio::time::sleep`, which panics off
-/// the runtime.
+/// toast per failure would be worse than the save. One call to the store's
+/// owner for the whole batch; a node with no bytes of its own -- a container
+/// -- is counted here without asking. Runtime work, not main-context work: a
+/// part not yet downloaded is waited for on `tokio::time::sleep`, which
+/// panics off the runtime.
 pub(crate) async fn save_all_parts(
-    database: &Store,
-    blobs: &BlobStore,
-    engine: Option<Engine>,
+    client: &Client,
     into: &std::path::Path,
     message: MessageId,
     nodes: &[postio_gtk::parts::Node],
 ) -> usize {
-    let mut failed = 0;
-    for node in nodes {
-        if crate::export::export_part(database, blobs, engine.clone(), into, message, node)
-            .await
-            .is_err()
-        {
-            failed += 1;
+    let (targets, refused) = part_targets(into, nodes);
+    if targets.is_empty() {
+        return refused;
+    }
+    let asked = targets.len();
+    match client.save_parts(message, targets).await {
+        Ok(failed) => refused + failed,
+        Err(error) => {
+            tracing::warn!(%error, "could not save a message's parts");
+            refused + asked
         }
     }
-    failed
+}
+
+/// Where each of `nodes` is saved under `into`, and how many have no bytes
+/// of their own to save.
+fn part_targets(
+    into: &std::path::Path,
+    nodes: &[postio_gtk::parts::Node],
+) -> (
+    Vec<(postio_model::ids::AttachmentId, std::path::PathBuf)>,
+    usize,
+) {
+    let mut targets = Vec::new();
+    let mut refused = 0;
+    for node in nodes {
+        match crate::export::part_target(into, node) {
+            Ok(target) => targets.push(target),
+            Err(_) => refused += 1,
+        }
+    }
+    (targets, refused)
 }
 
 /// Hand `path` to the desktop's own opener.
@@ -2060,131 +1912,39 @@ fn launch(window: &Window, path: &std::path::Path, always_ask: bool) {
     });
 }
 
-/// Wait for a queued body to land, or give up saying so.
+// Finding a part's bytes, fetching them if they were never downloaded, and
+// waiting for them to land moved to `postio_host::parts`: the store's owner
+// does it for every frontend (specs/005-tui-frontend T046), and this pane asks
+// it through the client (T018). Re-exported under the names this crate's
+// tests always used.
+#[cfg(test)]
+pub(crate) use postio_host::parts::{part_bytes, read_message, wait_for_body};
+
+/// Resolve a `cid:` reference against the message on screen, through the
+/// store's owner.
 ///
-/// Polling rather than listening: the engine announces arrivals on the event
-/// stream, but that stream has exactly one reader — the window — and a second
-/// consumer here would be a second place deciding what an event means. A save
-/// the user is waiting on can afford to look.
+/// What a `Content-ID` may resolve to is a security property every frontend
+/// has to agree on (#608), so the host answers it with the one resolution in
+/// `postio_session::reading`: scoped to `showing`'s message, never fetched.
 ///
-/// The deadline is what turns a server that never answers into a sentence
-/// rather than a spinner that never stops.
-pub(crate) async fn wait_for_body(database: &Store, message: MessageId) -> Result<BlobId, String> {
-    let deadline = std::time::Instant::now() + BODY_WAIT;
-    loop {
-        // A read that fails here is usually the writer we are waiting for
-        // holding the table, so contention is a reason to look again rather
-        // than to give up. Only the deadline ends this.
-        match raw_blob(database, message).await {
-            Ok(Some(raw)) => return Ok(raw),
-            Ok(None) => {}
-            Err(error) if std::time::Instant::now() >= deadline => return Err(error),
-            Err(_) => {}
-        }
-        if std::time::Instant::now() >= deadline {
-            return Err("That part did not arrive in time — it is still \
-                        downloading, so try again in a moment"
-                .into());
-        }
-        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
-    }
-}
-
-/// Wait for a queued part to land, or give up saying so.
+/// # Why this blocks
 ///
-/// [`wait_for_body`]'s sibling, and the same polling for the same reason. It
-/// watches for either shape the bytes can arrive in: the part's own blob,
-/// which is what a payload fetch writes, and the raw message, which is what
-/// the whole-message fallback writes for a row whose section could not be
-/// named.
-async fn wait_for_part(
-    database: &Store,
-    message: MessageId,
-    part_id: &str,
-) -> Result<PartSource, String> {
-    let deadline = std::time::Instant::now() + BODY_WAIT;
-    loop {
-        // A read that fails here is usually the writer we are waiting for
-        // holding the table, so contention is a reason to look again rather
-        // than to give up. Only the deadline ends this.
-        match locate_part(database, message, part_id).await {
-            Ok(Some(source)) => return Ok(source),
-            Ok(None) => {}
-            Err(error) if std::time::Instant::now() >= deadline => return Err(error),
-            Err(_) => {}
-        }
-        if std::time::Instant::now() >= deadline {
-            return Err("That part did not arrive in time — it is still \
-                        downloading, so try again in a moment"
-                .into());
-        }
-        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
-    }
+/// [`BlobSource::resolve`](postio_gtk::reader::BlobSource) is synchronous,
+/// because WebKit calls it while laying out a document: the `cid:` URI has to
+/// resolve to bytes before the image can be placed, and there is nothing to
+/// hand a future to. It was a blocking store read before; it is a blocking
+/// call to the host now, the same indexed read on the host's runtime.
+pub(crate) fn cid_source(
+    showing: impl Fn() -> Option<MessageId> + 'static,
+    client: Client,
+) -> Rc<dyn postio_ui::reader::parts::BlobSource> {
+    Rc::new(move |content_id: &str| {
+        let message = showing()?;
+        postio_session::blocking::now(client.inline_part(message, content_id.to_owned()))
+            .ok()
+            .flatten()
+    })
 }
-
-/// The MIME path of one attachment row, while the row id still means
-/// something.
-async fn part_path(
-    database: &Store,
-    message: MessageId,
-    attachment: AttachmentId,
-) -> Result<Option<String>, String> {
-    Ok(read_message(database, message)
-        .await?
-        .attachments
-        .iter()
-        .find(|part| part.id == attachment)
-        .and_then(|part| part.part_id.clone()))
-}
-
-/// Whether `part_id`'s bytes are on this machine, and in which shape.
-///
-/// The part's own blob first: it is the exact bytes, and reading it costs a
-/// file open where the raw message costs a parse of the whole thing.
-async fn locate_part(
-    database: &Store,
-    message: MessageId,
-    part_id: &str,
-) -> Result<Option<PartSource>, String> {
-    let row = read_message(database, message).await?;
-    if let Some(blob) = row
-        .attachments
-        .iter()
-        .find(|part| part.part_id.as_deref() == Some(part_id))
-        .and_then(|part| part.blob_id.clone())
-    {
-        return Ok(Some(PartSource::Payload(blob)));
-    }
-    Ok(row.raw_blob_id.map(PartSource::Raw))
-}
-
-/// Just the raw-message blob key. What the wait watches for.
-pub(crate) async fn raw_blob(
-    database: &Store,
-    message: MessageId,
-) -> Result<Option<BlobId>, String> {
-    Ok(read_message(database, message).await?.raw_blob_id)
-}
-
-pub(crate) async fn read_message(
-    database: &Store,
-    message: MessageId,
-) -> Result<postio_model::Message, String> {
-    let connection = database
-        .connect()
-        .await
-        .map_err(|error| error.to_string())?;
-    MessageRepository::new(&connection)
-        .get(message)
-        .await
-        .map_err(|error| error.to_string())?
-        .ok_or_else(|| "That message is no longer here".into())
-}
-
-// `cid_source` moved to `postio_session::reading` (#608). What a `Content-ID`
-// may resolve to is a security property both frontends have to agree on, not
-// a fact about this one.
-pub(crate) use postio_session::reading::cid_source;
 
 #[cfg(test)]
 mod tests {
@@ -2207,6 +1967,24 @@ mod tests {
     use postio_storage::{BlobStore, Store, test_support};
 
     use super::*;
+    use postio_model::ids::AttachmentId;
+    use postio_runtime::Engine;
+
+    /// [`super::save_all_parts`] over a store rather than a client: the same
+    /// nodes to paths, and the batch as the host writes it for
+    /// `Req::SaveParts` -- so the fetch-before-save below is the host's,
+    /// proven without a display.
+    async fn save_all_parts(
+        database: &Store,
+        blobs: &BlobStore,
+        engine: Option<Engine>,
+        into: &std::path::Path,
+        message: MessageId,
+        nodes: &[postio_gtk::parts::Node],
+    ) -> usize {
+        let (targets, refused) = part_targets(into, nodes);
+        refused + postio_host::parts::save_parts(database, blobs, engine, message, &targets).await
+    }
 
     #[test]
     fn root_type_reads_the_stored_content_type_when_there_is_one() {

@@ -210,6 +210,7 @@ fn sample_draft() -> Draft {
             text: Some("sure".into()),
             html: None,
         },
+        body_markdown: Some("sure".into()),
         attachments: vec![],
         state: DraftState::Editing,
         // Populated rather than `None`: this test exists to prove a field

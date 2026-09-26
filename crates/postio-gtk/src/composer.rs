@@ -69,7 +69,7 @@ use std::rc::Rc;
 
 use adw::prelude::*;
 use adw::subclass::prelude::*;
-use chrono::{DateTime, Datelike, Duration, Local, Utc};
+use chrono::{DateTime, Local, Utc};
 use gtk::{gdk, gio, glib};
 use postio_body::Placement;
 use postio_core::{CommandId, Context, Keymap};
@@ -78,7 +78,6 @@ use postio_model::{
     Account, AccountId, Attachment, Draft, DraftKind, EmailAddress, Identity, IdentityId, Message,
     MessageBody, Signature, SignatureId,
 };
-use postio_model::{reply, signature};
 
 use crate::shell::Pane;
 use crate::widgets::keyhint;
@@ -136,14 +135,7 @@ pub fn heading(kind: DraftKind) -> &'static str {
     }
 }
 
-/// What closing the composer does with the draft in it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Closing {
-    /// Keep it: reopening compose comes back to it.
-    Keep,
-    /// Nothing was written, so there is nothing to keep.
-    Drop,
-}
+pub use postio_model::draft::{Closing, closing};
 
 /// Which draft [`Composer::open`] puts on screen.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -190,29 +182,6 @@ pub fn opening(_kept: &Draft, _asked: &Draft) -> Opening {
     Opening::Fill
 }
 
-/// Whether closing the composer has anything to keep.
-///
-/// The acceptance criterion "`Esc` never silently discards content" is this
-/// function: anything the user typed — a recipient, a subject, a word of body —
-/// makes the draft worth keeping. Only a composition that is still exactly as
-/// it opened is dropped, and dropping *that* discards nothing.
-///
-/// Neither whitespace nor the signature counts as content. A body holding
-/// only what the composer put there would make every abandoned composer
-/// permanent, which is how a "we kept your draft" message stops meaning
-/// anything.
-pub fn closing(draft: &Draft) -> Closing {
-    let body = draft.body.text.as_deref().unwrap_or_default();
-    // The signature is the composer's own doing, not something the user
-    // wrote, so a body holding nothing else is still an untouched composer.
-    let written = signature::split(body).0;
-    if draft.has_recipients() || !draft.subject.trim().is_empty() || !written.trim().is_empty() {
-        Closing::Keep
-    } else {
-        Closing::Drop
-    }
-}
-
 /// What to say about recipients that will not survive contact with a server.
 ///
 /// A warning, never a refusal: the text stays in the field, and the count is
@@ -254,35 +223,6 @@ pub fn recipient_warning(draft: &Draft) -> Option<String> {
                 ))
             }
         }
-    }
-}
-
-/// What is odd about this message, in the words the dialog uses.
-///
-/// Empty for a message with nothing odd about it, which is almost all of
-/// them. Each entry is a clause rather than a sentence, because they are
-/// joined into one.
-fn send_concerns(draft: &Draft) -> Vec<String> {
-    let mut concerns = Vec::new();
-    // FR-018. Asked, never refused: a message with no subject is a perfectly
-    // ordinary thing to send on purpose, and refusing it would be the app
-    // having an opinion about someone else's correspondence.
-    if draft.subject.trim().is_empty() {
-        concerns.push("this message has no subject".to_owned());
-    }
-    // FR-057.
-    if postio_model::mention::mentions_an_attachment(draft) {
-        concerns.push("it mentions an attachment and does not carry one".to_owned());
-    }
-    concerns
-}
-
-/// `a`, `a and b`, `a, b and c`.
-fn join_with_and(parts: &[String]) -> String {
-    match parts {
-        [] => String::new(),
-        [one] => one.clone(),
-        [rest @ .., last] => format!("{} and {last}", rest.join(", ")),
     }
 }
 
@@ -409,14 +349,6 @@ const NO_SEND_PATH: &str = "not sent — no outgoing account is connected yet";
 /// refusing looked identical to the key doing nothing at all.
 const REPLY_BLOCKED: &str = "not opened — finish or close the current draft first";
 
-/// What the status line says when `ctrl+Return` is pressed on a draft that is
-/// addressed to nobody.
-const NO_RECIPIENTS: &str = "not sent — add a recipient first";
-
-/// What the status line says when `ctrl+Return` is pressed on a draft that has
-/// already been handed over: it is the queue's now, not the composer's.
-const ALREADY_QUEUED: &str = "not sent again — this draft is already on its way";
-
 /// What the status line says when a file was chosen or dropped but nothing
 /// is listening on [`Composer::connect_attach`] to turn it into an attachment.
 const NO_ATTACH_PATH: &str = "not attached — no attachment handler is connected yet";
@@ -487,27 +419,7 @@ type ClosedHandler = Box<dyn Fn(Closing)>;
 /// What to call when the composer takes over the reading pane.
 type OpenedHandler = Box<dyn Fn()>;
 
-/// One row of recipient completion: a single address, or a named group that
-/// expands to every one of its members the moment it is accepted.
-///
-/// ADR 0007 Q3: there is no group address to insert instead — a draft's
-/// recipients have to be what the user can see, which is what keeps `Bcc`
-/// honest and stops a draft's recipients from silently changing if someone
-/// edits the group's membership after it was picked.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum RecipientCandidate {
-    /// One address, exactly as accepting it always worked.
-    Contact(EmailAddress),
-    /// A named group. `members` is the membership at the moment this
-    /// candidate was offered — accepting it inserts all of them as
-    /// individual addresses, never a group reference.
-    Group {
-        /// Display name, for the completion row.
-        name: String,
-        /// Every member's address, in the order they are inserted.
-        members: Vec<EmailAddress>,
-    },
-}
+pub use postio_model::contact_group::RecipientCandidate;
 
 /// Answers "what does `prefix` complete to" for recipient completion —
 /// contacts, previous correspondents and contact groups, ranked by frequency
@@ -586,111 +498,20 @@ type AttachHandler = Box<dyn Fn(std::path::PathBuf, AttachReady)>;
 /// are the only commands this maps, and only when the composer is not
 /// already open — replying to a reply in progress is not a thing.
 fn reply_draft(id: CommandId, source: &Message, account: &Account) -> Option<Draft> {
-    match id {
-        CommandId::Reply => Some(reply::reply(source, account, quoted_body(source, false))),
-        CommandId::ReplyAll => Some(reply::reply_all(
-            source,
-            account,
-            quoted_body(source, false),
-        )),
-        CommandId::Forward => Some(reply::forward(source, account, quoted_body(source, true))),
-        _ => None,
-    }
-}
-
-/// The body a reply or forward starts from, done in the crate that has both
-/// halves.
-///
-/// Rich in both renderings: the HTML half is what the editor opens
-/// (`document_of` prefers it), and the text half keeps the `> ` convention
-/// every mail client expects.
-///
-/// A **reply** quotes what the reader showed (ADR 0033): the original's
-/// sanitised markup, through [`postio_body::quote_of`], so a table and a
-/// colour reach the quote instead of being narrowed away. The security
-/// property is unchanged and lives in that constructor — remote images
-/// blocked whatever the reader was allowed, and the reader's own permitted
-/// set rather than a second one.
-///
-/// A **forward** still goes through the parsed [`postio_body::Document`].
-/// It presents the whole message as the body of a new one rather than as a
-/// quotation inside a reply, so it is the *user's* content once sent, and
-/// `Block::Quoted` is specifically the thing that is not that. Bringing the
-/// two together is #1483.
-fn quoted_body(source: &Message, forward: bool) -> MessageBody {
-    let rich = if forward {
-        // The same carried content a reply gets (#1483). The asymmetry was
-        // never decided -- a forward flattened its content only because ADR
-        // 0033 happened to be about replies -- so forwarding a table-based
-        // newsletter reduced it to a column of text while replying to the
-        // same message kept it. What stays different is the presentation: a
-        // forward is not a quote and is not wrapped as one.
-        let carried = postio_body::quote_of(
-            source.body.html.as_deref(),
-            &forward_text(source),
-            QUOTE_SCOPE,
-        );
-        postio_body::forwarded(&carried, &reply::forward_header(source))
-    } else {
-        // The text half still goes through `source_document` when there is
-        // no markup, because that is where `format=flowed` is unwrapped
-        // (#456): handing `quote_of` the raw `text/plain` would quote a
-        // sender's soft wrap back at them as line breaks they never typed.
-        // With markup present the text part is the sender's own alternative
-        // and is taken as written.
-        let text = match source.body.html {
-            Some(_) => source.body.text.clone().unwrap_or_default(),
-            None => source_document(source).to_text(),
-        };
-        let quoted = postio_body::quote_of(source.body.html.as_deref(), &text, QUOTE_SCOPE);
-        postio_body::quoted_reply(&quoted, &reply::attribution(source))
+    let kind = match id {
+        CommandId::Reply => ReplyKind::Reply,
+        CommandId::ReplyAll => ReplyKind::ReplyAll,
+        CommandId::Forward => ReplyKind::Forward,
+        _ => return None,
     };
-    let (text, html) = postio_body::render(&rich);
-    MessageBody {
-        text: Some(text),
-        html: Some(html),
-    }
+    Some(postio_body::replying::reply_draft(kind, source, account))
 }
 
-/// The scope a reply's quoted styles are rewritten under: the parser's own
-/// word, so a round trip through the editor does not renumber anything.
-use postio_body::parse::QUOTE_SCOPE;
+use postio_body::replying::{ReplyKind, source_document};
 
-/// The plain half a forward carries.
-///
-/// The same rule a reply's uses: the sender's own text alternative when there
-/// is one, and otherwise the flowed-aware narrowing of what they sent, so a
-/// `format=flowed` message is not quoted back with breaks nobody typed
-/// (#456).
-fn forward_text(source: &Message) -> String {
-    match source.body.html {
-        Some(_) => source.body.text.clone().unwrap_or_default(),
-        None => source_document(source).to_text(),
-    }
-}
-
-/// The document `source`'s body means — the markup the reader showed when
-/// there is markup, the plain text otherwise.
-///
-/// The plain-text fallback goes through [`Document::from_flowed_text`]
-/// rather than [`Document::from_text`] exactly when `source` itself
-/// declared `format=flowed` (#456): unwrapping unconditionally would take
-/// an ordinary sender's own short lines as soft breaks and join them, and
-/// never unwrapping would show a `format=flowed` sender's wrapped sentence
-/// — including this app's own past sends — as line breaks nobody typed.
-///
-/// [`Document::from_flowed_text`]: postio_body::Document::from_flowed_text
-/// [`Document::from_text`]: postio_body::Document::from_text
-fn source_document(source: &Message) -> postio_body::Document {
-    match (&source.body.html, &source.body.text) {
-        (Some(html), _) => postio_body::parse(html),
-        (None, Some(text)) if source.text_is_flowed => {
-            postio_body::Document::from_flowed_text(text)
-        }
-        (None, Some(text)) => postio_body::Document::from_text(text),
-        (None, None) => postio_body::Document::new(),
-    }
-}
+use postio_ui::recipients::{MIN_COMPLETION_PREFIX, candidate_label};
+use postio_ui::schedule::schedule_presets;
+use postio_ui::sending::{ALREADY_QUEUED, NO_RECIPIENTS, join_with_and, send_concerns};
 
 mod imp {
     use super::*;
@@ -1197,6 +1018,10 @@ impl Composer {
         draft.bcc = parse_list(&imp.bcc.text());
         draft.subject = imp.subject.text().to_string();
         draft.body = self.body();
+        // This composer writes HTML, not Markdown: once it holds the body, any
+        // Markdown the terminal left describes a message that no longer
+        // exists, and the terminal reopening from it would undo this edit.
+        draft.body_markdown = None;
         draft
     }
 
@@ -3854,57 +3679,6 @@ fn field_label(text: &str) -> gtk::Label {
     label
 }
 
-/// A preset must land at least this far ahead of `now` to be offered as
-/// "today" rather than rolling to tomorrow — a picker opened one minute
-/// before 6pm must not offer "this evening" for an instant already gone.
-const MIN_SCHEDULE_LEAD: Duration = Duration::minutes(5);
-
-/// `day` at the given wall-clock hour and minute, in `day`'s own local zone.
-///
-/// A DST transition can make a wall-clock time ambiguous or nonexistent;
-/// falling back to `day` itself rather than panicking keeps a schedule-send
-/// picker from crashing the composer on the two days a year this can happen,
-/// at the cost of an odd-looking preset on exactly those days.
-fn at_local_time(day: DateTime<Local>, hour: u32, minute: u32) -> DateTime<Local> {
-    day.date_naive()
-        .and_hms_opt(hour, minute, 0)
-        .and_then(|naive| naive.and_local_timezone(Local).single())
-        .unwrap_or(day)
-}
-
-/// The fixed times [`CommandId::ScheduleSend`]'s picker offers, computed
-/// against `now` — recomputed every time the picker opens rather than once,
-/// since "in 1 hour" a picker opened yesterday is not "in 1 hour" today.
-///
-/// "This evening" rolls to tomorrow once 6pm today is behind `now`.
-/// "Monday morning" always means a Monday strictly after today: opening the
-/// picker on a Monday offers next week's, not the one already underway.
-fn schedule_presets(now: DateTime<Local>) -> [(&'static str, DateTime<Local>); 4] {
-    let in_one_hour = now + Duration::hours(1);
-
-    let mut evening = at_local_time(now, 18, 0);
-    if evening < now + MIN_SCHEDULE_LEAD {
-        evening = at_local_time(now + Duration::days(1), 18, 0);
-    }
-
-    let tomorrow_morning = at_local_time(now + Duration::days(1), 8, 0);
-
-    let days_from_monday = now.weekday().num_days_from_monday() as i64;
-    let days_until_monday = if days_from_monday == 0 {
-        7
-    } else {
-        7 - days_from_monday
-    };
-    let monday_morning = at_local_time(now + Duration::days(days_until_monday), 8, 0);
-
-    [
-        ("In 1 hour", in_one_hour),
-        ("This evening", evening),
-        ("Tomorrow morning", tomorrow_morning),
-        ("Monday morning", monday_morning),
-    ]
-}
-
 /// The three buttons the action row draws, in the order it draws them, with
 /// the command each one stands for.
 ///
@@ -3951,15 +3725,6 @@ fn sync_detach_button(button: &gtk::Button, detached: bool) {
     button.set_tooltip_text(Some(tooltip));
     button.update_property(&[gtk::accessible::Property::Label(tooltip)]);
 }
-
-/// How much of the recipient being typed must exist before completion offers
-/// anything.
-///
-/// Four, from #424. One character matches most of an address book, so the
-/// popover opened over the field with a list nobody could choose from yet —
-/// and it did it while a query ran on every keystroke. Four is where a prefix
-/// starts to identify somebody.
-const MIN_COMPLETION_PREFIX: usize = 4;
 
 /// Recipient completion attached to one entry: a popover of suggestions from
 /// [`Composer::connect_recipient_suggestions`], keyboard-navigable and
@@ -4177,38 +3942,11 @@ impl Completion {
             return false;
         };
 
-        // A contact inserts one address; a group inserts every member as its
-        // own address, comma by comma, exactly as if they had been typed
-        // individually -- there is no group reference to insert instead
-        // (ADR 0007 Q3).
-        let inserted: String = match &candidate {
-            RecipientCandidate::Contact(address) => format!("{address}, "),
-            RecipientCandidate::Group { members, .. } => members
-                .iter()
-                .map(|address| format!("{address}, "))
-                .collect(),
-        };
-
-        let text = entry.text();
-        let (start, _) = current_entry(&text);
-        let mut replaced = text.to_string();
-        replaced.replace_range(start.., &inserted);
+        let replaced = postio_ui::recipients::accepted(&entry.text(), &candidate);
         entry.set_text(&replaced);
         entry.set_position(-1);
         self.popover.popdown();
         true
-    }
-}
-
-/// The completion row's label: an address for a contact, or the name and
-/// size for a group -- distinguishable from a contact at a glance, since
-/// accepting one inserts several addresses rather than one.
-fn candidate_label(candidate: &RecipientCandidate) -> String {
-    match candidate {
-        RecipientCandidate::Contact(address) => address.to_string(),
-        RecipientCandidate::Group { name, members } => {
-            format!("{name} ({} people)", members.len())
-        }
     }
 }
 
@@ -4919,24 +4657,31 @@ mod tests {
 
     #[test]
     fn a_command_with_no_key_left_shows_no_hint_rather_than_a_blank_one() {
-        // Giving `save_draft` the key `send` has by default leaves one of the
-        // two without a binding -- an explicit `[keys]` entry outranks a
-        // default, so it is `send` that loses it. It must drop its hint
-        // rather than render an empty one, which is the rule
+        // Giving `send` the key `save_draft` has by default leaves Save draft
+        // without a binding -- an explicit `[keys]` entry outranks a
+        // default, and Save draft has no alternate to fall back on. It must
+        // drop its hint rather than render an empty one, which is the rule
         // `reader::actions` already follows. All three of these live in the
         // composer context, so this really is a collision rather than two
         // surfaces harmlessly sharing a key.
+        //
+        // The collision used to run the other way, costing Send its key. Send
+        // now keeps `alt+Return`, the alternate a legacy terminal can deliver
+        // (specs/005-tui-frontend T017), so it no longer ends up keyless.
         let mut overrides = postio_config::KeyBindings::default();
         overrides
             .overrides_mut()
-            .insert("save_draft".to_string(), "mod+Return".to_string());
+            .insert("send".to_string(), "mod+s".to_string());
 
         let keys = keys_of(&Keymap::resolve(&overrides));
         assert_eq!(
-            keys[2],
-            Some("ctrl+Return".to_string()),
+            keys[0],
+            Some("ctrl+s".to_string()),
             "the override wins the key"
         );
-        assert_eq!(keys[0], None, "and Send shows no hint at all: {keys:?}");
+        assert_eq!(
+            keys[2], None,
+            "and Save draft shows no hint at all: {keys:?}"
+        );
     }
 }

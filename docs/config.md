@@ -49,6 +49,14 @@ wrote it.
 | `signature_on_reply` | string | `"above_quote"` | Where the signature goes on a reply: `above_quote` or `below_quote`. |
 | `signature_on_forward` | string | `"above_quote"` | Where the signature goes on a forward. |
 
+## `[tui]`
+
+| Key | Type | Default | Description |
+|---|---|---|---|
+| `preview` | string | `"toggle"` | How the terminal composer shows the message it would send: `toggle` (one key swaps editor and preview) or `split` (side by side). |
+| `mouse` | boolean | `true` | Whether the terminal frontend takes the mouse. `false` leaves the terminal's own text selection; every key still works. |
+| `colors` | table | `{}` | Colour overrides for the terminal frontend, by role: `text`, `dim`, `accent`, `selection`, `focus`, `unread`, `flagged`, `link`, `quote`, `code`, `error`, `warning`, `success`. A value is a colour name, a palette number or `#rrggbb`. `NO_COLOR` overrides every one. |
+
 ## `[logging]`
 
 | Key | Type | Default | Description |

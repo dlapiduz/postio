@@ -1272,6 +1272,29 @@ fn rgba((r, g, b): (u8, u8, u8), alpha: f32) -> String {
     format!("rgba({r}, {g}, {b}, {alpha})")
 }
 
+/// The accent, light and dark, as `(red, green, blue)`: read from the
+/// generated reader palette rather than typed anywhere.
+///
+/// For a frontend that draws with colours rather than CSS -- the terminal,
+/// which uses the accent for the selected row and the focus on a true-colour
+/// terminal (`specs/005-tui-frontend` FR-054). Parsing the generated file
+/// rather than restating `#5980a6` keeps the rule this module exists for:
+/// retuning the design system moves every frontend, or fails the build.
+pub fn accent_rgb() -> ((u8, u8, u8), (u8, u8, u8)) {
+    const PALETTE: &str = include_str!("../data/reader-tokens.css");
+    let mut accents = PALETTE.lines().filter_map(|line| {
+        let value = line.trim().strip_prefix("--r-accent:")?.trim();
+        let hex = value.strip_prefix('#')?.strip_suffix(';')?;
+        let channel = |at: usize| u8::from_str_radix(hex.get(at..at + 2)?, 16).ok();
+        Some((channel(0)?, channel(2)?, channel(4)?))
+    });
+    // The generated file always has both, light first; a palette without them
+    // fails the test beside this rather than drawing black.
+    let light = accents.next().unwrap_or_default();
+    let dark = accents.next().unwrap_or(light);
+    (light, dark)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1372,5 +1395,21 @@ mod tests {
             let (r2, g2, b2) = hsl_to_rgb(h, s, l);
             assert_eq!((r, g, b), (r2, g2, b2), "{hex} did not survive HSL");
         }
+    }
+
+    #[test]
+    fn the_accent_is_read_from_the_generated_palette_for_both_schemes() {
+        let (light, dark) = super::accent_rgb();
+        let hex = |(r, g, b): (u8, u8, u8)| format!("#{r:02x}{g:02x}{b:02x}");
+        let palette = include_str!("../data/reader-tokens.css");
+        assert!(
+            palette.contains(&format!("--r-accent: {};", hex(light))),
+            "{light:?}"
+        );
+        assert!(
+            palette.contains(&format!("--r-accent: {};", hex(dark))),
+            "{dark:?}"
+        );
+        assert_ne!(light, dark, "dark mode has an accent of its own");
     }
 }

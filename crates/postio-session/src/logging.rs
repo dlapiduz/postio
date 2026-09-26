@@ -107,12 +107,29 @@ pub fn report_panics() {
     });
 }
 
-/// Start logging, and return the handle that can turn it up later.
+/// Where the log goes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Destination {
+    /// stderr and journald: a windowed app, whose stderr is a log.
+    StderrAndJournal,
+    /// journald alone: the terminal app, whose stderr is the screen it
+    /// draws on. Where there is no journal -- a machine without systemd, a
+    /// sandbox -- the log goes nowhere rather than onto the screen.
+    Journal,
+}
+
+/// Start logging to stderr and journald, and return the handle that can turn
+/// it up later.
 ///
 /// Best effort: a subscriber that will not install costs the log and nothing
 /// else. An application that refused to start because it could not open a log
 /// would be a worse answer than one running quietly.
 pub fn init(config: &LoggingConfig) -> Logging {
+    init_to(config, Destination::StderrAndJournal)
+}
+
+/// [`init`], to `destination`.
+pub fn init_to(config: &LoggingConfig, destination: Destination) -> Logging {
     let pinned = std::env::var(LEVEL_ENV)
         .ok()
         .filter(|value| !value.trim().is_empty());
@@ -120,18 +137,7 @@ pub fn init(config: &LoggingConfig) -> Logging {
 
     let (filter, reload) = reload::Layer::new(parse(&directive, config));
 
-    // stderr, not stdout: this is diagnostics, and stdout belongs to whatever
-    // the process is actually for. `with_ansi` follows the terminal, so a
-    // redirected log is plain text rather than escape codes.
-    let stderr = fmt::layer()
-        .with_writer(std::io::stderr)
-        .with_target(true)
-        .with_ansi(std::io::IsTerminal::is_terminal(&std::io::stderr()));
-    let stderr = if config.timestamps {
-        stderr.boxed()
-    } else {
-        stderr.without_time().boxed()
-    };
+    let stderr = stderr_layer(config, destination);
 
     // journald when the socket is there. Under Flatpak it usually is not, and
     // a sandbox with no journal is not a failure — stderr is still going to
@@ -163,6 +169,32 @@ pub fn init(config: &LoggingConfig) -> Logging {
         reload,
         pinned: pinned.is_some(),
     }
+}
+
+/// The stderr half of the log, when `destination` has one.
+///
+/// stderr, not stdout: this is diagnostics, and stdout belongs to whatever
+/// the process is actually for. `with_ansi` follows the terminal, so a
+/// redirected log is plain text rather than escape codes.
+fn stderr_layer<S>(
+    config: &LoggingConfig,
+    destination: Destination,
+) -> Option<Box<dyn Layer<S> + Send + Sync + 'static>>
+where
+    S: tracing::Subscriber + for<'span> tracing_subscriber::registry::LookupSpan<'span>,
+{
+    if destination == Destination::Journal {
+        return None;
+    }
+    let stderr = fmt::layer()
+        .with_writer(std::io::stderr)
+        .with_target(true)
+        .with_ansi(std::io::IsTerminal::is_terminal(&std::io::stderr()));
+    Some(if config.timestamps {
+        stderr.boxed()
+    } else {
+        stderr.without_time().boxed()
+    })
 }
 
 impl Logging {
@@ -222,10 +254,12 @@ const OURS: &[&str] = &[
     "postio_app",
     "postio_bench",
     "postio_body",
+    "postio_client",
     "postio_config",
     "postio_core",
     "postio_ffi",
     "postio_gtk",
+    "postio_host",
     "postio_account",
     "postio_jmap",
     "postio_gmail",
@@ -239,6 +273,7 @@ const OURS: &[&str] = &[
     "postio_storage",
     "postio_sync",
     "postio_test_support",
+    "postio_tui",
     "postio_ui",
     "io_imap",
 ];
@@ -385,6 +420,18 @@ fn bridge_log_records() -> bool {
 mod tests {
     use super::*;
     use postio_config::LogLevel;
+
+    #[test]
+    fn a_terminal_app_logs_to_the_journal_and_never_onto_its_screen() {
+        // The terminal frontend draws on the terminal stderr is attached to:
+        // a record written there lands in the middle of its screen.
+        let config = LoggingConfig::default();
+        assert!(stderr_layer::<Registry>(&config, Destination::Journal).is_none());
+        assert!(
+            stderr_layer::<Registry>(&config, Destination::StderrAndJournal).is_some(),
+            "a windowed app's stderr is a log, and keeps getting one"
+        );
+    }
 
     #[test]
     fn a_bare_level_turns_postio_up_and_leaves_the_world_alone() {

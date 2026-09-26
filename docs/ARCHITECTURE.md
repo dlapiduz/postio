@@ -16,6 +16,9 @@ in [`docs/archive/`](archive/); every finding it raised has since landed.
 ```mermaid
 graph TD
     app["<b>postio-app</b><br/><i>GTK binary</i><br/>a window, and the presenters that join the two halves"]
+    tui["<b>postio-tui</b><br/><i>terminal binary</i><br/>ratatui · crossterm · Markdown in and out"]
+    host["<b>postio-host</b><br/><i>in each app's process</i><br/>every store operation, once · sync · upkeep"]
+    client["<b>postio-client</b><br/>Req/Resp · commands down, events up<br/><i>no engine — CI enforced</i>"]
     session["<b>postio-session</b><br/><i>composition root — no toolkit</i><br/>store · runtime · engines · the verb vocabulary<br/><i>no GTK — CI enforced</i>"]
 
     subgraph view ["frontend"]
@@ -44,6 +47,13 @@ graph TD
 
     app --> session
     app --> gtk
+    app --> host
+    app --> client
+    tui --> client
+    tui --> host
+    host --> session
+    host --> client
+    client --> core
     session --> runtime
     session --> core
     gtk --> core
@@ -70,7 +80,7 @@ graph TD
     classDef pure fill:#eef3f8,stroke:#5980a6,color:#1c2b3a
     classDef guard stroke-dasharray:4 3,stroke:#5980a6
     class model,search pure
-    class core,gtk,session guard
+    class core,gtk,session,client,tui guard
 ```
 
 Arrows are "depends on", and every arrow drawn is a real direct dependency.
@@ -89,8 +99,16 @@ of which names a widget. See [ADR 0010](decisions/0010-mcp-surface.md) for why
 the alternative — a second binary opening the store directly — is not a second
 frontend but a second application sharing a file.
 
-Dashed borders mark the three crates whose dependency closure CI polices
+Dashed borders mark the crates whose dependency closure CI polices
 (`scripts/checks/check-crate-boundaries.py`).
+
+**One app opens the store at a time** ([ADR 0041](decisions/0041-one-app-opens-the-store-at-a-time.md)).
+The desktop, terminal and macOS apps each run `postio-host` inside their own
+process and reach mail only through `postio-client`, whose in-process
+transport is a spawn and a oneshot. The host is where every store operation
+is written once -- paging, reading, search, compose, settings, onboarding,
+sync and upkeep -- and the frontends draw. Whichever app starts first holds
+the store; the other says so and waits to be asked again.
 
 ---
 
@@ -285,13 +303,19 @@ This is also why `postio-account`'s in-process test server is written **against
 the wire** rather than against `io-imap`: a bug in the protocol crate cannot
 hide inside the thing meant to catch it.
 
-### 9. Two crate boundaries are enforced, not encouraged
+### 9. The crate boundaries are enforced, not encouraged
 
 - **`postio-core` must not depend on `gtk4`/`libadwaita`.** It is the
   UI-agnostic contract; this is what keeps a second frontend possible.
 - **`postio-gtk` must not depend on `turso`/`io-imap`.** The view layer does
   no SQL and speaks no protocol. (`rusqlite` stays on the banned list beside
   `turso`, so the rule outlives the engine that made it.)
+- **`postio-client` must not depend on a toolkit, WebKit, the database
+  engine or the protocol crates**, and **`postio-tui` on a toolkit or
+  WebKit.** The client is the frontends' whole view of mail, and it stays
+  free of what any one of them draws with; the terminal opens the store
+  through the host like every app, and is held to being small
+  (`specs/005-tui-frontend` FR-051) by leaving GTK and WebKit out.
 
 `scripts/checks/check-crate-boundaries.py` inspects `cargo metadata`'s **resolved
 graph**, not source text, so a violation arriving transitively through an

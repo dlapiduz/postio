@@ -2450,6 +2450,22 @@ impl Window {
                 self.conversation().toggle_rail();
             }
             CommandId::Settings => self.toggle_settings(),
+            // The close button, from the keyboard: closing the last window
+            // ends the application exactly as the button always did.
+            CommandId::Quit => self.close(),
+            // The terminal's composer hands its Markdown to `$EDITOR`. This
+            // one edits a rich document in place and has no text an editor
+            // could open and give back. The palette and the cheat sheet do
+            // not offer it here (`Requirement::Terminal`); the key still
+            // reaches this arm, so it says why rather than doing nothing.
+            CommandId::EditExternally => self.composer().set_status(
+                "this composer edits in place — the terminal one hands its text to $EDITOR",
+            ),
+            // The terminal's composer writes Markdown and can show what it
+            // will look like. This one shows formatting as it is written.
+            CommandId::TogglePreview => self
+                .composer()
+                .set_status("this composer already shows the message as it will look"),
             CommandId::Search => self.open_finder(Mode::Search),
             // The header button already flips this property directly
             // (`window.rs`, `sidebar_toggle.connect_toggled`); this is the
@@ -2581,6 +2597,13 @@ impl Window {
             // reason the folders are — see `postio-14b`. Set and cleared by
             // `open_parts`/`close_parts`, the one door in and out of it.
             CommandId::OpenParts => self.reader().request_parts(),
+            // The remote-image banner's two buttons and the unsubscribe
+            // banner's one, from the keyboard and the palette -- and only when
+            // the banner is there to offer them, so a key on a message with
+            // nothing to show or no list to leave does nothing at all.
+            CommandId::ShowImages | CommandId::AlwaysShowImages | CommandId::Unsubscribe => {
+                self.reader().run_banner_command(id);
+            }
             CommandId::NextPart => self.parts().next_part(),
             CommandId::PrevPart => self.parts().prev_part(),
             CommandId::OpenPart => self.parts().open_part(),
@@ -2905,6 +2928,7 @@ impl Window {
         postio_core::Availability {
             scope: self.imp().scope.get(),
             store_open: self.imp().store_open.get(),
+            terminal: false,
         }
     }
 

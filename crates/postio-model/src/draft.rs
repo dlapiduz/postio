@@ -154,6 +154,17 @@ pub struct Draft {
     pub subject: String,
     /// Body being composed.
     pub body: MessageBody,
+    /// The Markdown the user typed, when the draft was written in the
+    /// terminal composer; `None` when a frontend that does not author
+    /// Markdown saved it last.
+    ///
+    /// `body` still carries what is sent -- this Markdown as the text part and
+    /// its rendering as the HTML part. This is kept beside it so the terminal
+    /// reopens exactly what was typed rather than a translation back from the
+    /// HTML, and so the text part is sent `format=fixed` (see
+    /// [`outgoing::build`](crate::outgoing::build)).
+    #[serde(default)]
+    pub body_markdown: Option<String>,
     /// Attachments added so far. These carry
     /// [`MessageId::UNASSIGNED`](crate::MessageId::UNASSIGNED) as their owner
     /// until the draft becomes a sent message.
@@ -203,6 +214,7 @@ impl Draft {
             bcc: Vec::new(),
             subject: String::new(),
             body: MessageBody::default(),
+            body_markdown: None,
             attachments: Vec::new(),
             state: DraftState::Editing,
             rfc_message_id: None,
@@ -272,6 +284,38 @@ impl Draft {
     /// Every recipient across `To`, `Cc` and `Bcc`.
     pub fn all_recipients(&self) -> impl Iterator<Item = &EmailAddress> {
         self.to.iter().chain(&self.cc).chain(&self.bcc)
+    }
+}
+
+/// What closing the composer does with the draft in it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Closing {
+    /// Keep it: reopening compose comes back to it.
+    Keep,
+    /// Nothing was written, so there is nothing to keep.
+    Drop,
+}
+
+/// Whether closing the composer has anything to keep.
+///
+/// The acceptance criterion "`Esc` never silently discards content" is this
+/// function: anything the user typed — a recipient, a subject, a word of body —
+/// makes the draft worth keeping. Only a composition that is still exactly as
+/// it opened is dropped, and dropping *that* discards nothing.
+///
+/// Neither whitespace nor the signature counts as content. A body holding
+/// only what the composer put there would make every abandoned composer
+/// permanent, which is how a "we kept your draft" message stops meaning
+/// anything.
+pub fn closing(draft: &Draft) -> Closing {
+    let body = draft.body.text.as_deref().unwrap_or_default();
+    // The signature is the composer's own doing, not something the user
+    // wrote, so a body holding nothing else is still an untouched composer.
+    let written = crate::signature::split(body).0;
+    if draft.has_recipients() || !draft.subject.trim().is_empty() || !written.trim().is_empty() {
+        Closing::Keep
+    } else {
+        Closing::Drop
     }
 }
 

@@ -26,8 +26,11 @@ mimalloc = "0.1"
 postio-config.workspace = true
 postio-core.workspace = true
 postio-gtk.workspace = true
+# The store's owner: logic this app used to do itself, moved there so every
+# frontend shares it (specs/005-tui-frontend, ADR 0041).
+postio-client.workspace = true
+postio-host.workspace = true
 postio-account.workspace = true
-postio-jmap.workspace = true
 postio-index.workspace = true
 postio-model.workspace = true
 # The database half. Nothing else depends on it but this crate, so nothing is

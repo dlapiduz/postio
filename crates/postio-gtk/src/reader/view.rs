@@ -40,13 +40,13 @@ use gtk::glib;
 use postio_model::message::MessageBody;
 use webkit6::prelude::*;
 
-use super::allowlist::RemoteImageAllowList;
 use super::banner::{DecodeNotice, RemoteImageBanner, UnsubscribeBanner};
 use super::message_header::MessageHeader;
 use super::notices::{Notice, NoticeSlot};
 use super::scheme::{self, BlobSource};
 use crate::widgets::ActionBar;
 use postio_body::sanitize::RemoteImages;
+use postio_ui::allowlist::RemoteImageAllowList;
 // The document itself — CSP, wrapper, fonts, markers, absent states,
 // sanitizing and containing the body — is postio-ui's (#567, #590, ADR 0019
 // Q6): one implementation for every frontend, re-exported here so existing
@@ -1280,6 +1280,32 @@ impl Reader {
     /// would exempt.
     pub fn banner_always_allow_label(&self) -> String {
         self.banner.always_allow_label()
+    }
+
+    /// Run one of the banners' commands, as its button would: `show_images`,
+    /// `always_show_images` or `unsubscribe`. Only when the message has what
+    /// the banner offers -- images held back, a list to leave -- whichever
+    /// notice the slot happens to be showing; a key on a message with nothing
+    /// to show or no list to leave does nothing. Returns whether it ran.
+    ///
+    /// The registry entries these answer were buttons and nothing else, so a
+    /// person without a pointer could not reach them (Principle II;
+    /// `specs/005-tui-frontend` T044, T048).
+    pub fn run_banner_command(&self, command: postio_core::CommandId) -> bool {
+        use postio_core::CommandId;
+        match command {
+            CommandId::ShowImages if self.notices.wanted(Notice::RemoteImages) => {
+                self.banner.emit_show_once()
+            }
+            CommandId::AlwaysShowImages if self.notices.wanted(Notice::RemoteImages) => {
+                self.banner.emit_always_allow()
+            }
+            CommandId::Unsubscribe if self.notices.wanted(Notice::Unsubscribe) => {
+                self.unsubscribe_banner.emit_unsubscribe()
+            }
+            _ => return false,
+        }
+        true
     }
 
     /// Simulate clicking the banner's "always allow" — what a test uses in
