@@ -104,12 +104,12 @@ proven on synthetic images. Nothing renders yet.
   - `link` becomes a scoped `a { color }` rule;
   - `<meta name="color-scheme" content="light dark">` produces `color_scheme = LightDark` (FR-006)
 - [X] T014 Implement canvas lifting and `color-scheme` carrying in `crates/postio-body/src/sanitize.rs`, and emit the canvas in `crates/postio-ui/src/reader/document.rs` as a Postio-owned `div.postio-canvas` that fills the message's container (`reader.css`), carrying the canvas style and `data-postio-color-scheme`. It is carried in-band because `Rendered` hands its callers HTML and would otherwise drop the canvas. Add a `postio-ui` unit test asserting the emitted attributes
-- [ ] T015 [TEST] In `crates/postio-body/src/sanitize.rs`, walk a new `const REFUSALS` table and assert:
+- [X] T015 [TEST] In `crates/postio-body/src/sanitize.rs`, walk a new `const REFUSALS` table and assert:
   - every entry is actually refused by the sanitizer, one fixture snippet per entry;
   - every reason is `Containment`, `Privacy` or `NoScript`;
   - the existing `REFUSED`, `REFUSED_AT_RULES` and `REFUSED_UNITS` are reachable through it;
   - inline `<svg>` is listed with its reason (FR-005, 001 FR-019b)
-- [ ] T016 Implement the `Refusal` type and `REFUSALS` table in `crates/postio-body/src/sanitize.rs`, and record every removal in the sanitized message's `refusals`
+- [X] T016 Implement the `Refusal` type and `REFUSALS` table in `crates/postio-body/src/sanitize.rs`, and record every removal in the sanitized message's `refusals`
 - [ ] T017 [TEST] [P] In `crates/postio-body/src/hints.rs` unit tests, one test per row of research R9's hint table:
   - `<font color face size=1..7>` → `<span style>`, using the legacy size scale;
   - `valign` → `vertical-align`;
