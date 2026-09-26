@@ -15,6 +15,8 @@
 //!
 //! - **unsanitized**: the reference is what the sender built, not what the
 //!   sanitizer lets through. Measuring what the pipeline loses is the point;
+//! - **standards mode**: a doctype is supplied where the sender wrote none,
+//!   as every mail client's own page does for them;
 //! - **no network, no script**: a CSP `<meta>` admits `data:` images and
 //!   inline style only, JavaScript is off, and the session is ephemeral. The
 //!   fixtures' own `cid:` parts are inlined as `data:` URIs, so they are
@@ -213,7 +215,24 @@ fn document(fixture: &Fixture) -> String {
         );
         html = replace_ignoring_case(&html, &format!("cid:{content_id}"), &data);
     }
-    inject_after_head(&html, CSP)
+    standards_mode(&inject_after_head(&html, CSP))
+}
+
+/// The document in standards mode, as a sender's mail is always drawn: every
+/// mail client -- Postio included -- embeds a message in a page of its own,
+/// so a sender who wrote no doctype never gets quirks mode anywhere their
+/// mail is read. A reference drawn in quirks mode would measure a behaviour
+/// no reader can reproduce (the protocol's amendment of 2026-09-26).
+fn standards_mode(html: &str) -> String {
+    if html
+        .trim_start()
+        .get(..9)
+        .is_some_and(|start| start.eq_ignore_ascii_case("<!doctype"))
+    {
+        html.to_owned()
+    } else {
+        format!("<!DOCTYPE html>{html}")
+    }
 }
 
 /// Case-insensitive replace, for `cid:` references a sender wrote in any case.
