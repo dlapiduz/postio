@@ -233,6 +233,10 @@ const CASES: &[(&str, fn())] = &[
         gtk_reader_styles::from_to_and_cc_share_a_column as fn(),
     ),
     (
+        "gtk_reader_styles::each_messages_accent_breaks_before_the_next",
+        gtk_reader_styles::each_messages_accent_breaks_before_the_next as fn(),
+    ),
+    (
         "gtk_reader_styles::a_page_key_moves_the_document_itself",
         gtk_reader_styles::a_page_key_moves_the_document_itself as fn(),
     ),

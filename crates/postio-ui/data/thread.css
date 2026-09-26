@@ -177,6 +177,20 @@
   border-left: 3px solid var(--r-accent);
 }
 
+/* One segment per message, not one line down the conversation (#1688).
+   The one-document pane opens every message, and open messages laid end to
+   end joined their accent edges into a single rule the length of the
+   thread, so nothing on the page said where one message stopped and the
+   next began. The gap sits after the closing hairline: each message is a
+   bracket -- its accent down the left, its hairline along the foot -- and
+   the ground between two brackets is the break.
+   Only between two *open* messages: a folded row draws no accent, so it
+   already breaks the line, and the canvas's folded rows sit hairline to
+   hairline. */
+.postio-message[open] + .postio-message[open] {
+  margin-top: 12px;
+}
+
 .postio-message[open] > .postio-message-head,
 .postio-message[open] > .postio-message-recipients {
   /* 16 less the accent edge, so nothing shifts. The recipient rows are on

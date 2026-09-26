@@ -725,3 +725,88 @@ pub fn a_redraw_of_an_unchanged_thread_sanitises_nothing() {
         "one body changed, and only it is sanitised again"
     );
 }
+
+/// Each message's accent edge is its own segment (#1688).
+///
+/// The one-document pane opens every message (`expanded_in_document`), and
+/// an open message draws a 3px accent down its left edge. Laid end to end
+/// with nothing between them, three of those read as one line down the whole
+/// conversation, and nothing on the page says where one message stops and
+/// the next begins. Measured, because the markup is identical either way:
+/// what separates the segments is a box no string assertion can see.
+pub fn each_messages_accent_breaks_before_the_next() {
+    if adw::init().is_err() || gtk::gdk::Display::default().is_none() {
+        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
+        return;
+    }
+
+    let entry = |scope: &'static str, body: &'static str| postio_ui::reader::thread::Entry {
+        scope,
+        sender: "Ada Norwood",
+        address: "ada@example.com",
+        when: "09:14",
+        preview: "the first line",
+        expanded: true,
+        latest: false,
+        draft: false,
+        mine: false,
+        blocked: 0,
+        body,
+        styles: "",
+        recipients: "",
+        cc: "",
+    };
+    let document = postio_ui::reader::thread::conversation_document(
+        &[
+            entry("1", "<p>first</p>"),
+            entry("2", "<p>second</p>"),
+            entry("3", "<p>third</p>"),
+        ],
+        postio_body::RemoteImages::Blocked,
+        postio_ui::reader::document::Sheet::Theme,
+    );
+
+    // Each message's accent width, and the top and bottom of the box it runs
+    // down -- a left border spans its element's whole border box.
+    let measured = crate::webkit_probe::measure(
+        &document,
+        "(() => [...document.querySelectorAll('.postio-message')].map(m => { \
+            const r = m.getBoundingClientRect(); \
+            return getComputedStyle(m).borderLeftWidth + ':' + \
+              r.top.toFixed(1) + ':' + r.bottom.toFixed(1); }).join(','))()",
+    );
+    let segments: Vec<(f64, f64, f64)> = measured
+        .split(',')
+        .filter_map(|segment| {
+            let mut parts = segment.split(':');
+            let width = parts.next()?.trim().trim_end_matches("px").parse().ok()?;
+            let top = parts.next()?.trim().parse().ok()?;
+            let bottom = parts.next()?.trim().parse().ok()?;
+            Some((width, top, bottom))
+        })
+        .collect();
+
+    if segments.len() < 3 || segments.iter().all(|(_, top, bottom)| bottom <= top) {
+        eprintln!("skipping: this display reports no layout (got {measured:?}) -- see #1307");
+        return;
+    }
+
+    for (index, (width, _, _)) in segments.iter().enumerate() {
+        assert!(
+            *width > 0.0,
+            "message {index} draws no accent edge ({measured}); the gap below \
+             would be proving a break in a line that is not there"
+        );
+    }
+    for (index, pair) in segments.windows(2).enumerate() {
+        let (_, _, ends) = pair[0];
+        let (_, begins, _) = pair[1];
+        assert!(
+            begins - ends >= 4.0,
+            "message {index}'s accent ends at {ends} and message {}'s begins at \
+             {begins}: the edge reads as one line down the conversation rather \
+             than one segment per message ({measured})",
+            index + 1
+        );
+    }
+}
