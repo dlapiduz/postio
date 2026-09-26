@@ -36,6 +36,7 @@
 pub mod document;
 pub mod edit;
 pub mod flowed;
+mod hints;
 pub mod markdown;
 pub mod outgoing;
 pub mod parse;
