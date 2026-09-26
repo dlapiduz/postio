@@ -89,6 +89,19 @@ amended or superseded on this branch.
 - Q: How is designed mail with no dark styling shown in dark mode? → A: On
   the sender's light canvas as a sheet of paper by default, with a
   per-message "darken" command (FR-013(b), FR-013a).
+- Q: Is reading untrusted mail inside the app's own process acceptable,
+  without a sandboxed renderer process? → A: Yes, on one condition. Every
+  parser and decoder on the path of message content is memory-safe code, and
+  a failure while rendering one message ends in the plain-text fallback, not
+  a crash (FR-023a).
+- Q: Is a message with only a plain white page and dark text shown as paper
+  or adapted in dark mode? → A: It is adapted. A plain white or near-white
+  page with no other backgrounds counts as unstyled. Paper is for messages
+  with designed backgrounds within them (FR-013).
+- Q: How long may one message take to render before falling back to plain
+  text? → A: 400 ms (FR-023).
+- Q: What is fidelity judged against? → A: Renders from an established
+  browser engine, captured once and checked in (SC-002, Rendering corpus).
 
 ## User Scenarios & Testing *(mandatory)*
 
@@ -144,7 +157,7 @@ HTML. Flattening it loses meaning, not just decoration: which button is
 primary, which figure is the total, which block is the footer.
 
 **Independent Test**: Render the rendering corpus and compare each message
-against its reviewed reference image. Delivers value without dark mode
+against its browser-engine reference render. Delivers value without dark mode
 (light theme only).
 
 **Acceptance Scenarios**:
@@ -327,6 +340,9 @@ message and restarting the app.
 - **A message that is a single image, such as a scanned flyer** (no text to
   adapt): shown as is in both themes, on the sender's canvas if one is
   declared.
+- **Everyday correspondence from clients that stamp a white page and black
+  text** onto every message: this is not designed (FR-013(c)). It adapts to
+  the dark theme like plain mail, rather than showing as a white rectangle.
 - **Mixed messages** (a personal reply quoting a designed newsletter): each
   part is legible, and the quoted part keeps its own canvas inside the fold.
 - **Transparent images** (logos drawn for a white page) in dark mode: they
@@ -419,11 +435,18 @@ one, they say so.
 - **FR-013**: The presentation of a sender-styled message in dark mode MUST
   follow one rule, stated and testable, chosen from these in priority order:
   (a) if the sender supplied dark-mode styling, use it, subject to FR-012;
-  (b) otherwise, a message that declares its own backgrounds is shown on
-  its sender's canvas, a "sheet of paper" set inside the dark app, with the
-  sender's colours unchanged;
-  (c) messages that set only text colours and no backgrounds adapt to the
-  theme under FR-012.
+  (b) otherwise, a message that is **designed** is shown on its sender's
+  canvas, a "sheet of paper" set inside the dark app, with the sender's
+  colours unchanged. A message is designed when any element inside it
+  (other than the page itself) declares a background colour or a background
+  image, or when its page background is anything other than plain white or
+  near-white;
+  (c) every other message adapts to the theme under FR-012. This covers a
+  message that sets only text colours, and one whose only background is a
+  plain white or near-white page, which is a client's default rather than a
+  design. "Near-white" means a relative luminance of at least 0.9. The
+  classification is a pure function of the message, stated once and tested
+  against the corpus.
 - **FR-013a**: For a message shown as paper under FR-013(b), the user MUST be
   able to ask for it darkened. That is a registry command (Constitution II)
   which recolours that message's canvas and text into dark tones, subject to
@@ -489,10 +512,20 @@ one, they say so.
 **Robustness and cost**
 
 - **FR-023**: Rendering a message MUST NOT be able to crash, hang or block the
-  interface. Work is bounded in time and memory. If rendering fails or
-  exceeds its bound, the message falls back to its plain-text form with a
+  interface. Work is bounded in time and memory. The time bound is **400 ms**
+  per render of one message, which is about fifty times the spike's typical
+  cost (4–8 ms): only runaway input should reach it. The bound covers the
+  first render and every re-render (resize, theme change, zoom). If rendering
+  fails or exceeds its bound, the message falls back to its plain-text form with a
   notice stating that the original could not be shown and offering the source
   (001 FR-027).
+- **FR-023a**: The renderer runs inside the application's process, with no
+  separate sandbox process. That is acceptable only because everything that
+  parses or decodes message content (HTML, CSS, fonts, images, and any
+  format a message can supply) MUST be memory-safe code. No C or C++ parser
+  or decoder may sit on that path, and a check MUST fail the build if one is
+  added. A fault while rendering one message MUST be contained to that
+  message and end in FR-023's plain-text fallback. It MUST NOT end the app.
 - **FR-024**: Decoding an image MUST be bounded by its declared and actual
   dimensions and byte size. An over-limit image becomes a placeholder (#1501).
 
@@ -532,8 +565,12 @@ one, they say so.
 - **Rendering corpus**: the set of fixture messages that defines "renders
   well". It covers designed newsletters, transactional mail, legacy-client
   mail, plain-text-in-HTML, dark-mode-aware mail, hostile mail, and
-  international text. Each entry has a reviewed reference image per theme.
-  It extends the `.eml` corpus. Every address in it uses a reserved domain,
+  international text. Each designed entry has a **reference render**: the
+  unsanitized message drawn by an established browser engine at a fixed
+  pane width, in the light theme, with network off and the sender's full
+  styling. It is captured once and checked in. The capture MUST happen
+  while that engine is still in the tree, which is before FR-027 removes
+  it. It extends the `.eml` corpus. Every address in it uses a reserved domain,
   and no real person's mail may be used (Constitution VI).
 - **Message canvas**: the box one message renders into. It carries that
   message's resolved background, text colour and styling scope, and is the
@@ -557,8 +594,10 @@ one, they say so.
   across the rendering corpus meet the contrast floor (4.5:1, or 7:1 in high
   contrast) against their painted background. Zero illegible messages.
 - **SC-002**: At least **95%** of designed messages in the rendering corpus
-  match their reviewed light-theme reference: columns in the same places,
-  images in place at intended size, colours as specified. Every mismatch is
+  match their browser-engine reference render within a stated pixel
+  tolerance: columns in the same places, images in place at intended size,
+  colours as specified. The tolerance is fixed before the first comparison
+  runs and is not loosened to pass. Every mismatch is
   listed with its cause. The remainder are cosmetic (for example, a missing
   border), and none of them loses content.
 - **SC-003**: **Zero** network connection attempts by the renderer across the
@@ -566,8 +605,8 @@ one, they say so.
   the only connections are the application's own fetches of the image URLs
   of the allowed message.
 - **SC-004**: **Zero** crashes or hangs across the corpus plus a malformed and
-  oversized set. Every message either renders or falls back to plain text,
-  within a bounded time.
+  oversized set. Every message either renders or falls back to plain text
+  within 400 ms, and the interface keeps responding throughout.
 - **SC-005**: A typical message is on screen within the interaction budget
   after it is chosen (< 16 ms warm, and never a blank frame), and a theme
   switch repaints an open message within one frame.
