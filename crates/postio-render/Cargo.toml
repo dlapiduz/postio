@@ -1,0 +1,44 @@
+[package]
+name = "postio-render"
+description = "The reading renderer: message bodies drawn in-process, with no network and no C on the content path."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+repository.workspace = true
+
+[dependencies]
+
+[dev-dependencies]
+# Arm B of spec 006's engine evaluation (research R0, T023) is a harness in
+# `examples/`, at prototype depth, so the engine is a dev-dependency until the
+# maintainer's decision (T029): if Blitz is chosen these move up as the
+# Foundational phase builds the crate; if not, this crate is deleted.
+#
+# `net` and `system-fonts` off deliberately (research R3): no network crate,
+# and no fontconfig -- C that reads a message's codepoints -- on the content
+# path. Fonts come through `fontdb` instead, which is pure Rust.
+blitz-dom = { version = "=0.3.0-beta.2", default-features = false, features = ["floats", "svg"] }
+blitz-html = { version = "=0.3.0-beta.2", default-features = false }
+blitz-paint = { version = "=0.3.0-beta.2", default-features = false, features = ["svg"] }
+blitz-traits = { version = "=0.3.0-beta.2", default-features = false }
+anyrender = "=0.13.0"
+anyrender_vello_cpu = "=0.17.0"
+parley = { version = "0.11", default-features = false, features = ["std"] }
+style = { package = "stylo", version = "0.20" }
+fontdb = "0.24"
+# Stamps every element of a composed document with an index, so the
+# harness can address its overrides as a stylesheet and lay out afresh.
+html5ever = "0.39.0"
+markup5ever_rcdom = "0.39.0"
+# The formats the spike never turned on, so it decoded no raster image at
+# all (research R4). Pure Rust; no avif, tiff or exr.
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif", "webp"] }
+postio-body = { version = "0.3.0", path = "../postio-body" }
+postio-model = { version = "0.3.0", path = "../postio-model", features = ["test-corpus"] }
+postio-ui = { version = "0.3.0", path = "../postio-ui" }
+postio-test-support = { workspace = true, features = ["fidelity"] }
+
+[lints]
+workspace = true
