@@ -271,6 +271,10 @@ pub const REMOTE_IMAGE: &str = "remote image";
 /// Postio: an attempt to name a part by Postio's own scheme, which under
 /// ADR 0032's conversation document can be another message's.
 pub const FOREIGN_PARTS: &str = "postio-cid: references";
+/// A `data:` URI that is not an image: a page, a script, a document. An
+/// embedded image is the message's own and allowed (spec 006 FR-003); a
+/// `data:` link is a page opened from inside mail.
+pub const NON_IMAGE_DATA: &str = "non-image data: URIs";
 
 /// Everything the sanitizer refuses, with the reason it may (spec 006 FR-005,
 /// 001 FR-019b).
@@ -323,6 +327,7 @@ pub const REFUSALS: &[(Refused, Refusal)] = &[
     // Resources.
     (Refused::Resource(REMOTE_IMAGE), Refusal::Privacy),
     (Refused::Resource(FOREIGN_PARTS), Refusal::Containment),
+    (Refused::Resource(NON_IMAGE_DATA), Refusal::Containment),
 ];
 
 /// What one sanitize pass counted and refused, shared by the attribute
@@ -567,7 +572,7 @@ pub fn sanitize_body_in(html: &str, remote: RemoteImages, scope: Option<&str>) -
         // `url_schemes` afterward, so `CID_SCHEME` itself does not need to be
         // listed here — it is added anyway, for the reader it is documenting
         // intent to.
-        .add_url_schemes(["cid", CID_SCHEME])
+        .add_url_schemes(["cid", CID_SCHEME, "data"])
         // The sender's own styling, admitted on every element (spec FR-019).
         // An inline declaration needs no scoping of its own: it applies to
         // the element it sits on, which is already inside the container
@@ -932,6 +937,16 @@ fn rewrite_attribute<'u>(
         }
         return Some(Cow::Owned(format!("{}{id}", sender_id_prefix(scope))));
     }
+    if is_data_uri(value) {
+        // An embedded image is the message's own (spec 006 FR-003); anything
+        // else in a `data:` URI -- a page, a document, a link to one -- is
+        // not an image and is not kept.
+        if attribute == "src" && is_data_image(value) {
+            return Some(Cow::Borrowed(value));
+        }
+        tally.refuse(Refused::Resource(NON_IMAGE_DATA));
+        return None;
+    }
     if attribute == "href"
         && let Some(fragment) = value.trim().strip_prefix('#')
         && !fragment.is_empty()
@@ -1068,6 +1083,22 @@ fn viewport_unit(value: &str) -> Option<&'static str> {
             before && after
         })
     })
+}
+
+/// Whether a URL is a `data:` URI, however its scheme is spelled.
+fn is_data_uri(value: &str) -> bool {
+    value
+        .trim_start()
+        .get(..5)
+        .is_some_and(|scheme| scheme.eq_ignore_ascii_case("data:"))
+}
+
+/// Whether a `data:` URI carries an image.
+fn is_data_image(value: &str) -> bool {
+    value
+        .trim_start()
+        .get(5..11)
+        .is_some_and(|kind| kind.eq_ignore_ascii_case("image/"))
 }
 
 /// Whether a reference uses Postio's own part scheme, however it is spelled.
@@ -2284,6 +2315,10 @@ mod conversation_scope_tests {
                 r#"<p style="background:url(postio-cid:9/logo)">t</p><img src="POSTIO-CID:9/logo" alt="">"#.to_owned(),
                 "postio-cid:9".to_owned(),
             ),
+            Refused::Resource(NON_IMAGE_DATA) => (
+                r#"<img src="data:text/html,hello" alt=""><a href="data:text/plain,hi">t</a>"#.to_owned(),
+                "data:".to_owned(),
+            ),
             Refused::Resource(other) => panic!("no probe for resource {other}"),
         }
     }
@@ -2361,5 +2396,40 @@ mod conversation_scope_tests {
             RemoteImages::Blocked,
         );
         assert!(clean.refusals.is_empty(), "{:?}", clean.refusals);
+    }
+
+    /// Spec 006 FR-003: an image embedded in the message itself needs no
+    /// network and no consent. ammonia's default schemes dropped `data:`, so
+    /// every embedded logo vanished -- silently, since nothing listed it.
+    #[test]
+    fn an_embedded_image_survives_and_nothing_else_embedded_does() {
+        let png = "data:image/png;base64,iVBORw0KGgo=";
+        let clean = sanitize_body(
+            &format!(r#"<img src="{png}" alt="logo">"#),
+            RemoteImages::Blocked,
+        );
+        assert!(clean.html.contains(png), "{}", clean.html);
+        assert!(clean.refusals.is_empty(), "{:?}", clean.refusals);
+
+        let page = sanitize_body(
+            r#"<img src="data:text/html,<b>x</b>" alt="">"#,
+            RemoteImages::Blocked,
+        );
+        assert!(!page.html.contains("data:"), "{}", page.html);
+        assert!(
+            page.refusals.contains(&Refused::Resource(NON_IMAGE_DATA)),
+            "{:?}",
+            page.refusals
+        );
+
+        let link = sanitize_body(
+            r#"<a href="data:text/html,<script>x</script>">t</a>"#,
+            RemoteImages::Blocked,
+        );
+        assert!(
+            !link.html.contains("data:"),
+            "a data: link is a page, not an image: {}",
+            link.html
+        );
     }
 }
