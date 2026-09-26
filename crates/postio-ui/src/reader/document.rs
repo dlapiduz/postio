@@ -836,7 +836,13 @@ pub fn body_html_in(
     if let Some(html) = html {
         let sanitized = sanitize::sanitize_body_in(html, remote, scope);
         return Rendered {
-            html: on_canvas(&quote::fold_html_quotes(&sanitized.html), &sanitized),
+            html: on_canvas(
+                &format!(
+                    r#"<div class="{ORIGINAL_CLASS}">{}</div>"#,
+                    quote::fold_html_quotes(&sanitized.html)
+                ),
+                &sanitized,
+            ),
             styles: sanitized.styles,
             held_back: HeldBack {
                 remote_images: sanitized.remote_blocked,
@@ -854,6 +860,14 @@ pub fn body_html_in(
     }
     Rendered::default()
 }
+
+/// The class original HTML is wrapped in, so the reader's own typography
+/// can be reverted under it (spec 006 FR-019, `reader.css`).
+///
+/// Postio-owned and in the reserved namespace: a sender cannot wear it
+/// (`postio_body::sanitize`), and plain text and reader view are never
+/// wrapped in it, because Postio's type is what they are.
+pub const ORIGINAL_CLASS: &str = "postio-original";
 
 /// The sender's content on the page they styled (spec 006 FR-006).
 ///
@@ -1794,7 +1808,10 @@ mod tests {
             text: Some("plain fallback".to_owned()),
             html: Some("<p>rich</p>".to_owned()),
         };
-        assert_eq!(drawn(&body).html, "<p>rich</p>");
+        assert_eq!(
+            drawn(&body).html,
+            r#"<div class="postio-original"><p>rich</p></div>"#
+        );
     }
 
     #[test]
@@ -2481,5 +2498,50 @@ mod warming_tests {
             Rendering::Original
         );
         assert_eq!(opening_rendering(), Rendering::Original);
+    }
+
+    /// Spec 006 FR-019 / 001 FR-019: the sender's layout is the sender's.
+    /// The reader's own typography -- the body's size and line height, the
+    /// paragraph margins, `border-box` everywhere, link and blockquote
+    /// styling -- was reaching into sender markup and overriding the browser
+    /// defaults every sender designs against. Original HTML is wrapped in a
+    /// Postio-owned element the stylesheet reverts those under; plain text
+    /// and reader view keep Postio's type, which is what they are.
+    #[test]
+    fn original_markup_is_set_apart_from_postios_typography() {
+        let html = MessageBody {
+            html: Some("<p>Hi</p>".to_owned()),
+            ..MessageBody::default()
+        };
+        let original = body_html_in(&html, RemoteImages::Blocked, Rendering::Original, Some("7"));
+        assert!(
+            original.html.contains(r#"<div class="postio-original">"#),
+            "{}",
+            original.html
+        );
+        let reduced = body_html_in(&html, RemoteImages::Blocked, Rendering::Reader, Some("7"));
+        assert!(
+            !reduced.html.contains("postio-original"),
+            "{}",
+            reduced.html
+        );
+        let text = MessageBody {
+            text: Some("Hi".to_owned()),
+            ..MessageBody::default()
+        };
+        let plain = body_html_in(&text, RemoteImages::Blocked, Rendering::Original, Some("7"));
+        assert!(!plain.html.contains("postio-original"), "{}", plain.html);
+        let css = include_str!("../../data/reader.css");
+        for reverted in [
+            ".postio-original *",
+            ".postio-original p",
+            ".postio-original a",
+            ".postio-original blockquote",
+        ] {
+            assert!(
+                css.contains(reverted),
+                "reader.css must revert Postio's type under {reverted}"
+            );
+        }
     }
 }

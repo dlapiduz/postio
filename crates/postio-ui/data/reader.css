@@ -70,6 +70,41 @@ body:empty::before {
   overflow-x: auto;
 }
 
+/* A sender's own markup (spec 006 FR-019): what the sender designed
+   against is the browser's defaults, not the reader's type. Everything the
+   rules above set for Postio's own words reverts here -- box sizing, size
+   and line height, paragraph margins, link and quote styling -- so a
+   message's paragraphs, tables and links sit where its sender put them.
+   `overflow-wrap` and the image and table `max-width` stay: they keep an
+   unbreakable token or an over-wide picture inside the message's box rather
+   than widening the pane (FR-026). */
+.postio-original {
+  font-size: 16px;
+  line-height: normal;
+}
+
+.postio-original * {
+  box-sizing: revert;
+}
+
+.postio-original p {
+  margin: revert;
+}
+
+.postio-original a {
+  color: revert;
+  text-decoration: revert;
+  text-decoration-thickness: revert;
+  text-underline-offset: revert;
+}
+
+.postio-original blockquote {
+  margin: revert;
+  padding-left: revert;
+  border-left: revert;
+  color: revert;
+}
+
 /* The page the sender styled (spec 006 FR-006), lifted off their <body> by
    the sanitizer. It fills the container edge to edge -- the negative margin
    undoes .postio-body's padding and the padding restores it inside -- so a
