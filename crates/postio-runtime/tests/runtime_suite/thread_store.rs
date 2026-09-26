@@ -652,3 +652,53 @@ async fn a_query_view_is_counted_from_the_folders_cached_counts() {
         assert_eq!(total, expected, "{scope:?} was counted rather than read");
     }
 }
+
+#[tokio::test]
+async fn archiving_from_an_inbox_takes_the_row_out_of_unified_and_its_count() {
+    // #1692: Unified is the inboxes. An archive moves a message between two
+    // folders and leaves every folder's total summed together where it was,
+    // so a count held against that sum would still include the row -- and a
+    // list told there are more rows than its pages hold draws placeholders
+    // that never resolve.
+    let database = test_support::temp().await;
+    let report = seed_large(&database, 7, 300).await;
+    let archive = report.mailbox(MailboxRole::Archive).expect("an archive").id;
+    thread_seeded_messages(&database, report.account.id, 1).await;
+    let store = LocalStore::new(&database);
+
+    let first = store
+        .thread_page(request(ListScope::Unified, 0, 20))
+        .await
+        .expect("a unified page");
+    let inbox = report.mailbox(MailboxRole::Inbox).expect("an inbox").id;
+    assert_eq!(
+        first.total,
+        store
+            .thread_count(ListScope::Mailbox(inbox))
+            .await
+            .expect("the inbox's count"),
+        "one account: Unified is its inbox, row for row"
+    );
+    let top = first.rows[0].representative.id;
+
+    {
+        let connection = database.connect().await.expect("a connection");
+        postio_storage::repository::MessageRepository::new(&connection)
+            .move_to(&[top], archive)
+            .await
+            .expect("archive the top row");
+    }
+    let after = store
+        .thread_page(request(ListScope::Unified, 0, 20))
+        .await
+        .expect("a unified page");
+    assert_eq!(
+        after.total,
+        first.total - 1,
+        "the archived row is still counted"
+    );
+    assert!(
+        after.rows.iter().all(|row| row.representative.id != top),
+        "the archived row is still listed"
+    );
+}
