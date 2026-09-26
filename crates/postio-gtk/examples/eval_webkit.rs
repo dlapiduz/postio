@@ -45,6 +45,9 @@ use webkit6::prelude::*;
 /// The reader's width for every render, in CSS pixels.
 const WIDTH: i32 = 800;
 
+/// The sender every fixture is rendered as, and the one consent allows.
+const SENDER: &str = "eval@example.com";
+
 /// The isolated world the harness reads and writes the document from.
 const WORLD: &str = "postio-eval";
 
@@ -120,6 +123,12 @@ fn main() -> glib::ExitCode {
     }
 
     let mut report = String::from("# arm A (WebKit)\n\n");
+    if std::env::var_os("POSTIO_EVAL_GATES_ONLY").is_some() {
+        gates(&mut report);
+        std::fs::write(out.join("gates.md"), &report).expect("the report");
+        print!("{report}");
+        return glib::ExitCode::SUCCESS;
+    }
 
     // ── S1: fidelity, light, chrome geometry neutralized ────────────────────
     report.push_str("## S1 fidelity\n\n| fixture | agreeing | lost block | height ok | match |\n|---|---|---|---|---|\n");
@@ -260,6 +269,51 @@ const NEUTRAL_CHROME: &str = r#"(() => {
   return '';
 })()"#;
 
+/// G2 and G3: every hostile fixture, unconsented and consented, with its
+/// remote URLs pointed at a loopback listener; connections counted, and the
+/// time to a finished load taken.
+fn gates(report: &mut String) {
+    use postio_test_support::listener::Listener;
+    report.push_str(
+        "## G2 egress and G3 survival\n\n| fixture | consent | loaded in | connections | paths |\n|---|---|---|---|---|\n",
+    );
+    adw::StyleManager::default().set_color_scheme(adw::ColorScheme::ForceLight);
+    let listener = Listener::start();
+    listener.control();
+    for fixture in test_corpus::by_category(Category::Hostile) {
+        for consented in [false, true] {
+            let before = listener.count();
+            let paths_before = listener.paths().len();
+            let harness = Harness::with(
+                fixture,
+                900,
+                |mut body| {
+                    body.html = body.html.map(|html| listener.rewrite(&html));
+                    body
+                },
+                consented,
+            );
+            let loaded = harness.render_timed(Duration::from_secs(20));
+            // Time for anything that would fetch to have fetched.
+            let until = Instant::now() + Duration::from_millis(800);
+            while Instant::now() < until {
+                glib::MainContext::default().iteration(false);
+                std::thread::sleep(Duration::from_millis(5));
+            }
+            let paths: Vec<String> = listener.paths()[paths_before..].to_vec();
+            report.push_str(&format!(
+                "| `{}` | {} | {} | {} | {} |\n",
+                fixture.name(),
+                if consented { "allowed" } else { "blocked" },
+                loaded.map_or("**never**".to_owned(), |d| format!("{} ms", d.as_millis())),
+                listener.count() - before,
+                paths.join(" ")
+            ));
+            harness.close();
+        }
+    }
+}
+
 fn legibility_fixtures() -> Vec<&'static Fixture> {
     if let Ok(only) = std::env::var("POSTIO_EVAL_ONLY") {
         return vec![test_corpus::load(&only)];
@@ -333,6 +387,17 @@ struct Harness {
 
 impl Harness {
     fn new(fixture: &Fixture, height: i32) -> Harness {
+        Harness::with(fixture, height, |body| body, false)
+    }
+
+    /// As [`new`](Self::new), with the body rewritten first and, if
+    /// `consented`, the sender allowed remote images.
+    fn with(
+        fixture: &Fixture,
+        height: i32,
+        rewrite: impl FnOnce(MessageBody) -> MessageBody,
+        consented: bool,
+    ) -> Harness {
         let parsed = postio_model::mime::parse(fixture.bytes());
         let parts = parsed
             .parts
@@ -343,11 +408,11 @@ impl Harness {
             })
             .collect();
         let scratch = std::env::temp_dir().join("postio-eval-allowlist");
-        let reader = Reader::with_allowlist(
-            Rc::new(Parts(parts)),
-            RemoteImageAllowList::default(),
-            scratch,
-        );
+        let mut allowlist = RemoteImageAllowList::default();
+        if consented {
+            allowlist.allow(SENDER);
+        }
+        let reader = Reader::with_allowlist(Rc::new(Parts(parts)), allowlist, scratch);
         let window = gtk::Window::builder()
             .default_width(WIDTH)
             .default_height(height)
@@ -357,8 +422,29 @@ impl Harness {
         Harness {
             window,
             reader,
-            body: parsed.body,
+            body: rewrite(parsed.body),
         }
+    }
+
+    /// Render, and how long until the document finished loading, or `None`
+    /// if it never did (a crashed or hung web process).
+    fn render_timed(&self, patience: Duration) -> Option<Duration> {
+        let done = Rc::new(RefCell::new(false));
+        let flag = done.clone();
+        let handler = self.reader.view().connect_load_changed(move |_, event| {
+            if event == webkit6::LoadEvent::Finished {
+                *flag.borrow_mut() = true;
+            }
+        });
+        let started = Instant::now();
+        self.reader.render(&self.body, Some(SENDER));
+        let context = glib::MainContext::default();
+        while !*done.borrow() && started.elapsed() < patience {
+            context.iteration(false);
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        self.reader.view().disconnect(handler);
+        done.borrow().then(|| started.elapsed())
     }
 
     fn render(&self) {
@@ -369,7 +455,7 @@ impl Harness {
                 *flag.borrow_mut() = true;
             }
         });
-        self.reader.render(&self.body, Some("eval@example.com"));
+        self.reader.render(&self.body, Some(SENDER));
         wait(|| *done.borrow(), "the document to load");
         self.reader.view().disconnect(handler);
         settle();

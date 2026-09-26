@@ -79,6 +79,12 @@ fn main() {
         return;
     }
     let mut report = String::from("# arm B (Blitz)\n\n");
+    if std::env::var_os("POSTIO_EVAL_GATES_ONLY").is_some() {
+        gates(&fonts, &mut report);
+        std::fs::write(out.join("gates.md"), &report).expect("the report");
+        print!("{report}");
+        return;
+    }
 
     // ── S1 ────────────────────────────────────────────────────────────────
     report.push_str("## S1 fidelity\n\n| fixture | agreeing | lost block | height ok | match |\n|---|---|---|---|---|\n");
@@ -182,6 +188,60 @@ fn main() {
     print!("{report}");
 }
 
+/// G2 and G3, as arm A measures them, plus the local-file probe research
+/// R5 predicts this arm needs: usvg's default resolver reads any path an
+/// SVG's `<image>` names.
+fn gates(fonts: &FontSet, report: &mut String) {
+    use postio_test_support::listener::Listener;
+    use std::time::Instant;
+    report.push_str(
+        "## G2 egress and G3 survival\n\n| fixture | consent | laid out and painted in | panicked | connections | probe pixels |\n|---|---|---|---|---|---|\n",
+    );
+    // The probe: a magenta PNG where the hostile SVG looks. If any of it is
+    // painted, a message read a local file.
+    let probe = std::path::Path::new("/tmp/postio-svg-local-file-probe.png");
+    let magenta = Image::from_rgba(40, 40, [255u8, 0, 255, 255].repeat(40 * 40));
+    magenta.save_png(probe);
+    let listener = Listener::start();
+    listener.control();
+    for fixture in test_corpus::by_category(Category::Hostile) {
+        for remote in [RemoteImages::Blocked, RemoteImages::Allowed] {
+            let before = listener.count();
+            let message = Message::with(fixture, |html| listener.rewrite(html), remote);
+            let started = Instant::now();
+            let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                let mut doc = message.lay_out(fonts, false, None);
+                paint(&mut doc)
+            }));
+            let elapsed = started.elapsed();
+            std::thread::sleep(std::time::Duration::from_millis(300));
+            let probe_pixels = outcome.as_ref().map_or(0, |image| {
+                image
+                    .rgba
+                    .as_chunks::<4>()
+                    .0
+                    .iter()
+                    .filter(|p| p[0] > 240 && p[1] < 20 && p[2] > 240)
+                    .count()
+            });
+            report.push_str(&format!(
+                "| `{}` | {} | {} ms | {} | {} | {} |\n",
+                fixture.name(),
+                if remote == RemoteImages::Allowed {
+                    "allowed"
+                } else {
+                    "blocked"
+                },
+                elapsed.as_millis(),
+                outcome.is_err(),
+                listener.count() - before,
+                probe_pixels
+            ));
+        }
+    }
+    let _ = std::fs::remove_file(probe);
+}
+
 fn legibility_fixtures() -> Vec<&'static Fixture> {
     if let Ok(only) = std::env::var("POSTIO_EVAL_ONLY") {
         return vec![test_corpus::load(&only)];
@@ -209,24 +269,26 @@ struct Message {
 
 impl Message {
     fn of(fixture: &Fixture) -> Message {
-        let parsed = postio_model::mime::parse(fixture.bytes());
+        Message::with(fixture, |html| html.to_owned(), RemoteImages::Blocked)
+    }
+
+    /// As [`of`](Self::of), with the HTML rewritten first and composed
+    /// under `remote`.
+    fn with(fixture: &Fixture, rewrite: impl Fn(&str) -> String, remote: RemoteImages) -> Message {
+        let mut parsed = postio_model::mime::parse(fixture.bytes());
+        parsed.body.html = parsed.body.html.map(|html| rewrite(&html));
         let parts = parsed
             .parts
             .iter()
             .filter_map(|part| Some((part.attachment.content_id.clone()?, part.content.clone())))
             .collect();
         let body = parsed.body;
-        let rendered = document::body_html_in(
-            &body,
-            RemoteImages::Blocked,
-            document::opening_rendering(),
-            None,
-        );
+        let rendered = document::body_html_in(&body, remote, document::opening_rendering(), None);
         let sheet = document::sheet_for(Rendering::Original, document::suits_reader_view(&body));
         let html = stamp(&document::document_for(
             &rendered.html,
             &rendered.styles,
-            RemoteImages::Blocked,
+            remote,
             sheet,
         ));
         Message {
@@ -257,6 +319,13 @@ impl Message {
                 },
             )),
             ua_stylesheets: Some(vec![HEAD_IS_NOT_CONTENT.to_owned()]),
+            // A base a relative URL can resolve against. Without one, Blitz
+            // resolves against a `data:` URL, which cannot be a base, and
+            // panics on the first `<img src="x">` (the evaluation's G3). Under
+            // `POSTIO_EVAL_NO_BASE` the harness leaves it unset, to show that.
+            base_url: std::env::var_os("POSTIO_EVAL_NO_BASE")
+                .is_none()
+                .then(|| "postio-message://message/".to_owned()),
             net_provider: Some(Arc::new(Resources {
                 parts: self.parts.clone(),
             })),
@@ -278,6 +347,9 @@ struct Resources {
 impl NetProvider for Resources {
     fn fetch(&self, _doc_id: usize, request: Request, handler: Box<dyn NetHandler>) {
         let url = request.url.as_str().to_owned();
+        if std::env::var_os("POSTIO_EVAL_DEBUG").is_some() {
+            eprintln!("fetch: {}", &url[..url.len().min(60)]);
+        }
         if let Some(rest) = url.strip_prefix("postio-cid:") {
             let id = postio_body::sanitize::percent_decode(rest.rsplit('/').next().unwrap_or(rest));
             if let Some(bytes) = self.parts.get(&id) {

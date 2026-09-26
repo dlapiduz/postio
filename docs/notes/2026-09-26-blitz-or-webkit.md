@@ -208,6 +208,43 @@ not:
   not aliased, and falls to the bundled sans. Fontconfig's substitution
   table would have to be carried by Postio.
 
+### Gates G2 and G3, both arms (T024)
+
+Setup:
+- every hostile fixture was rendered unconsented and consented;
+- every remote URL was pointed at `postio_test_support::listener`, whose
+  control connection was counted first;
+- the harnesses were release builds;
+- another session was idle-waiting on the machine, at a load average of
+  about 2.
+
+| | arm A (WebKit) | arm B (Blitz) |
+|---|---|---|
+| G2, unconsented: connections | **0** in every fixture | **0** in every fixture |
+| G2, consented: connections | images only: 9 on `html-every-url-vector` (pixel, backgrounds, list marker, cursor, border image, generated content, the conditional rule's background, a cell `background`) and 4 on the tracking fixture. The web font and the `@import` were **not** fetched | **0**: the engine has no network code. Consented images would come through the app's fetcher (R12) |
+| G3: slowest render | 374 ms on the first load, which includes starting the web process; 89 ms after that | 101 ms (`html-very-tall`); the rest are 1–10 ms |
+| G3: crashes | none | **one panic class**, caught: see below |
+
+- **Both arms pass G2 and G3.** Arm B passes only with one configuration
+  its prototype lacked:
+  - blitz-dom 0.3.0-beta.2 panics when a relative image URL (`<img
+    src="x">`) is resolved against its default base, which is a `data:`
+    URL and cannot be one;
+  - the panic was contained by `catch_unwind`, as FR-023a requires, and
+    would have fallen back to plain text;
+  - but any message with a relative image, careless or hostile, would
+    trigger it;
+  - setting `DocumentConfig::base_url` removes it (re-measured: no panics).
+- **SVG images did not paint in arm B at all.** Neither `cid:` nor
+  `data:` did. The resource provider is asked and returns the bytes, and
+  PNGs take the same route successfully, so the failure is inside Blitz's
+  SVG parse or paint in this configuration. The cause was not found within
+  the evaluation. It is recorded as an open risk against fidelity (mail
+  uses SVG logos). It also makes research R5's local-file concern
+  unobservable here: the magenta probe read 0 pixels because nothing drew.
+- **Arm A's SVG local-file behaviour was not measured.** WebKit, like
+  every browser, loads no external resources for SVG used as an image.
+
 ### Engine-neutral defects the evaluation found
 
 Found while measuring arm A, and fixed on the branch before either arm is
