@@ -86,7 +86,8 @@ adds a 25th.
 - a theme switch or zoom step shown within one frame of its render arriving.
 
 **Constraints**:
-- 400 ms render bound, then plain-text fallback;
+- 400 ms render bound (`DEFAULT_RENDER_DEADLINE`, injectable, and scaled
+  in tests), then plain-text fallback;
 - no C on the content path;
 - no network in the renderer's graph;
 - tile memory at most 64 MiB per reader, independent of message height;

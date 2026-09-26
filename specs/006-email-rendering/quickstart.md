@@ -66,7 +66,8 @@ cargo nextest run -p postio-render --test hostile        # beacons, script, over
 
 **Expect:**
 - every hostile fixture either renders contained or reports
-  `FellBack { .. }` within 400 ms;
+  `FellBack { .. }` within the render deadline (400 ms in production,
+  scaled by `POSTIO_TEST_PATIENCE` in tests);
 - no panic escapes;
 - no connection is made;
 - no `LinkTarget` other than http, https, mailto, a verb or a fragment.
