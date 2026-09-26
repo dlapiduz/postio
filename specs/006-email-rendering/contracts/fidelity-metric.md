@@ -16,13 +16,13 @@ change to them is a spec change and needs a commit that says why.
   the document height.
 - **Fonts.** The bundled faces are installed as the default sans, serif and
   monospace families for the capture.
-- **Output.** `crates/postio-render/tests/reference/<fixture>.png`, plus a
+- **Output.** `crates/postio-test-support/data/reference/<fixture>.png`, plus a
   line in `reference/README.md` naming the fixture, the WebKitGTK version and
   the capture date.
 
 ## Comparison
 
-The candidate is `postio-render`'s render of the same fixture through the
+The candidate is the chosen engine's render of the same fixture through the
 **production pipeline**: sanitize, compose, render. It uses the same
 viewport, light theme and zoom 100.
 
@@ -37,7 +37,7 @@ viewport, light theme and zoom 100.
 5. **SC-002 passes** when **≥ 95%** of designed fixtures match.
 
 Every fixture that does not match is listed in
-`crates/postio-render/tests/reference/MISMATCHES.md`, with its cause and
+`crates/postio-test-support/data/reference/MISMATCHES.md`, with its cause and
 with *cosmetic* or *content-losing* stated. A content-losing mismatch fails
 SC-002 regardless of the 95%.
 

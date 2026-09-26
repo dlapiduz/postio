@@ -33,8 +33,17 @@ The spec asks for three things:
 - **WebKit leaves the reader entirely.** The composer keeps it until ADR 0039
   lands (R17).
 
-All technical unknowns are resolved in [research.md](./research.md). Three
-risks remain, and each is retired by a named task at the start of Phase 2:
+**The engine is not yet decided.** Everything above describes the Blitz arm.
+Research **R0** sets out a like-for-like evaluation of Blitz against WebKit,
+with gates, scored criteria and a decision rule written before either arm
+runs. It sits between the engine-neutral work and the engine-specific work,
+and the maintainer decides from its scorecard. If WebKit is chosen, R0 lists
+the four requirements that are amended and the plan is re-run for the
+engine-specific phases.
+
+All other technical unknowns are resolved in [research.md](./research.md).
+If Blitz is chosen, three risks remain, each retired by a named task at the
+start of its Foundational phase:
 - R6-a: which snapshot types are `Send`;
 - R15-a: `<details>` toggling;
 - the image and SVG paint path the spike never exercised.
@@ -226,8 +235,23 @@ Everything else lands in the crate that already owns that concern:
 
 Each phase is a run of commits on `feature/email-rendering`, red first. The
 branch lands **once**, as a single pull request reviewed against the spec
-(constitution, *Spec-driven work*). The order is forced by one fact: **the
-WebKit reference renders must be captured before WebKit leaves the reader.**
+(constitution, *Spec-driven work*). The order is forced by two facts:
+- **the WebKit reference renders must be captured before WebKit leaves the
+  reader;**
+- **the engine is chosen (R0) only after the engine-neutral work exists**,
+  so that both arms render the same improved input.
+
+**Tasks Phases 1–3 come before everything below** (the numbering in `tasks.md`):
+- **Phase 1**: the corpus, the references and the metric.
+- **Phase 2, engine-neutral groundwork**: the sanitizer keeps `class` and
+  `id`, lifts the canvas, carries `color-scheme`, walks the refusal list,
+  translates legacy hints, and opens every message in its original layout.
+  This improves today's WebKit reader too.
+- **Phase 3, the evaluation**: both arms as harnesses, the gates G1–G3, the
+  scores S1–S8, a scorecard note, and the maintainer's decision.
+
+The plan's Phases 2–9 below (tasks Phases 4–11) are the **Blitz** arm's plan. If WebKit is chosen, they are
+re-planned before any of them starts.
 
 **Phase 1 — Evidence before engine** (SC-002 prerequisites)
 - **P1-corpus.** Build the rendering corpus with `/add-fixture`, all

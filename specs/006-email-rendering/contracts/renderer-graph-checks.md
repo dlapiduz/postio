@@ -7,7 +7,12 @@ every check in `scripts/checks/`, each names its own fix when it fails.
 ## 1. `check-crate-boundaries.py`: a new `RULES["postio-render"]`
 
 This uses the existing mechanism: `find_violations` walks `cargo metadata`
-over normal, build and own-dev edges, transitively.
+transitively. **For this rule it walks normal and build edges only.**
+`postio-render`'s own dev-dependencies are exempt, because they never link into
+the product. Two of them are needed: the egress test binds a socket, and the
+suites use `postio-test-support`, which pulls in `tokio`. The rule gains an
+`edges` key to say so, and the rules that exist today keep their current
+walk.
 
 ```python
 "postio-render": {
