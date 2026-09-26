@@ -252,6 +252,50 @@ fn threads_of(rows: &dyn RowFacts, marked: &[MessageId]) -> Option<Vec<ThreadId>
     Some(threads)
 }
 
+/// Whether `command`, as invoked, takes the cursor's own row out of the view.
+///
+/// What triage needs a frontend to know the moment a key is pressed rather
+/// than when the store answers (#1687). `a a a` is "this, then the next,
+/// then the next": the second press has to land on the row below, and it is
+/// usually pressed before the first one's write, events and re-read have
+/// come back -- so a cursor that waited for the row to leave was still on
+/// it, and the second archive went to the conversation already archived
+/// ("Already there"). A frontend that hears `true` steps the cursor off the
+/// row as it sends the command, which is where the row's leaving would have
+/// put it anyway.
+///
+/// Narrow on purpose, because a cursor that steps off a row that stays is a
+/// cursor moved for nothing:
+///
+/// * aimed at the **cursor** -- nothing marked, and a target still left to
+///   the selection. Marked rows are the selection's business, and a verb
+///   that names its own rows (a hover action, a drop) is about those;
+/// * a verb that **files the row somewhere else**: archive, delete, snooze,
+///   and a move that has its destination. A move with none only asks where;
+/// * in a **folder**. Every other view outlives those verbs -- Unified and
+///   an account's view hold archived mail too, and Flagged holds a flagged
+///   message wherever it is filed.
+///
+/// Called with the command as invoked, before [`refine`] names the
+/// conversation.
+pub fn takes_the_cursor_row_out(command: &Command, aim: &Aim<'_>) -> bool {
+    let files_it_away = match command {
+        Command::Archive { .. } | Command::Delete { .. } | Command::Snooze { .. } => true,
+        Command::Move { to, .. } => to.is_some(),
+        Command::ArchiveThread { thread } => thread.is_none(),
+        _ => false,
+    };
+    let at_the_cursor = match command {
+        Command::ArchiveThread { .. } => true,
+        _ => matches!(command.target(), Some(MessageTarget::Selection)),
+    };
+    files_it_away
+        && at_the_cursor
+        && aim.cursor.is_some()
+        && matches!(aim.selection, Selection::These(marked) if marked.is_empty())
+        && matches!(aim.scope, Some(ViewScope::Mailbox(_)))
+}
+
 /// Point app state at what the user is looking at.
 ///
 /// Every message verb defaults to [`MessageTarget::Selection`], and
@@ -543,6 +587,109 @@ mod tests {
             cursor: cursor.map(message),
             rows,
         }
+    }
+
+    /// #1687: which gestures take the cursor's own row out of the view, so
+    /// the cursor steps off it before the store has answered and a second
+    /// press lands on the next message rather than on the one in flight.
+    #[test]
+    fn a_verb_that_files_the_cursors_row_away_from_its_folder_takes_it_out() {
+        use postio_model::{AccountId, MailboxId};
+
+        let rows = FakeRows::threads(&[(7, 3), (8, 4)]);
+        let nothing = Selection::These(Vec::new());
+        let folder = Some(ViewScope::Mailbox(MailboxId::new(1)));
+        let at = |scope: Option<ViewScope>, selection: &Selection, command: Command| {
+            let aim = Aim {
+                scope,
+                selection,
+                cursor: Some(message(7)),
+                rows: &rows,
+            };
+            takes_the_cursor_row_out(&command, &aim)
+        };
+
+        for command in [
+            Command::default_for(CommandId::Archive),
+            Command::default_for(CommandId::Delete),
+            Command::default_for(CommandId::Snooze),
+            Command::ArchiveThread { thread: None },
+            Command::Move {
+                target: MessageTarget::Selection,
+                to: Some(MailboxId::new(2)),
+            },
+        ] {
+            assert!(
+                at(folder.clone(), &nothing, command.clone()),
+                "{command:?} on the cursor's row in a folder takes it out",
+            );
+        }
+
+        assert!(
+            !at(
+                folder.clone(),
+                &nothing,
+                Command::default_for(CommandId::Flag)
+            ),
+            "a flag changes the row and leaves it where it is",
+        );
+        assert!(
+            !at(
+                folder.clone(),
+                &nothing,
+                Command::Move {
+                    target: MessageTarget::Selection,
+                    to: None,
+                },
+            ),
+            "a move with no destination only asks where to",
+        );
+        assert!(
+            !at(
+                folder.clone(),
+                &Selection::These(vec![message(8)]),
+                Command::default_for(CommandId::Archive),
+            ),
+            "with rows marked the verb is about them, not the cursor's row",
+        );
+        assert!(
+            !at(
+                folder.clone(),
+                &nothing,
+                Command::Archive {
+                    target: MessageTarget::Messages(vec![message(8)]),
+                },
+            ),
+            "a verb that names its own rows is not aimed at the cursor",
+        );
+        assert!(
+            !at(
+                Some(ViewScope::Unified {
+                    accounts: vec![AccountId::new(1)],
+                }),
+                &nothing,
+                Command::default_for(CommandId::Archive),
+            ),
+            "Unified holds archived mail too, so the row stays",
+        );
+        assert!(
+            !at(
+                Some(ViewScope::Flagged(AccountId::new(1))),
+                &nothing,
+                Command::default_for(CommandId::Archive),
+            ),
+            "an archived message is still flagged",
+        );
+        let nowhere = Aim {
+            scope: folder,
+            selection: &nothing,
+            cursor: None,
+            rows: &rows,
+        };
+        assert!(
+            !takes_the_cursor_row_out(&Command::default_for(CommandId::Archive), &nowhere),
+            "no cursor, no row to step off",
+        );
     }
 
     #[test]
