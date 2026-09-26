@@ -697,3 +697,27 @@ fn a_command_can_need_more_than_one_thing_at_once() {
         );
     }
 }
+
+/// Spec 006 FR-031: every message opens as its sender built it, so reader
+/// view became a command rather than a default -- and `view_original`, which
+/// only ever left reader view, is its way back. `mod+shift+o` pairs it with
+/// `mod+o`; the composer's `Detach composer` owns the same key only where
+/// the composer is, and compose takes the reading pane over, so the two
+/// contexts never meet (`bindings_do_not_collide_within_a_context`).
+#[test]
+fn reader_view_is_a_command_beside_view_original() {
+    let spec = registry::get(CommandId::ToggleReaderView);
+    assert_eq!(spec.id.as_str(), "toggle_reader_view");
+    assert_eq!(spec.title, "Reader view");
+    assert_eq!(spec.default_binding, "mod+shift+o");
+    assert_eq!(
+        spec.contexts,
+        registry::get(CommandId::ViewOriginal).contexts
+    );
+    assert!(!spec.destructive);
+    assert_eq!(spec.recovery, Recovery::None);
+    assert_eq!(
+        Command::default_for(CommandId::ToggleReaderView).id(),
+        CommandId::ToggleReaderView
+    );
+}

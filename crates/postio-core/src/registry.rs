@@ -540,8 +540,9 @@ static SPECS: &[CommandSpec] = &[
         id: CommandId::ViewOriginal,
         title: "View original",
         // `mod+o`, not a bare letter: it is a rare gesture on a surface
-        // where every bare letter is already a verb people use constantly,
-        // and reader view is the default rather than something to escape.
+        // where every bare letter is already a verb people use constantly.
+        // Since spec 006 FR-031 it is the way back from reader view rather
+        // than out of a default.
         //
         // `mod`, not a literal `ctrl` -- the canvas writes it `C-o`, which
         // means the primary accelerator, and that is Command on a Mac (#669).
@@ -553,6 +554,23 @@ static SPECS: &[CommandSpec] = &[
         // Wherever a message is drawn. A no-op when nothing is reduced, so
         // it costs nothing to offer everywhere mail is read rather than
         // making the key's meaning depend on what happens to be on screen.
+        contexts: ctx(MESSAGE_SURFACES),
+        destructive: false,
+        recovery: Recovery::None,
+        requires: MAIL,
+    },
+    CommandSpec {
+        id: CommandId::ToggleReaderView,
+        title: "Reader view",
+        // Paired with `View original`'s `mod+o`. The composer's `Detach
+        // composer` has this key only where the composer is, and compose
+        // takes the reading pane over, so the two never meet.
+        default_binding: "mod+shift+o",
+        // A terminal cannot tell `ctrl+shift+o` from `ctrl+o`, so it needs a
+        // key it can send; `alt+o` is the composer's convention for exactly
+        // this, and the composer's own `alt+o` never meets a message surface.
+        alternate_bindings: &["alt+o"],
+        // Wherever `View original` is: the two are one control's two halves.
         contexts: ctx(MESSAGE_SURFACES),
         destructive: false,
         recovery: Recovery::None,

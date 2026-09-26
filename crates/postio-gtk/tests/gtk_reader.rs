@@ -185,13 +185,12 @@ fn the_reader_renders_and_hardens_the_corpus() {
         "nothing has named a list yet"
     );
     reader.set_unsubscribe(Some("newsletter.example.com"));
-    // Not on screen yet: the newsletter opened in reader view, and the
-    // notice saying so outranks the list in the reader's one notice slot --
-    // a rewrite must never be silent. Leaving reader view, below, is what
-    // brings the list up.
+    // On screen at once: the newsletter opened as its sender built it (spec
+    // 006 FR-031), so no reader-view notice outranks the list in the
+    // reader's one notice slot.
     assert!(
-        !reader.unsubscribe_banner_visible() && reader.reader_notice_visible(),
-        "the slot shows one notice, and reader view's is the more important"
+        reader.unsubscribe_banner_visible() && !reader.reader_notice_visible(),
+        "nothing was rewritten, so the list is the notice that applies"
     );
     assert!(
         reader
@@ -222,12 +221,16 @@ fn the_reader_renders_and_hardens_the_corpus() {
     // And the caller does, for this message, as the application would.
     reader.set_unsubscribe(Some("newsletter.example.com"));
 
-    // ── #1009: a newsletter opens in reader view, and `C-o` leaves it ──────
+    // ── spec 006 FR-031: a newsletter opens as sent; reader view is asked for ─
     // Rendered above, so the state is whatever `render` decided for it.
     assert!(
-        reader.is_reader_view(),
-        "a campaign should open reduced; that is what reader view is for"
+        !reader.is_reader_view(),
+        "every message opens as its sender built it, bulk mail included"
     );
+    let finished = track_load_finished(&reader);
+    reader.toggle_reader_view();
+    wait_for(&finished, Duration::from_secs(5));
+    assert!(reader.is_reader_view(), "reader view is one command away");
     assert!(
         reader.reader_notice_visible(),
         "and it has to say so -- a surface that silently rewrites somebody's \
@@ -313,8 +316,8 @@ fn the_reader_renders_and_hardens_the_corpus() {
     reader.render(&parsed.body, Some("weekly@news.example.org"));
     wait_for(&finished, Duration::from_secs(5));
     assert!(
-        reader.is_reader_view(),
-        "the next message decides for itself"
+        !reader.is_reader_view(),
+        "the next message opens as its sender built it again"
     );
 
     // ── and ordinary correspondence is never dragged into it ──────────────
@@ -347,9 +350,14 @@ fn the_reader_renders_and_hardens_the_corpus() {
     let finished = track_load_finished(&reader);
     reader.render(&shipping.body, Some("orders@shop.example.test"));
     wait_for(&finished, Duration::from_secs(5));
+    // Opens as sent, like everything (spec 006 FR-031); the facts are
+    // reader view's, one command away.
+    let finished = track_load_finished(&reader);
+    reader.toggle_reader_view();
+    wait_for(&finished, Duration::from_secs(5));
     assert!(
         reader.is_reader_view(),
-        "a shipping notice is bulk mail and opens reduced"
+        "a shipping notice reduces on request"
     );
     let document = reader.test_document();
     let block = document
@@ -801,11 +809,29 @@ fn view_original_reaches_one_message_of_a_thread() {
             "(() => {{ const el = document.getElementById('m-{scope}');               return el ? String(el.querySelectorAll('table').length) : 'no such message'; }})()"
         )
     };
+    // Every message opens as its sender built it (spec 006 FR-031), the
+    // campaign included, so its tables are there to start with.
+    let document = reader.document_for_test();
+    assert_ne!(
+        measure(&document, &tables_in("7")),
+        "0",
+        "the campaign should open as its sender built it"
+    );
+
+    // ── reader view reaches one message of the thread, and only that one ──
+    let finished = track_load_finished(&reader);
+    reader.toggle_reader_view_for("7");
+    wait_for(&finished, Duration::from_secs(5));
     let document = reader.document_for_test();
     assert_eq!(
         measure(&document, &tables_in("7")),
         "0",
-        "the campaign did not open reduced, so this case cannot show `⌃O`          restoring anything"
+        "reader view left the campaign's layout in place -- the command did \
+         not reach the one-document pane"
+    );
+    assert!(
+        document.contains("an ordinary note"),
+        "the rest of the thread is drawn as it was"
     );
 
     // ── and the key reaches it ────────────────────────────────────────────
@@ -816,12 +842,9 @@ fn view_original_reaches_one_message_of_a_thread() {
     assert_ne!(
         measure(&document, &tables_in("7")),
         "0",
-        "`View original` left the campaign reduced -- in the one-document          pane the key was a no-op, because `view_original` read state only          `render` sets"
-    );
-    assert_eq!(
-        measure(&document, &tables_in("11")),
-        "0",
-        "showing one message whole must not unreduce the rest of the thread"
+        "`View original` left the campaign reduced -- in the one-document \
+         pane the key was a no-op, because `view_original` read state only \
+         `render` sets"
     );
 
     window.destroy();

@@ -58,6 +58,7 @@ command from inside a text field.
 | `K` | Previous message in conversation | Conversation |  | `prev_in_conversation` |
 | `z` | Fold or unfold this message | Conversation |  | `toggle_fold` |
 | `ctrl+o` | View original | List, conversation, reader |  | `view_original` |
+| `ctrl+shift+o` or `alt+o` | Reader view | List, conversation, reader |  | `toggle_reader_view` |
 | `O` | Expand all | Conversation |  | `expand_all` |
 | `I` | Hide or show the conversation rail | Conversation |  | `toggle_rail` |
 | `e` | Reply | List, conversation, reader, composer |  | `reply` |

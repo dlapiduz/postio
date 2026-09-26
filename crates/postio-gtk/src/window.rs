@@ -2434,6 +2434,13 @@ impl Window {
                     self.reader_showing().view_original();
                 }
             }
+            // Every message opens as sent (spec 006 FR-031), so this is the
+            // way into reader view, per message, and back out of it.
+            CommandId::ToggleReaderView => {
+                if !self.conversation().toggle_focused_reader_view() {
+                    self.reader_showing().toggle_reader_view();
+                }
+            }
 
             // The conversation's own, so it goes to the pane rather than out
             // on the bus: nothing outside this window has anything to do with

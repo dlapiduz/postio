@@ -145,11 +145,15 @@ pub struct Reader {
     /// The messages of the open thread the reader has been asked to show
     /// whole, by scope.
     ///
-    /// A thread's rendering is decided per message from its own content, and
-    /// this is the reader overruling that for one of them. Kept beside the
-    /// thread rather than inside `Open`, which only the single-message path
-    /// fills — reading `Open` is what made `⌃O` a no-op here (#1398).
-    originals: Rc<RefCell<std::collections::HashSet<String>>>,
+    /// How the reader asked for particular messages of the thread to be
+    /// drawn: `⌃O` for the sender's own markup, reader view for reduced.
+    /// Every other message opens as [`opening_rendering`] says (spec 006
+    /// FR-031). Kept beside the thread rather than inside `Open`, which only
+    /// the single-message path fills — reading `Open` is what made `⌃O` a
+    /// no-op here (#1398).
+    ///
+    /// [`opening_rendering`]: postio_ui::reader::document::opening_rendering
+    originals: Rc<RefCell<std::collections::HashMap<String, Rendering>>>,
     /// What the sanitiser made of each message of the thread on screen, so a
     /// redraw re-sanitises only what changed (#1605).
     renders: Rc<RefCell<postio_ui::reader::document::RenderCache>>,
@@ -758,7 +762,7 @@ impl Reader {
             showing: Rc::new(std::cell::Cell::new(false)),
             allowlist: Rc::new(RefCell::new(allowlist)),
             thread: Rc::new(RefCell::new(Vec::new())),
-            originals: Rc::new(RefCell::new(std::collections::HashSet::new())),
+            originals: Rc::new(RefCell::new(std::collections::HashMap::new())),
             renders: Rc::new(RefCell::new(
                 postio_ui::reader::document::RenderCache::default(),
             )),
@@ -1416,10 +1420,9 @@ impl Reader {
         // Per-message, like the two above: a message drawn over one that
         // was being sent must not inherit its bar.
         self.set_send_state(None);
-        // Reader view is decided per message, from the message. Bulk mail
-        // opens reduced; correspondence never does. See
-        // `document::suits_reader_view` for why the question is "was this
-        // laid out by a template" rather than "could this be reduced".
+        // Every message opens as its sender built it (spec 006 FR-031).
+        // Whether it reads as bulk is still asked: it picks the sheet the
+        // original is drawn on.
         // The message on screen drawn again keeps its place; another
         // message starts at the top.
         let same = self
@@ -1432,11 +1435,7 @@ impl Reader {
             .as_ref()
             .and_then(|prepared| prepared.verdict_for(body))
             .unwrap_or_else(|| postio_ui::reader::document::suits_reader_view(body));
-        let rendering = if bulk {
-            Rendering::Reader
-        } else {
-            Rendering::Original
-        };
+        let rendering = postio_ui::reader::document::opening_rendering();
         *self.open.borrow_mut() = Some(Open {
             body: body.clone(),
             sender: sender.map(str::to_owned),
@@ -1619,11 +1618,67 @@ impl Reader {
         if self.thread.borrow().is_empty() {
             return;
         }
-        if !self.originals.borrow_mut().insert(scope.to_owned()) {
+        if self
+            .originals
+            .borrow_mut()
+            .insert(scope.to_owned(), Rendering::Original)
+            == Some(Rendering::Original)
+        {
             return;
         }
         let thread = self.thread.borrow().clone();
         self.render_thread(&thread);
+    }
+
+    /// Draw the message `scope` in reader view, or as its sender built it
+    /// again if it already is — the one-document pane's `toggle_reader_view`
+    /// (spec 006 FR-031). Per message: the rest of the thread keeps however
+    /// it was drawn.
+    pub fn toggle_reader_view_for(&self, scope: &str) {
+        if self.thread.borrow().is_empty() {
+            return;
+        }
+        {
+            let mut chosen = self.originals.borrow_mut();
+            let now = chosen
+                .get(scope)
+                .copied()
+                .unwrap_or_else(postio_ui::reader::document::opening_rendering);
+            let next = if now == Rendering::Reader {
+                Rendering::Original
+            } else {
+                Rendering::Reader
+            };
+            chosen.insert(scope.to_owned(), next);
+        }
+        let thread = self.thread.borrow().clone();
+        self.render_thread(&thread);
+    }
+
+    /// Draw the open message in reader view, or as its sender built it again
+    /// — the single-message reader's `toggle_reader_view` (spec 006 FR-031).
+    ///
+    /// A no-op for a message with no markup of its own: plain text is already
+    /// what reader view is trying to get back to.
+    pub fn toggle_reader_view(&self) {
+        {
+            let mut guard = self.open.borrow_mut();
+            let Some(open) = guard.as_mut() else { return };
+            if open
+                .body
+                .html
+                .as_deref()
+                .is_none_or(|html| html.trim().is_empty())
+            {
+                return;
+            }
+            open.rendering = if open.rendering == Rendering::Reader {
+                Rendering::Original
+            } else {
+                Rendering::Reader
+            };
+        }
+        self.rerender();
     }
 
     /// Forget which messages were asked for whole.
@@ -2218,28 +2273,22 @@ fn load_document(canvas: &Canvas<'_>, document: &str) {
 fn compose_thread_document(
     messages: &[ThreadMessage],
     allowlist: &RefCell<RemoteImageAllowList>,
-    originals: &std::collections::HashSet<String>,
+    originals: &std::collections::HashMap<String, Rendering>,
     renders: &RefCell<postio_ui::reader::document::RenderCache>,
 ) -> String {
     // Rendered first, and held, because `Entry` borrows the markup.
-    // Reader view is decided per message, from the message, exactly as
-    // `render` decides it for one: bulk mail opens reduced, correspondence
-    // never does. A thread can hold both.
+    // Every message opens as its sender built it (spec 006 FR-031), exactly
+    // as `render` decides it for one.
     let rendered: Vec<postio_ui::reader::document::Rendered> = messages
         .iter()
         .map(|message| {
-            // The reader's own choice first: `⌃O` on a message overrules what
-            // its content suggests, for that message and no other (#1398).
-            let rendering = if originals.contains(&message.scope) {
-                Rendering::Original
-            } else if renders
-                .borrow_mut()
-                .suits_reader_view(&message.scope, &message.body)
-            {
-                Rendering::Reader
-            } else {
-                Rendering::Original
-            };
+            // The reader's own choice first -- `⌃O` or reader view on one
+            // message, for that message and no other (#1398) -- and how every
+            // message opens otherwise.
+            let rendering = originals
+                .get(&message.scope)
+                .copied()
+                .unwrap_or_else(postio_ui::reader::document::opening_rendering);
             // Per **message**, from its own sender. A conversation holds
             // several and the decision is per sender (`PRODUCT.md` §21),
             // so one allowed correspondent must not carry the rest of the

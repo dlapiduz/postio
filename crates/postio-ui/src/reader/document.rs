@@ -629,6 +629,23 @@ pub fn sheet_for(rendering: Rendering, suits_reader_view: bool) -> Sheet {
     }
 }
 
+/// How every message opens (spec 006 FR-031): as its sender built it.
+///
+/// Reader view is a command away, never the default. Whether a message reads
+/// as bulk ([`suits_reader_view`]) is still asked -- it picks the sheet the
+/// original is drawn on ([`sheet_for`]) and offers unsubscribe -- but it no
+/// longer decides the rendering. It did, and newsletters opened flattened:
+/// the maintainer's summary was that Postio "over indexed in privacy and
+/// removing layout".
+///
+/// The GTK reading pane's rule, and [`prepare`]'s. The terminal frontend
+/// draws markup as text, where reader view *is* the readable presentation of
+/// bulk mail, and keeps its own rule (spec 005); the macOS frontend is out of
+/// spec 006's scope and keeps its own too.
+pub fn opening_rendering() -> Rendering {
+    Rendering::Original
+}
+
 /// A body, drawn, and everything a surface needs to say about how.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Rendered {
@@ -1016,11 +1033,7 @@ impl Prepared {
 /// belongs -- each is paid on every message the cursor settles on.
 pub fn prepare_message(body: &MessageBody, remote: RemoteImages) -> Prepared {
     let verdict = suits_reader_view(body);
-    let rendering = if verdict {
-        Rendering::Reader
-    } else {
-        Rendering::Original
-    };
+    let rendering = opening_rendering();
     Prepared {
         scope: String::new(),
         body: body.clone(),
@@ -1032,19 +1045,14 @@ pub fn prepare_message(body: &MessageBody, remote: RemoteImages) -> Prepared {
 }
 
 /// Render `body` for the message `scope` ahead of time, as a conversation
-/// would draw it by default: reader view if it reads as bulk, the original
-/// if not, under `remote`.
+/// would draw it by default ([`opening_rendering`]), under `remote`.
 ///
 /// Pure, and for a worker thread -- the parses it saves the main thread are
 /// the point. A message drawn any other way when it is shown (its sender
 /// allowed since, `⌃O` on it) is simply rendered then, as before.
 pub fn prepare(scope: &str, body: &MessageBody, remote: RemoteImages) -> Prepared {
     let verdict = suits_reader_view(body);
-    let rendering = if verdict {
-        Rendering::Reader
-    } else {
-        Rendering::Original
-    };
+    let rendering = opening_rendering();
     Prepared {
         scope: scope.to_owned(),
         body: body.clone(),
@@ -2449,5 +2457,29 @@ mod warming_tests {
             "no canvas, no wrapper: {}",
             plain.html
         );
+    }
+
+    /// Spec 006 FR-031: every message opens as its sender built it. A
+    /// newsletter is still recognised as bulk -- that picks the sheet it is
+    /// drawn on and offers unsubscribe -- but it no longer decides the
+    /// rendering. Reader view is a command away, not the default.
+    #[test]
+    fn bulk_mail_opens_in_its_original_layout() {
+        let newsletter = postio_model::test_corpus::load("html-newsletter")
+            .parse()
+            .body;
+        assert!(
+            suits_reader_view(&newsletter),
+            "the fixture must read as bulk for this to mean anything"
+        );
+        assert_eq!(
+            prepare_message(&newsletter, RemoteImages::Blocked).rendering,
+            Rendering::Original
+        );
+        assert_eq!(
+            prepare("7", &newsletter, RemoteImages::Blocked).rendering,
+            Rendering::Original
+        );
+        assert_eq!(opening_rendering(), Rendering::Original);
     }
 }
