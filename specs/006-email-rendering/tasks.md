@@ -75,7 +75,7 @@ R13).
   - `html-rtl-mixed.eml`: Arabic and Hebrew paragraphs, with Latin inline;
   - `html-cjk-emoji.eml`: Chinese, Japanese and Korean text, plus emoji
 - [X] T007 Write the one-shot capture tool `crates/postio-gtk/examples/capture_reference.rs`, following `contracts/fidelity-metric.md` § Reference renders. It renders each designed fixture's **unsanitized** HTML in a WebKitGTK view with network, JavaScript and remote loads off, and serves `cid:` parts from the fixture itself. It uses 800 CSS px, scale 1, the light scheme, and the bundled faces as default families. The output is one PNG per fixture in `crates/postio-test-support/data/reference/`
-- [ ] T008 Run T007 by hand on the desktop (`cargo run -p postio-gtk --example capture_reference`). Check in the PNGs and `crates/postio-test-support/data/reference/README.md`, with one line per fixture giving the WebKitGTK version (`pkg-config --modversion webkitgtk-6.0`) and the date
+- [X] T008 Run T007 by hand on the desktop (`cargo run -p postio-gtk --example capture_reference`). Check in the PNGs and `crates/postio-test-support/data/reference/README.md`, with one line per fixture giving the WebKitGTK version (`pkg-config --modversion webkitgtk-6.0`) and the date
 - [ ] T009 [TEST] Write the metric's own tests in `crates/postio-test-support/src/fidelity.rs`, each checked against `contracts/fidelity-metric.md`:
   - an image compared with itself matches;
   - a copy with one 70 px column filled with the background does **not** match;
