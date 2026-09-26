@@ -40,14 +40,14 @@
 - **The reader is technical.** This spec is written for the maintainer and
   for the agents who will plan and build it, the same audience as every spec
   in `specs/`. It keeps to what a person sees and does, and says why.
-- **No markers, but decisions are still open.** The handoff lists six open
-  decisions and asks that they be confirmed rather than decided silently.
-  The spec carries each recommended default and points to Clarifications,
-  where `/speckit-clarify` records the maintainer's answer. It adds two
-  questions of its own:
-  - which change is the new message renderer;
-  - whether Focus's filtering and digests act while another app has the
-    store.
+- **Decisions confirmed in clarify (2026-09-26).** The handoff's six open
+  decisions went to the maintainer, with two more the spec raised: which
+  renderer planning waits for, and whether Focus's rules act while another
+  app runs. All eight are recorded in the spec's Clarifications.
+  - Three changed what Focus does: one keymap for every app, digest
+    summaries as drawn, and Focus's rules acting only while it runs.
+  - One changed how the branch ends: nothing lands until the maintainer
+    says so.
 - **Planning is gated.** `/speckit-plan` waits until the new message
   renderer has merged to `main` (see *The message view waits for the new
   renderer* in the spec).
