@@ -77,6 +77,19 @@ current one, it replaces it: the spike's own conclusion was that shipping two
 reading engines is worse than either one, and ADR 0032's rendering half is then
 amended or superseded on this branch.
 
+## Clarifications
+
+### Session 2026-09-26
+
+- Q: Should bulk mail open in its original layout, or in Reader view as
+  today? → A: Original layout by default for all mail. Reader view is opt-in
+  (FR-031).
+- Q: Must allowed remote images work before the branch lands? → A: Yes. It
+  is a merge condition (FR-030, US5).
+- Q: How is designed mail with no dark styling shown in dark mode? → A: On
+  the sender's light canvas as a sheet of paper by default, with a
+  per-message "darken" command (FR-013(b), FR-013a).
+
 ## User Scenarios & Testing *(mandatory)*
 
 ### User Story 1 - Every message is legible in dark mode (Priority: P1)
@@ -111,6 +124,11 @@ anything out.
    frame, keeps its scroll position, and agrees with the app's theme.
 5. **Given** plain-text mail in either theme, **When** it renders, **Then** it
    uses the app's own reading colours, exactly as today.
+6. **Given** dark mode and a designed message with no dark styling of its
+   own, **When** it renders, **Then** it appears on its sender's light canvas
+   as a sheet of paper inside the dark app. **When** the user asks for it
+   darkened, **Then** it is recoloured into dark tones and every text run
+   still meets FR-012. Asking again restores the paper.
 
 ---
 
@@ -146,9 +164,8 @@ against its reviewed reference image. Delivers value without dark mode
    no consent prompt, because nothing left the machine.
 5. **Given** a bulk newsletter, **When** it opens, **Then** it opens in its
    sender's layout, and the simplified reading presentation is one action
-   away. [NEEDS CLARIFICATION: Should bulk mail open in its original layout by
-   default, with the simplified Reader view opt-in, or keep opening in Reader
-   view as it does today?]
+   away. All mail opens in its original layout by default. Reader view is
+   opt-in per message (FR-031).
 6. **Given** a message whose layout is wider than the pane, **When** it
    renders, **Then** it is readable without the pane scrolling sideways (001
    FR-026). Designs meant to shrink do shrink, and fixed-width designs scroll
@@ -236,9 +253,8 @@ those images. The renderer still has no network of its own.
 **Why this priority**: Per-sender allowing exists today (001 FR-005, FR-022)
 and must not silently stop working. It is P3 because most of the value in
 this spec comes from images attached to the message, which need no network.
-[NEEDS CLARIFICATION: Must allowed remote images keep working in the first
-landing of this branch, or may that landing show only in-message images, with
-remote images following on the same branch before it merges?]
+It is nonetheless a **merge condition** (FR-030): the branch does not land
+until allowed senders' images work, so allowing a sender never regresses.
 
 **Independent Test**: Allow a sender, open their message against a local
 listener serving an image, and see the image. Revoke, reopen, and see a
@@ -358,13 +374,17 @@ one, they say so.
 - **FR-013**: The presentation of a sender-styled message in dark mode MUST
   follow one rule, stated and testable, chosen from these in priority order:
   (a) if the sender supplied dark-mode styling, use it, subject to FR-012;
-  (b) otherwise [NEEDS CLARIFICATION: For a designed message with no dark
-  styling of its own, should dark mode keep the sender's light canvas as a
-  "sheet of paper" inside the dark app, or recolour the message into dark
-  tones (as some webmail clients do), or keep the paper and offer recolouring
-  per message?];
+  (b) otherwise, a message that declares its own backgrounds is shown on
+  its sender's canvas, a "sheet of paper" set inside the dark app, with the
+  sender's colours unchanged;
   (c) messages that set only text colours and no backgrounds adapt to the
   theme under FR-012.
+- **FR-013a**: For a message shown as paper under FR-013(b), the user MUST be
+  able to ask for it darkened. That is a registry command (Constitution II)
+  which recolours that message's canvas and text into dark tones, subject to
+  FR-012 and FR-015, and can be undone the same way. It applies to the one
+  message it was asked of and is not remembered across openings; a
+  per-sender memory is out of scope here.
 - **FR-014**: Whatever rule FR-013 applies MUST apply to text and background
   together. A sender's text colour MUST NEVER be painted against a background
   the sender did not intend without FR-012's adjustment.
@@ -427,9 +447,16 @@ one, they say so.
   itself (001 FR-020).
 - **FR-029**: Moving between messages, and switching theme, MUST NOT show a
   blank, black or unpainted frame (001 FR-029, now also on theme change).
-- **FR-030**: User Stories 1–4 MUST be complete before the new renderer
-  replaces today's reader for users. Parity in reading affordances is a
-  condition of the switch, not a follow-up.
+- **FR-030**: User Stories 1–5 MUST be complete before the new renderer
+  replaces today's reader for users. Parity in reading affordances and in
+  allowed remote images is a condition of the switch, not a follow-up.
+
+**Default presentation**
+
+- **FR-031**: Every message, bulk or not, MUST open in its sender's layout.
+  The simplified Reader view MUST remain available as a registry command on
+  any HTML message, and `View original` returns from it. Whether a message
+  "reads as bulk" no longer decides how it opens.
 
 ### Key Entities
 
