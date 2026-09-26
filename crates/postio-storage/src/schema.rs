@@ -260,7 +260,12 @@ CREATE TABLE "drafts" (
     created_at              INTEGER NOT NULL,
     updated_at              INTEGER NOT NULL,
     -- 0003's column. Named here so the rebuild carries it; see above.
-    rfc_message_id          TEXT
+    rfc_message_id          TEXT,
+    -- The message a forward was made from (#1686): where a carried
+    -- attachment whose bytes were never downloaded is fetched from at send
+    -- time. Not `in_reply_to_message_id`, which decides threading headers a
+    -- forward must not carry.
+    forwarded_message_id    INTEGER REFERENCES messages(id) ON DELETE SET NULL
 );
 
 CREATE TABLE egress_log (

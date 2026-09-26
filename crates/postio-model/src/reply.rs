@@ -59,6 +59,9 @@ pub fn forward(source: &Message, account: &Account, body: MessageBody) -> Draft 
     draft.subject = subject::forward_subject(source.subject.as_deref().unwrap_or_default());
     draft.body = body;
     draft.attachments = carried_attachments(source);
+    if source.is_persisted() {
+        draft.forwarded_from = Some(source.id);
+    }
 
     if let Some(identity) = account.identity_for(&recipients_of(source)) {
         draft.start_as(identity);
@@ -257,8 +260,9 @@ fn forward_body(source: &Message) -> String {
 /// `write_attachments` decides insert-or-update by whether `id` is already
 /// assigned, and forwarding one message's attachment id into another
 /// message's row would corrupt the one it was borrowed from. `blob_id` is
-/// kept: the bytes are already in the blob store and sending does not need to
-/// re-upload them.
+/// kept when there is one: the bytes are already in the blob store and sending
+/// does not need to re-upload them. When there is not, `part_id` and the
+/// draft's [`Draft::forwarded_from`] say where to fetch them from (#1686).
 fn carried_attachments(source: &Message) -> Vec<Attachment> {
     source
         .attachments
@@ -568,6 +572,36 @@ mod tests {
             "a copy of another message's attachment row is not that row"
         );
         assert!(!carried.message_id.is_assigned());
+    }
+
+    #[test]
+    fn a_forward_remembers_the_message_its_attachments_come_from() {
+        // #1686: a carried attachment whose bytes were never downloaded has
+        // to be fetched from the original before the forward can be built,
+        // and the carry resets every id that would have said which one.
+        let mut source = a_message();
+        let mut attachment = Attachment::new(MessageId::new(42), "application/pdf", 1024);
+        attachment.part_id = Some("2".to_owned());
+        source.attachments = vec![attachment];
+
+        let draft = forward(
+            &source,
+            &account("grace@example.com"),
+            plain_forward(&source),
+        );
+
+        assert_eq!(draft.forwarded_from, Some(MessageId::new(42)));
+        assert_eq!(
+            draft.attachments[0].part_id.as_deref(),
+            Some("2"),
+            "the section is what names the part inside the original"
+        );
+        assert!(
+            reply(&source, &account("grace@example.com"), plain_quote(&source))
+                .forwarded_from
+                .is_none(),
+            "a reply carries nothing from its parent"
+        );
     }
 
     #[test]

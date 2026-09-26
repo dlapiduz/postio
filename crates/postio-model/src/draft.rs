@@ -128,8 +128,20 @@ pub struct Draft {
     pub identity_id: Option<IdentityId>,
     /// What kind of composition this is.
     pub kind: DraftKind,
-    /// The local message being replied to or forwarded, when there is one.
+    /// The local message being replied to, when there is one.
     pub in_reply_to: Option<MessageId>,
+    /// The local message a forward was made from, when this is one.
+    ///
+    /// Not [`Self::in_reply_to`], which a forward leaves empty on purpose: it
+    /// decides the threading headers, and a forward starts a new
+    /// conversation. This exists for the attachments a forward carries.
+    /// Their bytes may never have been downloaded — the payload axis leaves
+    /// them on the server until somebody asks (ADR 0017) — and the carry
+    /// resets the ids that would have said where they came from, so this and
+    /// each attachment's `part_id` are what lets the sender fetch a missing
+    /// part from the original rather than refusing to send (#1686).
+    #[serde(default)]
+    pub forwarded_from: Option<MessageId>,
     /// The thread this draft belongs to, so it can be shown inline.
     pub thread_id: Option<ThreadId>,
     /// `To` recipients.
@@ -184,6 +196,7 @@ impl Draft {
             identity_id: None,
             kind: DraftKind::New,
             in_reply_to: None,
+            forwarded_from: None,
             thread_id: None,
             to: Vec::new(),
             cc: Vec::new(),
