@@ -19,7 +19,7 @@ file format (Constitution II): they are chosen once, here.
 | `zoom_out` | Zoom out | `mod+minus` | `mod+KP_Subtract` | message surfaces | FR-021 |
 | `zoom_reset` | Actual size | `mod+0` | `mod+KP_0` | message surfaces | FR-021 |
 | `darken_message` | Darken this message / Show as sent | `D` | — | message surfaces, dark theme, focused message is `Paper` or `Darkened` | FR-013a |
-| `toggle_reader_view` | Reader view | `mod+shift+o` | — | message surfaces | FR-031 |
+| `toggle_reader_view` | Reader view | `mod+shift+o` | `alt+o` | message surfaces | FR-031 |
 
 **Why these keys.**
 - `mod+f`, `mod+plus`, `mod+minus` and `mod+0` are the platform's

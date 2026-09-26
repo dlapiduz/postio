@@ -89,6 +89,8 @@ command_ids! {
     ToggleFold => "toggle_fold",
     /// Draw the message on screen as its sender wrote it, not reduced.
     ViewOriginal => "view_original",
+    /// Draw the message on screen reduced, or as sent again (spec 006 FR-031).
+    ToggleReaderView => "toggle_reader_view",
     /// Open every collapsed message in the conversation.
     ExpandAll => "expand_all",
     /// Put the conversation rail away, or bring it back.
@@ -422,6 +424,13 @@ pub enum Command {
     /// No payload: it always means the message on screen. Reader view is a
     /// per-message state, so there is nothing else it could mean.
     ViewOriginal,
+    /// Draw the message on screen in reader view, or back as its sender
+    /// built it (spec 006 FR-031).
+    ///
+    /// No payload, like [`Command::ViewOriginal`]: it always means the
+    /// message on screen. Every message opens as sent, so this is the only
+    /// way into reader view.
+    ToggleReaderView,
     /// Expand every collapsed message in the open conversation (#1004).
     ///
     /// No payload: it means the conversation on screen, which is the only
@@ -885,6 +894,7 @@ impl Command {
             Command::PrevInConversation => CommandId::PrevInConversation,
             Command::ToggleFold => CommandId::ToggleFold,
             Command::ViewOriginal => CommandId::ViewOriginal,
+            Command::ToggleReaderView => CommandId::ToggleReaderView,
             Command::ExpandAll => CommandId::ExpandAll,
             Command::ToggleRail => CommandId::ToggleRail,
             Command::Reply { .. } => CommandId::Reply,
@@ -992,6 +1002,7 @@ impl Command {
             CommandId::PrevInConversation => Command::PrevInConversation,
             CommandId::ToggleFold => Command::ToggleFold,
             CommandId::ViewOriginal => Command::ViewOriginal,
+            CommandId::ToggleReaderView => Command::ToggleReaderView,
             CommandId::ExpandAll => Command::ExpandAll,
             CommandId::ToggleRail => Command::ToggleRail,
             CommandId::Reply => Command::Reply { message: None },

@@ -2826,7 +2826,10 @@ impl App {
             }
             "back" => self.selection.clear(),
             "toggle_sidebar" => return self.toggle_sidebar(),
-            "view_original" => return self.view_original(),
+            // One toggle in a terminal: reader view is the readable form of
+            // bulk mail here, and both commands move between it and the
+            // sender's own markup (spec 006 FR-031).
+            "view_original" | "toggle_reader_view" => return self.view_original(),
             "toggle_fold" => {
                 let folded = self
                     .reading

@@ -14,6 +14,7 @@ next_in_conversation	J
 prev_in_conversation	K
 toggle_fold	z
 view_original	ctrl+o
+toggle_reader_view	ctrl+shift+o | alt+o
 expand_all	O
 toggle_rail	I
 reply	e

@@ -175,7 +175,7 @@ pub fn section_for(command: CommandId) -> Option<MenuSection> {
         // does not do anything to the draft.
         C::CopyFields => Some(M::View),
         C::ToggleResultOrder => Some(M::View),
-        C::OpenParts | C::ViewOriginal => Some(M::View),
+        C::OpenParts | C::ViewOriginal | C::ToggleReaderView => Some(M::View),
         C::CommandPalette => Some(M::View),
 
         // ── Help ─────────────────────────────────────────────────────────

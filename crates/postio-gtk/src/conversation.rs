@@ -2396,6 +2396,22 @@ impl ConversationView {
         true
     }
 
+    /// Reader view on the focused message, or back to what its sender built
+    /// — the one-document pane's half of `toggle_reader_view` (spec 006
+    /// FR-031). Answers whether it did anything, like
+    /// [`show_focused_message_whole`](Self::show_focused_message_whole).
+    pub fn toggle_focused_reader_view(&self) -> bool {
+        let imp = self.imp();
+        let Some(focused) = imp.focused.get() else {
+            return false;
+        };
+        let Some(reader) = imp.document_reader.borrow().clone() else {
+            return false;
+        };
+        reader.toggle_reader_view_for(&focused.get().to_string());
+        true
+    }
+
     /// `⇧I`: put the rail away, or bring it back.
     ///
     /// The key is `⇧I` and not the `⇧R` screen 28 draws, because `R` is

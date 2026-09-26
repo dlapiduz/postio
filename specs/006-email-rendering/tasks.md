@@ -121,8 +121,8 @@ proven on synthetic images. Nothing renders yet.
   - `background="cid:x"` on `td` → `background-image` resolved through the `cid:` rewriting;
   - `background="http://…"` from an unconsented sender → refused with reason `Privacy`
 - [X] T018 Implement `crates/postio-body/src/hints.rs` and call it from `crates/postio-body/src/sanitize.rs` before ammonia runs (FR-007)
-- [ ] T019 [TEST] In `crates/postio-ui/src/reader/document.rs` unit tests, `body_html_in` for `html-newsletter.eml` (which `reads_as_bulk`) returns the **original** layout, with no reader-view reduction (FR-031)
-- [ ] T020 Make every message open `Original` in `crates/postio-ui/src/reader/document.rs` (`sheet_for`, `suits_reader_view`). `reads_as_bulk` stays for the unsubscribe banner
+- [X] T019 [TEST] In `crates/postio-ui/src/reader/document.rs` unit tests, `body_html_in` for `html-newsletter.eml` (which `reads_as_bulk`) returns the **original** layout, with no reader-view reduction (FR-031)
+- [X] T020 Make every message open `Original` in `crates/postio-ui/src/reader/document.rs` (`sheet_for`, `suits_reader_view`). `reads_as_bulk` stays for the unsubscribe banner
 
 **Checkpoint**: The sanitizer preserves and translates instead of deleting, and every message opens in its original layout. The spec's fidelity input is fixed before either engine is judged.
 
@@ -388,10 +388,10 @@ mismatch is listed as cosmetic (SC-002).
 - [ ] T094 [US2] Run T093 for the first time and write `crates/postio-test-support/data/reference/MISMATCHES.md` with the cause of each mismatch. If the metric's constants are wrong for reality, change them **once**, with the evidence in research R13, before judging any fix (`contracts/fidelity-metric.md`)
 - [ ] T095 [US2] Close the mismatch gaps until T093 is green. Sanitizer hints in `crates/postio-body/src/hints.rs` come first. A `[patch.crates-io]` `blitz-dom` fork pinned to a git revision is allowed only if a gap cannot be closed on Postio's side, and it is recorded in research R1 with the upstream PR it tracks
 - [ ] T096 [P] [US2] Replace `::-webkit-details-marker` in `crates/postio-ui/data/thread.css` with standard `summary::marker` or `list-style`, and add a `postio-ui` unit test asserting that no `-webkit-` token remains in the reader stylesheets
-- [ ] T097 [TEST] [US2] In `crates/postio-core/tests/core_suite/command_registry.rs`, `toggle_reader_view` exists with `mod+shift+o` in message surfaces and collides with nothing in an overlapping context. If the conflict test counts the composer's binding as overlapping, use the contract's fallback key `mod+alt+o`
-- [ ] T098 [US2] Add `ToggleReaderView` in `crates/postio-core/src/command.rs` and `crates/postio-core/src/registry.rs`, regenerate `docs/keybindings.md`, and update `linux-bindings.txt` by hand
-- [ ] T099 [TEST] [US2] In `crates/postio-gtk/tests/gtk_suite/body_view.rs`, in a two-message conversation, `toggle_reader_view` reduces only the focused message: its request has that scope in `reader_view`, and the neighbour keeps its layout. `view_original` restores it
-- [ ] T100 [US2] Handle `toggle_reader_view` in `crates/postio-gtk/src/reader/view.rs` with a session-only set of reduced scopes, and add the context-menu entry
+- [X] T097 [TEST] [US2] In `crates/postio-core/tests/core_suite/command_registry.rs`, `toggle_reader_view` exists with `mod+shift+o` in message surfaces and collides with nothing in an overlapping context. If the conflict test counts the composer's binding as overlapping, use the contract's fallback key `mod+alt+o`. **Done in Phase 2, with T019–T020**: once every message opens as sent, today\'s reader needs this command or it loses reader view entirely, whichever engine wins. `alt+o` was added as an alternate, because a terminal cannot tell `ctrl+shift+o` from `ctrl+o` (the TUI parity test caught it)
+- [X] T098 [US2] Add `ToggleReaderView` in `crates/postio-core/src/command.rs` and `crates/postio-core/src/registry.rs`, regenerate `docs/keybindings.md`, and update `linux-bindings.txt` by hand
+- [X] T099 [TEST] [US2] In `crates/postio-gtk/tests/gtk_suite/body_view.rs`, in a two-message conversation, `toggle_reader_view` reduces only the focused message: its request has that scope in `reader_view`, and the neighbour keeps its layout. `view_original` restores it. **Done in Phase 2 against today\'s reader**, in `crates/postio-gtk/tests/gtk_reader.rs`: the #1398 case now shows `toggle_reader_view_for` reducing one message of a thread and `view_original_for` restoring it. The Blitz widget\'s own case follows with `BodyView`
+- [X] T100 [US2] Handle `toggle_reader_view` in `crates/postio-gtk/src/reader/view.rs` with a session-only set of reduced scopes, and add the context-menu entry
 - [ ] T101 [P] [US2] Fix the stale comments that say sender style or `class` are stripped: `crates/postio-body/src/sanitize.rs:9-13`, `crates/postio-ui/data/reader.css:24-26` and `118-121`, and `crates/postio-ui/src/reader/document.rs:609-611`
 
 **Checkpoint**: US2 is independently proven. The fidelity test is green, and
