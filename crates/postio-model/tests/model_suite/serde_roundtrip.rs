@@ -200,6 +200,7 @@ fn sample_draft() -> Draft {
         identity_id: Some(IdentityId::new(7)),
         kind: DraftKind::Reply,
         in_reply_to: Some(MessageId::new(5)),
+        forwarded_from: Some(MessageId::new(6)),
         thread_id: Some(ThreadId::new(9)),
         to: vec![EmailAddress::new(Some("Alice"), "alice@example.com")],
         cc: vec![],
