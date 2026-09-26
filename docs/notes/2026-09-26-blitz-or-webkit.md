@@ -117,10 +117,70 @@ These are reported side by side. None of them alone decides.
 
 ## Results
 
-*Empty when the protocol was committed. Filled in by T024 (gates), T025
-(S1), T026 (S2, S3), T027 (S4, S5) and T028 (S6–S8, the scorecard and the
-recommendation).*
+### Arm A — WebKit (T022, `crates/postio-gtk/examples/eval_webkit.rs`)
+
+**G1, legibility.** Run with research R10's rule: `postio_ui::reader::theme`'s
+classification and repair, applied through an isolated-world script. The
+count is over 95 text runs in 10 fixtures, drawn dark, with the pixels
+sampled.
+
+| | runs below the floor |
+|---|---|
+| as the reader draws them today (4.5:1) | **28** |
+| with the rule (4.5:1) | **0** |
+| with the rule, against the high-contrast floor (7:1) | **2** |
+
+- **The two at 7:1** are white text on a sender's mid-blue button and card
+  fill. No lightness of the text reaches 7:1 against those backgrounds, and
+  FR-012 lets the rule change only the text. That is a gap in the spec, not
+  a failure of either engine: at 7:1 the rule must be allowed to touch the
+  background too, or high contrast accepts it. It is put to the
+  maintainer with the scorecard.
+- **Measured only after a fix arm A owes.** The reader's document does
+  **not** follow libadwaita's dark mode. WebKit resolves
+  `prefers-color-scheme` from GTK's own setting, and the only lever it
+  follows, `gtk-application-prefer-dark-theme`, has been deprecated since
+  GTK 4.20. This confirms at runtime the fourth cause in spec 006's
+  Context. The fix arm A would owe is the editor's: pass the dark flag into
+  the document itself.
+
+**S1, fidelity.** 6 of 6 designed fixtures match their references, with
+agreement between 98.3% and 100%. This was measured after the three
+engine-neutral fixes below. Arm A's number is expected to be high, because
+the references are WebKit; its question was only whether Postio's pipeline
+loses anything.
+
+### Engine-neutral defects the evaluation found
+
+Found while measuring arm A, and fixed on the branch before either arm is
+judged, because they cost both engines the same:
+
+- **Embedded `data:` images were dropped, silently.** ammonia's default
+  schemes exclude `data:`. `05987d24`.
+- **The reader's own typography reached into sender markup**: border-box
+  sizing, a 14 px size and 1.55 line height, paragraph margins, link and
+  quote styles. It now stops at `.postio-original`. `aeab703a`.
+- **`repair` met the floor before rounding and missed it after**: 4.48:1
+  painted. `postio-ui` `theme.rs`.
 
 ## Amendments
 
-*None.*
+*2026-09-26, before arm B has run and after arm A's first run:*
+
+1. **S1 neutralizes the reader's container geometry in both arms.** The
+   reader wraps a message in a padded, bordered box, and a reference is a
+   bare page, so S1 measured Postio's chrome rather than the engine. Both
+   harnesses now inject the same stylesheet. It paints the page white,
+   removes the box's padding and border, and treats `.postio-canvas` as the
+   sender's `<body>`: the browser's 8 px margin, which the sender's own
+   inline style still overrides.
+2. **References are drawn in standards mode.** A doctype is supplied where
+   the sender wrote none. Every mail client embeds a message in a page of
+   its own, so a sender never gets quirks mode where mail is read, and
+   neither arm can reproduce it. Only `transactional-shipping-notice`
+   changed (`aaee4fb9`).
+3. **High contrast is measured as the dark render against 7:1.**
+   libadwaita's high-contrast mode cannot be forced from a harness. Both
+   arms do it the same way.
+4. **The fidelity metric was amended before first use**, as its contract
+   records: row alignment, and a no-lost-block rule.

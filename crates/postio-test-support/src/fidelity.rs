@@ -333,6 +333,41 @@ pub fn diff_image(reference: &Image, comparison: &Comparison) -> Image {
     out
 }
 
+/// The colour most of a rectangle is painted: the ground a text run sits
+/// on, with its glyphs outvoted (spec 006 SC-001, the evaluation's gate G1).
+///
+/// Glyphs cover a minority of their own box, and a flat ground is one exact
+/// colour while antialiasing spreads a glyph across many, so the most
+/// frequent *exact* colour inside the box is what is painted behind the
+/// text. Not quantized: dark text on a dark ground -- the very case this
+/// measures -- lands in one bucket at any useful coarseness. The rectangle
+/// is clipped to the image; `None` if nothing is left.
+pub fn ground_behind(
+    image: &Image,
+    x: usize,
+    y: usize,
+    width: usize,
+    height: usize,
+) -> Option<[u8; 3]> {
+    let (x1, y1) = ((x + width).min(image.width), (y + height).min(image.height));
+    if x >= x1 || y >= y1 {
+        return None;
+    }
+    let mut votes: std::collections::HashMap<[u8; 3], usize> = std::collections::HashMap::new();
+    for row in y..y1 {
+        for column in x..x1 {
+            let at = (row * image.width + column) * 4;
+            *votes
+                .entry([image.rgba[at], image.rgba[at + 1], image.rgba[at + 2]])
+                .or_insert(0) += 1;
+        }
+    }
+    votes
+        .into_iter()
+        .max_by_key(|(_, count)| *count)
+        .map(|(colour, _)| colour)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -402,6 +437,21 @@ mod tests {
         }
         out.extend_from_slice(&image.rgba[at * row_bytes..]);
         Image::from_rgba(image.width, image.height + rows, out)
+    }
+
+    #[test]
+    fn the_ground_outvotes_the_glyphs_on_it() {
+        let mut image = Image::from_rgba(40, 20, vec![0; 40 * 20 * 4]);
+        fill(&mut image, 0, 0, 40, 20, [43, 43, 45, 255]);
+        // A "glyph": a quarter of the box in near-black, antialiased edges.
+        fill(&mut image, 5, 5, 10, 10, [34, 34, 34, 255]);
+        fill(&mut image, 15, 5, 2, 10, [38, 38, 40, 255]);
+        assert_eq!(ground_behind(&image, 0, 0, 40, 20), Some([43, 43, 45]));
+        assert_eq!(
+            ground_behind(&image, 50, 50, 5, 5),
+            None,
+            "clipped away entirely"
+        );
     }
 
     #[test]
