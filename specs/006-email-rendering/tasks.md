@@ -46,22 +46,22 @@ metric. The reference renders **must** be captured while WebKit is still the
 reader's engine, so this phase comes before anything is removed (research
 R13).
 
-- [ ] T001 Confirm the worktree `~/src/postio-worktrees/email-rendering` is on `feature/email-rendering`, with `main` recorded in `$(git rev-parse --git-dir)/postio-base`. Run `scripts/install-nextest.sh` and `scripts/install-shims.sh`
-- [ ] T002 Add the designed-mail corpus fixtures using `/add-fixture`, each with its loader-table row, categories and README row in `crates/postio-model/tests/corpus/`. All are synthetic, with reserved domains and invented brands:
+- [X] T001 Confirm the worktree `~/src/postio-worktrees/email-rendering` is on `feature/email-rendering`, with `main` recorded in `$(git rev-parse --git-dir)/postio-base`. Run `scripts/install-nextest.sh` and `scripts/install-shims.sh`
+- [X] T002 Add the designed-mail corpus fixtures using `/add-fixture`, each with its loader-table row, categories and README row in `crates/postio-model/tests/corpus/`. All are synthetic, with reserved domains and invented brands:
   - `html-designed-three-column.eml`, a three-column campaign with a button and a `cid:` hero image;
   - `html-transactional-receipt.eml`, a receipt with a totals table;
   - `html-responsive-media.eml`, which stacks under `@media (max-width: 600px)`;
   - `html-class-styled.eml`, whose `<style>` targets its own classes and ids (#1545)
-- [ ] T003 Add the legacy-client fixtures with `/add-fixture` in `crates/postio-model/tests/corpus/`:
+- [X] T003 Add the legacy-client fixtures with `/add-fixture` in `crates/postio-model/tests/corpus/`:
   - `html-legacy-font-center.eml`: `<font color face size>`, `<center>`, and body `bgcolor`, `text` and `link`;
   - `html-legacy-table-attrs.eml`: `valign`, `cellpadding`, `cellspacing`, `<table border=1>`, `table align=center`, `img align=right`, and `background=` on a cell
-- [ ] T004 Add the theme fixtures with `/add-fixture` in `crates/postio-model/tests/corpus/`:
+- [X] T004 Add the theme fixtures with `/add-fixture` in `crates/postio-model/tests/corpus/`:
   - `html-white-page-reply.eml`: a desktop-client reply with body `bgcolor=#ffffff` and `color:#000`, and no other backgrounds;
   - `html-dark-aware.eml`: `<meta name="color-scheme" content="light dark">` plus class-based `@media (prefers-color-scheme: dark)` rules;
   - `html-dark-text-no-background.eml`: `color:#222` with no background anywhere;
   - `html-illegible-sender-dark.eml`: sender dark rules that set `#333` text on `#222`;
   - `html-transparent-logo.eml`: a `cid:` PNG with alpha, drawn for a white page
-- [ ] T005 Add the hostile fixtures with `/add-fixture` in `crates/postio-model/tests/corpus/`:
+- [X] T005 Add the hostile fixtures with `/add-fixture` in `crates/postio-model/tests/corpus/`:
   - `html-deep-nesting.eml`: 400 nested `<div>`s;
   - `html-very-tall.eml`: about 40,000 px of content, with a unique last line;
   - `html-malformed-image.eml`: a truncated `cid:` PNG;
@@ -71,7 +71,7 @@ R13).
   - `html-script-forms.eml`: `<script>`, `onload`, `javascript:` hrefs and a `<form>`
 
   The existing `html-tracking-pixel-remote-images.eml` and `html-escaping-styles.eml` are reused
-- [ ] T006 Add the international fixtures with `/add-fixture` in `crates/postio-model/tests/corpus/`:
+- [X] T006 Add the international fixtures with `/add-fixture` in `crates/postio-model/tests/corpus/`:
   - `html-rtl-mixed.eml`: Arabic and Hebrew paragraphs, with Latin inline;
   - `html-cjk-emoji.eml`: Chinese, Japanese and Korean text, plus emoji
 - [ ] T007 Write the one-shot capture tool `crates/postio-gtk/examples/capture_reference.rs`, following `contracts/fidelity-metric.md` § Reference renders. It renders each designed fixture's **unsanitized** HTML in a WebKitGTK view with network, JavaScript and remote loads off, and serves `cid:` parts from the fixture itself. It uses 800 CSS px, scale 1, the light scheme, and the bundled faces as default families. The output is one PNG per fixture in `crates/postio-test-support/data/reference/`

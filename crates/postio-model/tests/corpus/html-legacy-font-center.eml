@@ -1,0 +1,18 @@
+Message-ID: <20010315T120000.legacy.font@mail.example.com>
+Date: Thu, 15 Mar 2001 12:00:00 +0000
+From: Harold Brisk <harold.brisk@example.com>
+To: Garden Society <members@society.example.org>
+Subject: Spring show schedule
+MIME-Version: 1.0
+Content-Type: text/html; charset=utf-8
+Content-Transfer-Encoding: 8bit
+
+<html><head><title>Spring show</title></head>
+<body bgcolor="#fffbe6" text="#3b2f00" link="#8a1c1c" vlink="#5c1313">
+<center><font face="Times New Roman" size="5" color="#1d5c1d"><b>Spring Show Schedule</b></font></center>
+<p><font face="Arial" size="2">Doors open at <font color="#8a1c1c"><b>nine</b></font> on the Saturday.</font></p>
+<p><font size="4">Judging begins at eleven sharp.</font></p>
+<p><font size="1" color="#6b6b6b">Refreshments by the committee.</font></p>
+<p>Full details on <a href="https://society.example.org/show">the society page</a>.</p>
+<center><font size="3">&mdash; Harold</font></center>
+</body></html>

@@ -1,0 +1,23 @@
+Message-ID: <20260925T030000.malformed@abuse.example.com>
+Date: Fri, 25 Sep 2026 03:00:00 +0000
+From: Broken Pictures <pics@abuse.example.com>
+To: Ren Ishida <ren.ishida@example.net>
+Subject: A picture that stops halfway
+MIME-Version: 1.0
+Content-Type: multipart/related; type="text/html"; boundary="=_rel_trunc_5e1f"
+
+--=_rel_trunc_5e1f
+Content-Type: text/html; charset=utf-8
+Content-Transfer-Encoding: 8bit
+
+<html><body><p>Before the image.</p>
+<p><img src="cid:truncated.png@abuse.example.com" width="120" height="80" alt="Truncated picture"></p>
+<p>After the image.</p></body></html>
+--=_rel_trunc_5e1f
+Content-Type: image/png; name="truncated.png"
+Content-Transfer-Encoding: base64
+Content-ID: <truncated.png@abuse.example.com>
+Content-Disposition: inline; filename="truncated.png"
+
+iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAIAAACQkWg2AAAAFklE
+--=_rel_trunc_5e1f--

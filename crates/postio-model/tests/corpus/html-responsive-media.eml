@@ -1,0 +1,26 @@
+Message-ID: <20260922T070000.resp@digest.example.net>
+Date: Tue, 22 Sep 2026 07:00:00 +0000
+From: Quarry Lane Digest <digest@quarrylane.example.net>
+To: Tomas Hale <tomas.hale@example.com>
+Subject: This week on Quarry Lane
+MIME-Version: 1.0
+Content-Type: text/html; charset=utf-8
+Content-Transfer-Encoding: 8bit
+
+<!DOCTYPE html>
+<html><head><meta charset="utf-8">
+<style>
+  .wrap { width: 100%; max-width: 640px; margin: 0 auto; font-family: Verdana, sans-serif; }
+  .col { display: inline-block; vertical-align: top; width: 300px; margin: 0 8px 16px 0; background: #fff4e0; color: #3d2a06; }
+  .col h2 { font-size: 18px; margin: 12px; }
+  .col p { font-size: 14px; line-height: 20px; margin: 0 12px 12px 12px; }
+  @media (max-width: 600px) {
+    .col { display: block; width: auto; margin: 0 0 16px 0; background: #e0f0ff; color: #0b2a4a; }
+  }
+</style></head>
+<body style="margin:0;background:#fafafa;">
+<div class="wrap">
+  <h1 style="font-size:22px;color:#222222;margin:16px 8px;">This week on Quarry Lane</h1>
+  <div class="col"><h2>Market hall reopens</h2><p>The roof is done and the stalls are back from Saturday.</p></div><div class="col"><h2>Bus times change</h2><p>The 14 now leaves the square at ten past the hour.</p></div>
+</div>
+</body></html>

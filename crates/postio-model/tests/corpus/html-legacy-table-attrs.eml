@@ -1,0 +1,42 @@
+Message-ID: <20030704T090000.legacy.table@lists.example.net>
+Date: Fri, 04 Jul 2003 09:00:00 +0000
+From: Brookside Allotments <committee@brookside.example.net>
+To: Ola Renner <ola.renner@example.com>
+Subject: Plot rota for July
+MIME-Version: 1.0
+Content-Type: multipart/related; type="text/html"; boundary="=_rel_legacy_2b7e"
+
+--=_rel_legacy_2b7e
+Content-Type: text/html; charset=utf-8
+Content-Transfer-Encoding: 8bit
+
+<html><body bgcolor="#ffffff" text="#202020">
+<table align="center" width="560" border="1" cellpadding="10" cellspacing="4" bgcolor="#f4f4f4">
+ <tr>
+  <td valign="top" width="60%" background="cid:stripe.legacy@brookside.example.net"><b>Week one</b><br>Plots 1&ndash;6 water the shared beds.</td>
+  <td valign="bottom" align="right" width="40%"><img src="cid:badge.legacy@brookside.example.net" align="right" width="48" height="48" alt="Brookside badge">Rota posted on the shed door.</td>
+ </tr>
+ <tr>
+  <td valign="middle" bgcolor="#e2f0d9">Week two: plots 7&ndash;12.</td>
+  <td valign="top" bgcolor="#fbe5d6">Compost turning, all hands.</td>
+ </tr>
+</table>
+</body></html>
+--=_rel_legacy_2b7e
+Content-Type: image/png; name="stripe.png"
+Content-Transfer-Encoding: base64
+Content-ID: <stripe.legacy@brookside.example.net>
+Content-Disposition: inline; filename="stripe.png"
+
+iVBORw0KGgoAAAANSUhEUgAAACgAAAAoCAIAAAADnC86AAAAZElEQVR42u3UIQ7AIBBE0bn/5XqI
+mtqKmiooabKb9eyYn4wC8Q08Xfebd5xP3r5bWarzRJZqhJurf7i/+oUt1RrufOGyVCPc/5tlqVZA
+kAu5kAu5kAu5kAu5kAu5kAu5kAu51gZgJx5AaRcSaAAAAABJRU5ErkJggg==
+--=_rel_legacy_2b7e
+Content-Type: image/png; name="badge.png"
+Content-Transfer-Encoding: base64
+Content-ID: <badge.legacy@brookside.example.net>
+Content-Disposition: inline; filename="badge.png"
+
+iVBORw0KGgoAAAANSUhEUgAAADAAAAAwCAIAAADYYG7QAAAAOUlEQVR42u3OMQ0AAAgDsLmZacTi
+gnA0qYBm2lciJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJHRnATZBOnlrrAWzAAAAAElFTkSuQmCC
+--=_rel_legacy_2b7e--
