@@ -71,8 +71,10 @@ direction:
   allowed. #1547 lists them. They are requirements below, because a renderer
   that lacks them is a regression, however well it lays out a table.
 
-This spec names that direction and not the engine. The plan chooses the engine
-and is measured against the requirements here. If the engine replaces the
+This spec names that direction and not the engine. **The engine is chosen by
+an explicit evaluation of Blitz against WebKit** (research R0), run on the same
+corpus and criteria before any engine-specific work; the maintainer decides from
+its scorecard. If the engine replaces the
 current one, it replaces it: the spike's own conclusion was that shipping two
 reading engines is worse than either one, and ADR 0032's rendering half is then
 amended or superseded on this branch.
@@ -629,13 +631,19 @@ one, they say so.
 
 - **The reading pane spec (001) stands.** This spec replaces nothing in it
   except where a requirement above says it tightens one.
-- **The engine is the plan's call.** The Blitz spike is the evidence for a
-  disconnected in-process renderer, and the plan's first job is to confirm it
-  against FR-001 to FR-030, including the affordances the spike did not
-  build. The plan also has to answer the spike's note that a shipped client
-  "vendors its own" renderer crates instead of taking published ones. If the
-  plan finds a renderer that meets the requirements better, the requirements
-  hold and the engine changes.
+- **The engine is decided by evaluation (research R0), not assumed.** The
+  Blitz spike is the evidence for a disconnected in-process renderer. WebKit,
+  improved by this spec's engine-neutral work, is the alternative, and both
+  are measured on the same corpus and criteria. Four requirements were written
+  for the Blitz direction:
+  - FR-001: no network by construction;
+  - FR-002: no script, Postio's own included;
+  - FR-023a: in-process with memory-safe parsers;
+  - SC-006: no separate rendering process.
+
+  If the maintainer chooses WebKit, those four are amended on this branch, as
+  R0 lays out, before engine-specific work continues. Every other
+  requirement holds for either engine.
 - **ADRs.** This spec inherits ADR 0020 (bodies and parts are local), ADR
   0023 (bundled fonts) and ADR 0039 (the composer is native, so the reader is
   the only web-content consumer left). It amends ADR 0032 if the rendering

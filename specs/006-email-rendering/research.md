@@ -15,9 +15,88 @@ not kept separately:
   the local registry (gtk4 0.11.4, blitz-* 0.3.0-beta.2, anyrender 0.13).
 
 Every decision has the same three parts: **Decision / Rationale /
-Alternatives**. No question from the Technical Context is left open. The
+Alternatives**. **R0 comes first and is open:** the engine is chosen by an
+evaluation, and R1–R8 describe the Blitz arm until it concludes. No question from the Technical Context is left open. The
 things that remain uncertain are **Risks**, and each one has a named task
 that retires it first.
+
+---
+
+## R0 — The engine is decided by an evaluation, not assumed
+
+**Status: open. It gates every engine-specific task** (maintainer,
+2026-09-26: *"we still need to evaluate whether we should use blitz or
+webkit"*).
+
+R1 onward describe the **Blitz** path. That path came from the spike, and
+the spike never measured WebKit on the same terms. So the engine is chosen by
+a like-for-like evaluation, run after the engine-neutral work (the corpus,
+the reference renders, the metric, and the sanitizer) and before any
+engine-specific work.
+
+### The two arms
+
+| | **A — WebKit (improved)** | **B — Blitz** |
+|---|---|---|
+| Engine | WebKitGTK 6, the shipped hardened `Reader`, one document per conversation (ADR 0032) | `postio-render` as R1–R8 describe, at prototype depth |
+| Input | the **same** production pipeline: the Phase 2 sanitizer (classes, the canvas, the hints), then `postio-ui` compose | the same |
+| Dark mode | a prototype of R10's rule (classification + contrast repair) in Postio's isolated-world script, the mechanism 001 R3 already allows | a prototype of R10 over Blitz computed styles |
+| Affordances | WebKit's own: selection, find (`FindController`), accessibility, zoom (`zoom-level`), printing | the R7/R8 build list (US4 + US6 tasks) |
+
+Both arms are measured by the same instruments on the same machine. Each arm
+is a harness under `examples/`, not product code. The losing arm is deleted.
+
+### Criteria
+
+**Gates.** An arm that fails one of these cannot be chosen until the failure
+is shown to be fixable within this branch:
+
+| | Gate | How it is measured |
+|---|---|---|
+| G1 | **Legible (SC-001)**: with the arm's dark-mode prototype, zero text runs below the floor across the theme fixtures, in dark and high contrast | pixel sampling behind every text run (R14), with text-run rects from each engine (A: `Range.getClientRects`; B: the text index) |
+| G2 | **No egress (SC-003)**: zero connections across the hostile corpus, unconsented and consented | a loopback listener with a counted control (#1336 discipline) |
+| G3 | **Survives hostile mail (SC-004)**: no crash, and no hang past the deadline | the hostile fixtures, each opened in a live reader |
+
+**Scored.** Reported side by side. None of these alone decides:
+
+| | Criterion | Measure |
+|---|---|---|
+| S1 | Fidelity | `contracts/fidelity-metric.md` over the designed fixtures. **Known bias:** the reference *is* WebKit, so arm A's score measures only sanitizer loss, and arm B's measures sanitizer plus engine loss. The question for B is "≥ 95%?", not "higher than A?" |
+| S2 | Cost | web/renderer Pss, process count, first and warm render time, and conversation handover at 2, 10 and 50 messages, using `postio-app`'s `pane_comparison` example (the #1348 method) |
+| S3 | Blank frames (FR-029) | frames showing only the ground colour during 50 message-to-message navigations, captured from the widget |
+| S4 | Affordance parity | which of US4 and US6 each arm has today, and the task count to close the gap (from `tasks.md`) |
+| S5 | Accessibility quality | the body's text, links and headings as a screen reader sees them (accerciser/AT-SPI walk), per arm |
+| S6 | Security posture | code that parses hostile input (C/C++ vs memory-safe), process isolation, and whether "no network" is structural or a setting |
+| S7 | Maintenance risk | upstream maturity and release cadence; how security updates reach users (distro WebKit vs pinned crates); open upstream gaps (R1) |
+| S8 | Platform reach | macOS already renders with WKWebView (ADR 0019); what each arm implies for a shared engine later |
+
+### The decision rule
+
+- **The maintainer decides.** The agent writes the scorecard and a
+  recommendation into `docs/notes/<date>-blitz-or-webkit.md`. The note is
+  listed in `docs/engineering-notes.md`, and the decision is recorded in
+  `spec.md`'s Clarifications.
+- **If both arms pass the gates,** the recommendation weighs S1, S3 and S6
+  against S2, S4 and S7.
+- **Written before either arm runs.** This rule, the criteria and the
+  fixtures are committed before any result exists, so the goalposts cannot
+  move to fit a result.
+
+### Requirements that assume an engine, and what happens to them
+
+| Requirement | As written (Blitz) | If WebKit is chosen |
+|---|---|---|
+| FR-001 | no network by construction | amended: network blocked by the engine's settings and CSP, proven by egress tests; the structural claim is withdrawn |
+| FR-002 | no script, Postio's own included | amended: sender script refused; Postio's isolated-world script allowed (001 R3) |
+| FR-023a | in-process, memory-safe parsers | replaced: rendering in WebKit's sandboxed web process |
+| FR-027 / FR-028 | one engine, one surface | unchanged, and already true of WebKit (ADR 0032) |
+| SC-006 | no separate rendering process | amended: one shared web process, with memory bounded as #1348 measured |
+| R3, R5–R8, contracts `renderer-api.md` and `renderer-graph-checks.md` | Blitz-specific | dropped; `/speckit-plan` re-run for the engine-specific phases |
+| US4 / US6 tasks | built | reduced to wiring WebKit's own features to the registry and tests |
+
+Either way, the engine-neutral work stands: R9 (sanitizer), R10 (the
+classification rule and the floor), R12 (the app-side fetcher), R13
+(references), R16 (Reader view opt-in), the corpus and the metric.
 
 ---
 
@@ -107,8 +186,10 @@ it.
 **Decision.** Two mechanical guards, both run by `scripts/check.sh`.
 
 1. **`check-crate-boundaries.py` gains `RULES["postio-render"]`.** It uses the
-   existing mechanism, a breadth-first `cargo metadata` walk over normal,
-   build and own-dev edges. It bans:
+   existing mechanism, a breadth-first `cargo metadata` walk, over **normal
+   and build edges only**. The renderer's own dev-dependencies never ship,
+   and its tests legitimately need a socket and `postio-test-support`
+   (`tokio`). It bans:
    - GTK and WebKit: `gtk4`, `gtk4-sys`, `webkit6`, `webkit6-sys`, `glib`,
      `gio`;
    - Postio's network and storage crates: `postio-transport`, `postio-sync`,
@@ -628,7 +709,7 @@ from its **unsanitized** HTML body:
 - at **800 CSS px** wide, scale 1, light scheme;
 - with the bundled fonts installed as the default families.
 
-It writes one PNG per fixture to `crates/postio-render/tests/reference/`.
+It writes one PNG per fixture to `crates/postio-test-support/data/reference/`.
 They are checked in. The tool needs a display and is run by hand. Each PNG is
 committed with a line in `reference/README.md` stating the WebKitGTK version
 that produced it.

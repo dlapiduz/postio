@@ -55,7 +55,7 @@ cargo nextest run -p postio-render --test fidelity       # each designed fixture
 ```
 
 **Expect:** at least 95% of fixtures match under `contracts/fidelity-metric.md`,
-and every mismatch is listed in `tests/reference/MISMATCHES.md` as cosmetic.
+and every mismatch is listed in `crates/postio-test-support/data/reference/MISMATCHES.md` as cosmetic.
 A failing fixture writes a diff image with the differing cells outlined.
 
 ## 3. Cannot betray the reader (US3, SC-003, SC-004)
