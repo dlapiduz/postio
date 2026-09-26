@@ -44,9 +44,9 @@ pub fn probe_options() -> ProbeOptions {
 
 /// What the screen should show for `report`.
 ///
-/// Split out of [`probe`] so it can be driven without a network: the mapping
-/// is where a discovery becomes a sentence, and it is the half that had the
-/// bug.
+/// Split out of the desktop's `probe` (`postio-app`) so it can be driven
+/// without a network: the mapping is where a discovery becomes a sentence,
+/// and it is the half that had the bug.
 pub fn status_for(report: &DiscoveryReport) -> Status {
     let found = report.settings().map(shown);
     match (&report.outcome, found) {

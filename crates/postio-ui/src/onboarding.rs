@@ -334,7 +334,7 @@ pub fn looks_like_an_address(address: &str) -> bool {
 ///
 /// A write that fails is logged and otherwise swallowed: the account and its
 /// credential are already saved by the time this runs, and the field's own
-/// default (5,000, [`SyncWindow::LastYear`](SyncWindow::LastYear)'s
+/// default (5,000, [`SyncWindow::LastYear`]'s
 /// own count) is exactly what a fresh install already has, so a failed
 /// write here costs the size the user picked, not the account.
 pub fn write_sync_window(window: SyncWindow) -> postio_config::Result<()> {

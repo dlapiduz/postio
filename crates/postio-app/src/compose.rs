@@ -1,6 +1,6 @@
 //! Wires the store's owner into the composer's seams.
 //!
-//! `postio-gtk::composer` builds a widget that edits a [`Draft`] and calls
+//! `postio-gtk::composer` builds a widget that edits a [`Draft`](postio_model::Draft) and calls
 //! back through a handful of seams — `connect_save`, `connect_recipient_
 //! suggestions`, `connect_reply_source` — without knowing anything persists
 //! it. This is the other half: each seam is answered by a

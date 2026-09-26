@@ -1,6 +1,6 @@
 //! The remote-image allow list: `postio-xxz`.
 //!
-//! Remote images are blocked by default — see [`super::sanitize::RemoteImages`]
+//! Remote images are blocked by default — see [`postio_body::sanitize::RemoteImages`]
 //! — and stay blocked for a message even after "show once", which never
 //! touches this file. This is only the standing exception: "always allow
 //! images from this sender", kept across restarts.
@@ -81,7 +81,7 @@ impl RemoteImageAllowList {
 
     /// Grant `sender` a standing exception, in memory only.
     ///
-    /// Deliberately not persisted here: [`super::view::Reader`] is what
+    /// Deliberately not persisted here: the frontend's reader is what
     /// knows whether it is running against the real
     /// `$XDG_STATE_HOME/postio/remote-images.ini` or, in a test, a scratch
     /// path — see [`save_to`](Self::save_to). Call that (or `save`

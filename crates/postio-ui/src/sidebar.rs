@@ -321,7 +321,7 @@ fn walk_folder_tree<'a>(
 /// Every ancestor of `id`, nearest first, so the caller can open all of them.
 ///
 /// A folder selected while an ancestor is collapsed must still be reachable —
-/// see [`Sidebar::select`] — and this is what tells it which parents to open.
+/// see `postio_gtk::sidebar::Sidebar::select` — and this is what tells it which parents to open.
 pub fn ancestors_of(mailboxes: &[Mailbox], id: MailboxId) -> Vec<MailboxId> {
     let by_id: HashMap<MailboxId, &Mailbox> = mailboxes.iter().map(|m| (m.id, m)).collect();
     let mut out = Vec::new();
