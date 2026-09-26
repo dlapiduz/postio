@@ -79,6 +79,12 @@ fn main() {
         return;
     }
     let mut report = String::from("# arm B (Blitz)\n\n");
+    if std::env::var_os("POSTIO_EVAL_COST_ONLY").is_some() {
+        cost(&fonts, &mut report);
+        std::fs::write(out.join("cost.md"), &report).expect("the report");
+        print!("{report}");
+        return;
+    }
     if std::env::var_os("POSTIO_EVAL_GATES_ONLY").is_some() {
         gates(&fonts, &mut report);
         std::fs::write(out.join("gates.md"), &report).expect("the report");
@@ -412,6 +418,108 @@ impl FontSet {
             source_cache: Default::default(),
         }
     }
+}
+
+/// Proportional set size of this process, in MiB: what #1348 measured web
+/// processes by, for the process Blitz draws in.
+fn pss_mib() -> f64 {
+    std::fs::read_to_string("/proc/self/smaps_rollup")
+        .ok()
+        .and_then(|text| {
+            text.lines()
+                .find(|line| line.starts_with("Pss:"))
+                .and_then(|line| line.split_whitespace().nth(1))
+                .and_then(|kb| kb.parse::<f64>().ok())
+        })
+        .map_or(0.0, |kb| kb / 1024.0)
+}
+
+/// S2: the thread `pane_comparison` measures arm A on, composed through the
+/// same pipeline, laid out and painted in-process at 2, 10 and 50 messages.
+fn cost(fonts: &FontSet, report: &mut String) {
+    use postio_ui::reader::thread::{Entry, conversation_document};
+    use std::time::Instant;
+    report.push_str(&format!(
+        "## S2 cost\n\nProcess Pss after font discovery: {:.0} MiB.\n\n| messages | first render | warm render | height | Pss after | growth |\n|---|---|---|---|---|---|\n",
+        pss_mib()
+    ));
+    for n in [2usize, 10, 50] {
+        let bodies: Vec<(String, String, String)> = (0..n)
+            .map(|index| {
+                let html = format!(
+                    "<p>Message {index} from Ren Ishida. The scope has three parts and I will \
+                     go through each so there are no surprises on the day.</p>\
+                     <p><b>Diagnostics.</b> We place two continuous monitors for 48 hours \
+                     -- one in the lowest livable level, one a floor above -- and pull a \
+                     soil-gas reading at the slab.</p>\
+                     <blockquote><p>Quoted from the message before it, so the folding \
+                     path has something to fold.</p></blockquote>"
+                );
+                let body = MessageBody {
+                    text: None,
+                    html: Some(html),
+                };
+                let scope = (index + 1).to_string();
+                let rendered = document::body_html_in(
+                    &body,
+                    RemoteImages::Blocked,
+                    document::opening_rendering(),
+                    Some(&scope),
+                );
+                (scope, rendered.html, rendered.styles)
+            })
+            .collect();
+        let entries: Vec<Entry<'_>> = bodies
+            .iter()
+            .enumerate()
+            .map(|(index, (scope, body, styles))| Entry {
+                scope,
+                sender: "Ren Ishida",
+                address: "ren.ishida@example.net",
+                when: "24 Aug",
+                preview: "preview",
+                expanded: true,
+                draft: false,
+                mine: false,
+                latest: index + 1 == n,
+                blocked: 0,
+                body,
+                recipients: "",
+                cc: "",
+                styles,
+            })
+            .collect();
+        let html = conversation_document(&entries, RemoteImages::Blocked, document::Sheet::Theme);
+        let message = Message {
+            body: MessageBody::default(),
+            parts: HashMap::new(),
+            styles: String::new(),
+            html,
+        };
+        let before = pss_mib();
+        let started = Instant::now();
+        let mut doc = message.lay_out(fonts, false, None);
+        let image = paint(&mut doc);
+        let first = started.elapsed();
+        let started = Instant::now();
+        let mut again = message.lay_out(fonts, false, None);
+        let _ = paint(&mut again);
+        let warm = started.elapsed();
+        let after = pss_mib();
+        report.push_str(&format!(
+            "| {n} | {:.1} ms | {:.1} ms | {} px | {after:.0} MiB | +{:.0} MiB |\n",
+            first.as_secs_f64() * 1000.0,
+            warm.as_secs_f64() * 1000.0,
+            image.height,
+            after - before
+        ));
+        drop((doc, again, image));
+    }
+    report.push_str(
+        "\nOne process, no web process and no network process. The whole document is \
+         rasterised into one buffer here (prototype depth); the plan's tiles cap that at \
+         64 MiB whatever the height.\n",
+    );
 }
 
 fn font_set() -> FontSet {

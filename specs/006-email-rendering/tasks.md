@@ -170,11 +170,11 @@ proven on synthetic images. Nothing renders yet.
   - **G2 (egress):** a loopback listener with a counted control, across the hostile fixtures, unconsented and consented;
   - **G3 (survival):** each hostile fixture opened in a live reader for arm A, and through the renderer for arm B. Record any crash, or any render longer than 400 ms
 - [X] T025 Score S1 (fidelity) for both arms with `postio_test_support::fidelity` against the reference PNGs, and write per-fixture results into the note. State the known bias: the reference is WebKit
-- [ ] T026 Score S2 (cost) and S3 (blank frames) for both arms, using `postio-app`'s `pane_comparison` example extended with a Blitz arrangement: Pss, processes, first and warm render, handover at 2, 10 and 50 messages, and ground-only frames over 50 navigations. Use the #1348 method (`docs/notes/2026-09-08-what-a-thread-costs-in-two-panes.md`)
-- [ ] T027 Score S4 (affordance parity) and S5 (accessibility quality):
+- [X] T026 Score S2 (cost) and S3 (blank frames) for both arms, using `postio-app`'s `pane_comparison` example extended with a Blitz arrangement: Pss, processes, first and warm render, handover at 2, 10 and 50 messages, and ground-only frames over 50 navigations. Use the #1348 method (`docs/notes/2026-09-08-what-a-thread-costs-in-two-panes.md`)
+- [X] T027 Score S4 (affordance parity) and S5 (accessibility quality):
   - an inventory of US4 and US6 against each arm: built in, or tasks still to build, counted from this file;
   - an AT-SPI walk of one message's body per arm with `accerciser` or the `atspi` crate, recording what a screen reader receives
-- [ ] T028 Score S6 (security posture), S7 (maintenance risk) and S8 (platform reach), each with evidence:
+- [X] T028 Score S6 (security posture), S7 (maintenance risk) and S8 (platform reach), each with evidence:
   - for security: which code parses hostile input in each arm, and whether "no network" is structural or a setting, citing the `cargo tree` audit for Blitz and the WebKit sandbox for WebKit;
   - for maintenance: the upstream release cadence and open gaps;
   - for platform reach: what each arm means for macOS.
