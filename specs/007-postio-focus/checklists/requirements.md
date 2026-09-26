@@ -48,6 +48,8 @@
     summaries as drawn, and Focus's rules acting only while it runs.
   - One changed how the branch ends: nothing lands until the maintainer
     says so.
+  - A ninth, given unasked, makes the local model the user's own and
+    optional. Postio never embeds or ships one (FR-165 to FR-169).
 - **Planning is gated.** `/speckit-plan` waits until the new message
   renderer has merged to `main` (see *The message view waits for the new
   renderer* in the spec).

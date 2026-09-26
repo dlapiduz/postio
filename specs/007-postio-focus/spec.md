@@ -35,8 +35,8 @@ mail and nothing else:
 
 1. It **calls out real actions**: an invitation, a direct question, a to-do.
 2. It **holds some mail back into digests** on a cadence the user chooses.
-   Each digest opens on a summary written on this machine, and every
-   statement in it cites the mail it came from.
+   When the user brings a local model, each digest opens on a summary written
+   on this machine, and every statement in it cites the mail it came from.
 3. It **hides spam and automated updates**. Each one keeps its reason and is
    one key from being restored.
 4. Later, it **links mail to the user's Obsidian vault**.
@@ -60,9 +60,10 @@ new:
   hints, chips, action bars) move into a GTK component crate that both desktop
   apps depend on, so Focus never depends on the classic app.
 - **Focus needs engine work that the terminal did not.** That means
-  invitations, filtering, digests, reminders and, later, a local classifier, a
-  digest summariser and an Obsidian writer. All of it is local, and all of it
-  is built so the classic app could use it too.
+  invitations, filtering, digests, reminders, an Obsidian writer and, when the
+  user brings one, a local model for classification and digest summaries.
+  All of it is local, and all of it is built so the classic app could use it
+  too.
 
 The maintainer ranked the priorities in this order: **performance**, then
 **consistency**, then **reusable components**.
@@ -75,7 +76,7 @@ The handoff's six open decisions went to the maintainer, with two more this
 spec raised: which renderer planning waits for, and whether Focus's rules act
 while another app runs. That is more than clarify's usual five questions,
 because the handoff asked for every one to be confirmed rather than decided
-silently.
+silently. The maintainer gave the last answer, on the model, unasked.
 
 - Q: Which change is the new message renderer that planning waits for?
   → A: `specs/006-email-rendering`, on `feature/email-rendering`. Planning
@@ -111,6 +112,14 @@ silently.
   `config.toml`? → A: One keymap for all apps. The classic app's and the
   terminal's defaults change to Focus's (`KEYS.md`), so every app shares one
   default profile. It is overridable under `[keys]` by command id.
+- Q: How does Focus get its local model? → A: "The local model should be
+  bring your own. I don't want to embed it as part of the app and it needs
+  to be optional."
+  - The user runs a model runtime of their choosing on this machine, and
+    names it in `config.toml`.
+  - Postio embeds, bundles, downloads and starts nothing.
+  - Focus is complete without a model, and every feature that uses one stays
+    off until the user turns it on (FR-165 to FR-169).
 
 ## The inputs, and which one wins
 
@@ -152,7 +161,7 @@ and scrubbed it (constitution VI).
 | C3 | 20 | "Rebind anything in ~/.config/postio/keys.toml" (also in `SPEC.md` and `KEYS.md`) | Constitution II and the handoff: `[keys]` in `config.toml`. There is no `keys.toml` | **Constitution wins.** The footer names `[keys]` in `config.toml` |
 | C4 | 21 | "Kept for 30 days, then deleted" | Handoff recommends: archived, never deleted automatically | **Maintainer: archived, never deleted** (Clarifications). 21's header copy changes |
 | C5 | 01–03, 15–19 | The digest row's first line is a written summary ("Summary of 14 messages from 6 senders: rail funding vote, …") | Principle 1, show mail as it is. Handoff decision 1 recommended senders and counts | **Maintainer: as drawn** (Clarifications). It is the one place the list shows text a model wrote (FR-011, FR-124) |
-| C6 | 22, 23 | The digest opens on a model-written summary with numbered references | Same | **Maintainer: as drawn** (Clarifications). The digest opens on its summary once milestone 2 exists, and on its plain list until then (FR-125, FR-172 to FR-175) |
+| C6 | 22, 23 | The digest opens on a model-written summary with numbered references | Same | **Maintainer: as drawn** (Clarifications). The digest opens on its summary when the user has brought a model (milestone 2), and on its plain list otherwise (FR-125, FR-172 to FR-175) |
 | C7 | 05, 06 | A plain-text composer with a "Markdown Ctrl M" toggle | Handoff: reuse the existing composer, not a new plain-text one | **Handoff wins.** The existing composer, in 05's frame. The Markdown toggle is dropped unless the existing composer has an equivalent (the plan checks). "Plain text · N words" stays, saying what will be sent |
 | C8 | 01, 03, 17–19 | Question and To-do markers | Handoff decision 2: they need the model | Milestone 2. Milestone 1 shows only Invite markers |
 | C9 | 01, 03, 04, 25 | "Task in Atlas · due Fri", and Task `t` / Note `n` buttons | Obsidian is a later milestone | Shown only once Obsidian exists (milestone 3) |
@@ -216,7 +225,7 @@ order of work on the branch, not landings:
   - Invite markers from the message's calendar part
   - filtering by headers and structure, with the Filtered view (21)
   - digest rules by sender (24), each digest opening on its plain list.
-- **Milestone 2, the local model**:
+- **Milestone 2, the optional local model the user brings**:
   - Question and To-do markers
   - digest summaries (22, 23), which the digest then opens on
   - digests by mailing list, by search, and "more like this".
@@ -239,7 +248,8 @@ give. Neither is needed to keep working:
 
 - **A constitution amendment.** The constitution's Scope must name Focus, as
   version 1.2.0 named the terminal. For milestone 2 it must also allow
-  Focus's local model. Today it says v1 has "no AI (deferred to epic E12)",
+  Focus's optional, user-supplied local model. Today it says v1 has "no AI
+  (deferred to epic E12)",
   and that work outside the scope belongs on the roadmap, not in a branch.
   The maintainer chose to build these features on this unlanded branch
   (Clarifications). The amendment lands with the branch, with the
@@ -951,9 +961,11 @@ The marker's action is Reply `e` for a question, and Task `t` and Snooze `s`
 for a to-do. The user can dismiss a wrong marker, and the dismissal is
 remembered as a correction.
 
-A small local model makes these decisions. It returns only a fixed schema: a
-category, spans as character offsets into the body, and a due date. It never
-returns text of its own.
+A small local model makes these decisions. It is one the user brings and
+runs on this machine, never one Postio ships (FR-165). Without it, Focus
+shows no Question or To-do markers, and "Has action" counts invitations only.
+The model returns only a fixed schema: a category, spans as character offsets
+into the body, and a due date. It never returns text of its own.
 
 **Why this priority**: Milestone 2, because it needs the local model. A
 marker that is often wrong is worse than none (brief: "Risks").
@@ -977,6 +989,9 @@ classification with a fake model that returns canned spans. Assert:
 3. **Given** a marker dismissed as wrong, **When** the same sender sends a
    similar message, **Then** the dismissal is taken into account (brief,
    layer 2).
+4. **Given** no model configured, **When** mail arrives, **Then** no
+   Question or To-do markers appear, "Has action" counts invitations only,
+   and Postio opens no connection to any model runtime.
 
 ---
 
@@ -984,8 +999,8 @@ classification with a fake model that returns canned spans. Assert:
 
 Screens 22 and 23, and the digest row on 01.
 
-`Enter` on a digest row opens the digest window on its summary. The summary
-is one reading column, grouped by topic ("Your town · The Evening Ledger ·
+When the user has brought a local model, `Enter` on a digest row opens the
+digest window on its summary. The summary is one reading column, grouped by topic ("Your town · The Evening Ledger ·
 5"). Each statement ends in a numbered reference to the message it came
 from.
 
@@ -1035,9 +1050,9 @@ canned statements and references, and assert:
 3. **Given** model output containing `<a href=…>` or a bare URL, **When** it
    is shown, **Then** it appears as plain characters, never as a link or as
    markup.
-4. **Given** no local model reachable, **When** the digest opens, **Then** it
-   opens on its plain list, and the row shows its senders instead of a
-   summary line.
+4. **Given** no local model configured, or the configured one not running,
+   **When** the digest opens, **Then** it opens on its plain list, and the
+   row shows its senders instead of a summary line.
 5. **Given** a digest whose mail contains instructions addressed to an
    assistant, **When** the summary is written, **Then** nothing is sent, no
    command runs, and no request leaves the machine.
@@ -1052,7 +1067,9 @@ canned statements and references, and assert:
 "Match a list or a search instead…" (24) makes a digest rule from a mailing
 list or from a query in the one language, previewed on recent mail before it
 is saved. "Digest mail like this" makes a rule from a selected message, and
-the local model checks which mail is alike.
+the local model, when the user has brought one, checks which mail is alike.
+Without a model, "Digest mail like this" is absent, and list and search rules
+work either way.
 
 **Why this priority**: The list and search rules need no model, but the
 handoff scoped the first milestone to sender rules. "Like this" needs the
@@ -1137,6 +1154,10 @@ the conversation in Postio.
 - **A late decision.** Once a model is in use, a decision made after a
   message was listed may add a marker. It never moves the message under the
   cursor, the message that is open, or one the user has acted on.
+- **The user's model is configured but not running.** Focus works as it
+  does without a model, and says so once where a model-backed feature would
+  appear. It does not keep retrying. When the model is back, recent mail it
+  missed can gain markers, but nothing already listed moves.
 - **Reminders.**
   - A reply from someone other than the user cancels the reminder. The
     user's own later message does not.
@@ -1233,8 +1254,8 @@ the conversation in Postio.
   keys MUST describe Focus, in this branch, together with the checks that
   enforce them:
   - the constitution's Scope and Principle VII. Before the branch lands, the
-    Scope must also allow Focus's local model, an amendment the maintainer
-    approves (see *Milestones, and landing*);
+    Scope must also allow Focus's optional, user-supplied local model, an
+    amendment the maintainer approves (see *Milestones, and landing*);
   - `docs/PRODUCT.md` §2, §8 and §23, and `docs/keybindings.md`;
   - `docs/ARCHITECTURE.md`.
 
@@ -1384,9 +1405,9 @@ the conversation in Postio.
   selection that was focused when the bar opened.
 - **FR-062**: Plain English MUST be lowered, on this machine, into editable
   chips of the one query language (constitution III). It MUST NOT use a
-  second language, the network or a model. It MUST be deterministic. Words
-  it cannot lower MUST stay free text. `Tab` MUST step into the chips, and
-  `Ctrl+Backspace` MUST return to the plain words.
+  second language or the network, and MUST NOT need a model. It MUST be
+  deterministic. Words it cannot lower MUST stay free text. `Tab` MUST step
+  into the chips, and `Ctrl+Backspace` MUST return to the plain words.
 - **FR-063**: Saved searches MUST be pinned across the top of the bar, with
   counts and `Alt+1`–`Alt+4`. `Ctrl+S` MUST save the current query as a
   saved search, the same kind every app reads.
@@ -1564,7 +1585,8 @@ the conversation in Postio.
   2. structure and rules: calendar parts, list and bulk headers, automated
      senders as data, and the user's digest rules;
   3. the user's corrections;
-  4. later, the local model, only for what layers 1–3 left undecided.
+  4. later, and only when the user has brought one, the local model, for
+     what layers 1–3 left undecided.
 - **FR-131**: Classification MUST never run on the UI path, and MUST never
   block the UI. A message MUST be listable, openable and actionable before
   it has been classified.
@@ -1575,8 +1597,9 @@ the conversation in Postio.
   treated as data, never as instructions (ADR 0009). This MUST be enforced
   by a boundary check. The digest summariser (FR-172 to FR-175) is the one
   component that writes text, and it is bounded separately.
-- **FR-133**: Classification MUST run on this machine only. It MUST NOT use
-  a cloud model or any network path.
+- **FR-133**: Classification MUST run on this machine only: its rules inside
+  Postio, and its model, when the user has brought one, at a local endpoint
+  (FR-168). It MUST NOT use a cloud model or reach any other host.
 - **FR-134**: Filtering, digest holding, digest delivery and reminders MUST
   act only while Focus is the app running (Clarifications).
   - Mail another app files lands in the inbox as usual. The other apps never
@@ -1601,11 +1624,12 @@ the conversation in Postio.
   classified first, newest first. Milestone 1's pass MUST read no message
   bodies apart from calendar parts. Its time budget is in SC-011. The same
   limits apply to the catch-up when Focus opens (FR-134).
-- **FR-142**: When a model arrives, its first pass MUST be limited to the
-  inbox and the last 30 days of mail, under the same one-core,
-  background-priority limit. Its progress MUST be visible, not hidden.
-  Digest summaries MUST be written in the background before a digest comes
-  due where possible, and MUST never delay the digest row.
+- **FR-142**: When the user turns the model on, its first pass MUST be
+  limited to the inbox and the last 30 days of mail, sent one request at a
+  time, in the background. The runtime is the user's own, so Postio bounds
+  what it asks of it rather than how it runs. Its progress MUST be visible,
+  not hidden. Digest summaries MUST be written in the background before a
+  digest comes due where possible, and MUST never delay the digest row.
 
 **Privacy**
 
@@ -1615,7 +1639,8 @@ the conversation in Postio.
   - no read receipt;
   - no link prefetch;
   - no unsubscribe or RSVP without a deliberate keypress;
-  - no model call off this machine.
+  - no model call off this machine, and no connection to a model runtime
+    the user has not configured.
 - **FR-151**: Logs MUST carry no message content: ids, counts and outcomes
   only. Stored excerpts, reasons and summaries are message content, and live
   only in the encrypted store.
@@ -1632,16 +1657,50 @@ the conversation in Postio.
   kept where every app reads them. They MUST be readable and correctable by
   the user, as the other rules and saved searches are.
 
-**Milestone 2, the local model** (specified now so milestone 1 does not
-design it out)
+**Milestone 2, the local model the user brings** (specified now so
+milestone 1 does not design it out)
+
+- **FR-165**: The local model MUST be one the user brings: a model and a
+  runtime they install, choose and run on this machine (for example Ollama,
+  or a llama.cpp server), named in `config.toml` (Clarifications). Postio
+  MUST NOT embed, bundle, download, install or start a model or an inference
+  runtime. No inference engine and no model weights may be compiled into or
+  shipped with any Postio app, and a dependency check MUST enforce it.
+- **FR-166**: The model MUST be optional. It is off until the user names a
+  provider. Postio MUST NOT look for a model runtime the user has not
+  configured, not even on this machine (constitution VI: no speculative
+  connection). Each feature that uses the model MUST have its own switch.
+- **FR-167**: Focus MUST be complete without a model. Without one:
+  - there are no Question or To-do markers, and "Has action" counts
+    invitations;
+  - digests open on their plain list, and digest rows show their senders
+    (FR-175);
+  - "Digest mail like this" is absent, while list and search rules still
+    work;
+  - filtering decides by guards, structure, rules and corrections alone, and
+    anything they leave undecided goes to the inbox;
+  - every command that needs the model is absent from every surface
+    (ADR 0009).
+
+  A configured model that is not running, or too slow, MUST be treated the
+  same way. Nothing waits on it.
+- **FR-168**: The provider MUST be on this machine: a loopback address or a
+  local socket. Focus MUST refuse an endpoint on another host, and say why
+  (brief: "Local, always"; ADR 0009's `Locality`). Every call to the model
+  MUST be recorded in the egress log, with ids, counts and outcomes only
+  (ADR 0009, Q6).
+- **FR-169**: Which runtime and model the user brings MUST be configuration,
+  not code. Postio speaks a documented local interface, and no runtime or
+  model is named or special-cased in code (constitution VII: providers are
+  data).
 
 - **FR-170**: Question and To-do markers MUST quote their sentence
   byte-exactly from the body, and never paraphrase it. A dismissed marker
   MUST be remembered as a correction.
 - **FR-171**: Digest rules MUST accept a mailing list, a query and "more like
   this", each previewed before it is saved.
-- **FR-172**: Each digest MUST open on a summary of its messages, as screen
-  22 draws it:
+- **FR-172**: When the user has brought a model (FR-165), each digest MUST
+  open on a summary of its messages, as screen 22 draws it:
   - written on this machine by the local model, from those messages only;
   - grouped by topic;
   - with a footer that says what wrote it.
@@ -1656,10 +1715,10 @@ design it out)
   a summary can never carry a live link, a tracking pixel or a command (ADR
   0009, Q4). The summariser MUST get no tools and MUST have no send path.
   Message text MUST be fenced as data, never treated as instructions.
-- **FR-175**: When no local model is reachable, or a summary cannot be
-  written, the digest MUST open on its plain list, and its row MUST show its
-  senders. Nothing waits on the model: a digest is listable and openable
-  before its summary exists.
+- **FR-175**: When no local model is configured or reachable, or a summary
+  cannot be written, the digest MUST open on its plain list, and its row
+  MUST show its senders. Nothing waits on the model: a digest is listable
+  and openable before its summary exists.
 
 **Milestone 3, Obsidian and links**
 
@@ -1711,6 +1770,9 @@ design it out)
   one digest, grouped by topic. Each statement carries numbered references,
   each pinned to a passage in one of the digest's messages. It is plain
   text, written on this machine, and absent until it has been written.
+- **Model provider** (milestone 2): the runtime and model the user brings,
+  as configured. Where it listens on this machine, which model to ask, and
+  which features may use it. It is absent until the user configures it.
 - **Reminder**: "remind me if no reply". The conversation, when it is due,
   and whether a reply from someone else has cancelled it.
 - **Default keymap**: the one default binding for each command id, shared by
@@ -1771,6 +1833,10 @@ design it out)
 - **SC-015**: Across every app, no default key means two different commands,
   and every command an app offers has a key. This is proven by enumerating
   the one keymap.
+- **SC-016**: With no model configured, every milestone 1 acceptance
+  scenario passes, and Postio opens zero connections to any model runtime,
+  proven by a test that fails on any attempt. No Postio package contains a
+  model or an inference engine.
 
 ## Assumptions
 
@@ -1778,16 +1844,18 @@ design it out)
   (Clarifications). The branch is rebased onto `main` as it goes, so it
   stays landable. Nobody runs `issue-land.sh` for it until the maintainer
   asks.
-- **The model.** The maintainer has chosen to build milestone 2's local
-  model on this branch. The constitution's Scope still says v1 has "no AI
-  (deferred to epic E12)", and the amendment that reconciles the two is part
-  of landing, with the maintainer's approval (FR-009). The model follows
-  ADR 0009:
-  - a provider the user runs on this machine;
-  - nothing bundled or downloaded by Postio;
-  - its features absent from every surface when no provider is reachable,
-    which is why every model-backed surface has a plain fallback
-    (FR-175).
+- **The model is the user's own, and optional** (Clarifications).
+  - The user installs, chooses and runs it on this machine (for example
+    with Ollama, or a llama.cpp server) and names it in `config.toml`.
+  - Postio never embeds, bundles, downloads, installs or starts one, and
+    never looks for one the user has not configured.
+  - Without it, Focus is complete, and every model-backed feature is absent
+    or falls back (FR-167).
+
+  This matches ADR 0009 ("Nothing is bundled"), which the model otherwise
+  follows. The constitution's Scope still says v1 has "no AI (deferred to
+  epic E12)". The amendment that reconciles the two lands with the branch,
+  with the maintainer's approval (FR-009).
 - **One inbox across accounts.** This is the brief's proposal. Folders and
   labels are grouped by account wherever there is more than one account.
 - **Filtering starts on.** It covers mail filed from the first open,
@@ -1828,7 +1896,8 @@ design it out)
   become `from:`/`to:`, date phrases become `after:`/`before:`, and phrases
   such as "with attachments" or "unread" become their operators; the rest
   stays free text. A later milestone may improve the lowering with the
-  model, still producing chips of the one language.
+  user's model, when they have brought one, still producing chips of the one
+  language.
 - **Label colours.** A label's stored colour is used when it has one.
   Otherwise the label gets a stable colour from a palette that excludes the
   accent's hue.
@@ -1859,6 +1928,8 @@ design it out)
 - Automatic replies or sends. The only automatic acts are archiving filtered
   mail and holding digest mail, both guarded, visible and undoable.
 - Cloud models.
+- Embedding, bundling, downloading, installing or starting a model or an
+  inference runtime. The model is the user's own, and optional.
 - An Obsidian plugin, or editing notes beyond appending captures.
 - A new protocol, backend or sync mode.
 - Focus on macOS, iOS or in the terminal.
