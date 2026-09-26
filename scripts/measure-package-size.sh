@@ -30,9 +30,21 @@ usage() {
     exit 2
 }
 
-# Bytes on disk under the given paths, symlinks followed.
+# The bytes of every file under the given paths, symlinks followed, and a
+# file reached more than once -- a hard link, which is how a Flatpak's store
+# shares files between installs -- counted once.
+#
+# Not `du -b`: macOS's `du` has no `-b`, and the self-test runs there. `stat`
+# answers everywhere, in one of two dialects: GNU's `-c`, BSD's `-f`.
 bytes_of() {
-    du -sbL -- "$@" | awk '{ total += $1 } END { print total + 0 }'
+    local format
+    if stat -c '%s' / >/dev/null 2>&1; then
+        format=(-c '%d:%i %s')
+    else
+        format=(-f '%d:%i %z')
+    fi
+    find -L "$@" -type f -exec stat "${format[@]}" {} + |
+        awk '!seen[$1]++ { total += $2 } END { print total + 0 }'
 }
 
 # The executables and every shared library they load, each counted once.

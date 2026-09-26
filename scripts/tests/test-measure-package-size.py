@@ -112,6 +112,51 @@ esac
     missing = run("flatpak", "dev.postio.Nothing", "dev.postio.Postio", env=env)
     case("an app flatpak cannot find is an error", missing.returncode == 2, missing.stdout + missing.stderr)
 
+    # macOS's `du` has no `-b`, and CI runs this on macOS: the sizes must not
+    # depend on GNU's tools. A `du` that refuses `-b` and a `stat` that only
+    # speaks BSD's dialect stand in for macOS's here, so Linux sees it too.
+    # On macOS the real tools are the BSD ones already; elsewhere they are
+    # stood in for.
+    bsd_env = dict(os.environ)
+    if sys.platform.startswith("linux"):
+        bsd = root / "bsd"
+        bsd.mkdir()
+        (bsd / "du").write_text(
+            """#!/usr/bin/env bash
+    for argument in "$@"; do
+      case "$argument" in -*b*) echo "du: invalid option -- b" >&2; exit 1 ;; esac
+    done
+    exec /usr/bin/env -u PATH du "$@"
+    """
+        )
+        (bsd / "du").chmod(0o755)
+        # And a `stat` in BSD's dialect: no `-c`, `-f` with `%z` for the size.
+        (bsd / "stat").write_text(
+            """#!/usr/bin/env bash
+    [ "$1" = -f ] || { echo "stat: illegal option -- ${1#-}" >&2; exit 1; }
+    format=${2//%z/%s}
+    shift 2
+    exec /usr/bin/stat -c "$format" "$@"
+    """
+        )
+        (bsd / "stat").chmod(0o755)
+        bsd_env["PATH"] = f"{bsd}:{os.environ['PATH']}"
+    portable = run("binaries", str(tui), "--", str(desktop), env=bsd_env)
+    case(
+        "the sizes do not need GNU du",
+        portable.returncode == 0 and "2000" in portable.stdout and "5000" in portable.stdout,
+        portable.stdout + portable.stderr,
+    )
+
+    # A file reached twice -- a hard link, which is how a Flatpak's store
+    # shares files between installs -- is on disk once.
+    linked = root / "linked"
+    linked.mkdir()
+    original = sized(linked / "a", 700)
+    os.link(original, linked / "b")
+    once = run("binaries", str(linked), "--", str(desktop))
+    case("a hard-linked file counts once", " 700 bytes" in once.stdout, once.stdout + once.stderr)
+
     case("no arguments is a usage error", run().returncode == 2)
     case("binaries without a separator is a usage error", run("binaries", str(tui)).returncode == 2)
 
