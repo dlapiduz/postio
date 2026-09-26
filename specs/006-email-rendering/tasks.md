@@ -99,11 +99,11 @@ proven on synthetic images. Nothing renders yet.
   - `id`s are rewritten `postio-s<scope>-<id>` per message, inside Postio's reserved `postio-` namespace so they can collide with neither a sender's name nor Postio's own `m-<scope>` and `pos-<n>` ids. In-message `href="#id"` links and the sender's `#id` selectors follow. `<label for>` is moot, because form controls are removed;
   - two messages both using `id="header"` get distinct ids (FR-005, #1545)
 - [X] T012 Implement T011 in `crates/postio-body/src/sanitize.rs`: allow `class` and `id` in the ammonia builder, and add the attribute filter that refuses the `postio-` prefix and rewrites ids
-- [ ] T013 [TEST] In `crates/postio-body/src/sanitize.rs` unit tests, assert:
+- [X] T013 [TEST] In `crates/postio-body/src/sanitize.rs` unit tests, assert:
   - `<body bgcolor="#fff" text="#222" link="#06c" style="background:#fafafa">` and `<html style=…>` produce a `Canvas { background, text, link }`;
   - `link` becomes a scoped `a { color }` rule;
   - `<meta name="color-scheme" content="light dark">` produces `color_scheme = LightDark` (FR-006)
-- [ ] T014 Implement canvas lifting and `color-scheme` carrying in `crates/postio-body/src/sanitize.rs`, and emit the canvas in `crates/postio-ui/src/reader/document.rs` `contain_body_in`: as a style on `div.postio-body` plus `data-postio-color-scheme`. Add a `postio-ui` unit test asserting the emitted attributes
+- [X] T014 Implement canvas lifting and `color-scheme` carrying in `crates/postio-body/src/sanitize.rs`, and emit the canvas in `crates/postio-ui/src/reader/document.rs` as a Postio-owned `div.postio-canvas` that fills the message's container (`reader.css`), carrying the canvas style and `data-postio-color-scheme`. It is carried in-band because `Rendered` hands its callers HTML and would otherwise drop the canvas. Add a `postio-ui` unit test asserting the emitted attributes
 - [ ] T015 [TEST] In `crates/postio-body/src/sanitize.rs`, walk a new `const REFUSALS` table and assert:
   - every entry is actually refused by the sanitizer, one fixture snippet per entry;
   - every reason is `Containment`, `Privacy` or `NoScript`;

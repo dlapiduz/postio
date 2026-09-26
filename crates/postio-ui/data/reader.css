@@ -70,6 +70,18 @@ body:empty::before {
   overflow-x: auto;
 }
 
+/* The page the sender styled (spec 006 FR-006), lifted off their <body> by
+   the sanitizer. It fills the container edge to edge -- the negative margin
+   undoes .postio-body's padding and the padding restores it inside -- so a
+   sender's white page is one surface, not a white box in a ring of reader
+   ground. `flow-root` keeps the sender's own margins and floats inside it. */
+.postio-canvas {
+  display: flow-root;
+  margin: -20px -24px;
+  padding: 20px 24px;
+  border-radius: inherit;
+}
+
 /* High contrast: the edge gains weight rather than changing colour scheme,
    the same treatment tokens.css's own hairlines get. */
 @media (prefers-contrast: more) {

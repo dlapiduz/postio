@@ -156,6 +156,54 @@ pub struct Sanitized {
     /// "Likely" is the honest word and the wording the panel uses. See
     /// [`is_likely_tracker`] for what the heuristic does and does not claim.
     pub trackers: u32,
+    /// The page the sender styled, lifted off `<html>` and `<body>` (spec 006
+    /// FR-006). Empty when the sender styled no page.
+    pub canvas: Canvas,
+    /// The `color-scheme` the sender declared, if any (spec 006 FR-013(a)).
+    pub color_scheme: Option<ColorScheme>,
+}
+
+/// The page a sender styled: what `<html>` and `<body>` said, lifted onto the
+/// message's own box because the sanitizer's output is a fragment and has no
+/// `<body>` to carry it (spec 006 FR-006).
+///
+/// Only the attributes and inline style of the two elements. A `body { … }`
+/// rule in the sender's stylesheet needs no lifting: `crate::styles` already
+/// resolves it to the message's container.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Canvas {
+    /// Declarations for the message's box, contained like any a sender
+    /// writes: `bgcolor` and `text` as colours, then `<html>`'s and
+    /// `<body>`'s own `style`.
+    pub style: String,
+    /// The page's background colour as written, if it is a colour.
+    pub background: Option<String>,
+    /// The page's text colour as written, if it is a colour.
+    pub text: Option<String>,
+    /// The page's link colour (`link=`), emitted as a scoped `a` rule.
+    pub link: Option<String>,
+}
+
+/// A `color-scheme` a sender declared in `<meta name="color-scheme">`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ColorScheme {
+    /// Light only.
+    Light,
+    /// Dark only.
+    Dark,
+    /// Both: the sender styled a dark variant.
+    LightDark,
+}
+
+impl ColorScheme {
+    /// The value as it goes in `data-postio-color-scheme`.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            ColorScheme::Light => "light",
+            ColorScheme::Dark => "dark",
+            ColorScheme::LightDark => "light dark",
+        }
+    }
 }
 
 impl Sanitized {
@@ -399,54 +447,219 @@ pub fn sanitize_body_in(html: &str, remote: RemoteImages, scope: Option<&str>) -
         });
 
     // Taken from the DOM before ammonia runs, because ammonia removes
-    // `<style>` tag-and-contents and there is no filter that sees a text
-    // node. The scoped result is returned beside the markup rather than
+    // `<style>` tag-and-contents, returns a fragment with no `<html>` or
+    // `<body>` left to read, and removes `<meta>`. One walk collects all
+    // three. The scoped result is returned beside the markup rather than
     // spliced back into it -- see `Sanitized::styles`.
-    let styles = crate::styles::scope_into(
-        &stylesheets(html),
-        &message_selector(scope_for_styles.as_deref()),
+    let facts = document_facts(html);
+    let selector = message_selector(scope_for_styles.as_deref());
+    let canvas = facts.page.canvas(remote, &blocked_count);
+    let mut styles = match &canvas.link {
+        Some(link) => format!("{selector} a {{ color: {link} }}\n"),
+        None => String::new(),
+    };
+    styles.push_str(&crate::styles::scope_into(
+        &facts.stylesheets,
+        &selector,
         &sender_id_prefix(scope_for_styles.as_deref()),
         remote,
         &blocked_count,
-    );
+    ));
 
     Sanitized {
         html: builder.clean(html).to_string(),
         styles,
         remote_blocked: blocked_count.load(Ordering::Relaxed),
         trackers: tracker_count.load(Ordering::Relaxed),
+        canvas,
+        color_scheme: facts.color_scheme,
     }
 }
 
-/// Every `<style>` element's text, in document order, joined.
-///
-/// Joined rather than kept apart because they are scoped identically and a
-/// browser would cascade them in this order anyway. `<style>` inside
-/// `<template>` or an already-removed subtree is not special-cased: it is
-/// still this sender's CSS, and it still ends up scoped to this sender's
-/// message.
-fn stylesheets(html: &str) -> String {
-    let dom = parse_document(RcDom::default(), ParseOpts::default()).one(html);
-    let mut found = String::new();
-    collect_stylesheets(&dom.document, &mut found);
-    found
+/// What the sanitizer needs from the whole document before ammonia reduces
+/// it to a fragment: the sender's stylesheets, their page, and the colour
+/// scheme they declared.
+#[derive(Default)]
+struct DocumentFacts {
+    /// Every `<style>` element's text, in document order, joined -- joined
+    /// rather than kept apart because they are scoped identically and a
+    /// browser would cascade them in this order anyway. `<style>` inside
+    /// `<template>` or an already-removed subtree is not special-cased: it is
+    /// still this sender's CSS, and it still ends up scoped to this sender's
+    /// message.
+    stylesheets: String,
+    page: Page,
+    color_scheme: Option<ColorScheme>,
 }
 
-fn collect_stylesheets(node: &Handle, found: &mut String) {
-    if let NodeData::Element { name, .. } = &node.data
-        && name.local.as_ref().eq_ignore_ascii_case("style")
-    {
-        for child in node.children.borrow().iter() {
-            if let NodeData::Text { contents } = &child.data {
-                found.push_str(&contents.borrow());
-                found.push('\n');
+/// What `<html>` and `<body>` said about the page, raw.
+#[derive(Default)]
+struct Page {
+    bgcolor: Option<String>,
+    text: Option<String>,
+    link: Option<String>,
+    html_style: Option<String>,
+    body_style: Option<String>,
+}
+
+/// An attribute's value, if it is a colour.
+fn colour(value: &Option<String>) -> Option<&str> {
+    value.as_deref().map(str::trim).filter(|v| is_colour(v))
+}
+
+impl Page {
+    /// The canvas: colours validated as colours, styles contained like any
+    /// declaration a sender writes. The body's own style outranks its
+    /// attributes, and both outrank `<html>`'s, as they would in a browser.
+    fn canvas(&self, remote: RemoteImages, blocked: &AtomicU32) -> Canvas {
+        let from_style = |style: &Option<String>, properties: &[&str]| {
+            style
+                .as_deref()
+                .and_then(|style| declared_colour(style, properties))
+        };
+        let background = from_style(&self.body_style, &["background-color", "background"])
+            .or_else(|| colour(&self.bgcolor).map(str::to_owned))
+            .or_else(|| from_style(&self.html_style, &["background-color", "background"]));
+        let text = from_style(&self.body_style, &["color"])
+            .or_else(|| colour(&self.text).map(str::to_owned))
+            .or_else(|| from_style(&self.html_style, &["color"]));
+        let link = colour(&self.link).map(str::to_owned);
+
+        let mut declarations: Vec<String> = Vec::new();
+        if let Some(background) = &background {
+            declarations.push(format!("background-color: {background}"));
+        }
+        if let Some(text) = &text {
+            declarations.push(format!("color: {text}"));
+        }
+        for style in [&self.html_style, &self.body_style].into_iter().flatten() {
+            let kept = contain_declarations(style, remote, blocked);
+            if !kept.is_empty() {
+                declarations.push(kept);
             }
         }
-        return;
+        Canvas {
+            style: declarations.join("; "),
+            background,
+            text,
+            link,
+        }
+    }
+}
+
+fn document_facts(html: &str) -> DocumentFacts {
+    let dom = parse_document(RcDom::default(), ParseOpts::default()).one(html);
+    let mut facts = DocumentFacts::default();
+    collect_facts(&dom.document, &mut facts);
+    facts
+}
+
+fn collect_facts(node: &Handle, facts: &mut DocumentFacts) {
+    if let NodeData::Element { name, attrs, .. } = &node.data {
+        let element = name.local.as_ref();
+        let attrs = attrs.borrow();
+        let get = |wanted: &str| {
+            attrs
+                .iter()
+                .find(|attr| attr.name.local.as_ref().eq_ignore_ascii_case(wanted))
+                .map(|attr| attr.value.to_string())
+        };
+        if element.eq_ignore_ascii_case("style") {
+            for child in node.children.borrow().iter() {
+                if let NodeData::Text { contents } = &child.data {
+                    facts.stylesheets.push_str(&contents.borrow());
+                    facts.stylesheets.push('\n');
+                }
+            }
+            return;
+        }
+        if element.eq_ignore_ascii_case("html") {
+            facts.page.html_style = get("style");
+        } else if element.eq_ignore_ascii_case("body") {
+            facts.page.bgcolor = get("bgcolor");
+            facts.page.text = get("text");
+            facts.page.link = get("link");
+            facts.page.body_style = get("style");
+        } else if element.eq_ignore_ascii_case("meta")
+            && facts.color_scheme.is_none()
+            && get("name").is_some_and(|name| {
+                name.eq_ignore_ascii_case("color-scheme")
+                    || name.eq_ignore_ascii_case("supported-color-schemes")
+            })
+        {
+            facts.color_scheme = get("content").as_deref().and_then(color_scheme);
+        }
     }
     for child in node.children.borrow().iter() {
-        collect_stylesheets(child, found);
+        collect_facts(child, facts);
     }
+}
+
+/// A `color-scheme` value, read the way CSS reads it: the keywords present,
+/// in any order, with `only` and `normal` meaning nothing to declare.
+fn color_scheme(content: &str) -> Option<ColorScheme> {
+    let words: Vec<String> = content
+        .split_ascii_whitespace()
+        .map(str::to_ascii_lowercase)
+        .collect();
+    let light = words.iter().any(|w| w == "light");
+    let dark = words.iter().any(|w| w == "dark");
+    match (light, dark) {
+        (true, true) => Some(ColorScheme::LightDark),
+        (false, true) => Some(ColorScheme::Dark),
+        (true, false) => Some(ColorScheme::Light),
+        (false, false) => None,
+    }
+}
+
+/// The colour a style declares for the first of `properties` that holds a
+/// colour and nothing else.
+fn declared_colour(style: &str, properties: &[&str]) -> Option<String> {
+    let declarations: Vec<(String, String)> = split_declarations(style)
+        .into_iter()
+        .filter_map(|declaration| {
+            let (property, value) = declaration.split_once(':')?;
+            Some((
+                property.trim().to_ascii_lowercase(),
+                value.trim().to_owned(),
+            ))
+        })
+        .collect();
+    properties.iter().find_map(|wanted| {
+        declarations
+            .iter()
+            .rev()
+            .find(|(property, _)| property == wanted)
+            .map(|(_, value)| value.trim_end_matches("!important").trim().to_owned())
+            .filter(|value| is_colour(value))
+    })
+}
+
+/// Whether a value is a colour and nothing more: a hex colour, a keyword, or
+/// an `rgb()`/`hsl()`-family function of numbers.
+///
+/// Conservative on purpose. The value goes into a `style` Postio writes, and
+/// an attribute is attacker-controlled text: `red;position:fixed` is not a
+/// colour, and neither is anything with a `url(` in it.
+fn is_colour(value: &str) -> bool {
+    let value = value.trim();
+    if let Some(hex) = value.strip_prefix('#') {
+        return matches!(hex.len(), 3 | 4 | 6 | 8) && hex.chars().all(|c| c.is_ascii_hexdigit());
+    }
+    if value.len() <= 32 && !value.is_empty() && value.chars().all(|c| c.is_ascii_alphabetic()) {
+        return true;
+    }
+    let lower = value.to_ascii_lowercase();
+    ["rgb(", "rgba(", "hsl(", "hsla("].iter().any(|function| {
+        lower
+            .strip_prefix(function)
+            .and_then(|rest| rest.strip_suffix(')'))
+            .is_some_and(|inner| {
+                inner
+                    .chars()
+                    .all(|c| c.is_ascii_digit() || " ,./%-".contains(c))
+            })
+    })
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1621,6 +1834,145 @@ mod conversation_scope_tests {
             clean.html.contains(r#"id="postio-s-pos-1""#),
             "{}",
             clean.html
+        );
+    }
+
+    /// Spec 006 FR-006: the page a sender styled is their canvas.
+    ///
+    /// Mail puts its white page on `<body>`, and cleaning the body as a
+    /// fragment dropped `<body>` with everything on it, while the dark text
+    /// colours written inside survived -- which is exactly black text on
+    /// the dark reader ground.
+    #[test]
+    fn the_senders_page_becomes_the_messages_canvas() {
+        let clean = sanitize_body_in(
+            r##"<html style="color:#333"><body bgcolor="#ffffff" text="#222" link="#06c" style="background:#fafafa;margin:0"><p>Hi</p></body></html>"##,
+            RemoteImages::Blocked,
+            Some("7"),
+        );
+        assert_eq!(
+            clean.canvas.background.as_deref(),
+            Some("#fafafa"),
+            "style wins over bgcolor"
+        );
+        assert_eq!(clean.canvas.text.as_deref(), Some("#222"));
+        assert_eq!(clean.canvas.link.as_deref(), Some("#06c"));
+        assert!(
+            clean.canvas.style.contains("background-color: #fafafa"),
+            "{}",
+            clean.canvas.style
+        );
+        assert!(
+            clean.canvas.style.contains("color: #222"),
+            "{}",
+            clean.canvas.style
+        );
+        assert!(
+            clean.canvas.style.contains("margin:0"),
+            "{}",
+            clean.canvas.style
+        );
+        assert!(
+            clean.styles.contains(&format!(
+                "{} a {{ color: #06c }}",
+                message_selector(Some("7"))
+            )),
+            "the link colour is a scoped rule: {}",
+            clean.styles
+        );
+    }
+
+    #[test]
+    fn a_bgcolor_alone_is_the_canvas_and_html_is_the_fallback() {
+        let body = sanitize_body(r#"<body bgcolor="White">x</body>"#, RemoteImages::Blocked);
+        assert_eq!(body.canvas.background.as_deref(), Some("White"));
+        let html = sanitize_body(
+            r#"<html style="background-color:#eef1f4"><body>x</body></html>"#,
+            RemoteImages::Blocked,
+        );
+        assert_eq!(html.canvas.background.as_deref(), Some("#eef1f4"));
+        let none = sanitize_body("<p>x</p>", RemoteImages::Blocked);
+        assert_eq!(none.canvas, Canvas::default());
+    }
+
+    /// An attribute is attacker-controlled text that ends up in a `style`:
+    /// only a colour is a colour.
+    #[test]
+    fn a_canvas_attribute_that_is_not_a_colour_is_ignored() {
+        let clean = sanitize_body(
+            r#"<body bgcolor="red;position:fixed" text="url(https://beacon.example.com/x)">x</body>"#,
+            RemoteImages::Blocked,
+        );
+        assert_eq!(clean.canvas.background, None);
+        assert_eq!(clean.canvas.text, None);
+        assert!(
+            !clean.canvas.style.contains("position"),
+            "{}",
+            clean.canvas.style
+        );
+        assert!(
+            !clean.canvas.style.contains("beacon"),
+            "{}",
+            clean.canvas.style
+        );
+    }
+
+    /// The canvas is contained like any declaration a sender writes.
+    #[test]
+    fn the_canvas_style_goes_through_the_same_refusals() {
+        let clean = sanitize_body(
+            r#"<body style="position:fixed;width:100vw;background-image:url(https://beacon.example.com/b.png);color:#111">x</body>"#,
+            RemoteImages::Blocked,
+        );
+        assert!(
+            !clean.canvas.style.contains("position"),
+            "{}",
+            clean.canvas.style
+        );
+        assert!(
+            !clean.canvas.style.contains("100vw"),
+            "{}",
+            clean.canvas.style
+        );
+        assert!(
+            !clean.canvas.style.contains("beacon"),
+            "{}",
+            clean.canvas.style
+        );
+        assert!(
+            clean.canvas.style.contains("color:#111"),
+            "{}",
+            clean.canvas.style
+        );
+        assert_eq!(
+            clean.remote_blocked, 1,
+            "a body background is a held-back image too"
+        );
+    }
+
+    /// Spec 006 FR-013(a): a sender who declares dark support gets their own
+    /// dark design, so the declaration has to survive `<meta>` removal.
+    #[test]
+    fn a_declared_color_scheme_is_carried() {
+        for (content, expected) in [
+            ("light dark", Some(ColorScheme::LightDark)),
+            ("dark light", Some(ColorScheme::LightDark)),
+            ("dark", Some(ColorScheme::Dark)),
+            ("only light", Some(ColorScheme::Light)),
+            ("normal", None),
+        ] {
+            let html = format!(
+                r#"<head><meta name="color-scheme" content="{content}"></head><body>x</body>"#
+            );
+            assert_eq!(
+                sanitize_body(&html, RemoteImages::Blocked).color_scheme,
+                expected,
+                "{content}"
+            );
+        }
+        assert_eq!(
+            sanitize_body("<p>x</p>", RemoteImages::Blocked).color_scheme,
+            None
         );
     }
 }

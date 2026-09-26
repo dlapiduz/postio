@@ -819,7 +819,7 @@ pub fn body_html_in(
     if let Some(html) = html {
         let sanitized = sanitize::sanitize_body_in(html, remote, scope);
         return Rendered {
-            html: quote::fold_html_quotes(&sanitized.html),
+            html: on_canvas(&quote::fold_html_quotes(&sanitized.html), &sanitized),
             styles: sanitized.styles,
             held_back: HeldBack {
                 remote_images: sanitized.remote_blocked,
@@ -836,6 +836,36 @@ pub fn body_html_in(
         };
     }
     Rendered::default()
+}
+
+/// The sender's content on the page they styled (spec 006 FR-006).
+///
+/// The sanitizer's output is a fragment, so what `<html>` and `<body>` said
+/// about the page arrives beside it as a [`sanitize::Canvas`], and this puts
+/// it back: a Postio-owned `.postio-canvas` that fills the message's
+/// container (`reader.css`), carrying the page's colours and style and the
+/// `color-scheme` the sender declared, for the engine and the theme rule to
+/// read. A sender who styled no page gets no wrapper at all.
+pub fn on_canvas(content: &str, sanitized: &sanitize::Sanitized) -> String {
+    let canvas = &sanitized.canvas;
+    if canvas.style.is_empty() && sanitized.color_scheme.is_none() {
+        return content.to_owned();
+    }
+    let mut out = String::from(r#"<div class="postio-canvas""#);
+    if !canvas.style.is_empty() {
+        out.push_str(r#" style=""#);
+        escape_into(&mut out, &canvas.style);
+        out.push('"');
+    }
+    if let Some(scheme) = sanitized.color_scheme {
+        out.push_str(r#" data-postio-color-scheme=""#);
+        out.push_str(scheme.as_str());
+        out.push('"');
+    }
+    out.push('>');
+    out.push_str(content);
+    out.push_str("</div>");
+    out
 }
 
 /// Give a sender's content a bounded surface of its own (#323): a visible
@@ -2370,6 +2400,54 @@ mod warming_tests {
         assert!(
             !document.contains("display:none"),
             "undisplayed text is never shaped, and fetches no face"
+        );
+    }
+
+    /// Spec 006 FR-006: the sender's page reaches the reader as the
+    /// message's canvas, filling its container, with any declared colour
+    /// scheme beside it for the engine to read.
+    #[test]
+    fn the_senders_canvas_is_emitted_around_their_content() {
+        let body = MessageBody {
+            html: Some(
+                r##"<head><meta name="color-scheme" content="light dark"></head><body bgcolor="#ffffff" text="#222"><p>Hi</p></body>"##
+                    .to_owned(),
+            ),
+            ..MessageBody::default()
+        };
+        let rendered = body_html_in(&body, RemoteImages::Blocked, Rendering::Original, Some("7"));
+        assert!(
+            rendered.html.starts_with(r#"<div class="postio-canvas""#),
+            "{}",
+            rendered.html
+        );
+        assert!(
+            rendered.html.contains("background-color: #ffffff"),
+            "{}",
+            rendered.html
+        );
+        assert!(rendered.html.contains("color: #222"), "{}", rendered.html);
+        assert!(
+            rendered
+                .html
+                .contains(r#"data-postio-color-scheme="light dark""#),
+            "{}",
+            rendered.html
+        );
+        let plain = MessageBody {
+            html: Some("<p>Hi</p>".to_owned()),
+            ..MessageBody::default()
+        };
+        let plain = body_html_in(
+            &plain,
+            RemoteImages::Blocked,
+            Rendering::Original,
+            Some("7"),
+        );
+        assert!(
+            !plain.html.contains("postio-canvas"),
+            "no canvas, no wrapper: {}",
+            plain.html
         );
     }
 }
