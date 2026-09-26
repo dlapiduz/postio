@@ -288,12 +288,26 @@ mod imp {
         /// is state the container already tracks and the default algorithm
         /// cannot see (#437).
         ///
-        /// Only for a *fresh* arrival, checked by `focus_child()` being
-        /// `None`: once focus is already inside (tabbing from one row to
-        /// another), the default algorithm's ordinary child-to-child
-        /// traversal is exactly what should run, so it is left alone.
+        /// Only for a *fresh* arrival: once focus is already inside (tabbing
+        /// from one row to another), the default algorithm's ordinary
+        /// child-to-child traversal is exactly what should run, so it is
+        /// left alone.
+        ///
+        /// "Inside" is asked of where the keyboard *is*, not of
+        /// `focus_child()`, which is only the chain GTK remembers. Archiving
+        /// the row that had the keyboard takes its widget away and leaves
+        /// the chain pointing into the list with nothing focused at its end;
+        /// the window then walks focus back in from the top, and a
+        /// `focus_child()` test called that walk "already inside" and let
+        /// the default put the keyboard on the first realized row --
+        /// scrolling the list to the top under the person archiving (#1687).
         fn focus(&self, direction_type: gtk::DirectionType) -> bool {
-            if self.obj().focus_child().is_some() {
+            let pane = self.obj();
+            let inside = pane
+                .root()
+                .and_then(|root| root.focus())
+                .is_some_and(|focus| focus.is_ancestor(&*pane));
+            if inside {
                 return self.parent_focus(direction_type);
             }
             self.view.grab_focus()

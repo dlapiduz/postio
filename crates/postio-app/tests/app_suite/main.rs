@@ -61,6 +61,7 @@ mod reading_offline;
 mod reclaim_pages;
 mod reclaim_wiring;
 mod recover_empty_draft;
+mod remove_walks_down;
 mod render_dedup;
 mod reply_identity;
 mod reply_source;
@@ -532,6 +533,19 @@ const CASES: &[(&str, fn())] = &[
     (
         "archive_in_place::archiving_a_conversation_on_screen_takes_out_only_its_row",
         archive_in_place::archiving_a_conversation_on_screen_takes_out_only_its_row as fn(),
+    ),
+    (
+        "remove_walks_down::archiving_and_deleting_walk_down_a_folder",
+        remove_walks_down::archiving_and_deleting_walk_down_a_folder as fn(),
+    ),
+    (
+        "remove_walks_down::a_row_taken_from_under_the_keyboard_leaves_the_list_where_it_was",
+        remove_walks_down::a_row_taken_from_under_the_keyboard_leaves_the_list_where_it_was
+            as fn(),
+    ),
+    (
+        "remove_walks_down::archiving_in_the_unified_view_moves_nothing",
+        remove_walks_down::archiving_in_the_unified_view_moves_nothing as fn(),
     ),
     (
         "thread_bodies_in_one_crossing::a_conversation_is_read_in_one_crossing",
