@@ -164,7 +164,7 @@ proven on synthetic images. Nothing renders yet.
 
   Commit it **before** any result exists, so that nothing moves to fit a result
 - [X] T022 Build arm A's harness, `crates/postio-gtk/examples/eval_webkit.rs`. It renders every designed, theme and hostile fixture through the **production pipeline** (Phase 2 sanitizer → `postio-ui` compose) in the shipped hardened `Reader`, at 800 px in light, dark and high contrast, to PNG. For each text run it also writes `{rect, color}` using Postio's isolated-world script (`Range.getClientRects`, `getComputedStyle`). It includes a prototype of research R10's classification and contrast repair in that script. It needs a display and is run by hand
-- [ ] T023 Build arm B's harness, `crates/postio-render/examples/eval_blitz.rs`. It is a prototype-depth `postio-render`: the `blitz-*` `=0.3.0-beta.2` crates with image formats and SVG on, and fonts through `fontdb` (research R1, R3, R4). It renders the same fixtures, through the same pipeline, in the same themes, to PNG, and writes `{rect, color}` per text run from Blitz's layout. It includes a prototype of R10 over computed styles. It is headless. It depends on the `postio-render` skeleton, so do the skeleton task first (the first task of Phase 4) and nothing else from Phase 4
+- [X] T023 Build arm B's harness, `crates/postio-render/examples/eval_blitz.rs`. It is a prototype-depth `postio-render`: the `blitz-*` `=0.3.0-beta.2` crates with image formats and SVG on, and fonts through `fontdb` (research R1, R3, R4). It renders the same fixtures, through the same pipeline, in the same themes, to PNG, and writes `{rect, color}` per text run from Blitz's layout. It includes a prototype of R10 over computed styles. It is headless. It depends on the `postio-render` skeleton, so do the skeleton task first (the first task of Phase 4) and nothing else from Phase 4
 - [ ] T024 Score the gates for both arms, and write the results into the note:
   - **G1 (legibility):** pixel sampling behind every text run, from T022 and T023 output, counted before and after each arm's repair prototype;
   - **G2 (egress):** a loopback listener with a counted control, across the hostile fixtures, unconsented and consented;
@@ -204,7 +204,7 @@ plan and tasks agree with the decision.
 
 ### The crate and its proofs (FR-001, FR-023a)
 
-- [ ] T030 Create the crate skeleton: `crates/postio-render/Cargo.toml` (edition 2024, no dependencies yet) and `crates/postio-render/src/lib.rs` with a crate doc stating it is GTK-free, network-free and C-free (spec FR-001, FR-023a). Add `crates/postio-render` to both `members` and `default-members` in the root `Cargo.toml`
+- [X] T030 Create the crate skeleton: `crates/postio-render/Cargo.toml` (edition 2024, no dependencies yet) and `crates/postio-render/src/lib.rs` with a crate doc stating it is GTK-free, network-free and C-free (spec FR-001, FR-023a). Add `crates/postio-render` to both `members` and `default-members` in the root `Cargo.toml`. **Done ahead of the gate, for T023**, which is the one Phase 4 task R0 allows before T029
 - [ ] T031 Add the renderer's dependencies to `crates/postio-render/Cargo.toml` **exactly as the spike had them**:
   - `blitz-dom`, `blitz-html`, `blitz-paint` and `blitz-traits` `=0.3.0-beta.2`, with `default-features = false`;
   - `blitz-dom` features `floats`, `system-fonts` and `svg`;

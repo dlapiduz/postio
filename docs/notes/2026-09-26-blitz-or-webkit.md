@@ -150,6 +150,64 @@ engine-neutral fixes below. Arm A's number is expected to be high, because
 the references are WebKit; its question was only whether Postio's pipeline
 loses anything.
 
+### Arm B — Blitz (T023, `crates/postio-render/examples/eval_blitz.rs`)
+
+Headless, with no display, no network crate, and fonts through `fontdb`
+rather than fontconfig. The whole run takes about 3 s on a debug build:
+font discovery, 6 fidelity renders, and 30 legibility layouts and paints.
+
+**G1, legibility.** The same rule and the same pixel sampling as arm A.
+Blitz's layout finds 88 text runs in the same 10 fixtures; arm A found 95,
+because the two engines split runs differently.
+
+| | runs below the floor |
+|---|---|
+| as drawn today (4.5:1) | **26** |
+| with the rule (4.5:1) | **0** |
+| with the rule, against the high-contrast floor (7:1) | **2** |
+
+The two at 7:1 are the same two as arm A's: white on a sender's
+mid-blue. So on legibility **the engines are at parity**, and the rule, not
+the engine, is what fixes the bug. Two things arm B needed that arm A did
+not:
+- **An attribute mutation did not restyle.** In blitz-dom 0.3.0-beta.2, a
+  `style` attribute set through `DocumentMutator` on a `<p>` reached
+  neither computed style nor paint, through two resolves, while the same
+  call on another element did. The harness applies overrides as a
+  stylesheet on a fresh layout instead. A shipped renderer would re-lay
+  out on a theme switch or a darken, which the render counts would have
+  to budget for.
+- **Its overrides need ID-level specificity.** A stylesheet rule loses to
+  a sender's own `!important`, where arm A's inline `!important` wins. The
+  harness uses `:is(#…, [stamp])` three times over.
+
+**S1, fidelity.** **5 of 6** designed fixtures match: 83%, below SC-002's
+95% bar.
+
+| fixture | agreeing | match |
+|---|---|---|
+| `html-class-styled` | 97.6% | yes |
+| `html-designed-three-column` | 99.1% | yes |
+| `html-newsletter` | 88.8%, and the height drifts | **no** |
+| `html-responsive-media` | 97.2% | yes |
+| `html-transactional-receipt` | 95.3% | yes |
+| `transactional-shipping-notice` | 98.4% | yes |
+
+- **The failure is one known upstream defect.**
+  `table { border-collapse: collapse }` is the standard email CSS reset,
+  and Blitz paints a phantom dark grid on such a table when it has no
+  borders at all. A one-cell probe paints 1,989 dark pixels with
+  `collapse` and none with `separate`. Upstream has it as DioxusLabs/blitz
+  #504, *"Collapsed table borders paint a phantom 3px grid for borderless
+  tables"*, an open PR with a fix, not merged at the time of writing.
+- **The counterfactual.** Forcing `separate`, which stands in for #504,
+  gives **6 of 6** (97.2–99.1%). This was measured and labelled as such
+  (`POSTIO_EVAL_COUNTERFACTUAL_504`), and it is not arm B's result.
+- **Font fallback.** Without fontconfig, `Helvetica` and `Arial` resolve
+  only because the harness aliases them to Liberation Sans. `Georgia` is
+  not aliased, and falls to the bundled sans. Fontconfig's substitution
+  table would have to be carried by Postio.
+
 ### Engine-neutral defects the evaluation found
 
 Found while measuring arm A, and fixed on the branch before either arm is
