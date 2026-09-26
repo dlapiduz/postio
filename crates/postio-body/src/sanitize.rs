@@ -38,8 +38,9 @@ use std::sync::{Arc, Mutex};
 use ammonia::Builder;
 use html5ever::driver::ParseOpts;
 use html5ever::parse_document;
+use html5ever::serialize::{SerializeOpts, TraversalScope, serialize};
 use html5ever::tendril::TendrilSink;
-use markup5ever_rcdom::{Handle, NodeData, RcDom};
+use markup5ever_rcdom::{Handle, NodeData, RcDom, SerializableHandle};
 
 /// The class every sender's content is wrapped in (`contain_body`), and the
 /// outermost thing a sender's own CSS is allowed to name.
@@ -266,6 +267,10 @@ pub const POSTIO_NAMES: &str = "postio- names";
 pub const SCRIPT_URLS: &str = "javascript: URLs";
 /// A remote image, by `src`, `background` or CSS `url()`, while blocked.
 pub const REMOTE_IMAGE: &str = "remote image";
+/// A `postio-cid:` reference written by the sender rather than rewritten by
+/// Postio: an attempt to name a part by Postio's own scheme, which under
+/// ADR 0032's conversation document can be another message's.
+pub const FOREIGN_PARTS: &str = "postio-cid: references";
 
 /// Everything the sanitizer refuses, with the reason it may (spec 006 FR-005,
 /// 001 FR-019b).
@@ -317,6 +322,7 @@ pub const REFUSALS: &[(Refused, Refusal)] = &[
     (Refused::Unit("dvh"), Refusal::Containment),
     // Resources.
     (Refused::Resource(REMOTE_IMAGE), Refusal::Privacy),
+    (Refused::Resource(FOREIGN_PARTS), Refusal::Containment),
 ];
 
 /// What one sanitize pass counted and refused, shared by the attribute
@@ -326,9 +332,36 @@ pub(crate) struct Tally {
     /// Remote references held back, for the banner and the parts panel.
     pub(crate) blocked: AtomicU32,
     refused: Mutex<Vec<Refused>>,
+    /// The message this pass sanitizes, for `cid:` rewriting in CSS.
+    scope: Option<String>,
 }
 
 impl Tally {
+    /// A tally for the message named `scope` (`None`: the single-message
+    /// reader).
+    pub(crate) fn for_scope(scope: Option<&str>) -> Tally {
+        Tally {
+            scope: scope.map(str::to_owned),
+            ..Tally::default()
+        }
+    }
+
+    /// `cid:` as this message's own part URI.
+    pub(crate) fn part_uri(&self, content_id: &str) -> String {
+        let id = percent_encode(
+            content_id
+                .trim()
+                .trim_start_matches('<')
+                .trim_end_matches('>'),
+        );
+        match &self.scope {
+            // The separator is a literal `/`, and the encoded id can never
+            // hold one -- see `sanitize_body_in`.
+            Some(scope) => format!("{CID_SCHEME}:{scope}/{id}"),
+            None => format!("{CID_SCHEME}:{id}"),
+        }
+    }
+
     /// A remote image held back: counted, and reported as refused.
     pub(crate) fn block(&self) {
         self.blocked.fetch_add(1, Ordering::Relaxed);
@@ -494,7 +527,7 @@ pub fn sanitize_body_in(html: &str, remote: RemoteImages, scope: Option<&str>) -
     // Owned: the filter is a `'static` closure and cannot borrow the caller's.
     let scope_for_styles = scope.map(str::to_owned);
     let scope = scope.map(str::to_owned);
-    let tally = Arc::new(Tally::default());
+    let tally = Arc::new(Tally::for_scope(scope.as_deref()));
     let counter = Arc::clone(&tally);
     let tracker_count = Arc::new(AtomicU32::new(0));
     let trackers = Arc::clone(&tracker_count);
@@ -562,6 +595,10 @@ pub fn sanitize_body_in(html: &str, remote: RemoteImages, scope: Option<&str>) -
         // (#1334), and `contain_declarations` refuses the properties that
         // escape one. None of these reach the network.
         .add_tags(["colgroup", "col"])
+        // `<font>` keeps only the style `crate::hints` wrote from its
+        // attributes; `<center>` is the one layout element mail still uses.
+        // Neither reaches beyond its own text.
+        .add_tags(["font", "center"])
         .add_tag_attributes("table", TABLE_LAYOUT)
         .add_tag_attributes("thead", TABLE_LAYOUT)
         .add_tag_attributes("tbody", TABLE_LAYOUT)
@@ -590,7 +627,11 @@ pub fn sanitize_body_in(html: &str, remote: RemoteImages, scope: Option<&str>) -
     // `<body>` left to read, and removes `<meta>`. One walk collects all
     // three. The scoped result is returned beside the markup rather than
     // spliced back into it -- see `Sanitized::styles`.
-    let facts = document_facts(html, &tally);
+    let (facts, dom) = document_facts(html, &tally);
+    // Presentational attributes into the style they mean (spec 006 FR-007),
+    // on the same parse; serialized again only if one was found.
+    let hinted = crate::hints::apply(&dom.document).then(|| serialize_document(&dom));
+    let input = hinted.as_deref().unwrap_or(html);
     let selector = message_selector(scope_for_styles.as_deref());
     let canvas = facts.page.canvas(remote, &tally);
     let mut styles = match &canvas.link {
@@ -606,7 +647,7 @@ pub fn sanitize_body_in(html: &str, remote: RemoteImages, scope: Option<&str>) -
     ));
 
     Sanitized {
-        html: builder.clean(html).to_string(),
+        html: builder.clean(input).to_string(),
         styles,
         remote_blocked: tally.blocked.load(Ordering::Relaxed),
         trackers: tracker_count.load(Ordering::Relaxed),
@@ -687,11 +728,24 @@ impl Page {
     }
 }
 
-fn document_facts(html: &str, tally: &Tally) -> DocumentFacts {
+fn document_facts(html: &str, tally: &Tally) -> (DocumentFacts, RcDom) {
     let dom = parse_document(RcDom::default(), ParseOpts::default()).one(html);
     let mut facts = DocumentFacts::default();
     collect_facts(&dom.document, &mut facts, tally);
-    facts
+    (facts, dom)
+}
+
+/// The document as markup again, after the hints rewrote it.
+fn serialize_document(dom: &RcDom) -> String {
+    let mut bytes = Vec::new();
+    let handle: SerializableHandle = dom.document.clone().into();
+    let options = SerializeOpts {
+        traversal_scope: TraversalScope::ChildrenOnly(None),
+        ..SerializeOpts::default()
+    };
+    // Writing into a Vec cannot fail.
+    let _ = serialize(&mut bytes, &handle, options);
+    String::from_utf8_lossy(&bytes).into_owned()
 }
 
 /// The refused elements, as [`REFUSALS`] names them.
@@ -818,7 +872,7 @@ fn declared_colour(style: &str, properties: &[&str]) -> Option<String> {
 /// Conservative on purpose. The value goes into a `style` Postio writes, and
 /// an attribute is attacker-controlled text: `red;position:fixed` is not a
 /// colour, and neither is anything with a `url(` in it.
-fn is_colour(value: &str) -> bool {
+pub(crate) fn is_colour(value: &str) -> bool {
     let value = value.trim();
     if let Some(hex) = value.strip_prefix('#') {
         return matches!(hex.len(), 3 | 4 | 6 | 8) && hex.chars().all(|c| c.is_ascii_hexdigit());
@@ -899,21 +953,12 @@ fn rewrite_attribute<'u>(
     // parts, and even in a single-message document it reaches past what the
     // rewrite below decides. Dropped rather than rewritten, because a
     // reference nobody can justify is not one to guess the intent of.
-    if value
-        .trim_start()
-        .to_ascii_lowercase()
-        .starts_with(&format!("{CID_SCHEME}:"))
-    {
+    if names_foreign_parts(value) {
+        tally.refuse(Refused::Resource(FOREIGN_PARTS));
         return None;
     }
     if let Some(id) = value.strip_prefix("cid:") {
-        let id = percent_encode(id.trim().trim_start_matches('<').trim_end_matches('>'));
-        return Some(Cow::Owned(match scope {
-            // The separator is a literal `/`, and the encoded id can never
-            // hold one — see `sanitize_body_in`.
-            Some(scope) => format!("{CID_SCHEME}:{scope}/{id}"),
-            None => format!("{CID_SCHEME}:{id}"),
-        }));
+        return Some(Cow::Owned(tally.part_uri(id)));
     }
     if is_remote(value) && remote == RemoteImages::Blocked {
         // One or the other, never both: the panel adds them up.
@@ -935,7 +980,7 @@ fn rewrite_attribute<'u>(
 /// because it also tried to pin itself is a message rendered wrongly, and the
 /// user cannot tell that from a sender who never set a colour.
 pub(crate) fn contain_declarations(value: &str, remote: RemoteImages, tally: &Tally) -> String {
-    let mut kept: Vec<&str> = Vec::new();
+    let mut kept: Vec<Cow<'_, str>> = Vec::new();
     for declaration in split_declarations(value) {
         let Some((property, declared)) = declaration.split_once(':') else {
             // Not a declaration at all. Dropped rather than guessed at.
@@ -952,16 +997,28 @@ pub(crate) fn contain_declarations(value: &str, remote: RemoteImages, tally: &Ta
             tally.refuse(Refused::Unit(unit));
             continue;
         }
-        if let Some(url) = css_url(declared)
-            && is_remote(&url)
-            && remote == RemoteImages::Blocked
-        {
-            // Counted with the images, because that is what it is: the panel
-            // says "6 remote images blocked" and a background is one of them.
-            tally.block();
-            continue;
+        if let Some(url) = css_url(declared) {
+            if names_foreign_parts(&url) {
+                tally.refuse(Refused::Resource(FOREIGN_PARTS));
+                continue;
+            }
+            if is_remote(&url) && remote == RemoteImages::Blocked {
+                // Counted with the images, because that is what it is: the
+                // panel says "6 remote images blocked" and a background is
+                // one of them.
+                tally.block();
+                continue;
+            }
+            if let Some(id) = url.trim().strip_prefix("cid:") {
+                // A sender's own inline part, named from CSS: the same
+                // rewrite a `src` gets, so it resolves against this message.
+                let property = declaration.split_once(':').map_or("", |(p, _)| p.trim());
+                let rewritten = replace_css_url(declared, &tally.part_uri(id));
+                kept.push(Cow::Owned(format!("{property}: {rewritten}")));
+                continue;
+            }
         }
-        kept.push(declaration.trim());
+        kept.push(Cow::Borrowed(declaration.trim()));
     }
     kept.join("; ")
 }
@@ -1011,6 +1068,26 @@ fn viewport_unit(value: &str) -> Option<&'static str> {
             before && after
         })
     })
+}
+
+/// Whether a reference uses Postio's own part scheme, however it is spelled.
+fn names_foreign_parts(value: &str) -> bool {
+    value
+        .trim_start()
+        .to_ascii_lowercase()
+        .starts_with(&format!("{CID_SCHEME}:"))
+}
+
+/// `value` with its first `url(...)` pointing at `uri` instead.
+fn replace_css_url(value: &str, uri: &str) -> String {
+    let lower = value.to_ascii_lowercase();
+    let Some(start) = lower.find("url(") else {
+        return value.to_owned();
+    };
+    let Some(end) = value[start..].find(')').map(|end| start + end) else {
+        return value.to_owned();
+    };
+    format!("{}url({uri}){}", &value[..start], &value[end + 1..])
 }
 
 /// The URL a value references, if it references one.
@@ -1143,7 +1220,7 @@ fn length_px(value: &str) -> Option<f32> {
 /// ASCII case only, deliberately: a scheme is ASCII by grammar, and
 /// `to_lowercase` on attacker-controlled text would allocate for every
 /// attribute in every message to fold characters no scheme can contain.
-fn is_remote(value: &str) -> bool {
+pub(crate) fn is_remote(value: &str) -> bool {
     let value = value.trim();
     ["http://", "https://", "ftp://"]
         .iter()
@@ -2202,6 +2279,10 @@ mod conversation_scope_tests {
             Refused::Resource(REMOTE_IMAGE) => (
                 r#"<img src="https://beacon.example.com/x.png" alt="">"#.to_owned(),
                 "beacon.example.com".to_owned(),
+            ),
+            Refused::Resource(FOREIGN_PARTS) => (
+                r#"<p style="background:url(postio-cid:9/logo)">t</p><img src="POSTIO-CID:9/logo" alt="">"#.to_owned(),
+                "postio-cid:9".to_owned(),
             ),
             Refused::Resource(other) => panic!("no probe for resource {other}"),
         }

@@ -110,7 +110,7 @@ proven on synthetic images. Nothing renders yet.
   - the existing `REFUSED`, `REFUSED_AT_RULES` and `REFUSED_UNITS` are reachable through it;
   - inline `<svg>` is listed with its reason (FR-005, 001 FR-019b)
 - [X] T016 Implement the `Refusal` type and `REFUSALS` table in `crates/postio-body/src/sanitize.rs`, and record every removal in the sanitized message's `refusals`
-- [ ] T017 [TEST] [P] In `crates/postio-body/src/hints.rs` unit tests, one test per row of research R9's hint table:
+- [X] T017 [TEST] [P] In `crates/postio-body/src/hints.rs` unit tests, one test per row of research R9's hint table:
   - `<font color face size=1..7>` → `<span style>`, using the legacy size scale;
   - `valign` → `vertical-align`;
   - `cellpadding` → `padding` on every cell;
@@ -120,7 +120,7 @@ proven on synthetic images. Nothing renders yet.
   - `img align=left/right` → `float`;
   - `background="cid:x"` on `td` → `background-image` resolved through the `cid:` rewriting;
   - `background="http://…"` from an unconsented sender → refused with reason `Privacy`
-- [ ] T018 Implement `crates/postio-body/src/hints.rs` and call it from `crates/postio-body/src/sanitize.rs` before ammonia runs (FR-007)
+- [X] T018 Implement `crates/postio-body/src/hints.rs` and call it from `crates/postio-body/src/sanitize.rs` before ammonia runs (FR-007)
 - [ ] T019 [TEST] In `crates/postio-ui/src/reader/document.rs` unit tests, `body_html_in` for `html-newsletter.eml` (which `reads_as_bulk`) returns the **original** layout, with no reader-view reduction (FR-031)
 - [ ] T020 Make every message open `Original` in `crates/postio-ui/src/reader/document.rs` (`sheet_for`, `suits_reader_view`). `reads_as_bulk` stays for the unsubscribe banner
 
