@@ -13,7 +13,7 @@
 
 ## Requirement Completeness
 
-- [ ] No [NEEDS CLARIFICATION] markers remain
+- [x] No [NEEDS CLARIFICATION] markers remain
 - [x] Requirements are testable and unambiguous
 - [x] Success criteria are measurable
 - [x] Success criteria are technology-agnostic (no implementation details)
@@ -31,9 +31,10 @@
 
 ## Notes
 
-- Three clarifications are open: the Reader-view default (US2 scenario 5),
-  remote images in the first landing (US5), and the dark-mode rule for
-  designed mail with no dark styling (FR-013b).
+- Three clarifications were resolved on 2026-09-26 (see the spec's
+  Clarifications section): original layout by default (FR-031), allowed
+  remote images as a merge condition (FR-030), and paper by default with a
+  per-message darken command (FR-013(b), FR-013a).
 - The Context section names Blitz, the spike and the current code paths. That
   is deliberate: it records the evidence and the cause of the defect, as spec
   001 does. The requirements and success criteria stay engine-agnostic, and
