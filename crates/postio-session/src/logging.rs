@@ -254,10 +254,13 @@ const OURS: &[&str] = &[
     "postio_app",
     "postio_bench",
     "postio_body",
+    "postio_calendar",
+    "postio_classify",
     "postio_client",
     "postio_config",
     "postio_core",
     "postio_ffi",
+    "postio_focus",
     "postio_gtk",
     "postio_host",
     "postio_account",
@@ -276,6 +279,7 @@ const OURS: &[&str] = &[
     "postio_test_support",
     "postio_tui",
     "postio_ui",
+    "postio_widgets",
     "io_imap",
 ];
 
