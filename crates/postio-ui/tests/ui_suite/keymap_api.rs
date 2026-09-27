@@ -153,3 +153,41 @@ fn every_default_binding_resolves_on_both_platforms() {
         );
     }
 }
+
+/// Focus's three new surfaces each take their own keys and fall back to
+/// Global alone (specs/007-postio-focus T027): a picker is not the list, so
+/// `x` -- which toggles a row's selection there -- does nothing in it, and
+/// `Escape` still leaves, as it does everywhere.
+#[test]
+fn a_picker_digest_and_filtered_view_fall_back_to_global_only() {
+    use postio_core::{Context, Keymap as Commands};
+    use postio_ui::keymap::Outcome;
+
+    let (mut resolver, problems) = Resolver::from_commands(Commands::defaults());
+    assert!(
+        problems.is_empty(),
+        "the defaults do not resolve: {problems:?}"
+    );
+    let now = std::time::Instant::now();
+    let mut press = |context: Context, key: &str| {
+        resolver.press(&chord(key), KeyContext::from(context), false, now)
+    };
+
+    assert_eq!(
+        press(Context::List, "x"),
+        Outcome::Command("toggle_selection".to_owned()),
+        "the control: `x` selects a row in the list"
+    );
+    for context in [Context::Picker, Context::Digest, Context::Filtered] {
+        assert_eq!(
+            press(context, "Escape"),
+            Outcome::Command("back".to_owned()),
+            "Escape does not leave {context}"
+        );
+    }
+    assert_eq!(
+        press(Context::Picker, "x"),
+        Outcome::Unhandled,
+        "`x` in a picker reached through to the list underneath it"
+    );
+}

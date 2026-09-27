@@ -92,6 +92,10 @@ fn heading(context: Context) -> &'static str {
         // Same reasoning as `Accounts`, one section down: these keys reach
         // only the keybinding list, not the whole settings panel.
         Context::Keys => "Keybindings",
+        // Focus's three (spec 007), named as Focus's key map names them.
+        Context::Picker => "Pickers",
+        Context::Digest => "Digests",
+        Context::Filtered => "Filtered",
     }
 }
 

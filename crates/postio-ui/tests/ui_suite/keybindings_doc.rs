@@ -49,6 +49,9 @@ fn where_available(contexts: ContextSet) -> String {
             Context::Parts => "parts panel",
             Context::Accounts => "account list",
             Context::Keys => "keybinding list",
+            Context::Picker => "picker",
+            Context::Digest => "digest",
+            Context::Filtered => "Filtered view",
         })
         .collect();
     let mut sentence = names.join(", ");

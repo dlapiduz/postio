@@ -75,6 +75,21 @@ pub enum Context {
     /// escape hatch is a `GtkTextView` over raw TOML, and a bare-letter
     /// binding must not fire while someone is typing there (#881).
     Keys,
+    /// A picker anchored to a row: snooze, remind, label or move
+    /// (specs/007-postio-focus research R6).
+    ///
+    /// Its own context, and not layered over the list, for the reason
+    /// [`Context::Parts`] is not: the picker sits over a row, and a letter
+    /// falling through to the list would act on the mail underneath while
+    /// the person's eyes are on the picker. Its keys are the picker
+    /// commands, the number keys among them.
+    Picker,
+    /// A digest's window: its messages, its summary, its rule (spec 007
+    /// US10). `A` there archives the whole digest.
+    Digest,
+    /// The Filtered view: what Focus archived on arrival, by reason (spec
+    /// 007 US9). `R` there restores.
+    Filtered,
 }
 
 impl Context {
@@ -92,6 +107,10 @@ impl Context {
         // the ones people have learned (ADR 0005 Q6c).
         Context::Accounts,
         Context::Keys,
+        // Focus's surfaces (spec 007), at the end for the same reason.
+        Context::Picker,
+        Context::Digest,
+        Context::Filtered,
     ];
 
     /// The stable serialized name, matching the `Deserialize` spelling.
@@ -107,6 +126,9 @@ impl Context {
             Context::Parts => "parts",
             Context::Accounts => "accounts",
             Context::Keys => "keys",
+            Context::Picker => "picker",
+            Context::Digest => "digest",
+            Context::Filtered => "filtered",
         }
     }
 

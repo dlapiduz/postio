@@ -54,6 +54,13 @@ pub enum UiContext {
     Accounts,
     /// The keybinding list in settings.
     Keys,
+    /// A picker anchored to a row: Postio Focus's (spec 007). macOS has no
+    /// surface for it yet, and resolves nothing there.
+    Picker,
+    /// A digest's window: Postio Focus's (spec 007).
+    Digest,
+    /// The Filtered view: Postio Focus's (spec 007).
+    Filtered,
 }
 
 impl From<postio_core::Context> for UiContext {
@@ -70,6 +77,9 @@ impl From<postio_core::Context> for UiContext {
             Context::Parts => UiContext::Parts,
             Context::Accounts => UiContext::Accounts,
             Context::Keys => UiContext::Keys,
+            Context::Picker => UiContext::Picker,
+            Context::Digest => UiContext::Digest,
+            Context::Filtered => UiContext::Filtered,
         }
     }
 }
@@ -95,6 +105,9 @@ impl From<UiContext> for postio_core::Context {
             UiContext::Parts => Context::Parts,
             UiContext::Accounts => Context::Accounts,
             UiContext::Keys => Context::Keys,
+            UiContext::Picker => Context::Picker,
+            UiContext::Digest => Context::Digest,
+            UiContext::Filtered => Context::Filtered,
         }
     }
 }

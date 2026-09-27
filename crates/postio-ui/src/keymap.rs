@@ -548,6 +548,12 @@ pub enum KeyContext {
     Accounts,
     /// The keybinding list in settings, once the keyboard is in it.
     Keys,
+    /// A picker anchored to a row (spec 007).
+    Picker,
+    /// A digest's window (spec 007).
+    Digest,
+    /// The Filtered view (spec 007).
+    Filtered,
 }
 
 impl KeyContext {
@@ -585,6 +591,14 @@ impl KeyContext {
             // hatch sits in the same panel, and a fall-through here would
             // let a mail binding fire while the keyboard is on a rebind row.
             Self::Keys => &[Self::Keys, Self::Global],
+            // Focus's three (spec 007). A picker sits over a row, so `x` or
+            // `a` falling through would act on the mail under it; a digest
+            // and the Filtered view are surfaces of their own, whose `A` and
+            // `R` mean something else there. Each takes its own keys, and
+            // `Escape` and the palette from Global.
+            Self::Picker => &[Self::Picker, Self::Global],
+            Self::Digest => &[Self::Digest, Self::Global],
+            Self::Filtered => &[Self::Filtered, Self::Global],
         }
     }
 }
@@ -608,6 +622,9 @@ impl From<Context> for KeyContext {
             Context::Parts => Self::Parts,
             Context::Accounts => Self::Accounts,
             Context::Keys => Self::Keys,
+            Context::Picker => Self::Picker,
+            Context::Digest => Self::Digest,
+            Context::Filtered => Self::Filtered,
         }
     }
 }

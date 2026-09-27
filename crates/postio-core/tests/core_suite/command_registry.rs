@@ -302,8 +302,9 @@ fn contexts_round_trip_through_strings() {
     // (#881) is the tenth, still inside that widened ceiling. The ceiling
     // is no longer written down twice -- `context.rs`'s
     // `every_context_fits_the_set` derives it from the integer itself, so
-    // this is only the deliberate-act tripwire.
-    assert_eq!(Context::ALL.len(), 10);
+    // this is only the deliberate-act tripwire. Postio Focus's picker, digest
+    // and Filtered view (spec 007) make thirteen.
+    assert_eq!(Context::ALL.len(), 13);
 }
 
 #[test]
