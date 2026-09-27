@@ -10,6 +10,7 @@ mod a11y;
 pub mod find;
 mod interact;
 mod tiles;
+pub mod zoom;
 
 use std::cell::{Cell, RefCell};
 use std::sync::{Arc, OnceLock};
@@ -92,7 +93,17 @@ pub(super) mod imp {
         pub(super) tiles: RefCell<tiles::Tiles>,
         /// The character to bring back to the top when the next snapshot
         /// arrives: a theme change keeps the reader's place.
-        pub(super) anchor: Cell<Option<usize>>,
+        /// A character, and the height in the view it should come back to,
+        /// when the next snapshot arrives: what a theme change or a zoom
+        /// keeps in place.
+        pub(super) anchor: Cell<Option<(usize, f64)>>,
+        /// The zoom, in percent: one of `postio_config::ZOOM_STEPS`.
+        pub(super) zoom: Cell<u16>,
+        /// A pinch in progress: its scale so far, drawn over the snapshot
+        /// until it ends and one render takes its place.
+        pub(super) pinch: Cell<Option<f64>>,
+        /// Where the pointer last was, for Ctrl+scroll's anchor.
+        pub(super) pointer: Cell<Option<gtk::graphene::Point>>,
         /// The selection, as a range of the text index (FR-017).
         pub(super) selection: RefCell<Option<std::ops::Range<usize>>>,
         /// The folds the user has flipped from how the document sets them.
@@ -129,6 +140,9 @@ pub(super) mod imp {
                 document: RefCell::default(),
                 tiles: RefCell::default(),
                 anchor: Cell::new(None),
+                zoom: Cell::new(100),
+                pointer: Cell::new(None),
+                pinch: Cell::new(None),
                 darkened: RefCell::default(),
                 selection: RefCell::default(),
                 drag_start: Cell::new(None),
@@ -166,6 +180,7 @@ pub(super) mod imp {
             self.parent_constructed();
             self.obj().set_focusable(true);
             super::interact::install(&self.obj());
+            super::zoom::install(&self.obj());
             // The theme source (FR-011): the app's dark and high-contrast
             // state, and nothing else.
             let style = adw::StyleManager::default();
@@ -193,6 +208,8 @@ pub(super) mod imp {
             SIGNALS.get_or_init(|| {
                 vec![
                     glib::subclass::Signal::builder("view-source").build(),
+                    // The zoom changed; its new value is `zoom()`.
+                    glib::subclass::Signal::builder("zoom-changed").build(),
                     // A verb link was followed: the message's scope, and the
                     // verb (`reply`, `forward`, `continue`, `allow`).
                     glib::subclass::Signal::builder("message-verb")
@@ -643,7 +660,7 @@ impl BodyView {
             viewport: Viewport {
                 width: f64::from(width),
                 hidpi_scale: self.surface_scale(),
-                zoom: 1.0,
+                zoom: f64::from(imp.zoom.get()) / 100.0,
             },
             theme: Theme {
                 dark: style.is_dark(),
@@ -700,7 +717,7 @@ impl BodyView {
         let imp = self.imp();
         if let Some(document) = imp.document.borrow().as_ref() {
             let top = imp.vadjustment.borrow().as_ref().map_or(0.0, |a| a.value());
-            imp.anchor.set(Some(document.text.char_at_top(top)));
+            imp.anchor.set(Some((document.text.char_at_top(top), 0.0)));
         }
         self.request_render();
     }
@@ -729,14 +746,14 @@ impl BodyView {
             .map_or(0, |doc| doc.text.text.chars().count());
         let document = Arc::new(document);
         imp.tiles.borrow_mut().reset(document.clone());
-        let anchor = imp.anchor.take().and_then(|offset| {
+        let anchor = imp.anchor.take().and_then(|(offset, at)| {
             document
                 .text
                 .clusters
                 .iter()
                 .filter(|c| c.range.end > offset)
                 .min_by_key(|c| c.range.start)
-                .map(|c| c.rect.y0)
+                .map(|c| (c.rect.y0 - at).max(0.0))
         });
         imp.document.replace(Some(document));
         self.configure_adjustments();
@@ -787,6 +804,12 @@ impl BodyView {
             width as f32,
             height as f32,
         ));
+        // A pinch scales what is already drawn; the render comes at its end.
+        let pinch = imp.pinch.get();
+        if let Some(scale) = pinch {
+            snapshot.save();
+            snapshot.scale(scale as f32, scale as f32);
+        }
         let view = self.downgrade();
         imp.tiles
             .borrow_mut()
@@ -797,6 +820,9 @@ impl BodyView {
             });
         self.draw_find(snapshot, left, top);
         self.draw_selection(snapshot, left, top);
+        if pinch.is_some() {
+            snapshot.restore();
+        }
         snapshot.pop();
     }
 }
