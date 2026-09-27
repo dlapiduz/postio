@@ -21,7 +21,7 @@ use std::rc::Rc;
 use gtk::gdk;
 use gtk::prelude::*;
 use postio_gtk::editor;
-use postio_gtk::reader::scheme::BlobSource;
+use postio_gtk::reader::BlobSource;
 use webkit6::prelude::*;
 
 use crate::{settle, settle_until};

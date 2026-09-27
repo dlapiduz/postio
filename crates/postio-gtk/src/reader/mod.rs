@@ -4,7 +4,7 @@
 //! straight line:
 //!
 //! * [`postio-lu6`](view) — the `WebView` itself: JavaScript and network
-//!   access off, inline images through a local [`scheme::BlobSource`],
+//!   access off, inline images through a local [`BlobSource`],
 //!   markup through [`postio_body::sanitize_body`], a click routed to the
 //!   system browser instead of ever navigating the pane.
 //! * [`postio-1bz`](postio_body::quote) — quoted-text folding, on the
@@ -41,7 +41,6 @@ pub mod banner;
 pub mod message_header;
 mod notices;
 pub mod rail;
-pub mod scheme;
 pub mod view;
 
 // The reading pane's bar is a `crate::widgets::ActionBar` now (#1002);
@@ -52,5 +51,5 @@ pub use postio_body::{RemoteImages, quote, sanitize};
 // path here too, so a caller that names it by that path is unchanged.
 pub use postio_ui::allowlist;
 pub use postio_ui::allowlist::RemoteImageAllowList;
-pub use scheme::BlobSource;
+pub use postio_ui::reader::parts::BlobSource;
 pub use view::{Absent, HeldBack, Reader};

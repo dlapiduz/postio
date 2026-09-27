@@ -21,8 +21,6 @@ use std::time::{Duration, Instant};
 
 use chrono::{TimeZone, Utc};
 
-#[path = "webkit_probe.rs"]
-mod webkit_probe;
 use gtk::gdk;
 use gtk::prelude::*;
 use postio_gtk::reader::{BlobSource, Reader, RemoteImageAllowList};
@@ -30,8 +28,6 @@ use postio_model::address::EmailAddress;
 use postio_model::message::MessageBody;
 use postio_model::test_corpus;
 use postio_ui::reader::document;
-use webkit_probe::{computed, measure};
-use webkit6::prelude::*;
 
 fn the_reader_renders_and_hardens_the_corpus() {
     // The whole point of the harness at the foot of this file. A libtest
@@ -80,6 +76,11 @@ fn the_reader_renders_and_hardens_the_corpus() {
         RemoteImageAllowList::default(),
         allowlist_path.clone(),
     );
+
+    // What the app hands every reader: a fetcher for the remote images a
+    // document names once the user allowed them. This one only ever dials
+    // this machine's loopback, so the file touches no real network.
+    reader.set_remote_fetch(loopback_fetch);
 
     // What `postio_gtk::parts::PartsPanel::set_held_back` is wired from —
     // every render's blocked-reference counts, in order, split into ordinary
@@ -287,14 +288,20 @@ fn the_reader_renders_and_hardens_the_corpus() {
         "the light palette belongs inside the sender's box, not on the root"
     );
 
-    // And it computes. A selector that lost on specificity, or a custom
+    // And it paints. A selector that lost on specificity, or a custom
     // property assumed to inherit where it does not, would leave the text
-    // above intact and paint nothing at all — so the engine is asked, in
-    // both directions.
-    let painted = computed(&document, ".postio-body", "background-color");
+    // above intact and paint nothing at all -- so the renderer is asked, in
+    // both directions, in the dark theme where the two grounds differ.
+    let light = document::reader_ground(false);
+    let sheet_document = document::document_for(
+        "<p>hi</p>",
+        "",
+        postio_body::RemoteImages::Blocked,
+        document::Sheet::Senders,
+    );
+    let sheet_ground = ground_behind_first_text(&sheet_document);
     assert_eq!(
-        painted,
-        rgb(document::reader_ground(false)),
+        sheet_ground, light,
         "the sender's box should actually be painted the light ground"
     );
     let theme_document = document::document_for(
@@ -303,9 +310,9 @@ fn the_reader_renders_and_hardens_the_corpus() {
         postio_body::RemoteImages::Blocked,
         document::Sheet::Theme,
     );
-    assert_eq!(
-        computed(&theme_document, ".postio-body", "background-color"),
-        "rgba(0, 0, 0, 0)",
+    assert_ne!(
+        ground_behind_first_text(&theme_document),
+        light,
         "an ordinary document must leave the box unpainted, so it shows the \
          chrome's ground through -- that is what makes the sheet a change"
     );
@@ -557,7 +564,7 @@ fn the_reader_renders_and_hardens_the_corpus() {
     let accepting = std::thread::spawn(move || {
         while !stopping.load(Ordering::Relaxed) {
             if let Ok((stream, _addr)) = listener.accept() {
-                // Answered, so WebKit's fetch completes rather than hanging:
+                // Answered, so the fetch completes rather than hanging:
                 // a request that arrives is the thing being measured, and it
                 // has to arrive the same way in both phases.
                 let _ = (&stream).write_all(
@@ -579,8 +586,8 @@ fn the_reader_renders_and_hardens_the_corpus() {
     let finished = track_load_finished(&reader);
     reader.render(&beacon, Some(sender));
     wait_for(&finished, Duration::from_secs(5));
-    // Give the listener the full window, in case WebKit's own image fetch is
-    // merely slow rather than blocked.
+    // Give the listener the full window, in case a fetch is merely slow
+    // rather than never asked for.
     pump_for(Duration::from_millis(900));
 
     assert!(
@@ -620,9 +627,10 @@ fn the_reader_renders_and_hardens_the_corpus() {
     // proof has to cover it too.
     //
     // Two mechanisms should refuse this — `sanitize::contain_declarations`
-    // drops a remote `url()` while images are blocked, and the CSP's
-    // `img-src` refuses the fetch if the sanitizer ever missed one. Defence
-    // in depth is only defence if something checks both layers are there.
+    // drops a remote `url()` while images are blocked, and the renderer
+    // resolves no URL the app did not hand it, so a declaration the
+    // sanitizer missed still fetches nothing. Defence in depth is only
+    // defence if something checks both layers are there.
     //
     // Run against a listener of its own, so a stray connection from the phase
     // above cannot be read as this one passing.
@@ -694,51 +702,18 @@ fn the_reader_renders_and_hardens_the_corpus() {
     // libtest would put all three on a thread pool, GTK tolerates one thread,
     // and the losers would return through the `no display` guard above and be
     // reported as passing (#355, `check-one-gtk-test-per-binary`).
-    rendering_the_next_message_keeps_the_web_process();
     a_new_reader_loads_nothing_until_it_is_asked_to();
-    readers_share_one_web_process();
     two_readers_resolve_their_own_inline_images();
     fifty_conversations_hold_what_one_holds();
-    the_pane_is_painted_before_it_has_a_document();
-    sender_script_is_refused_even_with_javascript_enabled();
     the_counters_see_what_the_reader_actually_does();
     a_senders_width_cannot_make_the_pane_scroll_sideways();
     view_original_reaches_one_message_of_a_thread();
-    one_senders_styling_cannot_reach_another_message();
-    a_whole_thread_costs_one_web_process();
-    a_dead_web_process_fails_the_wait_for_it_at_once();
     an_allowed_senders_images_survive_the_thread_document();
     the_show_verb_actually_grants_consent();
     a_messages_own_verb_names_that_message();
-    the_shipped_reader_refuses_a_senders_script();
     the_rail_hears_which_message_is_on_screen();
 }
 
-/// **The proof #1323 exists for.** With JavaScript enabled at the engine
-/// level, script that arrives *in a message* still does not run.
-///
-/// The reader turns JavaScript off wholesale today, and that is the strongest
-/// possible answer. It is also the one thing standing between the conversation
-/// pane and a rail that marks what you are actually reading: once a whole
-/// conversation is one document, message positions live in coordinates only
-/// the engine has, and with script off nothing can ask it.
-/// `document::scroll_markers` solved the other direction without script —
-/// anchors at `top: Nvh` moved by fragment navigation — and there is no
-/// fragment trick for document → application.
-///
-/// So the question is whether WebKit's two switches really separate *whose*
-/// script runs, rather than merely how much. `enable_javascript_markup(false)`
-/// claims to ignore script arriving in the document while leaving the
-/// application's own injections working. If that claim holds, the guarantee a
-/// user cares about — a message cannot run code — survives turning JavaScript
-/// on for Postio's own observer. If it does not, the rail marks by navigation
-/// instead and the spec is amended; the sanitizer is never the thing that
-/// gives way.
-///
-/// `document.title` is the channel, because it is observable from the
-/// application **without** script: `WebView::title()` reads it directly. A
-/// document that changed its own title would prove its script ran even in a
-/// view where nothing could be evaluated to ask.
 /// `View original` must reach a message in a thread (#1398).
 ///
 /// Reader view reduces bulk mail to readable prose, and `⌃O` is the consent
@@ -804,17 +779,21 @@ fn view_original_reaches_one_message_of_a_thread() {
 
     // A `<table>` inside the message's own element is the marker: reduction
     // keeps eleven tags and `href`, and `table` is not among them.
-    let tables_in = |scope: &str| {
-        format!(
-            "(() => {{ const el = document.getElementById('m-{scope}');               return el ? String(el.querySelectorAll('table').length) : 'no such message'; }})()"
-        )
+    let tables_in = |document: &str, scope: &str| {
+        // The message's own element, up to the next message's.
+        let start = document
+            .find(&format!("id=\"m-{scope}\""))
+            .expect("the message is in the document");
+        let rest = &document[start..];
+        let end = rest[1..].find("id=\"m-").map_or(rest.len(), |at| at + 1);
+        rest[..end].matches("<table").count()
     };
     // Every message opens as its sender built it (spec 006 FR-031), the
     // campaign included, so its tables are there to start with.
     let document = reader.document_for_test();
     assert_ne!(
-        measure(&document, &tables_in("7")),
-        "0",
+        tables_in(&document, "7"),
+        0,
         "the campaign should open as its sender built it"
     );
 
@@ -824,8 +803,8 @@ fn view_original_reaches_one_message_of_a_thread() {
     wait_for(&finished, Duration::from_secs(5));
     let document = reader.document_for_test();
     assert_eq!(
-        measure(&document, &tables_in("7")),
-        "0",
+        tables_in(&document, "7"),
+        0,
         "reader view left the campaign's layout in place -- the command did \
          not reach the one-document pane"
     );
@@ -840,152 +819,14 @@ fn view_original_reaches_one_message_of_a_thread() {
     wait_for(&finished, Duration::from_secs(5));
     let document = reader.document_for_test();
     assert_ne!(
-        measure(&document, &tables_in("7")),
-        "0",
+        tables_in(&document, "7"),
+        0,
         "`View original` left the campaign reduced -- in the one-document \
          pane the key was a no-op, because `view_original` read state only \
          `render` sets"
     );
 
     window.destroy();
-}
-
-fn sender_script_is_refused_even_with_javascript_enabled() {
-    // No `Content-Security-Policy` in this document, deliberately. The
-    // reader's real documents carry `script-src 'none'` and that is a second,
-    // independent refusal -- which is exactly why it cannot be in here. With
-    // both present, a passing assertion would not say *which* one refused the
-    // script, and the whole question is whether the engine setting does.
-    //
-    // Three ways a message can carry code: a script element, an
-    // event-handler attribute on an element guaranteed to fire it, and a
-    // handler on the body. Each writes a distinct title, so a failure names
-    // which one got through rather than only that one did.
-    let hostile = "<!DOCTYPE html><html><head><title>quiet</title></head>\
-        <body onload=\"document.title='body onload ran'\">\
-        <script>document.title = 'script element ran';</script>\
-        <img src=\"postio-cid:nothing-resolves-this\" \
-             onerror=\"document.title='onerror ran'\">\
-        </body></html>";
-
-    // The control, and the reason this spike is worth anything. Run the same
-    // document with markup script *allowed*: if the title does not change
-    // there either, then something else in this harness is refusing it and
-    // the real assertion below would be passing for a reason that has nothing
-    // to do with the switch under test.
-    let (permitted, _) = load_and_read_title(true, hostile);
-    assert_ne!(
-        permitted, "quiet",
-        "the control did not run the message's script even with markup \
-         enabled, so this spike cannot tell the switch apart from whatever \
-         else refused it -- fix the fixture before trusting the result"
-    );
-
-    let (refused, injected) = load_and_read_title(false, hostile);
-
-    assert_eq!(
-        refused, "quiet",
-        "script that arrived in the message ran ({permitted:?} got through \
-         with markup enabled, and enable_javascript_markup(false) did not \
-         stop it). The switch does not separate the sender's script from the \
-         application's, so the rail must mark by navigation and spec.md's \
-         FR-034/FR-035 need amending -- do not weaken postio-body's sanitizer \
-         to get around this"
-    );
-    assert_eq!(
-        injected, "the application still speaks",
-        "the application's own script did not run, so there is nothing to be \
-         gained by enabling JavaScript at all"
-    );
-}
-
-/// Load `document` with JavaScript on and markup script `markup`, and report
-/// the title afterwards plus what an injected script sees.
-///
-/// `document.title` is the channel because it is observable from the
-/// application **without** script: `WebView::title()` reads it directly, so a
-/// document that changed its own title is caught even in a view where nothing
-/// could be evaluated to ask.
-fn load_and_read_title(markup: bool, document: &str) -> (String, String) {
-    let settings = webkit6::Settings::new();
-    settings.set_enable_javascript(true);
-    settings.set_enable_javascript_markup(markup);
-
-    let (title, injected, weak) = {
-        // Its own ephemeral session and context, dropped with the view, for
-        // `computed`'s reason: the default `WebContext` is process-global and
-        // its WebProcess outlives every scope here.
-        let network_session = webkit6::NetworkSession::new_ephemeral();
-        let context = webkit6::WebContext::new();
-        let view = webkit6::WebView::builder()
-            .settings(&settings)
-            .web_context(&context)
-            .network_session(&network_session)
-            .build();
-        let window = gtk::Window::new();
-        window.set_child(Some(&view));
-        window.present();
-
-        let loaded = Rc::new(RefCell::new(false));
-        let flag = Rc::clone(&loaded);
-        view.connect_load_changed(move |_, event| {
-            if event == webkit6::LoadEvent::Finished {
-                *flag.borrow_mut() = true;
-            }
-        });
-        view.load_html(document, None);
-        wait_for(&loaded, Duration::from_secs(5));
-
-        // The broken image has to actually fail before `onerror` has had its
-        // chance; a title read too early would pass for the wrong reason.
-        pump_for(Duration::from_millis(300));
-
-        let title = view.title().map(|t| t.to_string()).unwrap_or_default();
-
-        // The other half of the claim, and the reason enabling this is worth
-        // anything: Postio's own script still runs. `script-src 'none'`
-        // governs what the *page* may load and execute; it has never governed
-        // the host application's injections, which is why `computed` above
-        // has been evaluating JavaScript against reader documents that carry
-        // that very directive all along.
-        let answer: Rc<RefCell<Option<String>>> = Rc::new(RefCell::new(None));
-        let slot = Rc::clone(&answer);
-        view.evaluate_javascript(
-            "document.title = 'the application still speaks'; document.title",
-            None,
-            None,
-            None::<&gtk::gio::Cancellable>,
-            move |outcome| {
-                *slot.borrow_mut() = Some(
-                    outcome
-                        .map(|value| value.to_str().to_string())
-                        .unwrap_or_default(),
-                );
-            },
-        );
-        let deadline = Instant::now() + postio_test_support::scaled(Duration::from_secs(5));
-        while answer.borrow().is_none() && Instant::now() < deadline {
-            while glib::MainContext::default().iteration(false) {}
-            std::thread::sleep(std::time::Duration::from_millis(5));
-        }
-        let injected = answer.borrow_mut().take().unwrap_or_default();
-
-        let weak = view.downgrade();
-        window.set_child(None::<&gtk::Widget>);
-        window.destroy();
-        (title, injected, weak)
-    };
-    // #794: a view still alive at `exit()` kills the binary after every test
-    // has been reported as passing. Same discipline as `computed`.
-    for _ in 0..200 {
-        while glib::MainContext::default().iteration(false) {}
-    }
-    assert!(
-        weak.upgrade().is_none(),
-        "the spike's WebView outlived its window, so its WebProcess is still \
-         attached at exit -- #794 all over again"
-    );
-    (title, injected)
 }
 
 /// The instrument, against the real reader (#1328).
@@ -1020,7 +861,7 @@ fn the_counters_see_what_the_reader_actually_does() {
         assert_eq!(
             postio_ui::test_support::surfaces_created() - surfaces_before,
             1,
-            "one Reader is one rendering surface -- and one web process, which \
+            "one Reader is one rendering surface -- once one web process, which \
              is the cost ADR 0032 measured at thirty for a thirty-message thread"
         );
 
@@ -1121,137 +962,15 @@ fn a_senders_width_cannot_make_the_pane_scroll_sideways() {
         // *reached the document*: it was not stripped between the sanitizer
         // and the engine. That is a DOM fact -- the attribute the sender
         // wrote, still there -- and it needs no layout at all.
-        let declared = measure(
-            &document,
-            "(() => { const el = document.querySelector('.postio-body > *'); \
-              return el.style.width || el.getAttribute('width') || ''; })()",
-        );
+        let body = document
+            .split_once("postio-body")
+            .map_or("", |(_, body)| body);
         assert!(
-            declared.contains("4000"),
-            "{name}: the declared width reached the document as {declared:?}, \
-             so it was stripped between the sanitizer and the engine (FR-019a)"
+            body.contains("4000"),
+            "{name}: the declared width never reached the document, so it was \
+             stripped between the sanitizer and the renderer (FR-019a)"
         );
     }
-}
-
-/// Can one message's inline styling move another message? (#1346)
-///
-/// Two pieces of work rest on opposite answers. #1327 admitted the sender's
-/// inline styling, reasoning that an inline declaration has no selector and
-/// so reaches its own subtree and nothing else. #1316's note says the
-/// opposite in terms — that stripping `style` is *"the only"* reason several
-/// senders can share a page — and the one-document conversation is built on
-/// that premise.
-///
-/// The inheritance argument is sound as far as it goes and does not cover the
-/// ways an element affects a **sibling** without inheriting into it: `float`
-/// escapes normal flow, a negative `margin` pulls content outside its own
-/// box, and `transform` paints outside the box without changing layout.
-/// #1327's refusal table names neither.
-///
-/// So it is asked of the engine, in the arrangement that makes contamination
-/// possible at all: two messages in one document. Geometry is compared
-/// against the identical document with a benign first message, because an
-/// absolute pixel value would only say the layout is what it is.
-fn one_senders_styling_cannot_reach_another_message() {
-    // Everything #1327 does not refuse, in one message.
-    // A block that occupies its own 120px, then paints itself 120px lower --
-    // exactly over whatever follows it. `transform` is the operative part: it
-    // paints above normal flow, so the intruder lands *on top of* the next
-    // message rather than beside or beneath it. #1327 refuses neither
-    // transform nor a negative margin.
-    //
-    // On one line deliberately. In a raw string a trailing `\` is a literal
-    // backslash, not a line continuation, and it lands inside the attribute
-    // where CSS reads it as an escape and swallows the declaration after it.
-    // Three earlier versions of this test "passed" against a payload broken
-    // exactly that way.
-    const HOSTILE: &str = r#"<div id="intruder" style="height:120px;transform:translateY(120px);background:#f0f">first</div>"#;
-    const SECOND: &str = r#"<p id="probe">second</p>"#;
-
-    // **What is actually being asked.** Not whether two boxes overlap: a
-    // float contributes nothing to its parent's height, so box arithmetic
-    // reports "clear" while the float paints straight over the message below.
-    // The question a person experiences is *what is drawn at this point*, so
-    // that is what is asked -- hit-test inside the second message and see
-    // whose element answers.
-    let hit_at_probe = |wrap: bool| -> String {
-        let first = if wrap {
-            document::contain_body(HOSTILE)
-        } else {
-            format!("<div>{HOSTILE}</div>")
-        };
-        let second = if wrap {
-            document::contain_body(SECOND)
-        } else {
-            format!("<div>{SECOND}</div>")
-        };
-        let document = document::wrap_document(
-            &format!("{first}{second}{}", document::scroll_markers()),
-            postio_body::RemoteImages::Blocked,
-            document::Sheet::Theme,
-        );
-        measure(
-            &document,
-            "(() => { const p = document.getElementById('probe') \
-              .getBoundingClientRect(); \
-              const hit = document.elementFromPoint(p.left + p.width / 2, \
-                                                    p.top + p.height / 2); \
-              return hit ? (hit.id || hit.tagName) : 'nothing'; })()",
-        )
-    };
-
-    // **Only where there is layout to measure.** This is a hit test, and a
-    // hit test needs boxes: on a display that never presents, every
-    // `getBoundingClientRect` is zero, `elementFromPoint(0, 0)` answers with
-    // whatever sits at the origin, and the control below fails for a reason
-    // that has nothing to do with containment. That is CI, and #1307 is the
-    // standing note about it -- `headless-runner.sh` pins WebKit to its
-    // software path and no test here reaches the renderer a user gets.
-    //
-    // Skipped rather than weakened. Containment is a property of laid-out
-    // boxes and has no cascade-level equivalent to assert instead, so the
-    // choice is between running it where boxes exist and not running it at
-    // all. A test that quietly passed on zeroes would be worse than both.
-    let laid_out = measure(
-        &document::wrap_document(
-            &document::contain_body(SECOND),
-            postio_body::RemoteImages::Blocked,
-            document::Sheet::Theme,
-        ),
-        "String(Math.round(document.getElementById('probe')\
-          .getBoundingClientRect().width))",
-    );
-    if laid_out.trim().parse::<f64>().unwrap_or(0.0) <= 0.0 {
-        eprintln!(
-            "skipping one_senders_styling_cannot_reach_another_message: this \
-             display reports no layout (probe width {laid_out:?}), so a hit \
-             test cannot say anything -- see #1307"
-        );
-        return;
-    }
-
-    // The control first, and it is what makes the rest mean anything: without
-    // the container, the hostile message *does* reach the one below it.
-    // Measured: the intruder occupies 136-256 and the probe 136-157, so they
-    // overlap exactly, and the transformed element paints above normal flow. If
-    // this ever reports the probe, the styling is being refused by something
-    // else and the assertion below is a coincidence rather than a containment.
-    assert_eq!(
-        hit_at_probe(false),
-        "intruder",
-        "the hostile styling did not reach the message below even without a \
-         container, so it is not hostile enough to prove anything"
-    );
-
-    // And with each message in its own `.postio-body`, it does not.
-    assert_eq!(
-        hit_at_probe(true),
-        "probe",
-        "one sender's content is drawn over another sender's mail. #1327's \
-         REFUSED table needs float, transform and negative margin BEFORE the \
-         one-document conversation lands"
-    );
 }
 
 /// A sender the user already allowed keeps their images in a thread (#1353).
@@ -1287,6 +1006,11 @@ fn an_allowed_senders_images_survive_the_thread_document() {
         allowlist,
         scratch_path("thread-allowlist"),
     );
+    let asked: Rc<RefCell<Vec<String>>> = Rc::default();
+    reader.set_remote_fetch({
+        let asked = Rc::clone(&asked);
+        move |urls, _done| asked.borrow_mut().extend(urls)
+    });
     let window = gtk::Window::new();
     window.set_default_size(600, 500);
     window.set_child(Some(&reader.widget()));
@@ -1323,15 +1047,15 @@ fn an_allowed_senders_images_survive_the_thread_document() {
          decision already made was thrown away the moment the message appeared \
          in a conversation"
     );
-    // Surviving the sanitizer is not enough to be *fetchable*: the document
-    // carries one `Content-Security-Policy` for the whole page, and a
-    // `img-src` without `https:` would refuse the allowed sender's image
-    // anyway. Asserting only that the URL is present would have passed while
-    // the picture stayed blank.
-    assert!(
-        document.contains("img-src") && document.contains("https:"),
-        "the URL survived but the document's policy still refuses it, so the \
-         allowed sender's images would not load"
+    // Surviving the sanitizer is not enough to be *fetched*: the reader has
+    // to ask its owner for it. Asserting only that the URL is present would
+    // have passed while the picture stayed blank.
+    let asked = asked.borrow().clone();
+    assert_eq!(
+        asked,
+        [format!("https://images.example.net/{ALLOWED}.gif")],
+        "the reader asked its fetcher for {asked:?}: the allowed sender's \
+         image and nothing of anyone else's"
     );
     assert!(
         !document.contains(&format!("https://images.example.net/{BLOCKED}.gif")),
@@ -1411,9 +1135,12 @@ fn the_show_verb_actually_grants_consent() {
         "the notice offers no way to act on the block"
     );
 
-    // The link click, as the engine delivers it.
+    // The link click, as the view delivers it: the verb its snapshot
+    // resolved the `postio-allow:` link to.
     let finished = track_load_finished(&reader);
-    reader.view().load_uri("postio-allow:7");
+    reader
+        .view()
+        .emit_by_name::<()>("message-verb", &[&"7".to_owned(), &"allow".to_owned()]);
     wait_for(&finished, Duration::from_secs(5));
     pump_for(Duration::from_millis(200));
 
@@ -1502,11 +1229,15 @@ fn a_messages_own_verb_names_that_message() {
     );
 
     // The older message's own reply, not the latest one's.
-    reader.view().load_uri("postio-reply:3");
+    reader
+        .view()
+        .emit_by_name::<()>("message-verb", &[&"3".to_owned(), &"reply".to_owned()]);
     pump_for(Duration::from_millis(200));
     // And a forward, to prove the two verbs are told apart rather than both
     // mapping to whichever was checked first.
-    reader.view().load_uri("postio-forward:9");
+    reader
+        .view()
+        .emit_by_name::<()>("message-verb", &[&"9".to_owned(), &"forward".to_owned()]);
     pump_for(Duration::from_millis(200));
 
     let named = named.borrow().clone();
@@ -1517,100 +1248,6 @@ fn a_messages_own_verb_names_that_message() {
         vec!["Reply:3".to_owned(), "Forward:9".to_owned()],
         "the verbs reported {named:?}: a message's own action must name that \
          message and its own verb, or it is the header's bar with extra steps"
-    );
-}
-
-/// The reader **as shipped** runs Postio's script and refuses the sender's
-/// (#1367).
-///
-/// #1323 proved the mechanism against a view the test assembled. This is the
-/// different and more important claim: that the reader a person actually gets
-/// — `hardened_settings`, the real scheme handlers, the real CSP — draws the
-/// same line. A posture proven only on a stand-in is a posture nobody has
-/// checked.
-///
-/// `document.title` is the channel because `WebView::title` reads it without
-/// script, so a message that rewrote its own title is caught regardless of
-/// what can be evaluated to ask.
-fn the_shipped_reader_refuses_a_senders_script() {
-    if adw::init().is_err() || gdk::Display::default().is_none() {
-        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
-        return;
-    }
-
-    let reader = Reader::with_allowlist(
-        Rc::new(NoBlobs),
-        RemoteImageAllowList::default(),
-        scratch_path("shipped-script-posture"),
-    );
-    let window = gtk::Window::new();
-    window.set_default_size(600, 500);
-    window.set_child(Some(&reader.widget()));
-    window.present();
-    pump();
-
-    // Every way a message can carry code, in one body. The sanitizer strips
-    // all three long before the engine sees them -- this is the layer *under*
-    // that, which is the one the setting is responsible for.
-    let hostile = MessageBody {
-        text: None,
-        html: Some(
-            r#"<p onclick="document.title='handler ran'">body</p>
-               <script>document.title = 'script element ran';</script>
-               <img src="postio-cid:missing" onerror="document.title='onerror ran'">
-               <a href="javascript:document.title='href ran'">link</a>"#
-                .to_owned(),
-        ),
-    };
-
-    let finished = track_load_finished(&reader);
-    reader.render(&hostile, Some("stranger@example.org"));
-    wait_for(&finished, Duration::from_secs(5));
-    // The broken image has to fail before `onerror` has had its chance.
-    pump_for(Duration::from_millis(300));
-
-    let title = reader
-        .view()
-        .title()
-        .map(|t| t.to_string())
-        .unwrap_or_default();
-    assert!(
-        !title.contains("ran"),
-        "a message ran its own script in the shipped reader: the title says \
-         {title:?}. `enable_javascript_markup(false)` is the setting that has \
-         to refuse this, and enabling JavaScript for the application has to \
-         not have weakened it"
-    );
-
-    // And the half that makes the change worth making at all.
-    let answer: Rc<RefCell<Option<String>>> = Rc::new(RefCell::new(None));
-    let slot = Rc::clone(&answer);
-    reader.view().evaluate_javascript(
-        "'the application still speaks'",
-        None,
-        None,
-        None::<&gtk::gio::Cancellable>,
-        move |outcome| {
-            *slot.borrow_mut() = Some(
-                outcome
-                    .map(|value| value.to_str().to_string())
-                    .unwrap_or_default(),
-            );
-        },
-    );
-    let deadline = Instant::now() + postio_test_support::scaled(Duration::from_secs(5));
-    while answer.borrow().is_none() && Instant::now() < deadline {
-        while glib::MainContext::default().iteration(false) {}
-        std::thread::sleep(std::time::Duration::from_millis(5));
-    }
-    let injected = answer.borrow_mut().take().unwrap_or_default();
-    window.set_visible(false);
-
-    assert_eq!(
-        injected, "the application still speaks",
-        "the application cannot evaluate script in the shipped reader, so the \
-         rail has no way to learn what is on screen and this posture bought \
-         nothing"
     );
 }
 
@@ -1676,23 +1313,15 @@ fn the_rail_hears_which_message_is_on_screen() {
 
     // A post the document could make, made directly, so the assertion is about
     // the channel rather than about layout.
-    reader.view().evaluate_javascript(
-        "window.webkit.messageHandlers.postioRail.postMessage('5')",
-        None,
-        None,
-        None::<&gtk::gio::Cancellable>,
-        |_| {},
-    );
+    reader
+        .view()
+        .emit_by_name::<()>("current-message", &[&"5".to_owned()]);
     pump_for(Duration::from_millis(300));
 
     // And one naming a message this document never rendered.
-    reader.view().evaluate_javascript(
-        "window.webkit.messageHandlers.postioRail.postMessage('999')",
-        None,
-        None,
-        None::<&gtk::gio::Cancellable>,
-        |_| {},
-    );
+    reader
+        .view()
+        .emit_by_name::<()>("current-message", &[&"999".to_owned()]);
     pump_for(Duration::from_millis(300));
 
     let heard = heard.borrow().clone();
@@ -1712,141 +1341,6 @@ fn the_rail_hears_which_message_is_on_screen() {
     );
 }
 
-/// Wait for the listener to report a connection, pumping GTK meanwhile.
-/// The web processes **this test** owns, by pid.
-///
-/// Scoped to our own descendants, and that is not a detail. The first version
-/// counted every `WebKitWebProces` on the machine, and a developer running
-/// this with Postio open counts *its* web processes -- which are alive before
-/// and after whatever the test does, so the assertion passed without ever
-/// observing the reader. WebKit puts the process under a `bwrap` sandbox, so
-/// the walk is up the parent chain rather than a direct child check.
-///
-/// `-x` against the **truncated** name: Linux cuts `comm` to fifteen
-/// characters, so it is `WebKitWebProces` and `pgrep -x WebKitWebProcess`
-/// matches nothing, warning about it on stderr where it is easy to miss. `-f`
-/// is worse -- it matches the `bwrap` wrapper too, counting each process
-/// twice, and this binary's own command line with them.
-fn web_processes() -> Vec<i32> {
-    let mine = std::process::id() as i32;
-    let out = std::process::Command::new("pgrep")
-        .args(["-x", "WebKitWebProces"])
-        .output()
-        .expect("pgrep");
-    String::from_utf8_lossy(&out.stdout)
-        .lines()
-        .filter_map(|line| line.trim().parse::<i32>().ok())
-        .filter(|pid| descends_from(*pid, mine))
-        .collect()
-}
-
-/// Whether `pid` has `ancestor` somewhere above it.
-fn descends_from(pid: i32, ancestor: i32) -> bool {
-    let mut current = pid;
-    for _ in 0..16 {
-        if current == ancestor {
-            return true;
-        }
-        let Ok(status) = std::fs::read_to_string(format!("/proc/{current}/status")) else {
-            return false;
-        };
-        let Some(parent) = status
-            .lines()
-            .find_map(|line| line.strip_prefix("PPid:"))
-            .and_then(|value| value.trim().parse::<i32>().ok())
-        else {
-            return false;
-        };
-        if parent <= 1 {
-            return false;
-        }
-        current = parent;
-    }
-    false
-}
-
-/// Rendering a second message must reuse the first one's web process.
-///
-/// The report is a **black flicker** moving between messages, alongside a
-/// WebKit web process spawning and dying about once a second while doing it.
-/// The two are one thing: a process that has just started has not finished
-/// relocating its libraries -- the first profile of this burst was
-/// `do_lookup_x`, `_dl_relocate_object_no_relro` and little else -- and a
-/// process with nothing drawn yet composites black.
-///
-/// Nothing in Postio asks for a second process. `Reader` builds its `WebView`
-/// once and reuses it, `show_occupant` only toggles visibility, and every
-/// message loads through `load_html` against the same `postio-reader:///`
-/// base, so there is no cross-site navigation to swap on. This asks whether
-/// WebKit replaces the process regardless.
-fn rendering_the_next_message_keeps_the_web_process() {
-    if adw::init().is_err() || gdk::Display::default().is_none() {
-        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
-        return;
-    }
-
-    let window = gtk::Window::new();
-    window.set_default_size(600, 500);
-    let reader = Reader::with_allowlist(
-        Rc::new(NoBlobs),
-        RemoteImageAllowList::default(),
-        scratch_path("process-reuse"),
-    );
-    window.set_child(Some(&reader.widget()));
-    window.present();
-    pump();
-
-    let first = postio_model::mime::parse(test_corpus::load("multipart-alternative").bytes());
-    let finished = track_load_finished(&reader);
-    reader.render(&first.body, None);
-    wait_for(&finished, Duration::from_secs(5));
-    pump();
-    let before = web_processes();
-    assert!(
-        !before.is_empty(),
-        "no web process after rendering a message, so this test cannot see \
-         what it is about"
-    );
-
-    let second = postio_model::mime::parse(test_corpus::load("html-newsletter").bytes());
-    let finished = track_load_finished(&reader);
-    reader.render(&second.body, None);
-    wait_for(&finished, Duration::from_secs(5));
-    pump();
-    let after = web_processes();
-
-    let kept: Vec<i32> = before
-        .iter()
-        .filter(|p| after.contains(p))
-        .copied()
-        .collect();
-    eprintln!("before {before:?}, after {after:?}, kept {kept:?}");
-    window.set_visible(false);
-
-    assert!(
-        !kept.is_empty(),
-        "every web process alive after the first message was gone after the \
-         second, so rendering a message replaces the process rather than \
-         reusing it -- which is the black flicker, since a process that has \
-         just started has nothing drawn. before={before:?} after={after:?}"
-    );
-}
-
-/// A second reader costs a second web process, and that is the flicker.
-///
-/// The conversation pane builds a `Reader` per expanded message -- lazily, so
-/// a thirty-message thread does not cost thirty views up front, and `collapse`
-/// keeps the widget so reopening is cheap. Both of those are right. What is
-/// left is that the *first* expansion of each message still builds one, and
-/// `Reader::with_allowlist` gives every reader a `WebContext` of its own.
-/// WebKit runs a web process per context, so moving through a conversation
-/// spawns one per message -- which is what "a process a second while opening
-/// messages" was, and why each arrives showing black: it has not finished
-/// relocating its libraries.
-///
-/// Recorded rather than fixed. Sharing one context needs the `postio-reader:`
-/// scheme handler to route by URI instead of closing over one message's
-/// blobs, which is a change to how parts are addressed, not a tuning knob.
 /// Fifty conversations cost what one does (#1412, spec FR-057).
 ///
 /// #1348 measured the shape this protects: one document flat at ~101 MiB Pss
@@ -1926,82 +1420,6 @@ fn fifty_conversations_hold_what_one_holds() {
     window.destroy();
 }
 
-/// The pane is painted before it has anything to show (#1414, FR-060).
-///
-/// #749's black flash is a frame of *unpainted view* between one document
-/// going and the next arriving. What prevents it is `paint_ground` on the
-/// `WebView` at construction — before any document exists — so the widget
-/// carries the theme ground from the moment it is built and a load has
-/// nothing black to show through.
-///
-/// # What this cannot see, and does not claim
-///
-/// Not "no frame was black". This suite's display lays nothing out and paints
-/// nothing, so any assertion about what was on screen *during* a load would be
-/// fiction (#1307). The mechanism is a widget property, and that is real: the
-/// view carries the ground before its first render and still carries it after
-/// one, so a load cannot leave it unpainted.
-///
-/// #1343 locked the neighbouring thing — a palette value gdk cannot parse
-/// failing loudly rather than silently — and the ground asserted elsewhere in
-/// this file is the *document's*, inside a page that has already loaded.
-/// Neither covers the widget before there is a page at all, which is the
-/// moment the flash happens.
-fn the_pane_is_painted_before_it_has_a_document() {
-    let reader = Reader::with_allowlist(
-        Rc::new(NoBlobs),
-        RemoteImageAllowList::default(),
-        scratch_path("painted-before-loading"),
-    );
-    let window = gtk::Window::new();
-    window.set_default_size(600, 500);
-    window.set_child(Some(&reader.widget()));
-    window.present();
-    pump();
-
-    let dark = adw::StyleManager::default().is_dark();
-    let expected: gtk::gdk::RGBA = document::reader_ground(dark)
-        .parse()
-        .expect("the generated palette parses -- #1343 is what says so loudly");
-
-    let painted = reader.view().background_color();
-    assert_eq!(
-        painted, expected,
-        "a reader that has never rendered is unpainted, so the first load has \
-         a black frame to show through -- which is #749"
-    );
-
-    // And a load does not clear it: the flash is *between* documents, so the
-    // ground has to survive the one that just went.
-    let finished = track_load_finished(&reader);
-    reader.render(
-        &MessageBody {
-            text: Some("a message".to_owned()),
-            html: None,
-        },
-        None,
-    );
-    wait_for(&finished, Duration::from_secs(5));
-    assert_eq!(
-        reader.view().background_color(),
-        expected,
-        "rendering cleared the widget ground, so the *next* message loads over \
-         an unpainted view"
-    );
-
-    // The palette is two grounds, so this is about the theme rather than about
-    // any colour at all: an assertion that passed for both would not be
-    // asserting the ground.
-    assert_ne!(
-        document::reader_ground(true),
-        document::reader_ground(false),
-        "light and dark share a ground, so the assertions above cannot tell \
-         the palette from a coincidence"
-    );
-
-    window.destroy();
-}
-
 /// Building a reader loads nothing (#1603).
 ///
 /// The constructor used to end in `clear()`, which loads an empty document --
@@ -2027,64 +1445,6 @@ fn a_new_reader_loads_nothing_until_it_is_asked_to() {
         postio_ui::test_support::renders_issued() - before,
         0,
         "building a reader handed a document to the engine"
-    );
-}
-
-fn readers_share_one_web_process() {
-    if adw::init().is_err() || gdk::Display::default().is_none() {
-        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
-        return;
-    }
-
-    let window = gtk::Window::new();
-    let first = Reader::with_allowlist(
-        Rc::new(NoBlobs),
-        RemoteImageAllowList::default(),
-        scratch_path("one-context"),
-    );
-    window.set_child(Some(&first.widget()));
-    window.present();
-    let parsed = postio_model::mime::parse(test_corpus::load("multipart-alternative").bytes());
-    let finished = track_load_finished(&first);
-    first.render(&parsed.body, None);
-    wait_for(&finished, Duration::from_secs(5));
-    pump();
-    let after_one = web_processes();
-
-    // A second reader, as the conversation pane makes for the next message.
-    let second = Reader::with_allowlist(
-        Rc::new(NoBlobs),
-        RemoteImageAllowList::default(),
-        scratch_path("two-contexts"),
-    );
-    let holder = gtk::Box::new(gtk::Orientation::Vertical, 0);
-    // Unparent before re-parenting, or `append` refuses the child --
-    //   Gtk-CRITICAL: gtk_box_append: assertion 'gtk_widget_get_parent
-    //   (child) == NULL' failed
-    // -- and leaves `first` where it was, for the `set_child` below to
-    // unparent instead, mid-load, with its WebView live.
-    window.set_child(None::<&gtk::Widget>);
-    holder.append(&first.widget());
-    holder.append(&second.widget());
-    window.set_child(Some(&holder));
-    let finished = track_load_finished(&second);
-    second.render(&parsed.body, None);
-    wait_for(&finished, Duration::from_secs(5));
-    pump();
-    let after_two = web_processes();
-
-    eprintln!("one reader {after_one:?}, two readers {after_two:?}");
-    window.set_visible(false);
-
-    // #1603: every reader was built with a context and a session of its
-    // own, so WebKitGTK gave each its own web process -- three live before
-    // the first frame, ~150 MB each. Readers built as related views share
-    // the first one's.
-    assert_eq!(
-        after_two.len(),
-        after_one.len(),
-        "a second reader cost a web process of its own ({after_one:?} -> \
-         {after_two:?})"
     );
 }
 
@@ -2152,6 +1512,43 @@ impl BlobSource for NoBlobs {
     }
 }
 
+/// Fetch `urls` the way the app's fetcher would, but only from `127.0.0.1`:
+/// anything else is dropped unasked, so no case here reaches a real host.
+fn loopback_fetch(urls: Vec<String>, done: postio_gtk::reader::view::RemoteArrived) {
+    let (tx, rx) = mpsc::channel::<Vec<(String, Vec<u8>)>>();
+    std::thread::spawn(move || {
+        let mut arrived = Vec::new();
+        for url in urls {
+            let Some(rest) = url.strip_prefix("http://127.0.0.1:") else {
+                continue;
+            };
+            let (port, path) = rest.split_once('/').unwrap_or((rest, ""));
+            let Ok(mut stream) = std::net::TcpStream::connect(format!("127.0.0.1:{port}")) else {
+                continue;
+            };
+            let _ = write!(
+                stream,
+                "GET /{path} HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n"
+            );
+            let mut response = Vec::new();
+            let _ = std::io::Read::read_to_end(&mut stream, &mut response);
+            arrived.push((url, response));
+        }
+        let _ = tx.send(arrived);
+    });
+    let done = RefCell::new(Some(done));
+    glib::timeout_add_local(Duration::from_millis(10), move || match rx.try_recv() {
+        Ok(arrived) => {
+            if let Some(done) = done.borrow_mut().take() {
+                done(arrived);
+            }
+            glib::ControlFlow::Break
+        }
+        Err(mpsc::TryRecvError::Empty) => glib::ControlFlow::Continue,
+        Err(mpsc::TryRecvError::Disconnected) => glib::ControlFlow::Break,
+    });
+}
+
 fn wait_for_connection(rx: &mpsc::Receiver<()>, timeout: Duration) -> bool {
     let deadline = Instant::now() + postio_test_support::scaled(timeout);
     while Instant::now() < deadline {
@@ -2170,36 +1567,66 @@ fn scratch_path(name: &str) -> std::path::PathBuf {
     dir.join(format!("{name}.ini"))
 }
 
-/// A `#rrggbb` from the generated palette, as a rendering engine reports it.
-fn rgb(hex: &str) -> String {
-    let hex = hex.trim_start_matches('#');
-    let channel = |at: usize| u8::from_str_radix(&hex[at..at + 2], 16).expect("a #rrggbb colour");
-    format!("rgb({}, {}, {})", channel(0), channel(2), channel(4))
-}
-
+/// A flag the reader's view raises when its next snapshot reaches the
+/// screen.
 fn track_load_finished(reader: &Reader) -> Rc<RefCell<bool>> {
     let done = Rc::new(RefCell::new(false));
     let flag = Rc::clone(&done);
-    reader.view().connect_load_changed(move |_, event| {
-        if event == webkit6::LoadEvent::Finished {
-            *flag.borrow_mut() = true;
-        }
+    reader.view().connect_rendered(move |_| {
+        *flag.borrow_mut() = true;
     });
     done
+}
+
+/// The ground the renderer paints behind `document`'s first text, in the
+/// dark theme, as `#rrggbb`.
+fn ground_behind_first_text(document: &str) -> String {
+    let resources = postio_render::Resources::new();
+    for face in document::FACES {
+        resources.insert_font(face.name, face.bytes);
+    }
+    let request = postio_render::RenderRequest {
+        generation: 1,
+        document: document.to_owned(),
+        plain_text: String::new(),
+        over_cap: None,
+        resources: Arc::new(resources),
+        viewport: postio_render::Viewport {
+            width: 600.0,
+            hidpi_scale: 1.0,
+            zoom: 1.0,
+        },
+        theme: postio_render::Theme {
+            dark: true,
+            high_contrast: false,
+        },
+        darkened: Vec::new(),
+        toggled_folds: Vec::new(),
+        reader_view: Vec::new(),
+    };
+    let drawn = postio_render::render(&request, postio_gtk::body_view::font_set());
+    let ground = drawn
+        .text
+        .clusters
+        .first()
+        .expect("the document draws some text")
+        .painted_ground;
+    let channel = |v: f64| (v * 255.0).round() as u8;
+    format!(
+        "#{:02x}{:02x}{:02x}",
+        channel(ground.r),
+        channel(ground.g),
+        channel(ground.b)
+    )
 }
 
 fn wait_for(flag: &Rc<RefCell<bool>>, timeout: Duration) {
     let deadline = Instant::now() + postio_test_support::scaled(timeout);
     while !*flag.borrow() && Instant::now() < deadline {
         while glib::MainContext::default().iteration(false) {}
-        // A document held by a dead web process is never going to finish
-        // loading; say so now rather than at the deadline.
-        if let Some(reason) = postio_gtk::web_process::take_death() {
-            panic!("a WebKit web process died ({reason}) while waiting for a load");
-        }
         std::thread::sleep(std::time::Duration::from_millis(10));
     }
-    assert!(*flag.borrow(), "the WebView never finished loading");
+    assert!(*flag.borrow(), "the reader never drew the document");
 }
 
 fn pump() {
@@ -2336,171 +1763,4 @@ fn main() {
         );
         std::process::exit(1);
     }
-}
-
-/// ADR 0032's claim, measured: a thread of any length is one web process.
-///
-/// The stacked pane builds a `Reader` per expanded message, and WebKitGTK
-/// ran a process per view with a context of its own, so a thirty-message
-/// thread ended with thirty of them; readers are related views of one
-/// another now (#1603, `readers_share_one_web_process` above), which is the
-/// other half of the same saving. One document in one view should cost one,
-/// whatever the thread's length, and this is what says whether it does.
-///
-/// Counted rather than timed, and counted against a *long* thread and a
-/// short one in the same reader: the number that matters is that it does not
-/// grow.
-fn a_whole_thread_costs_one_web_process() {
-    if adw::init().is_err() || gdk::Display::default().is_none() {
-        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
-        return;
-    }
-
-    // Before this reader exists: the cases above it in this binary leave
-    // their own readers alive, and what this measures is what *this* one
-    // costs, not what the process happens to be holding.
-    let before = web_processes();
-
-    let window = gtk::Window::new();
-    let reader = Reader::with_allowlist(
-        Rc::new(NoBlobs),
-        RemoteImageAllowList::default(),
-        scratch_path("one-document-thread"),
-    );
-    window.set_child(Some(&reader.widget()));
-    window.present();
-
-    let parsed = postio_model::mime::parse(test_corpus::load("multipart-alternative").bytes());
-    let thread = |count: usize| -> Vec<postio_gtk::reader::view::ThreadMessage> {
-        (0..count)
-            .map(|index| postio_gtk::reader::view::ThreadMessage {
-                scope: index.to_string(),
-                sender: format!("Sender {index}"),
-                address: format!("sender{index}@example.com"),
-                when: "09:14".into(),
-                recipients: String::new(),
-                cc: String::new(),
-                preview: "the first line".into(),
-                expanded: index + 1 == count,
-                absent: false,
-                latest: index + 1 == count,
-                draft: false,
-                mine: false,
-                body: parsed.body.clone(),
-            })
-            .collect()
-    };
-
-    let finished = track_load_finished(&reader);
-    reader.render_thread(&thread(2));
-    wait_for(&finished, Duration::from_secs(5));
-    pump();
-    let short = web_processes();
-
-    let finished = track_load_finished(&reader);
-    reader.render_thread(&thread(30));
-    wait_for(&finished, Duration::from_secs(5));
-    pump();
-    let long = web_processes();
-
-    eprintln!("2 messages {short:?}, 30 messages {long:?}");
-    window.set_visible(false);
-
-    // Compared as sets of pids, not as counts: the readers the earlier cases
-    // left alive are WebKit's to reap, and one of theirs exiting between two
-    // samples made a length comparison see "no new process" when this view's
-    // had plainly appeared (CI, 2026-09-14: `[.., 74179]` became
-    // `[.., 74321]`). What the claim is about is the processes *this* reader
-    // adds.
-    let spawned: Vec<_> = short.iter().filter(|pid| !before.contains(pid)).collect();
-    // At most one: a reader whose context another reader already made
-    // shares its process and adds none (#1603). Whether the thread rendered
-    // at all is the document check at the foot of this case.
-    assert!(
-        spawned.len() <= 1,
-        "the thread cost more than one view's process ({before:?} -> {short:?})"
-    );
-    let grown: Vec<_> = long.iter().filter(|pid| !short.contains(pid)).collect();
-    assert!(
-        grown.is_empty(),
-        "a thirty-message thread cost more web processes than a two-message \
-         one ({short:?} -> {long:?}), which is the whole claim of ADR 0032"
-    );
-
-    // And every message is actually in the document -- a view that rendered
-    // one message would also pass the count above.
-    let document = reader.test_document();
-    assert_eq!(
-        document.matches("<details").count(),
-        30,
-        "the document does not hold the whole thread"
-    );
-}
-
-/// A web process that dies fails the wait for it at once, not at the deadline.
-///
-/// CI, 2026-09-14: a web process died under an editor test on the runner's
-/// software GL stack, every bounded wait after it ran to its scaled
-/// deadline, and the case hit nextest's 240 s cap. `postio_gtk::web_process`
-/// hears the death from WebKit itself; this proves the wait helpers listen.
-fn a_dead_web_process_fails_the_wait_for_it_at_once() {
-    if adw::init().is_err() || gdk::Display::default().is_none() {
-        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
-        return;
-    }
-
-    let window = gtk::Window::new();
-    let reader = Reader::with_allowlist(
-        Rc::new(NoBlobs),
-        RemoteImageAllowList::default(),
-        scratch_path("dead-web-process"),
-    );
-    window.set_child(Some(&reader.widget()));
-    window.present();
-
-    let finished = track_load_finished(&reader);
-    reader.render(
-        &postio_model::MessageBody {
-            text: Some("alive".to_owned()),
-            html: None,
-        },
-        None,
-    );
-    wait_for(&finished, Duration::from_secs(5));
-
-    let before = postio_gtk::web_process::deaths();
-    reader.view().terminate_web_process();
-    // The signal arrives through the main loop, not from the call.
-    let deadline = Instant::now() + postio_test_support::scaled(Duration::from_secs(5));
-    while postio_gtk::web_process::deaths() == before && Instant::now() < deadline {
-        pump();
-        std::thread::sleep(Duration::from_millis(10));
-    }
-    // Counted once per view that lost it: readers share one web process
-    // (#1603), so every reader alive in this binary hears the same death.
-    assert!(
-        postio_gtk::web_process::deaths() > before,
-        "the death was not counted"
-    );
-    assert!(
-        postio_gtk::web_process::last_death().is_some(),
-        "and its reason kept"
-    );
-
-    // A wait begun after the death fails now, naming it, not at its deadline.
-    let never = Rc::new(RefCell::new(false));
-    let started = Instant::now();
-    let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        wait_for(&never, Duration::from_secs(20));
-    }));
-    let waited = started.elapsed();
-    window.set_visible(false);
-    assert!(
-        outcome.is_err(),
-        "the wait must fail once the process is gone"
-    );
-    assert!(
-        waited < Duration::from_secs(5),
-        "the wait ran {waited:?} towards its deadline instead of failing at once"
-    );
 }

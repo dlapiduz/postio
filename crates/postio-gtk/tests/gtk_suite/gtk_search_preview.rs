@@ -9,7 +9,7 @@
 //! something rather than going blank.
 //!
 //! Skips without a display. Nothing here touches the network — and the pane
-//! renders through the hardened reader, which is the reason it cannot.
+//! renders through the reader, whose renderer cannot.
 //!
 //! One test function, for the reason `gtk_style.rs` gives.
 
@@ -145,24 +145,45 @@ pub fn the_preview_follows_the_focus_and_answers_the_query_on_screen() {
         "the body arrived, so there is nothing left to apologise for"
     );
 
-    // -- and it renders through the hardened reader, not beside it --------
+    // -- and it renders through the reader, with the query marked -------
+    //
+    // Under WebKit this asked the view's settings whether a sender's script
+    // could run; the reader's renderer has no script engine at all, which
+    // `postio-render`'s hostile and egress suites prove (spec 006 T032,
+    // T034, T102). What a display still has to show is the body, drawn, and
+    // the matches picked out in it.
 
     let reader = find(&window.clone().upcast(), &|widget| {
-        widget.type_().name().contains("WebKitWebView")
+        widget.type_().name() == "PostioBodyView"
     })
-    .expect("the preview renders in a WebView");
-    let web_view: webkit6::WebView = reader.downcast().expect("a WebView");
-    // `enables_javascript_markup`, not `enables_javascript`. The claim this
-    // makes is that a preview is still **someone else's HTML** and their
-    // script cannot run — which is the markup setting. Since #1367 the reader
-    // evaluates Postio's own script, so asserting `!enables_javascript` would
-    // now be asserting that the rail cannot work, which is a different and
-    // much weaker thing to want.
-    assert!(
-        !webkit6::prelude::WebViewExt::settings(&web_view)
-            .expect("a WebView has settings")
-            .enables_javascript_markup(),
-        "a preview is still someone else's HTML, and their script must not run"
+    .expect("the preview renders through the reader's body view");
+    let reader: postio_gtk::body_view::BodyView = reader.downcast().expect("a body view");
+    crate::settle_until("the preview's body to be drawn", || {
+        reader
+            .document()
+            .is_some_and(|d| d.text.text.contains("walk dominates"))
+    });
+    let document = reader.document().expect("a snapshot");
+    let ground_of = |word: &str| {
+        let range = document
+            .text
+            .find(word)
+            .into_iter()
+            .last()
+            .unwrap_or_else(|| panic!("{word:?} is not drawn"));
+        document
+            .text
+            .clusters
+            .iter()
+            .find(|c| c.range.start <= range.start && range.start < c.range.end)
+            .map(|c| c.painted_ground)
+            .expect("a drawn word has a cluster")
+    };
+    assert_ne!(
+        ground_of("maildir"),
+        ground_of("dominates"),
+        "the query's match is drawn on the same ground as the words around \
+         it, so the preview does not show where the message matched"
     );
 
     // -- staying on the same result keeps the body it already has ---------

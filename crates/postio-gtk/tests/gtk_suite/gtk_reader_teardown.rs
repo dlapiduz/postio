@@ -1,26 +1,17 @@
-//! A dropped `Reader` really lets go of its `WebView`.
+//! A dropped `Reader` really lets go of its body view.
 //!
-//! #794: a test binary that stands up a reader passes and then dies on the
-//! way out, with WebKit saying — once per live view —
+//! #794 began as WebKit's: a test binary that stood up a reader passed and
+//! then died on the way out, because every `Reader` built a `WebContext` --
+//! a WebProcess -- that a dropped reader never released. The reader's body
+//! is a `BodyView` now (spec 006), and the same leak costs a render thread,
+//! a snapshot and its tiles per reader instead of a process; the assertion
+//! is the same one, on the mechanism, because it is deterministic.
 //!
-//!     WebProcess didn't exit as expected after the UI process connection
-//!     was closed
-//!
-//! and the UI process then taking SIGSEGV. It is intermittent, about the
-//! rate #699 ran at, so reproducing the crash is a poor way to test for it:
-//! a green run proves almost nothing.
-//!
-//! This asserts the *mechanism* instead, which is deterministic. Every
-//! `Reader` builds its own `WebContext` and ephemeral `NetworkSession`, and
-//! a `WebContext` is a WebProcess. If a dropped `Reader` does not release
-//! its view, those processes accumulate for the life of the binary and are
-//! still attached when `exit()` tears the connection down underneath them —
-//! which is exactly what WebKit is complaining about.
+//! The switch reintroduced it once: the view's own signal handlers held the
+//! reader's `Place`, and `Place` held the view.
 //!
 //! So: hold a weak reference, drop the reader, turn the loop, and require
-//! the view to be gone. A leak fails here in milliseconds and says which
-//! object survived, rather than failing one run in eight somewhere else with
-//! a signal number.
+//! the view to be gone.
 
 use std::rc::Rc;
 
@@ -29,7 +20,7 @@ use postio_gtk::reader::Reader;
 
 use crate::settle;
 
-pub fn a_dropped_reader_releases_its_webview() {
+pub fn a_dropped_reader_releases_its_view() {
     if adw::init().is_err() || gtk::gdk::Display::default().is_none() {
         eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
         return;
@@ -51,18 +42,15 @@ pub fn a_dropped_reader_releases_its_webview() {
 
     assert!(
         weak.upgrade().is_none(),
-        "the reader was dropped and its WebView is still alive, so its \
-         WebContext -- a WebProcess -- is too. Every reader a binary builds \
-         then survives to `exit()`, where WebKit reports `WebProcess didn't \
-         exit as expected after the UI process connection was closed` and \
-         the process segfaults (#794)."
+        "the reader was dropped and its body view is still alive, and with \
+         it a render thread, a snapshot and its tiles: every reader a \
+         process builds is kept for its lifetime (#794)"
     );
 }
 
 /// The same thing several times over, because one leak and a hundred leaks
-/// fail this the same way but are very different at teardown — and the
-/// reported crash showed *three* WebProcesses complaining, not one.
-pub fn readers_do_not_accumulate_webviews() {
+/// fail this the same way but are very different in memory.
+pub fn readers_do_not_accumulate_views() {
     if adw::init().is_err() || gtk::gdk::Display::default().is_none() {
         eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
         return;
@@ -78,7 +66,7 @@ pub fn readers_do_not_accumulate_webviews() {
     let alive = weaks.iter().filter(|w| w.upgrade().is_some()).count();
     assert_eq!(
         alive, 0,
-        "{alive} of 5 WebViews outlived the readers that made them; each one \
-         is a WebProcess still attached at exit"
+        "{alive} of 5 body views outlived the readers that made them; each \
+         one is a render thread and a snapshot kept for the process's life"
     );
 }

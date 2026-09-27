@@ -30,19 +30,6 @@ webkit6 = { version = "0.6", features = ["v2_50", "gtk_v4_18"] }
 
 [dev-dependencies]
 postio-test-support = { workspace = true, features = ["logs"] }
-# The performance head to head of spec 006's engine evaluation
-# (`examples/head_to_head.rs`): Blitz drawn in the same GTK window WebKit is,
-# so the two are measured by one instrument. Dev-only, and removed with the
-# losing arm.
-blitz-dom = { version = "=0.3.0-beta.2", default-features = false, features = ["floats", "svg"] }
-blitz-html = { version = "=0.3.0-beta.2", default-features = false }
-blitz-paint = { version = "=0.3.0-beta.2", default-features = false, features = ["svg"] }
-blitz-traits = { version = "=0.3.0-beta.2", default-features = false }
-anyrender = "=0.13.0"
-anyrender_vello_cpu = "=0.17.0"
-parley = { version = "0.11", default-features = false, features = ["std"] }
-fontdb = "0.24"
-memmap2 = "0.9"
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif", "webp"] }
 tracing-subscriber = { workspace = true }
 gtk4-sys = "0.11.4"

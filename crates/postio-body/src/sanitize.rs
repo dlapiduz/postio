@@ -578,9 +578,9 @@ pub const REFUSED_UNITS: &[&str] = &[
 
 /// Sanitize one HTML body for the reading pane.
 ///
-/// `cid:` references become [`CID_SCHEME`] URIs; `postio_gtk::reader::scheme` resolves
-/// those against the message's local parts (or answers 404 for a dangling
-/// reference — the corpus has one on purpose).
+/// `cid:` references become [`CID_SCHEME`] URIs; the reader's renderer
+/// resolves those against the message's local parts, and `postio_gtk::scheme`
+/// does for the composer (a dangling reference resolves to nothing — the corpus has one on purpose).
 pub fn sanitize_body(html: &str, remote: RemoteImages) -> Sanitized {
     sanitize_body_in(html, remote, None)
 }
@@ -1471,7 +1471,7 @@ pub(crate) fn is_remote(value: &str) -> bool {
 /// RFC 3986's unreserved set passes through unescaped; everything else —
 /// `@`, `%`, whitespace, non-ASCII — is escaped. Content-IDs are usually
 /// plain ASCII already; this is just so a stray odd one cannot produce a
-/// URI `postio_gtk::reader::scheme` parses differently than it means.
+/// URI `postio_gtk::scheme` parses differently than it means.
 pub(crate) fn percent_encode(value: &str) -> String {
     let mut out = String::with_capacity(value.len());
     for byte in value.bytes() {
@@ -1485,7 +1485,7 @@ pub(crate) fn percent_encode(value: &str) -> String {
     out
 }
 
-/// The inverse of `percent_encode`, for `postio_gtk::reader::scheme` to recover the
+/// The inverse of `percent_encode`, for `postio_gtk::scheme` to recover the
 /// `Content-ID` a request named.
 pub fn percent_decode(value: &str) -> String {
     let bytes = value.as_bytes();

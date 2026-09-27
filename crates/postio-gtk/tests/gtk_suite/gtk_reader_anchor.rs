@@ -1,14 +1,12 @@
 //! A document drawn again keeps the reader where they were.
 //!
-//! Every document change is a full WebKit load, and `load_html` starts a
-//! document at the top. So a conversation redrawn because a late body
-//! arrived -- the ordinary case while a mailbox backfills -- threw whoever
-//! was half-way down it back to the first message, and so did showing a
-//! message's images or its original. The page cannot be told to keep its
-//! place; the reader has to remember it and put it back.
+//! A conversation redrawn because a late body arrived -- the ordinary case
+//! while a mailbox backfills -- used to throw whoever was half-way down it
+//! back to the first message, and so did showing a message's images or its
+//! original. The view keeps the character at its top where it was.
 //!
-//! Measured in the engine, with `window.scrollY`: what a person sees is where
-//! the page is, and nothing on this side of the process boundary knows that.
+//! Measured on the snapshot on screen: the character a person is reading,
+//! and where on screen it sits.
 //!
 //! Skips without a display. Nothing here touches the network.
 
@@ -16,6 +14,7 @@ use std::rc::Rc;
 
 use gtk::gdk;
 use gtk::prelude::*;
+use postio_gtk::body_view::BodyView;
 use postio_gtk::conversation::ConversationView;
 use postio_gtk::list::Row;
 use postio_gtk::reader::Reader;
@@ -23,7 +22,6 @@ use postio_gtk::{fonts, style};
 use postio_model::EmailAddress;
 use postio_model::MessageBody;
 use postio_model::ids::{MessageId, ThreadId};
-use webkit6::prelude::*;
 
 fn display() -> bool {
     if adw::init().is_err() || gdk::Display::default().is_none() {
@@ -45,62 +43,47 @@ fn settle_for(how_long: std::time::Duration) {
     }
 }
 
-/// A number the engine computes in `view`, or NaN if it never answered.
-fn number(view: &webkit6::WebView, script: &str) -> f64 {
-    let answer = Rc::new(std::cell::Cell::new(f64::NAN));
-    let slot = Rc::clone(&answer);
-    view.evaluate_javascript(
-        &format!("String({script})"),
-        None,
-        None,
-        None::<&gtk::gio::Cancellable>,
-        move |outcome| {
-            if let Ok(value) = outcome {
-                slot.set(value.to_str().parse().unwrap_or(f64::NAN));
-            }
-        },
-    );
-    let deadline = std::time::Instant::now() + postio_test_support::patience();
-    while answer.get().is_nan() && std::time::Instant::now() < deadline {
-        settle_for(std::time::Duration::from_millis(5));
-    }
-    answer.get()
-}
-
-/// A string the engine computes in `view`, or empty if it never answered.
-fn text(view: &webkit6::WebView, script: &str) -> String {
-    let answer: Rc<std::cell::RefCell<Option<String>>> = Rc::default();
-    let slot = Rc::clone(&answer);
-    view.evaluate_javascript(
-        &format!("String({script})"),
-        None,
-        None,
-        None::<&gtk::gio::Cancellable>,
-        move |outcome| {
-            if let Ok(value) = outcome {
-                slot.replace(Some(value.to_str().to_string()));
-            }
-        },
-    );
-    let deadline = std::time::Instant::now() + postio_test_support::patience();
-    while answer.borrow().is_none() && std::time::Instant::now() < deadline {
-        settle_for(std::time::Duration::from_millis(5));
-    }
-    answer.take().unwrap_or_default()
-}
-
-/// Wait until `view` has finished loading and has somewhere to scroll.
-fn wait_laid_out(view: &webkit6::WebView) {
+/// Wait until `view` shows a snapshot whose text satisfies `ready` and
+/// that is tall enough to scroll.
+fn wait_laid_out(view: &BodyView, ready: impl Fn(&str) -> bool) {
     let deadline = std::time::Instant::now() + postio_test_support::patience();
     while std::time::Instant::now() < deadline {
         settle_for(std::time::Duration::from_millis(10));
-        if !view.is_loading()
-            && number(view, "document.documentElement.scrollHeight - innerHeight") > 2000.0
+        if let Some(document) = view.document()
+            && ready(&document.text.text)
+            && document.size.height - f64::from(view.height()) > 2000.0
         {
             return;
         }
     }
     panic!("the document never laid out tall enough to scroll");
+}
+
+fn scroll_to(view: &BodyView, y: f64) -> f64 {
+    let adjustment = view.vadjustment().expect("the view scrolls");
+    adjustment.set_value(y);
+    settle_for(std::time::Duration::from_millis(50));
+    adjustment.value()
+}
+
+/// The character at the top of the view: what a person is reading.
+fn reading(view: &BodyView) -> usize {
+    let top = view.vadjustment().expect("the view scrolls").value();
+    view.document().expect("a snapshot").text.char_at_top(top)
+}
+
+/// Where the character at `offset` sits on screen, from the view's top.
+fn on_screen(view: &BodyView, offset: usize) -> f64 {
+    let document = view.document().expect("a snapshot");
+    let top = view.vadjustment().expect("the view scrolls").value();
+    document
+        .text
+        .clusters
+        .iter()
+        .filter(|c| c.range.end > offset)
+        .min_by_key(|c| c.range.start)
+        .map(|c| c.rect.y0 - top)
+        .expect("the character is in the snapshot")
 }
 
 fn long_body(name: &str) -> MessageBody {
@@ -149,51 +132,34 @@ pub fn a_late_body_does_not_throw_the_reader_back_to_the_top() {
     pane.set_thread_body(MessageId::new(2), long_body("second"));
     let reader = pane.document_reader().expect("a document reader");
     let view = reader.view().clone();
-    let deadline = std::time::Instant::now() + postio_test_support::patience();
-    while !reader.test_document().contains("second:") && std::time::Instant::now() < deadline {
-        settle_for(std::time::Duration::from_millis(20));
-    }
-    wait_laid_out(&view);
+    wait_laid_out(&view, |text| text.contains("second:"));
 
     // Half-way down, reading.
-    number(&view, "(window.scrollTo(0, 1500), window.scrollY)");
-    settle_for(std::time::Duration::from_millis(300));
-    let reading_at = number(&view, "window.scrollY");
+    let scrolled = scroll_to(&view, 1500.0);
     assert!(
-        (reading_at - 1500.0).abs() < 2.0,
-        "the page did not scroll where it was asked: {reading_at}"
+        (scrolled - 1500.0).abs() < 2.0,
+        "the view did not scroll where it was asked: {scrolled}"
     );
+    let offset = reading(&view);
+    let reading_at = on_screen(&view, offset);
 
     // The third body lands and the conversation is drawn again.
     let loads = reader.loads();
     pane.set_thread_body(MessageId::new(3), long_body("third"));
-    let deadline = std::time::Instant::now() + postio_test_support::patience();
-    while reader.loads() == loads && std::time::Instant::now() < deadline {
-        settle_for(std::time::Duration::from_millis(10));
-    }
+    wait_laid_out(&view, |text| text.contains("third:"));
     assert!(
         reader.loads() > loads,
         "the late body never redrew the thread"
     );
-    wait_laid_out(&view);
-    settle_for(std::time::Duration::from_millis(100));
 
-    let after = number(&view, "window.scrollY");
+    let after = on_screen(&view, offset);
     assert!(
         (after - reading_at).abs() < 2.0,
-        "a late body moved the reader from {reading_at}px to {after}px"
+        "a late body moved the words being read from {reading_at}px to {after}px"
     );
 
     window.close();
 }
-
-/// The index of the first paragraph whose bottom is below the top of the
-/// viewport: the one a person is reading.
-const READING_INDEX: &str =
-    "[...document.querySelectorAll('p')].findIndex(p => p.getBoundingClientRect().bottom > 0)";
-
-/// A function of a paragraph index: where that paragraph's top sits on screen.
-const READING_TOP: &str = "(i => document.querySelectorAll('p')[i].getBoundingClientRect().top)";
 
 pub fn showing_a_messages_images_keeps_its_place() {
     if !display() {
@@ -221,43 +187,34 @@ pub fn showing_a_messages_images_keeps_its_place() {
         Some("ada@example.com"),
     );
     let view = reader.view().clone();
-    wait_laid_out(&view);
+    wait_laid_out(&view, |_| true);
     assert!(
         reader.banner_visible(),
         "the remote image was not held back"
     );
 
-    number(&view, "(window.scrollTo(0, 1500), window.scrollY)");
-    settle_for(std::time::Duration::from_millis(300));
-    // What the person is reading: the first paragraph still on screen, by
-    // its place in the message, and where on screen it sits. Showing the
-    // images changes what is *above* it -- a held-back image takes no room,
-    // a shown one does -- so the scroll offset has to move for the words
-    // to hold still, and it is the words a person watches.
-    let reading = number(&view, READING_INDEX);
-    let reading_at = number(&view, &format!("{READING_TOP}({reading})"));
+    scroll_to(&view, 1500.0);
+    // What the person is reading: the character at the top of the view, and
+    // where on screen it sits. Showing the images changes what is *above*
+    // it, so the scroll offset may move; the words must not.
+    let offset = reading(&view);
+    let reading_at = on_screen(&view, offset);
 
     let loads = reader.loads();
+    let generation = view.document().expect("a snapshot").generation;
     reader.click_show_once();
     let deadline = std::time::Instant::now() + postio_test_support::patience();
-    while reader.loads() == loads && std::time::Instant::now() < deadline {
+    while (reader.loads() == loads || view.document().is_none_or(|d| d.generation == generation))
+        && std::time::Instant::now() < deadline
+    {
         settle_for(std::time::Duration::from_millis(10));
     }
-    wait_laid_out(&view);
-    settle_for(std::time::Duration::from_millis(100));
+    assert!(reader.loads() > loads, "showing the images never redrew");
 
-    let after = number(&view, &format!("{READING_TOP}({reading})"));
-    let placed = text(
-        &view,
-        "document.documentElement.dataset.postioPlaced || 'never placed'",
-    );
-    let scrolled = number(&view, "window.scrollY");
-    eprintln!("restore: {placed}; scrollY {scrolled}; paragraph {reading} {reading_at} -> {after}");
+    let after = on_screen(&view, offset);
     assert!(
         (after - reading_at).abs() < 2.0,
-        "showing the images moved the paragraph being read from {reading_at}px \
-         to {after}px on screen (paragraph {reading}; restore: {placed}; scrollY now \
-         {scrolled})"
+        "showing the images moved the words being read from {reading_at}px to {after}px"
     );
 
     window.close();

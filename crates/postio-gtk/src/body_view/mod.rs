@@ -99,6 +99,10 @@ pub(super) mod imp {
         pub(super) anchor: Cell<Option<(usize, f64)>>,
         /// The zoom, in percent: one of `postio_config::ZOOM_STEPS`.
         pub(super) zoom: Cell<u16>,
+        /// The next snapshot starts at the top: a new message, not a redraw.
+        pub(super) to_top: Cell<bool>,
+        /// The scope `current-message` last reported.
+        pub(super) current: RefCell<Option<String>>,
         /// A pinch in progress: its scale so far, drawn over the snapshot
         /// until it ends and one render takes its place.
         pub(super) pinch: Cell<Option<f64>>,
@@ -143,6 +147,8 @@ pub(super) mod imp {
                 zoom: Cell::new(100),
                 pointer: Cell::new(None),
                 pinch: Cell::new(None),
+                current: RefCell::default(),
+                to_top: Cell::new(false),
                 darkened: RefCell::default(),
                 selection: RefCell::default(),
                 drag_start: Cell::new(None),
@@ -210,6 +216,12 @@ pub(super) mod imp {
                     glib::subclass::Signal::builder("view-source").build(),
                     // The zoom changed; its new value is `zoom()`.
                     glib::subclass::Signal::builder("zoom-changed").build(),
+                    // A snapshot reached the screen.
+                    glib::subclass::Signal::builder("rendered").build(),
+                    // The message with most of the view changed: its scope.
+                    glib::subclass::Signal::builder("current-message")
+                        .param_types([String::static_type()])
+                        .build(),
                     // A verb link was followed: the message's scope, and the
                     // verb (`reply`, `forward`, `continue`, `allow`).
                     glib::subclass::Signal::builder("message-verb")
@@ -247,6 +259,7 @@ pub(super) mod imp {
                 adjustment.connect_value_changed(move |_| {
                     if let Some(view) = view.upgrade() {
                         view.queue_draw();
+                        view.report_current_message();
                     }
                 });
             }
@@ -272,10 +285,42 @@ impl BodyView {
         view
     }
 
-    /// Show `content`, re-rendering at the current width.
+    /// Show `content` from its top: a different message, not a redraw of
+    /// the one on screen.
+    pub fn set_content_from_top(&self, content: Content) {
+        self.imp().to_top.set(true);
+        self.set_content(content);
+    }
+
+    /// Show `content` in place of what is on screen, keeping the reader's
+    /// place: the character at the top of the view stays where it is, so a
+    /// late body or a shown image above it does not move the words being
+    /// read.
     pub fn set_content(&self, content: Content) {
+        if !self.imp().to_top.get() {
+            self.keep_place();
+        }
         self.imp().content.replace(Some(content));
         self.request_render();
+    }
+
+    /// Remember the character at the top of the view, and how far above the
+    /// view's top it starts, for the next snapshot to put back.
+    fn keep_place(&self) {
+        let imp = self.imp();
+        let Some(document) = imp.document.borrow().clone() else {
+            return;
+        };
+        let top = imp.vadjustment.borrow().as_ref().map_or(0.0, |a| a.value());
+        let offset = document.text.char_at_top(top);
+        let at = document
+            .text
+            .clusters
+            .iter()
+            .filter(|c| c.range.end > offset)
+            .min_by_key(|c| c.range.start)
+            .map_or(0.0, |c| c.rect.y0 - top);
+        imp.anchor.set(Some((offset, at)));
     }
 
     /// The bytes of tile textures held now.
@@ -589,6 +634,39 @@ impl BodyView {
         Some(document.messages[at].scope.clone())
     }
 
+    /// Tell `current-message` listeners when the message with most of the
+    /// view changes (the rail, 001 FR-035).
+    fn report_current_message(&self) {
+        let now = self.current_message();
+        if now.is_some() && *self.imp().current.borrow() != now {
+            self.imp().current.replace(now.clone());
+            self.emit_by_name::<()>("current-message", &[&now.unwrap_or_default()]);
+        }
+    }
+
+    /// Call `f` with the scope of the message the rail should mark, as the
+    /// view scrolls.
+    pub fn connect_current_message(
+        &self,
+        f: impl Fn(&Self, &str) + 'static,
+    ) -> glib::SignalHandlerId {
+        self.connect_local("current-message", false, move |values| {
+            let view = values[0].get::<BodyView>().expect("the signal's own view");
+            let scope = values[1].get::<String>().expect("a scope");
+            f(&view, &scope);
+            None
+        })
+    }
+
+    /// Call `f` each time a snapshot reaches the screen.
+    pub fn connect_rendered(&self, f: impl Fn(&Self) + 'static) -> glib::SignalHandlerId {
+        self.connect_local("rendered", false, move |values| {
+            let view = values[0].get::<BodyView>().expect("the signal's own view");
+            f(&view);
+            None
+        })
+    }
+
     /// Scroll `scope`'s message to the top of the view.
     pub fn scroll_to_message(&self, scope: &str) {
         let (Some(document), Some(adjustment)) =
@@ -719,11 +797,7 @@ impl BodyView {
 
     /// The theme changed: re-render, keeping the character at the top.
     fn theme_changed(&self) {
-        let imp = self.imp();
-        if let Some(document) = imp.document.borrow().as_ref() {
-            let top = imp.vadjustment.borrow().as_ref().map_or(0.0, |a| a.value());
-            imp.anchor.set(Some((document.text.char_at_top(top), 0.0)));
-        }
+        self.keep_place();
         self.request_render();
     }
 
@@ -762,12 +836,18 @@ impl BodyView {
         });
         imp.document.replace(Some(document));
         self.configure_adjustments();
-        if let (Some(y), Some(adjustment)) = (anchor, imp.vadjustment.borrow().as_ref()) {
+        if imp.to_top.take() {
+            if let Some(adjustment) = imp.vadjustment.borrow().as_ref() {
+                adjustment.set_value(0.0);
+            }
+        } else if let (Some(y), Some(adjustment)) = (anchor, imp.vadjustment.borrow().as_ref()) {
             adjustment.set_value(y);
         }
         // The text is the same, so a find carries over to the new snapshot.
         self.refresh_find();
         self.announce_contents(old_len);
+        self.emit_by_name::<()>("rendered", &[]);
+        self.report_current_message();
         self.queue_draw();
     }
 

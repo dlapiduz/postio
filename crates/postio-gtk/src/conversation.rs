@@ -16,7 +16,7 @@
 //! Where focus opens and how much expands are the two decisions with real
 //! consequences — one for whether the pane lands where you stopped reading,
 //! the other for whether a thirty-message conversation instantiates thirty
-//! `WebKitWebView`s. Both are worth testing without a display, so both are
+//! readers. Both are worth testing without a display, so both are
 //! functions over rows rather than behaviour buried in a widget.
 
 use gtk::glib;
@@ -28,19 +28,18 @@ use postio_ui::reader::rail::{
 };
 use std::cell::RefCell;
 use std::rc::Rc;
-use webkit6::prelude::WebViewExt;
 
 use crate::list::Row;
 
 /// How many messages open expanded at most.
 ///
-/// Every expanded message is a `WebKitWebView`, and "expand everything
+/// Every expanded message is a reader of its own, and "expand everything
 /// unread" over a conversation nobody has read is one per message — which
 /// holds neither the interaction budget nor the memory. Three is what a
 /// person reads before they scroll, and scrolling expands more.
 pub const EAGER_EXPANSION_CAP: usize = 3;
 
-/// How many message bodies keep a live `WebKitWebView` at once.
+/// How many message bodies keep a live reader at once.
 ///
 /// `EAGER_EXPANSION_CAP` bounds how many open *when a conversation opens*.
 /// Nothing bounded how many accumulate as it is **scrolled**: `expand` builds
@@ -165,7 +164,7 @@ const REDRAW_DEADLINE: std::time::Duration = std::time::Duration::from_millis(40
 /// Which messages the **one-document** pane draws open.
 ///
 /// Separate from [`expanded_on_open`], which bounds the stacked pane, and it
-/// has to be: there every open message is a `WebKitWebView`, and the cap is
+/// has to be: there every open message is a reader of its own, and the cap is
 /// what stops a thirty-message thread from opening thirty processes. Here the
 /// whole thread is one view (ADR 0032), so a collapsed message saves no
 /// process and almost no memory — #1348 measured one document flat at
@@ -1120,11 +1119,11 @@ mod imp {
         pub(super) dwell: RefCell<Option<glib::SourceId>>,
         pub(super) dwell_delay: Cell<std::time::Duration>,
         /// Whether this pane renders the thread as one document in one
-        /// `WebView` (ADR 0032, #1316) rather than as a stack of readers.
+        /// reader (ADR 0032, #1316) rather than as a stack of readers.
         ///
         /// The stacked pane builds a `Reader` per expanded message, and
-        /// WebKitGTK runs a process per *view*, so a thirty-message thread
-        /// ends with thirty of them. That is what ADR 0032 replaced, and
+        /// under WebKit each was a web process, so a thirty-message thread
+        /// ended with thirty of them. That is what ADR 0032 replaced, and
         /// since it was accepted (#1316) `postio-app` sets this on every
         /// pane it builds -- the `false` below is what a pane constructed by
         /// a test starts as, not what the application ships.
@@ -1158,7 +1157,7 @@ mod imp {
         /// Whether a redraw is already queued for the next idle turn.
         ///
         /// Bodies arrive one at a time and every one of them changes the
-        /// document, so without this a ten-message thread would hand WebKit
+        /// document, so without this a ten-message thread would hand the reader
         /// ten documents on the way to the one it wants.
         pub(super) redraw_queued: Cell<bool>,
         /// When the pane stops waiting for bodies that have not arrived and
@@ -1431,7 +1430,7 @@ impl ConversationView {
     ///
     /// Focus lands on the most recent message — see [`opening_focus`] — and
     /// [`expanded_on_open`] decides how much opens with it.
-    /// Render this thread as one document in one `WebView` (ADR 0032, #1316).
+    /// Render this thread as one document in one reader (ADR 0032, #1316).
     ///
     /// `postio-app` always turns this on: ADR 0032 was accepted on
     /// 2026-09-09 and one document is the shape a conversation has. It stays
@@ -1468,7 +1467,7 @@ impl ConversationView {
     ///
     /// Redrawn on the next idle turn rather than here: bodies arrive one at a
     /// time and each changes the document, so drawing on arrival would hand
-    /// WebKit one document per message on the way to the one it wants.
+    /// the reader one document per message on the way to the one it wants.
     pub fn set_thread_body(&self, message: MessageId, body: postio_model::MessageBody) {
         let imp = self.imp();
         imp.thread_absent.borrow_mut().remove(&message);
@@ -1602,7 +1601,7 @@ impl ConversationView {
                 let imp = pane.imp();
                 // The pane stopped being what the reader shows while this was
                 // waiting, so the document it would draw is not the one in
-                // front of anybody. Drawing it anyway is #1497: a full WebKit
+                // front of anybody. Drawing it anyway is #1497: a full
                 // load that replaces whatever the reader moved on to.
                 if imp.redraw_generation.get() != generation {
                     return;
@@ -1730,17 +1729,14 @@ impl ConversationView {
         // cache re-sanitises only a body that changed (#1605).
         if reader.render_thread_if_changed(&messages) {
             imp.thread_renders.set(imp.thread_renders.get() + 1);
-            // Lifted once WebKit has the new document, not now: until its
-            // load finishes the view still paints the previous one.
+            // Lifted once the new snapshot is on screen, not now: until it
+            // arrives the view still paints the previous one.
             if reader.widget().opacity() < 1.0 {
                 let handler: Rc<RefCell<Option<glib::SignalHandlerId>>> = Rc::default();
-                let id = reader.view().connect_load_changed({
+                let id = reader.view().connect_rendered({
                     let handler = Rc::clone(&handler);
                     let pane = self.downgrade();
-                    move |view, event| {
-                        if event != webkit6::LoadEvent::Finished {
-                            return;
-                        }
+                    move |view| {
                         if let Some(pane) = pane.upgrade() {
                             pane.veil_document(false);
                         }
@@ -1826,7 +1822,7 @@ impl ConversationView {
         );
     }
 
-    /// How many conversation documents this pane has handed to WebKit.
+    /// How many conversation documents this pane has handed to its reader.
     ///
     /// Every one is a full teardown and reload — JavaScript is off, so there
     /// is no incremental path, and the scroll position goes with it. A thread
@@ -1840,7 +1836,7 @@ impl ConversationView {
         self.imp().thread_renders.get()
     }
 
-    /// The document the one-document pane last handed to WebKit.
+    /// The document the one-document pane last handed to its reader.
     ///
     /// The last artifact before the engine, which is where a wiring mistake
     /// shows: a pane that opened but never composed, or composed without the
@@ -2205,7 +2201,7 @@ impl ConversationView {
 
     pub fn is_expanded(&self, message: MessageId) -> bool {
         // The one-document pane has no `entries` -- the whole thread is one
-        // `WebView` (ADR 0032) -- and every body in it is visible by FR-013
+        // reader (ADR 0032) -- and every body in it is visible by FR-013
         // (#1389). Reading `entries` there answered `false` for a message
         // that is on screen, which is the same shape as #1386, #1398 and
         // #1402: a method that reads `entries` and quietly means "the stacked
@@ -2226,7 +2222,7 @@ impl ConversationView {
     /// jumping expands.
     pub fn focus_message(&self, message: MessageId) {
         // The one-document pane has no entries -- the whole thread is one
-        // `WebView` (ADR 0032) -- so everything below this, which is about
+        // reader (ADR 0032) -- so everything below this, which is about
         // expanding an entry and scrolling to its widget, has nothing to work
         // on. It used to fall out of the guard beneath and return, which made
         // the rail's rows, `J` and `K` all inert in the pane the rail exists
@@ -2616,7 +2612,7 @@ impl ConversationView {
         true
     }
 
-    /// How many message bodies are holding a live `WebKitWebView`.
+    /// How many message bodies are holding a live reader.
     ///
     /// One document is one view however long the thread is (ADR 0032), so
     /// this is 0 or 1 — which is the whole reason the cap the stacked pane
