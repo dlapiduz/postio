@@ -34,6 +34,7 @@ mod accounts;
 mod contact_groups;
 mod contacts;
 mod cross_account;
+mod digests;
 mod drafts;
 mod egress;
 mod filter_decisions;
@@ -54,6 +55,7 @@ pub use contacts::ContactRepository;
 pub use cross_account::{
     CrossAccountMove, CrossAccountMoveRepository, MovePhase, NewCrossAccountMove,
 };
+pub use digests::DigestRepository;
 pub use drafts::{CancelSendOutcome, DraftRepository, ServerCopyLocation};
 pub use egress::EgressLogRepository;
 pub use filter_decisions::{FilterDecision, FilterDecisionRepository, FilterLayer, FilterReason};
@@ -92,17 +94,33 @@ use crate::error::{Error, Result};
 pub(crate) const VISIBLE: &str = "deleted_locally = 0 AND (snoozed_until IS NULL OR snoozed_until <= (strftime('%s','now') * 1000))";
 
 /// What Focus's lists leave out beyond what every list does ([`VISIBLE`]),
-/// as a conjunct on the message `alias` names (`"rep."`, `"messages."`):
-/// the one place mail Focus holds back will leave its inbox (spec 007,
-/// research R13).
+/// as a conjunct on the message `alias` names (`"rep."`, `"messages."`, or
+/// `""` for a statement's only `messages`): the one place mail Focus holds
+/// back leaves its inbox (spec 007, research R13).
 ///
-/// Nothing yet, which is why Focus's inbox is the unified inbox's
-/// membership today. Every read of a Focus scope appends it -- the window,
-/// its representative's `NOT EXISTS` and its slice, the count, and a flat
-/// read of the same view -- so that when it stops being empty, the rows,
-/// the total and the seek marks still agree about what a row is.
-pub(crate) fn focus_excludes(_alias: &str) -> String {
-    String::new()
+/// A message a digest rule holds, until its delivery is archived (`⇧A`):
+/// the digest's own row stands for it in the meantime, and a release
+/// deletes the hold, so the message rejoins. Every read of a Focus scope
+/// appends this -- the window, its representative's `NOT EXISTS` and its
+/// slice, the count, the fold's keys and a flat read of the same view -- so
+/// the rows, the total and the seek marks agree about what a row is. Each
+/// test is a lookup by key into `digest_holds` and, for a delivered hold,
+/// `digest_deliveries`: a cost per candidate row, never a walk.
+pub(crate) fn focus_excludes(alias: &str) -> String {
+    let message = if alias.is_empty() {
+        "messages.id".to_owned()
+    } else {
+        format!("{alias}id")
+    };
+    format!(
+        " AND NOT EXISTS (
+             SELECT 1 FROM digest_holds held
+              WHERE held.message_id = {message}
+                AND (held.delivery_id IS NULL
+                     OR NOT EXISTS (SELECT 1 FROM digest_deliveries delivered
+                                     WHERE delivered.id = held.delivery_id
+                                       AND delivered.archived_at IS NOT NULL)))"
+    )
 }
 
 /// A timestamp as the schema stores it: milliseconds since the Unix epoch, UTC.

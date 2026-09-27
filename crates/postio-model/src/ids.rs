@@ -143,6 +143,11 @@ local_id!(
     /// Identifies a row in the one-click-unsubscribe activation log (#971).
     UnsubscribeActivationId
 );
+local_id!(
+    /// Identifies one delivery of a Focus digest (spec 007): what a rule held
+    /// until it came due, surfaced as one row of the inbox.
+    DeliveryId
+);
 
 macro_rules! scalar_id {
     ($(#[$doc:meta])* $name:ident, $inner:ty) => {

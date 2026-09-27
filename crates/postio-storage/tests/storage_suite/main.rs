@@ -29,6 +29,7 @@ mod connections;
 mod contact_groups;
 mod contact_rank_index;
 mod contacts;
+mod digests;
 mod draft_indexes;
 mod drafts;
 mod encryption;

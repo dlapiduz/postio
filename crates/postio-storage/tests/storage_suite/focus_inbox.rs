@@ -14,9 +14,9 @@ use postio_model::listing::{InviteAnswer, MarkerKind, MarkerSummary, MarkerWhen}
 use postio_model::{EmailAddress, Message, RfcMessageId};
 use postio_storage::Connection;
 use postio_storage::repository::{
-    AccountRepository, FocusListQuery, InviteIdentity, InviteState, Marker, MarkerRepository,
-    MarkerSource, MessageRepository, ThreadCursor, ThreadGroup, ThreadListQuery, ThreadListRow,
-    ThreadRepository, ThreadingRepository, UnifiedThreadListQuery,
+    AccountRepository, DigestRepository, FocusListQuery, InviteIdentity, InviteState, Marker,
+    MarkerRepository, MarkerSource, MessageRepository, ThreadCursor, ThreadGroup, ThreadListQuery,
+    ThreadListRow, ThreadRepository, ThreadingRepository, UnifiedThreadListQuery,
 };
 use postio_storage::test_support;
 use postio_storage::test_support::counting::{counted_async, scans};
@@ -878,5 +878,221 @@ async fn markers_are_focus_s_and_a_classic_list_neither_reads_nor_draws_them() {
         focus.iter().filter(|row| row.marker.is_some()).count(),
         4,
         "while Focus's page of the same inbox draws its four"
+    );
+}
+
+/// Every row of Focus's inbox over `inboxes`, three ways -- one page, a
+/// cursor walk, and offsets -- after checking the three and the count agree.
+async fn agreed(
+    threads: &ThreadRepository<'_>,
+    inboxes: &[(AccountId, MailboxId)],
+) -> Vec<ThreadListRow> {
+    let whole = threads
+        .focus_page_at(&focus(inboxes, 50, None), 0)
+        .await
+        .expect("the whole list");
+    assert_eq!(
+        threads.focus_count(inboxes).await.expect("a count") as usize,
+        whole.len(),
+        "the count and the rows cannot disagree about what a row is"
+    );
+    let mut walked = Vec::new();
+    let mut after = None;
+    loop {
+        let page = threads
+            .focus_page_at(&focus(inboxes, 2, after), 0)
+            .await
+            .expect("a page");
+        let Some(last) = page.last() else { break };
+        after = Some(last.cursor());
+        walked.extend(page);
+    }
+    assert_eq!(walked, whole, "a cursor walk repeats and skips nothing");
+    let mut skipped = Vec::new();
+    for offset in (0..whole.len() as u32).step_by(2) {
+        skipped.extend(
+            threads
+                .focus_page_at(&focus(inboxes, 2, None), offset)
+                .await
+                .expect("a page at an offset"),
+        );
+    }
+    assert_eq!(skipped, whole, "offsets land where the cursor walk did");
+    rows(whole)
+}
+
+fn subjects(rows: &[ThreadListRow]) -> Vec<&str> {
+    rows.iter().filter_map(subject).collect()
+}
+
+#[tokio::test]
+async fn held_mail_leaves_focus_s_inbox_at_every_membership_site() {
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    let inboxes = world(&connection).await;
+    more_of_ada_s(&connection, inboxes[0]).await;
+    mark_ada_s(&connection).await;
+    let threads = ThreadRepository::new(&connection);
+    let digests = DigestRepository::new(&connection);
+    // A conversation of one, held whole; and the newest message of the dam
+    // conversation, which leaves its older message to draw the row.
+    for rfc in ["<weir@example.com>", "<dam-2@example.com>"] {
+        digests
+            .hold(id_of(&connection, rfc).await, "Newsletters", at(20))
+            .await
+            .expect("held");
+    }
+
+    for inboxes in [&inboxes[..1], &inboxes[..]] {
+        let rows = agreed(&threads, inboxes).await;
+        let shown = subjects(&rows);
+        assert!(
+            !shown.contains(&"About <weir@example.com>"),
+            "a held conversation is not a row: {shown:?}"
+        );
+        assert!(
+            !shown.contains(&"About <dam-2@example.com>"),
+            "a held message draws no row: {shown:?}"
+        );
+        let dam = rows
+            .iter()
+            .find(|row| subject(row) == Some("About <dam@example.com>"))
+            .expect("the dam conversation is drawn from what is not held");
+        assert_eq!(dam.unread_count, 1, "a held message is not unread here");
+        assert_eq!(
+            dam.message_count, 2,
+            "the badge is still the conversation's size"
+        );
+        assert_eq!(
+            dam.marker.as_ref().map(|marker| marker.kind),
+            Some(MarkerKind::Question),
+            "a held message's marker is not the row's"
+        );
+    }
+
+    // Holding is Focus's: the classic inbox and Unified still list it all.
+    let (ada, ada_inbox) = inboxes[0];
+    let folder = threads
+        .page(&ThreadListQuery::in_mailbox(ada, ada_inbox).limit(50))
+        .await
+        .expect("the folder's rows");
+    assert!(subjects(&folder).contains(&"About <weir@example.com>"));
+    assert!(subjects(&folder).contains(&"About <dam-2@example.com>"));
+    let unified = rows(
+        threads
+            .unified_page(&UnifiedThreadListQuery {
+                limit: 50,
+                after: None,
+            })
+            .await
+            .expect("Unified's rows"),
+    );
+    assert!(subjects(&unified).contains(&"About <weir@example.com>"));
+}
+
+#[tokio::test]
+async fn held_mail_rejoins_when_released_or_when_its_delivery_is_archived() {
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    let inboxes = world(&connection).await;
+    more_of_ada_s(&connection, inboxes[0]).await;
+    let alone = &inboxes[..1];
+    let threads = ThreadRepository::new(&connection);
+    let digests = DigestRepository::new(&connection);
+    let before = agreed(&threads, alone).await.len();
+    let (weir, sluice, lock) = (
+        id_of(&connection, "<weir@example.com>").await,
+        id_of(&connection, "<sluice@example.com>").await,
+        id_of(&connection, "<lock@example.com>").await,
+    );
+    for held in [weir, sluice, lock] {
+        digests
+            .hold(held, "Newsletters", at(20))
+            .await
+            .expect("held");
+    }
+    assert_eq!(agreed(&threads, alone).await.len(), before - 3);
+
+    // Delivered, the mail is the digest's row, not three of the inbox's.
+    let delivery = digests
+        .deliver("Newsletters", at(30), at(30))
+        .await
+        .expect("a delivery")
+        .expect("it held something");
+    assert_eq!(agreed(&threads, alone).await.len(), before - 3);
+
+    // Released -- its sender stopped, or its rule removed -- it rejoins.
+    digests.release(lock).await.expect("released");
+    let rows = agreed(&threads, alone).await;
+    assert_eq!(rows.len(), before - 2);
+    assert!(subjects(&rows).contains(&"About <lock@example.com>"));
+
+    // The delivery archived, its holds no longer keep anything out.
+    digests
+        .archive_delivery(delivery, at(31))
+        .await
+        .expect("archived");
+    let rows = agreed(&threads, alone).await;
+    assert_eq!(rows.len(), before);
+    assert!(subjects(&rows).contains(&"About <weir@example.com>"));
+}
+
+#[tokio::test]
+async fn leaving_held_mail_out_costs_no_statement_and_scans_nothing() {
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    let inboxes = world(&connection).await;
+    more_of_ada_s(&connection, inboxes[0]).await;
+    mark_ada_s(&connection).await;
+    DigestRepository::new(&connection)
+        .hold(
+            id_of(&connection, "<weir@example.com>").await,
+            "Newsletters",
+            at(20),
+        )
+        .await
+        .expect("held");
+    let alone = &inboxes[..1];
+    let threads = ThreadRepository::new(&connection);
+    let query = focus(alone, 50, None);
+    let _ = threads.focus_page_at(&query, 0).await.expect("warm");
+
+    let mut page = Vec::new();
+    let counts = counted_async(|| async {
+        page = rows(threads.focus_page_at(&query, 0).await.expect("a page"));
+    })
+    .await;
+    assert!(counts.statements <= 3, "{counts:?}");
+    let participants: usize = page
+        .iter()
+        .filter(|row| row.id.is_some())
+        .map(|row| row.participants.len())
+        .sum();
+    let marked = page.iter().filter(|row| row.marker.is_some()).count();
+    assert_eq!(
+        counts.rows,
+        page.len() + participants + marked,
+        "{counts:?}"
+    );
+
+    let ids: Vec<ThreadId> = page.iter().filter_map(|row| row.id).collect();
+    for (label, sql) in [
+        ("the window", threads.explain_focus(&query, 0)),
+        ("the count", threads.explain_focus_count(1)),
+        (
+            "the markers",
+            threads.explain_focus_markers(1, ids.len(), 0),
+        ),
+    ] {
+        let plan = test_support::plan(&connection, &sql).await;
+        assert!(
+            scans(&connection, &sql).await.is_empty(),
+            "{label} scans a table to leave held mail out:\n{plan}"
+        );
+    }
+    let plan = test_support::plan(&connection, &threads.explain_focus(&query, 0)).await;
+    assert!(
+        !test_support::sorts(&plan),
+        "one inbox never sorts:\n{plan}"
     );
 }

@@ -922,3 +922,54 @@ async fn focus_s_inbox_folds_what_the_unified_inbox_folds() {
         "the fixture has to fold a conversation, or this proves nothing"
     );
 }
+
+#[tokio::test]
+async fn holding_mail_moves_focus_s_total_marks_and_rows_together() {
+    // A digest rule holding mail takes it out of Focus's inbox without any
+    // folder moving: the inbox's own counts and sync state -- the witness
+    // the count is kept against -- are what they were, and the count, the
+    // seek marks and the rows must still agree (spec 007, T134).
+    let (store, _account, _inbox, database) = store(200, 4).await;
+    let before = store
+        .thread_page(request(FOCUS, 0, 20))
+        .await
+        .expect("a Focus page");
+    let held = before.rows[0].id.expect("a conversation");
+    {
+        let connection = database.connect().await.expect("a connection");
+        postio_storage::sql::execute(
+            &connection,
+            "INSERT INTO digest_holds (message_id, rule, held_at)
+             SELECT id, 'Newsletters', 0 FROM messages WHERE thread_id = ?1",
+            [held.get()],
+        )
+        .await
+        .expect("held");
+    }
+
+    let after = store
+        .thread_page(request(FOCUS, 0, 20))
+        .await
+        .expect("a Focus page");
+    assert_eq!(
+        after.total,
+        before.total - 1,
+        "the held conversation left the count"
+    );
+    let mut seen = Vec::new();
+    let mut offset = 0;
+    while offset < after.total {
+        let page = store
+            .thread_page(request(FOCUS, offset, 20))
+            .await
+            .expect("a Focus page");
+        assert!(!page.rows.is_empty(), "row {offset} is servable");
+        offset += page.rows.len() as u32;
+        seen.extend(page.rows.into_iter().map(|row| row.id));
+    }
+    assert_eq!(seen.len() as u32, after.total, "the walk serves the total");
+    assert!(
+        !seen.contains(&Some(held)),
+        "and never the held conversation"
+    );
+}

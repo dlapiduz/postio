@@ -189,16 +189,49 @@ async fn inbox_witness(connection: &Checkout) -> Result<UnifiedWitness, postio_s
     .await
 }
 
+/// What Focus's inbox count is allowed to outlive: the unified list's
+/// witness, and what Focus holds back. One statement, the inboxes' rows and
+/// one more.
+///
+/// The extra row is there because holding mail moves no folder: a digest
+/// rule's hold, its release, and an archived delivery each change which
+/// messages are Focus's rows while every inbox's counts and sync state stay
+/// where they were, and a count kept against those alone would outlive the
+/// rows it counted -- and so would the seek marks checked against it (spec
+/// 007, T134). The digest tables are counted whole, which is a walk of each:
+/// they hold digest mail only, a small fraction of any mailbox, and never
+/// the mail itself.
+async fn focus_witness(connection: &Checkout) -> Result<UnifiedWitness, postio_storage::Error> {
+    postio_storage::sql::all(
+        connection,
+        "SELECT m.id, m.total_count, coalesce(s.highest_mod_seq, 0)
+           FROM accounts a JOIN mailboxes m
+             ON m.account_id = a.id AND m.role = 'inbox'
+           LEFT JOIN sync_state s ON s.mailbox_id = m.id
+          WHERE a.enabled = 1 AND a.pending_deletion = 0 AND m.selectable = 1
+         UNION ALL
+         SELECT 0, (SELECT count(*) FROM digest_holds),
+                (SELECT count(*) FROM digest_deliveries WHERE archived_at IS NOT NULL)
+          ORDER BY 1",
+        (),
+        |row| {
+            use postio_storage::sql::RowExt as _;
+            Ok((row.col(0)?, row.col(1)?, row.col(2)?))
+        },
+    )
+    .await
+}
+
 /// Focus's inbox: which inboxes it is made of and how many rows it has, from
-/// the cache while its witness -- the unified list's, since they are the
-/// same inboxes -- has not moved. A page in the steady state is then the
-/// witness, the window and its participants.
+/// the cache while its witness ([`focus_witness`]) has not moved. A page in
+/// the steady state is then the witness, the window, its participants and
+/// its markers.
 async fn focus_inbox(
     connection: &Checkout,
     cache: &Mutex<Option<FocusCounted>>,
     threads: &ThreadRepository<'_>,
 ) -> Result<(Vec<(AccountId, MailboxId)>, u32), postio_storage::Error> {
-    let witness = inbox_witness(connection).await?;
+    let witness = focus_witness(connection).await?;
     if let Some(held) = &*cache.lock().expect("not poisoned")
         && held.witness == witness
     {
@@ -686,9 +719,9 @@ impl LocalStore {
     ///
     /// The unified page's bargain -- seek to the nearest mark, skip the rest,
     /// stop trusting the marks when a seek lands past the end -- with its
-    /// own marks and a count kept against the inboxes' witness, so a page in
-    /// the steady state is three statements: the witness, the window and
-    /// its participants.
+    /// own marks and a count kept against [`focus_witness`], so a
+    /// one-account page in the steady state is four statements: the
+    /// witness, the window, its participants and its markers.
     async fn read_focus_page(
         &self,
         scope: FocusScope,

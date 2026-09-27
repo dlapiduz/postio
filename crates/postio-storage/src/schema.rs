@@ -228,6 +228,38 @@ CREATE TABLE cross_account_moves (
     updated_at           INTEGER NOT NULL
 );
 
+-- One delivery of a Focus digest (spec 007): what a `[[focus.digests]]`
+-- rule held until it came due, surfaced as one row of Focus's inbox.
+-- Lost on a resync like a snooze; the rules themselves live in config.toml.
+CREATE TABLE digest_deliveries (
+    id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+    -- The rule's `name` in `[[focus.digests]]`.
+    rule                TEXT    NOT NULL,
+    -- When it came due, and when Focus delivered it: later, if Focus was
+    -- not running at the due time.
+    due_at              INTEGER NOT NULL,
+    delivered_at        INTEGER NOT NULL,
+    -- Set by `⇧A`: the delivery's row leaves the inbox, and its holds no
+    -- longer keep its mail out of it.
+    archived_at         INTEGER,
+    -- Milestone 2: the summary's statements and references as JSON, and
+    -- when they were written; NULL until then.
+    summary             TEXT,
+    summary_written_at  INTEGER
+);
+
+-- Mail a digest rule holds back from Focus's inbox (spec 007, R13). While
+-- its delivery is NULL or not archived, Focus's inbox leaves the message
+-- out (`focus_excludes`); a release deletes the row and the message
+-- rejoins. Search still finds held mail.
+CREATE TABLE digest_holds (
+    message_id   INTEGER PRIMARY KEY REFERENCES messages(id) ON DELETE CASCADE,
+    rule         TEXT    NOT NULL,
+    held_at      INTEGER NOT NULL,
+    -- NULL while the rule's due time has not come.
+    delivery_id  INTEGER REFERENCES digest_deliveries(id) ON DELETE SET NULL
+);
+
 CREATE TABLE "drafts" (
     id                      INTEGER PRIMARY KEY AUTOINCREMENT,
     account_id              INTEGER NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
@@ -730,6 +762,10 @@ CREATE UNIQUE INDEX idx_contacts_shared_address
     ON contacts (address_normalized) WHERE account_id IS NULL;
 
 CREATE INDEX idx_cross_account_moves_phase ON cross_account_moves (phase);
+
+CREATE INDEX idx_digest_holds_delivery ON digest_holds (delivery_id);
+
+CREATE INDEX idx_digest_holds_rule ON digest_holds (rule, delivery_id);
 
 CREATE INDEX idx_drafts_account_updated ON drafts (account_id, updated_at DESC);
 
