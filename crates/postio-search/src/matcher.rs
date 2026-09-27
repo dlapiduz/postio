@@ -36,7 +36,7 @@
 //! address also selects mail sent **to** that address by anyone whose own
 //! address shares one of its words (`example`, `com`). That is what search
 //! answers today, so it is what a rule answers too; the day the executor
-//! checks the column as a phrase, this module follows it, and the
+//! checks the column as a phrase (#1699), this module follows it, and the
 //! differential test is what says so.
 //!
 //! # What it evaluates
