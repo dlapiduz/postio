@@ -386,8 +386,11 @@ CREATE TABLE messages (
     normalized_subject      TEXT,
     -- The `Date` header, as claimed by the sender; may be absent or a lie.
     date                    INTEGER,
-    -- When the server received it. Always known; this is the list sort key.
+    -- When the server received it. Always known.
     received_at             INTEGER NOT NULL,
+    -- The message's place in a list: `received_at` when it is filed, and
+    -- the list's sort key. `write_update` leaves it alone.
+    sort_at                 INTEGER NOT NULL,
     -- `List-Id`, for the mailing-list filters.
     list_id                 TEXT,
     -- The top-level `Content-Type`.
@@ -697,7 +700,7 @@ CREATE INDEX idx_messages_in_reply_to
     ON messages (account_id, in_reply_to);
 
 CREATE INDEX idx_messages_list
-    ON messages (mailbox_id, received_at DESC, id DESC, deleted_locally, snoozed_until);
+    ON messages (mailbox_id, sort_at DESC, id DESC, deleted_locally, snoozed_until);
 
 -- The backfill's top-up: a folder's newest messages that still owe a body.
 -- Newest first puts the bodies already fetched at the front, so a read that
@@ -739,7 +742,7 @@ CREATE INDEX idx_messages_thread
     ON messages (thread_id, received_at, id, deleted_locally, snoozed_until);
 
 CREATE INDEX idx_messages_thread_mailbox
-    ON messages (thread_id, mailbox_id, received_at DESC, id DESC);
+    ON messages (thread_id, mailbox_id, sort_at DESC, id DESC);
 
 CREATE UNIQUE INDEX idx_messages_uid
     ON messages (mailbox_id, uid_validity, uid) WHERE uid IS NOT NULL;

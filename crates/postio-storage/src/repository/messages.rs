@@ -99,6 +99,8 @@ pub struct MessageListRow {
     /// the conversation's members, participants, folders and labels -- for
     /// one number (#1613).
     pub thread_count: Option<u32>,
+    /// Its place in a folder's list: `received_at` when it was filed.
+    pub sort_at: DateTime<Utc>,
 }
 
 impl MessageListRow {
@@ -112,6 +114,7 @@ impl MessageListRow {
     pub fn cursor(&self) -> ListCursor {
         ListCursor {
             received_at: self.received_at,
+            sort_at: self.sort_at,
             id: self.id,
         }
     }
@@ -120,8 +123,10 @@ impl MessageListRow {
 /// A position in the list: the sort key of the last row already shown.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ListCursor {
-    /// The row's `received_at`.
+    /// The row's `received_at`, which a query view resumes by.
     pub received_at: DateTime<Utc>,
+    /// The row's `sort_at`, which a folder resumes by.
+    pub sort_at: DateTime<Utc>,
     /// The row's id, which breaks ties between messages received in the same
     /// millisecond and is what makes the order total.
     pub id: MessageId,
@@ -653,7 +658,8 @@ messages.size, messages.send_state, messages.send_at,
     JOIN addresses ON addresses.id = recipients.address_id
   WHERE recipients.message_id = messages.id AND recipients.kind = 'from'
   ORDER BY recipients.position LIMIT 1),
-(SELECT threads.message_count FROM threads WHERE threads.id = messages.thread_id)";
+(SELECT threads.message_count FROM threads WHERE threads.id = messages.thread_id),
+messages.sort_at";
 
 impl<'a> MessageRepository<'a> {
     /// Borrows a connection.
@@ -991,9 +997,10 @@ impl<'a> MessageRepository<'a> {
     pub fn explain(&self, query: &ListQuery) -> String {
         format!(
             "SELECT {LIST_COLUMNS} FROM messages WHERE {} \
-             ORDER BY messages.received_at DESC, messages.id DESC LIMIT {}",
+             ORDER BY messages.{key} DESC, messages.id DESC LIMIT {}",
             where_clause(query, query.after.is_some()),
-            query.limit
+            query.limit,
+            key = order_key(&query.scope)
         )
     }
 
@@ -2162,9 +2169,10 @@ fn where_clause(query: &ListQuery, with_cursor: bool) -> String {
         //
         // `plan_seeks_past_the_cursor` is what notices if this regresses, and
         // it asserts on the plan rather than on a clock.
+        let key = order_key(&query.scope);
         format!(
-            " AND messages.received_at <= ?{first}
-              AND (messages.received_at < ?{first} OR messages.id < ?{})",
+            " AND messages.{key} <= ?{first}
+              AND (messages.{key} < ?{first} OR messages.id < ?{})",
             first + 1
         )
     } else {
@@ -2189,10 +2197,23 @@ fn scope_arguments(scope: &ListScope) -> Vec<i64> {
 fn page_arguments(query: &ListQuery) -> Vec<i64> {
     let mut arguments = scope_arguments(&query.scope);
     if let Some(cursor) = query.after {
-        arguments.push(to_millis(cursor.received_at));
+        arguments.push(to_millis(match query.scope {
+            ListScope::Mailbox(_) => cursor.sort_at,
+            _ => cursor.received_at,
+        }));
         arguments.push(cursor.id.get());
     }
     arguments
+}
+
+/// The column a scope's list is ordered by: a folder by `sort_at`, over
+/// `idx_messages_list`; a query view by `received_at`, over the account and
+/// recency indexes search shares.
+fn order_key(scope: &ListScope) -> &'static str {
+    match scope {
+        ListScope::Mailbox(_) => "sort_at",
+        _ => "received_at",
+    }
 }
 
 /// ` AND ...` excluding every conversation `except` names, or nothing at all.
@@ -2304,10 +2325,10 @@ async fn insert(connection: &Connection, message: &Message) -> Result<MessageId>
                                deleted_locally, last_synced_at, raw_blob_id, content_type,
                                list_id, text_part_id, text_part_headers,
                                html_part_id, html_part_headers, text_is_flowed,
-                               read_receipt_requested)
+                               read_receipt_requested, sort_at)
          VALUES (NULL, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16,
                  ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?28, ?29, ?30, ?31,
-                 ?32, ?33, ?34, ?35, ?36, ?37, ?38)",
+                 ?32, ?33, ?34, ?35, ?36, ?37, ?38, ?11)",
     )
     .await?
     .execute(row_values(0, message))
@@ -2655,6 +2676,7 @@ pub(crate) fn read_list_row(row: &Row) -> Result<MessageListRow> {
         has_attachments: row.col(9)?,
         size: row.col::<i64>(10)? as u64,
         thread_count: row.col::<Option<i64>>(15)?.map(|count| count.max(0) as u32),
+        sort_at: from_millis(row.col(16)?),
     })
 }
 

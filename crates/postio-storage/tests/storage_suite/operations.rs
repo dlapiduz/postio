@@ -25,8 +25,8 @@ fn flags(raw: &str) -> FlagSet {
 async fn insert_message(connection: &Connection, mailbox: MailboxId) -> MessageId {
     connection
         .execute(
-            "INSERT INTO messages (account_id, mailbox_id, received_at)
-             SELECT account_id, id, 0 FROM mailboxes WHERE id = ?1",
+            "INSERT INTO messages (account_id, mailbox_id, received_at, sort_at)
+             SELECT account_id, id, 0, 0 FROM mailboxes WHERE id = ?1",
             [mailbox.get()],
         )
         .await

@@ -385,7 +385,7 @@ async fn deleting_an_account_takes_everything_that_hangs_off_it() {
         .execute_batch(
             "INSERT INTO mailboxes (id, account_id, name, path) VALUES (1, 1, 'INBOX', 'INBOX');
              INSERT INTO sync_state (mailbox_id, account_id, uid_validity) VALUES (1, 1, 42);
-             INSERT INTO messages (id, account_id, mailbox_id, received_at) VALUES (1, 1, 1, 0);
+             INSERT INTO messages (id, account_id, mailbox_id, received_at, sort_at) VALUES (1, 1, 1, 0, 0);
              INSERT INTO labels (id, account_id, name) VALUES (1, 1, 'Work');
              INSERT INTO message_labels (message_id, label_id) VALUES (1, 1);
              INSERT INTO threads (id, account_id) VALUES (1, 1);

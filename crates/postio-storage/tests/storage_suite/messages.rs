@@ -985,10 +985,11 @@ async fn seed(connection: &Connection, mailbox: MailboxId, count: u32) {
             "WITH RECURSIVE seq(n) AS (
                  SELECT 1 UNION ALL SELECT n + 1 FROM seq WHERE n < ?2
              )
-             INSERT INTO messages (account_id, mailbox_id, received_at, subject, preview,
+             INSERT INTO messages (account_id, mailbox_id, received_at, sort_at, subject, preview,
                                    flags, seen, flagged, size)
              SELECT (SELECT account_id FROM mailboxes WHERE id = ?1), ?1,
-                    1770000000000 + n * 1000, 'Subject ' || n, 'Preview ' || n,
+                    1770000000000 + n * 1000, 1770000000000 + n * 1000,
+                    'Subject ' || n, 'Preview ' || n,
                     '', n % 2, n % 7 = 0, 1024
                FROM seq",
             bind![mailbox.get(), count],
@@ -1307,6 +1308,7 @@ async fn the_message_list_plan_never_sorts() {
                 "cursor page",
                 messages.explain(&query.clone().after(ListCursor {
                     received_at: at(0),
+                    sort_at: at(0),
                     id: MessageId::new(1),
                 })),
             ),
@@ -1350,11 +1352,7 @@ async fn a_cursor_page_seeks_past_the_cursor_instead_of_filtering_down_to_it() {
     let messages = MessageRepository::new(&connection);
 
     for (label, query, sort_column) in [
-        (
-            "mailbox",
-            ListQuery::mailbox(MailboxId::new(1)),
-            "received_at",
-        ),
+        ("mailbox", ListQuery::mailbox(MailboxId::new(1)), "sort_at"),
         (
             "account",
             ListQuery::account(postio_model::AccountId::new(1)),
@@ -1363,6 +1361,7 @@ async fn a_cursor_page_seeks_past_the_cursor_instead_of_filtering_down_to_it() {
     ] {
         let sql = messages.explain(&query.clone().after(ListCursor {
             received_at: at(0),
+            sort_at: at(0),
             id: MessageId::new(1),
         }));
         let plan = plan_of(&connection, &sql).await;
