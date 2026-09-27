@@ -1,0 +1,45 @@
+From: Studio Bookings <bookings@studio.example>
+Reply-To: Sven Achterberg <sven.achterberg@example.org>
+To: Ada Norwood <ada.norwood@example.com>
+Subject: Booked: Portfolio review with Sven Achterberg, Tue 20 Oct 10:00 IST
+Date: Sat, 26 Sep 2026 10:15:00 +0000
+Message-ID: <bk-20261020-7f3a.confirm@studio.example>
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="=-bk-7f3a-mixed"
+
+--=-bk-7f3a-mixed
+Content-Type: text/plain; charset=utf-8
+Content-Transfer-Encoding: 7bit
+
+Your portfolio review is booked.
+
+When: Tuesday 20 October 2026, 10:00-11:00 (India Standard Time)
+Where: Video call, link sent the day before
+
+Need to move it? Reply to this email.
+
+--=-bk-7f3a-mixed
+Content-Type: text/calendar; charset=utf-8; method=REQUEST; name="event.ics"
+Content-Disposition: attachment; filename="event.ics"
+Content-Transfer-Encoding: 7bit
+
+BEGIN:VCALENDAR
+VERSION:2.0
+PRODID:-//Example Bookings//Scheduler 2.4//EN
+METHOD:REQUEST
+BEGIN:VEVENT
+UID:bk-20261020-7f3a@studio.example
+DTSTAMP:20260926T101500Z
+DTSTART;TZID=Asia/Kolkata:20261020T100000
+DTEND;TZID=Asia/Kolkata:20261020T110000
+SUMMARY:Portfolio review with Sven Achterberg
+ORGANIZER;CN=Sven Achterberg:mailto:sven.achterberg@example.org
+ATTENDEE;CN=Ada Norwood;ROLE=REQ-PARTICIPANT;PARTSTAT=NEEDS-ACTION;RSVP=TRU
+ E:mailto:ada.norwood@example.com
+LOCATION:Video call
+STATUS:CONFIRMED
+SEQUENCE:0
+END:VEVENT
+END:VCALENDAR
+
+--=-bk-7f3a-mixed--

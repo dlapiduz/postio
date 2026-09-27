@@ -130,6 +130,26 @@ Fixtures are tagged, not filed — most carry several tags.
 | `calendar-invite.eml` | `text/calendar; method=REQUEST` inside an alternative inside a mixed part, plus the same ICS again as an attachment. Line folding and escaping inside the ICS itself. |
 | `bounce-delivery-status.eml` | A Postfix bounce: `multipart/report; report-type=delivery-status`, a `message/delivery-status` part, and the original message embedded as `message/rfc822` — nested message parsing. |
 
+### Invitations
+
+Added for `specs/007-postio-focus` spike S1 (T007): the shapes an invitation
+arrives in, which the calendar adapter (`crates/postio-calendar`) is tested
+against. Each is written in the style of one generator, so the quirks are
+realistic, but every value is invented. Ada Norwood is the invitee in all of
+them, so an RSVP test always has an attendee to answer as. The times are
+chosen so that the zone matters: a wrong offset gives a wrong instant.
+
+| File | Exercises |
+|---|---|
+| `invite-windows-zone.eml` | Outlook-style: `DTSTART;TZID=W. Europe Standard Time` with the matching `VTIMEZONE`, a base64 calendar part, `X-MICROSOFT-*` properties and a `VALARM`. The Windows name has to map to `Europe/Berlin`; 10:00 on 6 October is 08:00 UTC, in summer time. |
+| `invite-cancel.eml` | Outlook-style `METHOD:CANCEL` with `STATUS:CANCELLED` for the UID of `invite-windows-zone.eml`, at `SEQUENCE:1`: the cancellation that has to find the marker it cancels. |
+| `invite-iana-zone.eml` | Google-style: `America/New_York` with its `VTIMEZONE` and `X-LIC-LOCATION`, `Auto-Submitted: auto-generated` on an invitation, parameters folded mid-token, an `ATTENDEE` inside the `VALARM` that is not a guest, RSVP links in the text that must never be followed, and the ICS again as an `application/ics` attachment. |
+| `invite-update-sequence.eml` | The event of `invite-iana-zone.eml` moved to another day: the same UID, `SEQUENCE:1` and a later `DTSTAMP`. What replaces a marker's time. |
+| `invite-quoted-printable.eml` | Apple-style: the calendar part is quoted-printable, so `=3D` must be decoded before any parameter is read; quoted `CN` and `EMAIL` parameters, properties out of order, a structured location, and a `UID` inside the `VALARM`. `Europe/London` on 3 November, after the clocks go back: GMT, not BST. |
+| `invite-utc-times.eml` | Zoom-style: `DTSTART` and `DTEND` in UTC with no `VTIMEZONE`, a stray `TZID` property that must not move them, an `ATTENDEE` with no `PARTSTAT`, and the calendar as a base64 attachment beside the alternative rather than inside it. |
+| `invite-weekly-exdate.eml` | Thunderbird-style weekly `RRULE` until 22 December with two `EXDATE`s, six-digit `TZOFFSETFROM` values, and occurrences either side of the 1 November DST change in `America/Chicago`: 09:30 local is 14:30 UTC in October and 15:30 UTC after. |
+| `invite-zone-without-vtimezone.eml` | A booking page's request whose `DTSTART;TZID=Asia/Kolkata` refers to a `VTIMEZONE` the calendar never defines. The zone has to be resolved by name, and its offset is five and a half hours. |
+
 ### HTML and remote content
 
 | File | Exercises |

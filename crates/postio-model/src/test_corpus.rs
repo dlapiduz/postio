@@ -404,6 +404,22 @@ corpus! {
         "Both alternatives carry Content-Disposition: inline \u{2014} the part that *is* the message, marked the way an attachment is.",
     "inline-image-cid": [MultipartRelated, InlineImage, Html, Base64, Attachment] =>
         "Two inline PNGs referenced by cid:, plus a third cid: reference with no matching part.",
+    "invite-cancel": [Calendar, MultipartAlternative, PlainText, QuotedPrintable, Base64] =>
+        "An Outlook-style METHOD:CANCEL for invite-windows-zone's UID, at SEQUENCE 1: the marker says cancelled and offers no answer.",
+    "invite-iana-zone": [Calendar, MultipartMixed, MultipartAlternative, NestedMultipart, Attachment, PlainText, Html, Base64, QuotedPrintable] =>
+        "A Google-style request on an IANA zone with its VTIMEZONE, an attendee inside a VALARM, and the same ICS again as an attachment.",
+    "invite-quoted-printable": [Calendar, MultipartAlternative, PlainText, QuotedPrintable] =>
+        "An Apple-style request whose calendar part is quoted-printable, with quoted CN and EMAIL parameters, the week after the clocks go back.",
+    "invite-update-sequence": [Calendar, MultipartAlternative, PlainText, Html, Base64, QuotedPrintable] =>
+        "invite-iana-zone's event moved to a new time: the same UID at SEQUENCE 1 with a later DTSTAMP, which replaces the marker's time.",
+    "invite-utc-times": [Calendar, MultipartMixed, MultipartAlternative, NestedMultipart, Attachment, PlainText, Html, Base64] =>
+        "A Zoom-style request in UTC with no VTIMEZONE, a stray TZID property to ignore, and the calendar attached rather than an alternative.",
+    "invite-weekly-exdate": [Calendar, MultipartMixed, MultipartAlternative, NestedMultipart, Attachment, PlainText, Base64] =>
+        "A Thunderbird-style weekly event with two EXDATEs, six-digit zone offsets, and occurrences on both sides of a DST change.",
+    "invite-windows-zone": [Calendar, MultipartAlternative, PlainText, Html, QuotedPrintable, Base64] =>
+        "An Outlook-style request on a Windows zone name with its VTIMEZONE, base64 calendar part, and X-MICROSOFT properties to ignore.",
+    "invite-zone-without-vtimezone": [Calendar, MultipartMixed, Attachment, PlainText] =>
+        "A booking-page request whose DTSTART names Asia/Kolkata and carries no VTIMEZONE: the zone is resolved by name, half-hour offset and all.",
     "list-thread-01-root": [Threading, MailingList, PlainText] =>
         "Thread root: the message every other list-thread fixture hangs off.",
     "list-thread-02-reply": [Threading, MailingList, PlainText] =>
