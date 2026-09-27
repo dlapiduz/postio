@@ -4902,6 +4902,7 @@ dependencies = [
  "stylo",
  "tempfile",
  "tracing",
+ "unicode-normalization",
  "url",
  "usvg",
 ]
