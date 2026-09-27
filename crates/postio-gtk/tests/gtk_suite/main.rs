@@ -36,9 +36,6 @@
 //! A panicking case can leave toolkit state behind that fails a later case:
 //! when several cases fail at once, trust the first.
 
-#[path = "../webkit_probe.rs"]
-mod webkit_probe;
-
 mod body_view;
 mod body_view_a11y;
 mod body_view_find;
