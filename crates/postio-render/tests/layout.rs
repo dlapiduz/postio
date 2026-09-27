@@ -68,3 +68,71 @@ fn a_senders_class_rule_is_painted() {
         "the .cta background is not painted"
     );
 }
+
+/// FR-026: an image arriving moves nothing. The same message with its
+/// remote images missing and then present has the same message box and
+/// the same place for every line of text.
+#[test]
+fn remote_images_arriving_move_nothing() {
+    use postio_body::RemoteImages;
+    use postio_ui::reader::document::{self, Rendering};
+    let parsed = postio_model::mime::parse(
+        postio_model::test_corpus::load("html-tracking-pixel-remote-images").bytes(),
+    );
+    let body = document::body_html_in(
+        &parsed.body,
+        RemoteImages::Allowed,
+        Rendering::Original,
+        None,
+    );
+    let html = document::document_for(
+        &body.html,
+        &body.styles,
+        RemoteImages::Allowed,
+        document::sheet_for(Rendering::Original, false),
+    );
+    let missing = render(&request_for(html.clone(), LIGHT));
+    let present_request = request_for(html.clone(), LIGHT);
+    let urls: Vec<String> = html
+        .split(['"', '\'', '(', ')'])
+        .filter(|s| s.starts_with("https://") && !s.contains(' '))
+        .map(str::to_owned)
+        .collect();
+    assert!(
+        !urls.is_empty(),
+        "the fixture's remote images survived consent"
+    );
+    let mut picture = Vec::new();
+    image::RgbImage::from_pixel(1, 1, image::Rgb([200, 30, 30]))
+        .write_to(
+            &mut std::io::Cursor::new(&mut picture),
+            image::ImageFormat::Png,
+        )
+        .expect("a PNG");
+    for url in &urls {
+        present_request
+            .resources
+            .insert_remote(url, picture.clone());
+    }
+    let present = render(&present_request);
+    assert!(
+        present.counts.resources_resolved > missing.counts.resources_resolved,
+        "no image arrived"
+    );
+    assert_eq!(
+        missing.messages[0].rect, present.messages[0].rect,
+        "the message box moved"
+    );
+    let lines = |doc: &postio_render::RenderedDocument| -> Vec<(String, f64)> {
+        doc.text
+            .clusters
+            .iter()
+            .map(|c| (doc.text.slice(c.range.clone()).to_owned(), c.rect.y0))
+            .collect()
+    };
+    assert_eq!(
+        lines(&missing),
+        lines(&present),
+        "text moved when the images arrived"
+    );
+}
