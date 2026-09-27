@@ -39,6 +39,7 @@ mod focus_on_launch;
 mod folder_header_count;
 mod glib_main_context;
 mod go_to_keystroke;
+mod hostile_mail;
 mod keystroke;
 mod label_wiring;
 mod large_folder_open;
@@ -380,6 +381,10 @@ const CASES: &[(&str, fn())] = &[
     (
         "reclaim_wiring::opening_a_store_with_a_ceiling_evicts_down_to_it",
         reclaim_wiring::opening_a_store_with_a_ceiling_evicts_down_to_it as fn(),
+    ),
+    (
+        "hostile_mail::each_hostile_message_opens_and_the_app_keeps_answering",
+        hostile_mail::each_hostile_message_opens_and_the_app_keeps_answering as fn(),
     ),
     (
         "reader_spawns_no_web_process::ten_conversations_start_no_web_process_and_hold_what_one_holds",
