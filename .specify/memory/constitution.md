@@ -1,7 +1,30 @@
 <!--
 Sync Impact Report
 ==================
-Version change: 1.2.0 → 1.2.1 (was: 1.1.0 → 1.2.0; 1.0.0 → 1.1.0; unversioned scaffold → 1.0.0)
+Version change: 1.2.1 → 1.3.0 (was: 1.2.0 → 1.2.1; 1.1.0 → 1.2.0; 1.0.0 → 1.1.0;
+  unversioned scaffold → 1.0.0)
+Bump rationale (1.3.0): MINOR. DRAFT: it waits for the maintainer's approval
+  and does not land without it (specs/007-postio-focus, T146).
+  - Additional Constraints → Scope names a second desktop app, Postio Focus,
+    on the same store, one app at a time (ADR 0041).
+  - "No AI" is replaced with what it has meant in practice. Postio itself
+    embeds, bundles, downloads and starts no model and no inference engine.
+    Focus may use a model the user runs on this machine and names in
+    `config.toml`. That model is optional, off until it is named, reached only
+    on this machine, and never required; without it a built-in rule-based
+    detector answers (spec 007, FR-165 to FR-170). Other AI features stay
+    deferred to epic E12.
+  - Principle VII's boundary list gains the rules `check-crate-boundaries.py`
+    has enforced since spec 007's T002:
+    - `postio-widgets` holds the GTK both desktop apps share (ADR 0043), and
+      neither app depends on the other;
+    - `postio-classify` takes no send path, no network crate and no inference
+      engine;
+    - `postio-calendar` is a pure leaf;
+    - no app links an inference engine, directly or through a dependency.
+
+  This expands both sections and narrows no principle. But it changes what
+  "no AI" permits, and that is the maintainer's call.
 Bump rationale (1.2.1): PATCH. Principle VI's reader clause is reworded from
   the mechanism it named ("the reader's WebKit view has JavaScript and network
   off") to the guarantee: the reader's renderer cannot run script or reach the
@@ -42,6 +65,12 @@ Added sections:
   Governance (filled)
 
 Removed sections: none
+
+Modified sections (1.3.0):
+  VII. Boundaries Are Enforced, Not Advised — adds `postio-widgets` (ADR 0043),
+  `postio-classify`, `postio-calendar`, and no inference engine in any app.
+  Additional Constraints — Scope names Postio Focus (specs/007-postio-focus),
+  and says what "no AI" forbids and what a user-supplied model may do.
 
 Modified sections (1.2.0):
   VII. Boundaries Are Enforced, Not Advised — adds every frontend reaching
@@ -210,6 +239,12 @@ rusqlite, gtk4, or tokio; `postio-config` takes no rusqlite or gtk4;
 Every frontend reaches mail through `postio-client`, one app holding the
 store at a time (ADR 0041); `postio-client` takes no toolkit, no WebKit, no
 store engine and no protocol, and `postio-tui` no toolkit and no WebKit.
+The GTK both desktop apps draw lives in `postio-widgets`, which takes no
+store engine and no protocol, and neither desktop app depends on the other
+(ADR 0043). `postio-classify` takes no send path, no network crate and no
+inference engine. `postio-calendar` takes no store engine, toolkit, async
+runtime or network crate. No app links an inference engine, directly or
+through any crate it depends on.
 
 **Providers are data, not code.** Server settings live in the preset table.
 Named constants and provider-specific branches are forbidden: Postio is not
@@ -226,10 +261,23 @@ that lives only in a document has already been crossed.
 
 ## Additional Constraints
 
-**Scope.** v1 is Linux only: GTK4 and libadwaita, Wayland first, and a
-terminal frontend on the same store (`specs/005-tui-frontend`). IMAP and SMTP,
-one provider preset table, OAuth in scope (ADR 0006), no AI (deferred to epic
-E12). Work outside this scope belongs on the roadmap, not in a branch.
+**Scope.** v1 is Linux only: GTK4 and libadwaita, Wayland first. It has two
+desktop apps, the classic app and Postio Focus (`specs/007-postio-focus`), and
+a terminal frontend (`specs/005-tui-frontend`), all on the same store, one app
+at a time. IMAP and SMTP, one provider preset table, OAuth in scope (ADR 0006).
+
+**No AI in Postio itself.** Postio embeds, bundles, downloads and starts no
+model and no inference engine. Focus may use a model the user runs on this
+machine and names in `config.toml`. That model is:
+
+- optional, and off until the user names it;
+- reached only on this machine;
+- never required: without it, a built-in rule-based detector answers
+  (spec 007, FR-165 to FR-170).
+
+Other AI features stay deferred to epic E12.
+
+Work outside this scope belongs on the roadmap, not in a branch.
 
 **No backwards compatibility.** There are no deployed installs to protect, so
 write the clean version: no compatibility shims, no deprecation paths, no
@@ -331,4 +379,4 @@ architecture call an agent can make is labelled `needs-architecture`.
 the skills it names. `CLAUDE.md` elaborates this constitution and MUST NOT
 contradict it.
 
-**Version**: 1.2.1 | **Ratified**: 2026-09-08 | **Last Amended**: 2026-09-27
+**Version**: 1.3.0 (draft, awaiting the maintainer's approval) | **Ratified**: 2026-09-08 | **Last Amended**: 2026-09-27

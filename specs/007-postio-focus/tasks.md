@@ -365,7 +365,7 @@ maintainer asks.
   - `docs/ARCHITECTURE.md`: the shape diagram gains the four crates, and §9 their boundaries;
   - a note in ADR 0032 on Focus's one-message dialog (FR-037)
   - `docs/config.md`: the `[focus]` section, `[[focus.digests]]` with its due-time rule, `[focus.filter]` and `[focus.model]`
-- [ ] T146 Draft the constitution's Scope amendment (MINOR): name Focus, and allow its optional, user-supplied local model. Update the Sync Impact Report. **It waits for the maintainer's approval, and does not land without it**
+- [ ] T146 Draft the constitution's Scope amendment (MINOR): name Focus, and allow its optional, user-supplied local model. Update the Sync Impact Report. **It waits for the maintainer's approval, and does not land without it**. Drafted 2026-09-27 as 1.3.0, with CLAUDE.md's scope line to match. Tick it when the maintainer approves
 - [ ] T147 [P] SC-011: the first classification pass over a 100,000-message store, as a `POSTIO-MEASUREMENT:` test in `.config/nextest.toml`'s nightly profile
 - [ ] T148 `screens.md` complete for 01–20, with every difference and its reason (SC-009)
 - [ ] T149 Walk quickstart.md by hand (scenarios 1–11) on a throwaway store, and record the outcomes in `screens.md`'s notes

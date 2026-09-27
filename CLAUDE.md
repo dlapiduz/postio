@@ -540,5 +540,7 @@ proportion defer to it. Keys: `e` reply, `a`/`A` archive, `u` undo,
 `J`/`K` walk a thread; all rebindable, table generated into
 `docs/keybindings.md`. Compose
 takes over the reading pane. The sidebar says "Flagged". v1 scope: Linux,
-IMAP+SMTP, one provider preset table, no AI (deferred to epic E12). OAuth is
-in scope — ADR 0006, tracked under #2.
+IMAP+SMTP, one provider preset table, and no AI in Postio itself. Postio Focus
+may use a local model the user runs and connects, which is optional and never
+required (constitution, Scope). Other AI is deferred to epic E12. OAuth is in
+scope — ADR 0006, tracked under #2.
