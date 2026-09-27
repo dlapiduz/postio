@@ -987,6 +987,43 @@ it only if T116's gate fails. What still goes wrong:
 - most misses: questions with no "you" in them, which the second-person rule
   declines by design.
 
+**Built (T116, T119).** The detector's rules clear the gate with no table of
+weights. "Right" is strict: both the marker's kind and its quoted sentence
+must match the label.
+
+| Kind | Labelled | Made | Right | Precision | Recall |
+|---|---|---|---|---|---|
+| All | 79 | 66 | 65 | **0.985** | 0.823 |
+| Question | 44 | 32 | 32 | 1.000 | 0.727 |
+| To-do | 35 | 34 | 33 | 0.971 | 0.943 |
+
+- **Due dates:** 17 of 18 right. The miss is "by then", which refers back to
+  an earlier sentence.
+- **What pushed it past the spike's 0.901:** general rules for the failures
+  listed above. They cover small talk no phrase list knows, "Check out …", a
+  "please" inside a signature, an ask after a name and a dash, and an undated
+  question chosen over a dated need. No dataset item is special-cased, and no
+  label was changed.
+- **The one wrong marker** marks a genuine to-do where the label prefers a
+  question with no "you", which the second-person rule declines by design.
+- **Still a best case.** The rules and the dataset now share readers. The
+  gate cuts own text with the spike's approximation until T117 uses
+  `postio_body::own_text`.
+
+**How due dates are read.**
+- The date is read in the local zone from the Date header, falling back to
+  `received_at`.
+- A day with no time is 08:00, as `parse_when` reads it.
+- "End of day" and "today" are 18:00 that day. "End of the week" is Friday
+  18:00. "End of the month" is its last day at 18:00.
+- "Until" is not a deadline, and "on Monday" says when, not by when.
+
+**Instructions aimed at a machine.** The corpus fixture ADR 0009 Q4 names is
+`untrusted-instructions`, in a new `prompt-injection` category. It holds one
+honest question followed by instruction-shaped and tool-shaped text. Neither
+detector marks such a message. The outcome is inert data holding none of the
+message's words.
+
 **What it stores.** Offsets into the extracted text, and an excerpt of the
 sentence capped at 200 characters. The detector returns only the offsets
 (data-model.md, "Classification output"). Whoever writes the marker cuts the

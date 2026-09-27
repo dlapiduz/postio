@@ -280,12 +280,12 @@ maintainer asks.
 
 ## Phase 11: The classification engine (blocks US8, US12, US9 and US10)
 
-- [ ] T101 `postio-classify` guards through `Facts`: `wrote_to` (from `correspondents`), `took_part`, `own_domain` and `never_filter`. Test first: a fixture table in `crates/postio-classify/src/` unit tests
+- [X] T101 `postio-classify` guards through `Facts`: `wrote_to` (from `correspondents`), `took_part`, `own_domain` and `never_filter`. Test first: a fixture table in `crates/postio-classify/src/` unit tests
 - [ ] T102 `FilingPass` in `commit_batch` (`crates/postio-sync/src/initial.rs:630-713`), for incremental passes only. Test first:
   - a first sync never calls it, and an incremental pass does;
   - an error leaves the mail in the inbox, and the insert commits;
   - at most 4 statements per new message plus writes, counted
-  - one message type crossing the seam: `postio_classify::FiledMessage` (T035) and the pass's own (T034) become one, in `postio-model` or at the host
+  - one message type crossing the seam: `postio_classify::FiledMessage` (T035) and the pass's own (T034) become one, in `postio-model` or at the host. It carries the thread, because a message with no `thread_id` is guarded and never filtered (T101)
   - T034 put the pass in `resync::incremental`'s write unit, not `commit_batch`, which only first syncs, rebuilds and re-enumerations reach; an error there still rolls the unit back, and this task makes it commit the insert (contracts/engine.md)
 - [ ] T103 The body-stage task: `BodyLoaded`, debounced, and a catch-up over `focus_classified`, newest first, at background priority. Test first: rows with no record are processed, and a version bump runs them again
 - [ ] T104 [P] Promote three headers:
@@ -294,7 +294,7 @@ maintainer asks.
   - `is:bulk` and `is:automated` in `postio-search` and `postio-index`.
 
   Test first: the fixtures' operators match, and a first sync's fetch is unchanged
-- [ ] T105 [P] The automated-senders table, shipped as TOML and loaded as data (`crates/postio-classify/data/senders.toml`). Test first: patterns match their fixtures, and the classifier holds no provider constant
+- [X] T105 [P] The automated-senders table, shipped as TOML and loaded as data (`crates/postio-classify/data/senders.toml`). Test first: patterns match their fixtures, and the classifier holds no provider constant
 - [ ] T106 [P] Add a note to ADR 0025 on the three promoted headers, and a line to ARCHITECTURE §6
 
 ## Phase 12: User Story 8: answer an invitation from the row (P2)
@@ -316,10 +316,10 @@ maintainer asks.
 ## Phase 13: User Story 12, milestone 1's part: the built-in needs-action detector (P2)
 
 - [X] T115 [US12] Own-text extraction in `crates/postio-body`: the newest message's text without quoted history or signature, with stable offsets. Test first: fixtures with top-posted and bottom-posted replies. S5 (T011) says: read the part the reader draws, the HTML flattened when there is HTML. Leave out what is never drawn: `<title>`, hidden preheaders, `alt` text
-- [ ] T116 [US12] The detector's rules in `crates/postio-classify`: questions and to-dos, the exclusions, due dates through `parse_when`, and one marker per message (research R10). Test first: the labelled corpus's precision gate of at least 0.9 (SC-013), red against the empty detector. Add the weights table only if T010 said so. S4 (T010): rules with R10's four fixes reach precision 0.901 on 201 items. Build those, and keep the weights table in reserve for a failed gate
-- [ ] T117 [US12] The body task writes question and to-do markers for mail sent directly to the user. The catch-up covers the inbox and the last 30 days. Test first: scenarios 1–3 and 7 (no model configured: markers still appear, and nothing connects). Cut the excerpt as a plain prefix of the sentence, at most 200 characters, with no ellipsis, or the locator cannot find it (R2)
+- [X] T116 [US12] The detector's rules in `crates/postio-classify`: questions and to-dos, the exclusions, due dates through `parse_when`, and one marker per message (research R10). Test first: the labelled corpus's precision gate of at least 0.9 (SC-013), red against the empty detector. Add the weights table only if T010 said so. S4 (T010): rules with R10's four fixes reach precision 0.901 on 201 items. Build those, and keep the weights table in reserve for a failed gate. Done: precision 0.985, recall 0.823, and no weights table (R10)
+- [ ] T117 [US12] The body task writes question and to-do markers for mail sent directly to the user. The catch-up covers the inbox and the last 30 days. Test first: scenarios 1–3 and 7 (no model configured: markers still appear, and nothing connects). Cut the excerpt as a plain prefix of the sentence, at most 200 characters, with no ellipsis, or the locator cannot find it (R2). Pass `BodyMessage.identities`, and `Senders::shipped()` through `Rules::senders()`. Cut own text with `postio_body::own_text`, and switch the gate test in `crates/postio-classify/tests/needs_action.rs` from the spike's approximation to it
 - [ ] T118 [US12] `dismiss_marker { dismissed }` (undoable), and three dismissals write `[focus.filter] stop_markers`. Test first: scenario 5
-- [ ] T119 [US12] Instruction-shaped text produces no action and no request. Test first: scenario 4, on ADR 0009's fixture
+- [X] T119 [US12] Instruction-shaped text produces no action and no request. Test first: scenario 4, on ADR 0009's fixture
 - [ ] T120 [US12] Compare question and to-do markers on screens 01 and 03, and record them
 
 ## Phase 14: User Story 9: spam and updates filtered, with reasons (P2)
@@ -327,7 +327,7 @@ maintainer asks.
 **Goal**: Screen 21, and the counts on 01, 10 and 16. **Independent test**: spec US9.
 
 - [ ] T121 [US9] The `filter_decisions` table, its repository, and the reason vocabulary. Test first: the CHECK refuses an unknown reason
-- [ ] T122 [US9] The filing pass's header rules: list, bulk and automated signals, the senders table, and the server's `$Junk`. With the guards, it writes a decision, archives through the storage verbs in the transaction, and queues the server move. Test first, on the known-answer corpus: scenarios 1–3 and 6, and zero guarded messages filtered (SC-006)
+- [ ] T122 [US9] The filing pass's header rules: list, bulk and automated signals, the senders table, and the server's `$Junk`. With the guards, it writes a decision, archives through the storage verbs in the transaction, and queues the server move. Test first, on the known-answer corpus: scenarios 1–3 and 6, and zero guarded messages filtered (SC-006). Set `thread_id` at filing: without one, a message is guarded and never filtered (T101)
 - [ ] T123 [US9] `[focus] filtering`, and `[focus.filter] never` in `crates/postio-config`. Test first: `filtering = false` files nothing new, and a `never` sender is not filtered. Extend `FocusConfig` (T132)
 - [ ] T124 [US9] The Filtered scope, its tab counts, and the view (screen 21): the header bar, tabs `1`–`7`, reason pills, the focused row's restore button, and the footer. Test first: scenarios 5 and 7, counted
 - [ ] T125 [US9] `restore_filtered { restored }` (undoable): the move to the inbox, the decision deleted, and the sender added to `never` through `toml_edit` and `write_atomically`. Test first: scenario 4, where undo reverses all three

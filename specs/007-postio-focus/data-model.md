@@ -224,6 +224,9 @@ This is the fixed schema (FR-132). There is no free-text field anywhere in it:
 
 The classifier's input is `postio_classify::FiledMessage`: the message, its
 mailbox role, the promoted header facts, and whether it has a calendar part.
+At the body stage it is `BodyMessage { filed, identities }`: the same message,
+and the user's identities on its account, which say who "you" is. The
+automated-senders table reaches the classifier through `Rules::senders()`.
 T034's filing pass in `postio-sync` has a type with the same name. The two are
 reconciled when the engine lane lands (tasks.md T102).
 

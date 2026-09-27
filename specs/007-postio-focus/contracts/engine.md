@@ -110,6 +110,31 @@ pub struct Outcome {
   3. structure and rules;
   4. the user's model, in milestone 2, through a `ModelLayer` trait that
      postio-ai implements.
+- **The needs-action question is not a layer** (T116, T119). After layers 1–3,
+  `at_body` asks it at most once:
+  1. **FR-106's gate** (`considered`) decides whether to ask. The mail must
+     be sent directly to the user. It must carry no list, bulk or automation
+     signal (automation bits, `List-Id`, `List-Unsubscribe`, `$Junk`). It
+     must not be in Junk, Sent, Drafts, Outbox or Trash, not from the user,
+     and not from a sender in the table. An unknown header fact (`None`)
+     counts as no evidence either way.
+  2. **Text that speaks to a machine** gets no marker from either detector
+     ("previous instructions", "system prompt", "AI assistant",
+     `tool_call`, …). This costs recall only on ordinary mail that happens to
+     use those phrases.
+  3. **The user's model** answers when one is connected; otherwise the
+     built-in detector does. Never both (FR-107).
+- **As built:**
+  - `at_filing` and `at_body` take `&dyn Facts` and `&dyn Rules`.
+  - `Rules::senders()` returns the automated-senders table:
+    `Senders::shipped()` in production, loaded from
+    `crates/postio-classify/data/senders.toml`, which `build.rs` validates.
+  - `BodyMessage` carries the filed message and the user's `identities` on
+    its account. They say who "you" is, and which names a greeting can use.
+- **Guards** close only the filter question. A message with no From address,
+  or no `thread_id`, is guarded and never filtered, so filing must set
+  `thread_id` (T102, T122). Holding a conversation the user took part in is
+  T133's rule.
 - **The output is the fixed schema** in the data model, with no free text
   (FR-132).
 - **Boundary rule.** No postio-smtp, io-smtp, postio-account, postio-sync,
