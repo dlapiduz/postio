@@ -40,6 +40,7 @@
 mod webkit_probe;
 
 mod body_view;
+mod body_view_select;
 mod body_view_theme;
 mod feed;
 mod feed_results;
@@ -191,6 +192,14 @@ pub(crate) fn reader_deadline() -> std::time::Duration {
 }
 
 const CASES: &[(&str, fn())] = &[
+    (
+        "body_view_select::a_drag_across_cells_selects_and_copies_them_as_rows",
+        body_view_select::a_drag_across_cells_selects_and_copies_them_as_rows as fn(),
+    ),
+    (
+        "body_view_select::double_and_triple_clicks_select_a_word_and_a_line",
+        body_view_select::double_and_triple_clicks_select_a_word_and_a_line as fn(),
+    ),
     (
         "body_view_theme::darken_is_its_own_undo",
         body_view_theme::darken_is_its_own_undo as fn(),

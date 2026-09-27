@@ -6,6 +6,7 @@
 //! function over the snapshot (research R7), added by the stories that need
 //! it; this is the surface they share.
 
+mod interact;
 mod tiles;
 
 use std::cell::{Cell, RefCell};
@@ -87,6 +88,10 @@ mod imp {
         /// The character to bring back to the top when the next snapshot
         /// arrives: a theme change keeps the reader's place.
         pub(super) anchor: Cell<Option<usize>>,
+        /// The selection, as a range of the text index (FR-017).
+        pub(super) selection: RefCell<Option<std::ops::Range<usize>>>,
+        /// Where a drag began, in the view's coordinates.
+        pub(super) drag_start: Cell<Option<gtk::graphene::Point>>,
         /// The messages the user darkened (FR-013a): for this session only,
         /// never stored.
         pub(super) darkened: RefCell<Vec<String>>,
@@ -111,6 +116,8 @@ mod imp {
                 tiles: RefCell::default(),
                 anchor: Cell::new(None),
                 darkened: RefCell::default(),
+                selection: RefCell::default(),
+                drag_start: Cell::new(None),
                 theme_handlers: RefCell::default(),
             }
         }
@@ -126,6 +133,7 @@ mod imp {
         fn class_init(klass: &mut Self::Class) {
             // The fallback notice's way to what was actually sent; the
             // reader connects it to the original-source view.
+            klass.install_action("clipboard.copy", None, |view, _, _| view.copy());
             klass.install_action("body.view-source", None, |view, _, _| {
                 view.emit_by_name::<()>("view-source", &[]);
             });
@@ -136,6 +144,8 @@ mod imp {
     impl ObjectImpl for BodyView {
         fn constructed(&self) {
             self.parent_constructed();
+            self.obj().set_focusable(true);
+            super::interact::install(&self.obj());
             // The theme source (FR-011): the app's dark and high-contrast
             // state, and nothing else.
             let style = adw::StyleManager::default();
@@ -297,6 +307,49 @@ impl BodyView {
             .or(document.messages.first())?;
         matches!(message.presentation, Paper | Darkened)
             .then(|| (message.scope.clone(), message.presentation))
+    }
+
+    /// Select from `from` to `to`, in the view's coordinates: what a drag
+    /// does.
+    #[doc(hidden)]
+    pub fn drag_select(&self, from: gtk::graphene::Point, to: gtk::graphene::Point) {
+        self.select_points(from, to, true);
+    }
+
+    /// Select the word (`presses == 2`) or line (`3`) at `at`.
+    #[doc(hidden)]
+    pub fn click_select(&self, at: gtk::graphene::Point, presses: i32) {
+        let Some(document) = self.document() else {
+            return;
+        };
+        let Some(offset) = document.text.hit(self.document_point(at)) else {
+            self.set_selection(None);
+            return;
+        };
+        let range = match presses {
+            2 => document.text.word_at(offset),
+            3 => document.text.line_at(offset),
+            _ => {
+                self.set_selection(None);
+                return;
+            }
+        };
+        self.set_selection((!range.is_empty()).then_some(range));
+        self.offer_primary();
+    }
+
+    /// The selected range of the text index.
+    pub fn selection(&self) -> Option<std::ops::Range<usize>> {
+        self.imp().selection.borrow().clone()
+    }
+
+    /// The selection's highlight rectangles, in document coordinates.
+    #[doc(hidden)]
+    pub fn selection_rects(&self) -> Vec<postio_render::Rect> {
+        match (self.selection(), self.document()) {
+            (Some(range), Some(document)) => document.text.rects(range),
+            _ => Vec::new(),
+        }
     }
 
     /// The snapshot on screen, if one has arrived.
@@ -494,6 +547,7 @@ impl BodyView {
                     view.queue_draw();
                 }
             });
+        self.draw_selection(snapshot, left, top);
         snapshot.pop();
     }
 }
