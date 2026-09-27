@@ -57,18 +57,40 @@ pub fn render(request: &RenderRequest, fonts: &FontSet) -> RenderedDocument {
         display_list_commands: u32::try_from(display_list.commands.len()).unwrap_or(u32::MAX),
         ..RenderCounts::default()
     };
-    RenderedDocument {
+    let mut document = RenderedDocument {
         generation: request.generation,
         size: kurbo::Size::new(f64::from(size.width), f64::from(size.height)),
         scale,
         display_list,
+        low_res: Raster {
+            width: 0,
+            height: 0,
+            rgba: Vec::new(),
+        },
         text: TextIndex::default(),
-        links: Vec::new(),
-        messages: Vec::new(),
-        folds: Vec::new(),
+        links: crate::snapshot::links(&doc),
+        messages: crate::snapshot::messages(&doc),
+        folds: crate::snapshot::folds(&doc),
         counts,
         outcome: Outcome::Rendered,
+    };
+    document.low_res = low_res(&document);
+    document
+}
+
+/// The most bytes the low-resolution copy may take.
+const LOW_RES_BUDGET: usize = 16 * 1024 * 1024;
+
+/// The whole document at a quarter of its scale, or smaller still if a
+/// quarter would not fit the budget: what shows where a tile is not ready.
+fn low_res(doc: &RenderedDocument) -> Raster {
+    let (width, height) = (doc.size.width * doc.scale, doc.size.height * doc.scale);
+    let mut factor = 0.25;
+    let bytes = |f: f64| (width * f).ceil() * (height * f).ceil() * 4.0;
+    while bytes(factor) > LOW_RES_BUDGET as f64 {
+        factor /= 2.0;
     }
+    raster_at(doc, factor)
 }
 
 /// A whole document's pixels, at the scale it was rendered for.
@@ -85,8 +107,13 @@ pub struct Raster {
 /// Rasterise all of `doc` at once. Tiles (T056) replace this for the
 /// widget; tests and one-shot captures keep it.
 pub fn rasterize(doc: &RenderedDocument) -> Raster {
-    let width = (doc.size.width * doc.scale).ceil().max(1.0) as u32;
-    let height = (doc.size.height * doc.scale).ceil().max(1.0) as u32;
+    raster_at(doc, 1.0)
+}
+
+/// All of `doc`, at `factor` times the scale it was recorded at.
+fn raster_at(doc: &RenderedDocument, factor: f64) -> Raster {
+    let width = (doc.size.width * doc.scale * factor).ceil().max(1.0) as u32;
+    let height = (doc.size.height * doc.scale * factor).ceil().max(1.0) as u32;
     let mut renderer = anyrender_vello_cpu::VelloCpuImageRenderer::new(width, height);
     let mut rgba = vec![0u8; width as usize * height as usize * 4];
     renderer.render(
@@ -94,7 +121,7 @@ pub fn rasterize(doc: &RenderedDocument) -> Raster {
             anyrender::PaintScene::append_scene(
                 scene,
                 doc.display_list.clone(),
-                kurbo::Affine::IDENTITY,
+                kurbo::Affine::scale(factor),
             )
         },
         &mut rgba,

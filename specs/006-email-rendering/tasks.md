@@ -277,12 +277,12 @@ plan and tasks agree with the decision.
 
 ### Snapshot, text index, tiles, egress
 
-- [ ] T050 [TEST] In `crates/postio-render/tests/snapshot.rs`, render a three-message `postio-ui` conversation document and assert:
+- [X] T050 [TEST] In `crates/postio-render/tests/snapshot.rs`, render a three-message `postio-ui` conversation document and assert:
   - one `MessageBox` per container, in document order, with non-overlapping rects;
   - `LinkBox` targets are only `External` (http, https or mailto), `Verb` or `Fragment`;
   - `FoldBox`es exist for each thread `<details>`;
   - `counts.renders == 1` and `counts.style_passes ≤ 2`
-- [ ] T051 Implement `crates/postio-render/src/snapshot.rs`: record the display list once with `blitz_paint::paint_scene` into `anyrender::recording::Scene`, build the message, link and fold boxes, rasterise the whole document once at 0.25 scale (capped at 16 MiB) as `low_res`, and fill `RenderCounts`
+- [X] T051 Implement `crates/postio-render/src/snapshot.rs`: record the display list once with `blitz_paint::paint_scene` into `anyrender::recording::Scene`, build the message, link and fold boxes, rasterise the whole document once at 0.25 scale (capped at 16 MiB) as `low_res`, and fill `RenderCounts`
 - [ ] T052 [TEST] In `crates/postio-render/tests/text_index.rs`, assert on the text of `html-transactional-receipt.eml`:
   - it contains its table as tab-separated cells and newline-separated rows;
   - a hidden preheader (`display:none`) is absent;
