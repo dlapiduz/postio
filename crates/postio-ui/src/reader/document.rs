@@ -946,17 +946,41 @@ pub fn contain_body_in(content: &str, scope: Option<&str>) -> String {
 /// a style: #323 gave the sender's content a visible edge so that markup
 /// imitating application chrome has a harder time, and a reader missing it
 /// would look completely fine.
+///
+/// It also gives the message's quote folds their ids, as a conversation's
+/// are given theirs, so the renderer can open one (spec 007 FR-034).
 pub fn document_for(content: &str, styles: &str, remote: RemoteImages, sheet: Sheet) -> String {
     wrap_document(
         &format!(
             "{}{}{}",
             senders_stylesheet(styles),
-            contain_body(content),
+            number_quote_folds(&contain_body(content), ""),
             scroll_markers()
         ),
         remote,
         sheet,
     )
+}
+
+/// The opening tag `postio-body` folds quoted text with. A sender cannot
+/// write it: the sanitizer strips every `postio-` class.
+const QUOTE_FOLD: &str = "<details class=\"postio-quote\"";
+
+/// Give every quote fold in `content` its id, `<prefix>q<n>`, numbered in
+/// document order: what the renderer opens and closes a fold by
+/// ([`FOLD_ATTRIBUTE`](super::thread::FOLD_ATTRIBUTE), spec 006 R15). In a
+/// conversation the prefix is the message's anchor and a dash, so no two
+/// messages' quotes share one; a single message needs none.
+pub(crate) fn number_quote_folds(content: &str, prefix: &str) -> String {
+    let fold = super::thread::FOLD_ATTRIBUTE;
+    let mut parts = content.split(QUOTE_FOLD);
+    let mut out = String::with_capacity(content.len());
+    out.push_str(parts.next().unwrap_or_default());
+    for (n, rest) in parts.enumerate() {
+        out.push_str(&format!("{QUOTE_FOLD} {fold}=\"{prefix}q{n}\""));
+        out.push_str(rest);
+    }
+    out
 }
 
 /// A sender's scoped CSS, in Postio's own `<style>` element.
@@ -1575,6 +1599,43 @@ mod tests {
             "folding must not need script: {}",
             rendered.html
         );
+    }
+
+    /// Spec 007 T067 (FR-034): a single message's quote folds carry ids, as
+    /// a conversation's do, so the renderer can open one by activation; and
+    /// each says how many lines it hides. The classic single-message reader
+    /// and Focus's open-email dialog both draw this document.
+    #[test]
+    fn a_single_messages_quote_folds_carry_ids_and_line_counts() {
+        let document_of = |body: MessageBody| {
+            let rendered = body_html(&body, RemoteImages::Blocked, Rendering::Original);
+            document_for(
+                &rendered.html,
+                &rendered.styles,
+                RemoteImages::Blocked,
+                Sheet::Theme,
+            )
+        };
+        let html = document_of(MessageBody {
+            text: None,
+            html: Some(
+                "<p>my reply</p><blockquote><p>one</p><p>two</p></blockquote>\
+                 <p>and more</p><blockquote><p>three</p></blockquote>"
+                    .to_owned(),
+            ),
+        });
+        for fold in [
+            r#"<details class="postio-quote" data-postio-fold="q0"><summary>2 quoted lines</summary>"#,
+            r#"<details class="postio-quote" data-postio-fold="q1"><summary>1 quoted line</summary>"#,
+        ] {
+            assert!(html.contains(fold), "{fold} is not in {html}");
+        }
+        let plain = document_of(MessageBody {
+            text: Some("Fine by me.\n> your words\n> and more of them\n".to_owned()),
+            html: None,
+        });
+        let fold = r#"<details class="postio-quote" data-postio-fold="q0"><summary>2 quoted lines</summary>"#;
+        assert!(plain.contains(fold), "{fold} is not in {plain}");
     }
 
     /// `style-src` must never name a host (#1383, spec FR-022).

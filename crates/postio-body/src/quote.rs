@@ -146,9 +146,50 @@ fn tag_name_ends_at(rest: &str, at: usize) -> bool {
 }
 
 fn wrap_quote(out: &mut String, span: &str) {
-    out.push_str("<details class=\"postio-quote\"><summary>Show quoted text\u{2026}</summary>");
+    open_fold(out, html_quote_lines(span));
     out.push_str(span);
     out.push_str("</details>");
+}
+
+/// A quote fold's opening, and the summary that says how much it hides.
+fn open_fold(out: &mut String, lines: usize) {
+    out.push_str("<details class=\"postio-quote\"><summary>");
+    out.push_str(&fold_label(lines));
+    out.push_str("</summary>");
+}
+
+/// What a quote's fold says, open or closed: how many lines of words it
+/// holds (spec 007 FR-034, "31 quoted lines"). One label for a single
+/// message and a conversation, in every app that draws the document.
+fn fold_label(lines: usize) -> String {
+    if lines == 1 {
+        "1 quoted line".to_owned()
+    } else {
+        format!("{lines} quoted lines")
+    }
+}
+
+/// The lines of words in a `<blockquote>` span, as its plain rendering
+/// breaks them: at blocks and at `<br>`.
+fn html_quote_lines(span: &str) -> usize {
+    crate::parse(span)
+        .to_text()
+        .lines()
+        .filter(|line| has_words(line))
+        .count()
+}
+
+/// The lines of words in a run of `>` lines.
+fn text_quote_lines(run: &str) -> usize {
+    run.lines().filter(|line| has_words(line)).count()
+}
+
+/// Whether a quoted line says anything once its `>` markers are off: a
+/// marker alone is the blank between two quoted paragraphs.
+fn has_words(line: &str) -> bool {
+    !line
+        .trim_start_matches(|c: char| c == '>' || c.is_whitespace())
+        .is_empty()
 }
 
 /// Render a `text/plain` body as HTML: escaped and `<pre>`-wrapped, with
@@ -160,9 +201,7 @@ pub fn text_to_html(text: &str) -> String {
         match stretch {
             Stretch::Own(own) => push_pre(&mut out, &own.lines().collect::<Vec<_>>()),
             Stretch::Quoted(quoted) => {
-                out.push_str(
-                    "<details class=\"postio-quote\"><summary>Show quoted text\u{2026}</summary>",
-                );
+                open_fold(&mut out, text_quote_lines(quoted));
                 push_pre(&mut out, &quoted.lines().collect::<Vec<_>>());
                 out.push_str("</details>");
             }
@@ -369,9 +408,27 @@ mod tests {
         let out = fold_html_quotes("<p>hi</p><blockquote><p>quoted</p></blockquote>");
         assert_eq!(
             out,
-            "<p>hi</p><details class=\"postio-quote\"><summary>Show quoted text\u{2026}</summary>\
+            "<p>hi</p><details class=\"postio-quote\"><summary>1 quoted line</summary>\
              <blockquote><p>quoted</p></blockquote></details>"
         );
+    }
+
+    /// Spec 007 FR-034: a fold says how much it hides, "31 quoted lines",
+    /// counting the lines that hold words. A `>` alone is not a line anyone
+    /// quoted, and neither is the blank between two paragraphs.
+    #[test]
+    fn a_fold_says_how_many_quoted_lines_it_hides() {
+        let text = text_to_html(
+            "Sounds good.\n\n> On Monday you wrote:\n> the old words\n>\n> > and older ones\n\nThanks",
+        );
+        assert!(text.contains("<summary>3 quoted lines</summary>"), "{text}");
+        let html = fold_html_quotes(
+            "<p>hi</p><blockquote><p>one</p><p>two<br>three</p>\
+             <blockquote><p>older</p></blockquote></blockquote>",
+        );
+        assert!(html.contains("<summary>4 quoted lines</summary>"), "{html}");
+        let one = fold_html_quotes("<blockquote><p>just this</p></blockquote>");
+        assert!(one.contains("<summary>1 quoted line</summary>"), "{one}");
     }
 
     #[test]
@@ -382,7 +439,7 @@ mod tests {
         assert_eq!(
             out,
             format!(
-                "<details class=\"postio-quote\"><summary>Show quoted text\u{2026}</summary>{html}</details>"
+                "<details class=\"postio-quote\"><summary>2 quoted lines</summary>{html}</details>"
             )
         );
         // Expanding the outer <details> reveals the whole nested chain.
