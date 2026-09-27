@@ -1,5 +1,7 @@
 //! The data the rules layer reads (`contracts/engine.md`, "The classifier").
 
+use crate::senders::Senders;
+
 /// Everything the classifier decides by, as data rather than code
 /// (constitution VII: providers are data):
 ///
@@ -8,10 +10,15 @@
 /// - the marker kinds the user stopped, from `[focus.filter] stop_markers`
 ///   (T118).
 ///
-/// It holds none of them yet, and each of those tasks adds what its layer
-/// reads here, so a rule can only arrive as data the pipeline is handed.
+/// Each of those tasks adds what its layer reads here, so a rule can only
+/// arrive as data the pipeline is handed.
 ///
 /// The needs-action detector's own rules are not here. They are words, not
 /// senders: plain code with a small compiled-in table, which is what FR-165
 /// allows the built-in detector.
-pub trait Rules {}
+pub trait Rules {
+    /// The automated-senders table: [`Senders::shipped`] in production. The
+    /// needs-action question is not asked of mail from a sender in it
+    /// (FR-106), and T122's filing pass files by it.
+    fn senders(&self) -> &Senders;
+}

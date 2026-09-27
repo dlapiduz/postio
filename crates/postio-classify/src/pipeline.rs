@@ -238,7 +238,7 @@ impl<'a> Pipeline<'a> {
             stage.at_body(message, text, facts, rules, &mut decisions);
         }
         if decisions.marker.is_open() {
-            let marker = self.needs_action(message, text);
+            let marker = self.needs_action(message, text, rules);
             decisions.marker.decide(marker);
         }
         decisions.outcome()
@@ -253,8 +253,9 @@ impl<'a> Pipeline<'a> {
         &self,
         message: &BodyMessage<'_>,
         text: &OwnText<'_>,
+        rules: &dyn Rules,
     ) -> Option<MarkerCandidate> {
-        if !needs_action::considered(message) || needs_action::speaks_to_a_machine(text) {
+        if !needs_action::considered(message, rules) || needs_action::speaks_to_a_machine(text) {
             return None;
         }
         let Some(model) = self.model else {
@@ -313,9 +314,17 @@ mod tests {
         }
     }
 
+    /// No rules: an empty senders table.
     struct NoRules;
 
-    impl Rules for NoRules {}
+    static NO_SENDERS: std::sync::LazyLock<crate::senders::Senders> =
+        std::sync::LazyLock::new(Default::default);
+
+    impl Rules for NoRules {
+        fn senders(&self) -> &crate::senders::Senders {
+            &NO_SENDERS
+        }
+    }
 
     fn ada() -> EmailAddress {
         EmailAddress::new(Some("Ada Norwood"), "ada.norwood@example.com")

@@ -18,7 +18,8 @@ use std::fmt::Debug;
 use std::ops::Range;
 
 use postio_classify::{
-    BodyMessage, Facts, FiledMessage, MarkerKind, Outcome, OwnText, Rules, at_body, at_filing,
+    BodyMessage, Facts, FiledMessage, MarkerKind, Outcome, OwnText, Rules, Senders, at_body,
+    at_filing,
 };
 use postio_model::test_corpus;
 use postio_model::{AccountId, EmailAddress, Identity, MailboxRole, Message, ThreadId};
@@ -55,7 +56,11 @@ impl Facts for NoGuards {
 
 struct BuiltIn;
 
-impl Rules for BuiltIn {}
+impl Rules for BuiltIn {
+    fn senders(&self) -> &Senders {
+        Senders::shipped()
+    }
+}
 
 fn message() -> Message {
     test_corpus::load("untrusted-instructions").parse()

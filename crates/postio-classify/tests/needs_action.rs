@@ -23,7 +23,9 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use chrono::{DateTime, Local, NaiveDate, TimeZone, Utc};
-use postio_classify::{BodyMessage, Facts, FiledMessage, MarkerKind, OwnText, Rules, at_body};
+use postio_classify::{
+    BodyMessage, Facts, FiledMessage, MarkerKind, OwnText, Rules, Senders, at_body,
+};
 use postio_model::{AccountId, EmailAddress, Identity, MailboxId, MailboxRole, Message, ThreadId};
 use serde::Deserialize;
 
@@ -295,7 +297,11 @@ impl Facts for NoGuards {
 /// What the body stage is handed in production.
 struct BuiltIn;
 
-impl Rules for BuiltIn {}
+impl Rules for BuiltIn {
+    fn senders(&self) -> &Senders {
+        Senders::shipped()
+    }
+}
 
 /// The headers each kind of addressing arrives with.
 struct Addressed {

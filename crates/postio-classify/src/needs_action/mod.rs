@@ -14,6 +14,7 @@ use postio_model::{EmailAddress, Flag, MailboxRole};
 
 use crate::input::{BodyMessage, OwnText};
 use crate::outcome::{MarkerCandidate, MarkerKind};
+use crate::rules::Rules;
 
 /// `messages.automation`'s bits: `Precedence` bulk, list and junk, and
 /// `Auto-Submitted` auto-generated and auto-replied. Any of them says the
@@ -23,10 +24,11 @@ const BULK_OR_AUTOMATED: u8 = 1 | 2 | 4 | 8 | 16;
 /// FR-106: whether the needs-action question is asked of this message at
 /// all, by either detector. Only mail sent directly to the user is: their
 /// address in `To`, and not from them. Never mail they are only copied on,
-/// list or bulk mail, mail an automated sender sent, or mail filed as junk
-/// or in their own Sent and Drafts. A header not yet known is no evidence
-/// either way (research R10).
-pub(crate) fn considered(message: &BodyMessage<'_>) -> bool {
+/// list or bulk mail, mail from an automated sender (by its headers, or by
+/// the automated-senders table), or mail filed as junk or in their own Sent
+/// and Drafts. A header not yet known is no evidence either way (research
+/// R10).
+pub(crate) fn considered(message: &BodyMessage<'_>, rules: &dyn Rules) -> bool {
     let filed = &message.filed;
     let mail = filed.message;
     let mine = |address: &EmailAddress| {
@@ -52,6 +54,10 @@ pub(crate) fn considered(message: &BodyMessage<'_>) -> bool {
         && filed.automation.unwrap_or(0) & BULK_OR_AUTOMATED == 0
         && !mail.flags.contains(&Flag::Junk)
         && !own_folder
+        && !mail
+            .from
+            .iter()
+            .any(|from| rules.senders().find(from).is_some())
 }
 
 /// Whether the own text speaks to a machine: it tells an assistant to
@@ -886,6 +892,15 @@ mod tests {
         }
     }
 
+    /// The rules with `senders` as their table.
+    struct Table(crate::senders::Senders);
+
+    impl Rules for Table {
+        fn senders(&self) -> &crate::senders::Senders {
+            &self.0
+        }
+    }
+
     fn considered_with(
         message: &Message,
         change: impl FnOnce(&mut FiledMessage<'_>),
@@ -893,7 +908,10 @@ mod tests {
     ) -> bool {
         let mut filed = filed(message);
         change(&mut filed);
-        considered(&BodyMessage { filed, identities })
+        considered(
+            &BodyMessage { filed, identities },
+            &Table(Default::default()),
+        )
     }
 
     #[test]
@@ -952,6 +970,34 @@ mod tests {
                 "automation {bit}"
             );
         }
+    }
+
+    #[test]
+    fn mail_from_a_sender_the_table_knows_is_not() {
+        // With no header to say so: the table is the second way an
+        // automated sender is known (research R10).
+        let table = Table(
+            crate::senders::Senders::parse(
+                "[[sender]]\nname = \"no-reply\"\nlocal = [\"noreply\"]\nreason = \"notification\"\n",
+            )
+            .expect("a table"),
+        );
+        let mut automated = direct();
+        automated.from = vec![EmailAddress::new(Some("Forge"), "noreply@forge.example")];
+        let identities = identities();
+
+        let considered_by = |message: &Message| {
+            considered(
+                &BodyMessage {
+                    filed: filed(message),
+                    identities: &identities,
+                },
+                &table,
+            )
+        };
+
+        assert!(!considered_by(&automated));
+        assert!(considered_by(&direct()), "and a person is still read");
     }
 
     #[test]

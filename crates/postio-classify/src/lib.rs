@@ -9,7 +9,7 @@
 //! - [`at_filing`] and [`at_body`] are the two moments a message is
 //!   classified: as it is filed, and when its body arrives;
 //! - [`Facts`] answers the guards, and [`Rules`] is everything decided by,
-//!   as data;
+//!   as data: [`Senders`] is the automated-senders table Postio ships;
 //! - [`Outcome`] is the answer, a schema with no text of its own (FR-132);
 //! - the built-in needs-action detector finds a question or a to-do in the
 //!   own text of mail sent directly to the user (FR-104 to FR-106, research
@@ -23,6 +23,7 @@ mod needs_action;
 mod outcome;
 mod pipeline;
 mod rules;
+mod senders;
 
 pub use facts::Facts;
 pub use input::{BodyMessage, FiledMessage, OwnText};
@@ -32,3 +33,4 @@ pub use outcome::{
 };
 pub use pipeline::{ModelLayer, NeedsAction, at_body, at_filing};
 pub use rules::Rules;
+pub use senders::{Sender, Senders, SendersError};
