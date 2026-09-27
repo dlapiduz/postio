@@ -22,7 +22,14 @@ pub const BASE_URL: &str = "postio-message://message/";
 /// scroller, the page. Content wider than the pane widens the document
 /// instead, and the view scrolls it sideways (FR-021a, SC-009). The shared
 /// `reader.css` keeps `overflow-x: auto` for the macOS reader's web view.
-const RENDERER_CSS: &str = ".postio-body { overflow-x: visible !important; }";
+///
+/// What `overflow-x: auto` also did there, implicitly, is kept explicitly:
+/// the box clips vertically and is its own formatting context, so a
+/// sender's negative margin or float cannot reach the next message
+/// (#1346). `flow-root` keeps a float's height inside the box, so the clip
+/// cuts only what escaped it.
+const RENDERER_CSS: &str = ".postio-body { overflow-x: visible !important; \
+                            overflow-y: clip !important; display: flow-root !important; }";
 
 /// Lay out and record `request`'s document, drawing with `fonts`.
 pub fn render(request: &RenderRequest, fonts: &FontSet) -> RenderedDocument {

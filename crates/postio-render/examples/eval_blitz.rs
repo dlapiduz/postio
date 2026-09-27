@@ -30,9 +30,9 @@ use parley::layout::PositionedLayoutItem;
 use postio_body::RemoteImages;
 use postio_model::MessageBody;
 use postio_model::test_corpus::{self, Category, Fixture};
+use postio_render::theme::{self, MessageFacts, Presentation, Rgb, Theme};
 use postio_test_support::fidelity::{self, Image};
 use postio_ui::reader::document::{self, Rendering};
-use postio_render::theme::{self, MessageFacts, Presentation, Rgb, Theme};
 
 /// The reader's width for every render, in CSS pixels.
 const WIDTH: u32 = 800;
