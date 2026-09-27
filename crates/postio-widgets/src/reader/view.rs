@@ -347,15 +347,31 @@ impl Place {
 impl Reader {
     /// Build a reader that resolves inline (`cid:`) images through `source`.
     ///
-    /// The remote-image allow list loads from `$XDG_STATE_HOME` here, once,
-    /// and stays in memory for the reader's life — the same lifetime as the
-    /// window it lives in, so there is never a second reader to disagree
-    /// with it about who is allow-listed.
+    /// The remote-image allow list is the one every reader of the app
+    /// shares ([`super::shared_allowlist`]), persisted in `$XDG_STATE_HOME`:
+    /// loaded once, so no reader can disagree with another about who is
+    /// allowed.
     pub fn new(source: Rc<dyn BlobSource>) -> Self {
-        Self::with_allowlist(
+        Self::sharing(
             source,
-            RemoteImageAllowList::load(),
-            RemoteImageAllowList::path(),
+            &RemoteImageAllowList::path(),
+            super::Verbs::STANDARD,
+        )
+    }
+
+    /// A reader on the allow list this app's other readers persisting to
+    /// `allowlist_path` share ([`super::shared_allowlist`]), drawing `verbs`:
+    /// one "Always allow" or revoke reaches all of them (T020).
+    pub fn sharing(
+        source: Rc<dyn BlobSource>,
+        allowlist_path: &std::path::Path,
+        verbs: super::Verbs,
+    ) -> Self {
+        Self::build(
+            source,
+            super::shared_allowlist(allowlist_path),
+            allowlist_path.to_owned(),
+            verbs,
         )
     }
 
@@ -377,6 +393,20 @@ impl Reader {
     pub fn with_verbs(
         source: Rc<dyn BlobSource>,
         allowlist: RemoteImageAllowList,
+        allowlist_path: std::path::PathBuf,
+        verbs: super::Verbs,
+    ) -> Self {
+        Self::build(
+            source,
+            Rc::new(RefCell::new(allowlist)),
+            allowlist_path,
+            verbs,
+        )
+    }
+
+    fn build(
+        source: Rc<dyn BlobSource>,
+        allowlist: Rc<RefCell<RemoteImageAllowList>>,
         allowlist_path: std::path::PathBuf,
         verbs: super::Verbs,
     ) -> Self {
@@ -482,7 +512,7 @@ impl Reader {
             stopped_actions,
             send_state: Rc::new(std::cell::Cell::new(None)),
             showing: Rc::new(std::cell::Cell::new(false)),
-            allowlist: Rc::new(RefCell::new(allowlist)),
+            allowlist,
             thread: Rc::new(RefCell::new(Vec::new())),
             originals: Rc::new(RefCell::new(std::collections::HashMap::new())),
             renders: Rc::new(RefCell::new(

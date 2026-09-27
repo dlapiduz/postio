@@ -117,6 +117,7 @@ mod gtk_onboarding_enter;
 mod gtk_onboarding_guess;
 mod gtk_onboarding_name;
 mod gtk_onboarding_sync_window;
+mod gtk_one_allowlist;
 mod gtk_orientation;
 mod gtk_pane_cycle;
 mod gtk_parts;
@@ -195,6 +196,14 @@ pub(crate) fn reader_deadline() -> std::time::Duration {
 }
 
 const CASES: &[(&str, fn())] = &[
+    (
+        "gtk_one_allowlist::two_readers_in_one_app_see_one_always_allow",
+        gtk_one_allowlist::two_readers_in_one_app_see_one_always_allow as fn(),
+    ),
+    (
+        "gtk_one_allowlist::a_revoke_in_settings_reaches_the_apps_readers",
+        gtk_one_allowlist::a_revoke_in_settings_reaches_the_apps_readers as fn(),
+    ),
     (
         "gtk_widgets_css::the_classic_app_dresses_the_shared_widgets",
         gtk_widgets_css::the_classic_app_dresses_the_shared_widgets as fn(),

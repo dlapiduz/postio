@@ -1189,11 +1189,10 @@ impl SettingsPanel {
     /// each with a way to revoke it (#871).
     ///
     /// `path` is where a revoke writes back to — `window.rs` hands in the
-    /// same path [`Window::new_reader`](super::window::Window::new_reader)
-    /// loads fresh on every call, so a revoke here reaches the next reader
-    /// built after it. Already-open readers keep whatever they last loaded,
-    /// same as any other file the watcher does not follow into a widget's
-    /// own cache.
+    /// path its readers share one allow list by
+    /// ([`Window::new_reader`](super::window::Window::new_reader)), and a
+    /// revoke here updates that shared list as well as the file, so it
+    /// reaches every reader of the app, open ones included (T020).
     pub fn set_remote_image_allowlist(
         &self,
         list: crate::reader::RemoteImageAllowList,
@@ -1238,6 +1237,12 @@ impl SettingsPanel {
         if let Err(error) = list.save_to(path) {
             tracing::error!(%error, "could not save the remote-image allow-list: {error}");
         }
+        // And the list the app's readers share, so the revoke reaches every
+        // reader -- open ones included -- rather than only the next one to
+        // read the file (T020).
+        postio_widgets::reader::shared_allowlist(path)
+            .borrow_mut()
+            .revoke(sender);
         drop(guard);
         self.redraw_privacy();
     }

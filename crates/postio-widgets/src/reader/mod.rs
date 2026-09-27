@@ -28,3 +28,35 @@ pub use postio_ui::allowlist;
 pub use postio_ui::allowlist::RemoteImageAllowList;
 pub use postio_ui::reader::parts::BlobSource;
 pub use view::{Absent, HeldBack, Reader};
+
+use std::cell::RefCell;
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
+use std::rc::Rc;
+
+thread_local! {
+    /// The allow list each app's readers share, by the file it persists to.
+    /// Readers live on the GTK main thread, so this does too.
+    static SHARED: RefCell<HashMap<PathBuf, Rc<RefCell<RemoteImageAllowList>>>> =
+        RefCell::default();
+}
+
+/// The remote-image allow list every reader of this app that persists to
+/// `path` shares (specs/007-postio-focus T020).
+///
+/// Loaded from `path` the first time anything asks, then held: an "Always
+/// allow" in one reader, or a revoke in the settings panel, is what every
+/// other reader of the app reads next -- open ones included. Keyed by the
+/// file, because an app's readers have that in common and an app writes one
+/// file: that makes it one list per app, where each reader used to load a
+/// copy of its own that went stale the moment another reader changed it.
+pub fn shared_allowlist(path: &Path) -> Rc<RefCell<RemoteImageAllowList>> {
+    SHARED.with(|shared| {
+        Rc::clone(
+            shared
+                .borrow_mut()
+                .entry(path.to_owned())
+                .or_insert_with(|| Rc::new(RefCell::new(RemoteImageAllowList::load_from(path)))),
+        )
+    })
+}

@@ -1100,12 +1100,12 @@ impl Window {
             }
         };
         let source = std::rc::Rc::new(source);
+        // One allow list for every reader this window builds (T020): the
+        // reading pane's and each one the conversation pane asks for.
         match self.imp().allowlist_path.borrow().clone() {
-            Some(path) => crate::reader::Reader::with_allowlist(
-                source,
-                crate::reader::RemoteImageAllowList::load_from(&path),
-                path,
-            ),
+            Some(path) => {
+                crate::reader::Reader::sharing(source, &path, crate::reader::Verbs::STANDARD)
+            }
             None => crate::reader::Reader::new(source),
         }
     }
@@ -3575,10 +3575,10 @@ impl Window {
         // gives (#1011).
         self.finder().press_escape();
         self.close_cheatsheet();
-        // Read fresh on every open rather than cached, the same reason
-        // `new_reader` loads its own copy each time rather than keeping one
-        // long-lived: whatever the reader last wrote should show up here
-        // without this panel needing to watch the file (#871).
+        // Read fresh on every open rather than cached: whatever a reader last
+        // wrote should show up here without this panel needing to watch the
+        // file (#871). The readers themselves share one list in memory, and a
+        // revoke here updates it as well as the file (T020).
         if let Some(path) = self.imp().allowlist_path.borrow().clone() {
             self.settings().set_remote_image_allowlist(
                 crate::reader::RemoteImageAllowList::load_from(&path),
