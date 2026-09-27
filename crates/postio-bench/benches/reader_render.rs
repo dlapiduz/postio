@@ -44,7 +44,12 @@ fn request(fixture: &test_corpus::Fixture) -> Option<RenderRequest> {
             resources.insert_part(None, cid, part.content.clone());
         }
     }
-    let body = document::body_html_in(&parsed.body, RemoteImages::Blocked, Rendering::Original, None);
+    let body = document::body_html_in(
+        &parsed.body,
+        RemoteImages::Blocked,
+        Rendering::Original,
+        None,
+    );
     let html = document::document_for(
         &body.html,
         &body.styles,
