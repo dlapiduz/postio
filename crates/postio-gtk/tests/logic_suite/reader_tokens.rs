@@ -125,3 +125,33 @@ fn strip_comments(css: &str) -> String {
     out.push_str(rest);
     out
 }
+
+/// The dark reader is designed, not derived (spec 006 FR-016, #1588): the
+/// generated dark block carries the design system's named reader roles,
+/// and its ground is no longer the chrome's `neutral-900`.
+#[test]
+fn the_dark_reader_roles_are_the_designed_ones() {
+    let generated = generated();
+    let dark = generated
+        .split("@media (prefers-color-scheme: dark)")
+        .nth(1)
+        .expect("a dark block");
+    for (role, value) in [
+        ("--r-ground", "#2e2e31"),
+        ("--r-ink", "#f5f5f8"),
+        ("--r-ink-secondary", "#e7e7ea"),
+        ("--r-dim", "#b7b7ba"),
+        ("--r-hairline", "#424244"),
+        ("--r-hairline-strong", "#5d5d60"),
+        ("--r-accent", "#94bce3"),
+    ] {
+        assert!(
+            dark.contains(&format!("{role}: {value};")),
+            "{role} is not {value} in dark:\n{dark}"
+        );
+    }
+    assert!(
+        !dark.contains("--r-ground: #2b2b2d;"),
+        "the ground is still neutral-900"
+    );
+}

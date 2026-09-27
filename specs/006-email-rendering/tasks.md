@@ -390,9 +390,9 @@ high-contrast themes (SC-001).
   - the command's title reads "Show as sent";
   - dispatching it again restores "Darken this message" and the `Paper` request
 - [ ] T084 [US1] Handle `darken_message` in `crates/postio-gtk/src/reader/view.rs` and `crates/postio-gtk/src/body_view/mod.rs`, with a session-only set of darkened scopes and the dynamic title. Add the context-menu entry. **View half done** (`BodyView::toggle_darken`, `darken_title`); the reader's dispatch and the context-menu entry land with the switch (T139), when `BodyView` is the reader's body
-- [ ] T085 [US1] Design the dark reader palette (#1588, FR-016) with `/ux-architect` and then `/gtk-design`, against `Design/Mail Client.dc.html`. Record the named roles in the design canvas's source, alongside the light ones
-- [ ] T086 [TEST] [US1] In `crates/postio-gtk/tests/logic_suite/reader_tokens.rs`, assert that the dark reader roles equal the designed values recorded by T085, and that `--r-ground` no longer equals `neutral-900`
-- [ ] T087 [US1] Replace `reader_dark_roles` in `crates/postio-ui/src/tokens.rs` with the designed roles, and regenerate `crates/postio-ui/data/reader-tokens.css`. `BodyView` builds `Theme.palette` from them in `crates/postio-gtk/src/body_view/mod.rs`
+- [X] T085 [US1] Design the dark reader palette (#1588, FR-016) with `/ux-architect` and then `/gtk-design`, against `Design/Mail Client.dc.html`. Record the named roles in the design canvas's source, alongside the light ones
+- [X] T086 [TEST] [US1] In `crates/postio-gtk/tests/logic_suite/reader_tokens.rs`, assert that the dark reader roles equal the designed values recorded by T085, and that `--r-ground` no longer equals `neutral-900`
+- [X] T087 [US1] Replace `reader_dark_roles` in `crates/postio-ui/src/tokens.rs` with the designed roles, and regenerate `crates/postio-ui/data/reader-tokens.css`. `BodyView` builds `Theme.palette` from them in `crates/postio-gtk/src/body_view/mod.rs`. **Amended:** no palette travels in the request -- the renderer reads the reader's colours from the composed document's own generated `reader-tokens.css`, so the designed roles reach every render by that route. The decision and its rationale are on #1588
 
 **Checkpoint**: US1 is independently proven. The contrast test is green over
 the whole corpus in every theme, and darken round-trips.

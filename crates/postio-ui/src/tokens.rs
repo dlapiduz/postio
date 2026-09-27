@@ -682,23 +682,35 @@ fn reader_light_roles(t: &Tokens) -> Result<Vec<(&'static str, String)>, TokenEr
     ])
 }
 
+/// The reader in dark: the design system's named reader roles (spec 006
+/// FR-016, #1588), designed rather than derived from the chrome's ramp --
+/// the reading surface sits three steps above the dark chrome.
 fn reader_dark_roles(t: &Tokens) -> Result<Vec<(&'static str, String)>, TokenError> {
     Ok(vec![
-        ("--r-ground", t.need("color-neutral-900")?.to_string()),
-        ("--r-ink", t.need("color-neutral-100")?.to_string()),
+        (
+            "--r-ground",
+            t.need("color-reader-dark-ground")?.to_string(),
+        ),
+        ("--r-ink", t.need("color-reader-dark-ink")?.to_string()),
         (
             "--r-ink-secondary",
-            t.need("color-neutral-200")?.to_string(),
+            t.need("color-reader-dark-ink-secondary")?.to_string(),
         ),
-        ("--r-dim", t.need("color-neutral-400")?.to_string()),
-        ("--r-hairline", t.need("color-neutral-700")?.to_string()),
+        ("--r-dim", t.need("color-reader-dark-dim")?.to_string()),
+        (
+            "--r-hairline",
+            t.need("color-reader-dark-hairline")?.to_string(),
+        ),
         (
             "--r-hairline-strong",
-            t.need("color-neutral-600")?.to_string(),
+            t.need("color-reader-dark-hairline-strong")?.to_string(),
         ),
-        ("--r-accent", t.need("color-accent-400")?.to_string()),
-        ("--r-quote-bg", t.tint("color-accent-400", 8.0)?),
-        ("--r-match-bg", t.tint("color-accent-400", 32.0)?),
+        (
+            "--r-accent",
+            t.need("color-reader-dark-accent")?.to_string(),
+        ),
+        ("--r-quote-bg", t.tint("color-reader-dark-accent", 8.0)?),
+        ("--r-match-bg", t.tint("color-reader-dark-accent", 32.0)?),
     ])
 }
 
