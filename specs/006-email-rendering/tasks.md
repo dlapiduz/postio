@@ -180,9 +180,10 @@ proven on synthetic images. Nothing renders yet.
   - for platform reach: what each arm means for macOS.
 
   Finish the note with the scorecard and a recommendation
-- [ ] T029 Put the scorecard to the maintainer and record the decision as a Clarifications bullet in `specs/006-email-rendering/spec.md`.
+- [X] T029 Put the scorecard to the maintainer and record the decision as a Clarifications bullet in `specs/006-email-rendering/spec.md`.
   - **If Blitz:** mark research R0 decided; continue with Phase 4 below; promote T023's harness only as far as tasks ask; delete `crates/postio-gtk/examples/eval_webkit.rs`.
   - **If WebKit:** amend FR-001, FR-002, FR-023a and SC-006 as R0's table says. Re-run `/speckit-plan` and `/speckit-tasks` for the engine-specific phases, keeping every completed task. Delete `crates/postio-render` and T023's harness.
+  - **Outcome (2026-09-26): Blitz** (*"lets do blitz for now, performance is critical"*), after the head to head in `docs/notes/2026-09-26-blitz-or-webkit.md`. High contrast shows designed mail as paper (FR-013b). The evaluation's engine findings became T030a–T030b and T031a–T031c below, and amendments to T038, T043 and T073.
 
 **Checkpoint**: The engine is decided and written down, and the spec,
 plan and tasks agree with the decision.
@@ -205,6 +206,8 @@ plan and tasks agree with the decision.
 ### The crate and its proofs (FR-001, FR-023a)
 
 - [X] T030 Create the crate skeleton: `crates/postio-render/Cargo.toml` (edition 2024, no dependencies yet) and `crates/postio-render/src/lib.rs` with a crate doc stating it is GTK-free, network-free and C-free (spec FR-001, FR-023a). Add `crates/postio-render` to both `members` and `default-members` in the root `Cargo.toml`. **Done ahead of the gate, for T023**, which is the one Phase 4 task R0 allows before T029
+- [X] T030a Carry Blitz as a patch queue (research R1): `blitz-dom` and `blitz-paint` `0.3.0-beta.2` vendored exactly as released under `vendor/`, `[patch.crates-io]` in the root `Cargo.toml`, `vendor` excluded from the workspace, `patches/blitz/{upstream.toml,series}`, `scripts/blitz-patches.sh verify|diff`, and `scripts/checks/check-blitz-patches.py` so `check.sh` refuses a `vendor/` edit that is not a patch
+- [X] T030b [TEST] Patch upstream #504, the collapsed-border phantom grid, as `patches/blitz/0001-collapsed-borders-only-where-they-are-drawn.patch`, red first in `crates/postio-render/tests/engine_patches.rs` (four cases red against the release). S1 goes from 5 of 6 to 6 of 6
 - [ ] T031 Add the renderer's dependencies to `crates/postio-render/Cargo.toml` **exactly as the spike had them**:
   - `blitz-dom`, `blitz-html`, `blitz-paint` and `blitz-traits` `=0.3.0-beta.2`, with `default-features = false`;
   - `blitz-dom` features `floats`, `system-fonts` and `svg`;
@@ -230,6 +233,9 @@ plan and tasks agree with the decision.
   - `usvg =0.48`
 
   Then commit T031 to T033 **together**, as one commit in which every check is green. The red state was observed but is never committed (CLAUDE.md: every commit is green for the crates it touches)
+- [ ] T031a [TEST] In `crates/postio-render/tests/engine_patches.rs` or the first `Renderer` test, a message with `<img src="x">` (a relative URL) renders without a panic. Observe it red with `DocumentConfig::base_url` unset, then make every document the renderer builds set it to `postio-message://message/` (research R1: Blitz resolves against a `data:` URL otherwise, and panics)
+- [ ] T031b [TEST] Painting happens at the surface's fractional scale, never 1.0 stretched (research R1, R8): a render at scale 2 has an edge sharpness (the fraction of intermediate greys across a text edge) measurably below the 1.0 render enlarged 2x, as `eval_blitz`'s `POSTIO_EVAL_SHARPNESS` measured. This is why the spike looked blurry on HiDPI
+- [ ] T031c Find why SVG images paint nothing with `svg` on in both crates (research R5 amendment). If the cause is Blitz's, fix it as the next patch in `patches/blitz/` with a case in `engine_patches.rs`; T038 then asserts the painted shapes
 - [ ] T034 [TEST] Add `RULES["postio-render"]` to `scripts/checks/check-crate-boundaries.py`, using the banned list and `why` from `contracts/renderer-graph-checks.md` § 1. Walk normal and build edges only: add the `edges` key the contract describes, so the renderer's dev-dependencies (a socket and `postio-test-support`) are exempt. **Observe it bite**: add a scratch `tokio` dev-dependency to `crates/postio-render/Cargo.toml`, see the check fail naming `tokio`, then remove the scratch line. Committed green
 - [ ] T035 [TEST] In `crates/postio-render/src/lib.rs`, declare `RenderRequest`, `RenderedDocument`, `TextIndex`, `MessageBox`, `LinkBox`, `FoldBox`, `Presentation`, `RenderCounts` and `FallbackReason`, following `data-model.md`. Add `static_assertions::assert_impl_all!(RenderedDocument: Send, Sync)`. Observe it red while the display-list field is a Blitz type, and green once the field is `anyrender::recording::Scene` (retires risk R6-a)
 
@@ -252,7 +258,7 @@ plan and tasks agree with the decision.
   - `serif`, `sans-serif` and `monospace` resolve;
   - shaping `html-cjk-emoji.eml` and `html-rtl-mixed.eml` produces **no glyph id 0** (tofu);
   - `FontSet` construction reads no file outside the fontdb-discovered set and the bundled bytes
-- [ ] T043 Implement `crates/postio-render/src/fonts.rs`. `FontSet` registers ADR 0023's `FACES` first, then the `fontdb` discovery, with explicit generic families and per-script fallbacks for Latin, CJK, Arabic, Hebrew, Devanagari and emoji. It is built once, off the UI thread
+- [ ] T043 Implement `crates/postio-render/src/fonts.rs`. `FontSet` registers ADR 0023's `FACES` first, then the `fontdb` discovery **memory-mapped with `memmap2`, never read into memory** (research R3 amendment: reading every file cost 198 MiB resident), with explicit generic families and per-script fallbacks for Latin, CJK, Arabic, Hebrew, Devanagari and emoji. It is built once, off the UI thread
 - [ ] T044 [TEST] In `crates/postio-render/src/resources.rs` unit tests, assert:
   - a scope-A `cid:` never resolves for a scope-B reference (FR-004);
   - an unknown key resolves to nothing and increments `resources_unresolved`;
@@ -363,7 +369,7 @@ high-contrast themes (SC-001).
   - boundary cases: a canvas at relative luminance 0.91 is `Adapted`, and at 0.89 is `Paper` (FR-013)
 - [ ] T071 [US1] Implement classification in `crates/postio-render/src/theme.rs`: a pure function over computed styles after the first style pass. The `SenderDark` detection reads `data-postio-color-scheme` or a scoped `prefers-color-scheme: dark` rule
 - [ ] T072 [TEST] [US1] Write `crates/postio-render/tests/contrast.rs` (SC-001). Render **every** corpus fixture with an HTML or text body in the light, dark and high-contrast themes. For each text cluster, sample the rasterised pixels in the cluster rect's padding, excluding glyph pixels, and assert that `contrast(cluster.color, sampled) ≥ 4.5`, or `≥ 7` in high contrast, for text of **every** size. There is no large-text allowance (spec FR-012). **Observe red** on `html-white-page-reply.eml` and `html-dark-text-no-background.eml` in dark mode: that is today's bug
-- [ ] T073 [US1] Implement the painted-ground walk and OKLCH L-only repair in `crates/postio-render/src/theme.rs`. Ancestors are composited over the canvas, and a `background-image` ground uses the decoded image's mean colour. Apply the repaired colours as highest-precedence `color` overrides, then restyle once, so `counts.style_passes == 2` exactly when `repaired_runs > 0`
+- [ ] T073 [US1] Implement the painted-ground walk and OKLCH L-only repair in `crates/postio-render/src/theme.rs`. Ancestors are composited over the canvas, and a `background-image` ground uses the decoded image's mean colour. Apply the repaired colours as **one override stylesheet** keyed by the elements' stamped indices at ID-level specificity, and lay the document out afresh with it (research R10 amendment: a `DocumentMutator` style change does not restyle in beta.2), so `counts.style_passes == 2` exactly when `repaired_runs > 0`
 - [ ] T074 [TEST] [US1] In `crates/postio-render/tests/contrast.rs`, `html-illegible-sender-dark.eml` in dark is `SenderDark`, and every cluster still meets the floor. The sender's dark styling is honoured, but not trusted
 - [ ] T075 [TEST] [US1] In `crates/postio-render/tests/presentation.rs`, check paper in dark mode for `html-newsletter.eml`:
   - the container's box is painted with the sender canvas, or white if none, inset from the reader ground, with the reader radius;

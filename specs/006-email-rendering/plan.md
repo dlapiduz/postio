@@ -13,8 +13,9 @@ The spec asks for three things:
   script, not by deleting markup.
 
 **The approach.**
-- **A new crate, `postio-render`, wraps Blitz** (0.3.0-beta.2, exact pins,
-  from crates.io). It is GTK-free, has no networking crate, and has no C
+- **A new crate, `postio-render`, wraps Blitz** (0.3.0-beta.2, exact pins;
+  `blitz-dom` and `blitz-paint` carried in `vendor/` with Postio's patch
+  queue, R1). It is GTK-free, has no networking crate, and has no C
   anywhere in its dependency graph. Two checks prove it (R2, R3).
 - **One render thread per reader.** It owns the engine and returns an
   immutable snapshot: a display list, a text index, link, message and fold
@@ -33,20 +34,23 @@ The spec asks for three things:
 - **WebKit leaves the reader entirely.** The composer keeps it until ADR 0039
   lands (R17).
 
-**The engine is not yet decided.** Everything above describes the Blitz arm.
-Research **R0** sets out a like-for-like evaluation of Blitz against WebKit,
-with gates, scored criteria and a decision rule written before either arm
-runs. It sits between the engine-neutral work and the engine-specific work,
-and the maintainer decides from its scorecard. If WebKit is chosen, R0 lists
-the four requirements that are amended and the plan is re-run for the
-engine-specific phases.
+**The engine is Blitz** (decided 2026-09-26, T029). Research **R0**'s
+like-for-like evaluation ran as written: both arms passed the gates, and the
+head to head measured Blitz at a third of WebKit's memory and half its cold
+start. The scorecard is `docs/notes/2026-09-26-blitz-or-webkit.md`.
 
 All other technical unknowns are resolved in [research.md](./research.md).
-If Blitz is chosen, three risks remain, each retired by a named task at the
-start of its Foundational phase:
+Three risks remain, each retired by a named task at the start of the
+Foundational phase:
 - R6-a: which snapshot types are `Send`;
 - R15-a: `<details>` toggling;
-- the image and SVG paint path the spike never exercised.
+- the image and SVG paint path: raster images paint in the evaluation,
+  SVG images do not yet (T031c).
+
+The evaluation also found engine behaviour the plan must carry (R1): the
+collapsed-border grid (patched, T030b), a panic without `base_url` (T031a),
+styles that do not restyle on mutation (R10's override stylesheet), fonts
+that must be memory-mapped (R3), and painting at the fractional scale (R8).
 
 ## Technical Context
 
@@ -250,8 +254,8 @@ branch lands **once**, as a single pull request reviewed against the spec
 - **Phase 3, the evaluation**: both arms as harnesses, the gates G1–G3, the
   scores S1–S8, a scorecard note, and the maintainer's decision.
 
-The plan's Phases 2–9 below (tasks Phases 4–11) are the **Blitz** arm's plan. If WebKit is chosen, they are
-re-planned before any of them starts.
+The plan's Phases 2–9 below (tasks Phases 4–11) are the Blitz plan, and
+the engine is Blitz.
 
 **Phase 1 — Evidence before engine** (SC-002 prerequisites)
 - **P1-corpus.** Build the rendering corpus with `/add-fixture`, all
@@ -300,8 +304,8 @@ FR-031)
   rects and find as pure functions.
 - **P4-fidelity.** Run the metric over the corpus. The first run records
   MISMATCHES.md and fixes the metric constants once if they are wrong, per
-  the contract. Then fix the gaps: sanitizer hints first, and a `blitz-dom`
-  patch only if unavoidable, recorded in R1.
+  the contract. Then fix the gaps: sanitizer hints first, and a patch in
+  `patches/blitz/` only if unavoidable, recorded in R1.
 - **P4-hostile.** The hostile suite: every fixture contained or `FellBack`
   within 400 ms.
 

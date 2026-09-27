@@ -27,7 +27,7 @@ tracing = { workspace = true }
 webkit6 = { version = "0.6", features = ["v2_50", "gtk_v4_18"] }
 
 [dev-dependencies]
-postio-test-support = { workspace = true, features = ["logs", "fidelity"] }
+postio-test-support = { workspace = true, features = ["logs"] }
 # The performance head to head of spec 006's engine evaluation
 # (`examples/head_to_head.rs`): Blitz drawn in the same GTK window WebKit is,
 # so the two are measured by one instrument. Dev-only, and removed with the
