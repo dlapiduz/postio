@@ -60,10 +60,10 @@ new:
   hints, chips, action bars) move into a GTK component crate that both desktop
   apps depend on, so Focus never depends on the classic app.
 - **Focus needs engine work that the terminal did not.** That means
-  invitations, filtering, digests, reminders, an Obsidian writer and, when the
-  user brings one, a local model for classification and digest summaries.
-  All of it is local, and all of it is built so the classic app could use it
-  too.
+  invitations, filtering, digests, reminders, a simple built-in detector for
+  mail that needs action, an Obsidian writer and, when the user brings one, a
+  local model for classification and digest summaries. All of it is local,
+  and all of it is built so the classic app could use it too.
 
 The maintainer ranked the priorities in this order: **performance**, then
 **consistency**, then **reusable components**.
@@ -76,7 +76,7 @@ The handoff's six open decisions went to the maintainer, with two more this
 spec raised: which renderer planning waits for, and whether Focus's rules act
 while another app runs. That is more than clarify's usual five questions,
 because the handoff asked for every one to be confirmed rather than decided
-silently. The maintainer gave the last answer, on the model, unasked.
+silently. The maintainer gave the last two answers, on the model, unasked.
 
 - Q: Which change is the new message renderer that planning waits for?
   → A: `specs/006-email-rendering`, on `feature/email-rendering`. Planning
@@ -120,6 +120,15 @@ silently. The maintainer gave the last answer, on the model, unasked.
   - Postio embeds, bundles, downloads and starts nothing.
   - Focus is complete without a model, and every feature that uses one stays
     off until the user turns it on (FR-165 to FR-169).
+- Q: What marks questions and to-dos when no model is connected? → A: "I
+  think we can plan for a simple embedded classifier for the needs action
+  question if no ai is connected."
+  - A simple detector built into Postio answers whether a message needs
+    action, meaning a question or a to-do, whenever no model is connected.
+  - It is plain code, not a language model, so it sits beside the answer
+    above rather than against it.
+  - The user's model takes over the question when it is connected (FR-104
+    to FR-108).
 
 ## The inputs, and which one wins
 
@@ -163,7 +172,7 @@ and scrubbed it (constitution VI).
 | C5 | 01–03, 15–19 | The digest row's first line is a written summary ("Summary of 14 messages from 6 senders: rail funding vote, …") | Principle 1, show mail as it is. Handoff decision 1 recommended senders and counts | **Maintainer: as drawn** (Clarifications). It is the one place the list shows text a model wrote (FR-011, FR-124) |
 | C6 | 22, 23 | The digest opens on a model-written summary with numbered references | Same | **Maintainer: as drawn** (Clarifications). The digest opens on its summary when the user has brought a model (milestone 2), and on its plain list otherwise (FR-125, FR-172 to FR-175) |
 | C7 | 05, 06 | A plain-text composer with a "Markdown Ctrl M" toggle | Handoff: reuse the existing composer, not a new plain-text one | **Handoff wins.** The existing composer, in 05's frame. The Markdown toggle is dropped unless the existing composer has an equivalent (the plan checks). "Plain text · N words" stays, saying what will be sent |
-| C8 | 01, 03, 17–19 | Question and To-do markers | Handoff decision 2: they need the model | Milestone 2. Milestone 1 shows only Invite markers |
+| C8 | 01, 03, 17–19 | Question and To-do markers | Handoff decision 2: they need the model | **Maintainer: a simple built-in detector answers them when no model is connected** (Clarifications), so milestone 1 shows them as drawn (FR-104 to FR-108) |
 | C9 | 01, 03, 04, 25 | "Task in Atlas · due Fri", and Task `t` / Note `n` buttons | Obsidian is a later milestone | Shown only once Obsidian exists (milestone 3) |
 | C10 | 01, 10, 16 | "186 filtered today", "4 digest rules" | Handoff: a count appears only once its feature exists | Shown when the feature exists |
 | C11 | 09 | "Archive everything read, older than a week" shows no key (—) | Constitution II: every command has a key | **Constitution wins.** It gets a key in the one keymap (plan) |
@@ -223,10 +232,12 @@ order of work on the branch, not landings:
 - **Milestone 1**: screens 01–20, and the differentiators that need no
   model:
   - Invite markers from the message's calendar part
+  - Question and To-do markers from a simple built-in detector
   - filtering by headers and structure, with the Filtered view (21)
   - digest rules by sender (24), each digest opening on its plain list.
 - **Milestone 2, the optional local model the user brings**:
-  - Question and To-do markers
+  - the user's model answering the needs-action question in place of the
+    built-in detector, when it is connected
   - digest summaries (22, 23), which the digest then opens on
   - digests by mailing list, by search, and "more like this".
 - **Milestone 3**: Obsidian (25) and `postio://` links.
@@ -238,6 +249,8 @@ order of work on the branch, not landings:
 - The Filtered reasons have room for reasons a model decides.
 - Digest rules have room for list, search and "more like this" matches.
 - The classification step has a seam where a model's decisions will enter.
+  The needs-action question has a single detector seam, so the user's model
+  can answer it in place of the built-in detector.
 
 A header count appears only once its feature exists: "186 filtered today"
 with filtering, "4 digest rules" with digests, and "Task in Atlas · due Fri"
@@ -951,47 +964,80 @@ the reverse.
 
 ---
 
-### User Story 12 - Questions and to-dos called out, quoted verbatim (Priority: P3, milestone 2)
+### User Story 12 - Questions and to-dos called out, quoted verbatim (Priority: P2, milestone 1; the user's model in milestone 2)
 
-When a message asks the user a direct question, or asks them to do
-something, its row gets a marker: "Question", or "To-do" with a due date if
-the mail gives one. The marker quotes the triggering sentence **verbatim**,
-never paraphrased. The open message highlights the sentence where it appears.
-The marker's action is Reply `e` for a question, and Task `t` and Snooze `s`
-for a to-do. The user can dismiss a wrong marker, and the dismissal is
-remembered as a correction.
+When a message sent directly to the user asks them a question, or asks them
+to do something, its row gets a marker: "Question", or "To-do" with a due
+date if the sentence names one. The marker quotes the triggering sentence
+**verbatim**, never paraphrased, and the open message highlights it where it
+appears. The marker's action is Reply `e` for a question, and Task `t` and
+Snooze `s` for a to-do (Task once Obsidian exists). The user can dismiss a
+wrong marker, and the dismissal is remembered as a correction.
 
-A small local model makes these decisions. It is one the user brings and
-runs on this machine, never one Postio ships (FR-165). Without it, Focus
-shows no Question or To-do markers, and "Has action" counts invitations only.
-The model returns only a fixed schema: a category, spans as character offsets
-into the body, and a due date. It never returns text of its own.
+Two detectors can answer this "needs action" question, and one answers at a
+time (Clarifications):
 
-**Why this priority**: Milestone 2, because it needs the local model. A
-marker that is often wrong is worse than none (brief: "Risks").
+- **Built in.** When no model is connected, a simple detector built into
+  Postio decides. It is plain code over the message's own text and headers,
+  runs inside Postio, and needs no model runtime. It is conservative: when
+  unsure, it marks nothing.
+- **The user's model.** When the user has connected a model (FR-165), the
+  model decides instead. It returns only a fixed schema: a category, spans
+  as character offsets into the body, and a due date. It never returns text
+  of its own.
 
-**Independent Test**: Run a fixture corpus with labelled questions and
-to-dos, including instruction-shaped text meant to hijack a model, through
-classification with a fake model that returns canned spans. Assert:
+Either way, the quote is a span of the message's own text, so it is verbatim
+by construction.
 
-- every quoted marker is a byte-exact substring of the body;
+**Why this priority**: The screens draw these markers in milestone 1, and the
+built-in detector needs no model, so milestone 1 has them. A marker that is
+often wrong is worse than none (brief: "Risks"), so the built-in detector is
+held to a precision bar (SC-013) and errs toward silence.
+
+**Independent Test**: Run a labelled fixture corpus through classification,
+first with no model connected, then with a fake model that returns canned
+spans. The corpus holds:
+
+- questions and to-dos sent directly to the user;
+- the same sentences in quoted history, signatures, bulk mail, and mail the
+  user is only copied on;
+- instruction-shaped text meant to hijack a model.
+
+Assert:
+
+- every marker quotes a byte-exact span of the newest message's own text;
+- the built-in detector meets SC-013's precision on the corpus;
 - markers are computed off the UI path;
-- the instruction-shaped text produced no action and no request.
+- nothing was sent, and no request was made beyond the model's own when one
+  is connected.
 
 **Acceptance Scenarios**:
 
-1. **Given** a message containing "Can you approve these by Friday so finance
-   can close the quarter?", **When** it is classified, **Then** its row
-   shows Question, with that sentence exactly as written.
-2. **Given** a body containing instructions addressed to an assistant,
+1. **Given** no model connected, and a message sent directly to the user
+   containing "Can you approve these by Friday so finance can close the
+   quarter?", **When** it is classified, **Then** its row shows Question,
+   with that sentence exactly as written.
+2. **Given** no model connected, and "Please leave comments by Wednesday;
+   I'd like to freeze it Thursday." sent directly to the user on Saturday 26
+   September, **When** it is classified, **Then** its row shows To-do, due
+   Wed 30 Sep, quoting "Please leave comments by Wednesday".
+3. **Given** the same question in quoted history, in a signature, in a
+   newsletter, or in mail the user is only copied on, **When** it is
+   classified, **Then** no marker appears.
+4. **Given** a body containing instructions addressed to an assistant,
    **When** it is classified, **Then** nothing is sent, no command runs, and
-   no network request is made beyond the local model's own.
-3. **Given** a marker dismissed as wrong, **When** the same sender sends a
-   similar message, **Then** the dismissal is taken into account (brief,
-   layer 2).
-4. **Given** no model configured, **When** mail arrives, **Then** no
-   Question or To-do markers appear, "Has action" counts invitations only,
-   and Postio opens no connection to any model runtime.
+   no network request is made, beyond the local model's own when one is
+   connected.
+5. **Given** a marker dismissed as wrong, **When** the message is classified
+   again, **Then** the marker does not return. **When** the same sender
+   sends a similar message, **Then** the dismissal is taken into account
+   (brief, layer 2).
+6. **Given** a model connected, **When** mail arrives, **Then** its markers
+   come from the model. **When** the model is not running, **Then** the
+   built-in detector answers instead, and nothing waits for the model.
+7. **Given** no model configured, **When** mail arrives, **Then** markers
+   still appear from the built-in detector, and Postio opens no connection
+   to any model runtime.
 
 ---
 
@@ -1158,6 +1204,11 @@ the conversation in Postio.
   does without a model, and says so once where a model-backed feature would
   appear. It does not keep retrying. When the model is back, recent mail it
   missed can gain markers, but nothing already listed moves.
+- **A body not yet on this machine.** Question and To-do markers need the
+  message's text, so they appear once the body is local. Postio never
+  fetches a body just to classify it.
+- **Mail in a language the built-in detector does not read.** It marks
+  nothing, rather than guess (Assumptions).
 - **Reminders.**
   - A reply from someone other than the user cancels the reminder. The
     user's own later message does not.
@@ -1504,6 +1555,34 @@ the conversation in Postio.
   Accept or Decline. After an answer, the marker MUST show what was
   answered.
 
+**Questions and to-dos** (milestone 1 built in; milestone 2 the user's
+model)
+
+- **FR-104**: A message sent directly to the user that asks them a question,
+  or asks them to do something, MUST get a Question or To-do marker. The
+  marker MUST quote the triggering sentence byte-exact, as a span of the
+  newest message's own text, never of quoted history or a signature. A To-do
+  MUST carry a due date when the sentence names one, read on this machine.
+- **FR-105**: When no model is connected, a built-in detector MUST answer
+  this question. It is plain code over the message's own text and headers.
+  It runs inside Postio, off the UI path, needs no model runtime, and makes
+  no network request. Given the same message and the same corrections, it
+  MUST always give the same answer.
+- **FR-106**: The built-in detector MUST be conservative:
+  - it considers only mail sent directly to the user, never mail they are
+    only copied on, list or bulk mail, or mail from automated senders;
+  - when unsure, it marks nothing.
+
+  Its precision is held to SC-013.
+- **FR-107**: When the user has connected a model, the model MUST answer the
+  question in place of the built-in detector (FR-170). When that model is
+  not running, the built-in detector MUST answer, so markers never wait on
+  the model.
+- **FR-108**: A dismissed marker MUST be remembered as a correction, and MUST
+  never return on that message. Both detectors MUST take dismissals into
+  account. The plan decides how far a dismissal teaches beyond its own
+  message, and records it.
+
 **Filtering** (milestone 1: headers and structure)
 
 - **FR-110**: While Focus runs, spam, promotions and automated updates
@@ -1582,11 +1661,14 @@ the conversation in Postio.
   one classification step, run where mail is filed. The step runs in
   layers, and an earlier layer's decision stands:
   1. the guard rules;
-  2. structure and rules: calendar parts, list and bulk headers, automated
-     senders as data, and the user's digest rules;
-  3. the user's corrections;
-  4. later, and only when the user has brought one, the local model, for
-     what layers 1–3 left undecided.
+  2. the user's corrections. They rank above the rules because a restore
+     must beat the rule that filtered the message;
+  3. structure and rules: calendar parts, list and bulk headers, automated
+     senders as data, the user's digest rules, and the built-in
+     needs-action detector when no model is connected;
+  4. only when the user has brought one, the local model, for what layers
+     1–3 left undecided and for the needs-action question in place of the
+     built-in detector.
 - **FR-131**: Classification MUST never run on the UI path, and MUST never
   block the UI. A message MUST be listable, openable and actionable before
   it has been classified.
@@ -1621,9 +1703,15 @@ the conversation in Postio.
   Timings are measured nightly and report without gating.
 - **FR-141**: The first classification of an existing store MUST run in the
   background, at low priority, on at most one CPU core. The inbox is
-  classified first, newest first. Milestone 1's pass MUST read no message
-  bodies apart from calendar parts. Its time budget is in SC-011. The same
-  limits apply to the catch-up when Focus opens (FR-134).
+  classified first, newest first.
+  - Filtering, digests and invitations MUST read no message bodies apart
+    from calendar parts.
+  - The needs-action detector MUST read only the bodies of inbox mail from
+    the last 30 days that was sent directly to the user, and only bodies
+    already on this machine. It never fetches a body to classify it.
+
+  The time budgets are in SC-011. The same limits apply to the catch-up when
+  Focus opens (FR-134).
 - **FR-142**: When the user turns the model on, its first pass MUST be
   limited to the inbox and the last 30 days of mail, sent one request at a
   time, in the background. The runtime is the user's own, so Postio bounds
@@ -1664,15 +1752,17 @@ milestone 1 does not design it out)
   runtime they install, choose and run on this machine (for example Ollama,
   or a llama.cpp server), named in `config.toml` (Clarifications). Postio
   MUST NOT embed, bundle, download, install or start a model or an inference
-  runtime. No inference engine and no model weights may be compiled into or
-  shipped with any Postio app, and a dependency check MUST enforce it.
+  runtime. No language model, no inference engine and no model file may be
+  compiled into or shipped with any Postio app, and a dependency check MUST
+  enforce it. The built-in needs-action detector (FR-105) is none of these:
+  it is plain code, with at most a small table of rules or weights compiled
+  in, and it needs no inference engine.
 - **FR-166**: The model MUST be optional. It is off until the user names a
   provider. Postio MUST NOT look for a model runtime the user has not
   configured, not even on this machine (constitution VI: no speculative
   connection). Each feature that uses the model MUST have its own switch.
 - **FR-167**: Focus MUST be complete without a model. Without one:
-  - there are no Question or To-do markers, and "Has action" counts
-    invitations;
+  - Question and To-do markers come from the built-in detector (FR-105);
   - digests open on their plain list, and digest rows show their senders
     (FR-175);
   - "Digest mail like this" is absent, while list and search rules still
@@ -1694,9 +1784,10 @@ milestone 1 does not design it out)
   model is named or special-cased in code (constitution VII: providers are
   data).
 
-- **FR-170**: Question and To-do markers MUST quote their sentence
-  byte-exactly from the body, and never paraphrase it. A dismissed marker
-  MUST be remembered as a correction.
+- **FR-170**: When connected, the user's model MUST answer the needs-action
+  question in place of the built-in detector, under the same rules (FR-104,
+  FR-106, FR-108). It MUST return only the fixed schema (FR-132), so its
+  quotes are byte-exact spans of the body, never paraphrased.
 - **FR-171**: Digest rules MUST accept a mailing list, a query and "more like
   this", each previewed before it is saved.
 - **FR-172**: When the user has brought a model (FR-165), each digest MUST
@@ -1746,7 +1837,8 @@ milestone 1 does not design it out)
 - **Action marker**: something a message asks of the user. Its kind
   (invite, question, to-do); a date and time (the event, or a due date);
   for a quote, the sentence as offsets into the body plus a short excerpt;
-  the action that answers it; and whether the user has answered or
+  what made it (the calendar part, the built-in detector or the user's
+  model); the action that answers it; and whether the user has answered or
   dismissed it.
 - **Invitation**: what the calendar part says. Title, start and end, time
   zone, location, organiser, whether it is a request, an update or a
@@ -1817,15 +1909,20 @@ milestone 1 does not design it out)
 - **SC-010**: Once the shared components have moved, the classic app's test
   suites pass with nothing changed but import paths and default key
   bindings.
-- **SC-011**: For a store of 100,000 messages, milestone 1's first
-  classification pass finishes in under 5 minutes on one core of the
-  reference workstation. It reads no body beyond calendar parts, and the
-  interface keeps its interaction budget throughout.
+- **SC-011**: For a store of 100,000 messages, on one core of the reference
+  workstation, with the interface keeping its interaction budget throughout:
+  - milestone 1's filtering, digest and invitation pass finishes in under 5
+    minutes, reading no body beyond calendar parts;
+  - the built-in needs-action pass over the inbox and the last 30 days
+    finishes in under 1 minute, reading only bodies already on this machine.
 - **SC-012**: Over the maintainer's first month on a real mailbox, fewer
   than 1 in 100 filtered messages are restored. This is measured on this
   machine, from Postio's own store, and reported nowhere else.
-- **SC-013** (milestone 2): Fewer than 1 in 10 question and to-do markers
-  are dismissed as wrong, measured the same way.
+- **SC-013**: On the labelled needs-action corpus, at least 9 in 10 of the
+  built-in detector's Question and To-do markers are right. How many it
+  misses is reported, not gated. On the maintainer's own mailbox, fewer than
+  1 in 10 markers are dismissed as wrong, whichever detector made them,
+  measured the same way as SC-012.
 - **SC-014** (milestone 2): On the summary fixture corpus:
   - every shown statement cites at least one of the digest's messages;
   - every cited passage exists byte-exact in its message;
@@ -1834,9 +1931,10 @@ milestone 1 does not design it out)
   and every command an app offers has a key. This is proven by enumerating
   the one keymap.
 - **SC-016**: With no model configured, every milestone 1 acceptance
-  scenario passes, and Postio opens zero connections to any model runtime,
-  proven by a test that fails on any attempt. No Postio package contains a
-  model or an inference engine.
+  scenario passes, Question and To-do markers still appear from the built-in
+  detector, and Postio opens zero connections to any model runtime. A test
+  that fails on any connection attempt proves it. No Postio package contains
+  a language model or an inference engine.
 
 ## Assumptions
 
@@ -1850,12 +1948,17 @@ milestone 1 does not design it out)
   - Postio never embeds, bundles, downloads, installs or starts one, and
     never looks for one the user has not configured.
   - Without it, Focus is complete, and every model-backed feature is absent
-    or falls back (FR-167).
+    or falls back (FR-167). Question and To-do markers fall back to the
+    built-in detector, which is plain code, not a model.
 
   This matches ADR 0009 ("Nothing is bundled"), which the model otherwise
   follows. The constitution's Scope still says v1 has "no AI (deferred to
   epic E12)". The amendment that reconciles the two lands with the branch,
   with the maintainer's approval (FR-009).
+- **The built-in needs-action detector reads English first.** Mail in a
+  language it does not handle gets no Question or To-do marker from it,
+  rather than a guess. The user's model, when connected, is not limited this
+  way.
 - **One inbox across accounts.** This is the brief's proposal. Folders and
   labels are grouped by account wherever there is more than one account.
 - **Filtering starts on.** It covers mail filed from the first open,
@@ -1928,8 +2031,9 @@ milestone 1 does not design it out)
 - Automatic replies or sends. The only automatic acts are archiving filtered
   mail and holding digest mail, both guarded, visible and undoable.
 - Cloud models.
-- Embedding, bundling, downloading, installing or starting a model or an
-  inference runtime. The model is the user's own, and optional.
+- Embedding, bundling, downloading, installing or starting a language model
+  or an inference runtime. The model is the user's own, and optional. The
+  built-in needs-action detector is plain code, not a model.
 - An Obsidian plugin, or editing notes beyond appending captures.
 - A new protocol, backend or sync mode.
 - Focus on macOS, iOS or in the terminal.
