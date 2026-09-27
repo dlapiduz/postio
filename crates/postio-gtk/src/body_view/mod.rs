@@ -6,6 +6,7 @@
 //! function over the snapshot (research R7), added by the stories that need
 //! it; this is the surface they share.
 
+mod a11y;
 pub mod find;
 mod interact;
 mod tiles;
@@ -62,7 +63,7 @@ pub fn prewarm_fonts() {
     });
 }
 
-mod imp {
+pub(super) mod imp {
     use super::*;
 
     #[derive(glib::Properties)]
@@ -145,9 +146,11 @@ mod imp {
         const NAME: &'static str = "PostioBodyView";
         type Type = super::BodyView;
         type ParentType = gtk::Widget;
-        type Interfaces = (gtk::Scrollable,);
+        type Interfaces = (gtk::Scrollable, gtk::AccessibleText);
 
         fn class_init(klass: &mut Self::Class) {
+            // A document, read as text (FR-020).
+            klass.set_accessible_role(gtk::AccessibleRole::Document);
             // The fallback notice's way to what was actually sent; the
             // reader connects it to the original-source view.
             klass.install_action("clipboard.copy", None, |view, _, _| view.copy());
@@ -240,7 +243,7 @@ glib::wrapper! {
     /// The reading surface: a snapshot drawn as tiles.
     pub struct BodyView(ObjectSubclass<imp::BodyView>)
         @extends gtk::Widget,
-        @implements gtk::Accessible, gtk::Buildable, gtk::ConstraintTarget, gtk::Scrollable;
+        @implements gtk::Accessible, gtk::AccessibleText, gtk::Buildable, gtk::ConstraintTarget, gtk::Scrollable;
 }
 
 impl BodyView {
@@ -676,6 +679,11 @@ impl BodyView {
             images_placeholdered: u64::from(counts.images_placeholdered),
             display_list_commands: u64::from(counts.display_list_commands),
         });
+        let old_len = imp
+            .document
+            .borrow()
+            .as_ref()
+            .map_or(0, |doc| doc.text.text.chars().count());
         let document = Arc::new(document);
         imp.tiles.borrow_mut().reset(document.clone());
         let anchor = imp.anchor.take().and_then(|offset| {
@@ -694,6 +702,7 @@ impl BodyView {
         }
         // The text is the same, so a find carries over to the new snapshot.
         self.refresh_find();
+        self.announce_contents(old_len);
         self.queue_draw();
     }
 
