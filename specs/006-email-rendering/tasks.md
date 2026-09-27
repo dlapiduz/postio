@@ -208,13 +208,13 @@ plan and tasks agree with the decision.
 - [X] T030 Create the crate skeleton: `crates/postio-render/Cargo.toml` (edition 2024, no dependencies yet) and `crates/postio-render/src/lib.rs` with a crate doc stating it is GTK-free, network-free and C-free (spec FR-001, FR-023a). Add `crates/postio-render` to both `members` and `default-members` in the root `Cargo.toml`. **Done ahead of the gate, for T023**, which is the one Phase 4 task R0 allows before T029
 - [X] T030a Carry Blitz as a patch queue (research R1): `blitz-dom` and `blitz-paint` `0.3.0-beta.2` vendored exactly as released under `vendor/`, `[patch.crates-io]` in the root `Cargo.toml`, `vendor` excluded from the workspace, `patches/blitz/{upstream.toml,series}`, `scripts/blitz-patches.sh verify|diff`, and `scripts/checks/check-blitz-patches.py` so `check.sh` refuses a `vendor/` edit that is not a patch
 - [X] T030b [TEST] Patch upstream #504, the collapsed-border phantom grid, as `patches/blitz/0001-collapsed-borders-only-where-they-are-drawn.patch`, red first in `crates/postio-render/tests/engine_patches.rs` (four cases red against the release). S1 goes from 5 of 6 to 6 of 6
-- [ ] T031 Add the renderer's dependencies to `crates/postio-render/Cargo.toml` **exactly as the spike had them**:
+- [X] T031 Add the renderer's dependencies to `crates/postio-render/Cargo.toml` **exactly as the spike had them**:
   - `blitz-dom`, `blitz-html`, `blitz-paint` and `blitz-traits` `=0.3.0-beta.2`, with `default-features = false`;
   - `blitz-dom` features `floats`, `system-fonts` and `svg`;
   - `anyrender =0.13` and `anyrender_vello_cpu =0.17`.
 
   Add a stub in `crates/postio-render/src/lib.rs` that names one item from each dependency, so that `scripts/checks/check-unused-deps.py` stays green. **Do not commit yet**: T031 to T033 are one commit. The next task's check must see the spike's graph red
-- [ ] T032 [TEST] Write `scripts/checks/check-renderer-is-memory-safe.py` to `contracts/renderer-graph-checks.md` § 2. It covers:
+- [X] T032 [TEST] Write `scripts/checks/check-renderer-is-memory-safe.py` to `contracts/renderer-graph-checks.md` § 2. It covers:
   - `links` outside the allowlist;
   - `-sys` packages;
   - `cc`, `cmake` or `bindgen` as a build dependency;
@@ -224,7 +224,7 @@ plan and tasks agree with the decision.
   - `panic = "abort"` in any profile.
 
   Each failure names its fix. **Observe it red** against T031's uncommitted graph: it must name `yeslogic-fontconfig-sys` and `blitz-paint` without `svg`
-- [ ] T033 Fix `crates/postio-render/Cargo.toml` to the plan's feature set so that T032 goes green:
+- [X] T033 Fix `crates/postio-render/Cargo.toml` to the plan's feature set so that T032 goes green:
   - `blitz-dom` features `floats` and `svg` only;
   - `blitz-paint` feature `svg`;
   - `parley` without `system`;
