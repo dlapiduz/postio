@@ -1235,12 +1235,10 @@ impl<'a> ThreadRepository<'a> {
     /// as it is in each inbox's own list: folding it into one row, as the
     /// unified view does, costs the partner search five more statements a
     /// page, which this budget has no room for.
-    pub async fn focus_page(&self, query: &FocusListQuery) -> Result<Vec<ThreadListRow>> {
-        self.focus_page_at(query, 0).await
-    }
-
-    /// [`Self::focus_page`] at a row offset from its cursor, for a list model
-    /// that scrolls by index, with the caveat [`Self::page_at`] carries.
+    ///
+    /// `offset` counts rows from the cursor, for a list model that scrolls
+    /// by index, with the caveat [`Self::page_at`] carries: the store's seek
+    /// marks are what keep it small.
     pub async fn focus_page_at(
         &self,
         query: &FocusListQuery,

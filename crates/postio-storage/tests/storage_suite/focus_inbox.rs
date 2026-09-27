@@ -230,7 +230,7 @@ async fn focus_s_inbox_is_every_enabled_inbox_s_conversations_newest_first() {
     let inboxes = world(&connection).await;
 
     let rows = ThreadRepository::new(&connection)
-        .focus_page(&focus(&inboxes, 50, None))
+        .focus_page_at(&focus(&inboxes, 50, None), 0)
         .await
         .expect("a Focus page");
 
@@ -270,11 +270,14 @@ async fn a_focus_inbox_page_is_at_most_three_statements_and_reads_only_what_it_s
     let threads = ThreadRepository::new(&connection);
     let query = focus(&inboxes, 50, None);
     // Warm: this is about the page's shape, not a cold statement cache.
-    let _ = threads.focus_page(&query).await.expect("a first read");
+    let _ = threads
+        .focus_page_at(&query, 0)
+        .await
+        .expect("a first read");
 
     let mut page = Vec::new();
     let first = counted_async(|| async {
-        page = threads.focus_page(&query).await.expect("a page");
+        page = threads.focus_page_at(&query, 0).await.expect("a page");
     })
     .await;
     assert!(
@@ -302,13 +305,13 @@ async fn a_focus_inbox_page_is_at_most_three_statements_and_reads_only_what_it_s
 
     // A page resumed from a cursor costs the same.
     let head = threads
-        .focus_page(&focus(&inboxes, 2, None))
+        .focus_page_at(&focus(&inboxes, 2, None), 0)
         .await
         .expect("a head");
     let after = Some(head.last().expect("two rows").cursor());
     let resumed = counted_async(|| async {
         threads
-            .focus_page(&focus(&inboxes, 2, after))
+            .focus_page_at(&focus(&inboxes, 2, after), 0)
             .await
             .expect("a resumed page");
     })
@@ -351,7 +354,7 @@ async fn focus_s_inbox_pages_by_cursor_and_by_offset_to_the_same_rows() {
     let inboxes = world(&connection).await;
     let threads = ThreadRepository::new(&connection);
     let whole = threads
-        .focus_page(&focus(&inboxes, 50, None))
+        .focus_page_at(&focus(&inboxes, 50, None), 0)
         .await
         .expect("the whole list");
     let ids = |rows: &[ThreadListRow]| rows.iter().map(ThreadListRow::cursor).collect::<Vec<_>>();
@@ -360,7 +363,7 @@ async fn focus_s_inbox_pages_by_cursor_and_by_offset_to_the_same_rows() {
     let mut after = None;
     loop {
         let page = threads
-            .focus_page(&focus(&inboxes, 2, after))
+            .focus_page_at(&focus(&inboxes, 2, after), 0)
             .await
             .expect("a page");
         let Some(last) = page.last() else { break };
@@ -396,7 +399,7 @@ async fn focus_s_inbox_is_counted_in_one_statement_from_an_index() {
     let inboxes = world(&connection).await;
     let threads = ThreadRepository::new(&connection);
     let rows = threads
-        .focus_page(&focus(&inboxes, 50, None))
+        .focus_page_at(&focus(&inboxes, 50, None), 0)
         .await
         .expect("the whole list");
     let _ = threads.focus_count(&inboxes).await.expect("warm");
