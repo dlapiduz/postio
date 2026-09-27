@@ -205,17 +205,50 @@ witness (R3).
 
 ```text
 Outcome  { filter: Option<Reason>, hold: Option<RuleName>, marker: Option<MarkerCandidate> }
-Reason   { kind: ReasonKind, source: Option<String>, layer: Layer }
-MarkerCandidate { kind: MarkerKind, span: Option<Range<usize>>, excerpt: Option<String>,
-                  starts_at, ends_at, due_at, invite: Option<InviteIdentity> }
+Reason   { kind: ReasonKind, source: Option<SourceName>, layer: Layer }
+MarkerCandidate { kind: MarkerKind, span: Option<Span>, starts_at, ends_at, due_at,
+                  invite: Option<InviteIdentity { uid: InviteUid, sequence, stamp }> }
 ```
 
-This is the fixed schema (FR-132). There is no free-text field anywhere in it.
+This is the fixed schema (FR-132). There is no free-text field anywhere in it:
+
+- **The quote is only a span.** `Span` is a character range into the
+  message's own text. The candidate carries no excerpt. The writer of the
+  marker (T117) cuts `markers.excerpt` from the own text by that span, so the
+  stored quote is verbatim by construction.
+- **The strings are newtypes.** `SourceName`, `RuleName` and `InviteUid` can
+  only be built inside `postio-classify`, so nothing else can put text into an
+  outcome, a model's answer included.
+
+The classifier's input is `postio_classify::FiledMessage`: the message, its
+mailbox role, the promoted header facts, and whether it has a calendar part.
+T034's filing pass in `postio-sync` has a type with the same name. The two are
+reconciled when the engine lane lands (tasks.md T102).
 
 ### `Invitation` (`crates/postio-calendar`)
 
-`{ uid, sequence, stamp, method: Request|Cancel|Other, summary, starts_at, ends_at, zone,
-   location, organizer, attendees: Vec<Attendee{address, partstat}>, recurring: bool }`
+`{ uid, sequence, stamp: Option<DateTime<Utc>>, method: Request|Cancel|Other, cancelled,
+   summary, starts_at: EventTime, ends_at: EventTime, zone: Zone, location, organizer,
+   attendees: Vec<Attendee{address, partstat}>, recurring: bool,
+   recurrence_id: Option<EventTime> }`
+
+- **`EventTime`** is `At(instant)`, `Floating(local time)` or `Day(date)`.
+  The adapter keeps floating and all-day times as they are rather than guessing
+  a zone. `instant_in(zone)` places them in the user's zone when a marker needs
+  an instant (T110).
+- **`Zone`** is `Utc`, `Named(IANA name)`, `Floating` or `Unknown(TZID)`.
+  Windows names such as `W. Europe Standard Time` resolve to their IANA name.
+- **`cancelled`** is true for a `METHOD:CANCEL`, or an event whose `STATUS` is
+  `CANCELLED`. `recurrence_id` names the occurrence an update is about.
+- **The adapter exposes the first occurrence only.** For a recurring series,
+  T110's "past" state needs the rule's last occurrence, which the adapter does
+  not expose yet. T110 adds it.
+
+`reply(invitation, attendee, answer)` writes a `METHOD:REPLY` with the
+invitation's UID, SEQUENCE and organiser, and only the answering attendee,
+spelled as the invitation spells them. `supersedes(newer, older)` requires the
+same UID and occurrence, then compares SEQUENCE, then DTSTAMP. When it cannot
+tell, it returns false.
 
 ### `FocusCounts` (the header strip)
 

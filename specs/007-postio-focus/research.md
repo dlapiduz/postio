@@ -741,6 +741,53 @@ branch lands. Caveats:
 - 0.3.14 pulls chrono-tz and mail-builder 1.x, where Postio has 0.5.0.
   Spike S1 checks the graph against `check-dependency-policy.py`.
 
+**Spike S1 (T007, 2026-09-27): calcard holds.** Eight invitations joined the
+corpus through `/add-fixture`, in the styles of Outlook, Google, Apple, Zoom
+and Thunderbird, beside the one already there.
+
+calcard 0.3.14 (default features off, pinned `=0.3.14`) read all nine with the
+right instants and zone:
+
+| Fixture | Style, and what makes it hard | Zone |
+|---|---|---|
+| `invite-windows-zone` | Outlook: a Windows zone name with its `VTIMEZONE`, base64 | Europe/Berlin |
+| `invite-cancel` | Outlook: `METHOD:CANCEL`, same UID, SEQUENCE 1 | Europe/Berlin |
+| `invite-iana-zone` | Google: an IANA zone, an `ATTENDEE` inside the `VALARM` | America/New_York |
+| `invite-update-sequence` | Google: an update, SEQUENCE 1, a later DTSTAMP | America/New_York |
+| `invite-quoted-printable` | Apple: quoted-printable, after the clocks go back | Europe/London |
+| `invite-utc-times` | Zoom: UTC times, no `VTIMEZONE`, a stray TZID | UTC |
+| `invite-weekly-exdate` | Thunderbird: a weekly rule, two EXDATEs, across a DST change | America/Chicago |
+| `invite-zone-without-vtimezone` | a TZID with no `VTIMEZONE` | Asia/Kolkata |
+| `calendar-invite` (already there) | | Europe/Stockholm |
+
+- **Recurrence:** the weekly rule expands to exactly ten dates, skips both
+  EXDATEs, and its UTC time moves an hour at the DST change.
+- **The alarm stays apart:** a `VALARM`'s `ATTENDEE` and UID stay out of the
+  event.
+- **Matching fields:** the update and the cancellation carry the UID and
+  SEQUENCE they are matched by.
+- **The dependency graph:**
+  - New crates: calcard, ahash, chrono-tz, mail-builder 1.0.0, phf 0.12.1 and
+    phf_shared 0.12.1.
+  - Duplicated crates went from 52 to 55 (mail-builder, phf, phf_shared).
+    `deny.toml` treats duplicates as warnings.
+  - Every new crate is MIT or Apache-2.0, and `check-dependency-policy.py`
+    passes.
+
+So ical-rs was not tried. It is still surveyed again before the branch
+lands.
+
+**Built (T107, T111):**
+
+- **The adapter:** its types are in data-model.md.
+- **`outgoing::build` gains a fifth argument,** `calendar:
+  Option<CalendarPart>`, where `CalendarPart` is `{ method, ics }`.
+  - The part goes last in the `multipart/alternative`, inside the
+    `multipart/mixed` when there are attachments.
+  - With `None`, the output is byte-identical to before. That was checked on
+    ten kinds of draft, with the date and boundaries normalised.
+- **`build_draft` is unchanged:** an RSVP is queued, never filed as a draft.
+
 **The calendar part.** At filing it is only an attachment row, and its
 `method=` parameter is dropped (`crates/postio-account/src/backend/message.rs:334-344`).
 The body backfill fetches `text/calendar` parts under 256 KiB together with
@@ -794,6 +841,10 @@ signature removed, the same boundaries the reader folds.
 
 - **A Question** ends in `?` and addresses the reader: in the second person,
   or with an interrogative opening whose subject is "you".
+  - A sentence ending in `?` is a Question even when it asks the reader to
+    act. So "Can you approve these by Friday so finance can close the
+    quarter?" is a Question (US12 scenario 1), not a dated To-do.
+  - A Question carries no due date.
 - **A To-do** asks the reader to act: "please", "can/could/would you", "let me
   know", "I need you to" followed by a verb, or an imperative opening.
 - **A deadline phrase** ("by Friday", "by Monday, 28 September") becomes a due
@@ -806,15 +857,47 @@ the first Question, else the first To-do.
 you?", "Hope you're well?") are excluded, and when two rules disagree nothing
 is marked. It reads English first (spec, Assumptions).
 
-**The gate** is a labelled corpus: fixtures in `crates/postio-model/tests/corpus`
-added through `/add-fixture`, with reserved domains and fictional names. It
-requires precision of at least 0.9 (SC-013); recall is reported but not gated.
-Spike S4 measures rules alone. Only if they miss the bar does the detector
-gain a small compiled-in table of weights, which FR-165 allows because it
-needs no inference engine.
+**The gate** is a labelled dataset: `crates/postio-classify/tests/data/needs_action.toml`,
+one data file of invented items with reserved domains and fictional names. It
+is not `.eml` fixtures, because an item is a message's own text and its
+headers' facts, not a whole message. It requires precision of at least 0.9
+(SC-013); recall is reported but not gated. Spike S4 measures rules alone.
+Only if they miss the bar does the detector gain a small compiled-in table of
+weights, which FR-165 allows because it needs no inference engine.
+
+**Spike S4 (T010, 2026-09-27): rules alone clear the bar, just.** The dataset
+has 201 items: 44 questions, 35 to-dos, and 122 with no ask. The prototype is
+test-only (`crates/postio-classify/tests/needs_action_spike.rs`).
+
+| Rules | Markers made | Right | Precision | Recall | Due dates right |
+|---|---|---|---|---|---|
+| This section's, as written | 79 | 63 | 0.797 | 0.797 | 16 of 17 |
+| With four general fixes | 71 | 64 | **0.901** | 0.810 | 16 of 17 |
+
+The four fixes, which the detector keeps:
+
+- Boilerplate that reads as a request is not one: "Let me know if you have
+  any questions".
+- An ask put to somebody else by name is not the reader's.
+- Text addressed to an assistant is not an ask.
+- A greeting in front of an imperative does not hide it: "Hi Ada, please …".
+
+The dataset and the rules have one author, so 0.901 is a best case. T116
+builds the rules with these fixes and keeps the table of weights ready, adding
+it only if T116's gate fails. What still goes wrong:
+
+- pleasantries no phrase list knows ("How's the new job treating you?");
+- "Check out this article", read as an imperative;
+- a signature with no closing line before it;
+- an ask after a name and a dash;
+- an undated question chosen over a dated ask in the same message;
+- most misses: questions with no "you" in them, which the second-person rule
+  declines by design.
 
 **What it stores.** Offsets into the extracted text, and an excerpt of the
-sentence capped at 200 characters. Dismissals are stored per message. Three
+sentence capped at 200 characters. The detector returns only the offsets
+(data-model.md, "Classification output"). Whoever writes the marker cuts the
+excerpt from the own text. Dismissals are stored per message. Three
 dismissals of the same kind for one sender stop that kind for that sender, and
 that stop is written to config as a correction (FR-108).
 
