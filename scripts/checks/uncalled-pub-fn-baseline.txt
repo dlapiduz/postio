@@ -42,6 +42,7 @@ idles                             # crates/postio-sync/src/watch.rs:290
 immediate                         # crates/postio-storage/src/blob.rs:551
 instant_in                        # crates/postio-calendar/src/invitation.rs:122 -- specs/007-postio-focus contract API: T110's marker writer reads a floating or whole-day invitation in the user's zone with it
 interactive_is_waiting            # crates/postio-storage/src/db.rs:469
+invitations                       # crates/postio-storage/src/repository/markers.rs -- specs/007-postio-focus: T110's marker writer finds the markers a later REQUEST or CANCEL for the same UID replaces
 into_mailbox                      # crates/postio-account/src/backend/message.rs:156
 invocation_id                     # crates/postio-core/src/dispatch.rs:152
 is_authoritative                  # crates/postio-account/src/discovery/settings.rs:94
