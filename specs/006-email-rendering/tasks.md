@@ -302,7 +302,7 @@ plan and tasks agree with the decision.
 - [X] T054 Implement `crates/postio-render/src/text_index.rs`: a reading-order serializer over the laid-out tree (research R7) with cluster rects from parley geometry, plus `hit`, `word_at`, `line_at`, `rects`, `slice`, `find` and `char_at_top`
 - [X] T055 [P] [TEST] In `crates/postio-render/src/tile.rs` unit tests, assert that tiles rasterised over a document and stacked are byte-identical to one full raster of the same region
 - [X] T056 [P] Implement `rasterize_tile` in `crates/postio-render/src/tile.rs` from the recorded display list, callable from any thread
-- [ ] T057 [TEST] Write `crates/postio-render/tests/egress.rs` to `contracts/renderer-graph-checks.md` § 3:
+- [X] T057 [TEST] Write `crates/postio-render/tests/egress.rs` to `contracts/renderer-graph-checks.md` § 3:
   - bind a loopback listener;
   - **control first**: connect from the test and assert the connection is counted, **seen red** before the listener's counter is wired;
   - rewrite every remote URL in every hostile fixture to the listener, and render each fixture in both the unconsented and the consented state;
