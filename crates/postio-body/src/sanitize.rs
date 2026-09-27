@@ -165,7 +165,30 @@ pub struct Sanitized {
     /// What this message asked for that was refused, each once, in
     /// [`REFUSALS`] order: counted, not silently lost (spec 006 FR-003).
     pub refusals: Vec<Refused>,
+    /// The input cap the body exceeded, if any (spec 006 research R6). A
+    /// body over a cap is not handed on: `html` and `styles` are empty, and
+    /// the reader shows the plain-text alternative with a notice.
+    pub over_cap: Option<Cap>,
 }
+
+/// An input cap: what bounds the work a message can ask of a renderer that
+/// cannot be stopped mid-layout (spec 006 research R6).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Cap {
+    /// More than [`MAX_ELEMENTS`] elements.
+    Elements,
+    /// Nested deeper than [`MAX_DEPTH`].
+    Depth,
+    /// More than [`MAX_BYTES`] of markup.
+    Bytes,
+}
+
+/// The most elements a body may have.
+pub const MAX_ELEMENTS: usize = 50_000;
+/// The deepest a body may nest.
+pub const MAX_DEPTH: usize = 256;
+/// The most markup a body may have, in bytes.
+pub const MAX_BYTES: usize = 2 * 1024 * 1024;
 
 /// The page a sender styled: what `<html>` and `<body>` said, lifted onto the
 /// message's own box because the sanitizer's output is a fragment and has no
@@ -211,6 +234,20 @@ impl ColorScheme {
 }
 
 impl Sanitized {
+    /// A body over `cap`: nothing of it is handed on.
+    fn over(cap: Cap) -> Sanitized {
+        Sanitized {
+            html: String::new(),
+            styles: String::new(),
+            remote_blocked: 0,
+            trackers: 0,
+            canvas: Canvas::default(),
+            color_scheme: None,
+            refusals: Vec::new(),
+            over_cap: Some(cap),
+        }
+    }
+
     /// Every remote reference that was stripped, whatever kind it was.
     ///
     /// What the banner asks: it decides whether it has anything to offer at
@@ -529,6 +566,12 @@ pub fn sanitize_body(html: &str, remote: RemoteImages) -> Sanitized {
 /// `None` is the single-message reader, and produces exactly what
 /// [`sanitize_body`] always did.
 pub fn sanitize_body_in(html: &str, remote: RemoteImages, scope: Option<&str>) -> Sanitized {
+    if html.len() > MAX_BYTES {
+        return Sanitized::over(Cap::Bytes);
+    }
+    if nests_past(html, PRESCAN_DEPTH) {
+        return Sanitized::over(Cap::Depth);
+    }
     // Owned: the filter is a `'static` closure and cannot borrow the caller's.
     let scope_for_styles = scope.map(str::to_owned);
     let scope = scope.map(str::to_owned);
@@ -546,8 +589,21 @@ pub fn sanitize_body_in(html: &str, remote: RemoteImages, scope: Option<&str>) -
     //
     // Skipped entirely when nothing is being blocked: the answer would not be
     // used, and a second parse of a large newsletter is not free.
+    //
+    // On the one parse `document_facts` makes, after the caps have been
+    // checked on it: this walk recurses too.
+    //
+    // Taken from the DOM before ammonia runs, because ammonia removes
+    // `<style>` tag-and-contents, returns a fragment with no `<html>` or
+    // `<body>` left to read, and removes `<meta>`. One walk collects all
+    // three. The scoped result is returned beside the markup rather than
+    // spliced back into it -- see `Sanitized::styles`.
+    let (facts, dom) = match document_facts(html, &tally) {
+        Ok(parsed) => parsed,
+        Err(cap) => return Sanitized::over(cap),
+    };
     let beacons = if remote == RemoteImages::Blocked {
-        likely_tracker_sources(html)
+        likely_tracker_sources(&dom.document)
     } else {
         HashSet::new()
     };
@@ -627,12 +683,6 @@ pub fn sanitize_body_in(html: &str, remote: RemoteImages, scope: Option<&str>) -
             )
         });
 
-    // Taken from the DOM before ammonia runs, because ammonia removes
-    // `<style>` tag-and-contents, returns a fragment with no `<html>` or
-    // `<body>` left to read, and removes `<meta>`. One walk collects all
-    // three. The scoped result is returned beside the markup rather than
-    // spliced back into it -- see `Sanitized::styles`.
-    let (facts, dom) = document_facts(html, &tally);
     // Presentational attributes into the style they mean (spec 006 FR-007),
     // on the same parse; serialized again only if one was found.
     let hinted = crate::hints::apply(&dom.document).then(|| serialize_document(&dom));
@@ -659,6 +709,7 @@ pub fn sanitize_body_in(html: &str, remote: RemoteImages, scope: Option<&str>) -
         canvas,
         color_scheme: facts.color_scheme,
         refusals: tally.refusals(),
+        over_cap: None,
     }
 }
 
@@ -733,11 +784,118 @@ impl Page {
     }
 }
 
-fn document_facts(html: &str, tally: &Tally) -> (DocumentFacts, RcDom) {
+fn document_facts(html: &str, tally: &Tally) -> Result<(DocumentFacts, RcDom), Cap> {
     let dom = parse_document(RcDom::default(), ParseOpts::default()).one(html);
+    // Before anything recursive walks the tree: `collect_facts`, the hints
+    // and ammonia all recurse once per level, and a message nested tens of
+    // thousands deep overflowed the stack here -- which aborts the process,
+    // with no unwind to catch.
+    if let Some(cap) = over_cap(&dom.document) {
+        return Err(cap);
+    }
     let mut facts = DocumentFacts::default();
     collect_facts(&dom.document, &mut facts, tally);
-    (facts, dom)
+    Ok((facts, dom))
+}
+
+/// How deep the markup scan lets a body nest before refusing it unparsed.
+/// Above the real cap on purpose: the scan cannot see every end tag HTML
+/// implies, so it only stops what is plainly beyond [`MAX_DEPTH`], and the
+/// parsed tree decides the rest.
+const PRESCAN_DEPTH: usize = MAX_DEPTH * 4;
+
+/// Elements whose end tag HTML lets a sender leave out, and void ones:
+/// the scan does not count them as nesting, or an ordinary message of
+/// unclosed `<p>`s would look ten thousand deep.
+const FLAT: &[&str] = &[
+    "p", "li", "dt", "dd", "tr", "td", "th", "option", "optgroup", "tbody", "thead", "tfoot",
+    "colgroup", "rb", "rt", "rp", "area", "base", "br", "col", "embed", "hr", "img", "input",
+    "link", "meta", "source", "track", "wbr",
+];
+
+/// Whether the markup plainly nests deeper than `limit`, from one linear
+/// scan of its tags. The tree builder's work grows with the square of the
+/// depth -- forty thousand levels took over thirty seconds to parse -- so
+/// the depth cap cannot wait for the parse.
+fn nests_past(html: &str, limit: usize) -> bool {
+    let bytes = html.as_bytes();
+    let mut depth = 0usize;
+    let mut at = 0;
+    while let Some(offset) = bytes[at..].iter().position(|b| *b == b'<') {
+        at += offset + 1;
+        if bytes[at..].starts_with(b"!--") {
+            at = find(bytes, at, b"-->").unwrap_or(bytes.len());
+            continue;
+        }
+        let closing = bytes.get(at) == Some(&b'/');
+        let start = at + usize::from(closing);
+        let len = bytes[start..]
+            .iter()
+            .take_while(|b| b.is_ascii_alphanumeric())
+            .count();
+        if len == 0 {
+            continue;
+        }
+        let name = html[start..start + len].to_ascii_lowercase();
+        let end = find(bytes, start, b">").unwrap_or(bytes.len());
+        at = end;
+        if FLAT.contains(&name.as_str()) {
+            continue;
+        }
+        if closing {
+            depth = depth.saturating_sub(1);
+            continue;
+        }
+        if bytes[..end].ends_with(b"/") {
+            continue;
+        }
+        if name == "script" || name == "style" {
+            at = find(bytes, at, format!("</{name}").as_bytes()).unwrap_or(bytes.len());
+            continue;
+        }
+        depth += 1;
+        if depth > limit {
+            return true;
+        }
+    }
+    false
+}
+
+/// Where `needle` starts at or after `from`, case-insensitively.
+fn find(bytes: &[u8], from: usize, needle: &[u8]) -> Option<usize> {
+    bytes
+        .get(from..)?
+        .windows(needle.len())
+        .position(|window| window.eq_ignore_ascii_case(needle))
+        .map(|offset| from + offset)
+}
+
+/// The first element-count or depth cap `root` exceeds, found without
+/// recursion.
+fn over_cap(root: &Handle) -> Option<Cap> {
+    let mut elements = 0usize;
+    let mut stack: Vec<(Handle, usize)> = vec![(root.clone(), 0)];
+    while let Some((node, depth)) = stack.pop() {
+        let depth = if matches!(node.data, NodeData::Element { .. }) {
+            elements += 1;
+            depth + 1
+        } else {
+            depth
+        };
+        if elements > MAX_ELEMENTS {
+            return Some(Cap::Elements);
+        }
+        if depth > MAX_DEPTH {
+            return Some(Cap::Depth);
+        }
+        stack.extend(
+            node.children
+                .borrow()
+                .iter()
+                .map(|child| (child.clone(), depth)),
+        );
+    }
+    None
 }
 
 /// The document as markup again, after the hints rewrote it.
@@ -1144,10 +1302,9 @@ fn css_url(value: &str) -> Option<String> {
 /// A URL used twice in one message, once as a picture and once as a beacon,
 /// is counted as a beacon both times. That is a real limitation and an
 /// unreal message.
-fn likely_tracker_sources(html: &str) -> HashSet<String> {
-    let dom = parse_document(RcDom::default(), ParseOpts::default()).one(html);
+fn likely_tracker_sources(document: &Handle) -> HashSet<String> {
     let mut found = HashSet::new();
-    collect_beacons(&dom.document, &mut found);
+    collect_beacons(document, &mut found);
     found
 }
 
@@ -2431,5 +2588,59 @@ mod conversation_scope_tests {
             "a data: link is a page, not an image: {}",
             link.html
         );
+    }
+}
+
+#[cfg(test)]
+mod cap_tests {
+    use super::*;
+
+    fn nested(depth: usize) -> String {
+        format!("{}x{}", "<div>".repeat(depth), "</div>".repeat(depth))
+    }
+
+    #[test]
+    fn a_body_within_the_caps_is_not_over_one() {
+        let out = sanitize_body(&nested(200), RemoteImages::Blocked);
+        assert_eq!(out.over_cap, None);
+        assert!(out.html.contains('x'));
+    }
+
+    #[test]
+    fn a_body_over_50_000_elements_is_over_the_element_cap() {
+        let html = "<span>a</span>".repeat(50_001);
+        let out = sanitize_body(&html, RemoteImages::Blocked);
+        assert_eq!(out.over_cap, Some(Cap::Elements));
+        assert!(out.html.is_empty(), "markup over a cap is not handed on");
+    }
+
+    #[test]
+    fn a_body_nested_deeper_than_256_is_over_the_depth_cap() {
+        let out = sanitize_body(&nested(300), RemoteImages::Blocked);
+        assert_eq!(out.over_cap, Some(Cap::Depth));
+    }
+
+    /// Nesting far past any stack's patience: the cap is found without
+    /// recursing, on a test thread's small default stack.
+    #[test]
+    fn a_body_nested_forty_thousand_deep_does_not_overflow_the_sanitizer() {
+        let out = sanitize_body(&nested(40_000), RemoteImages::Blocked);
+        assert!(out.over_cap.is_some());
+    }
+
+    /// Mail that never closes its paragraphs or list items is sloppy, not
+    /// deep: the scan does not count elements whose end tag may be left out.
+    #[test]
+    fn thousands_of_unclosed_paragraphs_are_not_deep() {
+        let html = format!("<div>{}</div>", "<p>line<li>item".repeat(3_000));
+        let out = sanitize_body(&html, RemoteImages::Blocked);
+        assert_eq!(out.over_cap, None);
+    }
+
+    #[test]
+    fn a_body_over_2_mib_is_over_the_size_cap() {
+        let html = format!("<p>{}</p>", "a".repeat(2 * 1024 * 1024));
+        let out = sanitize_body(&html, RemoteImages::Blocked);
+        assert_eq!(out.over_cap, Some(Cap::Bytes));
     }
 }

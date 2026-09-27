@@ -33,6 +33,7 @@ fn request(generation: u64, resources: Resources) -> RenderRequest {
                    <img src=\"postio-cid:part%40example.com\"></body></html>"
             .to_owned(),
         plain_text: String::new(),
+        over_cap: None,
         resources: Arc::new(resources),
         viewport: Viewport {
             width: 400.0,
@@ -102,5 +103,25 @@ fn after_abandon_the_next_request_goes_to_a_fresh_thread() {
     assert!(
         abandoned.recv_timeout(PATIENCE).is_err(),
         "an abandoned render was delivered"
+    );
+}
+
+/// A message the sanitizer found over an input cap falls back without the
+/// engine ever parsing it: its lookup would panic, and does not run.
+#[test]
+fn a_message_over_a_cap_falls_back_without_reaching_the_engine() {
+    let renderer = Renderer::new(fonts());
+    let poisoned = Resources::new();
+    poisoned.panic_on_lookup();
+    let mut over = request(1, poisoned);
+    over.over_cap = Some(postio_body::Cap::Depth);
+    over.plain_text = "the plain alternative".to_owned();
+    let fell_back = renderer
+        .request(over)
+        .recv_timeout(PATIENCE)
+        .expect("an over-cap message still answers");
+    assert_eq!(
+        fell_back.outcome,
+        Outcome::FellBack(FallbackReason::OverCap(postio_body::Cap::Depth))
     );
 }

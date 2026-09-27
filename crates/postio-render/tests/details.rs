@@ -15,6 +15,7 @@ fn render(toggled: &[&str]) -> (postio_render::RenderedDocument, postio_render::
         generation: 1,
         document: DOCUMENT.to_owned(),
         plain_text: String::new(),
+        over_cap: None,
         resources: Arc::new(Resources::new()),
         viewport: Viewport {
             width: 200.0,

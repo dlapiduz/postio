@@ -32,6 +32,9 @@ pub struct RenderRequest {
     /// The message's plain-text alternative, drawn if the render falls
     /// back (FR-023).
     pub plain_text: String,
+    /// The input cap the sanitizer found the body over, if any: such a
+    /// request is drawn as `plain_text` and never reaches the engine.
+    pub over_cap: Option<postio_body::Cap>,
     /// Everything the document may load; nothing else is reachable.
     pub resources: std::sync::Arc<Resources>,
     /// The laid-out width and the two scales, never folded together (R11).
@@ -218,9 +221,8 @@ pub enum FallbackReason {
     Panicked,
     /// It did not finish within the deadline (FR-023).
     Deadline,
-    /// The sanitizer found the body over an input cap. The cap it names
-    /// joins this variant when the caps land (T048, T049).
-    OverCap,
+    /// The sanitizer found the body over this input cap.
+    OverCap(postio_body::Cap),
     /// Nothing in the message could be decoded as a body.
     Undecodable,
 }

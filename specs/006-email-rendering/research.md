@@ -410,7 +410,14 @@ thread never touches Blitz.
   a nesting depth of **256** (deeper subtrees are flattened), and **2 MiB** of
   composed HTML per message. A message over a cap renders its plain-text
   alternative with a notice. These are checked in `postio-body` while
-  sanitizing, as a pure function.
+  sanitizing, as a pure function. **Amended (T049):** the depth cap has a
+  linear first line, a tag scan of the raw markup that refuses nesting
+  plainly past 1,024 before anything parses it. html5ever's tree builder
+  does quadratic work with depth (forty thousand levels took 33 s), and
+  the sanitizer's own walks recurse, so a deep enough message overflowed
+  the stack and aborted the app. The scan ignores void elements and those
+  whose end tag may be omitted, so unclosed `<p>`s are not "deep"; the
+  parsed tree still decides everything under 1,024.
 - **The UI never waits.** While a render is outstanding, the previous frame
   stays on screen. A new conversation shows its header, and its body area
   keeps its last paint or shows the ground colour. No frame is blank (FR-029).

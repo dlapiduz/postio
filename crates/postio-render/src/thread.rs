@@ -138,6 +138,20 @@ fn spawn(fonts: FontSet, generations: Arc<Generations>) -> Worker {
                 if !generations.wanted(generation) {
                     continue;
                 }
+                if let Some(cap) = request.over_cap {
+                    let document = fallback(
+                        &fonts,
+                        &request.plain_text,
+                        &request.theme,
+                        request.viewport,
+                        FallbackReason::OverCap(cap),
+                        generation,
+                    );
+                    if generations.wanted(generation) {
+                        let _ = reply.send(document);
+                    }
+                    continue;
+                }
                 busy.store(generation, Ordering::Release);
                 let rendered =
                     std::panic::catch_unwind(AssertUnwindSafe(|| crate::render(&request, &fonts)));
@@ -189,6 +203,7 @@ fn fallback(
              </body></html>"
         ),
         plain_text: String::new(),
+        over_cap: None,
         resources: Arc::new(crate::Resources::new()),
         viewport,
         theme: *theme,
