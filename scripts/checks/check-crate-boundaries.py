@@ -40,6 +40,18 @@ The invariants (see CLAUDE.md, "Architectural invariants"):
     0041) -- so the engine and the protocol are in its graph by design; a
     toolkit is how it would stop being small (``specs/005-tui-frontend``
     FR-051).
+  * ``postio-widgets`` must not depend on the store engine, the protocol, the
+    host or either desktop app. It is the GTK both desktop apps draw with
+    (ADR 0043), and it reaches mail only through ``postio-client``.
+  * ``postio-focus`` must not depend on ``postio-gtk`` or ``postio-app``, and
+    ``postio-gtk`` must not depend on ``postio-focus``: neither desktop app
+    stands on the other (``specs/007-postio-focus`` FR-007).
+  * ``postio-classify`` must not link anything that sends mail or reaches the
+    network (``specs/007-postio-focus`` FR-132, ADR 0009), and
+    ``postio-calendar`` must stay a pure leaf.
+  * No app binary (``postio-app``, ``postio-focus``, ``postio-tui``,
+    ``postio-ffi``) may link an inference engine. The local model is the
+    user's own and optional (``specs/007-postio-focus`` FR-165).
 
 Not enforced here: ADR 0001's rule that ``postio-sync`` never reaches
 ``io-imap``/``io-sasl``. Cargo unifies features workspace-wide, so
@@ -82,7 +94,148 @@ from collections import deque
 # alongside the bindings they belong to so the rule cannot be side-stepped by
 # depending on the lower layer directly.
 
+# Inference engines: runtimes that would put a language model inside a Postio
+# package. The model is the user's own, run beside Postio, and optional
+# (specs/007-postio-focus FR-165), so no app binary may link one. The built-in
+# needs-action detector is plain code and needs none of these.
+INFERENCE_ENGINES = [
+    "candle-core",
+    "candle-nn",
+    "candle-transformers",
+    "ort",
+    "ort-sys",
+    "tch",
+    "torch-sys",
+    "tract-core",
+    "tract-onnx",
+    "burn",
+    "burn-core",
+    "llama-cpp-2",
+    "llama-cpp-sys-2",
+    "llama_cpp",
+    "llama_cpp_sys",
+    "mistralrs",
+    "mistralrs-core",
+]
+
+# HTTP clients, TLS and sockets: what a crate would need to reach the network.
+NETWORK_CRATES = [
+    "reqwest",
+    "hyper",
+    "h2",
+    "ureq",
+    "curl",
+    "curl-sys",
+    "isahc",
+    "surf",
+    "rustls",
+    "tokio-rustls",
+    "native-tls",
+    "openssl",
+    "openssl-sys",
+    "socket2",
+    "mio",
+    "io-http",
+    "pimalaya-stream",
+]
+
 RULES: dict[str, dict[str, object]] = {
+    "postio-widgets": {
+        "banned": [
+            "rusqlite",
+            "libsqlite3-sys",
+            "turso",
+            "turso_core",
+            "io-imap",
+            "postio-host",
+            "postio-session",
+            "postio-runtime",
+            "postio-storage",
+            "postio-sync",
+            "postio-gtk",
+            "postio-app",
+            "postio-focus",
+        ],
+        "why": (
+            "postio-widgets is the GTK both desktop apps draw with (ADR 0043): "
+            "the message view, the composer, the small widgets and their "
+            "presenters. It reaches mail only through postio-client, so it "
+            "opens no store and speaks no protocol, and it depends on neither "
+            "app, so neither app depends on the other through it."
+        ),
+    },
+    "postio-focus": {
+        "banned": [
+            "postio-gtk",
+            "postio-app",
+            *INFERENCE_ENGINES,
+        ],
+        "why": (
+            "postio-focus opens the store itself when no other Postio has it "
+            "(ADR 0041), so the engine is in its graph on purpose. It draws "
+            "with postio-widgets and never with the classic app's crates "
+            "(specs/007-postio-focus FR-007), and it links no language model "
+            "(FR-165)."
+        ),
+    },
+    "postio-classify": {
+        "banned": [
+            "postio-smtp",
+            "io-smtp",
+            "postio-account",
+            "postio-sync",
+            "postio-runtime",
+            "postio-transport",
+            "io-imap",
+            "gtk4",
+            "gtk4-sys",
+            "libadwaita",
+            "libadwaita-sys",
+            "webkit6",
+            "webkit6-sys",
+            *NETWORK_CRATES,
+            *INFERENCE_ENGINES,
+        ],
+        # What ships: the classifier's tests may build a store the way every
+        # store test does.
+        "edges": "product",
+        "why": (
+            "specs/007-postio-focus FR-132 / ADR 0009: the classifier cannot "
+            "send mail, by construction. Nothing that sends, and nothing that "
+            "reaches the network, is in what it links, and its answer is a "
+            "fixed schema with no text of its own"
+        ),
+    },
+    "postio-calendar": {
+        "banned": [
+            "turso",
+            "turso_core",
+            "rusqlite",
+            "libsqlite3-sys",
+            "gtk4",
+            "gtk4-sys",
+            "libadwaita",
+            "libadwaita-sys",
+            "tokio",
+            "async-std",
+            *NETWORK_CRATES,
+        ],
+        "edges": "product",
+        "why": (
+            "postio-calendar is a pure leaf (specs/007-postio-focus research "
+            "R9): it parses an invitation and writes a reply, and needs no "
+            "store, no toolkit, no runtime and no network to do either"
+        ),
+    },
+    "postio-app": {
+        "banned": [*INFERENCE_ENGINES],
+        "why": (
+            "specs/007-postio-focus FR-165: no Postio package carries a "
+            "language model or an inference engine. The model is the user's "
+            "own, and optional"
+        ),
+    },
+
     "postio-ui": {
         "banned": [
             "gtk4",
@@ -147,6 +300,7 @@ RULES: dict[str, dict[str, object]] = {
             "webkit6-sys",
             "rusqlite",
             "libsqlite3-sys",
+            *INFERENCE_ENGINES,
         ],
         "why": (
             "postio-tui opens the store itself when no other Postio has it "
@@ -167,6 +321,7 @@ RULES: dict[str, dict[str, object]] = {
             "gsk4-sys",
             "webkit6",
             "webkit6-sys",
+            *INFERENCE_ENGINES,
         ],
         # `rusqlite` is deliberately *not* banned. postio-ffi sits above
         # postio-session, exactly where postio-app does, and the store is on
@@ -263,6 +418,7 @@ RULES: dict[str, dict[str, object]] = {
             "turso",
             "turso_core",
             "io-imap",
+            "postio-focus",
         ],
         "why": (
             "postio-gtk is the view layer: command down, event up. No SQL and "

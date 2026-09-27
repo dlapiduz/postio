@@ -61,6 +61,11 @@ def build_fixture(
     tui_deps: str = "",
     client_deps: str = "",
     ui_deps: str = "",
+    widgets_deps: str = "",
+    focus_deps: str = "",
+    classify_deps: str = "",
+    calendar_deps: str = "",
+    app_deps: str = "",
     include_gtk: bool = True,
 ) -> Path:
     root.mkdir(parents=True, exist_ok=True)
@@ -79,6 +84,13 @@ def build_fixture(
     write_crate(root, "crates", "postio-tui", tui_deps)
     write_crate(root, "crates", "postio-client", client_deps)
     write_crate(root, "crates", "postio-ui", ui_deps)
+    # Postio Focus and what it stands on (specs/007-postio-focus), and the
+    # classic app binary, which the inference-engine ban also covers.
+    write_crate(root, "crates", "postio-widgets", widgets_deps)
+    write_crate(root, "crates", "postio-focus", focus_deps)
+    write_crate(root, "crates", "postio-classify", classify_deps)
+    write_crate(root, "crates", "postio-calendar", calendar_deps)
+    write_crate(root, "crates", "postio-app", app_deps)
     # Bystanders: every crate `RULES` names has to exist as a workspace
     # member, or `find_violations` raises before any rule gets checked
     # (#560) -- so a rule added for a real crate the fixture never grew a
@@ -86,12 +98,27 @@ def build_fixture(
     # regardless of what that case is actually about. None of the cases here
     # target these, so a dependency-free crate that trivially passes every
     # rule is all they need to be.
-    for bystander in ("postio-ffi", "postio-gmail", "postio-jmap", "postio-render"):
+    for bystander in (
+        "postio-ffi",
+        "postio-gmail",
+        "postio-jmap",
+        "postio-render",
+        "postio-smtp",
+    ):
         write_crate(root, "crates", bystander)
     # Stand-ins for the real third-party crates, so nothing is fetched.
     # Both engine names: `turso` is the live rule, `rusqlite` stays banned so
     # the rule survives the rename that already happened once.
-    for banned in ("gtk4", "libadwaita", "turso", "rusqlite", "io-imap", "ammonia", "tokio"):
+    for banned in (
+        "gtk4",
+        "libadwaita",
+        "turso",
+        "rusqlite",
+        "io-imap",
+        "ammonia",
+        "tokio",
+        "candle-core",
+    ):
         write_crate(root, "vendor", banned)
     return root / "Cargo.toml"
 
@@ -362,6 +389,81 @@ def main() -> int:
             ),
             expected_status=1,
             must_mention=("postio-ui", "libadwaita"),
+        )
+
+        # Postio Focus (specs/007-postio-focus): the new crates' rules.
+        check_case(
+            "postio-focus reaches the classic app's crate",
+            build_fixture(
+                tmp_path / "focus-gtk",
+                focus_deps='postio-gtk = { path = "../postio-gtk" }\n',
+            ),
+            expected_status=1,
+            must_mention=("postio-focus", "postio-gtk"),
+        )
+        check_case(
+            "postio-gtk reaches postio-focus",
+            build_fixture(
+                tmp_path / "gtk-focus",
+                gtk_deps='postio-focus = { path = "../postio-focus" }\n',
+            ),
+            expected_status=1,
+            must_mention=("postio-gtk", "postio-focus"),
+        )
+        check_case(
+            "postio-focus may link the store engine, through the host",
+            build_fixture(
+                tmp_path / "focus-turso",
+                focus_deps='turso = { path = "../../vendor/turso" }\n',
+            ),
+            expected_status=0,
+            must_mention=("postio-focus",),
+        )
+        check_case(
+            "postio-widgets gains the store engine",
+            build_fixture(
+                tmp_path / "widgets-turso",
+                widgets_deps='turso = { path = "../../vendor/turso" }\n',
+            ),
+            expected_status=1,
+            must_mention=("postio-widgets", "turso"),
+        )
+        check_case(
+            "postio-classify gains a path that sends mail",
+            build_fixture(
+                tmp_path / "classify-smtp",
+                classify_deps='postio-smtp = { path = "../postio-smtp" }\n',
+            ),
+            expected_status=1,
+            must_mention=("postio-classify", "postio-smtp"),
+        )
+        check_case(
+            "postio-calendar gains an async runtime",
+            build_fixture(
+                tmp_path / "calendar-tokio",
+                calendar_deps='tokio = { path = "../../vendor/tokio" }\n',
+            ),
+            expected_status=1,
+            must_mention=("postio-calendar", "tokio"),
+        )
+        check_case(
+            "an app binary gains an inference engine",
+            build_fixture(
+                tmp_path / "app-candle",
+                app_deps='candle-core = { path = "../../vendor/candle-core" }\n',
+            ),
+            expected_status=1,
+            must_mention=("postio-app", "candle-core"),
+        )
+        check_case(
+            "postio-focus reaches an inference engine through another crate",
+            build_fixture(
+                tmp_path / "focus-candle",
+                focus_deps='helper = { path = "../helper" }\n',
+                helper_deps='candle-core = { path = "../../vendor/candle-core" }\n',
+            ),
+            expected_status=1,
+            must_mention=("postio-focus", "candle-core", "helper"),
         )
 
         # 18. And the real workspace is clean today.
