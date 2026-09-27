@@ -26,6 +26,10 @@ members = [
     "crates/postio-client",
     "crates/postio-host",
     "crates/postio-tui",
+    "crates/postio-widgets",
+    "crates/postio-focus",
+    "crates/postio-classify",
+    "crates/postio-calendar",
 ]
 # Upstream crates carried with Postio's patches applied: sources, not
 # members, so the workspace's lints and gates do not reach them.
@@ -72,6 +76,10 @@ default-members = [
     "crates/postio-client",
     "crates/postio-host",
     "crates/postio-tui",
+    "crates/postio-widgets",
+    "crates/postio-focus",
+    "crates/postio-classify",
+    "crates/postio-calendar",
 ]
 
 [workspace.package]
@@ -153,6 +161,9 @@ postio-gtk     = { path = "crates/postio-gtk" }
 postio-test-support = { path = "crates/postio-test-support" }
 postio-client = { path = "crates/postio-client" }
 postio-host    = { path = "crates/postio-host" }
+postio-widgets = { path = "crates/postio-widgets" }
+postio-classify = { path = "crates/postio-classify" }
+postio-calendar = { path = "crates/postio-calendar" }
 
 # Third-party crates two or more members share, so a version, a feature
 # list and a default-features decision are made once (#1498). A member

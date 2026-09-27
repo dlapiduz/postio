@@ -4650,6 +4650,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "postio-calendar"
+version = "0.3.0"
+
+[[package]]
+name = "postio-classify"
+version = "0.3.0"
+
+[[package]]
 name = "postio-client"
 version = "0.4.2"
 dependencies = [
@@ -4720,6 +4728,10 @@ dependencies = [
  "tracing",
  "uniffi",
 ]
+
+[[package]]
+name = "postio-focus"
+version = "0.3.0"
 
 [[package]]
 name = "postio-gmail"
@@ -5055,6 +5067,10 @@ dependencies = [
  "tempfile",
  "thiserror",
 ]
+
+[[package]]
+name = "postio-widgets"
+version = "0.3.0"
 
 [[package]]
 name = "potential_utf"
