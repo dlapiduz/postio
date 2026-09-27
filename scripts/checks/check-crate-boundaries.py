@@ -59,7 +59,9 @@ Kinds considered:
   * normal and build dependencies, transitively, from the guarded crate;
   * dev-dependencies of the guarded crate itself (a test that pulls rusqlite
     into postio-gtk violates the invariant just as much as the library would),
-    but not dev-dependencies of its dependencies, which are never built.
+    but not dev-dependencies of its dependencies, which are never built --
+    unless the rule says ``"edges": "product"``, as ``postio-render``'s does:
+    its invariant is about what ships, and its tests need a socket.
 
 Exit status: 0 clean, 1 violation found, 2 the check itself could not run.
 """
@@ -370,6 +372,58 @@ RULES: dict[str, dict[str, object]] = {
             "by accident instead of on purpose."
         ),
     },
+    "postio-render": {
+        "banned": [
+            # toolkit / web engine
+            "gtk4",
+            "gtk4-sys",
+            "glib",
+            "gio",
+            "webkit6",
+            "webkit6-sys",
+            # Postio crates that network or store
+            "postio-transport",
+            "postio-sync",
+            "postio-runtime",
+            "postio-storage",
+            "postio-account",
+            "postio-jmap",
+            "postio-gmail",
+            "postio-smtp",
+            "io-http",
+            "pimalaya-stream",
+            # Blitz's own networking
+            "blitz",
+            "blitz-net",
+            # network and TLS stacks
+            "reqwest",
+            "hyper",
+            "h2",
+            "ureq",
+            "curl",
+            "curl-sys",
+            "isahc",
+            "surf",
+            "rustls",
+            "tokio-rustls",
+            "native-tls",
+            "openssl",
+            "openssl-sys",
+            "socket2",
+            "mio",
+            "tokio",
+            "async-std",
+        ],
+        # The product graph only: the renderer's own tests bind a loopback
+        # socket to prove it never connects, and use postio-test-support,
+        # which pulls in tokio. Neither ever links into the app.
+        "edges": "product",
+        "why": (
+            "spec 006 FR-001 / ADR 0042: the renderer is incapable of a "
+            "network connection by construction; remote bytes enter only "
+            "through postio-runtime's RemoteImageFetcher"
+        ),
+    },
     "postio-config": {
         "banned": [
             "rusqlite",
@@ -434,8 +488,13 @@ def dep_kind_label(kinds: set[str | None]) -> str:
     return "dependency"
 
 
-def find_violations(meta: dict, crate: str, banned: set[str]) -> dict[str, list[tuple[str, str]]]:
+def find_violations(
+    meta: dict, crate: str, banned: set[str], own_dev: bool = True
+) -> dict[str, list[tuple[str, str]]]:
     """Breadth-first search of `crate`'s dependency closure.
+
+    ``own_dev`` walks the guarded crate's own dev-dependencies too; a rule
+    with ``"edges": "product"`` turns it off, to guard only what ships.
 
     Returns ``{banned_crate_name: shortest_path}`` where a path is a list of
     ``(crate_name, edge_kind)`` pairs starting at the guarded crate itself.
@@ -471,7 +530,7 @@ def find_violations(meta: dict, crate: str, banned: set[str]) -> dict[str, list[
             # dev-dependencies only count for the guarded crate itself: a
             # dependency's own dev-dependencies are never built.
             allowed: set[str | None] = {None, "build"}
-            if current == root:
+            if current == root and own_dev:
                 allowed.add("dev")
             kinds &= allowed
             if not kinds:
@@ -524,7 +583,9 @@ def main(argv: list[str] | None = None) -> int:
     for crate, rule in RULES.items():
         banned = set(rule["banned"])  # type: ignore[arg-type]
         try:
-            violations = find_violations(meta, crate, banned)
+            violations = find_violations(
+                meta, crate, banned, own_dev=rule.get("edges") != "product"
+            )
         except CheckError as exc:
             print(f"crate-boundary check: {exc}", file=sys.stderr)
             return 2
