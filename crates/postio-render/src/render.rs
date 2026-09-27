@@ -18,8 +18,82 @@ pub const BASE_URL: &str = "postio-message://message/";
 
 /// Lay out and record `request`'s document, drawing with `fonts`.
 pub fn render(request: &RenderRequest, fonts: &FontSet) -> RenderedDocument {
+    let scale = request.viewport.hidpi_scale;
+    let mut doc = lay_out(request, fonts, None);
+    let (resolved, unresolved) = request.resources.counts();
+    let placeholdered = request.resources.placeholdered();
+    // The theme rule (research R10): classify, then repair against what is
+    // actually painted, in a second layout if anything changes.
+    let plan = crate::present::plan(&doc, request);
+    let mut style_passes = 1;
+    if !plan.is_empty() {
+        let second = lay_out(request, fonts, Some(&plan));
+        // The same markup parses to the same nodes; if it somehow did not,
+        // the marks would land on the wrong ones, so keep the first layout.
+        if second.tree().len() == plan.nodes {
+            doc = second;
+            style_passes = 2;
+        }
+    }
+    let size = doc.root_element().final_layout().size;
+    let (width, height) = (
+        (f64::from(size.width) * scale).ceil() as u32,
+        (f64::from(size.height) * scale).ceil() as u32,
+    );
+    let mut display_list = anyrender::Scene::new();
+    blitz_paint::paint_scene(&mut display_list, &mut doc, scale, width, height, 0, 0);
+    let counts = RenderCounts {
+        renders: 1,
+        style_passes,
+        nodes: u32::try_from(doc.tree().len()).unwrap_or(u32::MAX),
+        repaired_runs: plan.repaired,
+        resources_resolved: resolved,
+        resources_unresolved: unresolved,
+        images_placeholdered: placeholdered,
+        display_list_commands: u32::try_from(display_list.commands.len()).unwrap_or(u32::MAX),
+        ..RenderCounts::default()
+    };
+    let mut messages = crate::snapshot::messages(&doc);
+    for message in &mut messages {
+        if let Some(presentation) = plan.presentations.get(&message.scope) {
+            message.presentation = *presentation;
+        }
+    }
+    let mut document = RenderedDocument {
+        generation: request.generation,
+        size: kurbo::Size::new(f64::from(size.width), f64::from(size.height)),
+        scale,
+        display_list,
+        low_res: Raster {
+            width: 0,
+            height: 0,
+            rgba: Vec::new(),
+        },
+        text: crate::text_index::build(&doc),
+        links: crate::snapshot::links(&doc),
+        messages,
+        folds: crate::snapshot::folds(&doc),
+        counts,
+        outcome: Outcome::Rendered,
+        needs_reader_view: plan.unreachable,
+    };
+    document.low_res = low_res(&document);
+    document
+}
+
+/// Parse, style and lay out `request`'s document, with a plan's overrides
+/// if there is one.
+fn lay_out(
+    request: &RenderRequest,
+    fonts: &FontSet,
+    plan: Option<&crate::present::Plan>,
+) -> blitz_dom::BaseDocument {
     let viewport = &request.viewport;
     let scale = viewport.hidpi_scale;
+    let mut sheets = vec![blitz_dom::DEFAULT_CSS.to_owned()];
+    if let Some(plan) = plan {
+        sheets.push(plan.css.clone());
+    }
     let config = DocumentConfig {
         viewport: Some(blitz_traits::shell::Viewport::new(
             (viewport.width * scale).round() as u32,
@@ -34,48 +108,24 @@ pub fn render(request: &RenderRequest, fonts: &FontSet) -> RenderedDocument {
         base_url: Some(BASE_URL.to_owned()),
         font_ctx: Some(fonts.context()),
         net_provider: Some(Arc::clone(&request.resources) as _),
+        ua_stylesheets: Some(sheets),
         ..Default::default()
     };
     let mut doc = blitz_html::HtmlDocument::from_html(&request.document, config).into_inner();
     toggle_folds(&mut doc, &request.toggled_folds);
+    if let Some(plan) = plan {
+        let name = blitz_dom::QualName::new(
+            None,
+            blitz_dom::ns!(),
+            blitz_dom::LocalName::from(crate::present::MARK),
+        );
+        let mut mutator = doc.mutate();
+        for (id, mark) in &plan.marks {
+            mutator.set_attribute(*id, name.clone(), &mark.to_string());
+        }
+    }
     doc.resolve(0.0);
-    let size = doc.root_element().final_layout().size;
-    let (width, height) = (
-        (f64::from(size.width) * scale).ceil() as u32,
-        (f64::from(size.height) * scale).ceil() as u32,
-    );
-    let mut display_list = anyrender::Scene::new();
-    blitz_paint::paint_scene(&mut display_list, &mut doc, scale, width, height, 0, 0);
-    let (resolved, unresolved) = request.resources.counts();
-    let counts = RenderCounts {
-        renders: 1,
-        style_passes: 1,
-        nodes: u32::try_from(doc.tree().len()).unwrap_or(u32::MAX),
-        resources_resolved: resolved,
-        resources_unresolved: unresolved,
-        images_placeholdered: request.resources.placeholdered(),
-        display_list_commands: u32::try_from(display_list.commands.len()).unwrap_or(u32::MAX),
-        ..RenderCounts::default()
-    };
-    let mut document = RenderedDocument {
-        generation: request.generation,
-        size: kurbo::Size::new(f64::from(size.width), f64::from(size.height)),
-        scale,
-        display_list,
-        low_res: Raster {
-            width: 0,
-            height: 0,
-            rgba: Vec::new(),
-        },
-        text: crate::text_index::build(&doc),
-        links: crate::snapshot::links(&doc),
-        messages: crate::snapshot::messages(&doc),
-        folds: crate::snapshot::folds(&doc),
-        counts,
-        outcome: Outcome::Rendered,
-    };
-    document.low_res = low_res(&document);
-    document
+    doc
 }
 
 /// The most bytes the low-resolution copy may take.
