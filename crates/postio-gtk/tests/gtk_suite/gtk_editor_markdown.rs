@@ -21,7 +21,7 @@ use gtk::gdk;
 use gtk::prelude::*;
 use postio_body::{Block, Document, Inline};
 use postio_gtk::editor::Editor;
-use postio_gtk::reader::scheme::BlobSource;
+use postio_gtk::reader::BlobSource;
 use webkit6::prelude::*;
 
 use crate::settle_until as settle;

@@ -6,24 +6,17 @@
 //! this suite keeps citing (`postio-14b`): a command that only works when
 //! called directly proves nothing about whether a keystroke can reach it.
 //!
-//! What is asserted is [`webkit6::WebView::uri`]'s fragment, not a scroll
-//! pixel. `WebKitWebView` implements no `GtkScrollable` and exposes no
-//! scroll-position getter at all — confirmed against the installed
-//! WebKitGTK's own introspection data while designing the fix, not assumed
-//! — so there is no scroll position for a test on this side of the process
-//! boundary to read regardless of JavaScript. That a same-document fragment
-//! navigation actually moves `window.scrollY` was verified separately, with
-//! a throwaway `WebView` built with JavaScript deliberately turned *on* for
-//! measurement only; production `enable-javascript` never changes, on the
-//! real reader or anywhere near it. What this file owns is the half that
-//! measurement could not: the right fragment for the right key, in the
-//! right context, clamped, and reset when a new message replaces the old
-//! one.
+//! What is asserted is the reader's scroll offset. Under WebKit there was
+//! no scroll position this side of the process boundary, so these cases
+//! counted `#pos-N` markers; the reader's body is a `GtkScrollable` now
+//! (spec 006), and the offset is the thing a person would call "did it
+//! scroll".
 //!
 //! Skips without a display. Nothing here touches the network.
 
 use crate::pump;
 use gtk::gdk;
+use gtk::prelude::*;
 use postio_gtk::window::Window;
 use postio_gtk::{fonts, style};
 use postio_model::MessageBody;
@@ -38,34 +31,40 @@ fn press_shift(window: &Window, key: gdk::Key) -> bool {
 
 fn body() -> MessageBody {
     MessageBody {
-        text: Some(
-            "A message long enough that scrolling it would mean something, \
-                     were this test measuring pixels rather than the mechanism."
-                .to_owned(),
-        ),
+        text: Some("A message long enough that scrolling it means something. ".repeat(600)),
         html: None,
     }
 }
 
-/// Which marker the reader believes it is on.
-///
-/// **Was `view().uri()`'s fragment, and could not stay that way.** Scrolling
-/// used to be `load_uri("postio-reader:///#pos-N")`, so the URI *was* the
-/// bookkeeping; #1433 made it a scripted `scrollIntoView`, because a
-/// fragment `load_uri` is a same-document scroll only while the URI still
-/// matches the base -- and after `Reader::warm` empties it, the same call
-/// became a real navigation to a scheme with no handler and put "The URL
-/// can't be shown" in front of a reader.
-///
-/// So the URI no longer moves, deliberately, and a test that watched it hung
-/// for two minutes waiting. What this file owns is unchanged and is asserted
-/// here directly: the right marker for the right key, clamped, and reset when
-/// a new message replaces the old one.
-fn marker(window: &Window) -> u32 {
-    window.reader().page_for_test()
+/// How far down the reader is scrolled.
+fn scrolled(window: &Window) -> f64 {
+    window.reader().scrolled_for_test()
 }
 
-pub fn page_down_and_page_up_move_a_marker_at_a_time() {
+/// Wait until the open message is drawn tall enough to page through.
+fn wait_drawn(window: &Window) {
+    crate::settle_until("the message to be drawn tall enough to page", || {
+        let view = window.reader().view().clone();
+        view.document()
+            .is_some_and(|d| d.size.height > 3.0 * f64::from(view.height().max(1)))
+            && view.height() > 0
+    });
+}
+
+/// Press `key` (with shift if `shift`) and wait for the offset to satisfy
+/// `moved`, returning it.
+fn page(window: &Window, key: gdk::Key, shift: bool, moved: impl Fn(f64) -> bool) -> f64 {
+    let claimed = if shift {
+        press_shift(window, key)
+    } else {
+        press(window, key)
+    };
+    assert!(claimed, "{key:?} should be claimed, not passed through");
+    crate::settle_until("the reader to scroll", || moved(scrolled(window)));
+    scrolled(window)
+}
+
+pub fn page_down_and_page_up_move_a_screen_at_a_time() {
     if adw::init().is_err() || gdk::Display::default().is_none() {
         eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
         return;
@@ -86,98 +85,45 @@ pub fn page_down_and_page_up_move_a_marker_at_a_time() {
     );
 
     window.show_message(&body(), Some("ada@example.com"));
-    pump();
+    wait_drawn(&window);
     assert!(
         window.reading(),
         "a message should be open before paging it"
     );
     assert_eq!(
-        marker(&window),
-        0,
-        "a freshly rendered message starts with no fragment -- the top"
+        scrolled(&window),
+        0.0,
+        "a freshly rendered message starts at the top"
     );
 
-    // -- Page_Down, the default binding -------------------------------------
+    // -- Page_Down, the default binding, then Page_Up walks it back ---------
+    let one = page(&window, gdk::Key::Page_Down, false, |y| y > 0.0);
+    let two = page(&window, gdk::Key::Page_Down, false, |y| y > one);
+    let back = page(&window, gdk::Key::Page_Up, false, |y| y < two);
     assert!(
-        press(&window, gdk::Key::Page_Down),
-        "Page_Down should be claimed, not passed through"
+        (back - one).abs() < 1.0,
+        "Page_Up came back to {back}, not {one}"
     );
-    pump();
-    // The fragment navigation is asynchronous; wait for it rather
-    // than trusting the turn count above (#851, and this file again
-    // on #187).
-    crate::settle_until("the reader to reach pos-1", || marker(&window) == 1);
-    assert_eq!(
-        marker(&window),
-        1,
-        "one Page_Down should land on the first marker"
-    );
-
-    assert!(press(&window, gdk::Key::Page_Down));
-    pump();
-    // The fragment navigation is asynchronous; wait for it rather
-    // than trusting the turn count above (#851, and this file again
-    // on #187).
-    crate::settle_until("the reader to reach pos-2", || marker(&window) == 2);
-    assert_eq!(marker(&window), 2);
-
-    // -- Page_Up walks it back ------------------------------------------
-    assert!(
-        press(&window, gdk::Key::Page_Up),
-        "Page_Up should be claimed too"
-    );
-    pump();
-    // The fragment navigation is asynchronous; wait for it rather
-    // than trusting the turn count above (#851, and this file again
-    // on #187).
-    crate::settle_until("the reader to reach pos-1", || marker(&window) == 1);
-    assert_eq!(marker(&window), 1);
 
     // -- the space/shift+space alternates do the same thing -----------------
-    assert!(press(&window, gdk::Key::space));
-    pump();
-    // The fragment navigation is asynchronous; wait for it rather
-    // than trusting the turn count above (#851, and this file again
-    // on #187).
-    crate::settle_until("the reader to reach pos-2", || marker(&window) == 2);
-    assert_eq!(
-        marker(&window),
-        2,
-        "space is the alternate binding for scrolling down"
+    let down = page(&window, gdk::Key::space, false, |y| y > back);
+    assert!(
+        (down - two).abs() < 1.0,
+        "space is the alternate for scrolling down"
     );
-    assert!(press_shift(&window, gdk::Key::space));
-    pump();
-    // The fragment navigation is asynchronous; wait for it rather
-    // than trusting the turn count above (#851, and this file again
-    // on #187).
-    crate::settle_until("the reader to reach pos-1", || marker(&window) == 1);
-    assert_eq!(
-        marker(&window),
-        1,
-        "shift+space is the alternate binding for scrolling up"
+    let up = page(&window, gdk::Key::space, true, |y| y < down);
+    assert!(
+        (up - one).abs() < 1.0,
+        "shift+space is the alternate for scrolling up"
     );
 
     // -- Page_Up cannot go past the top --------------------------------
-    assert!(press(&window, gdk::Key::Page_Up));
-    pump();
-    // The fragment navigation is asynchronous; wait for it rather
-    // than trusting the turn count above (#851, and this file again
-    // on #187).
-    crate::settle_until("the reader to reach pos-0", || marker(&window) == 0);
-    assert_eq!(marker(&window), 0);
-    assert!(
-        press(&window, gdk::Key::Page_Up),
-        "still claimed at the top -- it is this command's key either way"
-    );
-    pump();
-    // The fragment navigation is asynchronous; wait for it rather
-    // than trusting the turn count above (#851, and this file again
-    // on #187).
-    crate::settle_until("the reader to reach pos-0", || marker(&window) == 0);
+    page(&window, gdk::Key::Page_Up, false, |y| y == 0.0);
+    page(&window, gdk::Key::Page_Up, false, |y| y == 0.0);
     assert_eq!(
-        marker(&window),
-        0,
-        "Page_Up at the top stays at the top rather than going negative"
+        scrolled(&window),
+        0.0,
+        "Page_Up at the top stays at the top"
     );
 
     // -- and the keyboard never left the list -------------------------------
@@ -202,46 +148,25 @@ pub fn a_new_message_resets_the_scroll_position() {
     pump();
 
     window.show_message(&body(), Some("ada@example.com"));
-    pump();
-    assert!(press(&window, gdk::Key::Page_Down));
-    assert!(press(&window, gdk::Key::Page_Down));
-    pump();
-    // The fragment navigation is asynchronous; wait for it rather
-    // than trusting the turn count above (#851, and this file again
-    // on #187).
-    crate::settle_until("the reader to reach pos-2", || marker(&window) == 2);
-    assert_eq!(
-        marker(&window),
-        2,
-        "two presses down before the message changes"
-    );
+    wait_drawn(&window);
+    let one = page(&window, gdk::Key::Page_Down, false, |y| y > 0.0);
+    page(&window, gdk::Key::Page_Down, false, |y| y > one);
 
-    // A second message opening is a `load_html`, which always starts a
-    // document at the top -- the counter has to agree, or the next
-    // Page_Down would jump to `pos-3` on a page that just reset to zero.
+    // A second message starts at its top, not wherever the last one was.
+    let generation = window.reader().view().document().map(|d| d.generation);
     window.show_message(&body(), Some("grace@example.com"));
-    pump();
-    assert_eq!(
-        marker(&window),
-        0,
-        "the new message starts with no fragment, same as any fresh render"
-    );
-
-    assert!(press(&window, gdk::Key::Page_Down));
-    // A condition, not a count. `show_message` is a `load_html`, which is
-    // asynchronous: the forty pump rounds above are enough on an idle
-    // workstation and were not enough on a loaded runner, where this read
-    // `None` because the fragment navigation had not landed yet. Waiting for
-    // the thing being asserted removes the guess -- and a timeout now says
-    // what it was waiting for instead of failing an equality (#851).
-    crate::settle_until("the new message's first page marker", || {
-        marker(&window) == 1
+    crate::settle_until("the second message to be drawn", || {
+        window.reader().view().document().map(|d| d.generation) != generation
     });
     assert_eq!(
-        marker(&window),
-        1,
-        "paging the new message starts counting from zero again, not from \
-         wherever the last one left off"
+        scrolled(&window),
+        0.0,
+        "the new message starts at its top, same as any fresh render"
+    );
+    let again = page(&window, gdk::Key::Page_Down, false, |y| y > 0.0);
+    assert!(
+        (again - one).abs() < 1.0,
+        "paging the new message starts from its top: {again}, not {one}"
     );
 }
 
@@ -259,15 +184,14 @@ pub fn paging_with_nothing_open_does_nothing() {
     pump();
 
     assert!(!window.reading(), "nothing should be open yet");
-    // The command is still claimed -- it is bound in this context regardless
-    // of whether there happens to be a message open right now, the same way
-    // `j`/`k` are claimed with an empty list. What must not happen is a
-    // navigation to a marker that means nothing.
+    // The command is still claimed -- it is bound in this context whether
+    // or not a message is open, the same way `j`/`k` are claimed with an
+    // empty list. What must not happen is a scroll of nothing.
     press(&window, gdk::Key::Page_Down);
     pump();
     assert_eq!(
-        marker(&window),
-        0,
-        "nothing is open, so paging must not have navigated anywhere"
+        scrolled(&window),
+        0.0,
+        "nothing is open, so paging must not have scrolled anything"
     );
 }

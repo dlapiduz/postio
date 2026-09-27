@@ -4770,15 +4770,8 @@ dependencies = [
 name = "postio-gtk"
 version = "0.3.0"
 dependencies = [
- "anyrender",
- "anyrender_vello_cpu",
  "async-channel",
- "blitz-dom",
- "blitz-html",
- "blitz-paint",
- "blitz-traits",
  "chrono",
- "fontdb",
  "gio",
  "glib",
  "glib-build-tools",
@@ -4786,9 +4779,7 @@ dependencies = [
  "gtk4-sys",
  "image",
  "libadwaita",
- "memmap2",
  "pango",
- "parley",
  "postio-body",
  "postio-config",
  "postio-core",

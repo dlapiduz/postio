@@ -4,7 +4,7 @@ use std::rc::Rc;
 
 use glib::object::ObjectExt;
 use postio_gtk::editor;
-use postio_gtk::reader::scheme::BlobSource;
+use postio_gtk::reader::BlobSource;
 
 use crate::settle;
 

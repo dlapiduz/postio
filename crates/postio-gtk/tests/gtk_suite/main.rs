@@ -292,28 +292,8 @@ const CASES: &[(&str, fn())] = &[
         gtk_reader_styles::a_body_that_has_not_arrived_says_so_in_the_thread as fn(),
     ),
     (
-        "gtk_reader_styles::moving_between_messages_never_loads_an_error_page",
-        gtk_reader_styles::moving_between_messages_never_loads_an_error_page as fn(),
-    ),
-    (
         "gtk_reader_styles::the_readers_verbs_live_in_its_header",
         gtk_reader_styles::the_readers_verbs_live_in_its_header as fn(),
-    ),
-    (
-        "gtk_reader_styles::the_users_own_message_is_marked_in_the_document",
-        gtk_reader_styles::the_users_own_message_is_marked_in_the_document as fn(),
-    ),
-    (
-        "gtk_reader_styles::from_to_and_cc_share_a_column",
-        gtk_reader_styles::from_to_and_cc_share_a_column as fn(),
-    ),
-    (
-        "gtk_reader_styles::each_messages_accent_breaks_before_the_next",
-        gtk_reader_styles::each_messages_accent_breaks_before_the_next as fn(),
-    ),
-    (
-        "gtk_reader_styles::a_page_key_moves_the_document_itself",
-        gtk_reader_styles::a_page_key_moves_the_document_itself as fn(),
     ),
     (
         "gtk_reader_styles::a_redraw_of_an_unchanged_thread_sanitises_nothing",
@@ -326,10 +306,6 @@ const CASES: &[(&str, fn())] = &[
     (
         "gtk_reader_outgoing::a_message_being_sent_offers_sending_verbs_and_not_replies",
         gtk_reader_outgoing::a_message_being_sent_offers_sending_verbs_and_not_replies as fn(),
-    ),
-    (
-        "gtk_reader_styles::one_senders_stylesheet_cannot_restyle_another_message",
-        gtk_reader_styles::one_senders_stylesheet_cannot_restyle_another_message as fn(),
     ),
     (
         "gtk_settings_sync::the_pane_shows_the_files_values",
@@ -716,8 +692,8 @@ const CASES: &[(&str, fn())] = &[
         gtk_prev_view::h_steps_back_out_of_a_thread_the_same_way_escape_does as fn(),
     ),
     (
-        "gtk_reader_scroll::page_down_and_page_up_move_a_marker_at_a_time",
-        gtk_reader_scroll::page_down_and_page_up_move_a_marker_at_a_time as fn(),
+        "gtk_reader_scroll::page_down_and_page_up_move_a_screen_at_a_time",
+        gtk_reader_scroll::page_down_and_page_up_move_a_screen_at_a_time as fn(),
     ),
     (
         "gtk_reader_scroll::a_new_message_resets_the_scroll_position",
@@ -1528,12 +1504,12 @@ const CASES: &[(&str, fn())] = &[
         gtk_reader_actions::the_action_bar_follows_the_pane_carries_the_keymap_and_runs_registry_commands as fn(),
     ),
     (
-        "gtk_reader_fonts::the_faces_are_fetched_over_the_scheme_and_not_carried_by_the_document",
-        gtk_reader_fonts::the_faces_are_fetched_over_the_scheme_and_not_carried_by_the_document as fn(),
+        "gtk_reader_fonts::the_faces_are_the_readers_own_and_not_carried_by_the_document",
+        gtk_reader_fonts::the_faces_are_the_readers_own_and_not_carried_by_the_document as fn(),
     ),
     (
-        "gtk_reader_fonts::a_warmed_reader_draws_its_first_message_with_every_face_already_fetched",
-        gtk_reader_fonts::a_warmed_reader_draws_its_first_message_with_every_face_already_fetched
+        "gtk_reader_fonts::a_warmed_reader_draws_its_first_message_in_full",
+        gtk_reader_fonts::a_warmed_reader_draws_its_first_message_in_full
             as fn(),
     ),
     (
@@ -1661,16 +1637,16 @@ const CASES: &[(&str, fn())] = &[
         list_model::a_held_delivery_is_not_postponed_by_a_window_that_is_repainting as fn(),
     ),
     (
-        "gtk_reader_teardown::a_dropped_reader_releases_its_webview",
-        gtk_reader_teardown::a_dropped_reader_releases_its_webview as fn(),
+        "gtk_reader_teardown::a_dropped_reader_releases_its_view",
+        gtk_reader_teardown::a_dropped_reader_releases_its_view as fn(),
     ),
     (
-        "gtk_reader_teardown::readers_do_not_accumulate_webviews",
-        gtk_reader_teardown::readers_do_not_accumulate_webviews as fn(),
+        "gtk_reader_teardown::readers_do_not_accumulate_views",
+        gtk_reader_teardown::readers_do_not_accumulate_views as fn(),
     ),
     (
-        "gtk_window_teardown::a_destroyed_window_releases_its_reader_and_its_web_process",
-        gtk_window_teardown::a_destroyed_window_releases_its_reader_and_its_web_process as fn(),
+        "gtk_window_teardown::a_destroyed_window_releases_its_reader_and_its_renderer",
+        gtk_window_teardown::a_destroyed_window_releases_its_reader_and_its_renderer as fn(),
     ),
     (
         "gtk_window_teardown::dropping_a_window_without_destroying_it_is_not_enough",

@@ -362,6 +362,10 @@ the maintainer decides again with it in hand.
 
 ### Results (`crates/postio-gtk/examples/head_to_head.rs`)
 
+The example was deleted with the WebKit reader it measured (spec 006
+T139); `git show b1a376a0:crates/postio-gtk/examples/head_to_head.rs`
+still has it.
+
 **Setup.**
 - The runs are on a headless mutter at 1280×1000, scale 1, because the
   desktop's screen had stopped presenting frames. `capture.rs` records why

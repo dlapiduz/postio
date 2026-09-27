@@ -5,14 +5,14 @@
 //! not exited after the UI process closed the connection.
 //!
 //! Three `Window -> … -> Window` cycles kept every window ever built alive,
-//! and with it its `Reader`, its `WebContext` — which *is* a WebProcess —
-//! and its `NetworkSession`:
+//! and with it its `Reader` -- under WebKit a `WebContext`, which *is* a
+//! WebProcess; since spec 006 a render thread and a snapshot:
 //!
 //!   * `reader.connect_rendered` and `reader.connect_command` store handlers
 //!     in the `Reader`, which the window's imp stores in turn;
-//!   * the blob `source` closure becomes the `Rc<dyn BlobSource>` the reader
-//!     hands to its `WebContext`, so that one closes the loop *inside
-//!     WebKit* — which is why destroying the window never broke it.
+//!   * the blob `source` closure became the `Rc<dyn BlobSource>` the reader
+//!     handed to its `WebContext`, closing the loop *inside WebKit* --
+//!     which is why destroying the window never broke it.
 //!
 //! **Any one of the three kept the window alive.** Each was fixed alone
 //! first and looked like no fix at all; that is the thing to remember if a
@@ -29,7 +29,7 @@ use postio_gtk::window::Window;
 
 use crate::settle;
 
-pub fn a_destroyed_window_releases_its_reader_and_its_web_process() {
+pub fn a_destroyed_window_releases_its_reader_and_its_renderer() {
     if adw::init().is_err() || gtk::gdk::Display::default().is_none() {
         eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
         return;
@@ -37,7 +37,7 @@ pub fn a_destroyed_window_releases_its_reader_and_its_web_process() {
 
     let (window, view) = {
         let window = Window::default();
-        // Build the reader: it is what owns the WebContext, and the point.
+        // Build the reader: it is what owns the renderer, and the point.
         let view = window.reader().view().downgrade();
         let weak = window.downgrade();
         window.destroy();
@@ -52,9 +52,8 @@ pub fn a_destroyed_window_releases_its_reader_and_its_web_process() {
     );
     assert!(
         view.upgrade().is_none(),
-        "the reader's WebView outlived the window that built it; its \
-         WebContext is a WebProcess, and it is still attached at exit(), \
-         which is #794"
+        "the reader's body view outlived the window that built it, and \
+         its render thread and snapshot with it (#794)"
     );
 }
 

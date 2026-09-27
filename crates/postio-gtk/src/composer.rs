@@ -481,7 +481,7 @@ type BlobLookup = Rc<RefCell<Option<Box<dyn Fn(&str) -> Option<(Vec<u8>, String)
 
 /// Reads an attachment's bytes back, for the editing surface's
 /// `postio-cid:` requests. Synchronous and local, like
-/// [`crate::reader::scheme::BlobSource`], because that is what a scheme
+/// [`crate::reader::BlobSource`], because that is what a scheme
 /// handler can await.
 type AttachmentBytes = Box<dyn Fn(&Attachment) -> Option<Vec<u8>>>;
 

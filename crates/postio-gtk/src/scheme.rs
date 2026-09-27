@@ -1,8 +1,11 @@
-//! The `postio-cid:` custom scheme: how an inline image reaches the reader.
+//! The `postio-cid:` custom scheme: how an inline image reaches the
+//! composer's `WebView`.
 //!
-//! `sanitize.rs` rewrites every `cid:` reference in a message body to this
-//! scheme before the markup ever reaches the `WebView`; this module is what
-//! answers those requests. It never touches the network — inline parts are
+//! The reader has not used it since spec 006: its renderer resolves parts
+//! from a table handed over with the document. The composer's editing
+//! surface is still WebKit, and `sanitize.rs` rewrites every `cid:`
+//! reference in what it edits to this scheme; this module is what answers
+//! those requests. It never touches the network — inline parts are
 //! local blobs by the time a message has a renderable body at all — so a
 //! request either resolves from local bytes or fails with "not found", never
 //! by falling through to somewhere on the internet with the same name.
@@ -15,8 +18,7 @@
 use std::rc::Rc;
 
 use gtk::glib;
-use gtk::prelude::*;
-use webkit6::{URISchemeRequest, WebContext, WebView};
+use webkit6::{URISchemeRequest, WebContext};
 
 use postio_body::sanitize::{CID_SCHEME, percent_decode};
 
@@ -33,62 +35,13 @@ use postio_ui::reader::document::{FONT_MIME, FONT_SCHEME, font_bytes};
 ///
 /// `WebKitWebContext` offers no way to unregister a scheme, so this is meant
 /// to be called once per context with a `source` that stays valid for the
-/// context's whole life — [`super::view::Reader`] hands it a handle onto
-/// whichever message is currently open, not the message itself.
+/// context's whole life -- the composer hands it a handle onto whichever
+/// draft is open, not the draft itself.
 pub fn register(context: &WebContext, source: Rc<dyn BlobSource>) {
     context.register_uri_scheme(CID_SCHEME, move |request| {
         respond(request, source.as_ref());
     });
     register_fonts(context);
-}
-
-/// A reader view, weakly, and the source its `postio-cid` requests answer
-/// from.
-type Attached = (glib::WeakRef<WebView>, Rc<dyn BlobSource>);
-
-thread_local! {
-    /// Each reader view's own blob source, for a context the views share
-    /// (#1603). Weak, so a reader that goes takes its entry's usefulness with
-    /// it; pruned whenever a view is added.
-    static SOURCES: std::cell::RefCell<Vec<Attached>> =
-        const { std::cell::RefCell::new(Vec::new()) };
-}
-
-/// Register the schemes on a context that several reader views share.
-///
-/// The fonts are the same for every view. `postio-cid` is not: each reader
-/// shows its own message and resolves its inline images through its own
-/// source, so the handler asks which view is loading and answers from the
-/// source [`attach`] recorded for it. A request from a view with no source
-/// -- or one whose view is already gone -- resolves nothing, exactly as a
-/// `cid:` with no matching part does.
-pub fn register_shared(context: &WebContext) {
-    context.register_uri_scheme(CID_SCHEME, |request| {
-        let source = request.web_view().and_then(|view| {
-            SOURCES.with(|sources| {
-                sources
-                    .borrow()
-                    .iter()
-                    .find(|(held, _)| held.upgrade().as_ref() == Some(&view))
-                    .map(|(_, source)| Rc::clone(source))
-            })
-        });
-        match source {
-            Some(source) => respond(request, source.as_ref()),
-            None => respond(request, &|_: &str| None),
-        }
-    });
-    register_fonts(context);
-}
-
-/// Say which source answers `view`'s `postio-cid` requests on a shared
-/// context. See [`register_shared`].
-pub fn attach(view: &WebView, source: Rc<dyn BlobSource>) {
-    SOURCES.with(|sources| {
-        let mut sources = sources.borrow_mut();
-        sources.retain(|(held, _)| held.upgrade().is_some());
-        sources.push((view.downgrade(), source));
-    });
 }
 
 /// Register [`FONT_SCHEME`] on `context`, serving Postio's own typefaces
@@ -106,18 +59,6 @@ fn register_fonts(context: &WebContext) {
     context.register_uri_scheme(FONT_SCHEME, respond_with_font);
 }
 
-/// How many faces the font scheme has served in this process.
-static FONTS_SERVED: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
-
-/// How many vendored faces the engine has fetched over `postio-font` in this
-/// process. Process-wide on purpose: readers share one web process (#1603),
-/// so a face fetched for one reader is cached for the next, and whether a
-/// given view asked says less than whether the engine ever did.
-#[doc(hidden)]
-pub fn fonts_served() -> usize {
-    FONTS_SERVED.load(std::sync::atomic::Ordering::Relaxed)
-}
-
 fn respond_with_font(request: &URISchemeRequest) {
     let name = request
         .uri()
@@ -126,7 +67,6 @@ fn respond_with_font(request: &URISchemeRequest) {
 
     match font_bytes(&name) {
         Some(bytes) => {
-            FONTS_SERVED.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             let length = bytes.len() as i64;
             // `&'static [u8]` compiled into the binary, so the stream borrows
             // rather than copies: no read, no file, nothing to fail partway.
