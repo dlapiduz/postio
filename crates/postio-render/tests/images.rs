@@ -41,6 +41,7 @@ fn request(fixture: &str) -> (RenderRequest, Vec<(String, Vec<u8>)>) {
         generation: 1,
         document: html,
         plain_text: String::new(),
+        over_cap: None,
         resources: Arc::new(resources),
         viewport: Viewport {
             width: 800.0,

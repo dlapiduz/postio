@@ -272,8 +272,8 @@ plan and tasks agree with the decision.
   - a stale-generation result is never delivered;
   - after `abandon(g)` on a request held by a test delay hook, the next request is served by a new thread
 - [X] T047 Implement `crates/postio-render/src/thread.rs` (research R6): one thread with a 64 MiB stack, `catch_unwind(AssertUnwindSafe)`, the document dropped after a panic, generations, taint and replacement, and `fallback()` for plain text. Also a panic hook that logs location and message id only, never the payload
-- [ ] T048 [TEST] In `crates/postio-body/src/sanitize.rs` unit tests, check the input caps: a body over 50,000 elements, deeper than 256, or over 2 MiB sets `over_cap` with the cap named. In `crates/postio-render/tests/thread.rs`, a sanitized message with `over_cap` yields `FellBack { OverCap }` without Blitz parsing it (`counts.nodes == 0`)
-- [ ] T049 Implement the caps in `crates/postio-body/src/sanitize.rs` and the short-circuit in `crates/postio-render/src/thread.rs`
+- [X] T048 [TEST] In `crates/postio-body/src/sanitize.rs` unit tests, check the input caps: a body over 50,000 elements, deeper than 256, or over 2 MiB sets `over_cap` with the cap named. In `crates/postio-render/tests/thread.rs`, a sanitized message with `over_cap` yields `FellBack { OverCap }` without Blitz parsing it (`counts.nodes == 0`)
+- [X] T049 Implement the caps in `crates/postio-body/src/sanitize.rs` and the short-circuit in `crates/postio-render/src/thread.rs`
 
 ### Snapshot, text index, tiles, egress
 

@@ -670,6 +670,9 @@ pub struct Rendered {
     /// Links reduction collapsed. The canvas draws the pair as
     /// `1 link kept of 23`.
     pub links_dropped: usize,
+    /// The input cap the HTML body exceeded, if any: then `html` is the
+    /// plain-text alternative, and the reader says why (spec 006 R6).
+    pub over_cap: Option<postio_body::Cap>,
 }
 
 impl Rendered {
@@ -811,6 +814,9 @@ pub fn body_html_in(
             // sender HTML would be relying on it for a promise it does not
             // make.
             let sanitized = sanitize::sanitize_body_in(html, remote, scope);
+            if let Some(cap) = sanitized.over_cap {
+                return over_cap(body, cap);
+            }
             let reduced = reader_view::reduce(&sanitized.html);
             return Rendered {
                 html: reduced.html,
@@ -829,12 +835,16 @@ pub fn body_html_in(
                 rendering: Rendering::Reader,
                 links_kept: reduced.links_kept,
                 links_dropped: reduced.links_dropped,
+                over_cap: None,
             };
         }
     }
 
     if let Some(html) = html {
         let sanitized = sanitize::sanitize_body_in(html, remote, scope);
+        if let Some(cap) = sanitized.over_cap {
+            return over_cap(body, cap);
+        }
         return Rendered {
             html: on_canvas(
                 &format!(
@@ -859,6 +869,20 @@ pub fn body_html_in(
         };
     }
     Rendered::default()
+}
+
+/// A message whose HTML is over an input cap: its plain-text alternative,
+/// or a line saying there is nothing else to show. Never blank.
+fn over_cap(body: &MessageBody, cap: postio_body::Cap) -> Rendered {
+    let html = match body.text.as_deref().filter(|text| !text.trim().is_empty()) {
+        Some(text) => quote::text_to_html(text),
+        None => "<p>This message is too large to display.</p>".to_owned(),
+    };
+    Rendered {
+        html,
+        over_cap: Some(cap),
+        ..Rendered::default()
+    }
 }
 
 /// The class original HTML is wrapped in, so the reader's own typography
@@ -2543,5 +2567,48 @@ mod warming_tests {
                 "reader.css must revert Postio's type under {reverted}"
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod over_cap_tests {
+    use super::*;
+
+    fn deep() -> String {
+        format!("{}x{}", "<div>".repeat(2_000), "</div>".repeat(2_000))
+    }
+
+    /// A body over an input cap is never handed on, so the reader shows
+    /// the plain-text alternative, and says why (spec 006 R6, FR-023).
+    #[test]
+    fn an_over_cap_body_shows_its_plain_text_alternative() {
+        let body = MessageBody {
+            text: Some("the plain alternative".to_owned()),
+            html: Some(deep()),
+        };
+        for rendering in [Rendering::Original, Rendering::Reader] {
+            let rendered = body_html_in(&body, RemoteImages::Blocked, rendering, None);
+            assert!(
+                rendered.html.contains("the plain alternative"),
+                "{rendering:?} showed {:?}",
+                rendered.html
+            );
+            // Reader view prefers the plain part and never sanitizes the
+            // HTML beside it, so only Original meets the cap.
+            if rendering == Rendering::Original {
+                assert_eq!(rendered.over_cap, Some(postio_body::Cap::Depth));
+            }
+        }
+    }
+
+    #[test]
+    fn an_over_cap_body_with_no_alternative_is_not_blank() {
+        let body = MessageBody {
+            text: None,
+            html: Some(deep()),
+        };
+        let rendered = body_html_in(&body, RemoteImages::Blocked, Rendering::Original, None);
+        assert!(!rendered.html.trim().is_empty(), "the message opened blank");
+        assert_eq!(rendered.over_cap, Some(postio_body::Cap::Depth));
     }
 }
