@@ -185,6 +185,9 @@ and scrubbed it (constitution VI).
 | C18 | 01 | `SPEC.md`: "186 filtered (g f)" | PNG: "186 filtered today" | **PNG wins** |
 | C19 | `KEYS.md` | "`⇧X` Select all visible" | Constitution V: select all is a predicate | It selects every conversation in the current view, as a predicate, not just the rows on screen |
 | C20 | `KEYS.md` | Focus's keys: `s` snooze, `d` digest, `h` remind, `l` label, `U` unsubscribe, `R` restore, `g f`/`g d`/`g t`/`g s`, `Ctrl+Z` undo | The classic defaults: `s` flag, `d` delete, `h` previous view, `l` open, `U` mark unread, `R` refresh, `g f` sidebar, `g d` drafts, `g t` sent, `g s` flagged, `u` undo | **Maintainer: one keymap for all apps** (Clarifications). The classic and terminal defaults change to `KEYS.md`'s (FR-081) |
+| C21 | 25, the brief | The task line ends in its link: `- [ ] … 📅 2026-09-30 [✉](postio://message/…)` | The Obsidian Tasks plugin reads its fields from the end of the line, so text after the date hides the date from it (plan research) | **Behaviour wins.** The link goes before the date: `- [ ] … [✉](postio://message/…) 📅 2026-09-30` |
+| C22 | 01–20 | Shifted keys drawn with a glyph: `⇧J ⇧K`, `⇧X`, `⇧A` | Key hints are generated from the registry. The shared hint code refuses the `⇧` glyph (`check-key-hints-are-derived.py`) | **The derived hint wins.** The comparison records the notation difference |
+| C23 | 05 | Recipient suggestions open after three characters ("gra") | The shared completion rule opens them at four (`postio-ui/src/recipients.rs`) | One rule for both apps. Whether it becomes three is a `/ux-architect` call. Until then the comparison records the difference |
 
 ## The message view waits for the new renderer
 
@@ -720,8 +723,8 @@ button's keycap all show the key the keymap resolves.
    **Then** it appears in the key map and the command bar with no
    Focus-specific code.
 3. **Given** the one default keymap, **When** it is enumerated across every
-   app, **Then** no key is bound to two commands in one context, and a key
-   means the same command in every app that has that command.
+   app, **Then** no key is bound to two commands in one context, and each
+   command has the same key in every app that has it.
 4. **Given** the key map open, **When** the user presses `?` or `Esc`,
    **Then** it closes.
 5. **Given** the classic app after this feature, **When** it starts, **Then**
@@ -1146,8 +1149,9 @@ Screen 25.
   beside it.
 - A project is suggested from the vault, with its reason, and `Ctrl+P`
   changes it.
-- The preview is the exact markdown line, in the Obsidian Tasks format,
-  ending in a `postio://` link back to the message.
+- The preview is the exact markdown line, in the Obsidian Tasks format, with
+  a `postio://` link back to the message placed before the date, where the
+  Tasks plugin still reads the date.
 
 `Ctrl+Enter` appends the line to the vault on this machine. The row then
 shows "Task in <project> · due <day>". When the task is ticked in Obsidian,
@@ -1166,8 +1170,9 @@ the conversation in Postio.
 **Acceptance Scenarios**:
 
 1. **Given** a to-do marker, **When** the user captures it, **Then** exactly
-   one line, `- [ ] <sentence> 📅 <date> [✉](postio://message/<id>)`, is
-   appended to the chosen note. Nothing else in the vault changes.
+   one line, `- [ ] <sentence> [✉](postio://message/<id>) 📅 <date>`, is
+   appended to the chosen note. Nothing else in the vault changes, and the
+   Tasks plugin reads the line's due date.
 2. **Given** a `postio://` link, **When** it is opened, **Then** the
    conversation opens in Postio. Nothing is fetched, and a link Postio cannot
    resolve is refused with a message.
@@ -1496,10 +1501,11 @@ the conversation in Postio.
     does not collide with the keymap.
   - Every binding MUST be overridable from `[keys]` in `config.toml`, by
     command id. There is no `keys.toml` and no per-app key table.
-- **FR-082**: A key MUST mean one thing everywhere: in every Focus surface,
-  and in every app that has the command. No key may be bound to two commands
-  in one context. Undo is `Ctrl+Z` only. Inside a text field, `Ctrl+Z`
-  undoes typing.
+- **FR-082**: A key MUST mean one thing across Focus's surfaces, and a
+  command MUST have the same key in every app that has it. No key may be
+  bound to two commands in one context. Surfaces only another app has, such
+  as the classic sidebar, keep their own context keys. Undo is `Ctrl+Z`
+  only. Inside a text field, `Ctrl+Z` undoes typing.
 - **FR-083**: Every command reachable in Focus MUST have a key, a command-bar
   row and a visible, clickable control. That includes commands `KEYS.md`
   leaves without a key (C11, C12). The mouse MUST work everywhere and MUST
@@ -1815,7 +1821,9 @@ milestone 1 does not design it out)
 
 - **FR-180**: Obsidian capture MUST write plain markdown into a vault folder
   the user configures, on this machine, with no plugin and no network:
-  - tasks in the Obsidian Tasks format, ending in a `postio://` link;
+  - tasks in the Obsidian Tasks format, with a `postio://` link placed
+    before the date fields, which the Tasks plugin reads from the end of the
+    line;
   - notes created or appended, with quoted excerpts only when the user asks
     for them.
 
@@ -1927,9 +1935,10 @@ milestone 1 does not design it out)
   - every shown statement cites at least one of the digest's messages;
   - every cited passage exists byte-exact in its message;
   - no summary renders markup or a live link.
-- **SC-015**: Across every app, no default key means two different commands,
-  and every command an app offers has a key. This is proven by enumerating
-  the one keymap.
+- **SC-015**: Across every app, no key is bound to two commands in one
+  context, every command an app offers has a key, and each command has the
+  same default key in every app that offers it. This is proven by
+  enumerating the one keymap.
 - **SC-016**: With no model configured, every milestone 1 acceptance
   scenario passes, Question and To-do markers still appear from the built-in
   detector, and Postio opens zero connections to any model runtime. A test
