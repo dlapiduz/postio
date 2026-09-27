@@ -60,7 +60,7 @@ fn request(fixture: &str) -> (RenderRequest, Vec<(String, Vec<u8>)>) {
 #[test]
 fn an_inline_cid_image_paints_its_own_pixels() {
     let (request, parts) = request("inline-image-cid");
-    let doc = postio_render::render(&request);
+    let doc = postio_render::render(&request, fonts());
     let raster = postio_render::rasterize(&doc);
     let painted: HashSet<[u8; 3]> = raster
         .rgba
@@ -96,7 +96,7 @@ fn a_relative_image_url_resolves_to_nothing_without_a_panic() {
         "<img src=\"x\" width=\"10\" height=\"10\"></body>",
         1,
     );
-    let doc = postio_render::render(&request);
+    let doc = postio_render::render(&request, fonts());
     assert_eq!(doc.outcome, postio_render::Outcome::Rendered);
     assert_eq!(
         doc.counts.resources_unresolved, 2,
@@ -135,7 +135,7 @@ fn an_svg_image_paints_its_shapes_and_no_local_file() {
         );
     request.resources.insert_part(None, &cid, svg.into_bytes());
 
-    let raster = postio_render::rasterize(&postio_render::render(&request));
+    let raster = postio_render::rasterize(&postio_render::render(&request, fonts()));
     let pixels = raster.rgba.as_chunks::<4>().0;
     let near = |p: &[u8; 4], [r, g, b]: [u8; 3]| {
         p[0].abs_diff(r) < 8 && p[1].abs_diff(g) < 8 && p[2].abs_diff(b) < 8
@@ -150,4 +150,19 @@ fn an_svg_image_paints_its_shapes_and_no_local_file() {
         .count();
     assert_eq!(leaked, 0, "{leaked} pixels of a local file were painted");
     assert!(green > 1_000, "the SVG's own rect painted {green} pixels");
+}
+
+/// The process's font set: bundled faces plus discovery, built once.
+fn fonts() -> &'static postio_render::fonts::FontSet {
+    static FONTS: std::sync::OnceLock<postio_render::fonts::FontSet> = std::sync::OnceLock::new();
+    FONTS.get_or_init(|| {
+        postio_render::fonts::FontSet::new(postio_render::fonts::Bundled {
+            faces: postio_ui::reader::document::FACES
+                .iter()
+                .map(|face| face.bytes)
+                .collect(),
+            sans: "Barlow",
+            mono: "IBM Plex Mono",
+        })
+    })
 }

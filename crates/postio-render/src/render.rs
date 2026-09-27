@@ -8,6 +8,7 @@ use anyrender::ImageRenderer as _;
 use blitz_dom::DocumentConfig;
 use blitz_traits::shell::ColorScheme;
 
+use crate::fonts::FontSet;
 use crate::{Outcome, RenderCounts, RenderRequest, RenderedDocument, TextIndex};
 
 /// What relative URLs resolve against. Without a base Blitz resolves
@@ -15,8 +16,8 @@ use crate::{Outcome, RenderCounts, RenderRequest, RenderedDocument, TextIndex};
 /// `<img src="x">` (research R1).
 pub const BASE_URL: &str = "postio-message://message/";
 
-/// Lay out and record `request`'s document.
-pub fn render(request: &RenderRequest) -> RenderedDocument {
+/// Lay out and record `request`'s document, drawing with `fonts`.
+pub fn render(request: &RenderRequest, fonts: &FontSet) -> RenderedDocument {
     let viewport = &request.viewport;
     let scale = viewport.hidpi_scale;
     let config = DocumentConfig {
@@ -31,6 +32,7 @@ pub fn render(request: &RenderRequest) -> RenderedDocument {
             },
         )),
         base_url: Some(BASE_URL.to_owned()),
+        font_ctx: Some(fonts.context()),
         net_provider: Some(Arc::clone(&request.resources) as _),
         ..Default::default()
     };

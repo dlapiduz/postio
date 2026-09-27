@@ -25,7 +25,7 @@ fn render(toggled: &[&str]) -> (postio_render::RenderedDocument, postio_render::
         toggled_folds: toggled.iter().map(|id| (*id).to_owned()).collect(),
         reader_view: Vec::new(),
     };
-    let doc = postio_render::render(&request);
+    let doc = postio_render::render(&request, fonts());
     let raster = postio_render::rasterize(&doc);
     (doc, raster)
 }
@@ -87,4 +87,19 @@ fn opening_a_fold_moves_only_what_is_below_its_summary() {
         "what follows moved by the body's height"
     );
     assert!(open_doc.size.height - closed_doc.size.height >= 100.0);
+}
+
+/// The process's font set: bundled faces plus discovery, built once.
+fn fonts() -> &'static postio_render::fonts::FontSet {
+    static FONTS: std::sync::OnceLock<postio_render::fonts::FontSet> = std::sync::OnceLock::new();
+    FONTS.get_or_init(|| {
+        postio_render::fonts::FontSet::new(postio_render::fonts::Bundled {
+            faces: postio_ui::reader::document::FACES
+                .iter()
+                .map(|face| face.bytes)
+                .collect(),
+            sans: "Barlow",
+            mono: "IBM Plex Mono",
+        })
+    })
 }

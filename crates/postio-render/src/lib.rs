@@ -6,6 +6,7 @@
 //! crate is being built task by task; until it is, it holds the evaluation's
 //! harness in `examples/` and the dependency graph the checks prove.
 
+pub mod fonts;
 pub mod render;
 pub mod resources;
 pub mod theme;
