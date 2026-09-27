@@ -265,7 +265,13 @@ pub(crate) async fn resolve(
         None => None,
     };
 
-    let built = outgoing::build(&draft, identity, &outgoing_attachments, parent.as_ref());
+    let built = outgoing::build(
+        &draft,
+        identity,
+        &outgoing_attachments,
+        parent.as_ref(),
+        None,
+    );
 
     let Some(sent) = MailboxRepository::new(connection)
         .by_role(account.id, MailboxRole::Sent)

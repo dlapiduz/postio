@@ -43,7 +43,7 @@ fn built_reply(
     let identity = account.identities[0].clone();
     let source = test_corpus::load(fixture).parse();
     let draft = reply::reply(&source, &account, reply::plain_quote(&source));
-    let built = outgoing::build(&draft, &identity, &[], Some(&source));
+    let built = outgoing::build(&draft, &identity, &[], Some(&source), None);
     (mime::parse(&built.raw), source, draft)
 }
 
@@ -161,7 +161,7 @@ fn forwarding_carries_no_threading_headers_at_all() {
     assert!(draft.in_reply_to.is_none());
 
     // A forward starts a new conversation, so nothing is passed as the parent.
-    let built = outgoing::build(&draft, &identity, &[], None);
+    let built = outgoing::build(&draft, &identity, &[], None, None);
     let sent = mime::parse(&built.raw);
     assert!(sent.in_reply_to.is_none());
     assert!(sent.references.is_empty());

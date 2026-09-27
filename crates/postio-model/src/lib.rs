@@ -96,7 +96,7 @@ pub use mailbox::{Mailbox, MailboxCounts, MailboxRole, RoleKind, RoleOverrides};
 pub use message::{BodyState, LocalSyncState, Message, MessageBody, ServerIdentifiers};
 pub use mime::{ParsedMessage, ParsedPart};
 pub use operation::{Operation, OperationRange, OperationState, OperationTarget};
-pub use outgoing::{BuiltMessage, OutgoingAttachment};
+pub use outgoing::{BuiltMessage, CalendarMethod, CalendarPart, OutgoingAttachment};
 pub use scope::{Arrival, ListScope, Reaction};
 pub use subject::{is_reply, normalize_subject};
 pub use sync::{FullResyncReason, MailboxStatus, ResyncPlan, SyncState};

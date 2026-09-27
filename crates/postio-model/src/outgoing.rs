@@ -55,6 +55,41 @@ pub struct OutgoingAttachment<'a> {
     pub content: &'a [u8],
 }
 
+/// A calendar object to send with the message: the `text/calendar` part an
+/// RSVP carries (`specs/007-postio-focus` FR-102, research R9).
+///
+/// It goes in the `multipart/alternative`, beside the text a person reads,
+/// which is where RFC 6047 §2.4 puts an iTIP message and where every
+/// calendar client looks for one.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CalendarPart<'a> {
+    /// The iTIP method, repeated as the part's `method=` parameter.
+    pub method: CalendarMethod,
+    /// The iCalendar object, as `postio-calendar` writes it: UTF-8 with CRLF
+    /// line endings.
+    pub ics: &'a [u8],
+}
+
+/// The iTIP method of a calendar part Postio sends (RFC 5546 §1.4).
+///
+/// Postio answers invitations and organises none, so an answer is the only
+/// kind it has to send. A closed set keeps anything else out of a header
+/// parameter.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum CalendarMethod {
+    /// `REPLY`: an attendee's answer to an invitation (RFC 5546 §3.2.3).
+    Reply,
+}
+
+impl CalendarMethod {
+    /// The method's name as the `method=` parameter spells it.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            CalendarMethod::Reply => "REPLY",
+        }
+    }
+}
+
 /// A [`Draft`] built into raw bytes, ready to hand to SMTP.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BuiltMessage {
@@ -85,13 +120,25 @@ pub struct BuiltMessage {
 /// rebuilt — on every drain attempt, so generating one here unconditionally
 /// made a retried send a second *distinct* message rather than a duplicate
 /// anything downstream could recognise. The date is always the current time.
+///
+/// `calendar` is the answer to an invitation, when this message is one: its
+/// part joins the draft's text and HTML in the `multipart/alternative`. With
+/// `None` the message is exactly what it would be without the parameter.
 pub fn build(
     draft: &Draft,
     identity: &Identity,
     attachments: &[OutgoingAttachment<'_>],
     in_reply_to: Option<&Message>,
+    calendar: Option<CalendarPart<'_>>,
 ) -> BuiltMessage {
-    assemble(draft, identity, attachments, in_reply_to, Bcc::Omit)
+    assemble(
+        draft,
+        identity,
+        attachments,
+        in_reply_to,
+        Bcc::Omit,
+        calendar,
+    )
 }
 
 /// Builds `draft` into the copy filed in the account's **Drafts** mailbox.
@@ -114,7 +161,16 @@ pub fn build_draft(
     attachments: &[OutgoingAttachment<'_>],
     in_reply_to: Option<&Message>,
 ) -> BuiltMessage {
-    assemble(draft, identity, attachments, in_reply_to, Bcc::Include)
+    // An RSVP is queued to send, never filed as a draft, so the Drafts copy
+    // has no calendar part to carry.
+    assemble(
+        draft,
+        identity,
+        attachments,
+        in_reply_to,
+        Bcc::Include,
+        None,
+    )
 }
 
 /// Whether the assembled message carries a `Bcc` header.
@@ -132,6 +188,7 @@ fn assemble(
     attachments: &[OutgoingAttachment<'_>],
     in_reply_to: Option<&Message>,
     bcc: Bcc,
+    calendar: Option<CalendarPart<'_>>,
 ) -> BuiltMessage {
     let message_id = draft.rfc_message_id.clone().unwrap_or_else(|| {
         generate_message_id(identity.address.domain().unwrap_or(FALLBACK_DOMAIN))
@@ -213,11 +270,50 @@ fn assemble(
     for outgoing in attachments {
         builder = add_attachment(builder, outgoing);
     }
+    if let Some(calendar) = calendar {
+        builder = with_calendar(builder, calendar);
+    }
 
     let raw = builder
         .write_to_vec()
         .expect("writing RFC 5322 bytes to a Vec<u8> cannot fail");
     BuiltMessage { raw, message_id }
+}
+
+/// `builder` with `calendar` as the last alternative to the text and HTML.
+///
+/// mail-builder assembles text, HTML and attachments itself, and has no place
+/// for a third alternative. So this takes the parts it was given and builds
+/// the same tree it would -- an alternative, inside a mixed part when there
+/// are attachments -- with the calendar in the alternative, which is where
+/// RFC 6047 section 2.4 puts it. Without a calendar none of this runs, so
+/// every other message is exactly what mail-builder writes.
+fn with_calendar<'x>(
+    mut builder: MessageBuilder<'x>,
+    calendar: CalendarPart<'_>,
+) -> MessageBuilder<'x> {
+    let part = MbMimePart::new(
+        MbContentType::new("text/calendar")
+            .attribute("method", calendar.method.as_str())
+            .attribute("charset", "utf-8"),
+        MbBodyPart::Text(String::from_utf8_lossy(calendar.ics).into_owned().into()),
+    );
+    let alternatives: Vec<MbMimePart<'x>> = [builder.text_body.take(), builder.html_body.take()]
+        .into_iter()
+        .flatten()
+        .chain(std::iter::once(part))
+        .collect();
+    let alternative = MbMimePart::new("multipart/alternative", alternatives);
+    builder.body = Some(match builder.attachments.take() {
+        Some(attachments) => MbMimePart::new(
+            "multipart/mixed",
+            std::iter::once(alternative)
+                .chain(attachments)
+                .collect::<Vec<_>>(),
+        ),
+        None => alternative,
+    });
+    builder
 }
 
 /// `value` with every line break folded into a single space.
@@ -440,7 +536,7 @@ mod tests {
     #[test]
     fn a_plain_text_draft_round_trips_through_the_parser() {
         let ada = identity("ada@example.com");
-        let built = build(&draft(), &ada, &[], None);
+        let built = build(&draft(), &ada, &[], None, None);
 
         let parsed = mime::parse(&built.raw);
         assert_eq!(parsed.subject.as_deref(), Some("Tuesday walkthrough notes"));
@@ -463,7 +559,7 @@ mod tests {
         // already does for a header this crate cares about but has no
         // parsed field for.
         let ada = identity("ada@example.com");
-        let built = build(&draft(), &ada, &[], None);
+        let built = build(&draft(), &ada, &[], None, None);
         let raw = String::from_utf8_lossy(&built.raw);
 
         assert!(
@@ -493,7 +589,7 @@ mod tests {
         draft.body.html = Some("<ul><li>one</li><li>two</li></ul>".to_owned());
         draft.body_markdown = Some(markdown.clone());
 
-        let built = build(&draft, &identity("ada@example.com"), &[], None);
+        let built = build(&draft, &identity("ada@example.com"), &[], None, None);
         let raw = String::from_utf8_lossy(&built.raw).to_ascii_lowercase();
 
         assert!(
@@ -513,7 +609,7 @@ mod tests {
         let mut draft = draft();
         draft.body_markdown = Some("Looking now.".to_owned());
 
-        let built = build(&draft, &identity("ada@example.com"), &[], None);
+        let built = build(&draft, &identity("ada@example.com"), &[], None, None);
         let raw = String::from_utf8_lossy(&built.raw).to_ascii_lowercase();
 
         assert!(!raw.contains("text/html"), "no HTML part: {raw}");
@@ -527,8 +623,8 @@ mod tests {
     #[test]
     fn a_draft_with_no_reserved_id_gets_a_fresh_one_each_build() {
         let ada = identity("ada@example.com");
-        let first = build(&draft(), &ada, &[], None);
-        let second = build(&draft(), &ada, &[], None);
+        let first = build(&draft(), &ada, &[], None, None);
+        let second = build(&draft(), &ada, &[], None, None);
         assert_ne!(first.message_id, second.message_id);
     }
 
@@ -545,8 +641,8 @@ mod tests {
         let mut draft = draft();
         draft.rfc_message_id = Some(RfcMessageId::new("reserved.once@example.com"));
 
-        let first = build(&draft, &ada, &[], None);
-        let second = build(&draft, &ada, &[], None);
+        let first = build(&draft, &ada, &[], None, None);
+        let second = build(&draft, &ada, &[], None, None);
 
         assert_eq!(first.message_id, second.message_id, "same id, both builds");
         assert_eq!(
@@ -572,7 +668,7 @@ mod tests {
 
         assert_eq!(
             build_draft(&draft, &ada, &[], None).message_id,
-            build(&draft, &ada, &[], None).message_id,
+            build(&draft, &ada, &[], None, None).message_id,
         );
     }
 
@@ -581,7 +677,7 @@ mod tests {
         let mut ada = identity("ada@example.com");
         ada.reply_to = Some(EmailAddress::new(None::<String>, "replies@example.org"));
 
-        let parsed = mime::parse(&build(&draft(), &ada, &[], None).raw);
+        let parsed = mime::parse(&build(&draft(), &ada, &[], None, None).raw);
         assert_eq!(parsed.reply_to[0].address, "replies@example.org");
     }
 
@@ -636,7 +732,7 @@ mod tests {
         let mut draft = draft();
         draft.bcc = vec![EmailAddress::new(None::<String>, "quiet@example.com")];
 
-        let built = build(&draft, &ada, &[], None);
+        let built = build(&draft, &ada, &[], None, None);
         let parsed = mime::parse(&built.raw);
 
         assert!(
@@ -670,7 +766,7 @@ mod tests {
             EmailAddress::new(None::<String>, "alsoquiet@example.net"),
         ];
 
-        let built = build(&draft, &ada, &[], None);
+        let built = build(&draft, &ada, &[], None, None);
         let raw = String::from_utf8_lossy(&built.raw).into_owned();
         let parsed = mime::parse(&built.raw);
 
@@ -730,7 +826,7 @@ mod tests {
         let mut draft = draft();
         draft.bcc = vec![EmailAddress::new(None::<String>, "quiet@example.com")];
 
-        let built = build(&draft, &ada, &[], None);
+        let built = build(&draft, &ada, &[], None, None);
         let raw = String::from_utf8_lossy(&built.raw).into_owned();
 
         assert!(
@@ -750,7 +846,7 @@ mod tests {
         draft.bcc = vec![EmailAddress::new(None::<String>, "quiet@example.com")];
 
         let filed = mime::parse(&build_draft(&draft, &ada, &[], None).raw);
-        let sent = mime::parse(&build(&draft, &ada, &[], None).raw);
+        let sent = mime::parse(&build(&draft, &ada, &[], None, None).raw);
 
         assert_eq!(
             filed.bcc.first().map(|address| address.address.as_str()),
@@ -780,7 +876,7 @@ mod tests {
         draft.subject = "Gruß aus München".to_owned();
         draft.to = vec![EmailAddress::new(Some("田中 陽子"), "yoko@example.net")];
 
-        let parsed = mime::parse(&build(&draft, &ada, &[], None).raw);
+        let parsed = mime::parse(&build(&draft, &ada, &[], None, None).raw);
         assert_eq!(parsed.subject.as_deref(), Some("Gruß aus München"));
         assert_eq!(parsed.to[0].name.as_deref(), Some("田中 陽子"));
     }
@@ -791,7 +887,7 @@ mod tests {
         let mut draft = draft();
         draft.body.html = Some("<p>Looking now.</p>".to_owned());
 
-        let parsed = mime::parse(&build(&draft, &ada, &[], None).raw);
+        let parsed = mime::parse(&build(&draft, &ada, &[], None, None).raw);
         assert_eq!(parsed.body.text.as_deref(), Some("Looking now."));
         assert_eq!(parsed.body.html.as_deref(), Some("<p>Looking now.</p>"));
     }
@@ -810,6 +906,7 @@ mod tests {
                 attachment: &file,
                 content: &content,
             }],
+            None,
             None,
         );
         let parsed = mime::parse(&built.raw);
@@ -840,6 +937,7 @@ mod tests {
                 content: &content,
             }],
             None,
+            None,
         );
         let parsed = mime::parse(&built.raw);
 
@@ -862,8 +960,196 @@ mod tests {
         let mut draft = draft();
         draft.subject = String::new();
 
-        let parsed = mime::parse(&build(&draft, &ada, &[], None).raw);
+        let parsed = mime::parse(&build(&draft, &ada, &[], None, None).raw);
         assert!(parsed.subject.is_none());
+    }
+
+    // --- The calendar part (specs/007-postio-focus T111) ----------------------
+
+    /// An RSVP as `postio-calendar` writes one: CRLF, folded, a quoted `CN`.
+    const REPLY_ICS: &str = "BEGIN:VCALENDAR\r\n\
+        PRODID:-//Postio//Postio//EN\r\n\
+        VERSION:2.0\r\n\
+        METHOD:REPLY\r\n\
+        BEGIN:VEVENT\r\n\
+        UID:q4-budget-review@example.com\r\n\
+        SEQUENCE:0\r\n\
+        DTSTAMP:20260928T120000Z\r\n\
+        ORGANIZER;CN=\"Ines Okafor\":mailto:ines.okafor@example.com\r\n\
+        ATTENDEE;PARTSTAT=ACCEPTED;CN=\"Ada Norwood\":mailto:ada.norwood@example.com\r\n\
+        SUMMARY:Q4 budget review\r\n\
+        END:VEVENT\r\n\
+        END:VCALENDAR\r\n";
+
+    fn rsvp() -> CalendarPart<'static> {
+        CalendarPart {
+            method: CalendarMethod::Reply,
+            ics: REPLY_ICS.as_bytes(),
+        }
+    }
+
+    /// The message's MIME tree as nested content types, e.g.
+    /// `multipart/mixed[multipart/alternative[text/plain, text/calendar], ...]`.
+    fn tree(raw: &[u8]) -> String {
+        use mail_parser::{MessageParser, MimeHeaders};
+
+        fn render(message: &mail_parser::Message<'_>, id: u32) -> String {
+            let part = message.part(id).expect("a part the tree names");
+            let kind = part.content_type().map_or_else(
+                || "text/plain".to_owned(),
+                |kind| format!("{}/{}", kind.ctype(), kind.subtype().unwrap_or_default()),
+            );
+            match part.sub_parts() {
+                Some(children) => format!(
+                    "{kind}[{}]",
+                    children
+                        .iter()
+                        .map(|child| render(message, *child))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                ),
+                None => kind,
+            }
+        }
+
+        let message = MessageParser::default()
+            .parse(raw)
+            .expect("the built bytes parse");
+        render(&message, 0)
+    }
+
+    /// The first part whose content type is `text/calendar`.
+    fn calendar_part_of(raw: &[u8]) -> (String, Option<String>, Vec<u8>) {
+        use mail_parser::{MessageParser, MimeHeaders};
+
+        let message = MessageParser::default()
+            .parse(raw)
+            .expect("the built bytes parse");
+        let part = message
+            .parts
+            .iter()
+            .find(|part| {
+                part.content_type().is_some_and(|kind| {
+                    kind.ctype() == "text" && kind.subtype() == Some("calendar")
+                })
+            })
+            .expect("a text/calendar part");
+        let kind = part.content_type().expect("its content type");
+        (
+            kind.attribute("method").unwrap_or_default().to_owned(),
+            kind.attribute("charset").map(str::to_owned),
+            part.contents().to_vec(),
+        )
+    }
+
+    #[test]
+    fn a_reply_joins_the_text_in_a_multipart_alternative() {
+        let built = build(
+            &draft(),
+            &identity("ada@example.com"),
+            &[],
+            None,
+            Some(rsvp()),
+        );
+
+        assert_eq!(
+            tree(&built.raw),
+            "multipart/alternative[text/plain, text/calendar]"
+        );
+    }
+
+    #[test]
+    fn with_html_the_reply_is_the_last_alternative() {
+        let mut draft = draft();
+        draft.body.html = Some("<p>Looking now.</p>".to_owned());
+        let built = build(
+            &draft,
+            &identity("ada@example.com"),
+            &[],
+            None,
+            Some(rsvp()),
+        );
+
+        assert_eq!(
+            tree(&built.raw),
+            "multipart/alternative[text/plain, text/html, text/calendar]"
+        );
+    }
+
+    #[test]
+    fn with_an_attachment_the_alternative_sits_inside_the_mixed_part() {
+        let mut file = Attachment::new(crate::ids::MessageId::UNASSIGNED, "application/pdf", 4);
+        file.filename = Some("agenda.pdf".to_owned());
+        let content = b"%PDF".to_vec();
+        let built = build(
+            &draft(),
+            &identity("ada@example.com"),
+            &[OutgoingAttachment {
+                attachment: &file,
+                content: &content,
+            }],
+            None,
+            Some(rsvp()),
+        );
+
+        assert_eq!(
+            tree(&built.raw),
+            "multipart/mixed[multipart/alternative[text/plain, text/calendar], application/pdf]"
+        );
+    }
+
+    #[test]
+    fn the_calendar_part_says_its_method_and_carries_the_calendar_unchanged() {
+        let built = build(
+            &draft(),
+            &identity("ada@example.com"),
+            &[],
+            None,
+            Some(rsvp()),
+        );
+        let (method, charset, content) = calendar_part_of(&built.raw);
+
+        assert_eq!(method, "REPLY");
+        assert_eq!(charset.as_deref(), Some("utf-8"));
+        assert_eq!(
+            String::from_utf8(content).expect("UTF-8"),
+            REPLY_ICS,
+            "byte for byte, CRLF and all"
+        );
+    }
+
+    #[test]
+    fn a_reply_still_reads_as_its_text_to_a_person() {
+        // The receiving side's view: the text is the body, and the calendar is
+        // a part beside it, which is what calendar clients act on.
+        let built = build(
+            &draft(),
+            &identity("ada@example.com"),
+            &[],
+            None,
+            Some(rsvp()),
+        );
+        let parsed = mime::parse(&built.raw);
+
+        assert_eq!(parsed.body.text.as_deref(), Some("Looking now."));
+        assert!(
+            parsed
+                .parts
+                .iter()
+                .any(|part| part.attachment.mime_type == "text/calendar"),
+            "the calendar is reachable as a part"
+        );
+    }
+
+    #[test]
+    fn with_no_calendar_nothing_calendar_is_written() {
+        let built = build(&draft(), &identity("ada@example.com"), &[], None, None);
+
+        assert!(
+            !String::from_utf8_lossy(&built.raw).contains("text/calendar"),
+            "no calendar part appears unasked"
+        );
+        assert_eq!(tree(&built.raw), "text/plain");
     }
 
     fn parent(rfc_message_id: &str, references: &[&str]) -> Message {
@@ -882,7 +1168,7 @@ mod tests {
         let ada = identity("ada@example.com");
         let root = parent("<root@example.com>", &[]);
 
-        let parsed = mime::parse(&build(&draft(), &ada, &[], Some(&root)).raw);
+        let parsed = mime::parse(&build(&draft(), &ada, &[], Some(&root), None).raw);
         assert_eq!(
             parsed.in_reply_to,
             Some(RfcMessageId::new("<root@example.com>"))
@@ -898,7 +1184,7 @@ mod tests {
         let ada = identity("ada@example.com");
         let middle = parent("<middle@example.com>", &["<root@example.com>"]);
 
-        let parsed = mime::parse(&build(&draft(), &ada, &[], Some(&middle)).raw);
+        let parsed = mime::parse(&build(&draft(), &ada, &[], Some(&middle), None).raw);
         assert_eq!(
             parsed.in_reply_to,
             Some(RfcMessageId::new("<middle@example.com>"))
@@ -919,7 +1205,7 @@ mod tests {
         let mut orphan = parent("<unused@example.com>", &[]);
         orphan.rfc_message_id = None;
 
-        let parsed = mime::parse(&build(&draft(), &ada, &[], Some(&orphan)).raw);
+        let parsed = mime::parse(&build(&draft(), &ada, &[], Some(&orphan), None).raw);
         assert!(
             parsed.in_reply_to.is_none(),
             "nothing to reply to without a Message-ID"
@@ -934,7 +1220,7 @@ mod tests {
     fn with_no_parent_no_threading_headers_are_written_at_all() {
         let ada = identity("ada@example.com");
 
-        let parsed = mime::parse(&build(&draft(), &ada, &[], None).raw);
+        let parsed = mime::parse(&build(&draft(), &ada, &[], None, None).raw);
         assert!(parsed.in_reply_to.is_none());
         assert!(parsed.references.is_empty());
     }
