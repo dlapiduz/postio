@@ -46,8 +46,20 @@ fn hostile_mail_is_contained() {
             let started = Instant::now();
             let doc = render(&request);
             let took = started.elapsed();
+            // Reported, not gated (Constitution V: timings report, counts
+            // gate). The bound is the deadline's to enforce -- `body_view`'s
+            // injected-deadline case proves the fallback without a clock --
+            // and a wall-clock here failed the landing gate at 440 ms on a
+            // box running other suites beside it. What gates is the cause
+            // of the cost, counted.
             if took > bound {
-                failures.push(format!("{name}: {took:?}, past {bound:?}"));
+                eprintln!("{name}: {took:?}, past {bound:?} on this machine");
+            }
+            if doc.counts.style_passes > 2 {
+                failures.push(format!(
+                    "{name}: {} style passes; a render takes at most two",
+                    doc.counts.style_passes
+                ));
             }
             match doc.outcome {
                 Outcome::FellBack(_) => continue,
