@@ -15,6 +15,13 @@ prev_in_conversation	K
 toggle_fold	z
 view_original	ctrl+o
 toggle_reader_view	ctrl+shift+o | alt+o
+darken_message	D
+find_in_message	ctrl+f
+find_next	ctrl+g | F3
+find_previous	ctrl+shift+g | shift+F3
+zoom_in	ctrl+plus | ctrl+equal | ctrl+KP_Add
+zoom_out	ctrl+minus | ctrl+KP_Subtract
+zoom_reset	ctrl+0 | ctrl+KP_0
 expand_all	O
 toggle_rail	I
 reply	e

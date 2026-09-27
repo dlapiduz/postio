@@ -907,8 +907,11 @@ mod tests {
             &keymap,
             postio_core::Context::List,
             // No list is open here, so the view is unified, where a move has
-            // no account to move within (#182).
-            postio_core::Availability::open(postio_core::Scope::Unified),
+            // no account to move within (#182). As this terminal asks.
+            postio_core::Availability {
+                terminal: true,
+                ..postio_core::Availability::open(postio_core::Scope::Unified)
+            },
         );
         assert!(!sections.is_empty());
         for section in &sections {

@@ -59,6 +59,13 @@ command from inside a text field.
 | `z` | Fold or unfold this message | Conversation |  | `toggle_fold` |
 | `ctrl+o` | View original | List, conversation, reader |  | `view_original` |
 | `ctrl+shift+o` or `alt+o` | Reader view | List, conversation, reader |  | `toggle_reader_view` |
+| `D` | Darken this message | List, conversation, reader |  | `darken_message` |
+| `ctrl+f` | Find in message | List, conversation, reader |  | `find_in_message` |
+| `ctrl+g` or `F3` | Next match | List, conversation, reader |  | `find_next` |
+| `ctrl+shift+g` or `shift+F3` | Previous match | List, conversation, reader |  | `find_previous` |
+| `ctrl+plus` or `ctrl+equal` or `ctrl+KP_Add` | Zoom in | List, conversation, reader |  | `zoom_in` |
+| `ctrl+minus` or `ctrl+KP_Subtract` | Zoom out | List, conversation, reader |  | `zoom_out` |
+| `ctrl+0` or `ctrl+KP_0` | Actual size | List, conversation, reader |  | `zoom_reset` |
 | `O` | Expand all | Conversation |  | `expand_all` |
 | `I` | Hide or show the conversation rail | Conversation |  | `toggle_rail` |
 | `e` | Reply | List, conversation, reader, composer |  | `reply` |

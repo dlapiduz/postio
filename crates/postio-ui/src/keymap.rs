@@ -171,6 +171,10 @@ const NAMED_KEYS: &[(&str, &str)] = &[
     ("left", "Left"),
     ("right", "Right"),
     ("menu", "Menu"),
+    // The keypad's own keys, for zoom (spec 006).
+    ("kp_add", "KP_Add"),
+    ("kp_subtract", "KP_Subtract"),
+    ("kp_0", "KP_0"),
     ("f1", "F1"),
     ("f2", "F2"),
     ("f3", "F3"),

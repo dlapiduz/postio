@@ -102,6 +102,12 @@ fn every_command_is_reachable_by_a_key_this_terminal_sends_and_by_the_palette() 
         if NOT_YET.iter().any(|(pending, _)| *pending == id) {
             continue;
         }
+        // A command a terminal never offers -- one that changes how a
+        // message is drawn as pixels (`Requirement::Graphical`) -- owes it
+        // no key.
+        if !spec.requires.met_by(open) {
+            continue;
+        }
         let contexts: Vec<Context> = Context::ALL
             .iter()
             .copied()

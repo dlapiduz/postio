@@ -91,6 +91,20 @@ command_ids! {
     ViewOriginal => "view_original",
     /// Draw the message on screen reduced, or as sent again (spec 006 FR-031).
     ToggleReaderView => "toggle_reader_view",
+    /// Darken the focused paper message, or show it as sent again (spec 006 FR-013a).
+    DarkenMessage => "darken_message",
+    /// Find text in the message on screen (spec 006 FR-018).
+    FindInMessage => "find_in_message",
+    /// Go to the next match of the open find (spec 006 FR-018).
+    FindNext => "find_next",
+    /// Go to the previous match of the open find (spec 006 FR-018).
+    FindPrevious => "find_previous",
+    /// Draw messages one step larger (spec 006 FR-021).
+    ZoomIn => "zoom_in",
+    /// Draw messages one step smaller (spec 006 FR-021).
+    ZoomOut => "zoom_out",
+    /// Draw messages at their actual size (spec 006 FR-021).
+    ZoomReset => "zoom_reset",
     /// Open every collapsed message in the conversation.
     ExpandAll => "expand_all",
     /// Put the conversation rail away, or bring it back.
@@ -431,6 +445,20 @@ pub enum Command {
     /// message on screen. Every message opens as sent, so this is the only
     /// way into reader view.
     ToggleReaderView,
+    /// Darken the focused paper message, or show it as sent again (spec 006 FR-013a). No payload: it means the message on screen.
+    DarkenMessage,
+    /// Find text in the message on screen (spec 006 FR-018). No payload: it means the message on screen.
+    FindInMessage,
+    /// Go to the next match of the open find (spec 006 FR-018). No payload: it means the message on screen.
+    FindNext,
+    /// Go to the previous match of the open find (spec 006 FR-018). No payload: it means the message on screen.
+    FindPrevious,
+    /// Draw messages one step larger (spec 006 FR-021). No payload: it means the message on screen.
+    ZoomIn,
+    /// Draw messages one step smaller (spec 006 FR-021). No payload: it means the message on screen.
+    ZoomOut,
+    /// Draw messages at their actual size (spec 006 FR-021). No payload: it means the message on screen.
+    ZoomReset,
     /// Expand every collapsed message in the open conversation (#1004).
     ///
     /// No payload: it means the conversation on screen, which is the only
@@ -895,6 +923,13 @@ impl Command {
             Command::ToggleFold => CommandId::ToggleFold,
             Command::ViewOriginal => CommandId::ViewOriginal,
             Command::ToggleReaderView => CommandId::ToggleReaderView,
+            Command::DarkenMessage => CommandId::DarkenMessage,
+            Command::FindInMessage => CommandId::FindInMessage,
+            Command::FindNext => CommandId::FindNext,
+            Command::FindPrevious => CommandId::FindPrevious,
+            Command::ZoomIn => CommandId::ZoomIn,
+            Command::ZoomOut => CommandId::ZoomOut,
+            Command::ZoomReset => CommandId::ZoomReset,
             Command::ExpandAll => CommandId::ExpandAll,
             Command::ToggleRail => CommandId::ToggleRail,
             Command::Reply { .. } => CommandId::Reply,
@@ -1003,6 +1038,13 @@ impl Command {
             CommandId::ToggleFold => Command::ToggleFold,
             CommandId::ViewOriginal => Command::ViewOriginal,
             CommandId::ToggleReaderView => Command::ToggleReaderView,
+            CommandId::DarkenMessage => Command::DarkenMessage,
+            CommandId::FindInMessage => Command::FindInMessage,
+            CommandId::FindNext => Command::FindNext,
+            CommandId::FindPrevious => Command::FindPrevious,
+            CommandId::ZoomIn => Command::ZoomIn,
+            CommandId::ZoomOut => Command::ZoomOut,
+            CommandId::ZoomReset => Command::ZoomReset,
             CommandId::ExpandAll => Command::ExpandAll,
             CommandId::ToggleRail => Command::ToggleRail,
             CommandId::Reply => Command::Reply { message: None },
