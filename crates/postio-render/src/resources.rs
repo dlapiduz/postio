@@ -29,6 +29,8 @@ pub struct Resources {
     resolved: AtomicU32,
     unresolved: AtomicU32,
     placeholdered: AtomicU32,
+    #[cfg(feature = "test-hooks")]
+    hooks: hooks::Hooks,
 }
 
 impl Resources {
@@ -90,6 +92,8 @@ impl Resources {
     }
 
     fn lookup(&self, url: &str) -> Option<Bytes> {
+        #[cfg(feature = "test-hooks")]
+        self.hooks.run();
         if let Some(rest) = url
             .strip_prefix(postio_body::CID_SCHEME)
             .and_then(|rest| rest.strip_prefix(':'))
@@ -385,5 +389,91 @@ mod tests {
             [255, 0, 0],
             "not the first frame"
         );
+    }
+}
+
+/// What the render-thread tests drive, behind the `test-hooks` feature.
+#[cfg(feature = "test-hooks")]
+mod hooks {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::{Arc, Condvar, Mutex};
+    use std::time::Duration;
+
+    /// A lookup that panics, and a lookup held until released.
+    #[derive(Debug, Default)]
+    pub(super) struct Hooks {
+        pub(super) panic: AtomicBool,
+        pub(super) hold: Mutex<Option<Arc<Gate>>>,
+    }
+
+    impl Hooks {
+        pub(super) fn run(&self) {
+            if self.panic.load(Ordering::Relaxed) {
+                panic!("test hook: a resource lookup panicked");
+            }
+            let gate = self.hold.lock().expect("hooks are never poisoned").clone();
+            if let Some(gate) = gate {
+                gate.enter();
+            }
+        }
+    }
+
+    /// Where a held lookup waits, and how the test knows it got there.
+    #[derive(Debug, Default)]
+    pub struct Gate {
+        state: Mutex<(bool, bool)>,
+        changed: Condvar,
+    }
+
+    impl Gate {
+        fn enter(&self) {
+            let mut state = self.state.lock().expect("the gate is never poisoned");
+            state.0 = true;
+            self.changed.notify_all();
+            while !state.1 {
+                let (next, timeout) = self
+                    .changed
+                    .wait_timeout(state, Duration::from_secs(60))
+                    .expect("the gate is never poisoned");
+                state = next;
+                if timeout.timed_out() {
+                    break;
+                }
+            }
+        }
+
+        /// Let the held lookup go on.
+        pub fn release(&self) {
+            let mut state = self.state.lock().expect("the gate is never poisoned");
+            state.1 = true;
+            self.changed.notify_all();
+        }
+
+        /// Wait until a lookup is being held, or `patience` passes.
+        pub fn wait_until_held(&self, patience: Duration) {
+            let state = self.state.lock().expect("the gate is never poisoned");
+            let _ = self
+                .changed
+                .wait_timeout_while(state, patience, |state| !state.0)
+                .expect("the gate is never poisoned");
+        }
+    }
+}
+
+#[cfg(feature = "test-hooks")]
+pub use hooks::Gate;
+
+#[cfg(feature = "test-hooks")]
+impl Resources {
+    /// Make every lookup panic, as an engine bug would.
+    pub fn panic_on_lookup(&self) {
+        self.hooks.panic.store(true, Ordering::Relaxed);
+    }
+
+    /// Hold every lookup until the returned gate is released.
+    pub fn hold_lookup(&self) -> std::sync::Arc<Gate> {
+        let gate = std::sync::Arc::new(Gate::default());
+        *self.hooks.hold.lock().expect("hooks are never poisoned") = Some(gate.clone());
+        gate
     }
 }

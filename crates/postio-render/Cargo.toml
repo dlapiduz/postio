@@ -8,6 +8,11 @@ license.workspace = true
 publish.workspace = true
 repository.workspace = true
 
+[features]
+# Hooks the render-thread tests drive (a lookup that panics, a lookup held
+# until released). Never enabled by a product build.
+test-hooks = []
+
 [dependencies]
 # `net` and `system-fonts` off deliberately (research R3): no network crate,
 # and no fontconfig -- C that reads a message's codepoints -- on the content
@@ -29,6 +34,8 @@ skrifa = "0.44"
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif", "webp"] }
 kurbo = "0.13"
 base64 = { workspace = true }
+# A render panic is logged by location only (research R6).
+tracing = { workspace = true }
 # SVG images are re-serialised with no external references (research R5).
 usvg = "=0.48"
 # The sanitizer's part URI scheme, and its decoding.
@@ -38,6 +45,8 @@ url = { workspace = true }
 static_assertions = "1.1"
 
 [dev-dependencies]
+# The crate's own tests, with their hooks on.
+postio-render = { path = ".", features = ["test-hooks"] }
 # Arm B of the engine evaluation (research R0, T023) is a harness in
 # `examples/` that reaches into Blitz's styles and parses markup itself.
 style = { package = "stylo", version = "0.20" }
