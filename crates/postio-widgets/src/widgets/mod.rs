@@ -19,6 +19,14 @@ pub mod keyhint;
 pub mod notice;
 pub mod toast;
 
+/// The design system's spacing ramp in whole pixels -- `S1` 3px to `S8`
+/// 27px -- generated from the same tokens as `--postio-space-N` in
+/// `metrics.css`, so a margin set in code and a padding in a stylesheet are
+/// one number.
+pub mod space {
+    include!("../../data/space.rs");
+}
+
 pub use action_bar::{Action, ActionBar};
 pub use button::{Kind, Size, icon_button};
 pub use chip::{chip_button, filter_chip};

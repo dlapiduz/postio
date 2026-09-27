@@ -101,3 +101,77 @@ pub fn the_shared_sheet_dresses_the_shared_widgets() {
     gtk::style_context_remove_provider_for_display(&display, &sheet);
     gtk::style_context_remove_provider_for_display(&display, &roles);
 }
+
+/// The shared sheet brings the metrics every app lays these widgets out by:
+/// spacing, chip sizes and type sizes. An app defines only its colours
+/// (research R11), so with nothing but this test's colour roles, each metric
+/// must still resolve -- read back as the size it gives a probe.
+pub fn the_shared_sheet_brings_the_shared_metrics() {
+    if adw::init().is_err() || gdk::Display::default().is_none() {
+        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
+        return;
+    }
+    let display = gdk::Display::default().unwrap();
+    let roles = gtk::CssProvider::new();
+    roles.load_from_string(ROLES);
+    gtk::style_context_add_provider_for_display(
+        &display,
+        &roles,
+        gtk::STYLE_PROVIDER_PRIORITY_APPLICATION,
+    );
+    let sheet = postio_widgets::style::install(&display);
+    let probes = gtk::CssProvider::new();
+    probes.load_from_string(
+        ".probe-space { min-width: var(--postio-space-3); }\n\
+         .probe-chip { min-width: var(--postio-chip-height); }\n\
+         .probe-role { font-size: var(--postio-text-title); }\n\
+         .probe-literal { font-size: 1.3636rem; }",
+    );
+    gtk::style_context_add_provider_for_display(
+        &display,
+        &probes,
+        gtk::STYLE_PROVIDER_PRIORITY_APPLICATION + 1,
+    );
+
+    let probe = |class: &str, text: &str| {
+        let label = gtk::Label::new(Some(text));
+        label.add_css_class(class);
+        label
+    };
+    let (space, chip) = (probe("probe-space", ""), probe("probe-chip", ""));
+    let (role, literal) = (
+        probe("probe-role", "Inbox is empty"),
+        probe("probe-literal", "Inbox is empty"),
+    );
+    let column = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    for label in [&space, &chip, &role, &literal] {
+        label.set_halign(gtk::Align::Start);
+        column.append(label);
+    }
+    let window = gtk::Window::new();
+    window.set_child(Some(&column));
+    window.present();
+    while gtk::glib::MainContext::default().iteration(false) {}
+
+    let width = |label: &gtk::Label| label.measure(gtk::Orientation::Horizontal, -1).0;
+    assert_eq!(
+        width(&space),
+        10,
+        "--postio-space-3 does not resolve to 10px"
+    );
+    assert_eq!(
+        width(&chip),
+        22,
+        "--postio-chip-height does not resolve to 22px"
+    );
+    assert_eq!(
+        width(&role),
+        width(&literal),
+        "--postio-text-title does not resolve to its size"
+    );
+
+    window.destroy();
+    for provider in [&probes, &sheet, &roles] {
+        gtk::style_context_remove_provider_for_display(&display, provider);
+    }
+}

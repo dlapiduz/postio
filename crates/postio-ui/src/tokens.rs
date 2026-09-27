@@ -300,14 +300,11 @@ pub fn generate(tokens: &Tokens, source: &str) -> Result<String, TokenError> {
     )
     .unwrap();
     writeln!(out, ":root {{").unwrap();
-    for name in tokens.names() {
+    // The metrics are not here: spacing and radii are emitted by
+    // [`generate_metrics`], into the sheet both desktop apps share.
+    for name in tokens.names().filter(|name| !is_metric(name)) {
         let value = tokens.get(name).unwrap_or_default();
-        // The spacing ramp in whole pixels: GTK lays out in them, and the
-        // Rust constants in `space.rs` (generated beside this) are `i32`.
-        match whole_pixels(name, value) {
-            Some(px) => writeln!(out, "  --postio-{name}: {px}px;").unwrap(),
-            None => writeln!(out, "  --postio-{name}: {value};").unwrap(),
-        }
+        writeln!(out, "  --postio-{name}: {value};").unwrap();
     }
     writeln!(
         out,
@@ -316,9 +313,6 @@ pub fn generate(tokens: &Tokens, source: &str) -> Result<String, TokenError> {
     )
     .unwrap();
     writeln!(out, "  --postio-font-mono: {FONT_MONO};").unwrap();
-    writeln!(out, "  --postio-chip-height: {CHIP_HEIGHT};").unwrap();
-    writeln!(out, "  --postio-chip-pad-x: {CHIP_PAD_X};").unwrap();
-    writeln!(out, "  --postio-chip-pad-y: {CHIP_PAD_Y};").unwrap();
     writeln!(out, "}}\n").unwrap();
 
     // ── 2. semantic roles + Adwaita named colours, light ───────────────────
@@ -371,10 +365,9 @@ pub fn generate(tokens: &Tokens, source: &str) -> Result<String, TokenError> {
     )
     .unwrap();
     writeln!(out, ":root {{").unwrap();
+    // The sizes are metrics, in the shared sheet ([`generate_metrics`]);
+    // the faces are this app's identity, and stay here.
     writeln!(out, "  font-family: var(--postio-font-body);").unwrap();
-    for (role, size) in TYPE_ROLES {
-        writeln!(out, "  --postio-text-{role}: {size};").unwrap();
-    }
     writeln!(out, "}}\n").unwrap();
     writeln!(
         out,
@@ -569,6 +562,99 @@ fn whole_pixels(name: &str, value: &str) -> Option<i32> {
     Some(length(value)?.round() as i32)
 }
 
+/// Whether a design-system token is a metric -- spacing or a radius -- which
+/// both desktop apps share, rather than a colour, a face or a shadow, which
+/// each app defines for itself (specs/007-postio-focus research R11).
+fn is_metric(name: &str) -> bool {
+    name.starts_with("space-") || name.starts_with("radius-")
+}
+
+/// Generate `postio-widgets/data/metrics.css`: the metrics both desktop apps
+/// lay the shared widgets out by -- spacing in whole pixels, radii, chip
+/// sizes and type sizes -- and nothing else.
+///
+/// Colours are each app's own (specs/007-postio-focus research R11): the
+/// classic app's come from [`generate`], and Focus defines its from
+/// libadwaita's. A metric defined in both sheets would be two numbers for one
+/// thing, so [`generate`] carries none of these.
+pub fn generate_metrics(tokens: &Tokens, source: &str) -> Result<String, TokenError> {
+    let metrics: Vec<(&str, String)> = tokens
+        .names()
+        .filter(|name| is_metric(name))
+        .map(|name| {
+            let value = tokens.get(name).unwrap_or_default();
+            // The spacing ramp in whole pixels: GTK lays out in them, and the
+            // Rust constants in `space.rs` (generated beside this) are `i32`.
+            let value = match whole_pixels(name, value) {
+                Some(px) => format!("{px}px"),
+                None => value.to_owned(),
+            };
+            (name, value)
+        })
+        .collect();
+    for family in ["space-", "radius-"] {
+        if !metrics.iter().any(|(name, _)| name.starts_with(family)) {
+            return Err(TokenError(format!(
+                "the design system has no `{family}*` tokens to generate"
+            )));
+        }
+    }
+    let mut out = String::with_capacity(2 * 1024);
+    writeln!(out, "/* GENERATED FILE — do not edit by hand.").unwrap();
+    writeln!(out, " *").unwrap();
+    writeln!(out, " * Source : {source}").unwrap();
+    writeln!(
+        out,
+        " * Emitted by: crates/postio-gtk/build.rs via postio_ui::tokens"
+    )
+    .unwrap();
+    writeln!(out, " * Regenerate: cargo build -p postio-gtk").unwrap();
+    writeln!(out, " *").unwrap();
+    writeln!(
+        out,
+        " * The metrics both desktop apps lay the shared widgets out by: spacing,"
+    )
+    .unwrap();
+    writeln!(
+        out,
+        " * radii, chip sizes and type sizes (specs/007-postio-focus research R11)."
+    )
+    .unwrap();
+    writeln!(
+        out,
+        " * No colour is defined here: each app defines its own, the classic app in"
+    )
+    .unwrap();
+    writeln!(
+        out,
+        " * its generated tokens.css and Focus from libadwaita's named colours."
+    )
+    .unwrap();
+    writeln!(out, " */\n").unwrap();
+    writeln!(out, ":root {{").unwrap();
+    for (name, value) in &metrics {
+        writeln!(out, "  --postio-{name}: {value};").unwrap();
+    }
+    writeln!(
+        out,
+        "\n  /* A text chip's fixed vertical metrics: Postio's own. */"
+    )
+    .unwrap();
+    writeln!(out, "  --postio-chip-height: {CHIP_HEIGHT};").unwrap();
+    writeln!(out, "  --postio-chip-pad-x: {CHIP_PAD_X};").unwrap();
+    writeln!(out, "  --postio-chip-pad-y: {CHIP_PAD_Y};").unwrap();
+    writeln!(
+        out,
+        "\n  /* The sizes Postio sets type at, in `rem` so text scaling moves them. */"
+    )
+    .unwrap();
+    for (role, size) in TYPE_ROLES {
+        writeln!(out, "  --postio-text-{role}: {size};").unwrap();
+    }
+    writeln!(out, "}}").unwrap();
+    Ok(out)
+}
+
 /// The spacing ramp, as `(step, whole pixels)`: `(3, 10)` for `space-3`.
 pub fn space_scale(tokens: &Tokens) -> Vec<(u32, i32)> {
     tokens
@@ -580,7 +666,7 @@ pub fn space_scale(tokens: &Tokens) -> Vec<(u32, i32)> {
         .collect()
 }
 
-/// Generate `postio-gtk/data/space.rs`: the spacing ramp as Rust constants,
+/// Generate `postio-widgets/data/space.rs`: the spacing ramp as Rust constants,
 /// `S1` .. `S8`, so a widget's margin and the stylesheet's padding are one
 /// number by construction.
 pub fn generate_space_rs(tokens: &Tokens, source: &str) -> Result<String, TokenError> {
@@ -606,7 +692,7 @@ pub fn generate_space_rs(tokens: &Tokens, source: &str) -> Result<String, TokenE
         "// The design system's spacing ramp in whole pixels, the same numbers"
     )
     .unwrap();
-    writeln!(out, "// `--postio-space-N` carries in tokens.css.").unwrap();
+    writeln!(out, "// `--postio-space-N` carries in metrics.css.").unwrap();
     writeln!(out).unwrap();
     for (step, px) in scale {
         writeln!(out, "/// `--postio-space-{step}`: {px}px.").unwrap();

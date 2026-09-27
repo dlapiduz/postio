@@ -5,7 +5,7 @@
 // Regenerate : cargo build -p postio-gtk
 //
 // The design system's spacing ramp in whole pixels, the same numbers
-// `--postio-space-N` carries in tokens.css.
+// `--postio-space-N` carries in metrics.css.
 
 /// `--postio-space-1`: 3px.
 pub const S1: i32 = 3;

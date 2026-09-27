@@ -61,6 +61,10 @@ const CASES: &[(&str, fn())] = &[
         "widgets_css::the_shared_sheet_dresses_the_shared_widgets",
         widgets_css::the_shared_sheet_dresses_the_shared_widgets as fn(),
     ),
+    (
+        "widgets_css::the_shared_sheet_brings_the_shared_metrics",
+        widgets_css::the_shared_sheet_brings_the_shared_metrics as fn(),
+    ),
 ];
 
 /// Destroy every window a case left open, and let the teardown run, so the

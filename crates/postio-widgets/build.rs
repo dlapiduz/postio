@@ -9,6 +9,7 @@ fn main() {
     println!("cargo:rerun-if-changed=build.rs");
     println!("cargo:rerun-if-changed=data/widgets.gresource.xml");
     println!("cargo:rerun-if-changed=data/widgets.css");
+    println!("cargo:rerun-if-changed=data/metrics.css");
 
     let data_dir = PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").unwrap()).join("data");
     glib_build_tools::compile_resources(

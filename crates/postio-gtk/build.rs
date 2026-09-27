@@ -13,9 +13,12 @@
 //!    drifted from the source. The reader's palette, `reader-tokens.css`,
 //!    is generated the same way but written into `postio-ui`'s own data
 //!    directory (#799) rather than this crate's — the reader's data lives
-//!    with the reader, this crate only builds it. The spacing ramp is also
-//!    written as Rust, `data/space.rs`, which `crate::widgets::space`
-//!    includes: the same whole-pixel numbers the stylesheet uses.
+//!    with the reader, this crate only builds it. The metrics both desktop
+//!    apps share — spacing, radii, chip and type sizes — go the same way
+//!    into `postio-widgets`' data directory (specs/007-postio-focus research
+//!    R11): `metrics.css`, which the shared widgets' sheet imports, and the
+//!    spacing ramp as Rust, `space.rs`, which `postio_widgets::widgets::space`
+//!    includes. `tokens.css` keeps this app's colours, faces and shadows.
 //! 2. Compile `data/postio.gresource.xml` into the GResource bundle that
 //!    carries the stylesheet and the app icons, so the app resolves both
 //!    without a system font installation and without touching the network.
@@ -41,18 +44,26 @@ fn main() {
         .expect("crates/postio-gtk")
         .join("postio-ui")
         .join("data");
+    let widgets_data_dir = manifest_dir
+        .parent()
+        .expect("crates/postio-gtk")
+        .join("postio-widgets")
+        .join("data");
 
     match design_system_path(&manifest_dir) {
         Some(source) => {
             println!("cargo:rerun-if-changed={}", source.display());
             generate_tokens(&source, &data_dir.join("tokens.css"));
-            generate_space(&source, &data_dir.join("space.rs"));
+            generate_metrics(&source, &widgets_data_dir.join("metrics.css"));
+            generate_space(&source, &widgets_data_dir.join("space.rs"));
             generate_reader_tokens(&source, &ui_data_dir.join("reader-tokens.css"));
         }
         None => {
             println!(
                 "cargo:warning=Industry design system not found; \
-                 keeping the checked-in data/tokens.css and \
+                 keeping the checked-in data/tokens.css, \
+                 ../postio-widgets/data/metrics.css, \
+                 ../postio-widgets/data/space.rs and \
                  ../postio-ui/data/reader-tokens.css. \
                  Set POSTIO_DESIGN_SYSTEM to the styles.css to regenerate them."
             );
@@ -97,6 +108,16 @@ fn generate_tokens(source: &Path, out: &Path) {
     let label = relative_label(source);
     let generated = tokens::generate(&parsed, &label)
         .unwrap_or_else(|e| panic!("cannot generate tokens.css: {e}"));
+    write_if_changed(out, &generated);
+}
+
+/// The metrics both desktop apps share, as a stylesheet of their own.
+/// Checked in for the reason `tokens.css` is.
+fn generate_metrics(source: &Path, out: &Path) {
+    let parsed = parse_source(source);
+    let label = relative_label(source);
+    let generated = tokens::generate_metrics(&parsed, &label)
+        .unwrap_or_else(|e| panic!("cannot generate metrics.css: {e}"));
     write_if_changed(out, &generated);
 }
 

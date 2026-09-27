@@ -29,14 +29,7 @@ pub mod settings_group;
 // The controls both desktop apps draw moved to postio-widgets (ADR 0043).
 // Re-exported under their old paths, so every surface here that names
 // `crate::widgets::keyhint` or `crate::widgets::ActionBar` is unchanged.
-pub use postio_widgets::widgets::{action_bar, button, chip, keycap, keyhint, notice};
-
-/// The design system's spacing ramp in whole pixels -- `S1` 3px to `S8`
-/// 27px -- generated from the same tokens as `--postio-space-N`, so a
-/// margin set in code and a padding in `shell.css` are one number.
-pub mod space {
-    include!("../../data/space.rs");
-}
+pub use postio_widgets::widgets::{action_bar, button, chip, keycap, keyhint, notice, space};
 
 pub use action_bar::{Action, ActionBar};
 pub use button::{Kind, Size, icon_button};

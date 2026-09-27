@@ -22,6 +22,15 @@ fn gtk_dir() -> PathBuf {
         .join("postio-gtk")
 }
 
+/// `postio-widgets`' own directory, where the metrics both desktop apps
+/// share are generated (specs/007-postio-focus research R11).
+fn widgets_dir() -> PathBuf {
+    manifest_dir()
+        .parent()
+        .expect("crates/postio-ui")
+        .join("postio-widgets")
+}
+
 /// The same discovery `build.rs` does, so the two cannot disagree.
 fn design_system() -> Option<PathBuf> {
     let ds = manifest_dir()
@@ -68,6 +77,11 @@ fn generated() -> String {
         .expect("data/tokens.css is missing; run `cargo build -p postio-gtk`")
 }
 
+fn generated_metrics() -> String {
+    std::fs::read_to_string(widgets_dir().join("data").join("metrics.css"))
+        .expect("postio-widgets/data/metrics.css is missing; run `cargo build -p postio-gtk`")
+}
+
 /// The checked-in sheet must be exactly what the generator produces from the
 /// design system as it stands. CI runs this, so a hand edit to `tokens.css` —
 /// or a retuned design system nobody rebuilt — fails the build.
@@ -79,6 +93,19 @@ fn generated_tokens_are_reproducible() {
     assert_eq!(
         expected, actual,
         "data/tokens.css is stale. Run `cargo build -p postio-gtk` and commit the result."
+    );
+}
+
+/// The shared metrics, the same way: the checked-in sheet is exactly what the
+/// generator makes of the design system as it stands.
+#[test]
+fn generated_metrics_are_reproducible() {
+    let (path, parsed) = source_tokens();
+    let expected = tokens::generate_metrics(&parsed, &label(&path)).expect("generation failed");
+    assert_eq!(
+        expected,
+        generated_metrics(),
+        "postio-widgets/data/metrics.css is stale. Run `cargo build -p postio-gtk` and commit the result."
     );
 }
 
@@ -98,7 +125,9 @@ fn retuning_the_design_system_changes_the_generated_css() {
     let after = tokens::generate(&parsed, &label(&path)).unwrap();
 
     assert!(after.contains("--postio-color-accent: #ff0000;"));
-    assert!(after.contains("--postio-space-3: 99px;"));
+    // Spacing is a metric, in the sheet both desktop apps share.
+    let metrics = tokens::generate_metrics(&parsed, &label(&path)).unwrap();
+    assert!(metrics.contains("--postio-space-3: 99px;"));
     assert!(after.contains("--postio-font-body: \"Some Other Face\", sans-serif;"));
     // Derived values follow too — the selected-row tint is mixed from the accent.
     assert!(
@@ -168,7 +197,10 @@ fn wireframe_chrome_is_not_ported() {
 #[test]
 fn every_referenced_variable_is_defined() {
     let css = generated();
-    let defined: Vec<String> = css
+    // The metrics this sheet uses are defined in the shared one, which the
+    // app loads beside it (specs/007-postio-focus research R11).
+    let defined: Vec<String> = [css.as_str(), generated_metrics().as_str()]
+        .concat()
         .lines()
         .filter_map(|l| l.trim().strip_prefix("--"))
         .filter_map(|l| l.split(':').next())
@@ -182,7 +214,7 @@ fn every_referenced_variable_is_defined() {
         let name = rest[..end].trim().to_string();
         assert!(
             defined.contains(&name),
-            "`{name}` is used but never defined in tokens.css"
+            "`{name}` is used but never defined in tokens.css or metrics.css"
         );
         rest = &rest[end..];
     }
@@ -337,7 +369,7 @@ fn every_required_token_reaches_swift() {
 #[test]
 fn the_spacing_scale_is_whole_pixels() {
     let (path, parsed) = source_tokens();
-    let css = tokens::generate(&parsed, &label(&path)).unwrap();
+    let css = tokens::generate_metrics(&parsed, &label(&path)).unwrap();
     let spaces: Vec<&str> = css
         .lines()
         .filter(|line| line.trim_start().starts_with("--postio-space-"))
@@ -360,11 +392,11 @@ fn the_rust_spacing_scale_is_the_css_one_and_checked_in() {
     let (path, parsed) = source_tokens();
     let rust = tokens::generate_space_rs(&parsed, &label(&path)).unwrap();
     assert!(rust.contains("pub const S3: i32 = 10;"), "{rust}");
-    let checked_in = std::fs::read_to_string(gtk_dir().join("data").join("space.rs"))
-        .expect("data/space.rs is missing; run `cargo build -p postio-gtk`");
+    let checked_in = std::fs::read_to_string(widgets_dir().join("data").join("space.rs"))
+        .expect("postio-widgets/data/space.rs is missing; run `cargo build -p postio-gtk`");
     assert_eq!(
         rust, checked_in,
-        "data/space.rs is stale. Run `cargo build -p postio-gtk` and commit the result."
+        "postio-widgets/data/space.rs is stale. Run `cargo build -p postio-gtk` and commit the result."
     );
 }
 
@@ -374,11 +406,44 @@ fn the_rust_spacing_scale_is_the_css_one_and_checked_in() {
 #[test]
 fn the_type_roles_are_named_sizes() {
     let (path, parsed) = source_tokens();
-    let css = tokens::generate(&parsed, &label(&path)).unwrap();
+    let css = tokens::generate_metrics(&parsed, &label(&path)).unwrap();
     for (role, size) in tokens::TYPE_ROLES {
         assert!(
             css.contains(&format!("--postio-text-{role}: {size};")),
             "`--postio-text-{role}` is not generated"
         );
     }
+}
+
+/// The metric families: the numbers both desktop apps lay out by
+/// (specs/007-postio-focus research R11).
+const METRIC_FAMILIES: [&str; 4] = [
+    "--postio-space-",
+    "--postio-radius-",
+    "--postio-chip-",
+    "--postio-text-",
+];
+
+/// Whether `css` defines a variable of `family` -- a declaration, not a use.
+fn defines(css: &str, family: &str) -> bool {
+    css.lines()
+        .any(|line| line.trim_start().starts_with(family))
+}
+
+/// The classic app's sheet is its colour layer, and carries no metrics:
+/// spacing, radii, chip sizes and type sizes are shared by both desktop apps
+/// through postio-widgets, and Focus defines colours of its own (research
+/// R11). A metric defined in both places would be two numbers for one thing.
+#[test]
+fn the_colour_layer_carries_no_metrics() {
+    let (path, parsed) = source_tokens();
+    let css = tokens::generate(&parsed, &label(&path)).unwrap();
+    let carried: Vec<&str> = METRIC_FAMILIES
+        .into_iter()
+        .filter(|family| defines(&css, family))
+        .collect();
+    assert!(
+        carried.is_empty(),
+        "tokens.css still defines these metric families: {carried:?}"
+    );
 }

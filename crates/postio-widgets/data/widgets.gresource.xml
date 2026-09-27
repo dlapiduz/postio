@@ -8,5 +8,9 @@
   <gresource prefix="/dev/postio/Widgets">
     <!-- Hand-written; every value in it is a postio role the app defines. -->
     <file compressed="true">widgets.css</file>
+
+    <!-- Generated from the design system by postio-gtk's build.rs: the
+         metrics both apps share, which widgets.css imports. -->
+    <file compressed="true">metrics.css</file>
   </gresource>
 </gresources>

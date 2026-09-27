@@ -1,0 +1,38 @@
+/* GENERATED FILE — do not edit by hand.
+ *
+ * Source : Design/_ds/industry-b0b46d6e-4b0c-403e-a94f-85bdc36b6c2f/styles.css
+ * Emitted by: crates/postio-gtk/build.rs via postio_ui::tokens
+ * Regenerate: cargo build -p postio-gtk
+ *
+ * The metrics both desktop apps lay the shared widgets out by: spacing,
+ * radii, chip sizes and type sizes (specs/007-postio-focus research R11).
+ * No colour is defined here: each app defines its own, the classic app in
+ * its generated tokens.css and Focus from libadwaita's named colours.
+ */
+
+:root {
+  --postio-space-1: 3px;
+  --postio-space-2: 7px;
+  --postio-space-3: 10px;
+  --postio-space-4: 14px;
+  --postio-space-6: 20px;
+  --postio-space-8: 27px;
+  --postio-radius-sm: 2px;
+  --postio-radius-md: 4px;
+  --postio-radius-lg: 7px;
+
+  /* A text chip's fixed vertical metrics: Postio's own. */
+  --postio-chip-height: 22px;
+  --postio-chip-pad-x: 7px;
+  --postio-chip-pad-y: 2px;
+
+  /* The sizes Postio sets type at, in `rem` so text scaling moves them. */
+  --postio-text-micro: 0.6818rem;
+  --postio-text-meta: 0.7159rem;
+  --postio-text-small: 0.7841rem;
+  --postio-text-label: 0.8182rem;
+  --postio-text-ui: 0.8523rem;
+  --postio-text-body: 0.8864rem;
+  --postio-text-reading: 0.9204rem;
+  --postio-text-title: 1.3636rem;
+}

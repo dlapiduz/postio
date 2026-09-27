@@ -17,7 +17,15 @@
  * text-scaling setting (postio-gtk's shell.css says why at length).
  *
  * MOTION BUDGET (CLAUDE.md): transitions here are <= 100ms or absent.
+ *
+ * THE METRICS COME FIRST. Spacing, radii, chip and type sizes are shared by
+ * both desktop apps, and generated from the design system into
+ * `metrics.css` beside this sheet; importing it here means an app that
+ * takes these widgets takes the numbers they are laid out by, and defines
+ * only its colours (research R11).
  */
+
+@import url("resource:///dev/postio/Widgets/metrics.css");
 
 /* ── Key hints (`widgets::keyhint`) ─────────────────────────────────── */
 /* A key hint riding along inside a control. Quieter than `.postio-key`,
