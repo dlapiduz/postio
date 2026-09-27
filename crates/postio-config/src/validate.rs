@@ -224,6 +224,7 @@ fn check_text(text: &str, errors: &mut Vec<ValidationError>) -> Option<Config> {
         check_sync(config, &map, errors);
         check_filters(config, &map, errors);
         check_mailboxes(config, &map, errors);
+        check_digests(config, &map, errors);
     }
     config
 }
@@ -542,6 +543,81 @@ fn check_filters(config: &Config, map: &SourceMap, errors: &mut Vec<ValidationEr
                 format!("filters.{name}.query"),
                 false,
                 format!("filter `{name}` has an empty query"),
+            );
+        }
+    }
+}
+
+/// `[[focus.digests]]` (spec 007 T132, contracts/config.md): each rule by
+/// its name, and a query by its place in the rule.
+///
+/// Semantic, all of it: a rule that fails is not applied, and neither the
+/// file nor the other rules stop applying because of it (ADR 0008 Q6,
+/// [`crate::FocusConfig::applicable_digests`]). Whether a query reads in
+/// full is the query language's to say, and this crate keeps queries as
+/// text rather than parse them (`docs/ARCHITECTURE.md`, the one query
+/// language), so that check is `postio_ui::digest`'s.
+fn check_digests(config: &Config, map: &SourceMap, errors: &mut Vec<ValidationError>) {
+    let mut named: Vec<&str> = Vec::new();
+    for (index, rule) in config.focus.digests.iter().enumerate() {
+        let at = format!("focus.digests[{index}]");
+        let name = rule.name.trim();
+        let called = if name.is_empty() {
+            format!("digest rule {}", index + 1)
+        } else {
+            format!("digest rule `{name}`")
+        };
+        if name.is_empty() {
+            push(
+                errors,
+                map,
+                at.clone(),
+                false,
+                format!("{called} has no `name`"),
+            );
+        } else if named.contains(&name) {
+            push(
+                errors,
+                map,
+                format!("{at}.name"),
+                true,
+                format!("two digest rules are called `{name}`; only the first applies"),
+            );
+        } else {
+            named.push(name);
+        }
+        if rule.queries.is_empty() {
+            push(
+                errors,
+                map,
+                at.clone(),
+                false,
+                format!("{called} matches nothing; give it a query under `match`"),
+            );
+        }
+        for (place, query) in rule.queries.iter().enumerate() {
+            if query.trim().is_empty() {
+                push(
+                    errors,
+                    map,
+                    format!("{at}.match[{place}]"),
+                    true,
+                    format!("query {} of {called} is empty", place + 1),
+                );
+            }
+        }
+        if let Err(problem) = rule.due() {
+            let key = match problem {
+                crate::DueError::UnknownCadence(_) => "cadence",
+                crate::DueError::NotATime => "at",
+                _ => "day",
+            };
+            push(
+                errors,
+                map,
+                format!("{at}.{key}"),
+                true,
+                format!("{called}: {problem}"),
             );
         }
     }

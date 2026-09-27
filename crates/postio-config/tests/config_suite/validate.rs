@@ -482,3 +482,184 @@ email = "ada@example.com"
         "it should point at the table, not the top of the file"
     );
 }
+
+// ------------------------------------------------------- [[focus.digests]] --
+//
+// Spec 007 T132, contracts/config.md: validation reports an unparsable
+// query by the rule's name and the query's index, an unknown cadence, a day
+// that does not fit the cadence, and a duplicate name. A rule that fails is
+// not applied; the others still are (ADR 0008 Q6), so none of these stop
+// the file from loading.
+
+/// data-model.md's example rule, and a daily one beside it.
+const DIGESTS: &str = r#"[[focus.digests]]
+name    = "Newsletters"
+match   = ["from:news@localfirst.example", "from:editor@ledger.example"]
+cadence = "weekly"
+day     = "saturday"
+at      = "16:00"
+
+[[focus.digests]]
+name    = "School"
+match   = ["from:office@school.example"]
+cadence = "monthly"
+day     = 28
+at      = "08:30"
+"#;
+
+/// Every error for `text`, as `(path, message)`.
+fn errors(text: &str) -> Vec<(String, String)> {
+    check(text)
+        .validation
+        .errors()
+        .iter()
+        .map(|err| (err.path.clone(), err.message.clone()))
+        .collect()
+}
+
+/// A digest rule named `name`, with the rest given as TOML lines.
+fn rule(name: &str, rest: &str) -> String {
+    format!("[[focus.digests]]\nname = \"{name}\"\n{rest}\n")
+}
+
+#[test]
+fn good_digest_rules_are_valid_and_all_apply() {
+    let checked = check(DIGESTS);
+    assert!(
+        checked.validation.is_valid(),
+        "{:?}",
+        checked.validation.errors()
+    );
+    let config = checked.config.expect("a config");
+    let names: Vec<&str> = config
+        .focus
+        .applicable_digests()
+        .into_iter()
+        .map(|(rule, _)| rule.name.as_str())
+        .collect();
+    assert_eq!(names, ["Newsletters", "School"]);
+}
+
+#[test]
+fn an_unknown_cadence_is_reported_by_the_rules_name() {
+    let text = rule(
+        "Newsletters",
+        "match = [\"from:news@localfirst.example\"]\ncadence = \"fortnightly\"\nat = \"16:00\"",
+    );
+    let found = errors(&text);
+    assert_eq!(found.len(), 1, "{found:?}");
+    let (path, message) = &found[0];
+    assert_eq!(path, "focus.digests[0].cadence");
+    assert!(message.contains("Newsletters"), "{message}");
+    assert!(message.contains("fortnightly"), "{message}");
+}
+
+#[test]
+fn a_day_that_does_not_fit_the_cadence_is_reported() {
+    for (rest, why) in [
+        (
+            "cadence = \"weekly\"\nday = 15\nat = \"09:00\"",
+            "a weekly rule's day is a weekday",
+        ),
+        (
+            "cadence = \"weekly\"\nat = \"09:00\"",
+            "a weekly rule names its day",
+        ),
+        (
+            "cadence = \"weekly\"\nday = \"someday\"\nat = \"09:00\"",
+            "a weekday by name",
+        ),
+        (
+            "cadence = \"monthly\"\nday = \"saturday\"\nat = \"09:00\"",
+            "a monthly rule's day is a day of the month",
+        ),
+        (
+            "cadence = \"monthly\"\nday = 31\nat = \"09:00\"",
+            "a monthly day stops at 28, so every month has one",
+        ),
+        (
+            "cadence = \"monthly\"\nday = 0\nat = \"09:00\"",
+            "a monthly day starts at 1",
+        ),
+        (
+            "cadence = \"daily\"\nday = \"monday\"\nat = \"09:00\"",
+            "a daily rule has no day",
+        ),
+    ] {
+        let text = rule("Rule", &format!("match = [\"from:a@example.com\"]\n{rest}"));
+        let found = errors(&text);
+        assert_eq!(found.len(), 1, "{why}: {found:?}");
+        assert!(found[0].1.contains("Rule"), "{why}: {}", found[0].1);
+    }
+}
+
+#[test]
+fn a_time_that_is_not_a_clock_time_is_reported() {
+    for at in ["25:00", "9", "noon", ""] {
+        let text = rule(
+            "Rule",
+            &format!("match = [\"from:a@example.com\"]\ncadence = \"daily\"\nat = \"{at}\""),
+        );
+        let found = errors(&text);
+        assert_eq!(found.len(), 1, "{at:?}: {found:?}");
+        assert!(found[0].1.contains("Rule"), "{}", found[0].1);
+    }
+}
+
+#[test]
+fn a_duplicate_name_is_reported_at_the_later_rule_and_only_the_first_applies() {
+    let body = "match = [\"from:a@example.com\"]\ncadence = \"daily\"\nat = \"09:00\"";
+    let text = format!("{}\n{}", rule("Twice", body), rule("Twice", body));
+    let checked = check(&text);
+    let found = errors(&text);
+    assert_eq!(found.len(), 1, "{found:?}");
+    assert_eq!(found[0].0, "focus.digests[1].name");
+    assert!(found[0].1.contains("Twice"), "{}", found[0].1);
+    let config = checked
+        .config
+        .expect("a semantic problem does not stop the file loading");
+    assert_eq!(config.focus.applicable_digests().len(), 1);
+}
+
+#[test]
+fn an_empty_query_is_reported_by_the_rules_name_and_its_place() {
+    let text = rule(
+        "Newsletters",
+        "match = [\"from:news@localfirst.example\", \"  \"]\ncadence = \"daily\"\nat = \"09:00\"",
+    );
+    let found = errors(&text);
+    assert_eq!(found.len(), 1, "{found:?}");
+    let (path, message) = &found[0];
+    assert_eq!(path, "focus.digests[0].match[1]");
+    assert!(message.contains("Newsletters"), "{message}");
+    assert!(message.contains('2'), "the second query: {message}");
+}
+
+#[test]
+fn a_rule_with_no_query_or_no_name_is_reported() {
+    let no_query = rule("Empty", "cadence = \"daily\"\nat = \"09:00\"");
+    assert_eq!(errors(&no_query).len(), 1, "{:?}", errors(&no_query));
+    let no_name = "[[focus.digests]]\nmatch = [\"from:a@example.com\"]\ncadence = \"daily\"\nat = \"09:00\"\n";
+    assert_eq!(errors(no_name).len(), 1, "{:?}", errors(no_name));
+}
+
+#[test]
+fn a_rule_that_fails_is_not_applied_and_the_others_still_are() {
+    let bad = rule(
+        "Broken",
+        "match = [\"from:a@example.com\"]\ncadence = \"hourly\"\nat = \"09:00\"",
+    );
+    let text = format!("{DIGESTS}\n{bad}");
+    let checked = check(&text);
+    assert!(!checked.validation.is_valid());
+    let config = checked
+        .config
+        .expect("a semantic problem does not stop the file loading");
+    let names: Vec<&str> = config
+        .focus
+        .applicable_digests()
+        .into_iter()
+        .map(|(rule, _)| rule.name.as_str())
+        .collect();
+    assert_eq!(names, ["Newsletters", "School"]);
+}

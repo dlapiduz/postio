@@ -4748,6 +4748,7 @@ dependencies = [
 name = "postio-config"
 version = "0.4.2"
 dependencies = [
+ "chrono",
  "notify",
  "postio-model",
  "serde",

@@ -9,6 +9,8 @@ publish.workspace = true
 repository.workspace = true
 
 [dependencies]
+# A digest rule's day and time (spec 007 T132): types only, no clock.
+chrono = { workspace = true }
 notify = "8.2.0"
 postio-model.workspace = true
 serde = { workspace = true }

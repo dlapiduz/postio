@@ -451,7 +451,12 @@ impl When {
 /// `local` in `zone`, as a real instant even when the clocks skip or repeat
 /// it: a skipped time is pushed forward by the gap, and a repeated one is its
 /// first occurrence still after `now`.
-fn resolve_local<Tz: TimeZone>(
+///
+/// [`parse_when`]'s rule for a wall-clock time, public so that everything
+/// that turns a wall-clock time into an instant does it one way: a digest's
+/// due time is the other (`postio_ui::schedule::next_due`). `Some` always;
+/// the `Option` is the contract, not a case that happens.
+pub fn resolve_local<Tz: TimeZone>(
     zone: &Tz,
     local: chrono::NaiveDateTime,
     now: &DateTime<Tz>,

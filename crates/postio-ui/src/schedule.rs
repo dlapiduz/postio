@@ -8,13 +8,19 @@
 //! mean the same moment -- this evening, tomorrow morning, Monday morning --
 //! they compute it with the same function, so they cannot drift apart.
 //!
+//! A digest's due time is computed here too ([`next_due`]), on the calendar
+//! and through `parse_when`'s rule for a wall-clock time, so that it keeps
+//! its time across a change of the clocks.
+//!
 //! Two of those shared moments are still worded two ways: the schedule-send
 //! picker says "This evening" where the snooze picker says "Later today"
 //! (spec C14). Which one both say is `/ux-architect`'s call; until it is
 //! made, a test holds them to the same instant, so making it changes words
 //! and nothing else.
 
-use chrono::{DateTime, Datelike, Duration, Local, Weekday};
+use chrono::{DateTime, Datelike, Days, Duration, Local, Months, NaiveDate, TimeZone, Weekday};
+use postio_config::Due;
+use postio_search::date::resolve_local;
 
 /// A preset must land at least this far ahead of `now` to be offered as
 /// "today" rather than rolling to tomorrow — a picker opened one minute
@@ -133,6 +139,72 @@ fn end_of_the_week(now: DateTime<Local>) -> DateTime<Local> {
         at_local_time(now + Duration::days(i64::from(days_to_friday) + 7), 9, 0)
     } else {
         friday
+    }
+}
+
+/// When a digest rule next comes due after `after` (spec 007 T132,
+/// contracts/config.md): the first time its cadence, day and time name that
+/// is later than `after`.
+///
+/// `after` is the rule's last delivery, or when it was made, and its zone is
+/// the one the rule's time is read in: `Local` for every caller, and a zone
+/// with daylight saving for the tests that prove this.
+///
+/// Days are stepped on the calendar, never as 24-hour spans: across a change
+/// of the clocks a day is 23 or 25 hours, and a week of 168 lands an hour
+/// off the rule's time (the presets' #1700). The time is resolved by
+/// [`parse_when`](postio_search::date::parse_when)'s own rule,
+/// [`resolve_local`]: a time the clocks skip is pushed forward by the gap,
+/// and one they repeat is its first occurrence. A day's time comes due
+/// once, so a daily rule delivered at the first 02:30 of the night the
+/// clocks go back is next due the next night, not at the second 02:30.
+///
+/// `None` only past the end of the calendar.
+pub fn next_due<Tz: TimeZone>(due: &Due, after: &DateTime<Tz>) -> Option<DateTime<Tz>> {
+    let zone = after.timezone();
+    let (Due::Daily { at } | Due::Weekly { at, .. } | Due::Monthly { at, .. }) = *due;
+    let mut day = first_day(due, after.date_naive())?;
+    loop {
+        let local = day.and_time(at);
+        // Already come today, however the clocks repeat it.
+        let come = zone
+            .from_local_datetime(&local)
+            .earliest()
+            .is_some_and(|first| first <= *after);
+        if !come && let Some(when) = resolve_local(&zone, local, after).filter(|when| when > after)
+        {
+            return Some(when);
+        }
+        day = next_day(due, day)?;
+    }
+}
+
+/// The first day on or after `today` that `due` names.
+fn first_day(due: &Due, today: NaiveDate) -> Option<NaiveDate> {
+    match *due {
+        Due::Daily { .. } => Some(today),
+        Due::Weekly { day, .. } => {
+            let ahead =
+                (day.num_days_from_monday() + 7 - today.weekday().num_days_from_monday()) % 7;
+            today.checked_add_days(Days::new(u64::from(ahead)))
+        }
+        Due::Monthly { day, .. } => {
+            let this_month = today.with_day(day)?;
+            if this_month >= today {
+                Some(this_month)
+            } else {
+                this_month.checked_add_months(Months::new(1))
+            }
+        }
+    }
+}
+
+/// The next day after `day` that `due` names, stepped on the calendar.
+fn next_day(due: &Due, day: NaiveDate) -> Option<NaiveDate> {
+    match due {
+        Due::Daily { .. } => day.checked_add_days(Days::new(1)),
+        Due::Weekly { .. } => day.checked_add_days(Days::new(7)),
+        Due::Monthly { .. } => day.checked_add_months(Months::new(1)),
     }
 }
 
@@ -259,5 +331,192 @@ mod tests {
                 assert!(when > now, "{label} is not ahead of {now}: {when}");
             }
         }
+    }
+}
+
+/// `next_due` in a zone with daylight saving (spec 007 T132): a copy of
+/// `postio_search::date`'s test zone, because `Local` cannot promise one on
+/// whatever machine runs this.
+#[cfg(test)]
+mod digest_due_tests {
+    use chrono::{
+        DateTime, Duration, FixedOffset, MappedLocalTime, NaiveDate, NaiveDateTime, NaiveTime,
+        TimeZone, Weekday,
+    };
+    use postio_config::Due;
+
+    use super::next_due;
+
+    /// Central European time for 2026: CET (+01:00) until 29 March 01:00
+    /// UTC, CEST (+02:00) until 25 October 01:00 UTC, then CET again. 02:30
+    /// on 29 March never happens there, and 02:30 on 25 October happens
+    /// twice.
+    #[derive(Debug, Clone, Copy)]
+    struct Cet2026;
+
+    fn utc(y: i32, m: u32, d: u32, h: u32, min: u32) -> NaiveDateTime {
+        NaiveDate::from_ymd_opt(y, m, d)
+            .and_then(|date| date.and_hms_opt(h, min, 0))
+            .expect("a real date")
+    }
+
+    fn hours(h: i32) -> FixedOffset {
+        FixedOffset::east_opt(h * 3600).expect("a real offset")
+    }
+
+    impl TimeZone for Cet2026 {
+        type Offset = FixedOffset;
+
+        fn from_offset(_: &FixedOffset) -> Self {
+            Cet2026
+        }
+
+        fn offset_from_utc_datetime(&self, at: &NaiveDateTime) -> FixedOffset {
+            if *at >= utc(2026, 3, 29, 1, 0) && *at < utc(2026, 10, 25, 1, 0) {
+                hours(2)
+            } else {
+                hours(1)
+            }
+        }
+
+        fn offset_from_utc_date(&self, at: &NaiveDate) -> FixedOffset {
+            self.offset_from_utc_datetime(&at.and_hms_opt(0, 0, 0).expect("midnight"))
+        }
+
+        fn offset_from_local_datetime(
+            &self,
+            local: &NaiveDateTime,
+        ) -> MappedLocalTime<FixedOffset> {
+            let fits = |offset: FixedOffset| {
+                let at = *local - Duration::seconds(i64::from(offset.local_minus_utc()));
+                self.offset_from_utc_datetime(&at) == offset
+            };
+            match (fits(hours(2)), fits(hours(1))) {
+                (true, true) => MappedLocalTime::Ambiguous(hours(2), hours(1)),
+                (true, false) => MappedLocalTime::Single(hours(2)),
+                (false, true) => MappedLocalTime::Single(hours(1)),
+                (false, false) => MappedLocalTime::None,
+            }
+        }
+
+        fn offset_from_local_date(&self, local: &NaiveDate) -> MappedLocalTime<FixedOffset> {
+            self.offset_from_local_datetime(&local.and_hms_opt(0, 0, 0).expect("midnight"))
+        }
+    }
+
+    /// A wall-clock time in the test zone, which must exist exactly once.
+    fn at(y: i32, m: u32, d: u32, h: u32, min: u32) -> DateTime<Cet2026> {
+        Cet2026
+            .with_ymd_and_hms(y, m, d, h, min, 0)
+            .single()
+            .expect("an unambiguous wall-clock time")
+    }
+
+    fn time(h: u32, m: u32) -> NaiveTime {
+        NaiveTime::from_hms_opt(h, m, 0).expect("a time")
+    }
+
+    /// Spec US10 scenario 1: a weekly rule due Sunday 09:00, and mail held
+    /// on Wednesday.
+    #[test]
+    fn a_weekly_digest_comes_due_on_its_day_at_its_time() {
+        let sunday = Due::Weekly {
+            day: Weekday::Sun,
+            at: time(9, 0),
+        };
+        let wednesday = at(2026, 9, 23, 12, 0);
+        assert_eq!(next_due(&sunday, &wednesday), Some(at(2026, 9, 27, 9, 0)));
+        // Delivered then, it is next due a week on, not again that morning.
+        let delivered = at(2026, 9, 27, 9, 0);
+        assert_eq!(next_due(&sunday, &delivered), Some(at(2026, 10, 4, 9, 0)));
+    }
+
+    /// The clocks go forward on Sunday 29 March: a week is 167 hours, and
+    /// the digest still comes at 09:00. Stepped as 168 hours it would come
+    /// at 10:00.
+    #[test]
+    fn a_weekly_digest_keeps_its_time_when_the_clocks_go_forward() {
+        let sunday = Due::Weekly {
+            day: Weekday::Sun,
+            at: time(9, 0),
+        };
+        let delivered = at(2026, 3, 22, 9, 0);
+        let next = next_due(&sunday, &delivered).expect("a next time");
+        assert_eq!(next.naive_local(), utc(2026, 3, 29, 9, 0));
+        assert_eq!(next - delivered, Duration::hours(167));
+    }
+
+    /// The clocks go back on Sunday 25 October: a week is 169 hours, and the
+    /// digest still comes at 09:00. Stepped as 168 hours it would come at
+    /// 08:00.
+    #[test]
+    fn a_weekly_digest_keeps_its_time_when_the_clocks_go_back() {
+        let sunday = Due::Weekly {
+            day: Weekday::Sun,
+            at: time(9, 0),
+        };
+        let delivered = at(2026, 10, 18, 9, 0);
+        let next = next_due(&sunday, &delivered).expect("a next time");
+        assert_eq!(next.naive_local(), utc(2026, 10, 25, 9, 0));
+        assert_eq!(next - delivered, Duration::hours(169));
+    }
+
+    /// `parse_when`'s rule: a time the clocks skip is pushed forward by the
+    /// gap, so 02:30 on 29 March is 03:30 CEST.
+    #[test]
+    fn a_time_the_clocks_skip_is_pushed_forward_by_the_gap() {
+        let night = Due::Daily { at: time(2, 30) };
+        let next = next_due(&night, &at(2026, 3, 28, 12, 0)).expect("a next time");
+        assert_eq!(next, Cet2026.from_utc_datetime(&utc(2026, 3, 29, 1, 30)));
+        assert_eq!(next.naive_local(), utc(2026, 3, 29, 3, 30));
+    }
+
+    /// A time the clocks repeat is its first occurrence, and it comes due
+    /// once: delivered at the first 02:30 on 25 October, the rule is next
+    /// due on the 26th, not an hour later at the second.
+    #[test]
+    fn a_time_the_clocks_repeat_comes_due_once_at_its_first_occurrence() {
+        let night = Due::Daily { at: time(2, 30) };
+        let first = next_due(&night, &at(2026, 10, 24, 12, 0)).expect("a next time");
+        assert_eq!(first, Cet2026.from_utc_datetime(&utc(2026, 10, 25, 0, 30)));
+        let next = next_due(&night, &first).expect("a next time");
+        assert_eq!(next, at(2026, 10, 26, 2, 30));
+    }
+
+    /// A daily rule is due later today while its time is ahead, and
+    /// tomorrow once it is not.
+    #[test]
+    fn a_daily_digest_comes_today_while_its_time_is_ahead() {
+        let four = Due::Daily { at: time(16, 0) };
+        assert_eq!(
+            next_due(&four, &at(2026, 9, 26, 8, 0)),
+            Some(at(2026, 9, 26, 16, 0))
+        );
+        assert_eq!(
+            next_due(&four, &at(2026, 9, 26, 16, 0)),
+            Some(at(2026, 9, 27, 16, 0))
+        );
+    }
+
+    /// A monthly rule comes on its day of the month, this month while it is
+    /// ahead, and next month's once it is not.
+    #[test]
+    fn a_monthly_digest_comes_on_its_day_of_the_month() {
+        let third = Due::Monthly {
+            day: 3,
+            at: time(9, 0),
+        };
+        assert_eq!(
+            next_due(&third, &at(2026, 1, 2, 12, 0)),
+            Some(at(2026, 1, 3, 9, 0))
+        );
+        assert_eq!(
+            next_due(&third, &at(2026, 1, 3, 9, 0)),
+            Some(at(2026, 2, 3, 9, 0))
+        );
+        assert_eq!(
+            next_due(&third, &at(2026, 12, 20, 9, 0)),
+            Some(at(2027, 1, 3, 9, 0))
+        );
     }
 }

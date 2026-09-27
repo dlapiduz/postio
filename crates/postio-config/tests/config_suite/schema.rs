@@ -405,3 +405,57 @@ fn an_unparseable_role_is_dropped_rather_than_guessed() {
     .unwrap();
     assert!(cfg.role_overrides().is_empty());
 }
+
+/// Spec 007 T132: a `[[focus.digests]]` rule is read, and its cadence, day
+/// and time are when it comes due.
+#[test]
+fn a_digest_rule_says_when_it_comes_due() {
+    use chrono::{NaiveTime, Weekday};
+    use postio_config::Due;
+
+    let config = postio_config::Config::from_toml_str(
+        r#"[[focus.digests]]
+name    = "Newsletters"
+match   = ["from:news@localfirst.example", "from:editor@ledger.example"]
+cadence = "weekly"
+day     = "saturday"
+at      = "16:00"
+
+[[focus.digests]]
+name    = "Morning"
+match   = ["from:alerts@example.org"]
+cadence = "daily"
+at      = "7:05"
+
+[[focus.digests]]
+name    = "Statements"
+match   = ["from:bank@example.net"]
+cadence = "monthly"
+day     = 3
+at      = "09:00"
+"#,
+    )
+    .expect("parse");
+    let rules = &config.focus.digests;
+    assert_eq!(rules[0].name, "Newsletters");
+    assert_eq!(
+        rules[0].queries,
+        ["from:news@localfirst.example", "from:editor@ledger.example"]
+    );
+    let at = |h, m| NaiveTime::from_hms_opt(h, m, 0).expect("a time");
+    assert_eq!(
+        rules[0].due(),
+        Ok(Due::Weekly {
+            day: Weekday::Sat,
+            at: at(16, 0)
+        })
+    );
+    assert_eq!(rules[1].due(), Ok(Due::Daily { at: at(7, 5) }));
+    assert_eq!(
+        rules[2].due(),
+        Ok(Due::Monthly {
+            day: 3,
+            at: at(9, 0)
+        })
+    );
+}
