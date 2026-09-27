@@ -6,9 +6,13 @@
 //! crate is being built task by task; until it is, it holds the evaluation's
 //! harness in `examples/` and the dependency graph the checks prove.
 
+pub mod render;
+pub mod resources;
 pub mod theme;
 
 pub use kurbo::{Point, Rect};
+pub use render::{BASE_URL, Raster, rasterize, render};
+pub use resources::Resources;
 pub use theme::{Presentation, Rgb, Theme};
 
 /// One message's key in a composed conversation: what its container's
@@ -22,6 +26,8 @@ pub struct RenderRequest {
     pub generation: u64,
     /// The composed HTML.
     pub document: String,
+    /// Everything the document may load; nothing else is reachable.
+    pub resources: std::sync::Arc<Resources>,
     /// The laid-out width and the two scales, never folded together (R11).
     pub viewport: Viewport,
     /// The theme every message is classified and repaired against (R10).
@@ -53,6 +59,8 @@ pub struct RenderedDocument {
     pub generation: u64,
     /// The laid-out size in CSS pixels at this zoom.
     pub size: kurbo::Size,
+    /// The device scale the display list was recorded at.
+    pub scale: f64,
     /// The display list, recorded once and rasterised per tile.
     pub display_list: anyrender::Scene,
     /// The copy, find and accessibility text, with its geometry.
@@ -207,12 +215,3 @@ pub enum FallbackReason {
     /// Nothing in the message could be decoded as a body.
     Undecodable,
 }
-
-// Placeholder uses until the renderer is written, one per dependency.
-#[allow(unused_imports)]
-use {
-    anyrender::PaintScene as _, anyrender_vello_cpu::VelloCpuImageRenderer as _,
-    blitz_dom::BaseDocument as _, blitz_html::HtmlDocument as _, blitz_paint::paint_scene as _,
-    blitz_traits::shell::Viewport as _, fontdb::Database as _, image::ImageFormat as _,
-    parley::FontContext as _, usvg::Tree as _,
-};

@@ -4881,6 +4881,7 @@ version = "0.3.0"
 dependencies = [
  "anyrender",
  "anyrender_vello_cpu",
+ "base64 0.23.1",
  "blitz-dom",
  "blitz-html",
  "blitz-paint",
@@ -4898,7 +4899,6 @@ dependencies = [
  "static_assertions",
  "stylo",
  "url",
- "usvg",
 ]
 
 [[package]]
