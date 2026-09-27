@@ -27,6 +27,7 @@ postio-model.workspace = true
 # The reading renderer (spec 006): BodyView draws its snapshots.
 postio-render.workspace = true
 postio-ui.workspace = true
+tracing = { workspace = true }
 
 [build-dependencies]
 glib-build-tools = "0.22.8"

@@ -5161,6 +5161,7 @@ dependencies = [
  "postio-render",
  "postio-test-support",
  "postio-ui",
+ "tracing",
 ]
 
 [[package]]

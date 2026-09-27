@@ -24,6 +24,7 @@
 mod body_view_resets;
 mod harness;
 mod list_contract;
+mod list_model_generic;
 mod reader_verbs;
 mod support;
 mod widgets_css;
@@ -69,6 +70,10 @@ const CASES: &[(&str, fn())] = &[
     (
         "reader_verbs::a_reader_draws_the_verbs_it_is_given_and_none_when_given_none",
         reader_verbs::a_reader_draws_the_verbs_it_is_given_and_none_when_given_none as fn(),
+    ),
+    (
+        "list_model_generic::a_list_of_another_row_type_is_windowed_filled_and_refreshed",
+        list_model_generic::a_list_of_another_row_type_is_windowed_filled_and_refreshed as fn(),
     ),
 ];
 
