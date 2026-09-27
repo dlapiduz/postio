@@ -84,6 +84,11 @@ mod imp {
         /// What is on screen.
         pub(super) document: RefCell<Option<Arc<RenderedDocument>>>,
         pub(super) tiles: RefCell<tiles::Tiles>,
+        /// The character to bring back to the top when the next snapshot
+        /// arrives: a theme change keeps the reader's place.
+        pub(super) anchor: Cell<Option<usize>>,
+        /// The style manager's handlers, disconnected on dispose.
+        pub(super) theme_handlers: RefCell<Vec<glib::SignalHandlerId>>,
     }
 
     impl Default for BodyView {
@@ -101,6 +106,8 @@ mod imp {
                 laid_out_width: Cell::new(0),
                 document: RefCell::default(),
                 tiles: RefCell::default(),
+                anchor: Cell::new(None),
+                theme_handlers: RefCell::default(),
             }
         }
     }
@@ -123,6 +130,30 @@ mod imp {
 
     #[glib::derived_properties]
     impl ObjectImpl for BodyView {
+        fn constructed(&self) {
+            self.parent_constructed();
+            // The theme source (FR-011): the app's dark and high-contrast
+            // state, and nothing else.
+            let style = adw::StyleManager::default();
+            let mut handlers = Vec::new();
+            for property in ["dark", "high-contrast"] {
+                let view = self.obj().downgrade();
+                handlers.push(style.connect_notify_local(Some(property), move |_, _| {
+                    if let Some(view) = view.upgrade() {
+                        view.theme_changed();
+                    }
+                }));
+            }
+            self.theme_handlers.replace(handlers);
+        }
+
+        fn dispose(&self) {
+            let style = adw::StyleManager::default();
+            for handler in self.theme_handlers.take() {
+                style.disconnect(handler);
+            }
+        }
+
         fn signals() -> &'static [glib::subclass::Signal] {
             static SIGNALS: OnceLock<Vec<glib::subclass::Signal>> = OnceLock::new();
             SIGNALS.get_or_init(|| vec![glib::subclass::Signal::builder("view-source").build()])
@@ -318,6 +349,16 @@ impl BodyView {
         });
     }
 
+    /// The theme changed: re-render, keeping the character at the top.
+    fn theme_changed(&self) {
+        let imp = self.imp();
+        if let Some(document) = imp.document.borrow().as_ref() {
+            let top = imp.vadjustment.borrow().as_ref().map_or(0.0, |a| a.value());
+            imp.anchor.set(Some(document.text.char_at_top(top)));
+        }
+        self.request_render();
+    }
+
     fn show(&self, document: RenderedDocument) {
         let imp = self.imp();
         if document.generation != imp.generation.get() {
@@ -337,8 +378,20 @@ impl BodyView {
         });
         let document = Arc::new(document);
         imp.tiles.borrow_mut().reset(document.clone());
+        let anchor = imp.anchor.take().and_then(|offset| {
+            document
+                .text
+                .clusters
+                .iter()
+                .filter(|c| c.range.end > offset)
+                .min_by_key(|c| c.range.start)
+                .map(|c| c.rect.y0)
+        });
         imp.document.replace(Some(document));
         self.configure_adjustments();
+        if let (Some(y), Some(adjustment)) = (anchor, imp.vadjustment.borrow().as_ref()) {
+            adjustment.set_value(y);
+        }
         self.queue_draw();
     }
 
@@ -349,7 +402,7 @@ impl BodyView {
             .document
             .borrow()
             .as_ref()
-            .map_or(height, |doc| doc.size.height);
+            .map_or(height, |doc| doc.size.height.max(height));
         if let Some(adjustment) = imp.vadjustment.borrow().as_ref() {
             let value = adjustment.value().min((upper - height).max(0.0));
             adjustment.configure(value, 0.0, upper, 40.0, height * 0.9, height);

@@ -40,6 +40,7 @@
 mod webkit_probe;
 
 mod body_view;
+mod body_view_theme;
 mod feed;
 mod feed_results;
 mod gtk_accelerators;
@@ -190,6 +191,10 @@ pub(crate) fn reader_deadline() -> std::time::Duration {
 }
 
 const CASES: &[(&str, fn())] = &[
+    (
+        "body_view_theme::a_theme_change_re_renders_once_and_keeps_the_place",
+        body_view_theme::a_theme_change_re_renders_once_and_keeps_the_place as fn(),
+    ),
     (
         "body_view::a_very_tall_message_scrolls_to_its_end_within_budget",
         body_view::a_very_tall_message_scrolls_to_its_end_within_budget as fn(),
