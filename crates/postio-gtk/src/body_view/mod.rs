@@ -187,6 +187,25 @@ impl BodyView {
         self.request_render();
     }
 
+    /// The bytes of tile textures held now.
+    #[doc(hidden)]
+    pub fn tile_bytes(&self) -> usize {
+        self.imp().tiles.borrow().bytes()
+    }
+
+    /// Whether the view has drawn at its current scroll position with every
+    /// tile it needed.
+    #[doc(hidden)]
+    pub fn tiles_settled(&self) -> bool {
+        let top = self
+            .imp()
+            .vadjustment
+            .borrow()
+            .as_ref()
+            .map_or(0.0, |a| a.value());
+        self.imp().tiles.borrow().settled(top)
+    }
+
     /// Call `f` when the fallback notice's "View source" is chosen.
     pub fn connect_view_source(&self, f: impl Fn(&Self) + 'static) -> glib::SignalHandlerId {
         self.connect_local("view-source", false, move |values| {
@@ -307,6 +326,15 @@ impl BodyView {
         if imp.pending.get() == Some(document.generation) {
             imp.pending.set(None);
         }
+        let counts = &document.counts;
+        postio_ui::reader::cost::note_snapshot(postio_ui::reader::cost::SnapshotCounts {
+            style_passes: u64::from(counts.style_passes),
+            nodes: u64::from(counts.nodes),
+            repaired_runs: u64::from(counts.repaired_runs),
+            resources_unresolved: u64::from(counts.resources_unresolved),
+            images_placeholdered: u64::from(counts.images_placeholdered),
+            display_list_commands: u64::from(counts.display_list_commands),
+        });
         let document = Arc::new(document);
         imp.tiles.borrow_mut().reset(document.clone());
         imp.document.replace(Some(document));

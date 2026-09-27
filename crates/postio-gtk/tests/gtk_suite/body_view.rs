@@ -95,9 +95,14 @@ pub fn a_snapshot_fills_the_view_and_scrolls_with_it() {
         .child(&scroller)
         .build();
     window.present();
+    let (before, _) = postio_ui::test_support::snapshot_counts();
     view.set_content(content("html-designed-three-column"));
     assert!(until(|| view.document().is_some()), "no snapshot arrived");
     let doc = view.document().expect("a snapshot");
+    // One snapshot shown, and its cost reported with it (Principle V).
+    let (after, counts) = postio_ui::test_support::snapshot_counts();
+    assert_eq!(after - before, 1, "one render, one snapshot counted");
+    assert!(counts.nodes > 0 && counts.display_list_commands > 0);
     let adjustment = scroller.vadjustment();
     assert_eq!(
         adjustment.upper(),
@@ -281,6 +286,52 @@ pub fn a_render_past_its_deadline_shows_the_plain_text() {
     assert_eq!(
         shown.generation, generation,
         "the late snapshot replaced the fallback"
+    );
+    window.destroy();
+}
+
+/// FR-022: however tall the message, the tiles held stay within their
+/// budget, and scrolling reaches the very last line.
+pub fn a_very_tall_message_scrolls_to_its_end_within_budget() {
+    if adw::init().is_err() || gdk::Display::default().is_none() {
+        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
+        return;
+    }
+    let view = BodyView::new(crate::reader_deadline());
+    let scroller = gtk::ScrolledWindow::builder().child(&view).build();
+    let window = gtk::Window::builder()
+        .default_width(800)
+        .default_height(600)
+        .child(&scroller)
+        .build();
+    window.present();
+    view.set_content(content("html-very-tall"));
+    assert!(until(|| view.document().is_some()), "no snapshot arrived");
+    let doc = view.document().expect("a snapshot");
+    let low_res = doc.low_res.rgba.len();
+    let adjustment = scroller.vadjustment();
+    let bottom = adjustment.upper() - adjustment.page_size();
+    assert!(bottom > 30_000.0, "the fixture is not tall: {bottom}");
+    let budget = 64 * 1024 * 1024 + low_res;
+    for step in 1..=50 {
+        adjustment.set_value(bottom * f64::from(step) / 50.0);
+        assert!(
+            until(|| view.tiles_settled()),
+            "the tiles in view never arrived at step {step}"
+        );
+        let held = view.tile_bytes();
+        assert!(
+            held <= budget,
+            "step {step}: {held} bytes of tiles held, over {budget}"
+        );
+    }
+    let last = doc.text.find("Quartz lantern marks the very last line")[0].clone();
+    let rect = doc.text.rects(last)[0];
+    let (top, page) = (adjustment.value(), adjustment.page_size());
+    assert!(
+        rect.y0 >= top && rect.y1 <= top + page,
+        "the last line {rect:?} is outside the view {top}..{}",
+        top + page
     );
     window.destroy();
 }

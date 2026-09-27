@@ -332,11 +332,11 @@ plan and tasks agree with the decision.
   This keeps a debug build on a busy CI runner from falling back by accident, while production keeps its 400 ms (research R6, `check-test-deadlines-scale.py`)
 - [X] T063 [TEST] In `gtk_suite/body_view.rs`, construct a `BodyView` with an **injected 1 ms deadline**, and hold its render with the delay hook until the test releases it. Assert that the widget shows the plain-text fallback with the notice text and a "View source" action. Then release the hook, and assert the late snapshot is not shown. No wall clock appears in the assertion (FR-023)
 - [X] T064 Implement the deadline timer, `abandon` and the fallback notice in `crates/postio-gtk/src/body_view/mod.rs`, using the injected length and `crates/postio-gtk/src/reader/notices.rs` for the notice
-- [ ] T065 [TEST] In `gtk_suite/body_view.rs`, render `html-very-tall.eml` and scroll the adjustment to `upper - page_size` in 50 steps. Assert:
+- [X] T065 [TEST] In `gtk_suite/body_view.rs`, render `html-very-tall.eml` and scroll the adjustment to `upper - page_size` in 50 steps. Assert:
   - the unique last line's cluster rect is inside the viewport;
   - tile bytes held never exceed 64 MiB plus `low_res`, sampled at every step (FR-022)
-- [ ] T066 Implement eviction and prefetch in `crates/postio-gtk/src/body_view/tiles.rs` until T065 is green
-- [ ] T067 Add `RenderCounts` to the render counter in `crates/postio-ui/src/test_support/`, next to renders issued, surfaces created and bytes per document (001 T029/T030). `BodyView` reports each snapshot's counts to it
+- [X] T066 Implement eviction and prefetch in `crates/postio-gtk/src/body_view/tiles.rs` until T065 is green
+- [X] T067 Add `RenderCounts` to the render counter in `crates/postio-ui/src/test_support/`, next to renders issued, surfaces created and bytes per document (001 T029/T030). `BodyView` reports each snapshot's counts to it
 
 **Checkpoint**: Checks are green, risks are retired, the renderer produces
 snapshots headlessly, and a `BodyView` paints them. The user stories can now

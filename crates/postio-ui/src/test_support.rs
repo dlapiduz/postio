@@ -73,3 +73,21 @@ pub fn redraws_waited_out() -> u64 {
 pub fn pages_requested() -> u64 {
     cost::read(&cost::PAGES_REQUESTED)
 }
+
+/// Snapshots the reading renderer put on screen, and what they cost in
+/// total (spec 006): read a `before`, act, assert on the delta.
+pub fn snapshot_counts() -> (u64, crate::reader::cost::SnapshotCounts) {
+    use crate::reader::cost::*;
+    let get = cost::read;
+    (
+        get(&SNAPSHOTS),
+        SnapshotCounts {
+            style_passes: get(&STYLE_PASSES),
+            nodes: get(&SNAPSHOT_NODES),
+            repaired_runs: get(&REPAIRED_RUNS),
+            resources_unresolved: get(&RESOURCES_UNRESOLVED),
+            images_placeholdered: get(&IMAGES_PLACEHOLDERED),
+            display_list_commands: get(&DISPLAY_LIST_COMMANDS),
+        },
+    )
+}
