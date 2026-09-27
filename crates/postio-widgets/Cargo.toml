@@ -20,6 +20,8 @@ adw = { version = "0.9", package = "libadwaita", features = ["v1_7"] }
 # main loop.
 async-channel = { workspace = true }
 chrono = { workspace = true, features = ["std"] }
+gio = "0.22.9"
+glib = { version = "0.22.9", features = ["v2_72"] }
 gtk = { version = "0.11.4", package = "gtk4", features = ["v4_20"] }
 pango = { version = "0.22.9", features = ["v1_56"] }
 postio-body.workspace = true
@@ -34,6 +36,9 @@ tokio = { workspace = true, features = ["rt"] }
 tracing = { workspace = true }
 # Remote image URLs, parsed before a fetcher is asked (spec 006 T137).
 url = { workspace = true }
+# The composer's editing surface, until ADR 0039's native editor is built
+# (research R1). Nothing else here draws with WebKit.
+webkit6 = { version = "0.6", features = ["v2_50", "gtk_v4_18"] }
 
 [build-dependencies]
 glib-build-tools = "0.22.8"

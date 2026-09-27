@@ -28,8 +28,8 @@ use std::time::{Duration, Instant};
 use postio_body::{Document, EditHistory, parse};
 use webkit6::prelude::*;
 
+use super::scheme;
 use crate::reader::BlobSource;
-use crate::scheme;
 use postio_ui::editor::document as editor_document;
 
 /// A fixed, non-`http(s)` base for the editing shell, so edited content is
@@ -48,7 +48,7 @@ pub use postio_ui::editor::document::EDITOR_BASE_URI;
 /// and it removes a registration-order dependency from every test that
 /// builds an editor. The file lives beside the other bundled assets in
 /// `data/`.
-const EDITOR_SCRIPT_BODY: &str = include_str!("../data/editor.js");
+const EDITOR_SCRIPT_BODY: &str = include_str!("editor.js");
 
 /// The whole script, table and all.
 ///
@@ -151,7 +151,7 @@ fn view_with(
     view.set_accessible_role(gtk::AccessibleRole::TextBox);
     view.connect_decide_policy(handle_decide_policy);
     paint_ground(&view);
-    crate::web_process::watch(&view);
+    super::web_process::watch(&view);
     // The scheme can change while a draft is open, and the only right answer
     // is a new sheet rather than a new document: reloading would take the
     // caret and the undo history with it (FR-075).
@@ -330,10 +330,15 @@ type FormatWatcher = Box<dyn Fn(FormatState)>;
 /// document under the caret.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct FormatState {
+    /// Inside `Strong`.
     pub bold: bool,
+    /// Inside `Emphasis`.
     pub italic: bool,
+    /// Inside a bulleted list.
     pub bullet_list: bool,
+    /// Inside a numbered list.
     pub numbered_list: bool,
+    /// Inside a quote block.
     pub quote_block: bool,
 }
 

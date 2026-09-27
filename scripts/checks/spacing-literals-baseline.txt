@@ -4,7 +4,7 @@
 # file's count grows. Lower a line (or run the check with --write) when a
 # file's count drops.
 cheatsheet.rs 5
-composer.rs 11
+composer/mod.rs 11
 finder.rs 2
 header.rs 3
 list_state.rs 10

@@ -75,7 +75,8 @@ pub mod composer;
 pub mod config;
 pub mod conversation;
 pub mod drag_out;
-pub mod editor;
+// The composer's editing surface moved with it (ADR 0043; T024).
+pub use postio_widgets::composer::editor;
 pub mod feed;
 pub mod finder;
 pub mod fonts;
@@ -92,7 +93,7 @@ pub mod parts;
 pub mod reader;
 pub mod resources;
 pub mod row;
-pub mod scheme;
+pub use postio_widgets::composer::scheme;
 pub mod search;
 // Moved to postio-ui (#566, ADR 0019): the selection model has no toolkit
 // in it, and re-exporting keeps every call site and test resolving here.
@@ -107,6 +108,6 @@ pub mod thread_row;
 // The undo toast is drawn by both desktop apps (ADR 0043).
 pub use postio_widgets::widgets::toast;
 pub mod unavailable;
-pub mod web_process;
+pub use postio_widgets::composer::web_process;
 pub mod widgets;
 pub mod window;

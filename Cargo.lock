@@ -5151,6 +5151,8 @@ version = "0.3.0"
 dependencies = [
  "async-channel",
  "chrono",
+ "gio",
+ "glib",
  "glib-build-tools",
  "gtk4",
  "libadwaita",
@@ -5166,6 +5168,7 @@ dependencies = [
  "tokio",
  "tracing",
  "url",
+ "webkit6",
 ]
 
 [[package]]

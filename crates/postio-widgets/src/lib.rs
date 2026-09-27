@@ -10,6 +10,7 @@
 //! anything that opens the store.
 
 pub mod body_view;
+pub mod composer;
 pub mod list_model;
 pub mod present;
 pub mod reader;
