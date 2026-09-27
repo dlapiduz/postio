@@ -276,3 +276,53 @@ mod tests {
         );
     }
 }
+
+/// The reading renderer's counters (spec 006) add up what each snapshot
+/// cost, and the two stall counters count what they say.
+#[cfg(test)]
+mod snapshot_tests {
+    use super::*;
+    use crate::test_support;
+
+    #[test]
+    fn each_snapshot_adds_its_costs_to_the_totals() {
+        let (shown, before) = test_support::snapshot_counts();
+        let one = SnapshotCounts {
+            style_passes: 2,
+            nodes: 40,
+            repaired_runs: 3,
+            resources_unresolved: 1,
+            images_placeholdered: 1,
+            display_list_commands: 90,
+        };
+        note_snapshot(one);
+        note_snapshot(SnapshotCounts {
+            style_passes: 1,
+            ..one
+        });
+        let (shown_after, after) = test_support::snapshot_counts();
+        assert_eq!(shown_after - shown, 2);
+        assert_eq!(after.style_passes - before.style_passes, 3);
+        assert_eq!(after.nodes - before.nodes, 80);
+        assert_eq!(after.repaired_runs - before.repaired_runs, 6);
+        assert_eq!(after.resources_unresolved - before.resources_unresolved, 2);
+        assert_eq!(after.images_placeholdered - before.images_placeholdered, 2);
+        assert_eq!(
+            after.display_list_commands - before.display_list_commands,
+            180
+        );
+    }
+
+    #[test]
+    fn waiting_out_and_page_requests_are_counted_one_each() {
+        let (waited, pages) = (
+            test_support::redraws_waited_out(),
+            test_support::pages_requested(),
+        );
+        note_waited_out();
+        note_page_requested();
+        note_page_requested();
+        assert_eq!(test_support::redraws_waited_out() - waited, 1);
+        assert_eq!(test_support::pages_requested() - pages, 2);
+    }
+}
