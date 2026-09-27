@@ -9,6 +9,7 @@
 pub mod fonts;
 pub mod render;
 pub mod resources;
+mod snapshot;
 pub mod theme;
 pub mod thread;
 
@@ -75,6 +76,9 @@ pub struct RenderedDocument {
     pub scale: f64,
     /// The display list, recorded once and rasterised per tile.
     pub display_list: anyrender::Scene,
+    /// The whole document at a quarter of its scale, at most 16 MiB: what
+    /// is drawn where a tile is not ready yet, so no frame is blank.
+    pub low_res: Raster,
     /// The copy, find and accessibility text, with its geometry.
     pub text: TextIndex,
     /// Every link, in document order.
