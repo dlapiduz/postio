@@ -51,6 +51,7 @@ decision stands as of 0.4.0 (2026-09-14).
 | [0040](0040-the-store-keeps-few-connections-maintains-its-counts-and-budgets-its-index.md) | The store keeps few connections, maintains its counts, and budgets its index | Proposed; the connection half (§1) landed with #1602, the rest awaits the maintainer |
 | [0041](0041-one-app-opens-the-store-at-a-time.md) | One app opens the store at a time; each runs the host inside it | Accepted (2026-09-25), with `specs/005-tui-frontend` |
 | [0042](0042-the-reading-renderer-is-disconnected-and-memory-safe.md) | The reading renderer is disconnected and memory-safe | Accepted (2026-09-27), with `specs/006-email-rendering` |
+| [0043](0043-gtk-both-desktop-apps-share-lives-in-postio-widgets.md) | The GTK both desktop apps share lives in `postio-widgets` | Accepted (2026-09-27), with `specs/007-postio-focus` |
 
 ## Writing one
 
