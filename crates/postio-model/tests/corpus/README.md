@@ -103,6 +103,7 @@ Fixtures are tagged, not filed — most carry several tags.
 |---|---|
 | `plain-text-simple.eml` | The smallest realistic message: 7bit us-ascii, a `-- ` signature delimiter, a `Return-Path`. The happy path everything else is measured against. |
 | `plain-text-flowed-reply.eml` | `format=flowed; delsp=yes` with quoted parent text. Reflowing, quote-depth detection, and a correctly linked reply. |
+| `top-posted-reply-signature.eml` | A reply written above what it answers, in both parts of a text + HTML pair: the answer, a `-- ` signature, the attribution line, then the quoted history, as `>` lines in the plain part and a `<blockquote>` in the HTML. The HTML also carries a `<title>`. Own-text extraction (spec 007 T115) keeps the answer and leaves out the history, the signature and the title; the plain part wraps a sentence the HTML does not, which tells the two readings apart. |
 | `headers-only-no-body.eml` | The file ends after the last header: no blank line, no body. Trivially breaks any parser that splits on `\r\n\r\n` without a fallback. |
 | `header-folding-received-chain.eml` | A three-hop `Received` chain, `DKIM-Signature`, multi-line `Authentication-Results`, a folded `Subject` and a folded multi-recipient `To`. Header unfolding, at length. |
 | `charset-utf-8-emoji-rtl.eml` | Valid UTF-8 that is still hard to render: ZWJ emoji sequences, flags, RTL Arabic and Hebrew, combining marks, astral-plane glyphs, an embedded BOM. Byte length, char length and grapheme count all differ. |

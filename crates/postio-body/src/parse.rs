@@ -61,15 +61,25 @@ const DROPPED: [&str; 10] = [
 /// Total. See the module docs for why that is a security property and not a
 /// convenience.
 pub fn parse(html: &str) -> Document {
-    let dom = parse_fragment(
+    narrow(&fragment(html))
+}
+
+/// `html` as html5ever reads it inside a `<body>`: the tree [`parse`]
+/// narrows, for a caller that has something to take out of it first
+/// ([`crate::own_text()`]).
+pub(crate) fn fragment(html: &str) -> RcDom {
+    parse_fragment(
         RcDom::default(),
         ParseOpts::default(),
         QualName::new(None, ns!(html), LocalName::from("body")),
         Vec::new(),
         false,
     )
-    .one(html);
+    .one(html)
+}
 
+/// The subset a [`fragment`] narrows to. Total, as [`parse`] is.
+pub(crate) fn narrow(dom: &RcDom) -> Document {
     let mut blocks = Vec::new();
     let mut loose: Vec<Inline> = Vec::new();
     walk_blocks(&dom.document, &mut blocks, &mut loose);

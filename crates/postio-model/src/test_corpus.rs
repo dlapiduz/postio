@@ -456,6 +456,8 @@ corpus! {
         "text/plain with format=flowed and delsp=yes, quoting its parent — reflowing and quote detection.",
     "plain-text-simple": [PlainText, Threading] =>
         "The smallest realistic message: 7bit us-ascii, a signature delimiter, nothing unusual.",
+    "top-posted-reply-signature": [MultipartAlternative, PlainText, Html, Threading] =>
+        "A reply above its quote in both parts: the answer, a signature, then the history as > lines and as a <blockquote>.",
     "transactional-shipping-notice": [MultipartAlternative, PlainText, Html, MailingList, Designed] =>
         "A shipping notice whose plain part carries a repeated label: value block \u{2014} the facts reader view lifts above the body copy.",
     "transfer-encoding-base64": [Base64, PlainText] =>

@@ -21,5 +21,6 @@ mod edit;
 mod markdown_corpus;
 mod markdown_parity;
 mod outgoing;
+mod own_text;
 mod reader_view;
 mod replying;

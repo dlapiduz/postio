@@ -18,25 +18,39 @@
 //!
 //! Neither ever removes a byte of content — folding only wraps it, so
 //! "expand" always gets back exactly what was quoted.
+//!
+//! Both fold the [`Stretch`]es [`html_stretches`] and [`text_stretches`] find.
+//! They are the one quote detector: own-text extraction
+//! ([`crate::own_text()`]) leaves out exactly the stretches the reader folds.
 
-/// Wrap every outermost `<blockquote>…</blockquote>` in sanitized HTML with a
-/// collapsed `<details>`.
+/// A stretch of a message body: the sender's own words, or history they
+/// quoted.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Stretch<'a> {
+    /// The sender's own words, and whatever markup carries them.
+    Own(&'a str),
+    /// Quoted history: an outermost `<blockquote>…</blockquote>`, or a run
+    /// of `>`-prefixed lines.
+    Quoted(&'a str),
+}
+
+/// Sanitized HTML, split at its outermost `<blockquote>` elements.
 ///
-/// Only the outermost span of a nested quote chain is wrapped — expanding it
-/// reveals every ancestor at once, which is what every mail client that nests
-/// `<blockquote>` for `> >` quoting means by the nesting. Text outside a
-/// `<blockquote>` is copied through untouched, byte for byte.
+/// Only the outermost span of a nested quote chain is one stretch, which is
+/// what every mail client that nests `<blockquote>` for `> >` quoting means
+/// by the nesting. Every byte of `html` is in exactly one stretch, in order.
 ///
 /// Input is assumed to be well-formed, already-sanitized markup (see
 /// [`crate::sanitize::sanitize_body`]): tags are matched by their literal
 /// spelling, not parsed, which is only safe because `ammonia`'s serializer
 /// never emits the literal text `<blockquote` inside an attribute value.
-pub fn fold_html_quotes(html: &str) -> String {
+pub fn html_stretches(html: &str) -> Vec<Stretch<'_>> {
     const OPEN: &str = "<blockquote";
     const CLOSE: &str = "</blockquote>";
 
-    let mut out = String::with_capacity(html.len() + 96);
+    let mut stretches = Vec::new();
     let mut depth: usize = 0;
+    let mut own_start: usize = 0;
     let mut span_start: usize = 0;
     let mut i = 0;
 
@@ -54,24 +68,74 @@ pub fn fold_html_quotes(html: &str) -> String {
             depth -= 1;
             i += CLOSE.len();
             if depth == 0 {
-                wrap_quote(&mut out, &html[span_start..i]);
+                if own_start < span_start {
+                    stretches.push(Stretch::Own(&html[own_start..span_start]));
+                }
+                stretches.push(Stretch::Quoted(&html[span_start..i]));
+                own_start = i;
             }
             continue;
         }
-        let ch_len = rest.chars().next().map(char::len_utf8).unwrap_or(1);
-        if depth == 0 {
-            out.push_str(&rest[..ch_len]);
-        }
-        i += ch_len;
+        i += rest.chars().next().map(char::len_utf8).unwrap_or(1);
     }
 
     // An unmatched `<blockquote` (malformed input slipped past sanitizing)
-    // must not eat the rest of the message — emit it unwrapped rather than
-    // drop it silently.
-    if depth > 0 {
-        out.push_str(&html[span_start..]);
+    // must not eat the rest of the message: it stays the sender's own,
+    // rather than being folded or dropped.
+    if own_start < html.len() {
+        stretches.push(Stretch::Own(&html[own_start..]));
     }
+    stretches
+}
 
+/// A `text/plain` body, split at its contiguous runs of `>`-prefixed lines.
+///
+/// Every byte of `text` is in exactly one stretch, in order, and each
+/// stretch is whole lines, line endings included.
+pub fn text_stretches(text: &str) -> Vec<Stretch<'_>> {
+    let mut stretches = Vec::new();
+    let mut start = 0;
+    let mut at = 0;
+    let mut quoted: Option<bool> = None;
+    for line in text.split_inclusive('\n') {
+        let quote = is_quote_line(line);
+        if let Some(run) = quoted
+            && run != quote
+        {
+            stretches.push(stretch(&text[start..at], run));
+            start = at;
+        }
+        quoted = Some(quote);
+        at += line.len();
+    }
+    if let Some(run) = quoted {
+        stretches.push(stretch(&text[start..], run));
+    }
+    stretches
+}
+
+fn stretch(text: &str, quoted: bool) -> Stretch<'_> {
+    if quoted {
+        Stretch::Quoted(text)
+    } else {
+        Stretch::Own(text)
+    }
+}
+
+/// Wrap every outermost `<blockquote>…</blockquote>` in sanitized HTML with a
+/// collapsed `<details>`.
+///
+/// Only the outermost span of a nested quote chain is wrapped — expanding it
+/// reveals every ancestor at once. Text outside a `<blockquote>` is copied
+/// through untouched, byte for byte. The spans are [`html_stretches`]'s.
+pub fn fold_html_quotes(html: &str) -> String {
+    let mut out = String::with_capacity(html.len() + 96);
+    for stretch in html_stretches(html) {
+        match stretch {
+            Stretch::Own(own) => out.push_str(own),
+            Stretch::Quoted(quoted) => wrap_quote(&mut out, quoted),
+        }
+    }
     out
 }
 
@@ -88,46 +152,27 @@ fn wrap_quote(out: &mut String, span: &str) {
 }
 
 /// Render a `text/plain` body as HTML: escaped and `<pre>`-wrapped, with
-/// contiguous runs of `>`-prefixed lines folded into a collapsed
-/// [`fold_html_quotes`]-style `<details>`.
+/// contiguous runs of `>`-prefixed lines ([`text_stretches`]) folded into a
+/// collapsed [`fold_html_quotes`]-style `<details>`.
 pub fn text_to_html(text: &str) -> String {
     let mut out = String::with_capacity(text.len() + 128);
-    let mut lines = text.lines().peekable();
-    let mut plain_run: Vec<&str> = Vec::new();
-
-    while let Some(line) = lines.next() {
-        if !is_quote_line(line) {
-            plain_run.push(line);
-            continue;
-        }
-        flush_plain_run(&mut out, &mut plain_run);
-
-        let mut quote_run = vec![line];
-        while let Some(next) = lines.peek() {
-            if !is_quote_line(next) {
-                break;
+    for stretch in text_stretches(text) {
+        match stretch {
+            Stretch::Own(own) => push_pre(&mut out, &own.lines().collect::<Vec<_>>()),
+            Stretch::Quoted(quoted) => {
+                out.push_str(
+                    "<details class=\"postio-quote\"><summary>Show quoted text\u{2026}</summary>",
+                );
+                push_pre(&mut out, &quoted.lines().collect::<Vec<_>>());
+                out.push_str("</details>");
             }
-            quote_run.push(lines.next().expect("just peeked Some"));
         }
-        out.push_str("<details class=\"postio-quote\"><summary>Show quoted text\u{2026}</summary>");
-        push_pre(&mut out, &quote_run);
-        out.push_str("</details>");
     }
-    flush_plain_run(&mut out, &mut plain_run);
-
     out
 }
 
 fn is_quote_line(line: &str) -> bool {
     line.trim_start().starts_with('>')
-}
-
-fn flush_plain_run(out: &mut String, run: &mut Vec<&str>) {
-    if run.is_empty() {
-        return;
-    }
-    push_pre(out, run);
-    run.clear();
 }
 
 fn push_pre(out: &mut String, lines: &[&str]) {

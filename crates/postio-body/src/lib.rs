@@ -11,6 +11,8 @@
 //!
 //! * [`sanitize`] — incoming markup, hardened before it reaches any view.
 //! * [`quote`] — quoted-text folding, on that sanitized output.
+//! * [`own_text`](mod@own_text) — the newest message's own words, without
+//!   what [`quote`] folds or its signature, for the needs-action detector.
 //!
 //! # Why its own crate and not `postio-model`
 //!
@@ -39,6 +41,7 @@ pub mod flowed;
 mod hints;
 pub mod markdown;
 pub mod outgoing;
+pub mod own_text;
 pub mod parse;
 pub mod quote;
 pub mod reader_view;
@@ -49,6 +52,7 @@ pub mod styles;
 pub use document::{Block, ContentId, Document, HeadingLevel, Href, Inline, editor_image_src};
 pub use edit::{EditHistory, EditStep};
 pub use outgoing::{harden, render};
+pub use own_text::own_text;
 pub use parse::parse;
 pub use quote::{fold_html_quotes, text_to_html};
 pub use replying::{
