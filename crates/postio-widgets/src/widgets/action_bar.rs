@@ -27,9 +27,13 @@ type CommandHandler = Box<dyn Fn(Command)>;
 /// finds it by, and whether it gets the primary treatment.
 #[derive(Clone, Copy, Debug)]
 pub struct Action {
+    /// The command the button runs, and whose key its cap shows.
     pub command: CommandId,
+    /// The words on the button, and its accessible name.
     pub label: &'static str,
+    /// The CSS class a surface dresses it by and a test finds it by.
     pub class: &'static str,
+    /// Whether it is the one verb the bar exists for.
     pub primary: bool,
     /// Drawn instead of the label, when the design asks for an icon.
     ///
@@ -210,7 +214,7 @@ impl ActionBar {
 ///
 /// A free function, decoupled from the widgets [`ActionBar::set_keymap`]
 /// updates from it, so a rebind reaching a bar is testable without a display
-/// — the same split `crate::row`'s `hints_for` makes for the focused row.
+/// — the same split `postio_gtk::row`'s `hints_for` makes for the focused row.
 pub fn keys(actions: &[Action], keymap: &Keymap) -> Vec<(CommandId, Option<String>)> {
     actions
         .iter()

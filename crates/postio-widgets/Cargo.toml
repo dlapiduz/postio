@@ -19,6 +19,8 @@ adw = { version = "0.9", package = "libadwaita", features = ["v1_7"] }
 gtk = { version = "0.11.4", package = "gtk4", features = ["v4_20"] }
 postio-body.workspace = true
 postio-config.workspace = true
+# The command registry and keymap the keycaps and action bars read.
+postio-core.workspace = true
 # The reading renderer (spec 006): BodyView draws its snapshots.
 postio-render.workspace = true
 postio-ui.workspace = true

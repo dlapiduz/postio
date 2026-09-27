@@ -16,21 +16,20 @@
 //! mechanism wired to nothing is what `check-uncalled-pub-fn` exists to
 //! catch. It lands with the collapsed conversation row it belongs to.
 
-pub mod action_bar;
-pub mod button;
 pub mod checkrow;
-pub mod chip;
 pub mod chrome;
 pub mod field;
-pub mod keycap;
-pub mod keyhint;
 pub mod nav_row;
 pub mod notes;
-pub mod notice;
 pub mod plate;
 pub mod screen;
 pub mod segmented;
 pub mod settings_group;
+
+// The controls both desktop apps draw moved to postio-widgets (ADR 0043).
+// Re-exported under their old paths, so every surface here that names
+// `crate::widgets::keyhint` or `crate::widgets::ActionBar` is unchanged.
+pub use postio_widgets::widgets::{action_bar, button, chip, keycap, keyhint, notice};
 
 /// The design system's spacing ramp in whole pixels -- `S1` 3px to `S8`
 /// 27px -- generated from the same tokens as `--postio-space-N`, so a

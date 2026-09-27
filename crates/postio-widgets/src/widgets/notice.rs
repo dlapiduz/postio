@@ -28,7 +28,9 @@ use super::keycap::KeycapButton;
 
 /// One entry in a notice's overflow menu.
 pub struct NoticeMenuItem {
+    /// What the entry says.
     pub label: String,
+    /// What choosing it runs.
     pub handler: Rc<dyn Fn()>,
 }
 

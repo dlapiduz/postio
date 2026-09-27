@@ -10,3 +10,4 @@
 //! anything that opens the store.
 
 pub mod body_view;
+pub mod widgets;

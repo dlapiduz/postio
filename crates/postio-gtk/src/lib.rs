@@ -104,7 +104,8 @@ pub mod startup;
 pub mod state;
 pub mod style;
 pub mod thread_row;
-pub mod toast;
+// The undo toast is drawn by both desktop apps (ADR 0043).
+pub use postio_widgets::widgets::toast;
 pub mod unavailable;
 pub mod web_process;
 pub mod widgets;
