@@ -588,6 +588,42 @@ in place, and change screen 11's copy to "comes back to the inbox at that
 time". This is the plan's riskiest change to a shared hot path. Spike S6
 measures it against the list's counting tests before anything depends on it.
 
+**Spike S6 (T012, 2026-09-27): do it.** The spike moved the folder and
+conversation lists to `sort_at` on a commit it then reverted.
+
+- **What moved:** the folder thread window, its cursor and `NOT EXISTS`, the
+  rows for changed messages, the page boundaries, the unified count's keys and
+  the partners' keys, the account window's representative and a thread's
+  `last_at`, the flat folder list, and the indexes `idx_messages_list` and
+  `idx_messages_thread_mailbox`.
+- **Its size:** 3 source files and about 20 places. Across 13 files, including
+  tests, it was +88/−64.
+
+What it showed:
+
+- **The counting tests stayed green unchanged:** all of
+  `list_statement_count.rs`, the rows-for test at `threads.rs:340`, and the
+  no-sort and no-scan plan tests. The runtime suite passed as before.
+- **Raw inserts must name the column.** 70 of 467 storage tests first failed
+  on `NOT NULL`, all from 16 raw `INSERT INTO messages` in test files.
+- **A plan test names the column it seeks.** One expected `received_at`, and
+  the plan still seeks, now on `sort_at`.
+- **Drafts problem, not covered by any existing test.** A draft's row takes
+  `received_at` from `updated_at` on every save. With `write_update` leaving
+  `sort_at` alone, a re-saved draft stopped rising in Drafts. A probe showed it.
+
+So T093 does it, on three conditions:
+
+1. **Scope it as the spike did.** The folder and conversation lists move. The
+   query views (Account, Flagged, Snoozed, Outbox, the flat Unified read,
+   Thread) and search stay on `received_at`.
+2. **`write_update` keeps `sort_at` at least `received_at`,** so drafts still
+   rise, with a test.
+3. **Raw test inserts name the column.**
+
+T093 also moves Focus's own window, which the spike predates: its `ORDER BY`,
+cursor and `focus_at` in `focus_arm`, and the shared `representative_filter`.
+
 **Decision: reminders.** A `reminders` table records the conversation,
 `set_at`, `due_at`, `fired_at` and `cancelled_at`.
 

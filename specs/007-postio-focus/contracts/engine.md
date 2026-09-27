@@ -38,12 +38,26 @@ impl Host {
 ## The filing pass (`crates/postio-sync`)
 
 ```rust
-/// Runs inside `commit_batch`'s transaction for mail an incremental pass
-/// files, after upsert and threading and before any event is emitted.
-pub trait FilingPass: Send + Sync {
-    fn file(&self, tx: &Transaction, filed: &[FiledMessage]) -> Result<FilingEffects>;
+/// Called inside an incremental pass's own write transaction, once per
+/// write unit that filed something new, with exactly the new messages.
+#[async_trait]
+pub trait FilingPass: Send + Sync + Debug {
+    async fn file(&self, transaction: &Connection, filed: &[FiledMessage<'_>])
+        -> Result<FilingEffects, SyncError>;
 }
 ```
+
+As built by T034 (`crates/postio-sync/src/filing.rs`):
+
+- **Where it is called.** The pass runs in `resync::incremental`'s write unit,
+  not in `commit_batch`. Every pass that reaches `commit_batch` is a first
+  sync, a rebuild or a re-enumeration, so a call there would never see an
+  arrival. `resync_mailbox` calls `resync_mailbox_filing` with no pass.
+- **The signature.** It is async and takes the store's `Connection`, because
+  the store has no `Transaction` type.
+- **How Focus supplies it.** `Host::enable_focus(FocusSetup)` puts it in a
+  `FilingSlot` shared by every engine (`Wiring.filing`), so enabling it later
+  takes effect from the next pass. `FocusSetup::default()` files nothing.
 
 - **It is called only on incremental passes.** First syncs, whose mail never
   produces `Event::NewMail` (`crates/postio-runtime/src/engine.rs:3372-3461`),
@@ -60,7 +74,8 @@ pub trait FilingPass: Send + Sync {
   with its queued server move.
 - **Errors never lose mail** (ADR 0008, Q6). A failure leaves the message where
   it was, in the inbox, logs ids and outcome only, and lets the transaction
-  commit the insert.
+  commit the insert. As T034 built it, an error still rolls back the write
+  unit; `NoFiling` cannot fail. T102 makes a failure commit the insert.
 - **Its cost is bounded:** at most **4 statements per new message** plus one
   per write, with no scans. A counting test in the sync suite asserts both.
 
@@ -211,15 +226,27 @@ Focus scope's extra predicate, or totals, seek marks and rows would disagree:
 
 **Counting assertions** (`crates/postio-storage/src/test_support/counting.rs`):
 
-- a Focus inbox page is at most 3 statements (the window, participants and
-  markers), with rows equal to the rows returned and no scans;
+- a Focus inbox page is at most 3 statements at the storage layer (the window,
+  participants and markers), with rows equal to the rows returned and no
+  scans. The window merges every inbox in one statement. With several inboxes
+  it sorts at most inboxes × page rows; with one inbox it does not sort. The
+  runtime adds the inbox witness it caches against, so a page there is one
+  more. With more than one account enabled, folding a conversation that
+  reached two inboxes adds the partner statements Unified already pays
+  (T161);
 - `focus_counts` is at most 5 statements, with no scans;
 - a surfaced row's position is 1 statement.
 
 **`sort_at`** replaces `received_at` in the list's `ORDER BY`, seek marks and
 indexes (R7). The existing list counting tests
 (`crates/postio-storage/tests/storage_suite/list_statement_count.rs:191`,
-`threads.rs:340`) must pass unchanged.
+`threads.rs:340`) must pass unchanged. Spike S6 showed that they do.
+
+- **What moves:** the folder and conversation lists.
+- **What stays on `received_at`:** the query views (Account, Flagged, Snoozed,
+  Outbox, the flat Unified read, Thread) and search.
+- **Drafts keep rising:** `write_update` keeps `sort_at` at least
+  `received_at`, so a re-saved draft still rises to the top of Drafts.
 
 ## Boundary rules (`scripts/checks/check-crate-boundaries.py`)
 

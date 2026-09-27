@@ -181,8 +181,10 @@ are unchanged.
 
 ### `MarkerSummary` (what a row draws, no body needed)
 
-`{ kind, when: Option<When>, excerpt: Option<String>, answer: Option<Answer>, action: CommandId }`.
-`When` is either an event's start and end, or a due date.
+`{ kind, when: Option<When>, excerpt: Option<String>, answer: Option<Answer> }`.
+`When` is either an event's start and end, or a due date. There is no
+`action`: `postio-model` cannot depend on `postio-core`, so a frontend derives
+the row's action from the kind and the answer (T033).
 
 ### Surfaced rows
 
