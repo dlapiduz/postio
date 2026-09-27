@@ -7,6 +7,7 @@
 - **Revisits:** ADR 0015 Q4 (the conversation pane stacks every message of a thread)
 - **Touches:** ADR 0003 (script off in the reader), ADR 0023 (fonts served over a custom scheme), `PRODUCT.md` §20 (accessibility)
 - **Proposal:** render a whole conversation as **one document in one `WebView`**, with per-message chrome expressed in HTML, replacing the current one-`WebView`-per-expanded-message.
+- **Amended 2026-09-27 by [ADR 0042](0042-the-reading-renderer-is-disconnected-and-memory-safe.md) and `specs/006-email-rendering`:** the decision -- one document per conversation -- stands. Its mechanism, one `WebView`, is superseded: `postio-render` draws the same document in Postio's own process, with no web process at all (`reader_spawns_no_web_process`). What follows about web processes is the history that motivated the one document.
 
 ---
 

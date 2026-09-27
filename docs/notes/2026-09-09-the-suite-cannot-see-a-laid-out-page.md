@@ -1,5 +1,10 @@
 # The suite cannot see a laid-out page (2026-09-09, #1334)
 
+> **2026-09-27:** this still holds for WebKit surfaces (the composer), and no
+> longer for the reader: since spec 006 it is laid out and rasterised
+> in-process, and its geometry is asserted headlessly. See
+> [the reader renders without a display](2026-09-27-the-reader-renders-without-a-display.md).
+
 Four consecutive CI failures on one assertion, four local passes, and the same
 mistake underneath each: **asserting on rendered geometry in an environment
 that renders nothing.**
