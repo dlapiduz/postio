@@ -27,6 +27,9 @@ members = [
     "crates/postio-host",
     "crates/postio-tui",
 ]
+# Upstream crates carried with Postio's patches applied: sources, not
+# members, so the workspace's lints and gates do not reach them.
+exclude = ["vendor"]
 
 # What a bare `cargo build` or `cargo check` compiles: everything above
 # except the FFI layer.
@@ -278,3 +281,10 @@ turso_sdk_kit = { git = "https://github.com/dlapiduz/turso", rev = "c2ac9f25db74
 turso_sdk_kit_macros = { git = "https://github.com/dlapiduz/turso", rev = "c2ac9f25db74613eed163b99105de69e206f688b" }
 turso_sync_engine = { git = "https://github.com/dlapiduz/turso", rev = "c2ac9f25db74613eed163b99105de69e206f688b" }
 turso_sync_sdk_kit = { git = "https://github.com/dlapiduz/turso", rev = "c2ac9f25db74613eed163b99105de69e206f688b" }
+
+# Blitz 0.3.0-beta.2 with Postio's patch queue applied (`patches/blitz/`,
+# checked by `scripts/blitz-patches.sh verify`): the reading renderer's
+# engine, carried in-tree so a patch is reviewed as a diff in the same pull
+# request that needs it, and dropped when upstream takes it.
+blitz-dom = { path = "vendor/blitz-dom" }
+blitz-paint = { path = "vendor/blitz-paint" }

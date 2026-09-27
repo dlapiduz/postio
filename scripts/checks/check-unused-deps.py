@@ -46,9 +46,17 @@ def main() -> int:
             "  a dependency nothing uses goes unnoticed on this machine."
         )
         return 0
+    # Every directory but `vendor/`: those are upstream crates carried with
+    # a patch (`patches/blitz/`), their manifests are upstream's, and
+    # machete does not read the workspace's `exclude`.
+    paths = sorted(
+        p.name
+        for p in root.iterdir()
+        if p.is_dir() and p.name not in {"vendor", "target"} and not p.name.startswith(".")
+    )
     try:
         result = subprocess.run(
-            ["cargo", "machete"],
+            ["cargo", "machete", *paths],
             cwd=root,
             capture_output=True,
             text=True,
