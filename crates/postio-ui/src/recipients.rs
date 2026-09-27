@@ -89,7 +89,8 @@ impl From<Contact> for Correspondent {
 ///   offered.
 /// * **Then contacts** whose address begins with the prefix, or any word of
 ///   the name the user gave or last saw on it. A suppressed contact never
-///   (ADR 0007 Q2). They are ranked by [`rank`].
+///   (ADR 0007 Q2). They are ranked by the letters written to each, then
+///   ADR 0007 Q6's band, then how lately and how often each was seen.
 pub fn suggest(
     groups: &[(String, Vec<EmailAddress>)],
     correspondents: &[Correspondent],
