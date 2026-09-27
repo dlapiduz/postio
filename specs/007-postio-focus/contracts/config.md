@@ -50,13 +50,20 @@ message.
 (`cadence`, `day`, `at`) after the previous delivery, or after the rule was
 created, in the local zone.
 
-- It resolves through `at_local_time` (`crates/postio-ui/src/schedule.rs:19`),
-  so a daylight-saving gap or fold lands on a real instant.
+- `postio_ui::schedule::next_due` computes it, generic over the zone. It
+  steps calendar days, and resolves the time with
+  `postio_search::date::resolve_local`, as `parse_when` does. A time the clocks
+  skip is pushed forward by the gap. A time they repeat comes due once, at its
+  first occurrence, not twice.
 - Monthly days stop at 28, so every month has one.
 
 **Validation** reports:
 
-- an unparsable query, by the rule's name and the query's index;
+- an unparsable query, by the rule's name and the query's index. The check
+  is split, because `postio-config` does not parse queries
+  (docs/ARCHITECTURE.md). `postio-config` reports a blank query, and
+  `postio_ui::digest::unreadable_queries` reports an operator the language
+  cannot read;
 - an unknown cadence;
 - a day that does not fit the cadence;
 - a duplicate name.

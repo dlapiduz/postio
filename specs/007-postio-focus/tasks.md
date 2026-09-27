@@ -209,7 +209,7 @@ maintainer asks.
 
 - [ ] T058 [US7] The key map dialog (1100×760), generated from the registry and the groups table: `?` and `Escape`, and the footer naming `[keys]` in `config.toml`. Test first: scenario 4, and every row's key equals the key the keymap resolves
 - [ ] T059 [US7] `focus_suite/registry_parity.rs`: every command reachable with `Frontend::Focus` has a key, a command-bar row and a visible control. It starts with a `NOT_YET` list that each story empties. Test first: the list is non-empty, and fails with names
-- [ ] T060 [US7] `ConfigChanged.focus`, and live reload of `[keys]` and `[focus]` in Focus. Test first: scenario 1 (override archive, save, and the key map, bar and button all change)
+- [ ] T060 [US7] `ConfigChanged.focus`, and live reload of `[keys]` and `[focus]` in Focus. Test first: scenario 1 (override archive, save, and the key map, bar and button all change). `[focus]` is one struct, `postio_config::FocusConfig` (T132). Extend it and `change.rs`: `ConfigChanged` does not report `[focus]` yet
 - [ ] T061 [US7] Scenarios 2, 3 and 5 as `focus_suite` cases. The classic defaults are the one keymap's
 - [ ] T062 [US7] Compare screen 20, and record it
 
@@ -223,22 +223,22 @@ maintainer asks.
 **Goal**: Screen 04. **Independent test**: spec US2.
 
 - [ ] T065 [US2] `BodyView` gains a public highlight of a `TextIndex` range, and scrolls to it. Test first in `widgets_suite`: the overlay covers the range's rectangles, and the range is scrolled into view
-- [ ] T066 [P] [US2] A locator from excerpt to range in `crates/postio-ui/src/reader/`, using `TextIndex::find` with the offset tiebreak (research R2). Test first: a table that includes duplicates and diacritics. S5 (T011) says: collapse the excerpt's whitespace, and treat any run of whitespace as any other, on both sides
-- [ ] T067 [US2] Quote folds with ids and line counts in single-message documents (`crates/postio-body/src/quote.rs`, `crates/postio-ui/src/reader/document.rs`). Test first: "31 quoted lines from v2 folded" shows and opens on activation, and the classic single-message reader gains it too (a `gtk_suite` case)
+- [X] T066 [P] [US2] A locator from excerpt to range in `crates/postio-ui/src/reader/`, using `TextIndex::find` with the offset tiebreak (research R2). Test first: a table that includes duplicates and diacritics. S5 (T011) says: collapse the excerpt's whitespace, and treat any run of whitespace as any other, on both sides. Done, in `postio-render` (`TextIndex::locate`), since `postio-ui` must not take on the renderer (R2)
+- [ ] T067 [US2] Quote folds with ids and line counts in single-message documents (`crates/postio-body/src/quote.rs`, `crates/postio-ui/src/reader/document.rs`). Test first: "31 quoted lines from v2 folded" shows and opens on activation, and the classic single-message reader gains it too (a `gtk_suite` case). The document half is done: ids `q0`…, and "N quoted lines" on every fold. The GTK half waits for T019's reader move. Also make the terminal's fold line count the same way
 - [ ] T068 [US2] `view_source`: `Req::RawSource` reads the raw blob, fetched on the key press if it is not local, and the dialog shows it. Test first: `v` shows the raw message's header lines (scenario 5)
 - [ ] T069 [US2] The dialog (980×820): the header with Close, the title, the position, and `k`/`j`; the toolbar with its keys; the shared `Reader` in single-message mode with the Focus header card, the marker slot, attachment cards and the fold line. Test first: 100 opens build one surface (`surfaces_created` = 1, scenario 7), and the dialog opens within one frame of `Enter`
 - [ ] T070 [US2] `Escape` returns with the selection kept. `j`/`k` step the list and move its cursor, and `[`/`]` step the thread. Test first: scenarios 1–3
 - [ ] T071 [US2] `open_attachment_or_link`: a chooser over the snapshot's links and the message's parts. Nothing opens without a choice, and a link's target shows first. Test first: scenario 9
 - [ ] T072 [US2] HTML-only mail with remote images: sanitised, images blocked per sender, no script, no request. Test first: scenario 4, reusing the reader's no-request fixtures
-- [ ] T073 [US2] The marker card, and the sentence highlighted in the body (through T065 and T066). Test first: scenario 6, with a seeded question marker
+- [ ] T073 [US2] The marker card, and the sentence highlighted in the body (through T065 and T066). Test first: scenario 6, with a seeded question marker. Pass `own_text`'s length as the excerpt's `source_len` (R2)
 - [ ] T074 [US2] Compare screen 04, and record it (research R2's scrolling difference included)
 
 ## Phase 8: User Story 3: write and reply with the existing composer (P1)
 
 **Goal**: Screens 05 and 06. **Independent test**: spec US3.
 
-- [ ] T075 [US3] The `correspondents` table, maintained at local send (`crates/postio-sync/src/send.rs:525-575`) and when Sent syncs. Test first: sending to three addresses adds one to each, counted
-- [ ] T076 [P] [US3] `RecipientDirectory` rows carry `sent_count`, and completion ranks by it, with one rule for both apps (`crates/postio-ui/src/recipients.rs`). Test first: an address written to 42 times ranks above one seen 100 times and never written to (scenario 6)
+- [ ] T075 [US3] The `correspondents` table, maintained at local send (`crates/postio-sync/src/send.rs:525-575`) and when Sent syncs. Test first: sending to three addresses adds one to each, counted. Fill `sent_count` in `recipient_directory()`: the rows carry it since T076
+- [ ] T076 [P] [US3] `RecipientDirectory` rows carry `sent_count`, and completion ranks by it, with one rule for both apps (`crates/postio-ui/src/recipients.rs`). Test first: an address written to 42 times ranks above one seen 100 times and never written to (scenario 6). The rule is done: `postio_ui::recipients::suggest`, with ADR 0007's band (R15). Still open: the classic composer calls `Directory::suggest`, and the terminal ranks in SQL. Move both to the one rule after T024
 - [ ] T077 [US3] `Draft.labels` (`crates/postio-model/src/draft.rs`), and the host applies them to the Sent copy's conversation. Test first: scenario 4
 - [ ] T078 [US3] `DialogHost` for `ComposerHost`, in the 980×820 frame of screens 05 and 06: the header, the fields with Labels, the footer, and "Draft saved locally". Test first: `E` fills every recipient, "Re:", the thread's labels, and a folded quote (scenario 1)
 - [ ] T079 [P] [US3] An opt-in recipient chip entry in `crates/postio-widgets/src/widgets/recipients.rs`, which Focus turns on. Test first: choosing a suggestion adds a chip with name and address (scenario 6)
@@ -252,7 +252,7 @@ maintainer asks.
 **Goal**: Screens 07–10. **Independent test**: spec US4.
 
 - [X] T084 [P] [US4] `postio_search::natural::lower(text, today, names)`. Test first: a phrase table that includes screen 07's sentence, the words it cannot lower, and determinism (scenarios 1 and 8)
-- [ ] T085 [P] [US4] The finder's blended mode in `crates/postio-ui/src/finder.rs`: commands, places and one search row, grouped, with `>` for commands only. Test first: typing "arch" gives the three groups of screen 09, and a command acts on the aim held before the bar opened (scenario 3)
+- [X] T085 [P] [US4] The finder's blended mode in `crates/postio-ui/src/finder.rs`: commands, places and one search row, grouped, with `>` for commands only. Test first: typing "arch" gives the three groups of screen 09, and a command acts on the aim held before the bar opened (scenario 3)
 - [ ] T086 [US4] The bar overlay (860 px): the saved row (`Alt+1`–`4`), the input with chips, `Tab` into the chips, `back_to_words`, the echo line, the results, and the footer. Test first: half-typed operators show no error (scenario 2), and `in:Rec` lists Receipts newest first (scenario 4)
 - [ ] T087 [US4] `saved_search_1`–`4` in Focus. Test first: `Alt+2` shows its results (scenario 5)
 - [ ] T088 [US4] The folders popover (`g o`, or clicking "Inbox ▾"): mailboxes with their keys, folders, labels and counts, a filter, and `Enter` goes there. The header then names the place. Test first: scenario 6
@@ -315,9 +315,9 @@ maintainer asks.
 
 ## Phase 13: User Story 12, milestone 1's part: the built-in needs-action detector (P2)
 
-- [ ] T115 [US12] Own-text extraction in `crates/postio-body`: the newest message's text without quoted history or signature, with stable offsets. Test first: fixtures with top-posted and bottom-posted replies. S5 (T011) says: read the part the reader draws, the HTML flattened when there is HTML. Leave out what is never drawn: `<title>`, hidden preheaders, `alt` text
+- [X] T115 [US12] Own-text extraction in `crates/postio-body`: the newest message's text without quoted history or signature, with stable offsets. Test first: fixtures with top-posted and bottom-posted replies. S5 (T011) says: read the part the reader draws, the HTML flattened when there is HTML. Leave out what is never drawn: `<title>`, hidden preheaders, `alt` text
 - [ ] T116 [US12] The detector's rules in `crates/postio-classify`: questions and to-dos, the exclusions, due dates through `parse_when`, and one marker per message (research R10). Test first: the labelled corpus's precision gate of at least 0.9 (SC-013), red against the empty detector. Add the weights table only if T010 said so. S4 (T010): rules with R10's four fixes reach precision 0.901 on 201 items. Build those, and keep the weights table in reserve for a failed gate
-- [ ] T117 [US12] The body task writes question and to-do markers for mail sent directly to the user. The catch-up covers the inbox and the last 30 days. Test first: scenarios 1–3 and 7 (no model configured: markers still appear, and nothing connects)
+- [ ] T117 [US12] The body task writes question and to-do markers for mail sent directly to the user. The catch-up covers the inbox and the last 30 days. Test first: scenarios 1–3 and 7 (no model configured: markers still appear, and nothing connects). Cut the excerpt as a plain prefix of the sentence, at most 200 characters, with no ellipsis, or the locator cannot find it (R2)
 - [ ] T118 [US12] `dismiss_marker { dismissed }` (undoable), and three dismissals write `[focus.filter] stop_markers`. Test first: scenario 5
 - [ ] T119 [US12] Instruction-shaped text produces no action and no request. Test first: scenario 4, on ADR 0009's fixture
 - [ ] T120 [US12] Compare question and to-do markers on screens 01 and 03, and record them
@@ -328,7 +328,7 @@ maintainer asks.
 
 - [ ] T121 [US9] The `filter_decisions` table, its repository, and the reason vocabulary. Test first: the CHECK refuses an unknown reason
 - [ ] T122 [US9] The filing pass's header rules: list, bulk and automated signals, the senders table, and the server's `$Junk`. With the guards, it writes a decision, archives through the storage verbs in the transaction, and queues the server move. Test first, on the known-answer corpus: scenarios 1–3 and 6, and zero guarded messages filtered (SC-006)
-- [ ] T123 [US9] `[focus] filtering`, and `[focus.filter] never` in `crates/postio-config`. Test first: `filtering = false` files nothing new, and a `never` sender is not filtered
+- [ ] T123 [US9] `[focus] filtering`, and `[focus.filter] never` in `crates/postio-config`. Test first: `filtering = false` files nothing new, and a `never` sender is not filtered. Extend `FocusConfig` (T132)
 - [ ] T124 [US9] The Filtered scope, its tab counts, and the view (screen 21): the header bar, tabs `1`–`7`, reason pills, the focused row's restore button, and the footer. Test first: scenarios 5 and 7, counted
 - [ ] T125 [US9] `restore_filtered { restored }` (undoable): the move to the inbox, the decision deleted, and the sender added to `never` through `toml_edit` and `write_atomically`. Test first: scenario 4, where undo reverses all three
 - [ ] T126 [US9] "Filtered today" in the header strip, the popover's Filtered row, and the empty state's shortcut. Test first: the count equals decisions since local midnight
@@ -342,7 +342,7 @@ maintainer asks.
 **Goal**: Screen 24, the digest rows on 01 and 16, and the digest window in 22's frame. **Independent test**: spec US10.
 
 - [X] T131 [P] [US10] A matcher for `from:` and `list:` in `crates/postio-search`. Test first: ADR 0008's differential test against the executor over the corpus. Done: `postio_search::matcher::Matcher`. It mirrors the executor's `from:` bug, #1699, as ADR 0008 requires, so fixing #1699 changes both in one commit
-- [ ] T132 [P] [US10] `[[focus.digests]]`: parse, validate, and compute the next due time, safe across daylight-saving changes. Test first: contracts/config.md's validation list, and a weekly rule across a DST change. Step calendar days (`date_naive() + Days`), never `+ Duration::days`, which is 24 hours (#1700). Resolve the time with `parse_when`'s rule: a skipped time is pushed forward, a repeated one is its first occurrence
+- [X] T132 [P] [US10] `[[focus.digests]]`: parse, validate, and compute the next due time, safe across daylight-saving changes. Test first: contracts/config.md's validation list, and a weekly rule across a DST change. Step calendar days (`date_naive() + Days`), never `+ Duration::days`, which is 24 hours (#1700). Resolve the time with `parse_when`'s rule: a skipped time is pushed forward, a repeated one is its first occurrence
 - [ ] T133 [US10] The `digest_holds` and `digest_deliveries` tables. The filing pass holds matching mail, but never mail with an invitation or question or to-do, and never a conversation the user took part in. Test first: scenarios 1 and 2
 - [ ] T134 [US10] The Focus inbox scope leaves out held mail at every membership site, and its counts do too. Test first: counting assertions, and totals, seek marks and rows agree
 - [ ] T135 [US10] The due timer creates deliveries. One missed while Focus was closed is delivered once on start, and an empty one is not created. Test first: scenarios 3 and 6
@@ -364,6 +364,7 @@ maintainer asks.
   - `docs/PRODUCT.md` §2 and §23;
   - `docs/ARCHITECTURE.md`: the shape diagram gains the four crates, and §9 their boundaries;
   - a note in ADR 0032 on Focus's one-message dialog (FR-037)
+  - `docs/config.md`: the `[focus]` section, `[[focus.digests]]` with its due-time rule, `[focus.filter]` and `[focus.model]`
 - [ ] T146 Draft the constitution's Scope amendment (MINOR): name Focus, and allow its optional, user-supplied local model. Update the Sync Impact Report. **It waits for the maintainer's approval, and does not land without it**
 - [ ] T147 [P] SC-011: the first classification pass over a 100,000-message store, as a `POSTIO-MEASUREMENT:` test in `.config/nextest.toml`'s nightly profile
 - [ ] T148 `screens.md` complete for 01–20, with every difference and its reason (SC-009)

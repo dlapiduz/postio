@@ -260,6 +260,47 @@ The test is `crates/postio-render/tests/excerpt_locate.rs`, on the nightly
 profile. Its floors are these numbers rounded down, for each source on its
 own. When the corpus grows, the rates move, so the floors are measured again.
 
+**Built (T066).** The locator is in `postio-render`, beside `find`. The plan
+put it in `postio-ui`, but that crate must not take on the renderer.
+
+- **The API:** `TextIndex::locate(Excerpt { text, offset, source_len })`.
+  `offset` and `source_len` place the excerpt in the text it was read from,
+  for the tiebreak.
+- **How it matches:** it uses `find`'s folding, with whitespace collapsed on
+  both sides. `find` itself keeps its find-in-page behaviour.
+- **What it finds:** on the 61 fixtures of the first run, every sentence that
+  is present at all. That was 98.2% read from the text part and 99.5% read
+  from what is drawn.
+- **Duplicates:** on bodies sent twice over, it picked the right copy every
+  time.
+
+Two rules follow for the marker's writer (T117) and highlight (T073):
+
+- The stored excerpt is a plain prefix of the sentence, at most 200
+  characters, with no ellipsis added. An ellipsis would stop the excerpt from
+  being found.
+- `source_len` is the length of the own text it was cut from.
+
+**Own text (T115).** `postio_body::own_text(&MessageBody)` does this, in order:
+
+1. sanitises the HTML;
+2. drops the quoted stretches, using the same detector the reader folds by;
+3. leaves out text that is hidden inline and `alt` text;
+4. flattens what remains;
+5. splits off the signature.
+
+Two known gaps:
+
+- Outlook-style history under a From:/Sent: block, with no blockquote, is
+  neither folded by the reader nor left out (`html-white-page-reply`).
+- Text hidden by a class in the sender's own stylesheet is not seen.
+
+**Quote folds (T067, the document half).** Single-message documents give
+their folds the ids `q0`, `q1` and so on, and every fold, in single and thread
+documents, is labelled "N quoted lines", counting lines that hold words. The
+terminal's fold line still counts its own way, blank quote-marker lines
+included.
+
 **Quoted history (FR-034).** Single-message documents give their quote folds
 ids and a line count, as thread documents do:
 
@@ -485,6 +526,15 @@ existing `SaveSearch`.
 **`in:` completion** uses the finder's existing folder data
 (`crates/postio-gtk/src/finder.rs:245-268`, moving to postio-ui). A command
 acts on the aim the bar opened over; the finder already carries it.
+
+**Built (T085).** The blend is `postio_ui::finder::blend(text, places, keymap,
+context, availability)`. It is not one of the classic finder's `MODES`, so the
+classic finder is untouched.
+
+- **Places** are ranked, and each carries the key that goes there.
+- **The aim** a command acts on is `finder::Held { scope, selection, cursor }`:
+  the rows marked when the bar opened, else the cursor's row.
+- **Row counts** are not capped here; how many rows to draw is T086's.
 
 **Built (T084).** `natural::lower` refines three of the rules above:
 
@@ -1133,6 +1183,21 @@ applies the labels to the Sent copy's conversation and creates the reminder.
 Completion ranks by it, one rule for both apps: sent count, then last seen,
 then times seen. Today it ranks by the store's order, and `times_seen` counts
 any header, not letters written (`crates/postio-sync/src/contacts.rs:36-62`).
+
+**Built (T076).** The rule is `postio_ui::recipients::suggest`, over
+`Correspondent { contact, sent_count }` rows, which `RecipientDirectory` now
+carries. The order:
+
+1. sent count;
+2. ADR 0007 Q6's band: contacts the user made or imported before those seen
+   only in mail;
+3. last seen;
+4. times seen.
+
+ADR 0007 decided the band and nothing here overrules it. While every count is
+0, the order is the store's. The classic composer still calls its own
+`Directory::suggest`, and the terminal ranks in the host's SQL. Both move to
+the one rule after T024 moves the composer.
 
 **Unchanged or dropped:**
 
