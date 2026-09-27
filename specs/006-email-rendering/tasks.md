@@ -266,12 +266,12 @@ plan and tasks agree with the decision.
   - `tiff`, `bmp`, `ico` and `avif` bytes become placeholders;
   - an animated GIF yields its first frame (FR-024, research R4)
 - [X] T045 Implement the resource table in `crates/postio-render/src/resources.rs`: keys from `data-model.md`, header-only dimension probes, and placeholders
-- [ ] T046 [TEST] In `crates/postio-render/tests/thread.rs`, test containment and generations:
+- [X] T046 [TEST] In `crates/postio-render/tests/thread.rs`, test containment and generations:
   - a request whose resource provider panics (a `#[cfg(test)]` hook) returns `outcome = FellBack { Panicked }` and does not unwind into the test;
   - the next request succeeds;
   - a stale-generation result is never delivered;
   - after `abandon(g)` on a request held by a test delay hook, the next request is served by a new thread
-- [ ] T047 Implement `crates/postio-render/src/thread.rs` (research R6): one thread with a 64 MiB stack, `catch_unwind(AssertUnwindSafe)`, the document dropped after a panic, generations, taint and replacement, and `fallback()` for plain text. Also a panic hook that logs location and message id only, never the payload
+- [X] T047 Implement `crates/postio-render/src/thread.rs` (research R6): one thread with a 64 MiB stack, `catch_unwind(AssertUnwindSafe)`, the document dropped after a panic, generations, taint and replacement, and `fallback()` for plain text. Also a panic hook that logs location and message id only, never the payload
 - [ ] T048 [TEST] In `crates/postio-body/src/sanitize.rs` unit tests, check the input caps: a body over 50,000 elements, deeper than 256, or over 2 MiB sets `over_cap` with the cap named. In `crates/postio-render/tests/thread.rs`, a sanitized message with `over_cap` yields `FellBack { OverCap }` without Blitz parsing it (`counts.nodes == 0`)
 - [ ] T049 Implement the caps in `crates/postio-body/src/sanitize.rs` and the short-circuit in `crates/postio-render/src/thread.rs`
 

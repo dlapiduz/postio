@@ -98,6 +98,7 @@ during it.
 |---|---|
 | `generation` | Monotonic per reader. A result with a stale generation is dropped |
 | `document` | The composed HTML |
+| `plain_text` | The plain-text alternative, drawn if the render falls back (a panic, an input cap) |
 | `resources` | The resource table |
 | `viewport` | `width_px` (logical), `hidpi_scale` (fractional surface scale), `zoom` (a step) |
 | `theme` | `Theme { dark: bool, high_contrast: bool, palette: ReaderPalette }` |

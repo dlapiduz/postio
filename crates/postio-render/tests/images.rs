@@ -40,6 +40,7 @@ fn request(fixture: &str) -> (RenderRequest, Vec<(String, Vec<u8>)>) {
     let request = RenderRequest {
         generation: 1,
         document: html,
+        plain_text: String::new(),
         resources: Arc::new(resources),
         viewport: Viewport {
             width: 800.0,

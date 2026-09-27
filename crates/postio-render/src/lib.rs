@@ -10,11 +10,13 @@ pub mod fonts;
 pub mod render;
 pub mod resources;
 pub mod theme;
+pub mod thread;
 
 pub use kurbo::{Point, Rect};
 pub use render::{BASE_URL, FOLD_ATTRIBUTE, Raster, rasterize, render};
 pub use resources::Resources;
 pub use theme::{Presentation, Rgb, Theme};
+pub use thread::{DEFAULT_RENDER_DEADLINE, Renderer};
 
 /// One message's key in a composed conversation: what its container's
 /// `data-postio-message` carries, and what its `cid:` references resolve in.
@@ -27,6 +29,9 @@ pub struct RenderRequest {
     pub generation: u64,
     /// The composed HTML.
     pub document: String,
+    /// The message's plain-text alternative, drawn if the render falls
+    /// back (FR-023).
+    pub plain_text: String,
     /// Everything the document may load; nothing else is reachable.
     pub resources: std::sync::Arc<Resources>,
     /// The laid-out width and the two scales, never folded together (R11).
