@@ -8,7 +8,7 @@ license.workspace = true
 publish.workspace = true
 repository.workspace = true
 
-# No library and no binary: this crate is nine bench targets and nothing else.
+# No library and no binary: this crate is bench targets and nothing else.
 # Without this, cargo looks for `src/lib.rs` and fails.
 [lib]
 path = "src/lib.rs"
@@ -31,7 +31,11 @@ postio-core.workspace = true
 postio-gtk.workspace = true
 postio-account.workspace = true
 postio-index.workspace = true
-postio-model.workspace = true
+postio-model = { workspace = true, features = ["test-corpus"] }
+# `reader_render`: the reading renderer and the document it is handed.
+postio-body.workspace = true
+postio-render.workspace = true
+postio-ui.workspace = true
 postio-runtime.workspace = true
 postio-search.workspace = true
 postio-session.workspace = true
@@ -89,4 +93,9 @@ harness = false
 
 [[bench]]
 name = "sync_lanes"
+harness = false
+
+# The reading renderer, warm, per designed fixture (spec 006 SC-005).
+[[bench]]
+name = "reader_render"
 harness = false
