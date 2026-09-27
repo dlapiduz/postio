@@ -74,13 +74,13 @@ fn autoscroll(view: &BodyView, y: f32) {
     };
     let height = view.height() as f32;
     let step = if y < 24.0 {
-        -24.0
+        -24.0_f64
     } else if y > height - 24.0 {
         24.0
     } else {
         return;
     };
-    adjustment.set_value(adjustment.value() + f64::from(step));
+    adjustment.set_value(adjustment.value() + step);
 }
 
 impl BodyView {
