@@ -359,7 +359,7 @@ high-contrast themes (SC-001).
   - the text-index offset at the top of the viewport is the same before and after the switch;
   - no ground-only frame appears in between (FR-011, US1 scenario 4)
 - [ ] T069 [US1] Implement the theme source in `crates/postio-gtk/src/body_view/mod.rs`: connect to `adw::StyleManager` `dark` and `high-contrast` with the handler ids disconnected on dispose, re-render on change, and restore the anchor
-- [ ] T070 [TEST] [US1] Write a table test in `crates/postio-render/tests/presentation.rs` with the expected `Presentation` for each fixture:
+- [X] T070 [TEST] [US1] Write a table test in `crates/postio-render/tests/presentation.rs` with the expected `Presentation` for each fixture:
   - `html-newsletter.eml` and `html-designed-three-column.eml` are `Paper` in dark;
   - `html-white-page-reply.eml` is `Adapted`;
   - `html-dark-text-no-background.eml` is `Adapted`;
@@ -367,22 +367,22 @@ high-contrast themes (SC-001).
   - `plain-text-simple.eml` is `Adapted`;
   - every fixture is `Styled` in light;
   - boundary cases: a canvas at relative luminance 0.91 is `Adapted`, and at 0.89 is `Paper` (FR-013)
-- [ ] T071 [US1] Implement classification in `crates/postio-render/src/theme.rs`: a pure function over computed styles after the first style pass. The `SenderDark` detection reads `data-postio-color-scheme` or a scoped `prefers-color-scheme: dark` rule
-- [ ] T072 [TEST] [US1] Write `crates/postio-render/tests/contrast.rs` (SC-001). Render **every** corpus fixture with an HTML or text body in the light, dark and high-contrast themes. For each text cluster, sample the rasterised pixels in the cluster rect's padding, excluding glyph pixels, and assert that `contrast(cluster.color, sampled) ≥ 4.5`, or `≥ 7` in high contrast, for text of **every** size. There is no large-text allowance (spec FR-012). **Observe red** on `html-white-page-reply.eml` and `html-dark-text-no-background.eml` in dark mode: that is today's bug
-- [ ] T073 [US1] Implement the painted-ground walk and OKLCH L-only repair in `crates/postio-render/src/theme.rs`. Ancestors are composited over the canvas, and a `background-image` ground uses the decoded image's mean colour. Apply the repaired colours as **one override stylesheet** keyed by the elements' stamped indices at ID-level specificity, and lay the document out afresh with it (research R10 amendment: a `DocumentMutator` style change does not restyle in beta.2), so `counts.style_passes == 2` exactly when `repaired_runs > 0`
-- [ ] T074 [TEST] [US1] In `crates/postio-render/tests/contrast.rs`, `html-illegible-sender-dark.eml` in dark is `SenderDark`, and every cluster still meets the floor. The sender's dark styling is honoured, but not trusted
-- [ ] T075 [TEST] [US1] In `crates/postio-render/tests/presentation.rs`, check paper in dark mode for `html-newsletter.eml`:
+- [X] T071 [US1] Implement classification in `crates/postio-render/src/theme.rs`: a pure function over computed styles after the first style pass. The `SenderDark` detection reads `data-postio-color-scheme` or a scoped `prefers-color-scheme: dark` rule
+- [X] T072 [TEST] [US1] Write `crates/postio-render/tests/contrast.rs` (SC-001). Render **every** corpus fixture with an HTML or text body in the light, dark and high-contrast themes. For each text cluster, sample the rasterised pixels in the cluster rect's padding, excluding glyph pixels, and assert that `contrast(cluster.color, sampled) ≥ 4.5`, or `≥ 7` in high contrast, for text of **every** size. There is no large-text allowance (spec FR-012). **Observe red** on `html-white-page-reply.eml` and `html-dark-text-no-background.eml` in dark mode: that is today's bug
+- [X] T073 [US1] Implement the painted-ground walk and OKLCH L-only repair in `crates/postio-render/src/theme.rs`. Ancestors are composited over the canvas, and a `background-image` ground uses the decoded image's mean colour. Apply the repaired colours as **one override stylesheet** keyed by the elements' stamped indices at ID-level specificity, and lay the document out afresh with it (research R10 amendment: a `DocumentMutator` style change does not restyle in beta.2), so `counts.style_passes == 2` exactly when `repaired_runs > 0`
+- [X] T074 [TEST] [US1] In `crates/postio-render/tests/contrast.rs`, `html-illegible-sender-dark.eml` in dark is `SenderDark`, and every cluster still meets the floor. The sender's dark styling is honoured, but not trusted
+- [X] T075 [TEST] [US1] In `crates/postio-render/tests/presentation.rs`, check paper in dark mode for `html-newsletter.eml`:
   - the container's box is painted with the sender canvas, or white if none, inset from the reader ground, with the reader radius;
   - the pixels outside the card are the reader ground;
   - the sender's text colours are unchanged, apart from floor repairs
-- [ ] T076 [US1] Implement the paper card in `crates/postio-render/src/theme.rs`, and its style hook in `crates/postio-ui/src/reader/document.rs`: a container class set by presentation, never by the sender
-- [ ] T077 [TEST] [US1] In `crates/postio-render/tests/presentation.rs`, test darken:
+- [X] T076 [US1] Implement the paper card in `crates/postio-render/src/theme.rs`, and its style hook in `crates/postio-ui/src/reader/document.rs`: a container class set by presentation, never by the sender. **Amended:** the card is the same user-agent override rule as every other presentation change, keyed by a mark the renderer sets on the container; one mechanism rather than a class plus a rule, and still never the sender's to set
+- [X] T077 [TEST] [US1] In `crates/postio-render/tests/presentation.rs`, test darken:
   - with `darkened` naming the newsletter's scope, every background's OKLab L is in [0.12, 0.30] with its hue kept within 2°;
   - every cluster meets the floor;
   - removing it from `darkened` restores a display list byte-identical to `Paper` (FR-013a)
-- [ ] T078 [US1] Implement darken in `crates/postio-render/src/theme.rs`: `L → 0.12 + (1 − L) × 0.18` for backgrounds and borders, then repair
-- [ ] T079 [TEST] [US1] In `crates/postio-render/tests/presentation.rs`, render `html-transparent-logo.eml` both `Darkened` and `Adapted`. Assert that the image's pixels equal its decoded pixels composited over the **sender's canvas colour**, never over the dark ground, and that no image pixel is recoloured (FR-015)
-- [ ] T080 [US1] Implement the image canvas backing in `crates/postio-render/src/theme.rs`
+- [X] T078 [US1] Implement darken in `crates/postio-render/src/theme.rs`: `L → 0.12 + (1 − L) × 0.18` for backgrounds and borders, then repair
+- [X] T079 [TEST] [US1] In `crates/postio-render/tests/presentation.rs`, render `html-transparent-logo.eml` both `Darkened` and `Adapted`. Assert that the image's pixels equal its decoded pixels composited over the **sender's canvas colour**, never over the dark ground, and that no image pixel is recoloured (FR-015)
+- [X] T080 [US1] Implement the image canvas backing in `crates/postio-render/src/theme.rs`
 - [ ] T081 [TEST] [US1] In `crates/postio-core/tests/core_suite/command_registry.rs`, `darken_message` exists with default `D` in message surfaces, is not destructive, and does not collide with any binding in an overlapping context
 - [ ] T082 [US1] Add `DarkenMessage` in `crates/postio-core/src/command.rs` (the `command_ids!` entry, the variant and both conversion matches) and its `CommandSpec` in `crates/postio-core/src/registry.rs`, per `contracts/registry-commands.md`. Regenerate `docs/keybindings.md` with `POSTIO_UPDATE_DOCS=1`, and update the golden `linux-bindings.txt` by hand
 - [ ] T083 [TEST] [US1] In `crates/postio-gtk/tests/gtk_suite/body_view_theme.rs`, in dark mode with `html-newsletter.eml` focused:

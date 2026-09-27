@@ -7,6 +7,7 @@
 //! harness in `examples/` and the dependency graph the checks prove.
 
 pub mod fonts;
+mod present;
 pub mod render;
 pub mod resources;
 mod snapshot;
@@ -93,6 +94,9 @@ pub struct RenderedDocument {
     pub counts: RenderCounts,
     /// Whether the sender's markup was drawn, or the plain-text fallback.
     pub outcome: Outcome,
+    /// Messages whose text cannot reach the high-contrast floor on their
+    /// paper: the reader opens them in Reader view instead (FR-013b).
+    pub needs_reader_view: Vec<Scope>,
 }
 
 static_assertions::assert_impl_all!(RenderedDocument: Send, Sync);
