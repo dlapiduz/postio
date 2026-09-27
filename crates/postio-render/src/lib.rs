@@ -100,9 +100,39 @@ pub struct RenderedDocument {
     /// Messages whose text cannot reach the high-contrast floor on their
     /// paper: the reader opens them in Reader view instead (FR-013b).
     pub needs_reader_view: Vec<Scope>,
+    /// Counts this snapshot among the live ones while it exists.
+    _live: Live,
 }
 
 static_assertions::assert_impl_all!(RenderedDocument: Send, Sync);
+
+/// How many snapshots are alive in this process.
+static LIVE: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+/// A snapshot's place in [`live_documents`]: counted when made, uncounted
+/// when dropped.
+#[derive(Debug)]
+struct Live(());
+
+impl Live {
+    fn new() -> Live {
+        LIVE.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        Live(())
+    }
+}
+
+impl Drop for Live {
+    fn drop(&mut self) {
+        LIVE.fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
+    }
+}
+
+/// How many [`RenderedDocument`]s are alive in this process: the count the
+/// reader's memory claim is held to (SC-006) -- viewing more messages must
+/// not leave more snapshots behind.
+pub fn live_documents() -> usize {
+    LIVE.load(std::sync::atomic::Ordering::Relaxed)
+}
 
 impl RenderedDocument {
     /// The link under `point`, in document coordinates.
