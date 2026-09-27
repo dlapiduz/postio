@@ -43,27 +43,37 @@ fn content(name: &str) -> Content {
     }
 }
 
+/// One turn of the main loop, blocking until something happens. The
+/// heartbeat bounds the block: the frame clock paints on the compositor's
+/// frame callbacks, which only a blocking iteration waits for.
+fn pump() {
+    let heartbeat = glib::timeout_add_local(std::time::Duration::from_millis(10), || {
+        glib::ControlFlow::Continue
+    });
+    glib::MainContext::default().iteration(true);
+    heartbeat.remove();
+}
+
 /// Run the main loop until `done`, painting frames; false on timeout.
 fn until(done: impl Fn() -> bool) -> bool {
-    let context = glib::MainContext::default();
     let deadline =
         std::time::Instant::now() + postio_test_support::scaled(std::time::Duration::from_secs(10));
     while !done() && std::time::Instant::now() < deadline {
-        context.iteration(false);
-        std::thread::sleep(std::time::Duration::from_millis(2));
+        pump();
     }
     done()
 }
 
-/// The window's pixels, as the compositor would get them, with the stride
-/// of a row in bytes; `None` before the window's first frame.
-fn pixels(window: &gtk::Window) -> Option<(usize, Vec<u8>)> {
-    let (width, height) = (window.width(), window.height());
-    let paintable = gtk::WidgetPaintable::new(Some(window));
+/// What `widget` draws, in its own coordinates, with the stride of a row in
+/// bytes; `None` before it has drawn anything.
+fn pixels(widget: &impl IsA<gtk::Widget>) -> Option<(usize, Vec<u8>)> {
+    let widget = widget.as_ref();
+    let (width, height) = (widget.width(), widget.height());
+    let paintable = gtk::WidgetPaintable::new(Some(widget));
     let snapshot = gtk::Snapshot::new();
     paintable.snapshot(&snapshot, f64::from(width), f64::from(height));
     let node = snapshot.to_node()?;
-    let renderer = window.native().and_then(|native| native.renderer())?;
+    let renderer = widget.native().and_then(|native| native.renderer())?;
     let bounds = gtk::graphene::Rect::new(0.0, 0.0, width as f32, height as f32);
     let texture = renderer.render_texture(&node, Some(&bounds));
     let mut downloader = gdk::TextureDownloader::new(&texture);
@@ -100,24 +110,114 @@ pub fn a_snapshot_fills_the_view_and_scrolls_with_it() {
     let heading = doc.text.find("Trail runner")[0].clone();
     let rect = doc.text.rects(heading)[0];
     adjustment.set_value(100.0);
-    // From the view's own coordinates to the window's, past its header.
-    let point = view
-        .compute_point(
-            &window,
-            &gtk::graphene::Point::new((rect.x0 - 6.0) as f32, (rect.center().y - 100.0) as f32),
-        )
-        .expect("the view is inside the window");
-    let (x, y) = (f64::from(point.x()), f64::from(point.y()));
+    // In the view's own coordinates: 100px higher once scrolled.
+    let (x, y) = (rect.x0 - 6.0, rect.center().y - 100.0);
     let at = |pixels: &[u8], stride: usize| {
         let offset = y.round() as usize * stride + x.round() as usize * 4;
         [pixels[offset], pixels[offset + 1], pixels[offset + 2]]
     };
-    let seen = || pixels(&window).map(|(stride, pixels)| at(&pixels, stride));
+    let seen = || pixels(&view).map(|(stride, pixels)| at(&pixels, stride));
     let drawn = until(|| seen() == Some([0xdc, 0xeb, 0xe3]));
     assert!(
         drawn,
-        "at ({x}, {y}) the window shows {:?}, not the card",
+        "at ({x}, {y}) the view shows {:?}, not the card",
         seen()
+    );
+    window.destroy();
+}
+
+/// Near enough: the low-resolution copy is a quarter scale, upscaled.
+fn near(a: Option<[u8; 3]>, b: [u8; 3]) -> bool {
+    a.is_some_and(|a| a.iter().zip(b).all(|(x, y)| x.abs_diff(y) <= 6))
+}
+
+/// No frame is blank (FR-029): a render in flight leaves the last frame up,
+/// and a tile that is not ready draws from the low-resolution copy rather
+/// than the bare ground.
+pub fn no_frame_shows_only_the_ground() {
+    if adw::init().is_err() || gdk::Display::default().is_none() {
+        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
+        return;
+    }
+    let view = BodyView::new(postio_test_support::scaled(DEFAULT_RENDER_DEADLINE));
+    let scroller = gtk::ScrolledWindow::builder().child(&view).build();
+    let window = gtk::Window::builder()
+        .default_width(800)
+        .default_height(600)
+        .child(&scroller)
+        .build();
+    window.present();
+    view.set_content(content("html-designed-three-column"));
+    assert!(until(|| view.document().is_some()), "no snapshot arrived");
+    let doc = view.document().expect("a snapshot");
+    let rect = doc.text.rects(doc.text.find("Trail runner")[0].clone())[0];
+    // Read through the scroller, which always paints: where the view drew
+    // nothing, its ground shows, so a blank view is seen as one.
+    let point = view
+        .compute_point(
+            &scroller,
+            &gtk::graphene::Point::new((rect.x0 - 6.0) as f32, rect.center().y as f32),
+        )
+        .expect("the view is inside its scroller");
+    let at = |pixels: &[u8], stride: usize| {
+        let offset = point.y().round() as usize * stride + point.x().round() as usize * 4;
+        [pixels[offset], pixels[offset + 1], pixels[offset + 2]]
+    };
+    let seen = || pixels(&scroller).map(|(stride, pixels)| at(&pixels, stride));
+    let card = [0xdc, 0xeb, 0xe3];
+    assert!(until(|| seen() == Some(card)), "the card never drew");
+
+    // A second render, held inside its resource lookup: every frame
+    // painted meanwhile is still the first snapshot. A read of `None` is a
+    // frame not yet repainted, not a blank one: the paintable hands back
+    // the last node the widget drew, and there is none while a redraw is
+    // pending.
+    let mut held = content("html-designed-three-column");
+    let resources = Resources::new();
+    let gate = resources.hold_lookup();
+    held.resources = Arc::new(resources);
+    let before = doc.generation;
+    view.set_content(held);
+    let mut painted = 0;
+    let deadline =
+        std::time::Instant::now() + postio_test_support::scaled(std::time::Duration::from_secs(5));
+    while painted < 5 && std::time::Instant::now() < deadline {
+        pump();
+        if let Some(frame) = seen() {
+            assert_eq!(frame, card, "a render in flight changed the frame");
+            painted += 1;
+        }
+    }
+    assert_eq!(painted, 5, "too few frames were painted to judge");
+    gate.release();
+    assert!(
+        until(|| view.document().is_some_and(|d| d.generation > before)),
+        "the second snapshot never arrived"
+    );
+    assert!(
+        until(|| seen() == Some(card)),
+        "the second snapshot never drew"
+    );
+
+    // Every tile gone: the first frame painted after is the one that asks
+    // for them again, so it cannot hold them -- it shows the low-resolution
+    // copy, or it shows the ground.
+    view.evict_tiles();
+    let deadline =
+        std::time::Instant::now() + postio_test_support::scaled(std::time::Duration::from_secs(5));
+    let frame = loop {
+        pump();
+        if let Some(frame) = seen() {
+            break frame;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "nothing was painted after eviction"
+        );
+    };
+    assert!(
+        near(Some(frame), card),
+        "an evicted tile drew {frame:?}, not the low-resolution card"
     );
     window.destroy();
 }

@@ -175,6 +175,16 @@ impl BodyView {
         self.imp().document.borrow().clone()
     }
 
+    /// Drop every tile, as memory pressure would: what shows until they
+    /// are drawn again is the snapshot's low-resolution copy.
+    #[doc(hidden)]
+    pub fn evict_tiles(&self) {
+        if let Some(document) = self.imp().document.borrow().clone() {
+            self.imp().tiles.borrow_mut().reset(document);
+        }
+        self.queue_draw();
+    }
+
     fn renderer(&self) -> &Renderer {
         self.imp()
             .renderer
